@@ -79,7 +79,7 @@ sudo emaint sync -a
 sudo emerge --ask gui-apps/vgs-shell
 ```
 
-Arch development builds use `vgs-shell-git`.
+Arch development builds use `vgs-shell-git`. That recipe builds the current `main`, and it computes its version from the source clone: the VGS version, the number of commits, and the head. A package helper reads that number only after it clones. Until then it shows the version written in the published recipe, which is the head of the last publication, so the version you see before installing lags the one you get. Publication writes its own head into the recipe.
 
 ### Nix
 

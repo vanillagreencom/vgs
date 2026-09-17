@@ -4,6 +4,10 @@
 The local check compares PKGBUILD and .SRCINFO. The remote check requires
 network access and compares the published AUR repository with this tree.
 Without --remote, the script reports that publication was not checked.
+
+--stamp-vcs-version writes rather than checks: it puts this checkout's computed
+pkgver into a VCS recipe, which is how publish-aur.sh publishes a real version
+instead of the placeholder makepkg would replace only after cloning the source.
 """
 
 from __future__ import annotations
@@ -59,6 +63,20 @@ KEYS = PKGBASE_KEYS + tuple(
 )
 # Fields a package_* function may override; .SRCINFO repeats them per pkgname.
 SPLIT_KEYS = ("pkgdesc", "depends", "optdepends", "provides", "conflicts", "install")
+
+# The pkgver a VCS recipe carries before anything computes one: no commits counted
+# and a null commit hash.
+PLACEHOLDER_PKGVER = re.compile(r"\.r0\.g0+$")
+# The pkgver and pkgrel assignments, in PKGBUILD spelling and .SRCINFO spelling.
+VERSION_ASSIGNMENT = re.compile(r"^(\s*)(pkgver|pkgrel)(=| = )(\S*)$", re.MULTILINE)
+# What a VCS recipe's own pkgver() must use for computed_pkgver below to produce
+# the value that recipe's build produces.
+PKGVER_RECIPE_PARTS = (
+    "%s.r%s.g%s",
+    "cat VERSION",
+    "rev-list --count HEAD",
+    "rev-parse --short HEAD",
+)
 
 
 class CheckError(Exception):
@@ -124,6 +142,105 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
             splits[only] = {}
 
     return fields, splits
+
+
+def pkgver_body(directory: Path) -> str | None:
+    """The body of the recipe's pkgver(), or None for a recipe that has none.
+
+    A recipe with one recomputes its version from the cloned source at build
+    time; a recipe without one carries the version it builds.
+    """
+    match = re.search(
+        r"^pkgver\(\)\s*\{\n(.*?)^\}$",
+        (directory / "PKGBUILD").read_text(),
+        re.DOTALL | re.MULTILINE,
+    )
+    return match.group(1) if match else None
+
+
+def drop_computed_version(lines: list[str]) -> list[str]:
+    """Return `lines` without the pkgver and pkgrel assignments.
+
+    publish-aur.sh stamps the recipe it publishes with the head it publishes, so
+    those two fields are newer on the AUR than in this tree by design. Comparing
+    them would report drift for every commit made since the last publication.
+    """
+    return [line for line in lines if not VERSION_ASSIGNMENT.match(line.rstrip("\n"))]
+
+
+def git(root: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *arguments], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise CheckError(
+            f"git {' '.join(arguments)} in {root} failed: {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
+def computed_pkgver(root: Path) -> str:
+    """The pkgver a VCS recipe's pkgver() produces from the head checked out in `root`."""
+    if git(root, "rev-parse", "--is-shallow-repository") == "true":
+        raise CheckError(
+            f"{root} is a shallow checkout, so `git rev-list --count HEAD` counts only "
+            "the commits it fetched. A pkgver stamped from it would be lower than the "
+            "published one, and no AUR client offers an update to a lower version. "
+            "Check out the full history (actions/checkout fetch-depth: 0)."
+        )
+    return "{}.r{}.g{}".format(
+        (root / "VERSION").read_text().strip(),
+        git(root, "rev-list", "--count", "HEAD"),
+        git(root, "rev-parse", "--short", "HEAD"),
+    )
+
+
+def write_version(path: Path, pkgver: str, pkgrel: str) -> None:
+    """Rewrite one recipe file's pkgver and pkgrel assignments."""
+
+    def replace(match: re.Match[str]) -> str:
+        value = pkgver if match.group(2) == "pkgver" else pkgrel
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}{value}"
+
+    text, count = VERSION_ASSIGNMENT.subn(replace, path.read_text())
+    if count != 2:
+        raise CheckError(
+            f"{path}: one pkgver and one pkgrel assignment expected, {count} matched; "
+            "nothing was written"
+        )
+    path.write_text(text)
+
+
+def stamp_vcs_version(directory: Path, root: Path = ROOT) -> str | None:
+    """Write `root`'s computed pkgver into the recipe in `directory`.
+
+    Returns the value written, or None for a recipe whose pkgver is static and
+    therefore already the truth about what it builds.
+    """
+    if not (directory / "PKGBUILD").is_file():
+        raise CheckError(f"{directory} holds no PKGBUILD to stamp")
+    body = pkgver_body(directory)
+    if body is None:
+        return None
+
+    missing = [part for part in PKGVER_RECIPE_PARTS if part not in body]
+    if missing:
+        raise CheckError(
+            f"{directory}/PKGBUILD computes its pkgver without {', '.join(missing)}, so "
+            "the value computed here is not the one its build produces, and NOTHING was "
+            "written. Make computed_pkgver in scripts/check-aur-sync.py and the recipe's "
+            "pkgver() agree."
+        )
+
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    pkgver = computed_pkgver(root)
+    current = fields.get("pkgver") or [""]
+    # Another head is another version, and its first package is pkgrel 1. An
+    # unchanged version keeps the pkgrel that counts the recipe's own fixes.
+    pkgrel = "1" if pkgver != current[0] else (fields.get("pkgrel") or ["1"])[0]
+    for name in ("PKGBUILD", ".SRCINFO"):
+        write_version(directory / name, pkgver, pkgrel)
+    return pkgver
 
 
 def array_end(text: str, start: int) -> int:
@@ -249,6 +366,18 @@ def check_local(package: str, directory: Path) -> list[str]:
             compare(f"{package}/{name}", splits[name], srcsplits[name], SPLIT_KEYS)
         )
 
+    if pkgver_body(directory) is not None:
+        for value in pkgbuild.get("pkgver", []):
+            if PLACEHOLDER_PKGVER.search(value):
+                problems.append(
+                    f"{package}: pkgver={value} is the placeholder a VCS recipe carries "
+                    "before a build computes one. makepkg replaces it only after cloning "
+                    "the source, so published it is the version the AUR page and every "
+                    "helper report before that clone. Stamp this tree's head into it: "
+                    "scripts/check-aur-sync.py --stamp-vcs-version "
+                    f"{directory.relative_to(ROOT)}"
+                )
+
     for values in splits.values():
         for scriptlet in values.get("install", []):
             if not (directory / scriptlet).is_file():
@@ -273,6 +402,7 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
                 f"published package was checked: {result.stderr.strip()}"
             )
 
+        vcs = pkgver_body(directory) is not None
         problems = []
         for name in files:
             published = clone / name
@@ -281,6 +411,8 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
                 continue
             want = (directory / name).read_text().splitlines(keepends=True)
             have = published.read_text().splitlines(keepends=True)
+            if vcs:
+                want, have = drop_computed_version(want), drop_computed_version(have)
             if want == have:
                 continue
             diff = "".join(
@@ -349,6 +481,11 @@ def main() -> int:
         help="print the http(s) source URLs of the selected packages and exit",
     )
     parser.add_argument(
+        "--stamp-vcs-version",
+        metavar="DIRECTORY",
+        help="write this checkout's computed pkgver into the recipe in DIRECTORY and exit",
+    )
+    parser.add_argument(
         "--print-source-checksums",
         action="store_true",
         help="print each http(s) source URL and the sha256 the recipe declares for it",
@@ -361,6 +498,19 @@ def main() -> int:
     )
     args = parser.parse_args()
     selected = {name: PACKAGES[name] for name in (args.packages or PACKAGES)}
+
+    if args.stamp_vcs_version:
+        directory = Path(args.stamp_vcs_version)
+        try:
+            stamped = stamp_vcs_version(directory)
+        except CheckError as error:
+            print(f"check-aur-sync: {error}", file=sys.stderr)
+            return 2
+        if stamped is None:
+            print(f"{directory}: pkgver is not computed at build time; left as it is")
+        else:
+            print(f"{directory}: pkgver={stamped}")
+        return 0
 
     if args.print_source_checksums:
         try:

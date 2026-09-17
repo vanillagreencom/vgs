@@ -53,6 +53,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+          # The published git recipe carries a version counting every commit,
+          # so the default shallow checkout would publish a lower one.
+          fetch-depth: 0
 
       # AUR clients read .SRCINFO; it must agree with the recipe they build.
       - name: Arch recipes agree internally
