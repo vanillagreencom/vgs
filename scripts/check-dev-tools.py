@@ -679,10 +679,11 @@ def test_a_channel_the_catalog_dropped_falls_back_to_the_default():
         raise AssertionError("a default naming no option must be reported")
 
 
-def test_setting_a_channel_records_it_and_rewrites_the_stub():
+def test_setting_a_channel_reports_it_and_rewrites_the_stub():
     """The setting alone changes nothing: the stub carries the package spec, so
     a recorded channel that never reaches ~/.local/bin still installs the old
-    stream on the next launch."""
+    stream on the next launch. The shell owns settings.json, so the command
+    reports the picks for it to store and writes no setting itself."""
     catalog = mise.dev_tools_catalog()
     entry = next(e for e in channelled_entries(catalog) if e["id"] == "herdr")
     default = str(entry["channels"]["default"])
@@ -694,13 +695,11 @@ def test_setting_a_channel_records_it_and_rewrites_the_stub():
         original_home = mise.RT.home
         original_state = mise.RT.state_dir
         original_settings = mise.RT.load_settings
-        original_set = mise.RT.set_settings_value
         original_eprint = mise.RT.eprint
         original_path = os.environ.get("PATH", "")
         mise.RT.home = lambda: Path(tmp)
         mise.RT.state_dir = lambda: Path(tmp) / ".local" / "state" / "vshell"
         mise.RT.load_settings = lambda: dict(stored)
-        mise.RT.set_settings_value = lambda key, value: stored.__setitem__(key, value) or dict(stored)
         mise.RT.eprint = lambda *a: None
         os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
         stub = Path(tmp) / ".local" / "bin" / str(entry["command"])
@@ -712,14 +711,19 @@ def test_setting_a_channel_records_it_and_rewrites_the_stub():
 
             result = mise.mise_set_channel("herdr", other)
             assert result["ok"], result
-            assert_equal(stored["devToolChannels"], {"herdr": other}, "the pick is recorded under")
+            assert_equal(result["devToolChannels"], {"herdr": other}, "the picks are reported as")
+            assert_equal(stored, {}, "the command stores no setting")
+            assert_equal(mise.dev_tool_channels(), {}, "the settings read is restored after the run")
+            stored.update(devToolChannels=result["devToolChannels"])
             assert_equal(result["channel"], other, "and reported back as")
             assert options in stub.read_text(), \
                 f"the rewritten stub must install from {other}: " + stub.read_text()
 
             # And back again, so the change is not one-way.
-            assert mise.mise_set_channel("herdr", default)["ok"]
-            assert_equal(stored["devToolChannels"], {"herdr": default}, "the second pick replaces the first")
+            back = mise.mise_set_channel("herdr", default)
+            assert back["ok"], back
+            assert_equal(back["devToolChannels"], {"herdr": default}, "the second pick replaces the first")
+            stored.update(devToolChannels=back["devToolChannels"])
             assert options not in stub.read_text(), \
                 f"the stub must return to {default}: " + stub.read_text()
 
@@ -733,7 +737,7 @@ def test_setting_a_channel_records_it_and_rewrites_the_stub():
                 refused = mise.mise_set_channel(entry_id, channel)
                 assert not refused["ok"], f"{why} must be refused: {refused}"
                 assert refused["error"], f"{why} must say why: {refused}"
-                assert_equal(stored["devToolChannels"], {"herdr": default}, f"{why} must record nothing")
+                assert_equal("devToolChannels" in refused, False, f"{why} must report no picks to store")
                 assert_equal(stub.read_text(), before, f"{why} must not rewrite the stub")
                 assert_equal(mise.cmd_mise(["channel", entry_id, channel, "--json"]), 1, f"{why} exits non-zero")
             assert_equal(mise.cmd_mise(["channel", "herdr"]), 2, "a missing argument is a usage error")
@@ -742,7 +746,6 @@ def test_setting_a_channel_records_it_and_rewrites_the_stub():
             mise.RT.home = original_home
             mise.RT.state_dir = original_state
             mise.RT.load_settings = original_settings
-            mise.RT.set_settings_value = original_set
             mise.RT.eprint = original_eprint
             os.environ["PATH"] = original_path
 
@@ -1288,7 +1291,7 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
         ls, use = ["ls", "--json"], ["use", "-g", "--quiet", "cursor-agent[bin_path=]"]
         with mock.patch.multiple(mise, dev_tools_catalog=lambda: catalog), \
                 mock.patch.multiple(mise.RT, run=fake_run, command_exists=lambda name: True, load_settings=dict,
-                                    set_settings_value=lambda key, value: {}, eprint=lambda *a: None,
+                                    eprint=lambda *a: None,
                                     home=lambda: home, state_dir=lambda: home / "state"), \
                 mock.patch.dict(os.environ, {"PATH": os.pathsep.join(map(str, (bin_dir, other, package, shims, distro)))}):
             # Auto-install is off but from the opt-in to remove-stubs. Each row:
@@ -1419,7 +1422,7 @@ CASES = (
     test_a_channel_picks_the_release_stream_a_tool_installs_from,
     test_a_settings_row_carries_the_streams_it_can_offer,
     test_a_channel_the_catalog_dropped_falls_back_to_the_default,
-    test_setting_a_channel_records_it_and_rewrites_the_stub,
+    test_setting_a_channel_reports_it_and_rewrites_the_stub,
     test_the_settings_tab_runs_the_channel_command,
     test_env_remove_keeps_shared_tools,
     test_distro_owned_env_is_hands_off,

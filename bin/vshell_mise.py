@@ -14,7 +14,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -27,7 +27,6 @@ class DevToolsRuntime:
     run: Callable[..., subprocess.CompletedProcess[str]]
     command_exists: Callable[[str], bool]
     load_settings: Callable[[], Dict[str, Any]]
-    set_settings_value: Callable[[str, Any], Dict[str, Any]]
     load_required_json_file: Callable[[Path], Dict[str, Any]]
     eprint: Callable[..., None]
     spawn_terminal: Callable[..., int]
@@ -527,9 +526,11 @@ def mise_retire_stubs() -> List[str]:
 
 
 def mise_set_channel(entry_id: str, channel: str) -> Dict[str, Any]:
-    """Record which release stream one entry installs from, then run the
-    refresh, whose outcome is this one's. A stub carries the spec its channel
-    selects, so the setting alone leaves the next launch on the old stream."""
+    """Run the refresh with one entry switched to another release stream, and
+    report the resulting picks as `devToolChannels` for the shell to store; the
+    shell owns settings.json. The refresh's outcome is this one's. A stub carries
+    the spec its channel selects, so the setting alone leaves the next launch on
+    the old stream."""
     entries = launchable(dev_tools_catalog())
     entry = next((e for e in entries if e.get("id") == entry_id), None)
     if entry is None:
@@ -540,13 +541,20 @@ def mise_set_channel(entry_id: str, channel: str) -> Dict[str, Any]:
         return {"ok": False, "error": f"{entry_id} publishes one release stream; there is no channel to choose"}
     if channel not in offered:
         return {"ok": False, "error": f"{entry_id} has no channel {channel!r}; one of: " + " ".join(offered)}
-    RT.set_settings_value(DEV_TOOL_CHANNELS_SETTING, {**dev_tool_channels(), entry_id: channel})
-    synced = mise_sync()
-    # Re-read rather than predict: the stub just written is what the next launch
-    # runs, and it was built from the setting this call has now changed.
-    updated = next(e for e in launchable(dev_tools_catalog()) if e.get("id") == entry_id)
+    channels = {**dev_tool_channels(), entry_id: channel}
+    stored = RT
+    settings = stored.load_settings
+    configure(replace(stored, load_settings=lambda: {**settings(), DEV_TOOL_CHANNELS_SETTING: channels}))
+    try:
+        synced = mise_sync()
+        # Re-read rather than predict: the stub just written is what the next
+        # launch runs, and it was built from the pick this call carries.
+        updated = next(e for e in launchable(dev_tools_catalog()) if e.get("id") == entry_id)
+    finally:
+        configure(stored)
     return {"ok": synced["ok"], "error": synced["error"], "id": entry_id, "channel": str(updated["channel"]),
-            "package": str(updated["package"]), "optedOut": bool(synced["stubs"]["optedOut"])}
+            "package": str(updated["package"]), "optedOut": bool(synced["stubs"]["optedOut"]),
+            DEV_TOOL_CHANNELS_SETTING: channels}
 
 
 def mise_remove_stubs() -> Dict[str, Any]:

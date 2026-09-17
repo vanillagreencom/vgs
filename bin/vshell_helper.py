@@ -4735,7 +4735,13 @@ def render_template(text: str, roles: Dict[str, str], source: str) -> str:
 
 
 def write_file(path: Path, content: str, mode: int | None = None) -> bool:
-    """Replace `path` atomically and report whether its bytes moved.
+    """Replace the file `path` names atomically and report whether its bytes moved.
+
+    `path` is resolved with `os.path.realpath` first, and the temporary file is
+    created in the resolved target's directory and renamed onto the resolved
+    target. A config symlinked into a dotfiles checkout therefore stays a symlink
+    and its target takes the new content; renaming onto the link itself would
+    replace the link with a plain file and leave the tracked copy behind.
 
     A destination already holding `content` is left alone and reports False, so a
     caller can tell a consumer to reload only the files that actually changed. A
@@ -4747,21 +4753,25 @@ def write_file(path: Path, content: str, mode: int | None = None) -> bool:
     With `mode`, the temporary file is created at that mode, so no copy of the
     content ever exists at a wider one — which matters for a config another app
     keeps at 0600 for its API keys — and is chmod'ed to it while still empty, so
-    a narrow umask cannot leave a user's 0644 config at 0600. Without a mode the
-    temporary file takes the process umask, as every caller that does not name
-    one has always had."""
+    a narrow umask cannot leave a user's 0644 config at 0600. Without a mode an
+    existing target keeps its own mode the same way, and a created one takes the
+    process umask."""
+    target = Path(os.path.realpath(path))
     try:
-        unchanged = path.read_bytes() == content.encode()
+        unchanged = target.read_bytes() == content.encode()
     except OSError:
         unchanged = False
     if unchanged:
         # A failure here raises rather than falling through to a rewrite, so a
         # mode this call could not set is never reported as a write that set it.
-        if mode is not None and stat.S_IMODE(path.stat().st_mode) != mode:
-            os.chmod(path, mode)
+        if mode is not None and stat.S_IMODE(target.stat().st_mode) != mode:
+            os.chmod(target, mode)
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    if mode is None:
+        with contextlib.suppress(FileNotFoundError):
+            mode = stat.S_IMODE(target.stat().st_mode)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}.{time.time_ns()}")
     try:
         # O_EXCL because a name this process built from its own pid and a
         # nanosecond clock should never already exist; if it does, something
@@ -4774,7 +4784,7 @@ def write_file(path: Path, content: str, mode: int | None = None) -> bool:
                 # did not ask for. The file is still empty here.
                 os.fchmod(fd, mode)
             handle.write(content)
-        tmp.replace(path)
+        tmp.replace(target)
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -6863,20 +6873,6 @@ def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str
 CREATED_CONFIG_MODE = 0o600
 
 
-def resolved_config_path(path: Path) -> Path:
-    """Where a theme selection must land when it writes `path`.
-
-    These files are commonly symlinked into a dotfiles checkout, and a user can
-    point several account directories at one of them, as three Claude Code
-    accounts do. write_file replaces the name it is given, so writing the link
-    itself would leave a regular file in its place, strand the other names and
-    take the live config out of the user's version control. Resolving a path
-    whose leaf is not a link changes nothing, so all three selection writers
-    resolve.
-    """
-    return path.resolve()
-
-
 def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
                         create: bool = False) -> Dict[str, Any]:
     """Write one key into another app's own settings file, and only when it differs.
@@ -6911,7 +6907,7 @@ def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
         return {"ok": True, "path": str(path), "changed": False}
     node[keys[-1]] = value
     try:
-        write_file(resolved_config_path(path), json.dumps(data, indent=2) + "\n", mode)
+        write_file(path, json.dumps(data, indent=2) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
@@ -6955,7 +6951,7 @@ def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict
     if not changed:
         return {"ok": True, "path": str(path), "changed": False}
     try:
-        write_file(resolved_config_path(path), "\n".join(lines) + "\n", mode)
+        write_file(path, "\n".join(lines) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
@@ -7168,14 +7164,13 @@ def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str
         # `tui.theme`, or an inline `tui = { ... }` table). Writing anyway would
         # leave two spellings of one key behind.
         return {"ok": False, "error": "codex config sets [tui] theme in a form VGS cannot rewrite"}
-    target = resolved_config_path(config)
     # config.toml carries [mcp_servers.*] env values and [model_providers]
     # http_headers, which hold API keys, so a file the user kept private must not
     # come back world-readable under this process's umask, and one VGS brings into
     # existence must not start that way either.
     try:
-        mode = target.stat().st_mode & 0o777 if target.exists() else CREATED_CONFIG_MODE
-        write_file(target, new_text, mode)
+        mode = config.stat().st_mode & 0o777 if config.exists() else CREATED_CONFIG_MODE
+        write_file(config, new_text, mode)
     except OSError as exc:
         return {"ok": False, "error": f"codex config write failed: {exc}"}
     return {"ok": True, "theme": value, "config": str(config)}
@@ -7336,37 +7331,6 @@ def target_enabled(cfg: Dict[str, Any], theme_apps: Dict[str, bool]) -> bool:
     return detect_target(cfg)
 
 
-def set_theme_app_enabled(app: str, enabled: bool) -> Dict[str, bool]:
-    """Persist a themeApps toggle into settings.json (merges, atomic write).
-
-    The live shell watches settings.json and reloads external edits, so this
-    stays in sync with SettingsData.
-    """
-    ensure_dirs()
-    settings_path = cfg_dir() / "settings.json"
-    data: Dict[str, Any] = {}
-    if settings_path.exists():
-        data = load_required_json_file(settings_path)
-    apps = data.get("themeApps")
-    if not isinstance(apps, dict):
-        apps = {}
-    apps[app] = enabled
-    data["themeApps"] = apps
-    write_file(settings_path, json.dumps(data, indent=2) + "\n")
-    return {str(k): bool(v) for k, v in apps.items()}
-
-
-def set_settings_value(key: str, value: Any) -> Dict[str, Any]:
-    ensure_dirs()
-    settings_path = cfg_dir() / "settings.json"
-    data: Dict[str, Any] = {}
-    if settings_path.exists():
-        data = load_required_json_file(settings_path)
-    data[key] = value
-    write_file(settings_path, json.dumps(data, indent=2) + "\n")
-    return data
-
-
 def applied_blueprint() -> Dict[str, Any] | None:
     """The last applied blueprint exactly as `apply_theme_obj` wrote it, or None.
 
@@ -7406,9 +7370,8 @@ def current_theme_obj() -> Dict[str, Any]:
     return find_theme_exact(str(current_theme().get("name") or "")) or blueprint_from_current_theme()
 
 
-def theme_apps_inventory() -> List[Dict[str, Any]]:
-    """Per-app view over targets: toggle state, detection, curated status."""
-    theme_apps = theme_apps_settings()
+def theme_apps_inventory(theme_apps: Dict[str, bool]) -> List[Dict[str, Any]]:
+    """Per-app view over targets: toggle state from `theme_apps`, detection, curated status."""
     cur = current_theme_obj()
     curated_available = set((cur.get("apps") or {}).keys())
     apps: Dict[str, Dict[str, Any]] = {}
@@ -7631,10 +7594,13 @@ class _TargetPlan(NamedTuple):
 
 
 def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
-                    only_target: str | None = None, run_hooks: bool = True) -> Dict[str, Any]:
-    """Apply one complete theme batch without interleaving another mutation."""
+                    only_target: str | None = None, run_hooks: bool = True,
+                    theme_apps: Dict[str, bool] | None = None) -> Dict[str, Any]:
+    """Apply one complete theme batch without interleaving another mutation.
+
+    `theme_apps` is the app enable set; None reads it from settings.json."""
     with theme_mutation_lock():
-        return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks)
+        return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks, theme_apps)
 
 
 def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
@@ -7669,13 +7635,15 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
 
 def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                               only_target: str | None = None,
-                              run_hooks: bool = True) -> Dict[str, Any]:
+                              run_hooks: bool = True,
+                              theme_apps: Dict[str, bool] | None = None) -> Dict[str, Any]:
     ensure_dirs()
     roles = target_roles(bp)
     external_roles = app_target_roles(bp, roles)
     curated_apps: Dict[str, str] = bp.get("apps") or {}
     app_overrides = bp_app_overrides(bp)
-    theme_apps = theme_apps_settings()
+    if theme_apps is None:
+        theme_apps = theme_apps_settings()
     rendered: List[str] = []
     changed: List[str] = []
     curated_used: List[str] = []
@@ -10945,7 +10913,6 @@ def _devtools() -> Any:
         vshell_devtools.configure(vshell_devtools.DevToolsRuntime(
             home=home, state_dir=state_dir, repo_root=repo_root, run=run,
             command_exists=command_exists, load_settings=load_settings,
-            set_settings_value=set_settings_value,
             load_required_json_file=load_required_json_file, eprint=eprint,
             spawn_terminal=spawn_terminal, spawn_app=spawn_app, notify_user=notify_user,
             tui_app_id=TERMINAL_TUI_APP_ID))
@@ -11124,7 +11091,8 @@ def cmd_fonts(argv: List[str]) -> int:
         print(json.dumps(result, indent=2) if args.json else ("System fonts applied" if result.get("success") else "System fonts partially applied"))
         return 0 if result.get("success") else 1
     if args.cmd == "reset":
-        set_settings_value("systemFontsManaged", False)
+        # The shell owns settings.json: the result's `managed` is the value for
+        # it to store.
         result = apply_system_fonts(reset=True)
         print(json.dumps(result, indent=2) if args.json else "VGS system font overrides removed")
         return 0 if result.get("success") else 1
@@ -12012,18 +11980,23 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint("Use either --enable or --disable, not both")
             return 2
         toggled = args.enable or args.disable
+        # The shell owns settings.json and stores the toggle; the helper takes it
+        # as an argument, applies it to this run, and reports the resulting set.
+        theme_apps = theme_apps_settings()
         result: Dict[str, Any] = {}
         if toggled:
-            known = {entry["app"] for entry in theme_apps_inventory()}
+            known = {entry["app"] for entry in theme_apps_inventory(theme_apps)}
             if toggled not in known:
                 eprint(f"Unknown app: {toggled} (known: {', '.join(sorted(known))})")
                 return 1
-            set_theme_app_enabled(toggled, bool(args.enable))
+            theme_apps = {**theme_apps, toggled: bool(args.enable)}
             if args.enable:
-                result["applied"] = apply_theme_obj(current_theme_obj(), only_app=toggled)
-        inventory = theme_apps_inventory()
+                result["applied"] = apply_theme_obj(current_theme_obj(), only_app=toggled,
+                                                    theme_apps=theme_apps)
+        inventory = theme_apps_inventory(theme_apps)
         if args.json:
-            print(json.dumps({"apps": inventory, "count": len(inventory), **result}, indent=2))
+            print(json.dumps({"apps": inventory, "count": len(inventory),
+                              "themeApps": theme_apps, **result}, indent=2))
         else:
             for entry in inventory:
                 state = "always on" if entry["always"] else ("on" if entry["enabled"] else "off")
@@ -16545,7 +16518,7 @@ def ensure_cache_dir(path: Path, gid: int, run_uid: int | None = None) -> None:
         os.chmod(sub, 0o2770 if sub != run_dir else 0o700)
 
 
-def write_json_file(path: Path, data: Dict[str, Any], gid: int, mode: int = 0o660) -> None:
+def write_json_file(path: Path, data: Dict[str, Any], gid: int | None, mode: int = 0o660) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(data, indent=2, sort_keys=False) + "\n"
     write_root_file(path, content, mode=mode, gid=gid)
@@ -16831,9 +16804,8 @@ def sync_profile_cache_unprivileged(cache_dir_path: Path, username: str) -> None
     session = current_session_json(theme)
     target = cache_dir_path / "users" / username
     target.mkdir(parents=True, exist_ok=True)
-    for path, data in ((target / "settings.json", settings), (target / "theme.json", theme), (target / "session.json", session)):
-        path.write_text(json.dumps(data, indent=2) + "\n")
-        os.chmod(path, 0o660)
+    for name, data in (("settings.json", settings), ("theme.json", theme), ("session.json", session)):
+        write_json_file(target / name, data, None)
     wallpaper = str(settings.get("greeterWallpaperPath") or "").strip()
     override = target / "greeter_wallpaper_override"
     def publish(src: Path) -> None:
@@ -16841,9 +16813,7 @@ def sync_profile_cache_unprivileged(cache_dir_path: Path, username: str) -> None
         os.chmod(override, 0o660)
 
     missing_wallpaper = publish_greeter_wallpaper(wallpaper, override, publish)
-    (target / "sync-manifest.json").write_text(
-        json.dumps(greeter_sync_manifest(username, missing_wallpaper), indent=2) + "\n")
-    os.chmod(target / "sync-manifest.json", 0o660)
+    write_json_file(target / "sync-manifest.json", greeter_sync_manifest(username, missing_wallpaper), None)
 
 
 def write_greetd_config(cache_dir_path: Path, autologin: bool, target_user: str, initial_session_cmd: str = "") -> None:

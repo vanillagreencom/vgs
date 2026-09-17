@@ -499,6 +499,47 @@ def test_write_file_reports_whether_the_destination_moved():
     with_temp_home(check)
 
 
+def test_write_file_writes_through_a_symlink_and_keeps_the_mode():
+    """A config symlinked into a dotfiles checkout stays a symlink, and its
+    target takes the content. Renaming onto the link replaces it with a plain
+    file and leaves the tracked copy stale. Without a requested mode the target
+    keeps its own; the umask is set wider than the fixture's mode so a write
+    that dropped it shows."""
+    for label, link_to in (
+        ("an absolute link", lambda target, link: target),
+        ("a relative link", lambda target, link: Path(os.path.relpath(target, link.parent))),
+        ("a plain file", None),
+    ):
+        def check(home, label=label, link_to=link_to):
+            target = home / "dotfiles" / "vshell" / "settings.json"
+            target.parent.mkdir(parents=True)
+            target.write_text('{"old": true}\n')
+            os.chmod(target, EXISTING_CONFIG_MODE)
+            path = target
+            if link_to is not None:
+                path = home / ".config" / "vshell" / "settings.json"
+                path.parent.mkdir(parents=True)
+                path.symlink_to(link_to(target, path))
+                pointed = os.readlink(path)
+            previous = os.umask(0o022)
+            try:
+                assert_equal(helper.write_file(path, '{"new": true}\n'), True, f"{label}: write")
+            finally:
+                os.umask(previous)
+            if link_to is not None:
+                assert_equal(path.is_symlink(), True, f"{label}: the link survives")
+                assert_equal(os.readlink(path), pointed, f"{label}: the link still names its target")
+                assert_equal(sorted(p.name for p in path.parent.iterdir()), ["settings.json"],
+                             f"{label}: nothing is left beside the link")
+            assert_equal(target.read_text(), '{"new": true}\n', f"{label}: the target changed")
+            assert_equal(stat.S_IMODE(target.stat().st_mode), EXISTING_CONFIG_MODE,
+                         f"{label}: the target keeps its mode")
+            assert_equal(sorted(p.name for p in target.parent.iterdir()), ["settings.json"],
+                         f"{label}: no temporary file is left beside the target")
+
+        with_temp_home(check)
+
+
 # The fixture's targets, one per branch of the apply's render and commit. `app`
 # is "shell" on each, which target_enabled admits without detection, so the set
 # is the same on a machine with no themed application installed at all.
@@ -1959,14 +2000,19 @@ def test_apply_system_fonts_temp_home():
         assert "Example Mono" in fc_path.read_text()
         assert "gtk-font-name=Example & Sans 13" in gtk3_path.read_text()
 
-        helper.set_settings_value("systemFontsManaged", False)
-        reset = helper.apply_system_fonts(reset=True)
+        settings_before = (settings_dir / "settings.json").read_bytes()
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            assert_equal(helper.cmd_fonts(["reset", "--json"]), 0, "font reset exit status")
+        reset = json.loads(printed.getvalue())
         assert_equal(reset["partial"], False, "font reset should not warn")
         assert_equal(fc_path.exists(), False, "font reset should remove fontconfig")
         if helper.GTK_SETTINGS_BEGIN in gtk3_path.read_text():
             raise AssertionError("font reset should remove GTK managed block")
-        persisted = json.loads((settings_dir / "settings.json").read_text())
-        assert_equal(persisted["systemFontsManaged"], False, "font reset should persist disabled setting")
+        # The shell owns settings.json: reset reports the value and stores none.
+        assert_equal(reset["managed"], False, "font reset reports the disabled setting")
+        assert_equal((settings_dir / "settings.json").read_bytes(), settings_before,
+                     "font reset leaves settings.json unwritten")
 
     try:
         with_temp_home(run_case)
@@ -1974,6 +2020,34 @@ def test_apply_system_fonts_temp_home():
         helper.system_font_env = original_env
         helper._gsettings_set_font_rendering = original_gsettings
         helper.shutil.which = original_which
+
+
+def test_theme_apps_toggle_reports_the_set_and_writes_no_settings():
+    """The shell owns settings.json, so a toggle reaches the helper as an
+    argument: the run renders and lists with it, reports the resulting set for
+    the shell to store, and leaves settings.json as it found it."""
+    for flag, enabled, renders in (("--enable", True, True), ("--disable", False, False)):
+        def check(home, flag=flag, enabled=enabled, renders=renders):
+            settings = home / ".config" / "vshell" / "settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text(json.dumps({"themeApps": {"kitty": not enabled, "foot": True}, "other": 1}))
+            before = settings.read_bytes()
+            applied = []
+            printed = io.StringIO()
+            with patch.object(helper, "apply_theme_obj",
+                              side_effect=lambda bp, **kw: applied.append(kw) or {"ok": True}), \
+                    patch.object(helper, "current_theme_obj", return_value={"name": "fixture"}), \
+                    contextlib.redirect_stdout(printed):
+                assert_equal(helper.cmd_theme(["apps", flag, "kitty", "--json"]), 0, f"{flag} exit status")
+            result = json.loads(printed.getvalue())
+            assert_equal(result["themeApps"], {"kitty": enabled, "foot": True}, f"{flag} reports the set")
+            assert_equal(next(a["enabled"] for a in result["apps"] if a["app"] == "kitty"), enabled,
+                         f"{flag} lists the app with the toggle applied")
+            assert_equal(applied, [{"only_app": "kitty", "theme_apps": {"kitty": True, "foot": True}}]
+                         if renders else [], f"{flag} renders with the toggle applied")
+            assert_equal(settings.read_bytes(), before, f"{flag} leaves settings.json unwritten")
+
+        with_temp_home(check)
 
 
 def test_system_font_family_targets():
@@ -2020,6 +2094,9 @@ def test_system_font_size_targets():
             settings = home / ".config/vshell/settings.json"
             settings.parent.mkdir(parents=True)
             settings.write_text(json.dumps({"systemFontsManaged": True, "systemFontSize": 14}))
+
+            def store(key, value):
+                settings.write_text(json.dumps({**json.loads(settings.read_text()), key: value}))
             for version, font in gtk_fonts.items():
                 path = home / ".config" / version / "settings.ini"
                 path.parent.mkdir(parents=True)
@@ -2057,12 +2134,12 @@ def test_system_font_size_targets():
                     assert not failed["success"] and fc_path.read_text() == before
                     assert current == desktop_fonts, "failed font read must not substitute a different family"
                 if prior_family:
-                    helper.set_settings_value("systemFontInterfaceFamily", prior_family)
+                    store("systemFontInterfaceFamily", prior_family)
                     helper.apply_system_fonts()
                 with contextlib.redirect_stdout(io.StringIO()):
                     assert helper.cmd_fonts(["apply", "--size-only", "--json"]) == 0
                 if prior_family:
-                    helper.set_settings_value("systemFontInterfaceFamily", "")
+                    store("systemFontInterfaceFamily", "")
                     helper.apply_system_fonts()
                 assert helper.normalized_system_font_settings()["interface"]["family"] == ""
                 expected_gtk = {
@@ -2074,7 +2151,7 @@ def test_system_font_size_targets():
                     assert f"gtk-font-name={font}" in text.split(helper.GTK_SETTINGS_BEGIN)[1]
                 if desktop_fonts:
                     assert current == {"font-name": "Desktop Sans 14", "monospace-font-name": "Desktop Mono 14"}
-                helper.set_settings_value("systemFontInterfaceHinting", "medium")
+                store("systemFontInterfaceHinting", "medium")
                 helper.apply_system_fonts()
                 for version, font in expected_gtk.items():
                     assert f"gtk-font-name={font}" in (home / ".config" / version / "settings.ini").read_text()
@@ -4112,8 +4189,17 @@ def test_greeter_sync_survives_a_missing_wallpaper():
             assert_equal(override.exists(), False,
                          "a missing greeter wallpaper removes the stale override")
 
+            written = target / "settings.json"
+            replaced = written.stat().st_ino
             helper.load_settings = lambda: {"greeterWallpaperPath": str(present)}
             helper.sync_profile_cache_unprivileged(cache, "tester")
+            # The greeter reads these files while a sync runs, so a changed file is
+            # renamed into place rather than rewritten in place.
+            assert_equal(written.stat().st_ino != replaced, True,
+                         "a changed profile file is replaced, not rewritten in place")
+            assert_equal(json.loads(written.read_text()), {"greeterWallpaperPath": str(present)},
+                         "the replaced profile file holds the new settings")
+            assert_equal(stat.S_IMODE(written.stat().st_mode), 0o660, "the profile file mode")
             manifest = json.loads((target / "sync-manifest.json").read_text())
             assert_equal("greeterWallpaperMissing" in manifest, False,
                          "a present wallpaper records no missing-wallpaper reason")
@@ -12727,6 +12813,7 @@ def main():
     test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
     test_write_file_leaves_no_temporary_behind_when_the_write_fails()
     test_write_file_reports_whether_the_destination_moved()
+    test_write_file_writes_through_a_symlink_and_keeps_the_mode()
     test_theme_apply_runs_only_the_reload_hooks_whose_target_changed()
     test_theme_apply_runs_a_failed_hook_again_on_the_next_apply()
     test_theme_apply_commits_a_curated_target_as_one_unit()
@@ -12778,6 +12865,7 @@ def main():
     test_compositor_detection_fallback()
     test_gtk_settings_merge_and_reset()
     test_apply_system_fonts_temp_home()
+    test_theme_apps_toggle_reports_the_set_and_writes_no_settings()
     test_hyprland_layout_payload()
     test_hyprland_layout_apply_reads_the_highest_monitor_scale()
     test_hyprland_blur_script()

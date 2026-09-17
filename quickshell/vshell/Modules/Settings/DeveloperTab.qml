@@ -77,14 +77,26 @@ Item {
         }, 0, 3600000);
     }
 
-    // Recording the channel also rewrites the launcher stubs, so the row has to
-    // re-read: its package, and whether the tool now reads as installed, both
-    // change with the stream it points at.
+    // The channel command rewrites the launcher stubs for the pick and reports
+    // the resulting picks, which SettingsData stores: the shell owns
+    // settings.json. The row has to re-read, from the flushed store: its package,
+    // and whether the tool now reads as installed, both change with the stream
+    // it points at.
     function setChannel(id, channel) {
         root.channelError = "";
-        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode, errorText) => {
+        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel, "--json"], (output, exitCode, errorText) => {
             if (!root)
                 return;
+            let picks = null;
+            try {
+                picks = JSON.parse(output || "{}").devToolChannels || null;
+            } catch (e) {
+                root.channelError = "vshell mise channel returned unreadable output: " + e;
+            }
+            if (picks) {
+                SettingsData.set("devToolChannels", picks);
+                SettingsData.flushSettings();
+            }
             if (exitCode !== 0)
                 root.channelError = (String(errorText || "").trim()
                     || "vshell mise channel failed (" + exitCode + ")");

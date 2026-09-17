@@ -429,18 +429,18 @@ Usage:
   vshell theme pick [all|dark|light]
   vshell theme lint [name|--all]
   vshell theme migrate <name>|--all
-  vshell theme apps [--enable <app>|--disable <app>]
+  vshell theme apps [--enable <app>|--disable <app>]   (applies the toggle to this run; the shell stores it)
   vshell theme catalog list|updates|install <name>...|--all|update <name>...|--all|remove <name>...
   vshell theme regenerate <name> [--app <id>] [--yes]
   vshell icons index <theme>   (icon name-to-path map for an icon theme and its inherit chain)
   vshell cache prune   (bound the image cache; drop uninstalled icon themes' indexes; delete notification images the history no longer names)
-  vshell fonts status|apply|reset
+  vshell fonts status|apply|reset   (reset reports managed=false; the shell stores it)
   vshell deps status|check <feature>
   vshell notifications status|takeover|restore [--json]   (org.freedesktop.Notifications ownership)
   vshell remote-desktop status|start|stop|toggle|ui [--json]   (Sunshine host + its virtual output)
   vshell update count|run <system|aur|flatpak|tools|all>
   vshell mise install <package> [command [bin]]|refresh|remove-stubs|opt-in|list --json|outdated --json|up
-  vshell mise channel <id> <channel>   (which release stream a dev tool installs from)
+  vshell mise channel <id> <channel>   (rewrite a dev tool's launcher for another release stream; the shell stores the pick)
   vshell agent list|launch <id> [--inline]|install <id>|remove <id>|pick
   vshell dev-env list|install <id>|remove <id>
   vshell app uninstall <desktop-id>

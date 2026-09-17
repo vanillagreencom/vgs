@@ -7,7 +7,8 @@
 // dirty and queue helper-spawning hooks; one commit writes the batch once and then runs each
 // queued hook once, after the write, because the helpers read the persisted file. A second
 // write follows only when a hook changed the serialised text. Code that starts a helper
-// reading the store files flushes the stores first.
+// reading the store files flushes the stores first, and a setting the helper takes as an
+// argument or reports back is stored by the shell before a helper reads it.
 
 "use strict";
 
@@ -252,6 +253,42 @@ test("code that starts a helper reading the store files flushes the stores first
         };
         stubs.flushStores = () => evaluate(flushStores, stubs);
         evaluate(extractBlock(read(file), opener), stubs);
+        assert.deepEqual(events, expected, name);
+    }
+});
+
+test("the shell stores a helper-reported setting before the helper reads it back", () => {
+    // A theme app toggle is stored before the helper run that flushes it; a channel pick the
+    // helper reports is stored and flushed before the re-read, which reads it.
+    const themeService = extractBlock(read("Services/VGSThemeService.qml"), "function setAppEnabled(");
+    const developerTab = extractBlock(read("Modules/Settings/DeveloperTab.qml"), "function setChannel(");
+    for (const [name, body, output, exitCode, call, expected] of [
+        ["VGSThemeService.setAppEnabled", themeService, "", 0, ["foot", false],
+            [["toggle", "foot", false], ["run", ["theme", "apps", "--disable", "foot", "--json"]]]],
+        ["DeveloperTab.setChannel", developerTab, JSON.stringify({ devToolChannels: { herdr: "preview" } }), 0, ["herdr", "preview"],
+            [["run", ["vshell", "mise", "channel", "herdr", "preview", "--json"]], ["set", "devToolChannels", { herdr: "preview" }], ["flush"], ["refresh"]]],
+        ["DeveloperTab.setChannel refused", developerTab, JSON.stringify({ ok: false, error: "no channel" }), 1, ["herdr", "retired"],
+            [["run", ["vshell", "mise", "channel", "herdr", "retired", "--json"]], ["refresh"]]]
+    ]) {
+        const events = [];
+        const stubs = {
+            app: call[0], enabled: call[1], id: call[0], channel: call[1],
+            SettingsData: {
+                setThemeAppEnabled: (app, enabled) => events.push(["toggle", app, enabled]),
+                set: (key, value) => events.push(["set", key, value]),
+                flushSettings: () => events.push(["flush"])
+            },
+            ThemeRequest: { appToggleArgs: (app, enabled) => ["theme", "apps", enabled ? "--enable" : "--disable", app, "--json"] },
+            _setAppBusy: () => {},
+            _run: (id, args) => events.push(["run", args]),
+            Paths: { vshellCli: "vshell" },
+            Proc: { runCommand: (id, argv, callback) => {
+                events.push(["run", argv]);
+                callback(output, exitCode, "");
+            } },
+            root: { channelError: "", refresh: () => events.push(["refresh"]) }
+        };
+        evaluate(body, stubs);
         assert.deepEqual(events, expected, name);
     }
 });
