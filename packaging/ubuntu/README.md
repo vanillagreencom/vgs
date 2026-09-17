@@ -2,7 +2,7 @@
 
 VGS supports Ubuntu 26.04 LTS through Launchpad:
 
-- `ppa:avengemedia/danklinux` provides stable Quickshell. It publishes 0.3.1 for `resolute`, which meets the `quickshell (>= 0.3.1)` minimum in `packaging/debian/control`.
+- `ppa:avengemedia/danklinux` provides stable Quickshell. It publishes 0.3.1 for `resolute` (checked 2026-09-17), which meets the `quickshell (>= 0.3.1)` minimum in `packaging/debian/control`.
 - `ppa:vanillagreen/vgs-shell` provides VGS.
 
 Users must enable both PPAs before installing `vgs-shell`. The package prints the first-start step, `vshell setup`; [../README.md § Activation](../README.md#activation) states what it does.
