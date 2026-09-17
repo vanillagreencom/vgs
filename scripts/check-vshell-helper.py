@@ -2526,9 +2526,9 @@ def test_theme_hooks_stay_out_of_the_login_session():
         write = ("gsettings", "set", "org.gnome.desktop.interface")
         read = ("gsettings", "get", "org.gnome.desktop.interface")
         # `record` answers every read with no stdout, which is a key neither hook could
-        # read, so both stay on the write path. `gtk-settings` reads one key because a
-        # gtk-theme that already differs settles the comparison before color-scheme.
-        assert_equal(written, [read + ("gtk-theme",), write + ("gtk-theme",), write + ("color-scheme",),
+        # read, so every key stays on the write path.
+        assert_equal(written, [read + ("gtk-theme",), read + ("color-scheme",),
+                               write + ("gtk-theme",), write + ("color-scheme",),
                                read + ("icon-theme",), write + ("icon-theme",)],
                      "the settings hooks write gsettings from the login user's own home")
         # Quitting the windowless Files service is gtk4-reload's whole payload:
@@ -2584,27 +2584,32 @@ def _run_settings_hook(hook, current, icon_name="VgsProbeSet"):
 def test_the_settings_hooks_skip_the_writes_the_session_already_holds():
     """Neither settings hook writes, and gtk-settings does not sleep, on values already held.
 
-    Both are declared under the always-run `hook` key, so they run on every theme apply
-    including one that moves nothing, and gtk-settings then spends 300 ms in a sleep
-    whose only purpose is to separate the two writes it is about to make. A key the hook
-    cannot read keeps it on its write path: skipping there would drop a write on a value
-    nobody read.
+    Both are declared under the always-run `hook` key, so they run on every apply that
+    reaches their target's commit, including one that moves nothing, and gtk-settings
+    then spends 300 ms in a sleep whose only purpose is to separate the two writes it is
+    about to make. gtk-settings writes only the keys that disagree, so one stale key
+    costs one write and no sleep. A key the hook cannot read keeps it on its write path:
+    skipping there would drop a write on a value nobody read.
     """
     login = Path(pwd.getpwuid(os.getuid()).pw_dir)
     held = {"gtk-theme": "adw-gtk3-dark", "color-scheme": "prefer-dark"}
-    gtk_writes = [("gtk-theme", "adw-gtk3-dark"), ("color-scheme", "prefer-dark")]
+    theme_write = ("gtk-theme", "adw-gtk3-dark")
+    scheme_write = ("color-scheme", "prefer-dark")
     both = ["gtk-theme", "color-scheme"]
     rows = [
         ("gtk-settings on both values held", "gtk-settings", held,
          "gtk-theme and color-scheme already set", both, [], 0),
+        ("gtk-settings on neither value held", "gtk-settings",
+         {"gtk-theme": "Adwaita", "color-scheme": "prefer-light"},
+         "", both, [theme_write, scheme_write], 1),
         ("gtk-settings on another scheme", "gtk-settings", {**held, "color-scheme": "prefer-light"},
-         "", both, gtk_writes, 1),
+         "", both, [scheme_write], 0),
         ("gtk-settings on another theme", "gtk-settings", {**held, "gtk-theme": "Adwaita-dark"},
-         "", ["gtk-theme"], gtk_writes, 1),
+         "", both, [theme_write], 0),
         ("gtk-settings on an unreadable theme key", "gtk-settings", {**held, "gtk-theme": None},
-         "", ["gtk-theme"], gtk_writes, 1),
+         "", both, [theme_write], 0),
         ("gtk-settings on an unreadable scheme key", "gtk-settings", {**held, "color-scheme": None},
-         "", both, gtk_writes, 1),
+         "", both, [scheme_write], 0),
         ("icon-theme on the name held", "icon-theme", {"icon-theme": "VgsProbeSet"},
          "icon theme already set: VgsProbeSet", ["icon-theme"], [], 0),
         ("icon-theme on another name", "icon-theme", {"icon-theme": "Papirus"},
@@ -2616,9 +2621,12 @@ def test_the_settings_hooks_skip_the_writes_the_session_already_holds():
         assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
         for label, hook, current, reason, reads, writes, sleeps in rows:
             result, calls, slept = _run_settings_hook(hook, current)
+            # theme_apply reads `ok` to decide whether a hook needs a warning, so a skip
+            # that reported anything else would land as a partial apply.
+            assert_equal(result.get("ok"), True, f"{label}: the hook reports success")
             assert_equal(result.get("reason", ""), reason, f"{label}: why it skipped, or that it did not")
-            # A gtk-theme that already differs settles the comparison, so color-scheme
-            # is read only where the answer still depends on it.
+            # gtk-settings reads both keys on every run: the write list is exactly the
+            # keys whose read disagreed with the value the hook wants.
             assert_equal([call[3] for call in calls if call[1] == "get"], reads,
                          f"{label}: the keys it read before deciding")
             assert_equal([(call[3], call[4]) for call in calls if call[1] == "set"], writes,

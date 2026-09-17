@@ -6270,6 +6270,23 @@ def ensure_bundled_icon_themes() -> List[str]:
     return linked
 
 
+def _gsettings_interface_read(hook: str, key: str, **options: Any) -> Dict[str, Any]:
+    """Read one key of ``org.gnome.desktop.interface`` and parse its GVariant text.
+
+    The ``_run_hook_cmd`` result, carrying ``value`` when its stdout parses to a
+    string. A caller that must name why a read failed takes ``stderr`` or
+    ``error`` from the same result; one that only compares values tests ``value``.
+    """
+    result = _run_hook_cmd(hook, ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5, **options)
+    if not result.get("ok"):
+        return result
+    with contextlib.suppress(ValueError, SyntaxError):
+        parsed = ast.literal_eval(result.get("stdout") or "")
+        if isinstance(parsed, str):
+            result["value"] = parsed
+    return result
+
+
 def _gsettings_interface_value(hook: str, key: str) -> Optional[str]:
     """What ``org.gnome.desktop.interface`` currently holds for a string key.
 
@@ -6277,14 +6294,7 @@ def _gsettings_interface_value(hook: str, key: str) -> Optional[str]:
     compares this against a value it is about to write, so an unreadable key
     keeps it on its write path instead of skipping on a value nobody read.
     """
-    result = _run_hook_cmd(hook, ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5)
-    if not result.get("ok"):
-        return None
-    try:
-        current = ast.literal_eval(result.get("stdout") or "")
-    except (ValueError, SyntaxError):
-        return None
-    return current if isinstance(current, str) else None
+    return _gsettings_interface_read(hook, key).get("value")
 
 
 def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
@@ -6525,25 +6535,26 @@ def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
         gtk_theme = "Adwaita" if mode == "light" else "Adwaita-dark"
     if not shutil.which("gsettings"):
         return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": "gsettings not found"}
-    # Reading both keys first is what keeps an apply that moves neither off the
-    # sleep below, whose only purpose is to separate two writes this hook skips.
-    if (_gsettings_interface_value("gtk-settings", "gtk-theme") == gtk_theme
-            and _gsettings_interface_value("gtk-settings", "color-scheme") == color_scheme):
+    # A key the session already holds is read out of the write list, so an apply
+    # that moves neither writes nothing and takes no sleep, and one that moves a
+    # single key writes that key alone. An unreadable key stays pending: skipping
+    # it would drop a write on a value nobody read.
+    pending = [(key, value) for key, value in (("gtk-theme", gtk_theme), ("color-scheme", color_scheme))
+               if _gsettings_interface_value("gtk-settings", key) != value]
+    if not pending:
         return {"hook": "gtk-settings", "ok": True, "skipped": True,
                 "reason": "gtk-theme and color-scheme already set",
                 "colorScheme": color_scheme, "gtkTheme": gtk_theme}
     failures: List[str] = []
-    # Separate gtk-theme and color-scheme writes so their portal notifications
-    # do not arrive together during the theme-apply burst.
-    theme_cmd = ["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", gtk_theme]
-    theme_result = _run_hook_cmd("gtk-settings", theme_cmd, timeout=5)
-    if not theme_result.get("ok"):
-        failures.append(theme_result.get("stderr") or theme_result.get("error") or " ".join(theme_cmd))
-    time.sleep(0.3)
-    scheme_cmd = ["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", color_scheme]
-    scheme_result = _run_hook_cmd("gtk-settings", scheme_cmd, timeout=5)
-    if not scheme_result.get("ok"):
-        failures.append(scheme_result.get("stderr") or scheme_result.get("error") or " ".join(scheme_cmd))
+    for index, (key, value) in enumerate(pending):
+        if index:
+            # Separate two writes so their portal notifications do not arrive
+            # together during the theme-apply burst.
+            time.sleep(0.3)
+        cmd = ["gsettings", "set", "org.gnome.desktop.interface", key, value]
+        result = _run_hook_cmd("gtk-settings", cmd, timeout=5)
+        if not result.get("ok"):
+            failures.append(result.get("stderr") or result.get("error") or " ".join(cmd))
     return {"hook": "gtk-settings", "ok": not failures, "colorScheme": color_scheme, "gtkTheme": gtk_theme, "error": "; ".join(failures)}
 
 
@@ -6706,14 +6717,12 @@ def _font_description_with_size(description: str, size: int) -> str:
 
 def _gsettings_font_description(key: str, schema_default: bool = False) -> str:
     options = {"env": {**os.environ, "GSETTINGS_BACKEND": "memory"}} if schema_default else {}
-    result = _run_hook_cmd("system-fonts-read", ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5, **options)
+    result = _gsettings_interface_read("system-fonts-read", key, **options)
     if not result.get("ok"):
         raise ValueError(result.get("stderr") or result.get("error") or f"Could not read {key}")
-    raw = result["stdout"]
-    description = ast.literal_eval(raw)
-    if not isinstance(description, str) or not description.strip():
+    if not (result.get("value") or "").strip():
         raise ValueError(f"Invalid font description for {key}")
-    return raw
+    return result["stdout"]
 
 
 def _merge_gtk_settings(path: Path, values: Dict[str, str] | None, size: int | None = None, default_font: str = "Sans 10") -> bool:
