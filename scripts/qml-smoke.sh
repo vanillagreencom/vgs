@@ -1558,9 +1558,11 @@ nested_check() {
   sandbox="$(mktemp -d -t vshell-smoke.XXXXXX)"
   track_dir "$sandbox"
   pixel_error_log="$sandbox/grim.err"
-  # Keep the runtime directory short enough for Hyprland's IPC socket paths. The shell's event
-  # socket connection failed with ServerNotFoundError at a 107-byte .socket2.sock path and
-  # connected at 106; the instance signature's trailing number is not a fixed width.
+  # Keep the runtime directory short enough for Hyprland's IPC socket paths. In nested runs of
+  # this script the shell logged 'Unable to connect to hyprland event socket:
+  # ServerNotFoundError' in both logged runs whose .socket2.sock path was 107 bytes, and
+  # connected in runs at 106 bytes or fewer; the instance signature's trailing number is not
+  # a fixed width.
   rt_dir="${XDG_RUNTIME_DIR:?}/v$$"
   rm -rf -- "$rt_dir"
   mkdir -p -- "$rt_dir"
