@@ -19,12 +19,14 @@ Output is keyed lines, one record per line, in this order:
   share thread=NAME delta_bytes=N total_delta_bytes=N share_pct=F | status=no-growth
   library thread=NAME file=PATH delta_bytes=N
   stack rank=N thread=NAME delta_bytes=N head_bytes=N samples=N caller=PATH
-    frame addr=0x... file=PATH function=NAME location=FILE:LINE [inlined_into=NAME]
+    frame addr=0x... file=PATH function=NAME location=FILE:LINE [inlined_into=NAME] [resolution=symbol-table-only]
 `thread` rows cover every thread, largest growth first. `library` and `stack`
 rows cover only the threads named by --thread. A stack's caller is its innermost
 frame outside the allocation wrappers in ALLOCATION_WRAPPERS; `library` sums
 stacks by caller, and `frame` rows start at the caller. With --no-symbols, `frame`
-rows are omitted.
+rows are omitted. `resolution=symbol-table-only` marks a frame eu-addr2line named
+without a source location: with no debug info, a local function takes the name of
+the nearest exported symbol, so that name may be wrong.
 
 Refusals print `attribute-heap-profile: <key>=<value>` on the first line and exit 1.
 """
@@ -40,6 +42,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 DUMP_NAME = re.compile(r"\.(\d+)\.\d+\.[fimu]\d+\.heap$")
 COUNTS = re.compile(r"^\s+t(\*|\d+): (\d+): (\d+) \[\d+: \d+\](?: (.*))?$")
@@ -51,6 +54,15 @@ ADDRESS_LINE = re.compile(r"^0x[0-9a-f]{16}$")
 ALLOCATION_WRAPPERS = ("libjemalloc.so", "libstdc++.so", "libc.so")
 # Frames printed per stack, counted from the caller outward.
 FRAME_LIMIT = 16
+
+
+class Growth(NamedTuple):
+    delta: float
+    head: float
+    samples: int
+    # Frames from the caller outward, and the file that maps the first of them.
+    callers: list[int]
+    caller: str
 
 
 class Refusal(Exception):
@@ -140,12 +152,12 @@ def symbolize(dump: Dump, addresses: list[int]) -> dict[int, list[tuple[str, str
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=1800)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise Refusal("symbolizer-failed", "eu-addr2line", str(error)) from error
-    frames: dict[int, list[tuple[str, str]]] = {}
+    frames: dict[int, list[str]] = {}
     current: list[str] | None = None
     for line in result.stdout.splitlines():
         if ADDRESS_LINE.match(line):
             current = []
-            frames[int(line, 16)] = current  # type: ignore[assignment]
+            frames[int(line, 16)] = current
         elif current is not None:
             current.append(line)
     if set(frames) != set(addresses):
@@ -192,35 +204,36 @@ def attribute(base: Dump, head: Dump, thread: str, top: int, symbols: bool) -> l
     else:
         out.append(f"share thread={thread} delta_bytes={mine:.0f} total_delta_bytes={total:.0f} status=no-growth")
 
-    growth = []
-    for key in keys:
+    growth: list[Growth] = []
+    for key in sorted(keys):
         before = scaled(base, key, selected)[0]
         after, samples = scaled(head, key, selected)
         if before or after:
             frames = list(key[:1]) + [address - 1 for address in key[1:]]  # return addresses point past the call
             first = next((i for i, a in enumerate(frames) if not is_wrapper(mapped_file(head, a))), len(frames))
             callers = frames[first:]
-            growth.append((after - before, after, samples, frames, callers))
+            caller = mapped_file(head, callers[0]) if callers else "[allocation-wrappers-only]"
+            growth.append(Growth(after - before, after, samples, callers, caller))
     by_library: dict[str, float] = {}
-    for delta, _, _, _, callers in growth:
-        name = mapped_file(head, callers[0]) if callers else "[allocation-wrappers-only]"
-        by_library[name] = by_library.get(name, 0.0) + delta
+    for row in growth:
+        by_library[row.caller] = by_library.get(row.caller, 0.0) + row.delta
     for name, delta in sorted(by_library.items(), key=lambda item: (-item[1], item[0])):
         out.append(f"library thread={thread} file={name} delta_bytes={delta:.0f}")
 
-    growth.sort(key=lambda row: (-row[0], row[3]))
+    growth.sort(key=lambda row: (-row.delta, row.callers))
     ranked = growth[:top]
-    wanted = sorted({a for row in ranked for a in row[4][:FRAME_LIMIT]})
+    wanted = sorted({a for row in ranked for a in row.callers[:FRAME_LIMIT]})
     resolved = symbolize(head, wanted) if symbols else {}
-    for rank, (delta, after, samples, _, callers) in enumerate(ranked, start=1):
-        caller = mapped_file(head, callers[0]) if callers else "[allocation-wrappers-only]"
-        out.append(f"stack rank={rank} thread={thread} delta_bytes={delta:.0f} head_bytes={after:.0f} samples={samples} caller={caller}")
-        for address in callers[:FRAME_LIMIT] if symbols else []:
+    for rank, row in enumerate(ranked, start=1):
+        out.append(f"stack rank={rank} thread={thread} delta_bytes={row.delta:.0f} head_bytes={row.head:.0f} samples={row.samples} caller={row.caller}")
+        for address in row.callers[:FRAME_LIMIT] if symbols else []:
             chain = resolved[address]
-            function = chain[0][0].split(" inlined at ", 1)[0]
-            line = f"  frame addr=0x{address:x} file={mapped_file(head, address)} function={function} location={chain[0][1]}"
+            function, location = chain[0][0].split(" inlined at ", 1)[0], chain[0][1]
+            line = f"  frame addr=0x{address:x} file={mapped_file(head, address)} function={function} location={location}"
             if len(chain) > 1:
                 line += f" inlined_into={chain[-1][0]}"
+            if function != "??" and location.startswith("??"):
+                line += " resolution=symbol-table-only"
             out.append(line)
     return out
 
