@@ -141,6 +141,47 @@ func TestScoreRanksSubstringsAboveSubsequences(t *testing.T) {
 	}
 }
 
+// referenceScore is the scoring rule stated plainly: lower-case both strings
+// first, take the first substring match, and otherwise walk the query
+// characters in order through the name.
+func referenceScore(name, query string) (float64, bool) {
+	hay, needle := []rune(strings.ToLower(name)), []rune(strings.ToLower(query))
+	extra := float64(max(0, len(hay)-len(needle)))
+	if at := strings.Index(string(hay), string(needle)); at >= 0 {
+		return 1000 - float64(len([]rune(string(hay)[:at])))*2 - extra*0.15, true
+	}
+	pos, gap := -1, 0
+	for _, want := range needle {
+		next := slices.Index(hay[pos+1:], want)
+		if next < 0 {
+			return 0, false
+		}
+		next += pos + 1
+		if pos >= 0 {
+			gap += next - pos - 1
+		}
+		pos = next
+	}
+	return 650 - float64(gap)*4 - extra*0.1, true
+}
+
+func TestScoreMatchesTheLowerCasedReference(t *testing.T) {
+	names := []string{"FooBar", "Documents", "README.md", "firefox", "MyFireFox.desktop", "f_i_r_e",
+		"ÜBERBLICK", "Überblick.PDF", "naïve.TXT", "CamelCaseName", "x"}
+	queries := []string{"fb", "dc", "doc", "DOC", "rdm", "readme", "fox", "FiReFoX", "cn", "zz",
+		"über", "ÜB", "ubr", "nve", "naï", "x", "ccn"}
+	var f folder
+	for _, name := range names {
+		for _, query := range queries {
+			got, ok := f.score([]byte(name), newNeedle(query))
+			want, wantOK := referenceScore(name, query)
+			if ok != wantOK || (ok && got != want) {
+				t.Errorf("score(%q, %q) = %v, %v; the reference gives %v, %v", name, query, got, ok, want, wantOK)
+			}
+		}
+	}
+}
+
 func TestQueryRanksAndFiltersByKind(t *testing.T) {
 	root := tree(t,
 		"notes/firefox.txt",
