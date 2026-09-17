@@ -2,7 +2,7 @@
 # Drive bin/vshell-hyprctl-dispatch against a stub hyprctl that
 # answers a chosen reply and exit status. Only the exact reply "ok" with exit 0 is an
 # applied dispatch; every other row must exit 1 and print the refusal key with
-# hyprctl's exit status. A refusal Hyprland answers with exit 0 is how a classic-config
+# hyprctl's exit status. Only a refusal with exit 0 carries the classic-config hint. A refusal Hyprland answers with exit 0 is how a classic-config
 # session answers a Lua request, and exit 7 is how a Lua session answers an erroring one.
 # Every run gets an explicit environment.
 set -euo pipefail
@@ -28,17 +28,18 @@ chmod +x "$tmp/stubs/hyprctl"
 
 request='hl.dsp.focus({monitor="DP-1"})'
 
-# reply | hyprctl exit | expected exit | expected first stderr line ("" for none)
+# reply | hyprctl exit | expected exit | expected first stderr line ("" for none) | classic-config hint
 rows=(
-  'ok|0|0|'
-  'Invalid dispatcher|0|1|hyprctl-dispatch-refused exit=0'
-  "error: attempt to call a nil value (field 'vgsprobe')|7|1|hyprctl-dispatch-refused exit=7"
-  'ok|7|1|hyprctl-dispatch-refused exit=7'
-  '|0|1|hyprctl-dispatch-refused exit=0'
+  'ok|0|0||no'
+  'Invalid dispatcher|0|1|hyprctl-dispatch-refused exit=0|yes'
+  'okay|0|1|hyprctl-dispatch-refused exit=0|yes'
+  "error: attempt to call a nil value (field 'vgsprobe')|7|1|hyprctl-dispatch-refused exit=7|no"
+  'ok|7|1|hyprctl-dispatch-refused exit=7|no'
+  '|0|1|hyprctl-dispatch-refused exit=0|yes'
 )
 
 for row in "${rows[@]}"; do
-  IFS='|' read -r reply exit_status want_return want_key <<<"$row"
+  IFS='|' read -r reply exit_status want_return want_key want_hint <<<"$row"
   got_return=0
   env -i PATH="$tmp/stubs:/usr/bin:/bin" STUB_ARGV="$tmp/argv" STUB_REPLY="$reply" STUB_EXIT="$exit_status" \
     "$program" "$request" \
@@ -48,6 +49,9 @@ for row in "${rows[@]}"; do
   first_line=""
   IFS= read -r first_line <"$tmp/stderr" || true
   [[ $first_line == "$want_key" ]] || fail "reply '$reply' exit $exit_status: stderr starts '$first_line', want '$want_key'"
+  got_hint=no
+  grep -q '^  hint=classic-config-manager:' "$tmp/stderr" && got_hint=yes
+  [[ $got_hint == "$want_hint" ]] || fail "reply '$reply' exit $exit_status: classic-config hint $got_hint, want $want_hint"
   [[ $(<"$tmp/argv") == "dispatch"$'\n'"$request" ]] || fail "reply '$reply' exit $exit_status: hyprctl argv was $(<"$tmp/argv")"
 done
 

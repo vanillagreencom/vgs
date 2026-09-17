@@ -11,8 +11,9 @@
 #
 # Exit 0 when Hyprland applied REQUEST, with no output. Otherwise exit 1 with this
 # diagnostic on stderr: the first line is `hyprctl-dispatch-refused exit=<N>`, where N is
-# hyprctl's exit status; the request, the reply and the explanation follow. A best-effort
-# caller may continue past the 1: the refusal is already on stderr.
+# hyprctl's exit status; the request and the reply follow. A refusal with exit 0 adds a
+# `hint=classic-config-manager` line that names that config manager as a possible cause. A best-effort caller
+# may continue past the 1: the refusal is already on stderr.
 set -euo pipefail
 
 status=0
@@ -21,5 +22,7 @@ if [[ $status -eq 0 && $reply == ok ]]; then
   exit 0
 fi
 printf 'hyprctl-dispatch-refused exit=%d\n  request: %s\n  reply: %s\n' "$status" "$1" "$reply" >&2
-printf '  VGS dispatches through the Hyprland Lua config manager; a classic-config session refuses every request.\n' >&2
+if [[ $status -eq 0 ]]; then
+  printf '  hint=classic-config-manager: if this session uses the classic config manager, it refuses every request; VGS dispatches through the Lua config manager.\n' >&2
+fi
 exit 1

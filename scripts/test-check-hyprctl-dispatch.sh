@@ -22,6 +22,7 @@ rows=(
   'discarded~vshell-a~#!/bin/bash~hyprctl dispatch "hl.dsp.window.center()" >/dev/null 2>&1 || true~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'instance flag~vshell-a~#!/usr/bin/env bash~  hyprctl -i 0 dispatch "hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'batch~vshell-a~#!/usr/bin/env bash~hyprctl --batch "dispatch hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
+  'env sh~vshell-a~#!/usr/bin/env sh~hyprctl dispatch "hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'posix sh~vshell-a~#!/bin/sh~reply=$(hyprctl dispatch "hl.dsp.exit()")~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'owner~vshell-hyprctl-dispatch~#!/usr/bin/env bash~  reply="$(hyprctl dispatch "$1" 2>&1)" || status=$?~0~'
   'comment~vshell-a~#!/bin/bash~  # hyprctl dispatch answers ok~0~'

@@ -116,6 +116,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/check-hyprctl-dispatch.sh
 -         | scripts/test-hyprctl-dispatch.sh
 -         | scripts/test-check-hyprctl-dispatch.sh
+-         | scripts/test-screensaver-launch.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
 -         | scripts/test-validation-dump.sh
