@@ -2585,9 +2585,9 @@ def test_the_settings_hooks_skip_the_writes_the_session_already_holds():
     """Neither settings hook writes, and gtk-settings does not sleep, on values already held.
 
     Both are declared under the always-run `hook` key, so they run on every apply that
-    reaches their target's commit, including one that moves nothing, and gtk-settings
-    then spends 300 ms in a sleep whose only purpose is to separate the two writes it is
-    about to make. gtk-settings writes only the keys that disagree, so one stale key
+    reaches their target's commit, including one that moves nothing, where gtk-settings
+    would otherwise spend 300 ms in a sleep whose only purpose is to separate two writes
+    it is not making. gtk-settings writes only the keys that disagree, so one stale key
     costs one write and no sleep. A key the hook cannot read keeps it on its write path:
     skipping there would drop a write on a value nobody read.
     """
