@@ -579,6 +579,12 @@ PluginComponent {
         const trimmed = query.trim();
         const generation = fileSearchGeneration;
         const kind = DSearchService.kindForType(fileSearchType);
+        // The gate can close during the debounce, as when the backend restarts.
+        if (!DSearchService.canDispatch(kind, trimmed)) {
+            fileSearching = false;
+            fileSearchDeclined = true;
+            return;
+        }
         DSearchService.search(trimmed, { kind: kind, limit: 120 }, response => {
             if (generation !== fileSearchGeneration
                     || categories[selectedCategoryIndex]?.id !== "files"

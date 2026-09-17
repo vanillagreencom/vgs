@@ -1400,6 +1400,7 @@ test("an index answer reaches the caller only for the newest search of its kind"
 function menuFileSearch(snapshot) {
     const q = qmlSource(menuSource, "VGSMenu.qml");
     const searches = [];
+    const gate = { snapshot: snapshot };
     const scope = {
         resettingState: false, routingPrefix: false, query: "", fileSearchType: "file",
         fileSearchGeneration: 0, folderCompletion: "", visibleItems: [], selectedItemIndex: 0,
@@ -1408,7 +1409,7 @@ function menuFileSearch(snapshot) {
         DSearchService: {
             kindForType: backend.kindForType,
             queryIsSearchable: backend.queryIsSearchable,
-            canDispatch: (kind, query) => backend.canDispatchFor(kind, query, snapshot),
+            canDispatch: (kind, query) => backend.canDispatchFor(kind, query, gate.snapshot),
             search: (query, params) => searches.push([params.kind, query])
         }
     };
@@ -1418,7 +1419,7 @@ function menuFileSearch(snapshot) {
         const fn = new Function(...params, `with (scope) ${q.body(name)}`);
         scope[name] = (...args) => fn(scope, ...args);
     }
-    return { scope, searches };
+    return { scope, searches, gate };
 }
 
 test("VGSMenu applies the search gate and dispatches once typing pauses", () => {
@@ -1445,6 +1446,23 @@ test("VGSMenu applies the search gate and dispatches once typing pauses", () => 
             assert.deepEqual(searches, [[backend.kindForType(type), "fire"]],
                 `${label}: the pause dispatches one search, for the query typed last`);
         }
+    }
+});
+
+test("VGSMenu asks the gate again when the debounce fires", () => {
+    for (const [label, before, after, declined] of [
+        ["the index lost with fd missing", withIndex("ready", false, true), ready(false, true), true],
+        ["the index gained with fd missing", ready(true, true), withIndex("ready", false, true), false]
+    ]) {
+        const { scope, searches, gate } = menuFileSearch(before);
+        scope.query = "fire";
+        scope.refreshFileItems();
+        assert.equal(scope.fileSearchDebounce.running, true, `${label}: the search is scheduled`);
+        gate.snapshot = after;
+        scope.dispatchFileSearch();
+        assert.deepEqual(searches, declined ? [] : [["files", "fire"]], `${label}: search sent`);
+        assert.equal(scope.fileSearchDeclined, declined, `${label}: declined`);
+        assert.equal(scope.fileSearching, !declined, `${label}: spinner`);
     }
 });
 
