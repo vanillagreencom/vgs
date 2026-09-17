@@ -53,6 +53,7 @@ INCLUDE_CURSOR="${VSHELL_SCREENSHOT_CURSOR:-no}"
 CAPTURE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vshell-capture"
 COUNTDOWN_PID_FILE="$CAPTURE_STATE_DIR/screenshot-countdown.pid"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+HYPR_DISPATCH="$SCRIPT_DIR/vshell-hyprctl-dispatch"
 VSHELL_CLI="$SCRIPT_DIR/vshell"
 COUNTDOWN_OWNED=0
 
@@ -81,18 +82,18 @@ place_satty_window() {
 
   [[ -n $address ]] || return 0
 
-  hyprctl dispatch "hl.dsp.focus({window=\"address:$address\"})" >/dev/null 2>&1 || true
+  "$HYPR_DISPATCH" "hl.dsp.focus({window=\"address:$address\"})" || true
   if [[ $target_ws =~ ^-?[0-9]+$ ]]; then
-    hyprctl dispatch "hl.dsp.window.move({ workspace = $target_ws })" >/dev/null 2>&1 || true
-    hyprctl dispatch "hl.dsp.focus({window=\"address:$address\"})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.window.move({ workspace = $target_ws })" || true
+    "$HYPR_DISPATCH" "hl.dsp.focus({window=\"address:$address\"})" || true
   fi
   if [[ -n $target_monitor ]]; then
-    hyprctl dispatch "hl.dsp.window.move({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.window.move({monitor=\"$target_monitor\"})" || true
   fi
   if [[ $editor_size =~ ^([0-9]+)x([0-9]+)$ ]]; then
-    hyprctl dispatch "hl.dsp.window.resize({x=${BASH_REMATCH[1]},y=${BASH_REMATCH[2]}})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.window.resize({x=${BASH_REMATCH[1]},y=${BASH_REMATCH[2]}})" || true
   fi
-  hyprctl dispatch 'hl.dsp.window.center()' >/dev/null 2>&1 || true
+  "$HYPR_DISPATCH" 'hl.dsp.window.center()' || true
 }
 
 ARGS=()
@@ -124,11 +125,11 @@ focus_satty_target() {
   local target_monitor="${VSHELL_SCREENSHOT_EDITOR_MONITOR:-}"
   if [[ -n $target_monitor ]]; then
     target_ws=$(hyprctl monitors -j | jq -r --arg mon "$target_monitor" '.[] | select(.name == $mon) | .activeWorkspace.id // empty' | head -n1)
-    hyprctl dispatch "hl.dsp.focus({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.focus({monitor=\"$target_monitor\"})" || true
     if [[ $target_ws =~ ^-?[0-9]+$ ]]; then
-      hyprctl dispatch "hl.dsp.focus({ workspace = $target_ws })" >/dev/null 2>&1 || true
+      "$HYPR_DISPATCH" "hl.dsp.focus({ workspace = $target_ws })" || true
     fi
-    hyprctl dispatch "hl.dsp.focus({monitor=\"$target_monitor\"})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.focus({monitor=\"$target_monitor\"})" || true
   fi
   printf '%s\n' "$target_ws"
 }
@@ -341,7 +342,7 @@ focus_restore() {
   active=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
   [[ $active == "$addr" ]] && return 0
   hyprctl clients -j 2>/dev/null | jq -e --arg a "$addr" 'any(.[]; .address == $a)' >/dev/null 2>&1 || return 0
-  hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
+  "$HYPR_DISPATCH" "hl.dsp.focus({window=\"address:$addr\"})" || true
 }
 
 PRE_SELECT_FOCUS=""
@@ -354,7 +355,7 @@ restore_selection_focus() {
 
 restore_cursor() {
   if [[ -n ${ORIGINAL_CURSOR_X:-} && -n ${ORIGINAL_CURSOR_Y:-} ]]; then
-    hyprctl dispatch "hl.dsp.cursor.move({x=${ORIGINAL_CURSOR_X},y=${ORIGINAL_CURSOR_Y}})" >/dev/null 2>&1 || true
+    "$HYPR_DISPATCH" "hl.dsp.cursor.move({x=${ORIGINAL_CURSOR_X},y=${ORIGINAL_CURSOR_Y}})" || true
     ORIGINAL_CURSOR_X=""
     ORIGINAL_CURSOR_Y=""
   fi
@@ -431,7 +432,7 @@ move_cursor_outside_selection() {
   )
 
   [[ -n $safe_point ]] || return 0
-  hyprctl dispatch "hl.dsp.cursor.move({x=${safe_point%% *},y=${safe_point##* }})" >/dev/null 2>&1 || true
+  "$HYPR_DISPATCH" "hl.dsp.cursor.move({x=${safe_point%% *},y=${safe_point##* }})" || true
   sleep 0.08
 }
 

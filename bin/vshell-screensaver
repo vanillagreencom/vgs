@@ -14,6 +14,7 @@ set -euo pipefail
 script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
 # Both a checkout root and /usr/lib/vshell carry config/vshell/.
 script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+hypr_dispatch="$script_dir/vshell-hyprctl-dispatch"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CLASS="org.vgs.screensaver"
@@ -175,16 +176,22 @@ cmd_launch() {
   fi
   launch_cmd="${launch_prefix}ghostty --class=$CLASS --title=Screensaver --config-file=$GHOSTTY_CONF --font-size=18 -e vshell screensaver run"
 
-  hyprctl monitors -j |
-    jq -r '.[] | select(.disabled == false) | .name' |
-    while IFS= read -r monitor; do
-      [[ -n $monitor ]] || continue
-      hyprctl dispatch "hl.dsp.focus({monitor=\"$monitor\"})" >/dev/null 2>&1 || true
-      hyprctl dispatch "hl.dsp.exec_cmd('$launch_cmd')" >/dev/null 2>&1 || true
-      sleep 0.25
-    done
+  local monitors monitor refused=0
+  monitors="$(hyprctl monitors -j | jq -r '.[] | select(.disabled == false) | .name')"
+  # Focus moves are best-effort; a refused launch leaves no saver on that monitor, so
+  # the launch exits nonzero and ScreensaverService drops its active state.
+  while IFS= read -r monitor; do
+    [[ -n $monitor ]] || continue
+    "$hypr_dispatch" "hl.dsp.focus({monitor=\"$monitor\"})" || true
+    "$hypr_dispatch" "hl.dsp.exec_cmd('$launch_cmd')" || refused=$((refused + 1))
+    sleep 0.25
+  done <<<"$monitors"
 
-  [[ -n $focused_monitor ]] && hyprctl dispatch "hl.dsp.focus({monitor=\"$focused_monitor\"})" >/dev/null 2>&1 || true
+  [[ -n $focused_monitor ]] && "$hypr_dispatch" "hl.dsp.focus({monitor=\"$focused_monitor\"})" || true
+  if ((refused > 0)); then
+    printf 'screensaver-launch-refused count=%d\n' "$refused" >&2
+    return 1
+  fi
   return 0
 }
 
