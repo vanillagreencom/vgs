@@ -4,7 +4,7 @@
 // Execute thumbnail sweep decisions from the shipped region.
 // Plans retain attempt counts for unseen identities and forget confirmed thumbnails.
 // A structured command result completes a sweep even when every requested thumbnail failed.
-// The service spends its one discovery sweep at dispatch and never restores it.
+// The executed dispatcher spends its discovery sweep at dispatch, and an unparseable answer restores only a requested sweep.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -14,9 +14,11 @@ const fs = require("fs");
 const REPO = path.resolve(__dirname, "..");
 const qmlSource = require("./lib/qml-source.js");
 const { evaluateMarked } = require("./lib/qml-region.js");
+const { callInScope } = require("./lib/qml-block.js");
 const SERVICE = path.join(REPO, "quickshell", "vshell", "Services", "VGSThemeService.qml");
 const MARKER = "THUMBNAIL SWEEP DECISION";
 const source = fs.readFileSync(SERVICE, "utf8");
+const service = qmlSource(source, "VGSThemeService.qml");
 
 const sweep = evaluateMarked(source, MARKER, ["thumbSweepPlan", "thumbSweepResult"],
     "VGSThemeService.qml");
@@ -84,16 +86,57 @@ test("thumbSweepResult completes on any structured answer, charges reported iden
 });
 
 // scripts/test-theme-startup.js executes the startup handler that dispatches the discovery sweep.
-test("the service spends its discovery sweep at dispatch and never arms it again", () => {
-    const service = qmlSource(source, "VGSThemeService.qml");
-    service.requires(service.body("_sweepWallpaperThumbs"), "_sweepWallpaperThumbs()", [
-        ["root._thumbSweepWanted, root._thumbDiscoveryPending, root._thumbMaxAttempts",
-            "the plan hears the discovery request apart from the forced one", 1],
-        ["root._thumbDiscoveryPending = false;", "any dispatched --all spends the discovery sweep, so it runs once", 1],
-        ["root.thumbSweepResult(output, plan.missing, root._thumbAttempts, plan.forced);",
-            "only the forced request is restorable; passing discovery here lets an unparseable answer re-arm it", 1]
-    ]);
-    service.requires(source, "VGSThemeService.qml", [
-        ["_thumbDiscoveryPending = true", "nothing re-arms the discovery sweep; only its declaration starts it pending", 0]
-    ]);
+// This executes the shipped dispatcher against a recording _run whose callback the test answers.
+function dispatcher({ wanted, discovery, entries }) {
+    const dispatched = [];
+    const root = {
+        thumbSweepPlan: sweep.thumbSweepPlan,
+        thumbSweepResult: sweep.thumbSweepResult,
+        themeWallpapers: entries,
+        _thumbAttempts: {},
+        _thumbMaxAttempts: MAX,
+        _thumbSweepInFlight: false,
+        _thumbSweepWanted: wanted,
+        _thumbDiscoveryPending: discovery,
+        rereads: 0,
+        refreshWallpapers() {
+            this.rereads += 1;
+        },
+        _run(id, args, callback) {
+            dispatched.push({ args, callback });
+        }
+    };
+    const call = () => callInScope(service.body("_sweepWallpaperThumbs"), root);
+    return { root, dispatched, call };
+}
+
+const CACHED = [entry("a", "/t/a.jpg")];
+
+test("_sweepWallpaperThumbs spends the discovery sweep at dispatch, and an unparseable answer restores only a requested sweep", () => {
+    {
+        const { root, dispatched, call } = dispatcher({ wanted: false, discovery: true, entries: CACHED });
+        call();
+        assert.equal(dispatched.length, 1,
+            "the pending discovery sweep dispatches --all while every current-theme entry is cached");
+        assert.deepEqual(dispatched[0].args, ["theme", "wallpaper-thumbs", "--all", "--json"], "the discovery sweep covers every theme");
+        assert.equal(root._thumbDiscoveryPending, false,
+            "dispatch spends the discovery sweep before the helper answers, or each read re-runs --all for the rest of the session");
+    }
+    {
+        const { root, dispatched, call } = dispatcher({ wanted: false, discovery: true, entries: CACHED });
+        call();
+        dispatched[0].callback("not json at all", 1);
+        assert.equal(root._thumbDiscoveryPending, false, "an unparseable answer does not re-arm the discovery sweep");
+        call();
+        assert.equal(dispatched.length, 1,
+            "a later read with every entry cached and nothing requested dispatches nothing after the discovery sweep");
+    }
+    {
+        const { root, dispatched, call } = dispatcher({ wanted: true, discovery: true, entries: CACHED });
+        call();
+        assert.equal(root._thumbSweepWanted, false, "dispatch spends a requested sweep too");
+        dispatched[0].callback("not json at all", 1);
+        assert.equal(root._thumbSweepWanted, true, "an unparseable answer restores a requested sweep");
+        assert.equal(root._thumbDiscoveryPending, false, "and still leaves the discovery sweep spent");
+    }
 });
