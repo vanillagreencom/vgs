@@ -2,6 +2,8 @@
 # VGS toggle screen recording for Hyprland and Niri using gpu-screen-recorder.
 set -euo pipefail
 
+HYPR_DISPATCH="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vshell-hyprctl-dispatch"
+
 # shellcheck source=/dev/null  # user config, exists only at runtime
 [[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
 
@@ -94,7 +96,7 @@ focus_restore() {
   active="$(focus_snapshot)"
   [[ $active == "$addr" ]] && return 0
   hyprctl clients -j 2>/dev/null | jq -e --arg a "$addr" 'any(.[]; .address == $a)' >/dev/null 2>&1 || return 0
-  hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
+  "$HYPR_DISPATCH" "hl.dsp.focus({window=\"address:$addr\"})" || true
 }
 
 # Use the optional uwsm scope only when it is available to the session.

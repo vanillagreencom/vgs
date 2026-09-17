@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Usage: vshell-hyprctl-dispatch REQUEST
+# Send one Hyprland dispatch for the shell scripts in bin/ and check the reply.
+# scripts/check-hyprctl-dispatch.sh refuses a `hyprctl dispatch` in any other bin/ shell script.
+#
+# These scripts support Hyprland only under its Lua config manager, like the shell's
+# HyprlandService and the Lua config fragments VGS generates. Every request is an hl.dsp
+# call, and a classic-config session refuses it; no classic-config fallback exists.
+# hyprctl answers an applied dispatch with exactly "ok". A refusal answers anything else,
+# with or without a nonzero exit, so neither the status nor the reply alone proves it ran.
+#
+# Exit 0 when Hyprland applied REQUEST, with no output. Otherwise exit 1 with this
+# diagnostic on stderr: the first line is `hyprctl-dispatch-refused exit=<N>`, where N is
+# hyprctl's exit status; the request, the reply and the explanation follow. A best-effort
+# caller may continue past the 1: the refusal is already on stderr.
+set -euo pipefail
+
+status=0
+reply="$(hyprctl dispatch "$1" 2>&1)" || status=$?
+if [[ $status -eq 0 && $reply == ok ]]; then
+  exit 0
+fi
+printf 'hyprctl-dispatch-refused exit=%d\n  request: %s\n  reply: %s\n' "$status" "$1" "$reply" >&2
+printf '  VGS dispatches through the Hyprland Lua config manager; a classic-config session refuses every request.\n' >&2
+exit 1

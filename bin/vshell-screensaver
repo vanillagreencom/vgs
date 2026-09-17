@@ -14,6 +14,7 @@ set -euo pipefail
 script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
 # Both a checkout root and /usr/lib/vshell carry config/vshell/.
 script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+hypr_dispatch="$script_dir/vshell-hyprctl-dispatch"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CLASS="org.vgs.screensaver"
@@ -179,12 +180,12 @@ cmd_launch() {
     jq -r '.[] | select(.disabled == false) | .name' |
     while IFS= read -r monitor; do
       [[ -n $monitor ]] || continue
-      hyprctl dispatch "hl.dsp.focus({monitor=\"$monitor\"})" >/dev/null 2>&1 || true
-      hyprctl dispatch "hl.dsp.exec_cmd('$launch_cmd')" >/dev/null 2>&1 || true
+      "$hypr_dispatch" "hl.dsp.focus({monitor=\"$monitor\"})" || true
+      "$hypr_dispatch" "hl.dsp.exec_cmd('$launch_cmd')" || true
       sleep 0.25
     done
 
-  [[ -n $focused_monitor ]] && hyprctl dispatch "hl.dsp.focus({monitor=\"$focused_monitor\"})" >/dev/null 2>&1 || true
+  [[ -n $focused_monitor ]] && "$hypr_dispatch" "hl.dsp.focus({monitor=\"$focused_monitor\"})" || true
   return 0
 }
 

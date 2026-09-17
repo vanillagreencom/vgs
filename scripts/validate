@@ -113,6 +113,9 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-attribute-heap-profile.py
 -         | scripts/test-bench-shell-events.py
 -         | scripts/test-screenrecording-status.sh
+-         | scripts/check-hyprctl-dispatch.sh
+-         | scripts/test-hyprctl-dispatch.sh
+-         | scripts/test-check-hyprctl-dispatch.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
 -         | scripts/test-validation-dump.sh
