@@ -8619,6 +8619,10 @@ def preview_stage():
     def focused_monitor() -> str | None:
         return next((m.get("name") for m in preview_hyprctl_json("monitors") if m.get("focused")), None)
 
+    def refusal_text(reply: subprocess.CompletedProcess[str]) -> str:
+        # hyprctl carries a refusal on stdout and a transport failure on stderr.
+        return (reply.stdout or reply.stderr or "").strip() or "no reply"
+
     def enforce_monitor(name: str | None) -> None:
         # Output add/remove shifts Hyprland's focused monitor as a side effect
         # (cursor warp + follow_mouse); put keyboard focus back where it was.
@@ -8663,9 +8667,16 @@ def preview_stage():
                     # Hyprland session, which is where they already are. Name the
                     # compositor's refusal of each spelling instead.
                     for spelling, reply in (("eval", hook), ("keyword", rule)):
-                        text = (reply.stdout or reply.stderr or "").strip() or "no reply"
-                        eprint(f"preview staging rule refused (hyprctl {spelling} exit {reply.returncode}): {text}")
-            if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
+                        eprint(f"preview staging rule refused (hyprctl {spelling} exit {reply.returncode}): {refusal_text(reply)}")
+            create_ok = False
+            if rules_ok:
+                create = run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT])
+                create_ok = _hyprctl_eval_ok(create)
+                if not create_ok:
+                    # Same reason as the rule refusal above: without the compositor's own
+                    # reply the operator is told to move to the session they are in.
+                    eprint(f"preview staging output refused (hyprctl output create exit {create.returncode}): {refusal_text(create)}")
+            if create_ok:
                 staged = True
                 # The output inherits the user's default scale; force scale 1 so the
                 # nested session sees the full logical resolution.
@@ -8694,8 +8705,7 @@ def preview_stage():
         if lua_rule:
             retired = run(["hyprctl", "eval", PREVIEW_STAGE_OFF_LUA])
             if not _hyprctl_eval_ok(retired):
-                reply = (retired.stdout or retired.stderr or "").strip() or "no reply"
-                eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {reply}")
+                eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {refusal_text(retired)}")
         if legacy_rule:
             run(["hyprctl", "reload"])
         if staged:
@@ -15789,15 +15799,16 @@ def _hyprctl_eval(script: str) -> subprocess.CompletedProcess[str]:
 
 
 def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
-    """Whether a `hyprctl eval` chunk or `hyprctl keyword` request actually ran.
+    """Whether a `hyprctl eval`, `keyword` or `output create` request actually ran.
 
     hyprctl answers an applied request with exactly "ok", and prefixes a failed Lua chunk
     with "error:". Each spelling refuses on stdout with exit 0 on the config manager it
     does not belong to: `eval` answers "eval is only supported with the lua config
     manager" on a classic config, `keyword` answers "keyword can't work with non-legacy
-    parsers. Use eval." on a Lua config. A return code alone reads either refusal as
-    applied, so the caller believes the compositor owns decoration or a window rule it
-    never registered.
+    parsers. Use eval." on a Lua config. `output create` answers "no backend replied to
+    the request" when no backend serves it. A return code alone reads any of those
+    refusals as applied, so the caller believes the compositor owns decoration, a window
+    rule or an output it never registered.
     """
     return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
 
