@@ -5493,23 +5493,24 @@ def test_notification_takeover_records_who_asked():
         seed = json.loads((REPO_ROOT / "config" / "vshell" / "settings.default.json").read_text())
         assert_equal(seed["notificationFirstRunTakeoverDone"], False,
                      "the shipped seed must leave the one-shot unspent")
-        assert_equal(helper.vgs_first_run_takeover_done(), False,
-                     "an absent settings.json must not read as a spent one-shot")
+        assert_equal(helper.vgs_first_run_takeover_state(), (False, True),
+                     "an absent settings.json reads as unspent, and settings still read")
         assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], False,
                      "status must surface the on-disk answer")
 
         settings.write_text("{ this is not json")
-        assert_equal(helper.vgs_first_run_takeover_done(), False,
-                     "an unreadable settings.json must not read as a spent one-shot")
+        assert_equal(helper.vgs_first_run_takeover_state(), (False, False),
+                     "an unreadable settings.json is unspent AND unknown, which the "
+                     "report must not present as a one-shot still to come")
 
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": False}))
-        assert_equal(helper.vgs_first_run_takeover_done(), False, "false is false")
+        assert_equal(helper.vgs_first_run_takeover_state(), (False, True), "false is false")
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": "yes"}))
-        assert_equal(helper.vgs_first_run_takeover_done(), False,
+        assert_equal(helper.vgs_first_run_takeover_state(), (False, True),
                      "a non-boolean must not be coerced into a spent one-shot")
 
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": True}))
-        assert_equal(helper.vgs_first_run_takeover_done(), True,
+        assert_equal(helper.vgs_first_run_takeover_state(), (True, True),
                      "a persisted true is what the shell waits for")
         assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], True,
                      "status must surface the on-disk answer")
@@ -5581,28 +5582,52 @@ def test_notification_status_withholds_the_manual_fix_before_the_first_run():
         helper.vgs_notification_server_enabled = lambda: True
         status = {
             "busName": helper.NOTIFICATION_BUS_NAME, "state": "foreign", "error": "",
-            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False, "atRisk": False,
+            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False,
+            "vgsFirstRunTakeoverKnown": True, "atRisk": False,
             "owner": {"present": True, "pid": 42, "process": "mako", "exe": "/usr/bin/mako",
                       "unit": "mako.service", "isVgs": False, "unique": ":1.7", "cmdline": "", "error": ""},
             "conflicts": [], "takeover": {"available": True, "reason": ""},
             "restore": {"available": False},
         }
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            helper._print_notification_status(status)
-        unspent = buffer.getvalue()
+
+        def printed(**overrides):
+            helper._print_notification_status({**status, **overrides})
+
+        def capture(**overrides):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                printed(**overrides)
+            return buffer.getvalue()
+
+        unspent = capture()
         assert "fix: vshell notifications takeover" not in unspent, \
             "the manual command must not be named while the shell's own takeover is unspent"
         assert "takes this name over itself" in unspent, \
             "the report must say what will claim the name instead"
 
-        status["vgsFirstRunTakeoverDone"] = True
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            helper._print_notification_status(status)
-        spent = buffer.getvalue()
+        spent = capture(vgsFirstRunTakeoverDone=True)
         assert "fix: vshell notifications takeover" in spent, \
             "once the one-shot is spent, the manual command is the only way back"
+
+        # Every state where the flag is false but the shell will never act on
+        # it. The note would promise a takeover that never comes, while
+        # withholding the one command that resolves the conflict.
+        for label, overrides in (
+            ("settings could not be read", {"vgsFirstRunTakeoverKnown": False}),
+            ("VGS holds the name but an activation file remains", {"state": "vgs", "atRisk": True}),
+        ):
+            stuck = capture(**overrides)
+            assert "takes this name over itself" not in stuck, \
+                f"the shell does not claim the name when {label}"
+            assert "fix: vshell notifications takeover" in stuck, \
+                f"the manual command is the only way out when {label}"
+
+        # Nothing actionable: the note must not stand in for the reason either.
+        unfixable = capture(takeover={"available": False, "reason": "mako is not a unit VGS can stop"})
+        assert "takes this name over itself" not in unfixable, \
+            "the shell does not claim a name no takeover can free"
+        assert "mako is not a unit VGS can stop" in unfixable, \
+            "an unfixable conflict must still state why"
     finally:
         helper.vgs_notification_server_enabled = original_enabled
 

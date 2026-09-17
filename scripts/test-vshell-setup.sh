@@ -18,27 +18,33 @@
 #   - an argument after the verb is refused with a usage line, before anything
 #     runs.
 #
-# Negative rows use lacks rather than grep -v, which answers a different
+# Negative rows use file_lacks, never grep -v, which answers a different
 # question: -v selects the lines that do not match, so it succeeds whenever the
 # file holds any other line, and four rows here passed unconditionally on it.
+# Every helper takes the file first, so a swapped call is an error, not a pass.
 #
-# The message half is derived from the tree rather than from a list here:
-#   - no file under packaging/ and no line of README.md repeats the raw enable
-#     command; bin/vshell is its single owner, and install.sh performs the
-#     enable rather than printing it, so both are outside the scanned set;
-#   - every channel directory under packaging/ carries an install message that
-#     names the first-start step its own channel can run, each channel keyed to
-#     both the file and the step, so neither a build recipe can answer for the
-#     message nor a systemd instruction pass on Void.
+# Two message rules, each with its own reach. This comment is what
+# docs/architecture/helper.md points at for those, so keep it exact.
+#
+#   - Single owner: no file under packaging/ and no line of README.md repeats
+#     the raw enable command, because bin/vshell owns it. install.sh is outside
+#     this scan by design: it runs the enable rather than printing it.
+#   - First-start step: each channel directory under packaging/ carries an
+#     install message naming the step its own channel can run. The six shipped
+#     channels are arch, debian, fedora, gentoo, ubuntu and void; arch
+#     contributes two messages, one per package. Each channel is keyed to both
+#     its files and its step in one record, so neither a build recipe can
+#     answer for the message nor a systemd instruction pass on Void.
+#
+# What no rule here reaches: the non-directory rows of the packaging README's
+# channel table, flake.nix, and the openSUSE spec, which lives in the OBS
+# project rather than in this repository.
 #
 # Two recipe rows guard what no message names. Each anchor holds its line
-# together with the structure that makes it work, because both regressions keep
-# the text: an enable moved out of install.sh's start branch still reads as an
-# enable, and a commented-out override still leaves --no-enable in the file
-# while dh goes back to enabling VGS for every account on the machine.
-#
-# The openSUSE channel is outside every rule here: its spec lives in the OBS
-# project, not in this repository, so nothing in this tree can reach it.
+# together with the structure that makes it work, because every regression they
+# catch keeps the text: an enable moved out of install.sh's start branch still
+# reads as an enable, and a commented-out override still leaves --no-enable in
+# the file while dh goes back to enabling VGS for every account on the machine.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -126,11 +132,6 @@ EOF
 
 first_call() { head -n 1 "$call_log"; }
 
-# True when no line of file $2 holds the literal $1. grep -v cannot say this:
-# it selects the lines that do not match, so it succeeds whenever the file has
-# any other line at all, which every file these rows read always does.
-lacks() { ! grep -qF -- "$1" "$2"; }
-
 # True when file $1 holds the literal $2, which may span lines. Reading the
 # whole file rather than grepping lets an anchor pin a line together with the
 # structure that guards it; an unreadable file fails the caller's test.
@@ -174,49 +175,53 @@ packaging_owners() {
   return 0
 }
 
-# The first-start step each channel directory must name. Void runs runit, so a
-# systemd instruction there would be one its users cannot execute; keying the
-# token per channel is what stops the two being interchangeable. A directory
-# absent from this table is reported rather than skipped, so a channel added
-# without a decision about its first start reddens instead of passing.
-channel_step() {
+# What each channel directory must say, as one record: the first-start step,
+# then the message files that must carry it, relative to the directory. Void
+# runs runit, so a systemd instruction there would be one its users cannot
+# execute; keying the step per channel is what stops the two being
+# interchangeable. Naming the files is what keeps a build recipe from answering
+# for the message: packaging/debian/rules names vshell setup in a comment, and a
+# scan of the whole directory passed on that comment while the postinst said
+# nothing. Step and files live in one record because two tables drifted: a
+# channel listed in only one of them was checked against nothing.
+channel_contract_shipped() {
   case "$1" in
-    arch | debian | fedora | gentoo | ubuntu) printf 'vshell setup\n' ;;
-    void) printf 'exec-once = vshell run\n' ;;
+    arch) printf '%s\n' 'vshell setup' 'vgs-shell.install' 'vgs-shell-git/vgs-shell-git.install' ;;
+    debian) printf '%s\n' 'vshell setup' 'vgs-shell.postinst' ;;
+    fedora) printf '%s\n' 'vshell setup' 'vgs-shell.spec' ;;
+    gentoo) printf '%s\n' 'vshell setup' 'vgs-shell-*.ebuild' ;;
+    ubuntu) printf '%s\n' 'vshell setup' 'README.md' ;;
+    void) printf '%s\n' 'exec-once = vshell run' 'INSTALL.msg' ;;
     *) return 1 ;;
   esac
 }
 
-# The file, or files, in a channel directory that carry its install message,
-# relative to that directory. Naming them is what keeps a build recipe from
-# answering for the message: packaging/debian/rules names vshell setup in a
-# comment, and a scan of the whole directory passed on that comment while the
-# postinst said nothing.
-channel_messages() {
-  case "$1" in
-    arch) printf '%s\n' 'vgs-shell.install' 'vgs-shell-git/vgs-shell-git.install' ;;
-    debian) printf '%s\n' 'vgs-shell.postinst' ;;
-    fedora) printf '%s\n' 'vgs-shell.spec' ;;
-    gentoo) printf '%s\n' 'vgs-shell-*.ebuild' ;;
-    ubuntu) printf '%s\n' 'README.md' ;;
-    void) printf '%s\n' 'INSTALL.msg' ;;
-    *) return 1 ;;
-  esac
-}
+# What packaging_gaps reads. One control replaces it in a subshell to plant a
+# malformed record; every row outside that subshell gets the shipped table.
+channel_contract() { channel_contract_shipped "$1"; }
 
 # Every channel directory under $1 whose install message is missing or names no
 # first-start step, or the wrong one for its channel, or that this suite has no
 # expectation for.
 packaging_gaps() {
-  local dir name step message path seen=0 matched
+  local dir name record step message path seen=0 matched
   for dir in "$1"/packaging/*/; do
     [[ -d $dir ]] || continue
     seen=$((seen + 1))
     name="$(basename -- "${dir%/}")"
-    if ! step="$(channel_step "$name")"; then
+    # Read the contract's status before its output: a table lookup that failed
+    # would otherwise deliver an empty list, and an empty list checks nothing.
+    if ! record="$(channel_contract "$name")"; then
       printf 'unknown-channel %s\n' "${dir%/}"
       continue
     fi
+    if [[ $record != *$'\n'* ]]; then
+      # A record is a step and at least one message file. One line alone would
+      # otherwise be read as a step with the step itself for a filename.
+      printf 'no-message-files %s\n' "${dir%/}"
+      continue
+    fi
+    step="${record%%$'\n'*}"
     while IFS= read -r message; do
       matched=0
       # Unquoted so a channel may name its message by glob, as Gentoo does: its
@@ -228,7 +233,7 @@ packaging_gaps() {
         file_holds "$path" "$step" || printf 'no-step %s\n' "$path"
       done
       ((matched)) || printf 'no-message %s\n' "${dir%/}/$message"
-    done < <(channel_messages "$name")
+    done <<<"${record#*$'\n'}"
   done
   # An empty glob would otherwise leave the rule passing on nothing at all.
   ((seen > 0)) || printf 'no-channel-directories %s\n' "$1/packaging"
@@ -239,9 +244,16 @@ packaging_gaps() {
 # The anchor holds the enable together with the branch that decides it runs, so
 # a --no-start install that quietly starts the shell anyway reddens the row as
 # surely as a deleted line does.
+# The anchor holds the whole decision, both branches, because each line in it
+# has already gone missing once in this change: the enable itself, and the line
+# naming vshell setup after --no-start.
 # shellcheck disable=SC2016  # bash source of install.sh, quoted verbatim as its anchor
 installer_anchor='if [[ "$start" == true ]]; then
-  systemctl --user enable --now vshell.service'
+  systemctl --user enable --now vshell.service
+  echo "Run: vshell deps status"
+else
+  echo "Start it with: vshell setup"
+fi'
 
 # dh_installsystemduser rides the default dh sequence from compat 12 and enables
 # the unit for every account on the machine unless this override is present. The
@@ -283,10 +295,10 @@ expect enable-refused-cause "a refused enable points at systemctl's own message"
   grep -qF -- 'could not enable vshell.service' "$err_out"
 expect enable-refused-no-route "a refused enable does not offer the compositor route" \
   "stderr: $(cat "$err_out")" \
-  lacks 'exec-once = vshell run' "$err_out"
+  file_lacks "$err_out" 'exec-once = vshell run'
 expect enable-refused-no-start "a refused enable does not go on to start the unit" \
   "calls: $(tr '\n' '|' <"$call_log")" \
-  lacks 'systemctl --user start' "$call_log"
+  file_lacks "$call_log" 'systemctl --user start'
 
 run_setup start-refused "$script_under_test" 0 1 0 "$stub_path"
 expect start-refused-status "a refused start fails setup" \
@@ -296,7 +308,7 @@ expect start-refused-cause "a refused start points at status and the journal" \
   grep -qF -- 'journalctl --user -u vshell.service' "$err_out"
 expect start-refused-no-route "a refused start does not offer the compositor route" \
   "stderr: $(cat "$err_out")" \
-  lacks 'exec-once = vshell run' "$err_out"
+  file_lacks "$err_out" 'exec-once = vshell run'
 
 run_setup no-systemctl "$script_under_test" 0 0 0 "$nosystemd"
 expect no-systemctl-status "a system with no systemctl fails setup" \
@@ -304,6 +316,9 @@ expect no-systemctl-status "a system with no systemctl fails setup" \
 expect no-systemctl-route "a missing systemctl is the case that earns the compositor route" \
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'exec-once = vshell run' "$err_out"
+expect no-systemctl-report "a system without systemd still gets the report, its only list" \
+  "calls: $(tr '\n' '|' <"$call_log")" \
+  test "$(first_call)" = 'helper deps status'
 
 run_setup extra-argument "$script_under_test" 0 0 0 "$stub_path" status
 expect reject-argument-status "setup takes no argument" \
@@ -391,7 +406,7 @@ if build_mutant "$mutants/no-enable" "$enable_call" '  if false; then'; then
   run_setup control-no-enable "$mutants/no-enable" 0 0 0 "$stub_path"
   expect control-no-enable "dropping the enable call reddens the accepted case" \
     "calls: $(tr '\n' '|' <"$call_log")" \
-    lacks 'systemctl --user enable' "$call_log"
+    file_lacks "$call_log" 'systemctl --user enable'
 fi
 
 if build_mutant "$mutants/report-last" "$report_first" '  :' \
@@ -439,6 +454,31 @@ printf 'vshell setup\n' >"$mutant_tree/packaging/madeup/INSTALL.msg"
 expect control-unknown-channel "a channel this suite has no expectation for reddens the channel rule" \
   "gaps: $(packaging_gaps "$mutant_tree" | tr '\n' ' ')" \
   file_holds <(packaging_gaps "$mutant_tree") "unknown-channel $mutant_tree/packaging/madeup"
+
+# A message file deleted rather than emptied: the no-step arm never sees it, so
+# only the no-message arm can report a channel that has stopped speaking at all.
+rm -f -- "${mutant_tree:?}/packaging/void/INSTALL.msg"
+expect control-missing-message "a channel whose message file is gone reddens the channel rule" \
+  "gaps: $(packaging_gaps "$mutant_tree" | tr '\n' ' ')" \
+  file_holds <(packaging_gaps "$mutant_tree") "no-message $mutant_tree/packaging/void/INSTALL.msg"
+
+# A contract carrying a step but no message file. Two tables let that state pass
+# with nothing checked, because the missing half was an empty stream whose
+# status no one read; one record turns it into a reported gap. The override runs
+# in a subshell, so it cannot reach any other row.
+gaps_without_messages="$(
+  channel_contract() {
+    case "$1" in
+      void) printf '%s\n' 'exec-once = vshell run' ;;
+      *) channel_contract_shipped "$1" ;;
+    esac
+  }
+  packaging_gaps "$repo_root"
+)"
+expect control-contract-without-messages "a channel contract naming no message file reddens the channel rule" \
+  "gaps: $(printf '%s' "$gaps_without_messages" | tr '\n' ' ')" \
+  file_holds <(printf '%s\n' "$gaps_without_messages") \
+  "no-message-files $repo_root/packaging/void"
 
 empty_tree="$tmp/empty-tree"
 mkdir -p "$empty_tree/packaging"

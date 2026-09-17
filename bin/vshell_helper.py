@@ -18665,15 +18665,22 @@ def vgs_notification_server_enabled() -> bool:
     return bool(value) if isinstance(value, bool) else True
 
 
-def vgs_first_run_takeover_done() -> bool:
-    """Read whether settings.json records the automatic takeover as spent.
-    An in-memory setting does not establish that FileView saved it. Return
-    False on read errors so a failed save cannot permit repeated takeover."""
+def vgs_first_run_takeover_state() -> Tuple[bool, bool]:
+    """Whether settings.json records the automatic takeover as spent, and
+    whether settings.json could be read at all.
+
+    An in-memory setting does not establish that FileView saved it, so a read
+    error reports the one-shot as unspent: a failed save must not permit
+    repeated takeover. Unspent for that reason is not the same answer as
+    unspent because the shell has yet to run, and a caller that promises the
+    shell will act has to tell the two apart -- on an unreadable settings.json
+    the shell never spends the one-shot at all.
+    """
     try:
         value = load_settings().get("notificationFirstRunTakeoverDone", False)
     except Exception:
-        return False
-    return value is True
+        return False, False
+    return value is True, True
 
 
 def notification_status() -> Dict[str, Any]:
@@ -18778,12 +18785,14 @@ def notification_status() -> Dict[str, Any]:
         reason = "no conflicting notification daemon found"
 
     record_state = _load_takeover_record()
+    first_run_spent, first_run_known = vgs_first_run_takeover_state()
     return {
         "busName": NOTIFICATION_BUS_NAME,
         "state": state,
         "error": owner["error"],
         "vgsServerEnabled": vgs_notification_server_enabled(),
-        "vgsFirstRunTakeoverDone": vgs_first_run_takeover_done(),
+        "vgsFirstRunTakeoverDone": first_run_spent,
+        "vgsFirstRunTakeoverKnown": first_run_known,
         # VGS holds the name now, but something else would still be activated
         # into it on a session where VGS starts a moment later.
         "atRisk": state == "vgs" and bool(conflicts),
@@ -19093,10 +19102,21 @@ def _print_notification_status(status: Dict[str, Any]) -> None:
             detail.append("activation " + conflict["activationFile"] + (" (shadowed)" if conflict["shadowed"] else ""))
         print(f"  conflict: {conflict['daemon']}" + (": " + ", ".join(detail) if detail else ""))
     if vgs_wants_it and (status["state"] != "vgs" or status["atRisk"]):
-        if not status["vgsFirstRunTakeoverDone"]:
-            # The shell takes the name over itself the first time it runs.
-            # Naming the manual command while that one-shot is unspent invites a
-            # takeover racing the shell's own, and both write the undo record.
+        # The shell takes the name over itself the first time it runs, so naming
+        # the manual command while that one-shot is unspent invites a takeover
+        # racing the shell's own, and both write the undo record. Promise that
+        # only where the shell will actually act: the one-shot has to be known
+        # unspent rather than unspent because settings could not be read, and
+        # the conflict has to be the plain foreign one a takeover resolves.
+        # Every other state keeps the manual command, which is the only way out.
+        shell_will_claim_it = (
+            not status["vgsFirstRunTakeoverDone"]
+            and status["vgsFirstRunTakeoverKnown"]
+            and status["takeover"]["available"]
+            and status["state"] == "foreign"
+            and not status["atRisk"]
+        )
+        if shell_will_claim_it:
             print("  note: VGS takes this name over itself the first time it runs")
         elif status["takeover"]["available"]:
             print("  fix: vshell notifications takeover")

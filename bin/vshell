@@ -280,6 +280,15 @@ EOF
 # every account on the machine. This verb is that one step, for one account.
 _setup() {
   [[ $# -eq 0 ]] || { echo "Usage: vshell setup" >&2; return 2; }
+  # Report first, on every path. deps status is the single report of optional
+  # features and of who owns org.freedesktop.Notifications, and on a system
+  # without systemd it is the only list of optional tools there is. The unit is
+  # Type=simple, so a report taken after the start would answer while the shell
+  # is still loading and about to claim that name, and would name the owner the
+  # shell is in the middle of replacing. The report is advisory: a helper fault
+  # must not keep the first start from happening.
+  "$helper" deps status ||
+    echo "vshell setup: could not read the dependency report; enabling the unit anyway." >&2
   # A missing systemctl is the one case the compositor route answers. Any
   # status from systemctl itself means systemd is present and refused.
   if ! command -v systemctl >/dev/null 2>&1; then
@@ -291,14 +300,6 @@ Void runs runit rather than systemd. Start VGS from your compositor config:
 EOF
     return 1
   fi
-  # Report before starting. deps status is the single report of optional
-  # features and of who owns org.freedesktop.Notifications. The unit is
-  # Type=simple, so a report taken after the start would answer while the shell
-  # is still loading and about to claim that name, and would name the owner the
-  # shell is in the middle of replacing. The report is advisory: a helper fault
-  # must not keep the first start from happening.
-  "$helper" deps status ||
-    echo "vshell setup: could not read the dependency report; enabling the unit anyway." >&2
   if ! systemctl --user enable vshell.service; then
     echo "vshell setup: systemctl could not enable vshell.service; its message above names the cause." >&2
     return 1
