@@ -45,6 +45,24 @@ OTHER_PKGVER = """pkgver() {
 }
 """
 
+# The same recipe with the counted commits left behind as a comment. Every part
+# of the expected formula appears in the text; none of it runs.
+COMMENTED_PKGVER = """pkgver() {
+  cd vgs
+  # was: printf '%s.r%s.g%s' "$(cat VERSION)" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  printf '%s.g%s' "$(cat VERSION)" "$(git rev-parse --short HEAD)"
+}
+"""
+
+# The expected formula with a comment beside it. The commands are the expected
+# ones, so this recipe is stamped; only what runs decides.
+ANNOTATED_PKGVER = """pkgver() {
+  cd vgs
+  # The tag-free version: the source VERSION, the commits, the head.
+  printf '%s.r%s.g%s' "$(cat VERSION)" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+"""
+
 PLACEHOLDER = "0.1.0.r0.g0000000"
 
 
@@ -194,18 +212,119 @@ class Stamp(unittest.TestCase):
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
 
     def test_a_recipe_computing_another_version_is_refused(self):
+        for name, body in (("another formula", OTHER_PKGVER),
+                           ("the formula in a comment", COMMENTED_PKGVER)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "source"
+                make_repo(source)
+                directory = Path(tmp) / "recipe"
+                recipe(directory, body=body)
+                before = (directory / "PKGBUILD").read_text()
+
+                with self.assertRaises(CHECKER.CheckError) as raised:
+                    CHECKER.stamp_vcs_version(directory, root=source)
+
+                self.assertIn("rev-list --count HEAD", str(raised.exception))
+                self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_comment_beside_the_expected_formula_does_not_refuse_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, body=ANNOTATED_PKGVER)
+
+            self.assertEqual(
+                CHECKER.stamp_vcs_version(directory, root=source),
+                f"0.5.0.r{count}.g{head}",
+            )
+
+    def test_a_recipe_file_that_cannot_be_rewritten_leaves_both_files_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, body=OTHER_PKGVER)
+            recipe(directory)
+            srcinfo = directory / ".SRCINFO"
+            srcinfo.write_text(srcinfo.read_text().replace("\tpkgrel = 4\n", ""))
+            before = ((directory / "PKGBUILD").read_text(), srcinfo.read_text())
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("1 matched", str(raised.exception))
+            self.assertEqual(
+                before, ((directory / "PKGBUILD").read_text(), srcinfo.read_text())
+            )
+
+
+class PublishedVersion(unittest.TestCase):
+    """What the recipe's own git HEAD, the published state, decides about a stamp."""
+
+    def publish(self, tmp: Path, pkgver: str, pkgrel: str = "4") -> Path:
+        """A recipe directory whose committed state publishes these values."""
+        directory = tmp / "recipe"
+        directory.mkdir()
+        git("init", "--quiet", "--initial-branch", "master", cwd=directory)
+        recipe(directory, pkgver=pkgver, pkgrel=pkgrel)
+        git("add", "--all", cwd=directory)
+        git("commit", "--quiet", "-m", "published", cwd=directory)
+        # publish-aur.sh overwrites the working tree from this repository before
+        # the stamp runs, so the published values live only in HEAD by then.
+        recipe(directory, pkgver=PLACEHOLDER, pkgrel="1")
+        return directory
+
+    def test_a_lower_computed_version_is_refused_and_nothing_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(Path(tmp), "0.5.0.r900.gfeedbee")
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
                 CHECKER.stamp_vcs_version(directory, root=source)
 
-            self.assertIn("rev-list --count HEAD", str(raised.exception))
+            self.assertIn("0.5.0.r900.gfeedbee", str(raised.exception))
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_published_version_of_another_shape_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(Path(tmp), "20260916")
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("20260916", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_higher_computed_version_is_stamped_over_the_published_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = self.publish(Path(tmp), "0.1.0.r0.g0000000")
+
+            stamped = CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertEqual(stamped, f"0.5.0.r{count}.g{head}")
+            self.assertIn(
+                f"pkgver={stamped}\npkgrel=1\n", (directory / "PKGBUILD").read_text()
+            )
+
+    def test_the_published_pkgrel_is_kept_when_the_version_does_not_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = self.publish(Path(tmp), f"0.5.0.r{count}.g{head}", pkgrel="4")
+
+            CHECKER.stamp_vcs_version(directory, root=source)
+
+            # The working tree said 1. Publishing that against a published 4 at
+            # the same version would be a downgrade.
+            self.assertIn("\npkgrel=4\n", (directory / "PKGBUILD").read_text())
+            self.assertIn("\n\tpkgrel = 4\n", (directory / ".SRCINFO").read_text())
 
     def test_a_recipe_that_computes_no_pkgver_is_left_as_it_is(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,7 +339,20 @@ class Stamp(unittest.TestCase):
 
 
 class RemoteComparison(unittest.TestCase):
-    """Which lines the published-recipe comparison leaves out for a VCS recipe."""
+    """What the published recipe is compared on, and what it is judged on alone."""
+
+    FILES = ("PKGBUILD", ".SRCINFO")
+
+    def compare(self, tmp: str, published: dict, tree: dict) -> list[str]:
+        directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+        recipe(directory, **tree)
+        recipe(clone, **published)
+        original = CHECKER.ROOT
+        CHECKER.ROOT = Path(tmp)
+        try:
+            return CHECKER.compare_published("probe", directory, clone, self.FILES)
+        finally:
+            CHECKER.ROOT = original
 
     def test_only_the_two_stamped_assignments_are_dropped(self):
         lines = [
@@ -228,15 +360,70 @@ class RemoteComparison(unittest.TestCase):
             "pkgver=0.5.0.r335.ga945a5a0\n",
             "pkgrel=1\n",
             "_pkgver=kept\n",
+            "pkgver=\n",
             "\tpkgver = 0.5.0.r335.ga945a5a0\n",
             "\tpkgrel = 1\n",
+            "\tpkgrel = \n",
             "pkgver() {\n",
         ]
 
         self.assertEqual(
             CHECKER.drop_computed_version(lines),
-            ["pkgname=probe\n", "_pkgver=kept\n", "pkgver() {\n"],
+            ["pkgname=probe\n", "_pkgver=kept\n", "pkgver=\n", "\tpkgrel = \n",
+             "pkgver() {\n"],
         )
+
+    def test_a_published_version_apart_from_this_tree_s_is_not_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                self.compare(
+                    tmp,
+                    published={"pkgver": "0.5.0.r335.ga945a5a0", "pkgrel": "1"},
+                    tree={"pkgver": "0.5.0.r400.gbbbbbbb", "pkgrel": "1"},
+                ),
+                [],
+            )
+
+    def test_a_published_placeholder_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = self.compare(
+                tmp,
+                published={"pkgver": PLACEHOLDER, "pkgrel": "4"},
+                tree={"pkgver": "0.5.0.r400.gbbbbbbb", "pkgrel": "1"},
+            )
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn(PLACEHOLDER, problems[0])
+
+    def test_a_published_version_of_another_shape_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = self.compare(
+                tmp,
+                published={"pkgver": "20260916", "pkgrel": "1"},
+                tree={"pkgver": "0.5.0.r400.gbbbbbbb", "pkgrel": "1"},
+            )
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("20260916", problems[0])
+
+    def test_a_published_difference_outside_the_version_is_still_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+            recipe(directory, pkgver="0.5.0.r400.gbbbbbbb", pkgrel="1")
+            recipe(clone, pkgver="0.5.0.r335.ga945a5a0", pkgrel="1")
+            pkgbuild = clone / "PKGBUILD"
+            pkgbuild.write_text(
+                pkgbuild.read_text().replace("example.invalid/vgs", "example.invalid/old")
+            )
+            original = CHECKER.ROOT
+            CHECKER.ROOT = Path(tmp)
+            try:
+                problems = CHECKER.compare_published("probe", directory, clone, self.FILES)
+            finally:
+                CHECKER.ROOT = original
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("PKGBUILD", problems[0])
 
 
 class RepositoryState(unittest.TestCase):

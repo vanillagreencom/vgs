@@ -53,9 +53,13 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-          # The published git recipe carries a version counting every commit,
-          # so the default shallow checkout would publish a lower one.
+          # The published git recipe carries a version counting every commit. A
+          # shallow checkout counts only the commits it fetched, which would be a
+          # lower version than the published one, so the stamp refuses it and the
+          # publish fails. Only the count needs the history, not its file
+          # contents, which blob:none leaves on the server.
           fetch-depth: 0
+          filter: blob:none
 
       # AUR clients read .SRCINFO; it must agree with the recipe they build.
       - name: Arch recipes agree internally
