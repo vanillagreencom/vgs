@@ -25,14 +25,15 @@ const switcherSource = fs.readFileSync(qmlPath("Modules", "Bar", "Widgets", "Wor
 const SHARED_LIST_CALL = "CompositorService.hyprlandWorkspacesForScreen(";
 const SHARED_ACTIVE_CALL = "CompositorService.hyprlandActiveWorkspaceId(";
 
-const service = {
-    list: ["function hyprlandWorkspacesForScreen(screenName, followFocus, occupiedOnly)", ["screenName", "followFocus", "occupiedOnly"]],
-    isSpecial: ["function _hyprlandWorkspaceIsSpecial(ws)", ["ws"]],
-    placeholder: ["function _hyprlandWorkspacePlaceholder()", []],
-    order: ["function hyprlandWorkspaceOrder(a, b)", ["a", "b"]],
-    activeId: ["function hyprlandActiveWorkspaceId(screenName, followFocus)", ["screenName", "followFocus"]],
-    selector: ["function hyprlandWorkspaceSelector(ws)", ["ws"]],
-};
+// Every CompositorService function the two call sites reach, with its parameter names.
+const SERVICE_FUNCTIONS = [
+    ["function hyprlandWorkspacesForScreen(screenName, followFocus, occupiedOnly)", ["screenName", "followFocus", "occupiedOnly"]],
+    ["function _hyprlandWorkspaceIsSpecial(ws)", ["ws"]],
+    ["function _hyprlandWorkspacePlaceholder()", []],
+    ["function hyprlandWorkspaceOrder(a, b)", ["a", "b"]],
+    ["function hyprlandActiveWorkspaceId(screenName, followFocus)", ["screenName", "followFocus"]],
+    ["function hyprlandWorkspaceSelector(ws)", ["ws"]],
+];
 
 const bodies = {
     barList: extractBlock(barSource, "function getRealWorkspaces()"),
@@ -44,6 +45,10 @@ const bodies = {
     rowScroll: extractBlock(switcherSource, "function switchWorkspace(direction)"),
     rowClick: extractBlock(switcherSource, "function switchToWorkspaceByModelData(data)"),
     rowPadding: extractBlock(switcherSource, "function _makePlaceholder()"),
+    rowLabel: extractBlock(switcherSource, "function getWorkspaceIndex(modelData, index)"),
+    rowLabelFallback: extractBlock(switcherSource, "function getWorkspaceIndexFallback(modelData, index)"),
+    drawnIsActive: extractBlock(switcherSource, "property bool isActive:"),
+    drawnIsPlaceholder: extractBlock(switcherSource, "property bool isPlaceholder:"),
 };
 
 // One Hyprland workspace whose live monitor and last-fetched monitor can disagree. `monitor` is
@@ -74,9 +79,11 @@ const WORKSPACES = [
 
 const TOPLEVELS = [{ workspace: { id: 11 } }, { workspace: { id: 13 } }];
 // Each screen reports its own active workspace, and the focused one is neither of them, so the
-// per-screen answer and the follow-focus answer can never be confused for each other.
+// per-screen answer and the follow-focus answer can never be confused for each other. DP-1 is
+// active on the named workspace at id -1, the id the row's padding also carries, so a drawn marker
+// that reads the id alone cannot tell the two apart.
 const MONITORS = [
-    { name: "DP-1", activeWorkspace: { id: 11 } },
+    { name: "DP-1", activeWorkspace: { id: -1 } },
     { name: "DP-2", activeWorkspace: { id: 12 } },
 ];
 const FOCUSED_WORKSPACE = { id: 14 };
@@ -107,17 +114,23 @@ function compositorService() {
         isMiracle: false,
         compositor: "hyprland",
     };
-    for (const [key, [opener, parameters]] of Object.entries(service)) {
+    for (const [opener, parameters] of SERVICE_FUNCTIONS) {
         const body = extractBlock(serviceSource, opener);
         const name = opener.slice("function ".length, opener.indexOf("("));
         singleton[name] = (...args) => callInScope(body, singleton, scope, parameters, args);
-        singleton[`body_${key}`] = body;
     }
     return singleton;
 }
 
 function settings(followFocus, occupiedOnly, showWorkspacePadding = false) {
-    return { workspaceFollowFocus: followFocus, showOccupiedWorkspacesOnly: occupiedOnly, showWorkspacePadding, showWorkspaceApps: false };
+    return {
+        workspaceFollowFocus: followFocus,
+        showOccupiedWorkspacesOnly: occupiedOnly,
+        showWorkspacePadding,
+        showWorkspaceApps: false,
+        showWorkspaceName: false,
+        showWorkspaceIndex: false,
+    };
 }
 
 // The bar background: its switch list, its current-workspace answer and its scroll handler, with
@@ -150,13 +163,24 @@ function rowSite(screenName, followFocus, occupiedOnly, extraEntries = []) {
         NiriService: {},
         MangoService: {},
     };
-    const component = { screenName, useExtWorkspace: false, isMango: false, mangoOverviewActive: false };
+    const component = { screenName, useExtWorkspace: false, isMango: false, mangoOverviewActive: false, isVertical: false, dwlActiveTags: [] };
     component._makePlaceholder = () => callInScope(bodies.rowPadding, component, scope);
     component.workspaceList = callInScope(bodies.rowList, component, scope).concat(extraEntries);
     component.currentWorkspace = callInScope(bodies.rowCurrent, component, scope);
     component.getRealWorkspaces = () => callInScope(bodies.rowRealList, component, scope);
     component.switchWorkspace = direction => callInScope(bodies.rowScroll, component, scope, ["direction"], [direction]);
     component.switchToWorkspaceByModelData = data => callInScope(bodies.rowClick, component, scope, ["data"], [data]);
+    component.getWorkspaceIndexFallback = (modelData, index) => callInScope(bodies.rowLabelFallback, component, scope, ["modelData", "index"], [modelData, index]);
+    // What the row draws for one entry. The delegate reads its own `modelData` and the widget's
+    // state by bare name, so the entry joins the component the bodies already resolve against.
+    component.drawn = (modelData, index) => {
+        const view = Object.assign(Object.create(null), component, { modelData });
+        return {
+            isActive: callInScope(bodies.drawnIsActive, view, scope),
+            isPlaceholder: callInScope(bodies.drawnIsPlaceholder, view, scope),
+            label: callInScope(bodies.rowLabel, view, scope, ["modelData", "index"], [modelData, index]),
+        };
+    };
     return { component, dispatched };
 }
 
@@ -165,12 +189,12 @@ const ids = list => Array.from(list).map(ws => ws.id);
 // screen name, follow focus, occupied only, the ids the list must answer with, the workspace both
 // call sites must treat as current.
 const LIST_ROWS = [
-    ["a screen keeps the workspaces its monitor property names", "DP-1", false, false, [11, -1, -3], 11],
+    ["a screen keeps the workspaces its monitor property names", "DP-1", false, false, [11, -1, -3], -1],
     ["a workspace moved between monitors reaches its new screen before the next fetch", "DP-2", false, false, [12, 13], 12],
     ["a screen with no workspaces of its own falls back to one placeholder", "DP-3", false, false, [1], 14],
     ["following focus ignores the screen entirely", "DP-1", true, false, [11, 12, 13, 14, -1, -3], 14],
     ["an unknown screen lists every ordinary workspace", "", false, false, [11, 12, 13, 14, -1, -3], 14],
-    ["occupied-only keeps the screen's active workspace and the ones holding a window", "DP-1", false, true, [11], 11],
+    ["occupied-only keeps an empty active workspace even when it is a named one", "DP-1", false, true, [11, -1], -1],
     ["occupied-only keeps an empty active workspace and drops an empty idle one", "DP-2", false, true, [12, 13], 12],
     ["occupied-only under follow-focus keeps the focused workspace, empty or not", "DP-1", true, true, [11, 13, 14], 14],
 ];
@@ -208,10 +232,10 @@ test("both call sites treat the same workspace as current", () => {
 // screen name, follow focus, occupied only, scroll direction, what the scroll must dispatch.
 // `null` means the scroll must dispatch nothing.
 const SCROLL_ROWS = [
-    ["scrolling onto a named workspace dispatches its name, which is its only reachable target", "DP-1", false, false, 1, "name:notes"],
-    ["scrolling onto a numbered workspace dispatches its id", "DP-1", true, false, -1, 13],
+    ["scrolling onto a named workspace dispatches its name, which is its only reachable target", "DP-1", false, false, 1, "name:scratch"],
+    ["scrolling off a named active workspace onto a numbered one dispatches its id", "DP-1", false, false, -1, 11],
     ["scrolling back from an empty focused workspace steps to its neighbour in the drawn list", "DP-1", true, true, -1, 13],
-    ["scrolling back from the first workspace dispatches nothing", "DP-1", false, false, -1, null],
+    ["scrolling back from the first workspace dispatches nothing", "DP-2", false, false, -1, null],
 ];
 
 test("both call sites dispatch the same scroll target", () => {
@@ -238,6 +262,25 @@ test("padding is marked out of band, so a real workspace at id -1 survives the r
     const withPadding = rowSite("DP-1", false, false, [padding]);
     assert.deepEqual(ids(withPadding.component.workspaceList), [11, -1, -3, -1], "the drawn list holds the padding beside the named workspace");
     assert.deepEqual(ids(withPadding.component.getRealWorkspaces()), [11, -1, -3], "the row's own scroll list drops the padding and keeps the named workspace");
+});
+
+test("the row draws a real workspace at id -1 as itself and its padding as an empty slot", () => {
+    // DP-1 is active on the named workspace at id -1, so every marker that reads the id alone
+    // gives the padding the drawn workspace's answer.
+    const site = rowSite("DP-1", false, false);
+    const named = site.component.workspaceList.find(ws => ws.id === -1);
+    const padding = site.component._makePlaceholder();
+    assert.equal(site.component.currentWorkspace, -1, "the fixture must leave DP-1 active on the named workspace");
+
+    const drawnNamed = site.component.drawn(named, 4);
+    assert.equal(drawnNamed.isPlaceholder, false, "a real workspace at id -1 is not padding");
+    assert.equal(drawnNamed.isActive, true, "the workspace the screen is active on is drawn as active");
+    assert.equal(drawnNamed.label, "notes", "a real workspace is labelled by its own name, not by its slot");
+
+    const drawnPadding = site.component.drawn(padding, 4);
+    assert.equal(drawnPadding.isPlaceholder, true, "padding is drawn as padding");
+    assert.equal(drawnPadding.isActive, false, "padding is never the active workspace, whatever id it carries");
+    assert.equal(drawnPadding.label, 5, "padding is labelled by its slot");
 });
 
 test("a special workspace is judged by its name, not by its negative id", () => {
