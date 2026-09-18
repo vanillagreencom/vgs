@@ -1,8 +1,8 @@
 # Runtime
 
-Covers: `quickshell/**`, `bin/**`, `scripts/validate`, `scripts/qml-smoke.sh`
+Covers: scripts/**
 
-How the shell process starts, what it costs to run, and how it is measured. The rules below come from the previous shell's measured sessions and review findings.
+Requirements for the shell process and its measurement tools. The measurement scripts exist under `scripts/`; the V2 runner, shell and nested validation harness are not implemented yet. Add their paths to `Covers:` when they land. The rules below govern that implementation; they do not claim that its checks already exist.
 
 ## Process
 

@@ -76,6 +76,7 @@ docs/plans/
 docs/research/
 # Session handoff (single file, never committed) — see AGENTS.md § Conventions
 docs/handoff/
+assets/
 
 # Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md
