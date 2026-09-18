@@ -21,6 +21,20 @@ tags: [review]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
+
+Quickshell rules for this shell, learned from measured sessions of the previous one. They add to the rules above.
+
+- One shell per session. Validation runs in the nested compositor sandbox; never start a second shell against the live session and never kill Quickshell processes by name.
+- Every Wayland object the shell creates is dispatched or destroyed. An undispatched event queue grew at 120 MiB per hour in the previous shell. A plugin draws inside a core-owned surface and creates none of its own.
+- One owner per watcher, poller and subprocess. A lookup that costs a process runs once per set, never per item, and a map replaces itself whole so bindings re-evaluate once.
+- No disk walk per keystroke and no unconditional sleep on an apply path. Read first, write and wait only on change.
+- Bound every cache whose keys other applications supply.
+- Judge a hyprctl reply by its text through the one shared reply judge, never by exit status alone, and never discard a dispatch reply.
+- FolderListModel substitutes the working directory for a missing folder: compare its folder property with the folder asked for before reading. Process.exited precedes running becoming false; a command that fails to start emits no exited.
+- Every figure in a docstring, comment or document was measured in the same PR and the text names how. A budget without its measurement is a blocker.
+- A new surface, service or plugin lands with its validation row in the same PR: nested smoke plus the latency and memory budgets docs/architecture/runtime.md names.
+- Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
+
 <!-- kendex:project-instructions:end -->
 
 # Code Quality

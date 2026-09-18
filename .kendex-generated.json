@@ -459,7 +459,6 @@
   ".agents/skills/orch/scripts/lib/lane-claims.sh",
   ".agents/skills/orch/scripts/lib/lane-context.sh",
   ".agents/skills/orch/scripts/lib/lane-mail-nap.sh",
-  ".agents/skills/orch/scripts/lib/pane-working.sh",
   ".agents/skills/orch/scripts/lib/pr-watch-pass.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-gates.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-measurement.sh",
@@ -787,6 +786,7 @@
   ".agents/skills/worktree/tests/worktree_for_branch.sh",
   ".agents/skills/worktree/tests/worktree_help_dispatch.sh",
   ".agents/skills/worktree/tests/worktree_materialized_links.sh",
+  ".agents/skills/worktree/tests/worktree_merged_verb.sh",
   ".agents/skills/worktree/tests/worktree_no_worktree_installs.sh",
   ".agents/skills/worktree/tests/worktree_output_prune.sh",
   ".agents/skills/worktree/tests/worktree_path_safety.sh",
@@ -897,15 +897,5 @@
   ".pi/kendex/hooks/lane-mail-halt.sh",
   ".pi/kendex/hooks/pre-commit-check.sh",
   ".pi/kendex/hooks/reviewer-read-only.sh",
-  "CLAUDE.md",
-  "backend/CLAUDE.md",
-  "backend/vendor/CLAUDE.md",
-  "bin/CLAUDE.md",
-  "config/vshell/CLAUDE.md",
-  "config/vshell/nvim/colorschemes/CLAUDE.md",
-  "quickshell/vshell/CLAUDE.md",
-  "scripts/CLAUDE.md",
-  "themes/CLAUDE.md",
-  "third_party/CLAUDE.md",
-  "tools/CLAUDE.md"
+  "CLAUDE.md"
 ]
