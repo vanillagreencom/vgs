@@ -96,12 +96,13 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |
-| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use |
+| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use; `state <item>` prints one lane's state from the pane, by the same judge `oversee-watch` and `open-terminal --wake` ask |
 | `lane-host` | Resolve or call the configured host provider; protocol: [schemas/lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
 | `lane-mail` | The lane-to-overseer mailbox. A lane runs `ask`, `notice`, `wait` and `inbox`; the overseer runs `send`, `drain` and `pending`, adding `--root` and `--host` for a lane on another host |
+| `lane-marker` | Write a lane's launch record, the marker under the common git directory and the lane's own mailbox; `open-terminal` and `lane-host create` both call it, and `lane-mail-check` hands a lane its mail only where it stands. Takes two positional arguments |
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |
 | `oversee-watch` | Block until the fleet needs the overseer, then print one wake carrying every event the pass found |
-| `oversee-succeed` | Replace a 1M-window overseer past its context mark with a successor overseer window at the same index; `window-below-mark` and `context-below-mark` exit 0 |
+| `oversee-succeed` | Replace an overseer past its context mark, or on an account at or below `ORCH_OVERSEER_HEADROOM_PCT` headroom, with a successor overseer window at the same index; `window-below-mark` and `context-below-mark` exit 0, `no-lane-qualifies` refuses and at `mark=account` names the account and its reset |
 
 Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path. Waiter and gate semantics, including the `3` exit on hard auth failure and reading the effective gate mode (`approval`, `review`, `off`) only through `approval-wait --resolve-mode`: [references/gates.md](references/gates.md). Artifact checks: [references/artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) (review/QA findings).
 

@@ -46,7 +46,7 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 
 **Skip if** `harness == codex-app`.
 
-Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and, for a claude or codex item, to its account lane under [oversee.md](oversee.md) § 3 Lane directive. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
+Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and, for a claude or codex item, to its account lane under [oversee.md](oversee.md) § 3 Lane directive. An `open-terminal` launch under a `--lane` names a model, and an effort where its harness has an effort flag; `open-terminal --help` holds the flag each harness takes, marks the harness with no effort flag, and refuses a lane launch that names either none. The commands below pass no `--cmd`, so those words go in `--launch-flags`; a launch that does pass `--cmd` names them inside that command instead, the template being rendered verbatim, and `--launch-flags` beside it are refused as reaching nothing. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one, and leaves a `--cmd` launch alone, its own argv carrying the posture).
 
 Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows inside tmux, GUI terminals outside it. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
 
@@ -57,6 +57,8 @@ Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mod
 ```bash
 .agents/skills/orch/scripts/open-terminal --tracker github --repo [OWNER/REPO] --harness [HARNESS] --launch-flags "[FLAGS]" [NUMBERS]
 ```
+
+Neither command passes `--state-dir`, so the launcher records no lane and creates no oversee state: a handoff is launch-only, and nothing here monitors what it starts. A fleet launch names its state per [oversee.md](oversee.md) § 3 Lane record.
 
 `--lane <config-dir>` launches under that account, `--lane <alias>` under a lane named in `ORCH_LANE_ALIASES`, and `--lane auto` (or `auto:<harness>`) under `lanes pick`'s choice, re-picked before each further tmux item. A named lane that `ORCH_LANE_EXCLUDE` or `ORCH_LANE_RETIRE` covers is refused. Which lane and which flags: [oversee.md](oversee.md) § 3 Lane directive. When an item must change harnesses, its new brief includes this sentence: `Continue [ITEM] from the prior [HARNESS] transcript at [TRANSCRIPT_PATH]; read it first, then resume the orch workflow.`
 
