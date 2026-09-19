@@ -143,7 +143,7 @@ chmod +x "$STUB"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
+cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
 # `lanes` is what a --lane row's lane_check calls; without it the row refuses
 # with helper-missing before reaching the gate it is about.
 cp "$SCRIPTS_DIR/lanes" "$REPO/scripts/lanes"
@@ -248,7 +248,12 @@ run() {
     custom-portable) envs=(TMUX=stub,1,0); args=(--tmux --cmd "claude 'Read the agent'\\''s brief'") ;;
     tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
     tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
-    tmux-codex-lane) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex --lane "$CODEX_LANE") ;;
+    # A lane launch names a model and an effort or open-terminal refuses it
+    # before anything else; these rows are about the timeout the account check
+    # waits on, so the pair rides with the mode in codex's own spellings.
+    tmux-codex-lane) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1)
+      args=(--tmux --harness codex --lane "$CODEX_LANE"
+            --launch-flags "-m gpt-6-astra -c model_reasoning_effort=high") ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
   esac
   if [[ "$envspec" != - ]]; then
@@ -327,7 +332,7 @@ mutant() {
   src="$SCRIPTS_DIR/$file"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$dir/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lanes" "$dir/scripts/lanes"
   chmod +x "$dir/scripts/lanes"
   cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"

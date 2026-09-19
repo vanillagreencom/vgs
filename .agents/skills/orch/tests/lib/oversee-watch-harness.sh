@@ -351,8 +351,10 @@ EOF
 # Workflow-state reader. `get oversee <expr>` executes the watcher's jq filter
 # against the case's oversee-state.json while preserving explicit failure
 # fixtures; `exists <item>` and `get <item> <expr>` read state-<item>.json,
-# a missing file exiting 1 the way the real CLI does. Every call's argv is
-# appended to workflow-state.args.
+# a missing file exiting 1 the way the real CLI does. `handoff-standing` is
+# handed to the real script: whether a record stands has one owner, and a
+# second answer here could let the watch pass a case the shipped verb fails.
+# Every call's argv is appended to workflow-state.args.
 cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -374,6 +376,7 @@ fi
 file="$state_dir/workflow-state-$id.json"
 case "$cmd" in
   exists) [[ -f "$file" ]] ;;
+  handoff-standing) exec "$REAL_WORKFLOW_STATE" --state-dir "${state_dir:-tmp}" handoff-standing "$id" ;;
   get)
     [[ -f "$file" ]] || { echo "Error: State file not found: $file" >&2; exit 1; }
     jq -r "${expr:-.}" "$file" ;;
@@ -410,7 +413,10 @@ new_case() {
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
 # WATCH_BIN names the script under test; a suite points it at a mutant copy
-# for a must-fail control and leaves it unset otherwise.
+# for a must-fail control and leaves it unset otherwise. WATCH_CWD names the
+# checkout the watch runs in, for a case whose fleet is more than one
+# repository; it defaults to the sandbox repository every other case uses, and
+# any checkout it names carries the same .agents/skills/orch symlink.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -437,7 +443,7 @@ run_watch() {
       *) watch_args+=("$arg") ;;
     esac
   done
-  (cd "$TMP_ROOT/repo" \
+  (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
            -u LINEAR_TEAM \
@@ -446,6 +452,7 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
+           REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            "${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}" --interval 0 --max-loops 2 \
