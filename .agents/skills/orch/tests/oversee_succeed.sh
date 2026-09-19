@@ -29,6 +29,19 @@ check() { # NAME GOT WANT
   if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
 }
+# A timing row asserts NAME and reads NAME:VALUE back when the figure missed the
+# range, so the seconds it measured reach the failure text. An empty bound is
+# open on that side; a non-numeric VALUE never matches.
+in_range() { # NAME VALUE LO HI
+  local name="$1" value="$2" lo="$3" hi="$4"
+  if [[ "$value" =~ ^[0-9]+$ ]] &&
+     { [[ -z "$lo" ]] || (( value >= lo )); } &&
+     { [[ -z "$hi" ]] || (( value <= hi )); }; then
+    printf '%s\n' "$name"
+  else
+    printf '%s:%s\n' "$name" "$value"
+  fi
+}
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
@@ -99,20 +112,29 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 CODEX_SCREEN='  Context 48% left'
 
 # The same script over a lane-context.sh whose window table is empty, which is
-# what this reader did before the table existed. The tree is
-# symlinks but for that one file, so every other dependency is the real one.
+# what this reader did before the table existed.
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # The account read's own condition, taken from the library the script under
 # test sources, so every host decision below is the check's own answer and not
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# script_copy DIR — the script tree at DIR as symlinks to the real files, with
+# lib/ a real directory of symlinks so a caller can drop ONE library file and
+# write its own in that place while every other dependency stays the real one.
+# The three controls below each patch a different file and are otherwise the
+# same tree; built once here so a reader sees that at a glance rather than by
+# diffing three spellings of it.
+script_copy() { # DIR
+  mkdir -p "$1"
+  ln -s "$SRC_DIR"/* "$1/"
+  rm -f -- "${1:?}/lib"
+  mkdir "$1/lib"
+  ln -s "$SRC_DIR"/lib/* "$1/lib/"
+}
+
 UNPATCHED="$TMP_ROOT/unpatched"
-mkdir -p "$UNPATCHED"
-ln -s "$SRC_DIR"/* "$UNPATCHED/"
-rm -f -- "${UNPATCHED:?}/lib"
-mkdir "$UNPATCHED/lib"
-ln -s "$SRC_DIR"/lib/* "$UNPATCHED/lib/"
+script_copy "$UNPATCHED"
 rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
@@ -249,6 +271,54 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+# The table's two halves, pinned against each other rather than against the argv
+# above: this script WRITES a successor's flags with launch_choice_write, and
+# open-terminal READS a launch's choices back with launch_choice_value and
+# launch_choice_effort. A word one half writes that the other cannot find is a
+# successor whose model and effort the launch gate never sees, and every literal
+# row in this suite would still pass. Each row is written and read back here,
+# the harnesses this suite never launches included; a row with no effort flag
+# writes the model alone and reads back no effort. Plain model ids only: the
+# writer quotes its values for the shell it is building a command in, and the
+# reader is handed argv a shell has already split.
+roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joined
+  local words
+  words="$(launch_choice_write "$1" "$2" "$3")"
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$words")" \
+    "$(launch_choice_effort "$1" "$words" '')"
+}
+check "every row's written words read back as the model and effort they were written from" \
+  "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)" \
+  "fable;high|gpt-6-astra;high|grok-5;|sonnet;high"
+
+# Control: the reader answers from the row's own spellings. The same launches
+# with a character in front of every word read back neither choice, so the row
+# above passes because the reader found what the writer wrote rather than
+# because it hands back whatever value sits beside any word.
+misspelt() { # HARNESS MODEL EFFORT — the same, read back from words no row names
+  local out="" word
+  local -a tokens=()
+  read -r -a tokens <<<"$(launch_choice_write "$1" "$2" "$3")"
+  for word in ${tokens[@]+"${tokens[@]}"}; do out="$out x$word"; done
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$out")" \
+    "$(launch_choice_effort "$1" "$out" '')"
+}
+check "control: those words spelt as ones no row names read back neither choice" \
+  "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(misspelt opencode grok-5 high)|$(misspelt pi sonnet high)" \
+  ";|;|;|;"
+
+# The same table's effort spellings, which open-terminal prints in its
+# launch-effort-missing refusal and whose EMPTINESS is that launcher's whole
+# answer to "is this launch asked for an effort at all". An accessor that handed
+# back the `-` sentinel would print it in that refusal and ask a harness with no
+# effort flag for one; one that answered for a harness the table does not name
+# would refuse every custom launch. Both are pinned here, beside the row list
+# they are read from.
+check "the effort spellings accessor answers each row's list, and nothing for a flagless or unnamed harness" \
+  "$(launch_choice_effort_spellings claude)|$(launch_choice_effort_spellings codex)|$(launch_choice_effort_spellings pi)|$(launch_choice_effort_spellings opencode)|$(launch_choice_effort_spellings nosuch)|$(launch_choice_effort_spellings '')" \
+  "--effort|model_reasoning_effort=|--thinking|||"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -336,13 +406,31 @@ check "context mark with another harness walled: the refusal names no account" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
+# SCHED_SLACK — the seconds a loaded runner adds to a figure taken off the
+# clock, over whatever the script under test decided. Every wait below is
+# counted in whole seconds and ends on a `sleep 1`, so a runner late to
+# schedule the last iteration moves the figure by one while the budgeting
+# stands still, and the macOS runner is regularly that late. A row pinning the
+# exact second therefore pins the runner's load, and reddens a gate every
+# branch and every orch pull request must pass. Each row below pins the
+# interval its claim is about instead. Lateness is the whole of what this pays
+# for: a row measuring wall clock around a whole run carries work the script
+# did besides waiting, and names its own term for that.
+SCHED_SLACK=2
+
+# The refusal reports how long the run waited, and the budget it spent is what
+# that figure is about: never less than --wait-secs, since the loop abandons
+# only once the budget is gone, and never more than a late schedule can add.
+IDLE_WAIT=2
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"
-run_succeed idle 'claude:1:high' --wait-secs 2
+run_succeed idle 'claude:1:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
-check "never working: refused, caller kept, successor closed" \
-  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
+idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
+idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
+check "never working: refused after its whole budget, caller kept, successor closed" \
+  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|yes|0"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
@@ -577,6 +665,27 @@ check "control: with the window table empty the same screen refuses and launches
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0|none"
 
+# The model and effort words come from lib/lane-launch.sh's table. A harness the
+# table holds no row for is not a launch this builder can write: nothing here
+# knows how that harness spells a model, and a successor started without one
+# runs on whatever default it ships and spends the account either way. Reached
+# by taking the rows away rather than by naming a third harness, because the
+# preference parser and `lanes pick` each admit claude and codex alone, so one
+# planted defect cannot otherwise arrive at the builder.
+ROWLESS="$TMP_ROOT/rowless"
+script_copy "$ROWLESS"
+rm -f -- "${ROWLESS:?}/lib/lane-launch.sh"
+sed "s/printf '%s\\\\n' \"\$row\"; return;/return;/" \
+  "$SRC_DIR/lib/lane-launch.sh" > "$ROWLESS/lib/lane-launch.sh"
+check "control rowless finds the row print to drop" \
+  "$(grep -c "printf '%s\\\\n' \"\$row\"; return;" "$ROWLESS/lib/lane-launch.sh")" "0"
+new_caller "$MARK"
+SUCCEED_BIN="$ROWLESS/oversee-succeed" run_succeed rowless 'claude:1:high'
+check "control: with the table holding no row the successor is refused, and none is launched" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed harness=claude|0|none"
+
+
 # ── One command builder: the launcher form, and the trust dialog ─────────────
 #
 # A config dir with a command named for it is launched THROUGH that command,
@@ -655,11 +764,7 @@ check "a lane whose launcher is on PATH is launched through it by absolute path,
 # launched under the environment prefix a shim overwrites, so the lane's own
 # command is never invoked and the bare harness takes the prefix instead.
 SHIMCTL="$TMP_ROOT/prefix-only"
-mkdir -p "$SHIMCTL"
-ln -s "$SRC_DIR"/* "$SHIMCTL/"
-rm -f -- "${SHIMCTL:?}/lib"
-mkdir "$SHIMCTL/lib"
-ln -s "$SRC_DIR"/lib/* "$SHIMCTL/lib/"
+script_copy "$SHIMCTL"
 rm -f -- "${SHIMCTL:?}/lib/lane-launch.sh"
 sed "s/^    printf 'launcher:%s\\\\n' \"\$path\"\$/    printf 'prefix\\\\n'/" \
   "$SRC_DIR/lib/lane-launch.sh" > "$SHIMCTL/lib/lane-launch.sh"
@@ -811,13 +916,29 @@ check "a successor whose account could not be observed: named on stderr, launch 
 # per-process environment is readable the read answers at once instead and the
 # seconds go to the wait; the ceiling is what this row pins either way, which is
 # what a caller sizes its timeout by.
+#
+# The ceiling is the promise succ_budget_bound's floor states — --wait-secs plus
+# at most one settle — with two terms on top, since the figure is taken off
+# `date +%s` around the whole call rather than inside the script.
+# BOUND_OVERHEAD is the part of that window which is not the wait: the shim's
+# own fork and capture, the window the run opens and the lane launch under it.
+# SCHED_SLACK is the runner's lateness over all of it.
+# BOUND_WAIT is sized so that ceiling still sits under the defect the control
+# below plants: that copy spends the early read's half-share and only then
+# starts its own whole --wait-secs, so it cannot return before one and a half
+# of them. 18 seconds is that floor here, and the ceiling is 16, so the three
+# terms above may grow by one more second between them before the control stops
+# being able to fail this row's claim.
+BOUND_WAIT=12
+BOUND_OVERHEAD=1
+BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + BOUND_OVERHEAD + SCHED_SLACK ))
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 bound_started=$(date +%s)
-succeed_shim bound 'claude:1:high' --wait-secs 6
+succeed_shim bound 'claude:1:high' --wait-secs "$BOUND_WAIT"
 bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
-  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
+  "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" "1|within"
 
 # The copy that budgets the old way: the running-turn wait counting its own
 # seconds from where it started rather than asking the one clock, which is the
@@ -840,10 +961,10 @@ check "control: the running-turn wait starts its own deadline in the copy" \
 if observed_row "control: a wait that starts its own deadline overruns the one --wait-secs bound"; then
   new_caller "$MARK"
   bound_started=$(date +%s)
-  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
+  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs "$BOUND_WAIT"
   bound_elapsed=$(( $(date +%s) - bound_started ))
   check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
-    "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+    "$RC|$(in_range over "$bound_elapsed" "$((BOUND_CEILING + 1))" '')" "1|over"
 fi
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
