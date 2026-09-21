@@ -189,7 +189,7 @@ ORCH_MERGE_AUTONOMY = "auto"
 
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
 # flight.
-ORCH_OVERSEER_LANES = "3"
+ORCH_OVERSEER_LANES = "6"
 
 # Successor overseer order for oversee-succeed, as harness:rank:effort on the
 # tier ladder: top Claude tier, top Codex tier, then the second tier of each.
