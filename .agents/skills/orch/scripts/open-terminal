@@ -34,7 +34,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-quote) text='A quote in the lane path cannot be embedded safely in the launch command.' ;;
     lane-separator) text='A tab or newline in the lane path cannot be stored in a claim.' ;;
     lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
-    lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane.' ;;
+    lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names what each lane was and, where a threshold applied, the threshold.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
@@ -43,7 +43,9 @@ ot_message() { # REASON FIELD=VALUE...
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
-    lane-model-walled) text='The account has no usage window left for the model this launch passes; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
+    launch-trusted) text='The launch directory is trusted in the config this codex launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch.' ;;
+    launch-trust-missing) text='The folder-trust entry for this launch directory could not be made in the config this codex launch would read. Nothing was launched: the harness would open on the folder-trust question and wait there for an answer nobody at the pane gives. Remedy by reason: trust-refused is an answer already recorded for this directory that is not trust, which this will not overwrite, so change it where it was written or launch somewhere else; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause, so relink it; account-store is the account transcript directory that could not be made; home-path, home-create, home-link and home-entry are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; config-write and config-install are that home config.toml, the same; entry-unreadable is the entry written and not read back. The lane host provider makes this entry for a sandboxed lane instead.' ;;
+    lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
@@ -86,7 +88,9 @@ ot_message() { # REASON FIELD=VALUE...
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
-    marker-failed) text='The lane launch marker could not be written, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
+    host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
+    host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
+    marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
@@ -228,7 +232,9 @@ Options:
                     is the one walling the model the launch runs, named in the
                     --cmd command where there is one and in --launch-flags where
                     there is not; with no model named there it is the account's
-                    binding bucket (default: 90, or $ORCH_LANE_MAX_PCT)
+                    binding bucket. Forwarded to `lanes`, which owns the bound,
+                    its default and $ORCH_LANE_MAX_PCT; without this flag that
+                    setting decides.
   --state-dir PATH  The workflow-state directory the lane record is written
                     to, passed to workflow-state as its own --state-dir. An
                     absolute path is one address for the whole fleet however
@@ -359,8 +365,9 @@ workflow state that flag names (`workflow-state get oversee .lanes`, created
 when absent); a launch with no --state-dir names no fleet, records nothing
 and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
-issue-N for a GitHub item, carrying the window, account dir, host, mail_root,
-surface, model, session_id, launched_at and status `running`;
+issue-N for a GitHub item, carrying the tracker, repository, harness, window,
+account dir, host, mail_root, surface, model, session_id, launched_at and
+status `running`;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item
@@ -481,6 +488,15 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-gitfile.sh
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
+# lane_context_caller_cfg there is the one answer to "which config dir is a
+# codex process spending", leaf, LANES_HOME base and home-to-account rule
+# together. Both readings below that need a default account ask it rather than
+# spelling one, so this launcher cannot drift from the readers inside the
+# session it opens.
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -488,9 +504,14 @@ GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-15}"
 
 parse_argv "$@"
-# The flag wins outright: both its spellings refuse an empty value, so an unset
-# LANE_MAX_PCT here means no flag was passed and the setting decides.
-LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
+# The threshold is FORWARDED, never defaulted here: `lanes` owns the bound, its
+# default and ORCH_LANE_MAX_PCT, and a second default in this script is what let
+# a pick typed from the oversee directive refuse an account this gate allowed.
+# Both spellings of the flag refuse an empty value, so an unset LANE_MAX_PCT
+# here means no flag was passed and `lanes` decides. The threshold that judged
+# is on the keyed `lanes:` line every refusal below is printed under.
+LANE_PCT_ARGS=()
+[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")
 
 [[ -x "$WORKTREE_CLI" ]] || { ot_message helper-missing "path=$WORKTREE_CLI" >&2; exit 1; }
 # The lane record is what the watch reads the fleet from, so a launcher that
@@ -800,7 +821,8 @@ lane_check() {
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
-  "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT" ${model_args[@]+"${model_args[@]}"}
+  "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
+    ${model_args[@]+"${model_args[@]}"}
 }
 # Sets HOST_ACCOUNT to what the lane host says about this account, for this
 # harness: `held`, `missing` (the provider answered and named no such account of
@@ -858,7 +880,7 @@ if [[ -n "$LANE" ]]; then
         # lanes exits 3 for "every lane is over the threshold" and 1 for a real
         # failure. Both stop the launch; only the first is the operator's call.
         if [[ "$lane_rc" -eq 3 ]]; then
-          ot_message lane-unavailable "harness=$lane_harness" "max-pct=$LANE_MAX_PCT" >&2
+          ot_message lane-unavailable "harness=$lane_harness" >&2
         else
           ot_message lane-resolution-failed "exit=$lane_rc" >&2
         fi
@@ -947,7 +969,7 @@ if [[ -n "$LANE" ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
     lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-      --model "$LAUNCH_MODEL" --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
+      --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
     case "$lane_rc" in
       0) ;;
       # 4 is `lanes` holding no record for this directory — a config dir outside
@@ -955,8 +977,19 @@ if [[ -n "$LANE" ]]; then
       # nothing to judge and never was; --help says such a dir is used as given,
       # so the launch proceeds exactly as it did before this gate existed.
       4) ;;
-      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-           "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
+      3)
+        lane_wall="$(jq -er '.wall' <<<"$lane_record")" || {
+          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-wall" >&2
+          exit 1
+        }
+        lane_bucket="$(jq -er '.binding_bucket' <<<"$lane_record")" || {
+          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
+          exit 1
+        }
+        ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+          "pct=$lane_wall" "bucket=$lane_bucket" >&2
+        exit 1
+        ;;
       # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
       # which: a RELAUNCH onto an account it reports holding proceeds, because
       # the copy running that session is the provider's and the harness's own
@@ -1087,6 +1120,59 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
+# The codex account a launch that names no lane will run on: the one the PANE
+# inherits, asked of lib/lane-context.sh's owner of that question.
+#
+# WHOSE environment, and why not always this process's. A pane open_tmux creates
+# inherits the tmux SERVER's environment, and CODEX_HOME is not in tmux's
+# default update-environment list, so a value set only here never reaches it. An
+# orch agent running inside a codex lane and launching an item with no --lane —
+# the command shape workflows/handoff.md section 2 documents — would otherwise
+# render its OWN account onto that item and spend it there, with no claim taken
+# on it. The test names the LAUNCHER and not the terminal mode: a --wake reaches
+# open_wake in tmux mode too, since the gate above exempts a wake from the
+# tmux-only settings and not from the mode, and run_detached scrubs CLAUDECODE,
+# TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
+# that really does inherit this process's environment.
+#
+# WHICH tmux scope, and in what order. tmux keeps a session environment beside a
+# global one, and a pane takes the session's entry wherever it has one. The
+# environment the SERVER was started with lands in the GLOBAL scope alone, and
+# nothing in this repository calls `set-environment`, so on a fleet host the
+# account a pane inherits is the global entry while the session scope holds
+# nothing at all: asking without -g answers `unknown variable` there and sends
+# every no-lane launch to the harness default rather than the operator's
+# numbered account.
+#
+# Each read prints `CODEX_HOME=<value>` for a variable that scope holds and
+# `-CODEX_HOME` for one it marks for removal. A marker is what the pane gets, so
+# it ends the walk with no value instead of falling through to the scope below —
+# a session marker hides a global value from the pane exactly that way. Anything
+# else, including no tmux to ask, leaves the owner to name the harness's own
+# default.
+launch_ambient_codex_home() {
+  local ambient="${CODEX_HOME:-}" scope line
+  local -a scope_flag
+  if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then
+    ambient=""
+    for scope in session global; do
+      scope_flag=()
+      [[ "$scope" == session ]] || scope_flag=(-g)
+      line="$(tmux show-environment ${scope_flag[@]+"${scope_flag[@]}"} CODEX_HOME 2>/dev/null)" || continue
+      case "$line" in
+        CODEX_HOME=*) ambient="${line#CODEX_HOME=}"; break ;;
+        # The pane gets nothing for a variable this scope marks for removal, and
+        # a marker here outranks a value in the scope below.
+        -CODEX_HOME) break ;;
+        # Neither a value nor a marker: this scope answers nothing about the
+        # variable, so the next one is asked.
+        *) ;;
+      esac
+    done
+  fi
+  ( CODEX_HOME="$ambient"; lane_context_caller_cfg codex )
+}
+
 # Find the newest transcript whose harness kickoff names the item.
 find_relaunch_session() { # HARNESS ITEM WORKTREE
   local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter files file best="" best_root="" rc relative target
@@ -1105,7 +1191,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   case "$harness" in
     claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]'"$id_match" ;;
     codex)
-      config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      config="$(launch_ambient_codex_home)"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
@@ -1172,14 +1258,23 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
-  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report
+  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report record_repo
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
-  rec="$(jq -cn --arg item "$item" --arg window "$window" --arg account "$account" --arg host "$host" \
+  # A GitHub lane records the repository the launch settled on, which is the
+  # --repo option where one was given and the resolver's answer otherwise:
+  # the option alone leaves a resolved launch's record null, and lane-close
+  # then has no repository to read the item's state with. Every other tracker
+  # records the option and nothing else, the resolver's answer there being the
+  # caller's own checkout rather than anything this lane's item lives in.
+  record_repo="$REPO"
+  [[ "$TRACKER" != github ]] || record_repo="$repo"
+  rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
+    --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" \
-    '{item: $item, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
@@ -1608,21 +1703,10 @@ launchable_dir() { # DIR TITLE
 # with no shell under it is unjudged, never idle. The cwd and the environment
 # are read through /proc.
 lane_session_state() { # DIR — prints busy, idle or unjudged
-  local root table pids pid cwd state config
-  root="$(cd -- "$1" && pwd -P)" || { printf unjudged; return 0; }
-  # pid, parent pid and command name without its directory, which macOS ps prints.
-  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" ||
-    { printf unjudged; return 0; }
-  pids="$(awk -v harness="$HARNESS" '$3 == harness { print $1 }' <<<"$table")" || { printf unjudged; return 0; }
-  for pid in $pids; do
-    [[ -d /proc/self ]] || { printf unjudged; return 0; }
-    if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
-      # A process that exited is no session; one still running whose cwd
-      # cannot be read is never judged idle.
-      [[ -d "/proc/$pid" ]] || continue
-      printf unjudged; return 0
-    fi
-    [[ "$cwd" == "$root" ]] || continue
+  local table pid state config
+  lane_owned_processes "$1" "$HARNESS" || { printf unjudged; return 0; }
+  table="$LANE_OWNED_PROCESS_TABLE"
+  for pid in $LANE_OWNED_PROCESS_PIDS; do
     state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }
       END {
         state = "idle"
@@ -1643,14 +1727,61 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
   printf idle
 }
 
+# What the call site's refusal says when a launch record cannot be made: the
+# reason and the fields under it. The record's own owner sets them, because it
+# is where the rungs are told apart. Two of them are reads that never reach a
+# marker, and a provider answers a missing file with a status and no line of
+# its own, so a refusal naming the write would name neither the cause nor a
+# path an operator can open.
+LANE_MARKER_REASON=marker-failed
+LANE_MARKER_FIELDS=()
+
+# One call over the transport `lane-host create` came over.
+host_transport() { # VERB ARGS...
+  (cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "$@")
+}
+
+# A hosted lane's marker, written where the lane's own git resolves it and read
+# back before the launch counts. The provider's `create` writes this record too,
+# and that is not trusted: a provider that skips the write leaves a lane
+# `lane-mail-check` reads as no lane at all, silently, for as long as it runs.
+# Writing it again is also what a relaunch onto a sandbox created before the
+# provider wrote markers needs, and a second write of the same bytes costs the
+# lane nothing.
+#
+# Only the marker half. The mailbox half is on the provider's disk, where the
+# first `lane-mail append` that reaches it creates it under the lock that host
+# holds; nothing here can take that lock.
+host_lane_marker() { # ITEM ROOT
+  local gitfile common marker read_back
+  LANE_MARKER_REASON=host-gitfile-unread
+  LANE_MARKER_FIELDS=("path=$2/.git")
+  gitfile="$(host_transport cat --item "$1" "$2/.git")" || return 1
+  LANE_MARKER_REASON=host-gitfile-invalid
+  LANE_MARKER_FIELDS=("path=$2/.git" "value=$gitfile")
+  common="$(lane_gitfile_common_dir "$gitfile")" || return 1
+  LANE_MARKER_REASON=marker-failed
+  LANE_MARKER_FIELDS=("path=$common")
+  marker="$("$SCRIPT_DIR/lane-marker" --marker-path "$common" "$1")" || return 1
+  LANE_MARKER_FIELDS=("path=$marker")
+  printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || return 1
+  read_back="$(host_transport cat --item "$1" "$marker")" || return 1
+  [[ "$read_back" == "$2" ]]
+}
+
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
 # the containment over them, which is lane-mail's own, so this hands it the
 # tree and the item and nothing else. Its own keyed line goes to the stderr
-# this inherits and does not redirect; the call site adds an `ot_message
-# marker-failed` naming the item and the worktree, which carries none of that
-# script's text.
-write_lane_marker() { # WT ITEM
+# this inherits and does not redirect; the call site adds the line the reason
+# set here names, which carries none of that script's text. A hosted lane's
+# record is on its provider's disk and out of that script's reach, so the
+# branch is here, in the one owner of the record, and not at the call site,
+# which records every lane the same way.
+write_lane_marker() { # WT ITEM REMOTE_ROOT
+  LANE_MARKER_REASON=marker-failed
+  LANE_MARKER_FIELDS=("path=$1")
+  [[ -z "${3:-}" ]] || { host_lane_marker "$2" "$3"; return; }
   "$SCRIPT_DIR/lane-marker" "$1" "$2"
 }
 
@@ -1936,7 +2067,7 @@ for raw in "${ITEMS[@]}"; do
     next_lane="$(pick_auto_lane)" || lane_rc=$?
     if [[ "$lane_rc" -ne 0 ]]; then
       if [[ "$lane_rc" -eq 3 ]]; then
-        ot_message lane-unavailable "harness=$LANE_HARNESS" "max-pct=$LANE_MAX_PCT" "item=$item" "launched=$launched" >&2
+        ot_message lane-unavailable "harness=$LANE_HARNESS" "item=$item" "launched=$launched" >&2
       else
         ot_message lane-resolution-failed "exit=$lane_rc" "item=$item" "launched=$launched" >&2
       fi
@@ -2006,7 +2137,7 @@ for raw in "${ITEMS[@]}"; do
   create_rc=0 ssh_target="" remote_path="" remote_prefix=""
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
-  if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
+  if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?
   elif [[ "$keep_tree" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
   if [[ "$create_rc" -eq 0 && "$keep_tree" == true ]] && ! launchable_dir "$wt" "$title"; then
@@ -2064,8 +2195,8 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the tree's root. A --host launch has no local tree; lane-host create writes its marker.
-  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id"; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
+  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
+  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; failed=$((failed + 1)); continue; fi
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
@@ -2095,9 +2226,40 @@ for raw in "${ITEMS[@]}"; do
   # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
-  elif [[ -n "$LANE_ENV" ]]; then
-    LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}" "$CMD_TEMPLATE")"
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM")"
+  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
+    # Folder trust belongs to the DIRECTORY the harness opens into, not to the
+    # account a launch was aimed at, so the preparation runs for every local
+    # codex launch and not only for one under --lane. A launch with no lane
+    # opens into a worktree nothing has trusted just the same, and the command
+    # shape workflows/handoff.md § 2 documents passes no --lane at all.
+    #
+    # Which variable, and which directory it starts from: the resolved lane
+    # where one was picked, otherwise the account the pane would have opened on
+    # by itself. A launch that ends on a home of its own reaches it by the
+    # variable that names it, so the prefix is rendered either way, while every
+    # other consumer keeps naming the ACCOUNT — the claim, the lane record and
+    # the transcript scan ask which account this lane spends, and a private home
+    # is a place to read a config from, not another account.
+    if [[ -n "$LANE_ENV" ]]; then
+      launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
+    else
+      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)"
+    fi
+    if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
+      launch_home="$LANE_TRUST_HOME"
+      [[ "$LANE_TRUST_ROUTE" == none ]] ||
+        ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
+    else
+      ot_message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" \
+        "reason=$LANE_TRUST_REASON" >&2
+      failed=$((failed + 1)); continue
+    fi
+    launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"
+    # The account check reads LANE_FORM, and it is about a lane that was PICKED.
+    # A launch with none has no account to check and keeps the `unchecked` the
+    # check reads as skip, whatever prefix the line below carries.
+    [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")"
   fi
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a
