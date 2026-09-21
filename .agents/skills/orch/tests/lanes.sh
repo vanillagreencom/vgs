@@ -14,6 +14,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+# The two thresholds the checkout configures. Every run that asserts a threshold
+# goes through run_lanes or claims_table, which run from outside the checkout as
+# well, so neither the environment nor kendex.settings.toml supplies one: those
+# rows assert the script's default, and a row that wants a setting passes it.
+# The two direct $LANES calls below, in stage_cache and in the renewal ceiling,
+# run from the checkout and assert no threshold.
+unset ORCH_LANE_MAX_PCT ORCH_HANDOFF_HEADROOM_PCT
 # The renewal's own settings, for the same reason: with one of these exported a
 # developer runs a different suite from CI, where a baseline expired-token row
 # renews, or a row reaches a live helper or the real token endpoint.
@@ -33,9 +40,23 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
+# mutate_file, the substitution half of the must-fail control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
+
+# Every run is made from here, with the ceiling stopping git one level above
+# it: `lanes` resolves its project root from the working directory, so a run
+# made in the checkout reads the checkout kendex.settings.toml and this suite
+# would assert the repository configuration rather than the script defaults.
+# It is a git repository carrying no settings, not a bare directory: `lane-host`
+# takes its own root from `git rev-parse` on the working directory, so outside
+# every repository the provider verb dies and the hosted rows below lose the
+# answer they are asserting.
+NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"
+git -C "$NOSETTINGS" init -q -b main
 
 # tmux stub for the claim store: `list-panes` prints the lines of
 # $TMUX_PANES_FILE, or of $TMUX_PANES_FILE.<N> on the Nth call when that file
@@ -75,7 +96,8 @@ run_lanes() {
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/store"
   ERR="$RUN/stderr"
-  OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
+  OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+    LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
     TOKEN_LOG="$RUN/token.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
     PATH="$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
@@ -541,7 +563,8 @@ claims_table() {
       file:*) chmod 000 "$STORE/claims/${perm#file:}.claim" ;;
     esac
     # shellcheck disable=SC2086
-    OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" \
+    OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+      LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" \
       TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$ERR")
     RC=$?
     case "$perm" in
@@ -762,7 +785,92 @@ table \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
-  "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
+  "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z haswall=false"
+
+echo "=== pick --model judges shared and scoped buckets together ==="
+# The account-wide 5-hour and weekly windows wall every model. A model launch
+# therefore uses the largest matching bucket, and the returned binding fields
+# identify that bucket rather than the account's unrelated overall maximum.
+new_home shared-model-wall
+make_lane "$H" claude 3600
+SHARED_PICK="pick --lane $H/.claude --harness claude --max-pct 80 --model fable --json"
+jq -n '{
+  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2026-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
+
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 85, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "the named model wall outranks both shared buckets and names itself||$SHARED_PICK|rc=3 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
+
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 70, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a lane is picked when its shared and named model buckets are below the bound||$SHARED_PICK|rc=0 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=70 key=none"
+
+# Control: remove the shared candidates from the one judge. The account with a
+# spent 5-hour window then passes on its low model bucket.
+jq -n '{
+  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+SHARED_MUTANT="$TMP_ROOT/mutant-shared-model-wall"
+mkdir -p "$SHARED_MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$SHARED_MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$SHARED_MUTANT/lib/"
+chmod +x "$SHARED_MUTANT/lanes"
+assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one shared-window input to drop"
+sed -i.bak 's/| (shared_bindings/| ([]/' "$SHARED_MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$SHARED_MUTANT/lanes"
+table \
+  "control: without shared buckets the spent account passes on its model bucket||$SHARED_PICK|rc=0 binding_bucket=model wall=10 key=none"
+LANES="$LANES_PATCHED"
+table \
+  "the patched judge refuses the same account on its shared 5-hour bucket||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
+
+# Control: preserve the wall but stop carrying its bucket into the returned
+# record. The refusal then misnames the unrelated model bucket as its cause.
+BUCKET_MUTANT="$TMP_ROOT/mutant-binding-bucket"
+mkdir -p "$BUCKET_MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$BUCKET_MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$BUCKET_MUTANT/lib/"
+chmod +x "$BUCKET_MUTANT/lanes"
+assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one returned bucket field to break"
+sed -i.bak 's/binding_bucket: ($binding.bucket \/\/ null)/binding_bucket: .binding_bucket/' "$BUCKET_MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES="$BUCKET_MUTANT/lanes"
+table \
+  "control: without the returned decision bucket the refusal names the unrelated model maximum||$SHARED_PICK|rc=3 binding_bucket=model wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
+LANES="$LANES_PATCHED"
+table \
+  "the patched record names the shared bucket that produced the wall||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
 
 # A lane measured on its scoped window alone answers nothing about a model that
 # window does not name, and an unanswered question is never read as "it is free".
@@ -945,7 +1053,7 @@ table \
   "room prints the env prefix and nothing else||$ONE --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude key=none" \
   "room under --json prints the lane record instead||$ONE --model opus --json|rc=0 alias=eclaude key=none" \
   "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
-  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,max-pct=90" \
+  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,bucket=model,max-pct=95" \
   "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
   "the record comes back on 5 too, whose status says the account read fine and its one window names another model||pick --lane $H/.uclaude --harness claude --model sonnet --json|rc=5 status=ok model_label=Opus wall=null" \
   "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
@@ -1003,7 +1111,7 @@ new_home hosted-accounts
 make_lane "$H" claude -3600
 HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
 HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
-printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\n' \
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\tmodel-resets=2026-08-02T06:00:00Z\n' \
   "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
 printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
 # The provider's own status for the account. No other fixture sets the field, so
@@ -1031,6 +1139,7 @@ table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
   "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
+  "the hosted reading carries its deciding model bucket and reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=2026-08-02T06:00:00Z" \
   "a status the provider reports is the host row's status, not this parser's default|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|list --harness claude --json|through=claude:local,claude:host last.status=expired last.headroom_pct=null" \
   "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
   "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
@@ -1040,6 +1149,17 @@ table \
   "a retired account the provider reports is listed retired, with no headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.status=retired eclaude.headroom_pct=null eclaude.measured_through=host" \
   "a codex account the provider holds is not listed in a claude listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|list --harness claude --json|rc=0 through=claude:local length=1 key=none" \
   "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none"
+
+# Control: keep the hosted model percentage and label, but drop its reset at
+# the protocol parser. The hosted row still carries the model bucket, while
+# the returned reset becomes null.
+lanes_mutant mutant-host-model-reset lanes \
+  'model: nz(\$mr)' 'model: null'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-host-model-reset/lanes"
+table \
+  "control: without the hosted model reset propagation the hosted model bucket has no reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=null"
+LANES="$LANES_PATCHED"
 
 # The verb is OPTIONAL: a provider without it gives no answer, which is not a
 # failure. Both listings are captured whole and compared, because the claim is
@@ -1345,6 +1465,44 @@ if command -v timeout > /dev/null 2>&1; then
 else
   printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
 fi
+
+echo "=== the default bound is the owner rule: more than five percent headroom ==="
+# On a pick that names no model, which is every row below, a lane never launches
+# on an account with five percent headroom or less. The number lives in this
+# script and nowhere else, so a launcher that forwards no threshold gets the
+# same one a pick typed by hand does; ORCH_LANE_MAX_PCT moves both together, and
+# a setting nobody can read refuses rather than falling back.
+new_home default-bound
+make_lane "$H" claude 3600
+claude_usage 94 10 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "an account at 94 percent used is picked||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "the setting is the default of --max-pct, and lowering it refuses that account|ORCH_LANE_MAX_PCT=94|pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=94,model=none,walled=1,unmeasured=0" \
+  "the flag still outranks the setting|ORCH_LANE_MAX_PCT=94|pick --harness claude --max-pct 95|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a setting outside 0-100 is refused before any lane is measured|ORCH_LANE_MAX_PCT=94%|pick --harness claude|rc=1 key=invalid-lane-max-pct,value=94%"
+
+# The control moves the default back to the number this change replaced: the
+# account at 94 percent is then refused, and the launchable headroom between 90
+# and 95 that the owner rule opens is unused again. The whole lib directory
+# comes with the copy because `lanes` sources its libraries beside itself, so a
+# lone copy of the script would die on startup and credit a pass to nothing.
+MUTANT_DIR="$TMP_ROOT/mutant-default"
+mkdir -p "$MUTANT_DIR/lib"
+cp "$SCRIPTS_DIR/lanes" "$MUTANT_DIR/" || { printf 'control: copy failed\n' >&2; exit 1; }
+cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT_DIR/lib/" || { printf 'control: lib copy failed\n' >&2; exit 1; }
+chmod +x "$MUTANT_DIR/lanes"
+mutate_file "$MUTANT_DIR/lanes" 'ORCH_LANE_MAX_PCT:-95' 'ORCH_LANE_MAX_PCT:-90'
+LANES_REAL="$LANES"; LANES="$MUTANT_DIR/lanes"
+table \
+  "control: with the default back at 90 the account at 94 percent is refused||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=90,model=none,walled=1,unmeasured=0"
+LANES="$LANES_REAL"
+
+new_home default-bound-spent
+make_lane "$H" claude 3600
+claude_usage 95 10 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "an account at 95 percent used is refused, five percent headroom being the wall||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=0" \
+  "the setting raises the same bound, and that account is picked|ORCH_LANE_MAX_PCT=96|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
 echo "=== argument handling ==="
 table \
