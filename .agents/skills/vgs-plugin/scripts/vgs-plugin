@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
@@ -43,9 +44,6 @@ def cmd_new(args):
     if not kinds or unknown:
         print(f"vgs-plugin: refused: kinds={args.kinds} unknown={','.join(unknown)} known={','.join(KINDS)}")
         return 2
-    if "." not in args.id or args.id != args.id.lower():
-        print(f"vgs-plugin: refused: id={args.id} (want author.name, lower case)")
-        return 2
     base = os.path.join(REPO, args.dir) if not os.path.isabs(args.dir) else args.dir
     target = os.path.join(base, args.id)
     if os.path.exists(target):
@@ -60,9 +58,24 @@ def cmd_new(args):
         "KINDS": json.dumps(kinds),
         "ENTRY_POINTS": json.dumps({KINDS[k][0]: KINDS[k][2] for k in kinds}),
     }
-    os.makedirs(target)
     with open(os.path.join(TEMPLATES, "manifest.json.tmpl"), encoding="utf-8") as fh:
         manifest = fill(fh.read(), values)
+    # The repository's one manifest judge decides the id and the shape before
+    # anything is written, so a refused id leaves no directory behind.
+    with tempfile.TemporaryDirectory() as probe:
+        probe_dir = os.path.join(probe, "probe")
+        os.makedirs(probe_dir)
+        with open(os.path.join(probe_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+            fh.write(manifest)
+        for kind in kinds:
+            with open(os.path.join(probe_dir, KINDS[kind][2]), "w", encoding="utf-8") as fh:
+                fh.write("")
+        judged = subprocess.run(["node", os.path.join(REPO, "scripts", "check-manifests.js"), "--", probe_dir], capture_output=True, text=True, check=False)
+        if judged.returncode != 0:
+            print(judged.stdout.rstrip())
+            print(f"vgs-plugin: refused: id={args.id}")
+            return 2
+    os.makedirs(target)
     with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
         fh.write(manifest)
     for kind in kinds:

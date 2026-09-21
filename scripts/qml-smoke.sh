@@ -20,9 +20,12 @@
 # naming it; that is not a pass. Exit 1 when a check failed.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
-# the end of the run. The default is twice the value this script printed as
-# rss_kib on the owner's machine on 2026-09-21 with the three bundled
-# plugins on one nested monitor.
+# the end of the run. It catches a startup allocation blow-up and nothing
+# else: a run this short cannot see the slow growth docs/architecture/memory.md
+# describes, and the reading carries the machine's graphics stack. The
+# default is twice the rss_kib this script printed on the owner's machine on
+# 2026-09-21 with the three bundled plugins on one nested monitor. The
+# high-water mark is printed beside it as the reproducible reading.
 set -euo pipefail
 
 timeout_s=60
@@ -184,36 +187,118 @@ then ok "bundled plugins discovered, enabled and error-free"; else fail "bundled
 
 # Bar surfaces the nested compositor lists; awk so zero matches is 0, not a failure.
 bar_count() { hypr layers | awk '/namespace: vgs:bar/ { n++ } END { print n + 0 }'; }
+# The nested output can take a moment to appear in the monitor list.
 monitors=-1; bars=-1
-if ! monitors="$(hypr -j monitors | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"; then fail "hyprctl monitors failed"; fi
-sleep 1
-if ! bars="$(bar_count)"; then fail "hyprctl layers failed"; fi
+for _ in $(seq 1 50); do
+  if monitors="$(hypr -j monitors | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" && [[ $monitors -gt 0 ]]; then break; fi
+  sleep 0.2
+done
+[[ $monitors -gt 0 ]] || fail "hyprctl lists no monitor"
+for _ in $(seq 1 50); do
+  if bars="$(bar_count)" && [[ $bars == "$monitors" ]]; then break; fi
+  sleep 0.2
+done
 if [[ $bars == "$monitors" && $monitors != 0 && $monitors != -1 ]]; then ok "one bar surface per monitor ($bars of $monitors)"; else fail "bar surfaces: $bars for $monitors monitors"; fi
 
-# Every bar hosts the given widget list, left to right.
+# Widget ids every bar host built, left to right, from the core's own
+# build records. Polls up to 5 s: a config write travels through the
+# watcher, the merge and a rebuild before the record changes.
+# A screen whose bar is unloaded has no record; it reads as an empty list.
+bar_widget_ids() {
+  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:[r["id"] for r in v if r["kind"]=="bar-widget"] for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
+}
 expect_widgets() { # LABEL EXPECTED_JSON_LIST
-  local got
-  if ! got="$(ipc shell barWidgets)"; then fail "$1: barWidgets failed"; return; fi
-  if python3 -c 'import json,sys; want=json.loads(sys.argv[1]); d=json.loads(sys.argv[2]); sys.exit(0 if d and all(v==want for v in d.values()) else 1)' "$2" "$got"; then ok "$1"; else fail "$1: got $got"; fi
+  local want got=""
+  if ! want="$(python3 -c 'import json,sys; print(json.dumps([json.loads(sys.argv[1])]*int(sys.argv[2])))' "$2" "$monitors")"; then fail "$1: expected list unreadable"; return; fi
+  for _ in $(seq 1 25); do
+    if got="$(bar_widget_ids)" && [[ $got == "$want" ]]; then ok "$1"; return; fi
+    sleep 0.2
+  done
+  fail "$1: got $got want $want"
 }
 expect_widgets "every bar built the workspaces and clock widgets" '["vgs.workspaces","vgs.clock"]'
 
+# A rebuild counter: the core counts every instance it builds. Rows below
+# assert that an unrelated write and a no-op rescan build nothing.
+builds() { ipc shell buildCount; }
+expect "the core built the bar and its two widgets per screen" "$((3 * monitors))" builds
+
 expect "disabling a widget is allowed" ok ipc shell setPluginEnabled vgs.clock false
-sleep 0.5
 clock_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="vgs.clock"][0])'; }
-expect "widget reads disabled after the user file changed" False clock_state
 expect_widgets "the bar dropped the disabled widget" '["vgs.workspaces"]'
+expect "widget reads disabled after the user file changed" False clock_state
 expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled vgs.clock true
-sleep 0.5
 expect_widgets "the bar rebuilt the re-enabled widget" '["vgs.workspaces","vgs.clock"]'
 
 expect "disabling the bar names the widgets it hides" "ok hidden=vgs.clock,vgs.workspaces" ipc shell setPluginEnabled vgs.bar false
-sleep 0.5
 expect_widgets "the bar host unloaded the disabled bar" '[]'
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
-sleep 0.5
 expect_widgets "the bar host rebuilt the re-enabled bar" '["vgs.workspaces","vgs.clock"]'
 if [[ -f "$home/.config/vgs/shell.json" ]]; then ok "manager wrote the user file"; else fail "user file missing"; fi
+
+# An unrelated key in the user file and a no-op rescan build nothing.
+if before="$(builds)"; then
+  python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["unrelated"] = 1
+json.dump(d, open(p, "w"), indent=2)
+PY
+  sleep 1
+  expect "an unrelated configuration write rebuilds nothing" "$before" builds
+  expect "a no-op rescan answers ok" ok ipc shell rescanPlugins
+  sleep 1
+  expect "a no-op rescan rebuilds nothing" "$before" builds
+else
+  fail "buildCount unreadable"
+fi
+
+# A fixture plugin in the sandbox user directory: kind service plus a bar
+# widget with the compositor capability. Proves user-directory discovery,
+# the service host, and that a widget receives its own capabilities.
+fixture="$home/.config/vgs/plugins/acme.probe"
+mkdir -p "$fixture"
+cat >"$fixture/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.probe", "name": "Probe", "version": "0.1.0", "author": "acme", "description": "smoke fixture",
+  "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "barWidget": "Widget.qml" },
+  "barWidget": { "defaultSection": "right", "defaults": { "label": "probe", "tags": ["a", "b"] } },
+  "vgs": { "capabilities": ["compositor"] } }
+JSON
+cat >"$fixture/Service.qml" <<'QML'
+import QtQuick
+Item { property var shell: null }
+QML
+cat >"$fixture/Widget.qml" <<'QML'
+import QtQuick
+import qs.Ui
+BarWidget {
+    moduleName: "acme.probe"
+    implicitWidth: 10
+    implicitHeight: barSize
+    // Written by the core after creation; the smoke reads them back.
+    readonly property bool hasCompositor: shell !== null && typeof shell.compositor === "object"
+    readonly property bool tagsAreArray: Array.isArray(settings.tags)
+}
+QML
+expect "rescan after adding a user plugin answers ok" ok ipc shell rescanPlugins
+probe_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.probe"][0])' 2>/dev/null || echo absent; }
+found=""
+for _ in $(seq 1 25); do if found="$(probe_state)" && [[ $found == False ]]; then break; fi; sleep 0.2; done
+if [[ $found == False ]]; then ok "user-directory plugin discovered and disabled until enabled"; else fail "fixture after rescan: $found"; fi
+expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
+service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
+widget_caps() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); rows=[r for k,v in d.items() if k.startswith("bar:") for r in v if r["id"]=="acme.probe"]; print(",".join(rows[0]["capabilities"]) if rows else "none")'; }
+got=""
+for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == True ]]; then break; fi; sleep 0.2; done
+if [[ $got == True ]]; then ok "the service host built the fixture service"; else fail "service host: built=$got"; fi
+expect_widgets "the fixture widget joined the right section" '["vgs.workspaces","vgs.clock","acme.probe"]'
+expect "the fixture widget received its own compositor capability" compositor widget_caps
+expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
+expect_widgets "the fixture widget left the bar" '["vgs.workspaces","vgs.clock"]'
+got=""
+for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then break; fi; sleep 0.2; done
+if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
 
 # Control: a bare qs beside the runner must refuse to draw.
 spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
@@ -250,9 +335,10 @@ else
   ok "shell log holds no error ($instance_log)"
 fi
 
-rss_kib=0
+rss_kib=0; hwm_kib=0
 if ! rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "resident size unreadable for pid $shell_qs_pid"; fi
-echo "  rss_kib=$rss_kib ceiling_kib=$rss_ceiling_kib"
+if ! hwm_kib="$(awk '/^VmHWM:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "high-water mark unreadable for pid $shell_qs_pid"; fi
+echo "  rss_kib=$rss_kib hwm_kib=$hwm_kib ceiling_kib=$rss_ceiling_kib"
 if [[ $rss_kib -gt 0 && $rss_kib -le $rss_ceiling_kib ]]; then ok "resident size under the ceiling"; else fail "resident size $rss_kib KiB over ceiling $rss_ceiling_kib KiB"; fi
 
 if [[ $failures -gt 0 ]]; then

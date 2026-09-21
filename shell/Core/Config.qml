@@ -6,8 +6,9 @@ import "PluginLogic.js" as Logic
 
 // Shell configuration: the shipped defaults under config/ merged with the
 // user's file. Both files are watched; a change re-derives `effective`
-// once. A user file that does not parse keeps the last good value and logs
-// the error, so a typo never blanks the desktop.
+// once. A user file that does not parse keeps the last good value, logs
+// the error and blocks writes until it parses again, so a typo never
+// blanks the desktop and a manager edit never overwrites unread edits.
 Singleton {
     id: root
 
@@ -18,6 +19,7 @@ Singleton {
     property var shipped: ({ version: 1 })
     property var user: null
     property bool shippedLoaded: false
+    property bool userParseFailed: false
     readonly property var effective: Logic.effectiveConfig(shipped, user)
 
     function parse(label, text) {
@@ -33,7 +35,6 @@ Singleton {
         id: shippedView
         path: root.shippedPath
         watchChanges: true
-        blockLoading: true
         onLoaded: {
             const r = root.parse(path, text());
             if (r.ok) { root.shipped = r.value; root.shippedLoaded = true; }
@@ -49,16 +50,34 @@ Singleton {
         printErrors: false
         onLoaded: {
             const r = root.parse(path, text());
+            root.userParseFailed = !r.ok;
             if (r.ok) root.user = r.value;
         }
-        onLoadFailed: error => { if (error === FileViewError.FileNotFound) root.user = null; else console.error("config: user file unreadable at " + path + ": " + error); }
+        onLoadFailed: error => {
+            if (error === FileViewError.FileNotFound) { root.user = null; root.userParseFailed = false; }
+            else console.error("config: user file unreadable at " + path + ": " + error);
+        }
         onFileChanged: reload()
+        onSaveFailed: error => {
+            console.error("config: user file not written at " + path + ": " + error);
+            root.lastSaveError = String(error);
+            root.user = root.userBeforeWrite;
+        }
+        onSaved: root.lastSaveError = ""
     }
 
-    // Replace the user file whole. The watcher then re-derives `effective`.
+    property var userBeforeWrite: null
+    property string lastSaveError: ""
+
+    // Replace the user file whole. The in-memory value moves first so the
+    // screen reacts at once; a failed save restores it and is reported on
+    // the next write. Returns `ok` or the keyed refusal.
     function writeUser(value) {
+        if (lastSaveError !== "") return "refused: user-config=unwritable path=" + userPath + " error=" + lastSaveError;
+        userBeforeWrite = root.user;
         root.user = value;
         userView.setText(JSON.stringify(value, null, 2) + "\n");
+        return "ok";
     }
 
     function reload() {

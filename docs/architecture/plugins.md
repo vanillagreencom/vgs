@@ -1,102 +1,94 @@
 # Plugins
 
-Covers: shell/plugins/**, shell/Core/**, shell/Commons/**, shell/Ui/**, shell/Hosts/**, shell/shell.qml, config/shell.json, bin/**
+Covers: shell/plugins/**, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Config.qml, shell/Commons/**, shell/Ui/**, shell/Hosts/**, config/shell.json, bin/vgsh-scan, .agents/skills/vgs-plugin/**
 
-The plugin contract: what a plugin is, how the core loads and unloads it, what it may use, and how an Omarchy Quattro plugin fits without edits.
+The plugin contract: what a plugin is, what the core builds for it, what it may use, and where an Omarchy Quattro plugin fits.
 
 ## Manifest
 
-A plugin is a directory with `manifest.json` at its root. The schema is Omarchy Quattro's, schema version 1, taken whole, plus one reserved key. `shell/Core/PluginLogic.js` is the one judge of a manifest; `scripts/check-manifests.js` and `vgsh plugin validate` run that judge offline.
+A plugin is a directory with `manifest.json` at its root. The schema is Omarchy Quattro's, schema version 1, plus one reserved key. `shell/Core/PluginLogic.js` is the one judge of a manifest; `scripts/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text.
 
-| Field | Meaning |
-|---|---|
-| `schemaVersion` | `1`. Any other value refuses the plugin. |
-| `id` | Dotted and author-namespaced, lower case: `author.name`. `vgs.*` is first-party here and `omarchy.*` first-party there. |
-| `name`, `version`, `author`, `description` | Listing metadata, all required. |
-| `license` | Optional SPDX identifier. |
-| `kinds` | One or more of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`. |
-| `entryPoints` | One QML file per declared kind, keyed `barWidget`, `bar`, `panel`, `overlay`, `menu`, `service`, relative to the plugin root and inside it. |
-| `keepLoaded` | Optional. A summoned kind stays loaded between summons. |
-| `barWidget` | Per-kind block: `displayName`, `category`, `allowMultiple`, `defaultSection`, `defaults`, `schema`. `schema` is the declarative settings form the manager renders. |
-| `vgs` | The one reserved key. `capabilities`: core APIs the plugin uses beyond its kinds. `budgets`: the ceilings its validation row asserts. A `requires` key is refused: plugins declare no dependencies. |
+| Field | Read by the core | Meaning |
+|---|---|---|
+| `schemaVersion` | yes | `1`. Any other value refuses the plugin. |
+| `id` | yes | Dotted and author-namespaced, lower case: `author.name`. `vgs.*` is first-party here and `omarchy.*` first-party there. |
+| `name`, `version`, `author`, `description` | listed | Listing metadata, all required. |
+| `license` | no | Optional SPDX identifier. |
+| `kinds` | yes | One or more of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`. |
+| `entryPoints` | yes | One QML file per declared kind, keyed `barWidget`, `bar`, `panel`, `overlay`, `menu`, `service`, relative to the plugin root and inside it. |
+| `keepLoaded` | no | Omarchy schema, carried and not consumed. |
+| `barWidget.defaultSection` | yes | The section `vgsh plugin enable` places the widget in; `center` when absent or unknown. |
+| `barWidget.defaults` | yes | The widget's default settings, under its layout entry. |
+| `barWidget.displayName`, `category`, `allowMultiple`, `schema` | no | Omarchy schema, carried for the manager's user interface, which does not exist yet. |
+| `vgs.capabilities` | yes | Core APIs the plugin uses beyond its kinds. |
+| `vgs.budgets` | no | Reserved for the validation row's ceilings. |
+| `vgs.requires` | refused | Plugins declare no dependencies, [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md). |
 
-## Kinds are surfaces, not dependencies
+## Kinds
 
-A kind names a surface the core can host. A plugin declares every kind it can fill and the core shows each one whose host exists. A kind whose host is absent is not shown, and the plugin's other kinds keep working. Nothing depends on another plugin by name.
+A kind names a surface the core can host. A plugin declares every kind it can fill and the core builds each one whose host exists and whose configuration enables it. A kind whose host is absent is not built; the plugin's other kinds are.
 
-A notification center is the shape this serves: kind `service` owns the notification daemon, kind `bar-widget` draws a bell in the bar, and kind `panel` is the list that opens under the bell. With no bar enabled the bell is not shown, the service keeps collecting, and the panel opens from the shortcut the plugin registers and at the placement its settings choose. The panel's placement is a setting of that plugin, not of the bar.
-
-| Kind | Entry point is | Draws in | Loaded |
+| Kind | Entry point is | Host | Built when |
 |---|---|---|---|
-| `bar-widget` | an `Item` extending `BarWidget` from `qs.Ui` | the active bar's sections | when placed in a bar section and a bar is active |
-| `bar` | an `Item` that lays out widgets | the bar host, one per screen | when it is the active bar; one at a time |
-| `panel` | an `Item` with `open(payloadJson)` and `close()` | the panel host | on summon |
-| `overlay` | an `Item` with `open(payloadJson)` and `close()` | the overlay host | on summon |
-| `menu` | an `Item` with `open(payloadJson)` and `close()` | the menu host | on summon |
-| `service` | a headless `Item` | nothing | at startup when enabled |
+| `bar-widget` | an `Item` extending `BarWidget` from `qs.Ui` | the active bar's sections | placed in a bar section and a bar is active |
+| `bar` | an `Item` | `BarHost`, one per screen | it is the active bar; one at a time |
+| `service` | a headless `Item` | `ServiceHost` | enabled |
+| `panel`, `overlay`, `menu` | an `Item` with `open(payloadJson)` and `close()` | none yet | never, until each host lands with the first plugin of its kind |
 
-The core creates every Wayland surface. An entry point never names `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock` or `WlrLayershell`; `scripts/check-plugin-boundary.py` refuses the name. The bar host exists; the panel, overlay and menu hosts land with the first plugin of each kind.
+Enabled means: the active bar; a bar widget placed in a section; a plugin listed in `plugins`; a first-party plugin declaring a kind other than `bar` and `bar-widget`, unless listed in `disabledPlugins`. `disabledPlugins` wins over every other rule.
 
-Disabling the active bar hides every enabled bar widget and the manager says so in its reply. The widgets stay enabled and return with the next bar.
+Disabling the active bar hides every enabled bar widget and the manager's reply names them. They stay enabled and return with the next bar. Enabling a bar makes it the active bar.
 
-## Loading
+## What the core builds and hands over
 
-- Plugins live under the shell root: first-party under `shell/plugins/<id>/`, user plugins under `~/.config/vgs/plugins/<id>/`. The user directory takes precedence over the bundled one when two plugins share an id, and the hidden one is reported once.
-- `bin/vgsh-scan` reads every manifest in one process per scan; the shell validates them and replaces its manifest map whole, so bindings re-evaluate once.
-- A host builds an entry point with `Qt.createComponent` on a `file://` URL and parents the instance to its slot. `import qs.Commons` and `import qs.Ui` resolve through the shell root from that URL.
-- A host assigns `shell`, `barConfig` and `screen` after creation, never as initial properties: initial properties cross a QVariant conversion that drops the facade's functions and turns nested lists into sequences `Array.isArray` rejects.
-- The bar builds each widget with `bar`, `moduleName` and `settings`, the three properties `BarWidget` declares, and destroys and rebuilds a section when the layout entry list changes.
-- Unload is destruction: the host destroys the instance and everything parented to it. A plugin keeps no object outside its own tree.
-- Quickshell watches only files reached from `shell.qml` by static import, so an edit inside a plugin reloads nothing. `vgsh ipc call shell rescanPlugins` re-reads manifests and bumps the generation every host keys its instances on.
+- `bin/vgsh-scan` reads every manifest under `shell/plugins/` and `~/.config/vgs/plugins/` in one process. The user directory wins an id collision and the hidden plugin is logged when the collision set changes. The registry replaces its manifest map whole and bumps its generation only when the set changed.
+- `PluginSlot` in `shell/Hosts/` owns one instance of one kind: it asks the core to build, rebuilds when the plugin id or the generation changes, and destroys before every rebuild and on its own destruction. Every host is a surface plus slots.
+- The core builds an entry point with `Qt.createComponent` on a `file://` URL and assigns its properties after creation, never as initial properties: initial properties cross a QVariant conversion that drops functions and turns nested lists into sequences `Array.isArray` rejects.
+- Every instance receives `shell`: its manifest, its settings, the widget catalogue, and one provider per capability its manifest names. A bar widget also receives `bar`, `moduleName` and `settings`. A bar receives `barConfig` and `screen`.
+- Settings are the manifest's `barWidget.defaults` under the configuration entry for the plugin: the layout entry for a bar widget, the `plugins` row for every other kind.
+- A bar builds its widgets only through `shell.widgets.create` and `shell.widgets.destroy`, so every widget gets its own scope and the core records what it built. A bar never receives a widget's entry point.
+- A bar rebuilds a section when that section's entry list changes. A configuration write that leaves the layout alone builds nothing; `scripts/qml-smoke.sh` asserts it through the core's build counter.
+- Quickshell watches only files reached from `shell.qml` by static import, so an edit inside a plugin reloads nothing. `vgsh ipc call shell rescanPlugins` re-reads manifests; a changed set bumps the generation every slot keys on.
 
 ## Capabilities
 
-A capability is a core API named in the manifest's `vgs.capabilities`, delivered on the `shell` object at load. The core owns the list in `PluginLogic.js` and refuses an unknown name.
+A capability is a core API named in the manifest's `vgs.capabilities` and delivered as `shell.<name>`. `PluginLogic.js` owns the name list and `Plugins.qml` maps each name to its provider; an unknown name refuses the manifest.
 
 | Capability | Gives the plugin |
 |---|---|
-| `compositor` | `shell.compositor.focusWorkspace(id)`: a dispatch through the core's one reply judge, in Lua or classic syntax as the session needs |
+| `compositor` | `shell.compositor.focusWorkspace(id)`: one dispatch through the core's reply judge, in Lua or classic syntax as the session needs |
 
-Every plugin receives `shell.manifest` and `shell.widgets`, the bar-widget catalogue a bar uses to build its sections. A capability lands with its interface, its core provider and one consuming plugin in the same PR.
+A capability lands with its name, its provider row and one consuming plugin in the same PR.
 
 ## Isolation
 
-- Static: a plugin file imports Qt and Quickshell modules other than `Quickshell.Wayland`, `qs.Commons`, `qs.Ui`, and files under its own directory. No `qs.Core`, no `qs.Hosts`, no other plugin, no `..`. `scripts/check-plugin-boundary.py` enforces it and `scripts/test-check-plugin-boundary.py` plants one violation per rule.
+- Static: a plugin's QML imports start with `QtQuick`, `QtQml`, `Qt.labs.`, `Quickshell`, `qs.Commons` or `qs.Ui`, never `Quickshell.Wayland` or `QtQuick.Window`; a quoted import stays inside the plugin directory; no window type is named. `scripts/check-plugin-boundary.py` enforces these three rules on `.qml` files and `scripts/test-check-plugin-boundary.py` plants one violation per rule. A plugin's `.js` files are not read.
 - The core names no plugin: the same check refuses a first-party id literal or a plugin directory import under `shell/` outside `shell/plugins/`. The default bar id lives in `config/shell.json`.
-- Runtime: a plugin receives a scoped `shell` object, not the host singletons.
-- Not a sandbox: a plugin runs in the shell process with the shell's file and process access, and a visual plugin shares the host's scene. Omarchy documents the same limit. Sensitive state never relies on the scope alone.
-- A process-per-plugin boundary is the alternative. It is not chosen until the runtime budgets are measured against it.
+- Runtime: a plugin receives a scoped `shell` object, never a host singleton. A bar's `shell` is the bar's own; a widget reaching `bar.shell` gets the bar's capabilities, not its own, so a widget uses its own `shell`.
+- Not a sandbox: a plugin runs in the shell process with the shell's file and process access, and a visual plugin shares the host's scene, [D010](../decisions/D010-facade-scope-not-sandbox.md).
 
 ## Plugin manager
 
-The manager is core: its mechanism is the `Plugins` singleton plus the `vgsh plugin` subcommand, and its user interface will be a first-party plugin of kind `menu`.
+The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interface does not exist yet.
 
-- `vgsh plugin list`, `enable <id>`, `disable <id>`, `validate <dir>`. Enable and disable go through the shell's IPC, which writes the user file; the shell watches the file and re-derives the enabled set. `disable` on the active bar answers `ok hidden=<ids>`.
-- Configuration is `config/shell.json` merged with `~/.config/vgs/shell.json`. A user key replaces the shipped key whole, except `plugins`, whose entries merge by id with the user entry winning, and `disabledPlugins`, which is the user list. The manager seeds the user `bar` key from the effective bar before its first edit so one change never drops the other widgets. `scripts/test-plugin-logic.js` pins each rule.
-- Enabled means: the active bar; a bar widget placed in a section; a plugin listed in `plugins`; a first-party plugin with a non-bar kind unless listed in `disabledPlugins`.
-- Not yet written: `add <git url>`, `update`, `remove`. Their rules stand: clone into staging, validate, refuse a duplicate id, land disabled, run no plugin code, ask for no privilege, fast-forward only with the diff shown.
+- `vgsh plugin list`, `enable <id>`, `disable <id>`, `validate <dir>`. Enable and disable go through the shell's IPC, which writes the user file; the shell watches the file and re-derives the enabled set.
+- Configuration is `config/shell.json` merged with `~/.config/vgs/shell.json`, [D006](../decisions/D006-two-configuration-layers.md). `scripts/test-plugin-logic.js` pins each merge rule and the seeding of the user `bar` key.
+- A user file that does not parse keeps the last good value and refuses every write until it parses again. A write the disk refuses restores the value in memory and refuses the next write with the error.
+- Not yet written: `add <git url>`, `update`, `remove`, [D007](../decisions/D007-install-runs-no-plugin-code.md).
 
 ## Omarchy compatibility
 
-An unmodified Omarchy Quattro plugin loads when it uses only what the core provides under the same names: the manifest schema; the kinds; `qs.Commons` with `Color`, `Style`, `Util`; `qs.Ui` with `BarWidget`; the widget properties `bar`, `moduleName`, `settings`; the bar properties `foreground`, `background`, `urgent`, `fontFamily`, `position`, `vertical`, `barSize`.
+An unmodified Omarchy Quattro plugin loads when it uses only what the core provides under Omarchy's names: the manifest schema; the kinds; `qs.Commons` with `Color`, `Style`, `Util`; `qs.Ui` with `BarWidget`; the widget properties `bar`, `moduleName`, `settings`; the bar properties `foreground`, `background`, `urgent`, `fontFamily`, `position`, `vertical`, `barSize`. No plugin written for the other shell has been loaded yet; the compatibility fixture row will pin one marketplace plugin at a recorded commit.
 
-Not yet provided: `Border` in `qs.Commons`, the rest of `qs.Ui`, the injected `omarchyPath`, `pluginRegistry` and `barWidgetRegistry` properties, the four proxied `omarchy.*` services, `bar.run`, tooltips and popouts, and the `summon`, `hide`, `toggle` and `call` IPC methods. Out of scope: plugins that shell out to `omarchy-*` commands, the `shell.toml` theme pipeline, and the inline `type: "command"` and `type: "qml"` bar modules. The compatibility PR pins one marketplace plugin as a fixture at a recorded commit and runs it in the nested sandbox.
+Not yet provided: `Border` in `qs.Commons`, the rest of `qs.Ui`, the injected `omarchyPath`, `pluginRegistry` and `barWidgetRegistry` properties, the four proxied `omarchy.*` services, `bar.run`, tooltips and popouts, and the `call` IPC method. Out of scope: plugins that shell out to `omarchy-*` commands, the `shell.toml` theme pipeline, and the inline `type: "command"` and `type: "qml"` bar modules.
 
 ## Budgets
 
-- `scripts/qml-smoke.sh` runs the shell with every bundled plugin in the nested sandbox and asserts the resident-size ceiling its header states, measured by the same script.
-- A service owns every watcher, poller and subprocess it starts, one owner per source.
+- `scripts/qml-smoke.sh` runs the shell with every bundled plugin and one fixture plugin in the nested sandbox, asserts the widgets each bar built and the capabilities each received, and asserts the resident-size ceiling its header states. That ceiling catches a startup allocation blow-up and nothing else.
+- A service owns every watcher, poller and subprocess it starts, one owner per source, inside its own tree.
 - A plugin holds no cache keyed by data other applications supply without a ceiling.
-- A latency row does not exist yet; `scripts/bench-shell-events.py` is the tool it will use.
+- No latency row exists yet; `scripts/bench-shell-events.py` is the tool it will use.
 
 ## Decisions
 
-- The manifest is Omarchy's, whole, plus one reserved key. Two formats would need a translator that drifts.
-- Kinds are the six Omarchy kinds and each is a surface. A seventh is a core change with its own host.
-- No dependencies between plugins. A kind whose host is absent is not shown; everything else in the plugin still runs.
-- The core is privileged and names no plugin. DeepSeek Harness makes even its main loop replaceable; a shell that scopes plugins needs a core they cannot swap out.
-- No install hooks, no privilege, land disabled: Omarchy's installer rules.
-- The inline command module is not core. A shell-out on an interval into a bar slot contradicts the per-plugin budget; it ships as a plugin if wanted.
-- Two configuration layers, not Omarchy's one. A shipped default that never reaches a customised user file is a regression channel.
-
-No decision record exists yet. The first structural PR records these with the decider skill.
+[D003](../decisions/D003-everything-is-a-plugin.md), [D004](../decisions/D004-omarchy-manifest-plus-one-key.md), [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D006](../decisions/D006-two-configuration-layers.md), [D007](../decisions/D007-install-runs-no-plugin-code.md), [D009](../decisions/D009-one-manifest-judge-under-node.md) and [D010](../decisions/D010-facade-scope-not-sandbox.md).

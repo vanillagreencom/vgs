@@ -16,8 +16,15 @@ var ENTRY_KEYS = {
     "service": "service"
 };
 
-// Capabilities the core can hand a plugin. A manifest naming another one is refused.
+// Capabilities the core can hand a plugin. A manifest naming another one is
+// refused. Plugins.qml maps each name to its provider.
 var CAPABILITIES = ["compositor"];
+
+var SECTIONS = ["left", "center", "right"];
+
+function hasOwn(obj, key) {
+    return obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
+}
 
 var ID_PATTERN = /^[a-z0-9]+(\.[a-z0-9-]+)+$/;
 
@@ -63,11 +70,16 @@ function validateManifest(raw, sourceDir) {
     var vgs = raw.vgs === undefined ? {} : raw.vgs;
     if (!isPlainObject(vgs))
         return { ok: false, error: "vgs must be an object" };
+    // REVISIT(D005): a plugin dependency would be declared here, if ever.
     if (vgs.requires !== undefined)
         return { ok: false, error: "plugins declare no dependencies; a kind whose host is absent is not shown" };
     var capabilities = vgs.capabilities === undefined ? [] : vgs.capabilities;
     if (!Array.isArray(capabilities))
         return { ok: false, error: "the vgs block's capabilities must be an array" };
+    if (raw.barWidget !== undefined && !isPlainObject(raw.barWidget))
+        return { ok: false, error: "barWidget must be an object" };
+    if (raw.barWidget && raw.barWidget.defaults !== undefined && !isPlainObject(raw.barWidget.defaults))
+        return { ok: false, error: "barWidget.defaults must be an object" };
     for (var c = 0; c < capabilities.length; c++) {
         if (CAPABILITIES.indexOf(capabilities[c]) === -1)
             return { ok: false, error: "unknown capability " + JSON.stringify(capabilities[c]) };
@@ -124,6 +136,32 @@ function activeBarId(config, defaultBarId) {
     return config && config.bar && typeof config.bar.id === "string" && config.bar.id.length > 0 ? config.bar.id : defaultBarId;
 }
 
+// The settings a plugin receives: its manifest's barWidget.defaults under
+// the entry the configuration holds for it. A bar widget's entry is its
+// layout entry (`layoutEntry`, passed by the bar); every other kind's entry
+// is the `plugins[]` row with its id. Keys the entry sets win.
+function settingsFor(config, manifest, layoutEntry) {
+    var out = {};
+    var defaults = manifest.barWidget && isPlainObject(manifest.barWidget.defaults) ? manifest.barWidget.defaults : {};
+    Object.keys(defaults).forEach(function (k) { out[k] = defaults[k]; });
+    var entry = layoutEntry;
+    if (!isPlainObject(entry)) {
+        entry = (Array.isArray(config.plugins) ? config.plugins : []).filter(function (e) {
+            return isPlainObject(e) && e.id === manifest.id;
+        })[0];
+    }
+    if (isPlainObject(entry))
+        Object.keys(entry).forEach(function (k) { if (k !== "id") out[k] = entry[k]; });
+    return JSON.parse(JSON.stringify(out));
+}
+
+// The bar's section entry lists as a string, so a host can tell a layout
+// change from a configuration write that left the layout alone.
+function layoutKey(config) {
+    var layout = config && config.bar && isPlainObject(config.bar.layout) ? config.bar.layout : {};
+    return JSON.stringify(SECTIONS.map(function (s) { return Array.isArray(layout[s]) ? layout[s] : []; }));
+}
+
 // Whether a plugin is enabled under this configuration.
 // - The active bar is enabled.
 // - A bar widget is enabled when placed in a bar section.
@@ -151,7 +189,7 @@ function isEnabled(config, manifest, defaultBarId) {
 // disabled. They stay enabled and keep every other kind they declare; the
 // manager reports them so the user knows what leaves the screen.
 function hiddenByDisabling(manifests, config, id, defaultBarId) {
-    var m = manifests[id];
+    var m = hasOwn(manifests, id) ? manifests[id] : undefined;
     if (!m || m.kinds.indexOf("bar") === -1 || activeBarId(config, defaultBarId) !== id)
         return [];
     return Object.keys(manifests).filter(function (other) {
@@ -163,25 +201,29 @@ function hiddenByDisabling(manifests, config, id, defaultBarId) {
 // The user-file change that enables or disables one plugin. Returns the new
 // user object; the caller writes it. A bar widget is placed in its
 // manifest's default section when enabled and removed from every section
-// when disabled. Because a user `bar` key replaces the shipped one whole,
-// a user file without one is seeded from the effective bar first, so the
-// edit keeps every other widget in place.
+// when disabled. Enabling a bar makes it the active bar. Because a user
+// `bar` key replaces the shipped one whole, a user file without one is
+// seeded from the effective bar first, so the edit keeps every other
+// widget in place.
 function withEnabled(user, manifest, enabled, effective) {
     var out = isPlainObject(user) ? JSON.parse(JSON.stringify(user)) : {};
     if (out.version === undefined) out.version = 1;
     var disabled = Array.isArray(out.disabledPlugins) ? out.disabledPlugins.slice() : [];
+    var touchesBar = manifest.kinds.indexOf("bar-widget") !== -1 || (enabled && manifest.kinds.indexOf("bar") !== -1);
+    if (touchesBar && !isPlainObject(out.bar))
+        out.bar = effective && isPlainObject(effective.bar) ? JSON.parse(JSON.stringify(effective.bar)) : {};
+    if (enabled && manifest.kinds.indexOf("bar") !== -1)
+        out.bar.id = manifest.id;
     if (manifest.kinds.indexOf("bar-widget") !== -1) {
-        if (!isPlainObject(out.bar))
-            out.bar = effective && isPlainObject(effective.bar) ? JSON.parse(JSON.stringify(effective.bar)) : {};
         if (!isPlainObject(out.bar.layout)) out.bar.layout = { left: [], center: [], right: [] };
-        ["left", "center", "right"].forEach(function (section) {
+        SECTIONS.forEach(function (section) {
             out.bar.layout[section] = (Array.isArray(out.bar.layout[section]) ? out.bar.layout[section] : []).filter(function (entry) {
                 return !(isPlainObject(entry) && entry.id === manifest.id);
             });
         });
         if (enabled) {
             var section = manifest.barWidget && typeof manifest.barWidget.defaultSection === "string" ? manifest.barWidget.defaultSection : "center";
-            if (["left", "center", "right"].indexOf(section) === -1) section = "center";
+            if (SECTIONS.indexOf(section) === -1) section = "center";
             out.bar.layout[section].push({ id: manifest.id });
         }
     }

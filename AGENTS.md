@@ -11,13 +11,11 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 ## Conventions
 
 - Hyprland is the only compositor. No compositor abstraction and no second compositor.
-- Everything outside the core is a plugin with its own directory and `manifest.json`. A plugin declares surfaces, never dependencies. A plugin reads `qs.Commons`, `qs.Ui`, its capabilities and its own files, never another plugin and never the core's internals.
-- The core names no plugin. The shipped `config/shell.json` names the default bar.
-- A change that adds a surface, a service or a plugin adds its validation row in the same PR: the nested smoke plus the budgets `docs/architecture/runtime.md` names.
+- Everything outside the core is a plugin with its own directory and `manifest.json`; `docs/architecture/plugins.md` is the contract and `scripts/check-plugin-boundary.py` the line between core and plugin.
+- A change that adds a surface, a service or a plugin adds its row to `scripts/qml-smoke.sh` in the same PR.
 - Never start a second shell against the live session. Validation runs in the nested sandbox only.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
-- `kendex refresh` and `kendex apply` are refused from a linked worktree; run them from a plain terminal in the checkout.
-- Rules local to a directory live in that directory's `AGENTS.md`.
+- Rules local to a directory live in that directory's `AGENTS.md`. Claude Code reads them through the `CLAUDE.md` shim beside each; Pi reads only the root-to-cwd chain at launch, so a Pi agent reads the nested file itself before working under a directory.
 
 ## Read next
 

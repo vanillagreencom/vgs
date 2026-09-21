@@ -20,30 +20,29 @@ ShellRoot {
     }
 
     Variants {
-        id: barHosts
         model: root.guarded ? Quickshell.screens : []
         BarHost {}
     }
 
-    // Widget ids each bar currently hosts, keyed by screen name. The smoke
-    // reads this to prove the bar and its widgets were built.
-    function barWidgets() {
-        const out = {};
-        for (const host of barHosts.instances)
-            out[host.screen.name] = host.instance === null ? [] : host.instance.widgetIds();
-        return out;
+    Loader {
+        active: root.guarded
+        sourceComponent: ServiceHost {}
     }
 
     IpcHandler {
         target: "shell"
 
         function ping(): string { return "ok"; }
+        function guarded(): bool { return root.guarded; }
         function listPlugins(): string { return Plugins.listJson(); }
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
+        function built(): string { return Plugins.builtJson(); }
+        function buildCount(): int { return Plugins.buildCount; }
         function reloadConfig(): string { Config.reload(); return "ok"; }
-        function rescanPlugins(): string { Plugins.rescan(); return "ok"; }
+        function rescanPlugins(): string { return Plugins.rescan(); }
         function setPluginEnabled(id: string, enabled: bool): string { return Plugins.setEnabled(id, enabled); }
-        function guarded(): bool { return root.guarded; }
-        function barWidgets(): string { return JSON.stringify(root.barWidgets()); }
+        function summon(kind: string, id: string, payloadJson: string): string { return Plugins.route("summon", kind, id, payloadJson); }
+        function hide(kind: string, id: string): string { return Plugins.route("hide", kind, id, ""); }
+        function toggle(kind: string, id: string, payloadJson: string): string { return Plugins.route("toggle", kind, id, payloadJson); }
     }
 }

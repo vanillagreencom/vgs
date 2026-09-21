@@ -1,23 +1,14 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// Workspace numbers. Reads the compositor's workspace list; focusing one
-// goes through the core's compositor capability, which judges the reply.
+// Workspace numbers. The id list comes from the shared Workspaces token, so
+// every screen reads one derivation. Focusing one goes through this
+// plugin's own compositor capability, which judges the reply.
 BarWidget {
     id: root
     moduleName: "vgs.workspaces"
-
-    readonly property var shell: bar ? bar.shell : null
-
-    function ids() {
-        const out = [];
-        for (const ws of Hyprland.workspaces.values)
-            if (ws.id > 0) out.push(ws.id);
-        return out;
-    }
 
     implicitWidth: row.implicitWidth
     implicitHeight: barSize
@@ -28,11 +19,11 @@ BarWidget {
         spacing: Style.spacing.sm
 
         Repeater {
-            model: root.ids()
+            model: Workspaces.ids
 
             Rectangle {
                 required property int modelData
-                readonly property bool focused: Hyprland.focusedWorkspace !== null && Hyprland.focusedWorkspace.id === modelData
+                readonly property bool focused: Workspaces.focusedId === modelData
 
                 Layout.preferredWidth: Style.space(5)
                 Layout.preferredHeight: root.barSize - Style.spacing.md

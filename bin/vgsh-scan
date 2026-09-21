@@ -16,7 +16,10 @@ import sys
 def main(argv):
     out = []
     for base in argv[1:]:
+        if not os.path.exists(base):
+            continue
         if not os.path.isdir(base):
+            out.append({"dir": base, "error": "not a directory"})
             continue
         try:
             names = sorted(os.listdir(base))

@@ -2,6 +2,5 @@
 
 CI and the review-gate writer. Both are kendex-shaped and the review gate reads the repository default branch.
 
-- CI runs the same checks `scripts/validate` lists, as named steps in one job. A step that runs a script the tree does not hold is a defect.
-- The `CI / ci-ok` context name stays stable: the merge queue and branch rules require it.
-- The review-gate writer refuses any branch but the repository default. Work on a non-default branch gets no gate.
+- CI runs every `scripts/validate` area but `qml`, which needs a Wayland session, plus the kendex guards, as named steps in one job. A step that runs a script the tree does not hold is a defect.
+- The review-gate writer reads its definition from the repository default branch, which is `main`, and gates pull requests against it.

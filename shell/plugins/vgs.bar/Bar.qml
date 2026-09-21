@@ -2,16 +2,15 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 
-// The bar: three sections of widgets read from barConfig.layout. Each
-// widget is a bar-widget plugin loaded through `shell.widgets`, given the
-// three properties every widget expects, and destroyed with its section
-// when the layout changes. The bar owns layout only; a widget owns its
-// content and its own state.
+// The bar: three sections of widgets read from barConfig.layout. The core
+// builds every widget through shell.widgets.create and hands it `bar`,
+// `moduleName`, `settings` and its own `shell`; this file owns layout
+// only. A section rebuilds when its own entry list changes, never on an
+// unrelated configuration write.
 Item {
     id: bar
 
-    // The host assigns these after creation; the sections build once both
-    // `shell` and `barConfig` are present and rebuild when the layout changes.
+    // The host assigns these after creation.
     property var shell: null
     property var barConfig: null
     property var screen: null
@@ -24,18 +23,12 @@ Item {
     readonly property bool vertical: false
     readonly property int barSize: Style.bar.sizeHorizontal
 
-    readonly property var layout: barConfig && barConfig.layout ? barConfig.layout : ({})
-
-    // Ids of the widgets built into the three sections, left to right.
-    function widgetIds() {
-        const ids = [];
-        for (const section of [left, center, right])
-            for (const w of section.instances) ids.push(w.moduleName);
-        return ids;
-    }
+    // Read straight from barConfig: a change handler runs before a dependent
+    // binding re-evaluates, so a `layout` binding would be stale here.
+    function layoutOf() { return barConfig && barConfig.layout ? barConfig.layout : {}; }
 
     function entries(section) {
-        const list = layout[section];
+        const list = layoutOf()[section];
         return Array.isArray(list) ? list.filter(e => e && typeof e.id === "string") : [];
     }
 
@@ -44,31 +37,30 @@ Item {
         required property string name
         spacing: Style.spacing.controlGap
         property var instances: []
+        property string builtKey: ""
 
         function rebuild() {
-            for (const item of instances) item.destroy();
-            instances = [];
             if (bar.shell === null || bar.barConfig === null) return;
+            const wanted = bar.entries(name);
+            const key = JSON.stringify(wanted);
+            if (key === builtKey) return;
+            for (const item of instances) bar.shell.widgets.destroy(item);
+            instances = [];
             const built = [];
-            for (const entry of bar.entries(name)) {
-                const url = bar.shell.widgets.entryUrl(entry.id);
-                if (url === "") { console.warn("bar: " + name + " names " + entry.id + ", which is not an enabled bar widget"); continue; }
-                const component = Qt.createComponent(url);
-                if (component.status !== Component.Ready) { console.error("bar: widget " + entry.id + " failed: " + component.errorString()); continue; }
-                const widget = component.createObject(section, { bar: bar, moduleName: entry.id, settings: entry });
-                if (widget === null) { console.error("bar: widget " + entry.id + " created no object"); continue; }
-                built.push(widget);
+            for (const entry of wanted) {
+                const widget = bar.shell.widgets.create(entry.id, section, bar, entry);
+                if (widget !== null) built.push(widget);
             }
             instances = built;
+            builtKey = key;
         }
 
-        Component.onCompleted: rebuild()
-        Component.onDestruction: { for (const item of instances) item.destroy(); }
+        Component.onDestruction: { for (const item of instances) if (bar.shell !== null) bar.shell.widgets.destroy(item); }
     }
 
     function rebuildAll() { left.rebuild(); center.rebuild(); right.rebuild(); }
     onShellChanged: rebuildAll()
-    onLayoutChanged: rebuildAll()
+    onBarConfigChanged: rebuildAll()
 
     Section { id: left; name: "left"; anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
     Section { id: center; name: "center"; anchors.centerIn: parent }

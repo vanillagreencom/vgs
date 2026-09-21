@@ -1,6 +1,6 @@
 # Runtime
 
-Covers: scripts/**, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml
+Covers: scripts/**, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, .github/workflows/**
 
 Requirements for the shell process, the runner and the measurement tools, and the Quickshell facts the implementation rests on.
 
@@ -14,7 +14,6 @@ Requirements for the shell process, the runner and the measurement tools, and th
 
 ## Memory
 
-- Quickshell links jemalloc. Resident size reports live data plus retained pages, falls in steps, and is not a leak measurement. The process high-water mark is the number a session reached.
 - Growth lives in anonymous memory. A QML object count or a JavaScript heap snapshot measures none of it.
 - A growth rate needs a window of at least 600 seconds. Shorter windows report sampling noise.
 - Wayland events arrive as libwayland closures placed on the event queue of the target object and freed only when that queue is dispatched. In the previous shell an undispatched queue grew at 120 MiB per hour and a QML reload released it. A surface or object the shell creates is dispatched or destroyed; a plugin creates no surface of its own.
@@ -41,6 +40,7 @@ Requirements for the shell process, the runner and the measurement tools, and th
 - A `Process` stdout parser is attached before the process starts; a null parser closes the channel for good.
 - `Qt.resolvedUrl()` gives asset URLs. `Quickshell.shellDir` gives the filesystem path a subprocess needs.
 - A JS object handed to `createObject` as an initial property crosses a QVariant conversion: functions vanish and nested lists stop being arrays. Assign such properties after creation.
+- A property change handler runs before a binding that depends on the same property re-evaluates. Read the source property inside the handler.
 - `Array.prototype.flatMap` is absent from this engine.
 
 ## Validation
@@ -49,4 +49,4 @@ Requirements for the shell process, the runner and the measurement tools, and th
 - The sandbox needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment and Hyprland, `qs`, `hyprctl`, `python3`, `node`, `flock` and `setsid` on the path. A missing one exits 77 and names it.
 - The sandbox runtime dir is a short name under the host's `XDG_RUNTIME_DIR`. A Unix socket path is limited to 107 bytes and Hyprland adds a 63-character signature under `hypr/`; a runtime dir under a long temporary path made Hyprland refuse IPC.
 - Every check that spawns a process passes its environment explicitly, from `env -i`.
-- A budget in a script or document was measured by that script on the machine and date the text names.
+- A budget in a script names the machine and date it was measured on.

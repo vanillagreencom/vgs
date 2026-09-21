@@ -3,10 +3,9 @@ import QtQuick.Layouts
 import qs.Commons
 
 // __NAME__: a replacement bar. The host assigns `shell`, `barConfig` and
-// `screen` after creation. The bar owns layout only: it builds each widget
-// from shell.widgets.entryUrl(id) with `bar`, `moduleName` and `settings`,
-// and destroys a section's widgets before rebuilding it. widgetIds() is
-// what the smoke reads to prove the widgets were built.
+// `screen` after creation. The core builds every widget through
+// shell.widgets.create and hands it its own properties; this file owns
+// layout only and rebuilds when its entry list changes.
 Item {
     id: bar
 
@@ -22,18 +21,14 @@ Item {
     readonly property bool vertical: false
     readonly property int barSize: Style.bar.sizeHorizontal
 
-    readonly property var layout: barConfig && barConfig.layout ? barConfig.layout : ({})
-
-    function widgetIds() {
-        const ids = [];
-        for (const w of row.instances) ids.push(w.moduleName);
-        return ids;
-    }
+    // Read straight from barConfig: a change handler runs before a dependent
+    // binding re-evaluates, so a `layout` binding would be stale here.
+    function layoutOf() { return barConfig && barConfig.layout ? barConfig.layout : {}; }
 
     function entries() {
         const out = [];
         for (const section of ["left", "center", "right"])
-            for (const e of (Array.isArray(layout[section]) ? layout[section] : []))
+            for (const e of (Array.isArray(layoutOf()[section]) ? layoutOf()[section] : []))
                 if (e && typeof e.id === "string") out.push(e);
         return out;
     }
@@ -43,26 +38,27 @@ Item {
         anchors.centerIn: parent
         spacing: Style.spacing.controlGap
         property var instances: []
+        property string builtKey: ""
 
         function rebuild() {
-            for (const item of instances) item.destroy();
-            instances = [];
             if (bar.shell === null || bar.barConfig === null) return;
+            const wanted = bar.entries();
+            const key = JSON.stringify(wanted);
+            if (key === builtKey) return;
+            for (const item of instances) bar.shell.widgets.destroy(item);
+            instances = [];
             const built = [];
-            for (const entry of bar.entries()) {
-                const url = bar.shell.widgets.entryUrl(entry.id);
-                if (url === "") continue;
-                const component = Qt.createComponent(url);
-                if (component.status !== Component.Ready) { console.error("__ID__: widget " + entry.id + " failed: " + component.errorString()); continue; }
-                const widget = component.createObject(row, { bar: bar, moduleName: entry.id, settings: entry });
+            for (const entry of wanted) {
+                const widget = bar.shell.widgets.create(entry.id, row, bar, entry);
                 if (widget !== null) built.push(widget);
             }
             instances = built;
+            builtKey = key;
         }
 
-        Component.onDestruction: { for (const item of instances) item.destroy(); }
+        Component.onDestruction: { for (const item of instances) if (bar.shell !== null) bar.shell.widgets.destroy(item); }
     }
 
     onShellChanged: row.rebuild()
-    onLayoutChanged: row.rebuild()
+    onBarConfigChanged: row.rebuild()
 }

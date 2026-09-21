@@ -4,26 +4,50 @@ What a plugin receives and may call. The core owns every table here; a value not
 
 ## Kinds
 
-| Kind | Entry point key | Base | Host | Shown when |
+| Kind | Entry point key | Base | Host today | Built when |
 |---|---|---|---|---|
 | `bar-widget` | `barWidget` | `BarWidget` from `qs.Ui` | the active bar's sections | placed in `bar.layout.<section>` and a bar is active |
 | `bar` | `bar` | `Item` | the bar host, one per screen | it is `bar.id` in the configuration |
-| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()` | the panel host | summoned |
-| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host | summoned |
-| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()` | the menu host | summoned |
-| `service` | `service` | `Item` | none | enabled |
+| `service` | `service` | `Item` | the service host | enabled |
+| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()` | none | never, until the panel host lands |
+| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | none | never, until the overlay host lands |
+| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()` | none | never, until the menu host lands |
 
-Hosts present today: bar. Panel, overlay and menu hosts land with the first plugin of each kind; until then those kinds validate but are not shown.
+## Properties every instance receives
 
-## Properties a bar widget receives
+| Property | Type | Assigned by | Meaning |
+|---|---|---|---|
+| `shell` | object | the core, after creation | this plugin's scoped object, table below |
+
+Declare it as `property var shell: null`; the templates do.
+
+## Properties a bar widget also receives
 
 | Property | Type | Meaning |
 |---|---|---|
 | `bar` | object | the bar API below |
 | `moduleName` | string | the plugin id; the template sets it |
-| `settings` | object | the widget's inline entry from `bar.layout`, for example `{ "id": "vgs.clock", "format": "HH:mm" }` |
+| `settings` | object | `barWidget.defaults` under the widget's layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }` |
 
 `BarWidget` adds `vertical`, `barSize` and `setting(name, fallback)`.
+
+## Properties a bar also receives
+
+| Property | Type | Meaning |
+|---|---|---|
+| `barConfig` | object | the effective `bar` configuration; reassigned when the layout changes |
+| `screen` | ShellScreen | the screen this bar draws on |
+
+## The shell object
+
+| Member | Present | Value |
+|---|---|---|
+| `shell.manifest` | always | this plugin's validated manifest |
+| `shell.settings` | always | `barWidget.defaults` under the plugin's configuration entry |
+| `shell.widgets.manifestFor(id)` | always | a plugin's manifest, or undefined |
+| `shell.widgets.create(id, parent, bar, entry)` | always | builds an enabled bar widget under `parent` with its own `shell`, or null after logging |
+| `shell.widgets.destroy(instance)` | always | destroys a widget `create` built |
+| `shell.compositor.focusWorkspace(id)` | capability `compositor` | one dispatch through the core's reply judge |
 
 ## The bar API
 
@@ -36,20 +60,8 @@ Hosts present today: bar. Panel, overlay and menu hosts land with the first plug
 | `position` | string | `"top"` |
 | `vertical` | bool | `false` |
 | `barSize` | int | `Style.bar.sizeHorizontal` |
-| `shell` | object | the bar plugin's scoped shell object |
 
-## Properties a bar receives
-
-`shell`, `barConfig` (the effective `bar` configuration object) and `screen`. The bar builds each widget with `shell.widgets.entryUrl(id)` and hands it the three widget properties. `widgetIds()` returns the built ids for the smoke.
-
-## The shell object
-
-| Member | Present | Value |
-|---|---|---|
-| `shell.manifest` | always | this plugin's validated manifest |
-| `shell.widgets.entryUrl(id)` | always | the `file://` entry point of an enabled bar widget, or `""` |
-| `shell.widgets.manifestFor(id)` | always | a plugin's manifest, or undefined |
-| `shell.compositor.focusWorkspace(id)` | with capability `compositor` | one dispatch through the core's reply judge |
+A widget reads its capabilities from its own `shell`, never from the bar.
 
 ## Capabilities
 
@@ -57,7 +69,20 @@ Hosts present today: bar. Panel, overlay and menu hosts land with the first plug
 |---|---|
 | `compositor` | `shell.compositor` |
 
-## Theme tokens in `qs.Commons`
+## Allowed imports
+
+| Prefix | Refused inside it |
+|---|---|
+| `QtQuick` | `QtQuick.Window` |
+| `QtQml` | |
+| `Qt.labs.` | |
+| `Quickshell` | `Quickshell.Wayland` |
+| `qs.Commons`, `qs.Ui` | |
+| a quoted path | one that leaves the plugin directory |
+
+Names refused anywhere in a plugin's QML: `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock`, `WlSessionLockSurface`, `WlrLayershell`, `Window`, `ApplicationWindow`.
+
+## Tokens in `qs.Commons`
 
 | Token | Type |
 |---|---|
@@ -68,6 +93,7 @@ Hosts present today: bar. Panel, overlay and menu hosts land with the first plug
 | `Style.spacing.xs`, `sm`, `md`, `lg`, `xl`, `controlGap`, `controlPaddingX` | int |
 | `Style.font.family`, `Style.font.size`, `Style.font.small` | string, int, int |
 | `Style.bar.sizeHorizontal`, `Style.bar.sizeVertical` | int |
+| `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |
 | `Util.alpha(color, opacity)`, `Util.fileUrl(path)`, `Util.shellQuote(value)` | function |
 
 ## IPC
@@ -78,17 +104,19 @@ Hosts present today: bar. Panel, overlay and menu hosts land with the first plug
 |---|---|
 | `ping` | `ok` |
 | `guarded` | `true` when started by the runner |
-| `listPlugins` | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]` |
+| `listPlugins` | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned` |
 | `listShellConfig` | the effective configuration as JSON |
-| `barWidgets` | JSON: screen name to the widget ids its bar built |
-| `setPluginEnabled <id> <true|false>` | `ok`, `ok hidden=<ids>` or `unknown: <id>` |
+| `built` | JSON: host key to the instances the core built there, each `id`, `kind`, `capabilities` |
+| `buildCount` | instances built since start |
+| `setPluginEnabled <id> <true|false>` | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | `ok` |
-| `rescanPlugins` | `ok`; re-reads manifests and rebuilds every host |
+| `rescanPlugins` | `ok`, or `busy` while a scan runs and one more is queued |
+| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | `refused: no-host=<kind>` until that kind has a host |
 
 ## Manifest `vgs` block
 
 | Key | Value |
 |---|---|
 | `capabilities` | array of capability names from the table above |
-| `budgets` | object; a ceiling a validation row asserts, with the measurement that produced it named in the PR |
+| `budgets` | object, reserved for a validation row's ceilings |
 | `requires` | refused |

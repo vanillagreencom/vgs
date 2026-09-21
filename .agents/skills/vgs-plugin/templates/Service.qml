@@ -8,6 +8,8 @@ import Quickshell.Io
 Item {
     id: root
 
+    // The core assigns the plugin's scoped shell object after creation.
+    property var shell: null
     property string lastLine: ""
 
     Process {

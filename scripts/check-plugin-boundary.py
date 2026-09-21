@@ -2,9 +2,10 @@
 """Enforce the plugin boundary docs/architecture/plugins.md states.
 
 Plugin rules, one per QML file under a plugin directory:
-  import-module      a module import is one of the allowed namespaces
+  import-module      a module import starts with QtQuick, QtQml, Qt.labs., qs.Commons,
+                     qs.Ui or Quickshell, never Quickshell.Wayland or QtQuick.Window
   import-path        a quoted import stays inside the plugin directory
-  surface-type       no window or layer-shell type is named
+  surface-type       no window or layer-shell type is named outside a // comment
 Core rules, one per QML or JS file under shell/ outside shell/plugins/:
   core-plugin-name   no first-party plugin id literal (the `vgs.` prefix alone is fine)
   core-plugin-import no import of a plugin directory
@@ -20,45 +21,43 @@ import os
 import re
 import sys
 
-ALLOWED_MODULES = (
-    "QtQuick", "QtQml", "Qt.labs.",
-    "Quickshell", "Quickshell.Io", "Quickshell.Hyprland", "Quickshell.Widgets",
-    "Quickshell.Services.", "Quickshell.Bluetooth", "Quickshell.Networking",
-    "qs.Commons", "qs.Ui",
-)
-SURFACE_TYPES = ("PanelWindow", "FloatingWindow", "PopupWindow", "WlSessionLock", "WlrLayershell", "WlSessionLockSurface")
+ALLOWED_PREFIXES = ("QtQuick", "QtQml", "Qt.labs.", "Quickshell", "qs.Commons", "qs.Ui")
+REFUSED_MODULES = ("Quickshell.Wayland", "QtQuick.Window")
+SURFACE_TYPES = ("PanelWindow", "FloatingWindow", "PopupWindow", "WlSessionLock", "WlSessionLockSurface", "WlrLayershell", "Window", "ApplicationWindow")
 MODULE_IMPORT = re.compile(r"^\s*import\s+([A-Za-z][\w.]*)")
 PATH_IMPORT = re.compile(r"^\s*import\s+\"([^\"]+)\"")
-SURFACE = re.compile(r"\b(" + "|".join(SURFACE_TYPES) + r")\b")
-PLUGIN_ID_LITERAL = re.compile(r"[\"']vgs\.[a-z]")
+SURFACE = re.compile(r"\b(" + "|".join(SURFACE_TYPES) + r")\s*\{")
+PLUGIN_ID_LITERAL = re.compile(r"[\"'`]vgs\.[a-z]")
 PLUGIN_DIR_IMPORT = re.compile(r"^\s*import\s+\"[^\"]*plugins/")
 
 
 def module_allowed(name):
-    for allowed in ALLOWED_MODULES:
+    for refused in REFUSED_MODULES:
+        if name == refused or name.startswith(refused + "."):
+            return False
+    for allowed in ALLOWED_PREFIXES:
         if allowed.endswith("."):
             if name.startswith(allowed):
                 return True
         elif name == allowed or name.startswith(allowed + "."):
-            # Quickshell.Wayland is the surface module and is never allowed.
-            return not name.startswith("Quickshell.Wayland")
+            return True
     return False
 
 
-def qml_files(root):
+def source_files(root, suffixes):
     for dirpath, _dirs, files in os.walk(root):
         for name in sorted(files):
-            if name.endswith((".qml", ".js")):
+            if name.endswith(suffixes):
                 yield os.path.join(dirpath, name)
 
 
 def check_plugin(plugin_dir, findings):
     real_root = os.path.realpath(plugin_dir)
-    for path in qml_files(plugin_dir):
-        if not path.endswith(".qml"):
-            continue
+    for path in source_files(plugin_dir, (".qml",)):
         with open(path, encoding="utf-8") as fh:
             for number, line in enumerate(fh, 1):
+                if line.lstrip().startswith("//"):
+                    continue
                 m = MODULE_IMPORT.match(line)
                 if m and not module_allowed(m.group(1)):
                     findings.append(f"import-module {path}:{number} {m.group(1)}")
@@ -68,17 +67,19 @@ def check_plugin(plugin_dir, findings):
                     if not target.startswith(real_root + os.sep) and target != real_root:
                         findings.append(f"import-path {path}:{number} {m.group(1)}")
                 m = SURFACE.search(line)
-                if m and not line.lstrip().startswith("//"):
+                if m:
                     findings.append(f"surface-type {path}:{number} {m.group(1)}")
 
 
 def check_core(shell_dir, findings):
     plugins_root = os.path.join(shell_dir, "plugins")
-    for path in qml_files(shell_dir):
+    for path in source_files(shell_dir, (".qml", ".js")):
         if path.startswith(plugins_root + os.sep):
             continue
         with open(path, encoding="utf-8") as fh:
             for number, line in enumerate(fh, 1):
+                if line.lstrip().startswith("//"):
+                    continue
                 if PLUGIN_ID_LITERAL.search(line):
                     findings.append(f"core-plugin-name {path}:{number} {line.strip()}")
                 if PLUGIN_DIR_IMPORT.match(line):

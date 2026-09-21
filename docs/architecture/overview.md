@@ -8,7 +8,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 
 ## Vocabulary
 
-- Core: everything under `shell/` except `shell/plugins/`, plus `bin/` and `config/`. The runner, the instance lock, the Hyprland connection and its reply judge, the theme tokens, the hosts, the plugin registry, the plugin manager and the IPC surface.
+- Core: the runner, the instance lock, the Hyprland connection and its reply judge, the theme tokens, the hosts, the plugin registry, the plugin manager and the IPC surface. `scripts/check-plugin-boundary.py` draws the line.
 - Plugin: a directory with `manifest.json` at its root, in the Omarchy Quattro schema, plus one QML entry point per kind.
 - Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`. A kind is a surface the core can host. The core owns the list; a new kind is a core change.
 - Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own.
@@ -18,12 +18,12 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and will install, update and remove them. Its user interface is a plugin; its mechanism is not.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
-- Validation row: an entry in `scripts/validate`. A plugin without a row does not merge.
+- Validation row: an assertion in `scripts/qml-smoke.sh` that a plugin is built and shown. A plugin without one does not merge.
 
 ## Boundaries
 
 - Core: depends on Quickshell, Qt, the Hyprland socket and `config/shell.json`. Contains no plugin code and no plugin name. Enforced by `scripts/check-plugin-boundary.py`.
-- Plugin: depends on `qs.Commons`, `qs.Ui`, the Qt and Quickshell modules other than `Quickshell.Wayland`, the capabilities its manifest names, and its own directory. Enforced by the same check.
+- Plugin: depends on the import set [plugins.md § Isolation](plugins.md#isolation) lists, the capabilities its manifest names, and its own directory. Enforced by the same check.
 - Plugin manager: depends on the core and git. Runs no code from a plugin. Enforced by the manager's rows in `scripts/validate` once install exists.
 - Validation: depends on the nested compositor sandbox, built from the repository alone, with its runtime dir beside the host's. Never touches the live session.
 - The plugin boundary is a static import check plus a scoped API object. It is not a process sandbox. Read [plugins.md § Isolation](plugins.md#isolation) before relying on it.
@@ -31,25 +31,25 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 ## Invariants
 
 1. One shell process per session. The runner holds the lock and the shell draws only when its process is the runner's. Enforced by `scripts/qml-smoke.sh`, which starts a bare `qs` beside the runner and asserts it refuses.
-2. Every Wayland object the shell creates is dispatched or destroyed. Enforced by the resident-size ceiling in `scripts/qml-smoke.sh`.
-3. A plugin unloads cleanly: after unload no widget, surface or object of it remains. Enforced by the disable rows in `scripts/qml-smoke.sh`.
-4. The plugin manager runs no plugin code and asks for no privilege. Enforced by its rows once install exists.
-5. An unmodified Omarchy Quattro plugin that uses only what [plugins.md](plugins.md) lists as provided loads without edits. Enforced by the compatibility fixture row once it exists.
-6. Every figure in a document was measured in the PR that wrote it, and the document names how.
+2. Every Wayland object the shell creates is dispatched or destroyed. No check enforces it yet; the memory sampler port will.
+3. A disabled plugin leaves the core's build records and the bar. Enforced by the disable rows in `scripts/qml-smoke.sh`. That no object of it remains is not checked.
+4. A plugin receives only the capabilities its own manifest names. Enforced by the fixture rows in `scripts/qml-smoke.sh`.
+5. The plugin manager runs no plugin code and asks for no privilege. Enforced by its rows once install exists.
+6. An unmodified Omarchy Quattro plugin that uses only what [plugins.md](plugins.md) lists as provided loads without edits. Enforced by the compatibility fixture row once it exists.
+7. A figure in a document names the tool and the run that produced it. Enforced by review; `docs/architecture/memory.md` names its provenance in its first paragraph.
 
 ## Decisions
 
-- Hyprland only. Niri support in the previous shell doubled the compositor code paths and the review surface.
-- Quickshell 0.3.1 is the baseline. Every recipe with a version slot requires at least it.
-- Everything outside the core is a plugin, and the plugin manager is core.
-- The plugin manifest is the Omarchy Quattro `manifest.json`, schema version 1, with v2 additions under one reserved key, so Omarchy plugins load unchanged and first-party plugins publish to the Omarchy marketplace unchanged.
-- The six Omarchy kinds are the surface list, and plugins declare no dependencies. [plugins.md](plugins.md) holds the rest.
-- The core is privileged and plugins cannot replace it.
-- Install runs no plugin code and lands the plugin disabled.
-- Each change carries its own validation row.
-- The allocator is Quickshell's jemalloc. The shell sets no allocator tuning.
-
-No decision record exists yet. The first structural PR writes them with the decider skill.
+- [D001](../decisions/D001-hyprland-only.md): Hyprland only.
+- [D002](../decisions/D002-quickshell-0-3-1-baseline.md): Quickshell 0.3.1 is the baseline.
+- [D003](../decisions/D003-everything-is-a-plugin.md): everything outside the core is a plugin; the manager is core; the core names no plugin.
+- [D004](../decisions/D004-omarchy-manifest-plus-one-key.md): the manifest is Omarchy Quattro's plus one reserved key.
+- [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md): kinds are surfaces; plugins declare no dependencies.
+- [D006](../decisions/D006-two-configuration-layers.md): two configuration layers merged by entry id.
+- [D007](../decisions/D007-install-runs-no-plugin-code.md): install runs no plugin code and lands the plugin disabled.
+- [D008](../decisions/D008-validation-row-per-change.md): every change carries its validation row; the nested sandbox is the only shell start.
+- [D009](../decisions/D009-one-manifest-judge-under-node.md): one manifest judge shared by shell and scripts.
+- [D010](../decisions/D010-facade-scope-not-sandbox.md): a static check plus a scoped API object, not a process sandbox.
 
 ## Topics
 

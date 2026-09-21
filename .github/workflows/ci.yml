@@ -67,5 +67,7 @@ jobs:
         run: scripts/validate manifests
       - name: Plugin boundary
         run: scripts/validate boundary
+      - name: Runner CLI
+        run: scripts/validate cli
       - name: Measurement tools
         run: scripts/validate tools

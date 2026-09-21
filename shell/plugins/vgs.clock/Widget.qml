@@ -14,9 +14,13 @@ BarWidget {
     implicitWidth: label.implicitWidth
     implicitHeight: barSize
 
+    // Seconds tick only when a seconds field is shown; a quoted literal
+    // such as 'secs' is not a field.
+    readonly property bool showsSeconds: root.format.replace(/'[^']*'/g, "").indexOf("s") !== -1
+
     SystemClock {
         id: clock
-        precision: root.format.indexOf("s") !== -1 ? SystemClock.Seconds : SystemClock.Minutes
+        precision: root.showsSeconds ? SystemClock.Seconds : SystemClock.Minutes
     }
 
     Text {

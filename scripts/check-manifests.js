@@ -43,10 +43,12 @@ for (const dir of dirs) {
     if (!r.ok) { console.log("refused  " + dir + ": " + r.error); refused += 1; continue; }
     if (seen[r.manifest.id]) { console.log("refused  " + dir + ": id " + r.manifest.id + " already used by " + seen[r.manifest.id]); refused += 1; continue; }
     seen[r.manifest.id] = dir;
+    let missing = false;
     for (const kind of r.manifest.kinds) {
         const entry = path.join(dir, r.manifest.entryPoints[ctx.ENTRY_KEYS[kind]]);
-        if (!fs.existsSync(entry)) { console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry); refused += 1; }
+        if (!fs.existsSync(entry)) { console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry); refused += 1; missing = true; }
     }
+    if (missing) continue;
     console.log("ok       " + r.manifest.id + " " + r.manifest.version + " kinds=" + r.manifest.kinds.join(","));
 }
 if (refused > 0) { console.log("check-manifests: refused=" + refused); process.exit(1); }

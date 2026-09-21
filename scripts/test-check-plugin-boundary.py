@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""One planted violation per rule of check-plugin-boundary.py, plus one clean
-fixture. Each row builds a throwaway shell tree, runs the check on it and
-asserts the rule key and the exit status."""
+"""One planted violation per rule of check-plugin-boundary.py, one clean
+fixture, and one row per exemption. Each row builds a throwaway shell tree,
+runs the check on it and asserts the rule key and the exit status."""
 import os
 import subprocess
 import sys
@@ -9,7 +9,7 @@ import tempfile
 
 CHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-plugin-boundary.py")
 
-CLEAN_WIDGET = 'import QtQuick\nimport Quickshell.Hyprland\nimport qs.Commons\nimport qs.Ui\nimport "./lib"\nBarWidget { }\n'
+CLEAN_WIDGET = 'import QtQuick\nimport QtQuick.Layouts\nimport Quickshell.Hyprland\nimport qs.Commons\nimport qs.Ui\nimport "./lib"\nBarWidget { }\n'
 CLEAN_CORE = 'import QtQuick\nimport Quickshell\nimport qs.Core\nQtObject { property string prefix: "vgs." }\n'
 
 # rows: name, plugin file text, core file text, expected rule key or None
@@ -17,10 +17,19 @@ ROWS = [
     ("clean tree", CLEAN_WIDGET, CLEAN_CORE, None),
     ("plugin imports a core module", CLEAN_WIDGET.replace("import qs.Ui", "import qs.Core"), CLEAN_CORE, "import-module"),
     ("plugin imports the wayland module", CLEAN_WIDGET.replace("import qs.Ui", "import Quickshell.Wayland"), CLEAN_CORE, "import-module"),
+    ("plugin imports the Qt window module", CLEAN_WIDGET.replace("import qs.Ui", "import QtQuick.Window"), CLEAN_CORE, "import-module"),
+    ("plugin imports a Qt module outside the prefixes", CLEAN_WIDGET.replace("import qs.Ui", "import QtMultimedia"), CLEAN_CORE, "import-module"),
     ("plugin imports another plugin", CLEAN_WIDGET.replace("import qs.Ui", "import qs.plugins.other"), CLEAN_CORE, "import-module"),
     ("plugin path import escapes its directory", CLEAN_WIDGET.replace('import "./lib"', 'import "../other"'), CLEAN_CORE, "import-path"),
-    ("plugin names a window type", CLEAN_WIDGET.replace("BarWidget { }", "PanelWindow { }"), CLEAN_CORE, "surface-type"),
+    ("plugin names a Quickshell window type", CLEAN_WIDGET.replace("BarWidget { }", "PanelWindow { }"), CLEAN_CORE, "surface-type"),
+    ("plugin names a Qt window type", CLEAN_WIDGET.replace("BarWidget { }", "Window { }"), CLEAN_CORE, "surface-type"),
+    ("plugin names an application window", CLEAN_WIDGET.replace("BarWidget { }", "ApplicationWindow { }"), CLEAN_CORE, "surface-type"),
+    ("plugin names a lock surface", CLEAN_WIDGET.replace("BarWidget { }", "WlSessionLockSurface { }"), CLEAN_CORE, "surface-type"),
+    ("a window type in a comment is not a finding", CLEAN_WIDGET + "// PanelWindow { } is core-owned\n", CLEAN_CORE, None),
+    ("a window type as a word is not a finding", CLEAN_WIDGET.replace("BarWidget { }", 'BarWidget { property string note: "Window" }'), CLEAN_CORE, None),
     ("core names a plugin id", CLEAN_CORE.replace('"vgs."', '"vgs.bar"'), None, "core-plugin-name"),
+    ("core names a plugin id in a template literal", CLEAN_CORE.replace('"vgs."', '`vgs.bar`'), None, "core-plugin-name"),
+    ("core names a plugin id in a comment is not a finding", CLEAN_CORE + '// the "vgs.clock" widget\n', None, None),
     ("core imports a plugin directory", CLEAN_CORE.replace("import qs.Core", 'import "../plugins/vgs.bar"'), None, "core-plugin-import"),
 ]
 
@@ -49,10 +58,11 @@ def run_row(name, widget, core, want):
 
 def main():
     results = [run_row(*row) for row in ROWS]
-    unreadable = subprocess.run([sys.executable, CHECK, "--shell", "/nonexistent/shell"], capture_output=True, text=True, check=False)
-    good = unreadable.returncode == 2
-    print(("  ok    " if good else "  FAIL  ") + "unreadable shell dir exits 2")
-    results.append(good)
+    for label, args in (("unreadable shell dir exits 2", ["--shell", "/nonexistent/shell"]), ("unreadable plugin dir exits 2", ["/nonexistent/plugin"])):
+        proc = subprocess.run([sys.executable, CHECK] + args, capture_output=True, text=True, check=False)
+        good = proc.returncode == 2
+        print(("  ok    " if good else "  FAIL  ") + label)
+        results.append(good)
     if all(results):
         print("test-check-plugin-boundary: ok")
         return 0

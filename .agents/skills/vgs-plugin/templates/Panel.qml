@@ -7,6 +7,8 @@ import qs.Commons
 Item {
     id: root
 
+    // The core assigns the plugin's scoped shell object after creation.
+    property var shell: null
     property var payload: ({})
     property bool shown: false
 

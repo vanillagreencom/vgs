@@ -5,7 +5,7 @@
 #   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc, config preselected)
 #   vgsh log <qs log args...>      read the running shell's log
 #   vgsh plugin list               every discovered plugin with its enabled state
-#   vgsh plugin enable <id>        enable one plugin
+#   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
 #
@@ -20,19 +20,20 @@ shell_dir="$root/shell"
 rt_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 
-usage() { sed -n '2,15p' "$self" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '2,14p' "$self" | sed 's/^# \{0,1\}//' >&2; }
 
+# One IPC call. qs prints its own log lines on stdout ahead of the reply;
+# the reply is the last stdout line. stderr passes through untouched.
 ipc() {
   local out status
   set +e
-  out="$(qs ipc -p "$shell_dir" call "$@" 2>&1)"
+  out="$(qs ipc -p "$shell_dir" call "$@")"
   status=$?
   set -e
   if [[ $status -ne 0 ]]; then
     printf 'vgsh: refused: shell=not-running\n%s\n' "$out" >&2
     exit 69
   fi
-  # qs prints its own log lines ahead of the reply; the reply is the last line.
   printf '%s\n' "${out##*$'\n'}"
 }
 
@@ -59,12 +60,14 @@ case "$cmd" in
   plugin)
     sub="${1:-}"
     [[ $# -gt 0 ]] && shift
-    args=("$@")
     case "$sub" in
       list)
-        ipc shell listPlugins | python3 -c '
+        # Captured first so the not-running exit code is the command's, not
+        # the formatter's.
+        reply="$(ipc shell listPlugins)"
+        python3 - "$reply" <<'PY'
 import json, sys
-data = json.load(sys.stdin)
+data = json.loads(sys.argv[1])
 for p in data["plugins"]:
     state = "enabled" if p["enabled"] else "disabled"
     print(f"{p['id']:<28} {p['version']:<8} {state:<9} kinds={','.join(p['kinds'])}")
@@ -72,10 +75,12 @@ for e in data["errors"]:
     print(f"error   {e['dir']}: {e['error']}")
 for c in data["collisions"]:
     print(f"hidden  {c}")
-'
+if data.get("scanError"):
+    print(f"scan-error {data['scanError']}")
+PY
         ;;
       enable|disable)
-        id="${args[0]:-}"
+        id="${1:-}"
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
         enabled=true; [[ $sub == disable ]] && enabled=false
         reply="$(ipc shell setPluginEnabled "$id" "$enabled")"
@@ -86,7 +91,7 @@ for c in data["collisions"]:
         esac
         ;;
       validate)
-        dir="${args[0]:-}"
+        dir="${1:-}"
         if [[ -z $dir ]]; then printf 'vgsh: refused: dir=missing\n' >&2; usage; exit 2; fi
         exec node "$root/scripts/check-manifests.js" -- "$dir"
         ;;
