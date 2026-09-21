@@ -70,7 +70,7 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 | `app` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
-| `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
+| `releases` | Cutting a release, versioning, and publishing to the distribution channels. |
 
 Priority rule: `ci-infra` implies Urgent unless the issue deliberately records why it is lower. Everything VGS uses to decide whether a change is safe to merge lives in that category, so a defect there invalidates the evidence behind every other issue's "verified" claim.
 
@@ -94,7 +94,7 @@ Priority rule: `ci-infra` implies Urgent unless the issue deliberately records w
 | `needs-research` | Blocked on unresolved research. Prefer a blocking relation to a research issue when one exists. |
 | `needs-review` | Requires an explicit review gate before execution/merge/close. |
 | `needs-safety-audit` | Concurrency, lock-free, memory/thread safety, or safety-critical validation required. |
-| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. For the shell's toplevel view rebuild after a Hyprland workspace event, the benchmark row in `scripts/validate qml` satisfies it (docs/architecture/shell.md § Invariants); any other path needs its own measurement. |
+| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. |
 | `critical-path` | Blocks or enables major project progress; align priority accordingly. |
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |

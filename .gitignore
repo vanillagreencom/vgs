@@ -85,6 +85,5 @@ assets/
 /trees/
 # kendex:local-state begin
 /tmp/
-/.kendex-lock.json
 /.cache/
 # kendex:local-state end
