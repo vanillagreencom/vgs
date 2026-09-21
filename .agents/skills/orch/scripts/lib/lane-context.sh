@@ -52,6 +52,15 @@
 # never read as an empty one.
 set -euo pipefail
 
+# A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
+# which account such a path belongs to. Sourced here rather than left to the
+# caller: the turn-end hook that asks the account question loads this file
+# alone. The sibling is named by expansion and not by `dirname` and `pwd`,
+# because this library is also loaded under a PATH holding jq, awk and cat and
+# nothing else, where an external would leave it half loaded.
+# shellcheck source=lane-home.sh
+source "${BASH_SOURCE[0]%/*}/lane-home.sh"
+
 # The foreground processes that ARE a harness, matched whole. A denylist of
 # shells cannot establish that one is running: after a harness exits, a pane
 # running less, vim or git log still holds the old footer and passes any
@@ -150,14 +159,24 @@ lane_context_shape() {
 # only where exactly one is set, so no session is joined to an account that was
 # never established; empty is the honest answer, and its caller reports an
 # account it could not name rather than reading it as room.
+#
+# What CODEX_HOME holds is not always an account. A codex launch that had to
+# make its own folder-trust record runs under a private home built under one,
+# so lib/lane-home.sh turns such a path back into the account it was built
+# under. Without that the mail a turn-end hook hands off, and the lane it has
+# `lanes pick` judge, name a directory no claim was taken on, and a second
+# session is launched onto an account this one is already spending. Both arms
+# that can answer with that variable go through the rule: the codex shape, and
+# the shape naming no harness, which is what a pane running `lanes` itself
+# offers. A claude answer passes through it unchanged, carrying no such shape.
 lane_context_caller_cfg() { # SHAPE
   local home="${LANES_HOME:-$HOME}"
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
-    codex) printf '%s\n' "${CODEX_HOME:-$home/.codex}" ;;
+    codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
     *)
       [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
-        printf '%s\n' "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
+        lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
       ;;
   esac
 }
@@ -279,6 +298,23 @@ lane_context_parse() {
   printf '%s\n' "$out"
 }
 
+# The key a live session's own row is matched on, `<tmux server pid> <pane id>`
+# on one line; 1 where the caller sits on no pane this reader can ask about.
+#
+# Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
+# alone is not. Every consumer that compares one session's key against another
+# session's record reads it here: the report below matches its claims on it,
+# `oversee-watch` records the overseer's by it, and the turn-end hook compares
+# its own against that record, so the three cannot spell one session
+# differently.
+lane_context_caller_key() {
+  local pane="${TMUX_PANE:-}" server
+  [ -n "$pane" ] || return 1
+  server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" || return 1
+  [ -n "$server" ] || return 1
+  printf '%s %s\n' "$server" "$pane"
+}
+
 # The claims in $1 plus the CALLER's OWN pane, unless a claim already names it.
 # An overseer is started by hand into a window nothing claimed a lane for, so
 # its own context — the figure its succession turns on — reaches no report
@@ -292,13 +328,13 @@ lane_context_parse() {
 # lands on, appended or already present, carries the `caller` flag out, so
 # this is the only place that decides which row is the reader's own session.
 lane_context_with_caller() {
-  local claims="$1" cfg="$2" pane="${TMUX_PANE:-}" server name marked
-  if [[ -z "$pane" ]] || ! server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" \
-    || [[ -z "$server" ]]
-  then
+  local claims="$1" cfg="$2" key pane server name marked
+  if ! key="$(lane_context_caller_key)"; then
     printf '%s\n' "$claims"
     return 0
   fi
+  server="${key%% *}"
+  pane="${key#* }"
   # A claim already naming this pair IS the caller's row, so the flag goes on
   # the record that is already there rather than on a duplicate beside it.
   if marked="$(awk -F'\t' -v OFS='\t' -v s="$server" -v p="$pane" '
@@ -438,7 +474,7 @@ lane_context_message() {
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       printf 'lane-context: handoff kind=lane-threshold overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (20 against 5), so by default its own row reads - at a headroom that already fires its succession.\n'
+      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (20 against 3), so by default its own row reads - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;
