@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.workspaces",
+  "name": "Workspaces",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Workspace numbers for the bar's screen; click focuses one.",
+  "license": "MIT",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Widget.qml" },
+  "barWidget": {
+    "displayName": "Workspaces",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  },
+  "vgs": {
+    "capabilities": ["compositor"]
+  }
+}

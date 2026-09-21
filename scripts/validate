@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# The validation manifest. Every check the repository runs is listed here
+# once, and CI runs this file, not a second list.
+#
+# Usage: scripts/validate [AREA]
+#   AREA is one of: logic, manifests, boundary, tools, qml, all (default: all)
+#
+# Exit 0: every selected check passed. Exit 77: every check that ran passed
+# but at least one could not run and is named; that is not a pass. Exit 1: a
+# check failed. Exit 2: unknown area.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+cd -- "$repo"
+
+area="${1:-all}"
+failed=()
+skipped=()
+
+run() { # LABEL CMD...
+  local label="$1"; shift
+  echo "== $label"
+  local status=0
+  "$@" || status=$?
+  case "$status" in
+    0) ;;
+    77) skipped+=("$label") ;;
+    *) failed+=("$label (exit $status)") ;;
+  esac
+}
+
+# rows: area  label  command
+rows=(
+  "logic|plugin logic table|node scripts/test-plugin-logic.js"
+  "manifests|bundled manifests|node scripts/check-manifests.js"
+  "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py"
+  "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
+  "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
+  "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
+  "tools|event latency benchmark|python3 scripts/test-bench-shell-events.py"
+  "qml|nested smoke|scripts/qml-smoke.sh"
+)
+
+matched=false
+for row in "${rows[@]}"; do
+  IFS='|' read -r row_area label command <<<"$row"
+  if [[ $area == all || $area == "$row_area" ]]; then
+    matched=true
+    # shellcheck disable=SC2086
+    run "$label" $command
+  fi
+done
+if [[ $matched != true ]]; then
+  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, tools, qml, all\n' "$area" >&2
+  exit 2
+fi
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+  printf 'validate: failed=%s\n' "$(IFS=';'; echo "${failed[*]}")"
+  exit 1
+fi
+if [[ ${#skipped[@]} -gt 0 ]]; then
+  printf 'validate: status=not-measured skipped=%s\n' "$(IFS=';'; echo "${skipped[*]}")"
+  exit 77
+fi
+echo "validate: ok"

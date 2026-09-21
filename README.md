@@ -4,15 +4,25 @@ A desktop shell for Hyprland on Quickshell. The core is small and fixed. Everyth
 
 ## Install
 
-Not yet. The first release comes with its install command.
+Not yet. The first release comes with its install command. From a checkout, `bin/vgsh run` starts the shell.
+
+## Features
+
+- A bar with a clock and workspace numbers, each a plugin.
+- A plugin manager: `bin/vgsh plugin list`, `enable`, `disable`, `validate`.
+- One manifest format shared with Omarchy Quattro plugins.
+- A nested validation sandbox that never touches the live session.
 
 ## How it works
 
-- The core starts one shell per session, holds the instance lock and opens the Hyprland connection.
-- The core loads each plugin from its manifest and gives it the shared theme tokens and the compositor events.
-- A plugin draws inside a core-owned window or runs as a service. It never opens its own compositor surface.
-- Validation runs the shell in a nested compositor and holds each plugin to its latency and memory budget.
+- `bin/vgsh run` takes the instance lock and starts one shell for the session.
+- The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
+- The shell reads every plugin manifest under `shell/plugins/` and `~/.config/vgs/plugins/`.
+- A plugin declares the surfaces it can fill. The shell shows each one whose host is active and skips the rest.
+- `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen.
 
 ## Settings
 
-Settings live in the plugin that reads them. The core reads none of its own.
+- `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
+- `~/.config/vgs/theme.json`: the five palette colours every plugin reads.
+- A widget's settings sit inline on its layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }`.

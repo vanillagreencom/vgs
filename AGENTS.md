@@ -1,20 +1,32 @@
 # v2
 
-A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland and loads plugins. Every visible surface and every service is a plugin, and each plugin ships with the check that proves it stays fast and stable.
+A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Every visible surface and every service is a plugin with an Omarchy-compatible manifest, and each plugin ships with the check that proves it stays fast and stable.
+
+## Commands
+
+- `scripts/validate [AREA]`: the validation manifest. Exit 77 means a check could not run and is not a pass.
+- `scripts/qml-smoke.sh`: the nested sandbox row alone. Needs a Wayland session; never touches the live shell.
+- `bin/vgsh run | ipc | log | plugin`: the runner and plugin manager. `vgsh plugin validate <dir>` checks a manifest offline.
 
 ## Conventions
 
 - Hyprland is the only compositor. No compositor abstraction and no second compositor.
-- Everything outside the core is a plugin with its own directory and manifest. A plugin reads the core's public API and its own files, never another plugin's.
-- A change that adds a surface, a service or a plugin adds its validation row in the same PR: a smoke run in the isolated runtime plus the budgets `docs/architecture/runtime.md` names.
+- Everything outside the core is a plugin with its own directory and `manifest.json`. A plugin declares surfaces, never dependencies. A plugin reads `qs.Commons`, `qs.Ui`, its capabilities and its own files, never another plugin and never the core's internals.
+- The core names no plugin. The shipped `config/shell.json` names the default bar.
+- A change that adds a surface, a service or a plugin adds its validation row in the same PR: the nested smoke plus the budgets `docs/architecture/runtime.md` names.
 - Never start a second shell against the live session. Validation runs in the nested sandbox only.
-- Before writing or changing code, load the code-quality skill.
+- Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
+- `kendex refresh` and `kendex apply` are refused from a linked worktree; run them from a plain terminal in the checkout.
 - Rules local to a directory live in that directory's `AGENTS.md`.
 
 ## Read next
 
 - `docs/architecture/overview.md`: before structural work.
+- `docs/architecture/plugins.md`: before writing a plugin, a host or the manager.
 - `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell.
+- `shell/AGENTS.md`: when working under `shell/`.
+- `shell/plugins/AGENTS.md`: when working under `shell/plugins/`.
+- `scripts/AGENTS.md`: when working under `scripts/`.
 
 ## Code Review Rules
 

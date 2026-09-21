@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# vgsh: the v2 shell runner and plugin manager CLI.
+#
+#   vgsh run                       start the shell; holds the instance lock, refuses a second shell
+#   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc, config preselected)
+#   vgsh log <qs log args...>      read the running shell's log
+#   vgsh plugin list               every discovered plugin with its enabled state
+#   vgsh plugin enable <id>        enable one plugin
+#   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
+#   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
+#
+# Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
+# Exit 0 on success, 1 on a refusal from the shell, 2 on a bad invocation,
+# 75 when another shell holds the lock, 69 when the shell is not running.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+root="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+shell_dir="$root/shell"
+rt_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+usage() { sed -n '2,15p' "$self" | sed 's/^# \{0,1\}//' >&2; }
+
+ipc() {
+  local out status
+  set +e
+  out="$(qs ipc -p "$shell_dir" call "$@" 2>&1)"
+  status=$?
+  set -e
+  if [[ $status -ne 0 ]]; then
+    printf 'vgsh: refused: shell=not-running\n%s\n' "$out" >&2
+    exit 69
+  fi
+  # qs prints its own log lines ahead of the reply; the reply is the last line.
+  printf '%s\n' "${out##*$'\n'}"
+}
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "$cmd" in
+  run)
+    mkdir -p -- "$config_home/vgs"
+    exec 9>"$rt_dir/vgsh.lock"
+    if ! flock -n 9; then
+      printf 'vgsh: refused: lock=%s\nanother vgsh run holds the instance lock; one shell per session\n' "$rt_dir/vgsh.lock" >&2
+      exit 75
+    fi
+    # exec keeps this pid and the lock descriptor, so the shell can prove it
+    # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
+    VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir" "$@"
+    ;;
+  ipc)
+    exec qs ipc -p "$shell_dir" "$@"
+    ;;
+  log)
+    exec qs log -p "$shell_dir" "$@"
+    ;;
+  plugin)
+    sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    args=("$@")
+    case "$sub" in
+      list)
+        ipc shell listPlugins | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for p in data["plugins"]:
+    state = "enabled" if p["enabled"] else "disabled"
+    print(f"{p['id']:<28} {p['version']:<8} {state:<9} kinds={','.join(p['kinds'])}")
+for e in data["errors"]:
+    print(f"error   {e['dir']}: {e['error']}")
+for c in data["collisions"]:
+    print(f"hidden  {c}")
+'
+        ;;
+      enable|disable)
+        id="${args[0]:-}"
+        if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
+        enabled=true; [[ $sub == disable ]] && enabled=false
+        reply="$(ipc shell setPluginEnabled "$id" "$enabled")"
+        case "$reply" in
+          ok) echo ok ;;
+          "ok hidden="*) echo "$reply"; echo "those bar widgets stay enabled and return when a bar is enabled" ;;
+          *) printf 'vgsh: refused: %s\n' "$reply" >&2; exit 1 ;;
+        esac
+        ;;
+      validate)
+        dir="${args[0]:-}"
+        if [[ -z $dir ]]; then printf 'vgsh: refused: dir=missing\n' >&2; usage; exit 2; fi
+        exec node "$root/scripts/check-manifests.js" -- "$dir"
+        ;;
+      *)
+        printf 'vgsh: refused: plugin-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
+        ;;
+    esac
+    ;;
+  -h|--help|help)
+    usage; exit 0
+    ;;
+  *)
+    printf 'vgsh: refused: command=%s\n' "${cmd:-missing}" >&2; usage; exit 2
+    ;;
+esac

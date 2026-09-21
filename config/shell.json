@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "bar": {
+    "id": "vgs.bar",
+    "position": "top",
+    "layout": {
+      "left": [ { "id": "vgs.workspaces" } ],
+      "center": [ { "id": "vgs.clock", "format": "ddd d MMM  HH:mm" } ],
+      "right": []
+    }
+  },
+  "plugins": [],
+  "disabledPlugins": []
+}

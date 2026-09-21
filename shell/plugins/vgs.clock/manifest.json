@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.clock",
+  "name": "Clock",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Date and time in the bar.",
+  "license": "MIT",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Widget.qml" },
+  "barWidget": {
+    "displayName": "Clock",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": { "format": "ddd d MMM  HH:mm" },
+    "schema": [
+      { "key": "format", "type": "string", "label": "Format" }
+    ]
+  },
+  "vgs": {
+    "capabilities": []
+  }
+}

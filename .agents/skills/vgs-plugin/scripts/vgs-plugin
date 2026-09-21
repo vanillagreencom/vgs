@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Scaffold and check v2 shell plugins.
+
+  vgs-plugin new <author.name> --kinds <kind,...> [--dir DIR] [--name NAME] [--author AUTHOR] [--description TEXT]
+  vgs-plugin check <plugin-dir>
+
+`new` writes <DIR>/<id>/ (default DIR: shell/plugins) from the templates
+beside this script, one entry point per kind, then runs `check` on it.
+`check` runs the repository's manifest judge and boundary check on one
+plugin directory. Exit 0 when clean, 1 on findings, 2 on a bad invocation.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL = os.path.dirname(HERE)
+REPO = os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
+TEMPLATES = os.path.join(SKILL, "templates")
+
+# kind -> (entry point key, template file, entry file name)
+KINDS = {
+    "bar-widget": ("barWidget", "BarWidget.qml", "Widget.qml"),
+    "bar": ("bar", "Bar.qml", "Bar.qml"),
+    "panel": ("panel", "Panel.qml", "Panel.qml"),
+    "overlay": ("overlay", "Panel.qml", "Overlay.qml"),
+    "menu": ("menu", "Panel.qml", "Menu.qml"),
+    "service": ("service", "Service.qml", "Service.qml"),
+}
+
+
+def fill(text, values):
+    for key, value in values.items():
+        text = text.replace("__" + key + "__", value)
+    return text
+
+
+def cmd_new(args):
+    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+    unknown = [k for k in kinds if k not in KINDS]
+    if not kinds or unknown:
+        print(f"vgs-plugin: refused: kinds={args.kinds} unknown={','.join(unknown)} known={','.join(KINDS)}")
+        return 2
+    if "." not in args.id or args.id != args.id.lower():
+        print(f"vgs-plugin: refused: id={args.id} (want author.name, lower case)")
+        return 2
+    base = os.path.join(REPO, args.dir) if not os.path.isabs(args.dir) else args.dir
+    target = os.path.join(base, args.id)
+    if os.path.exists(target):
+        print(f"vgs-plugin: refused: exists={target}")
+        return 2
+    name = args.name or args.id.split(".", 1)[1].replace("-", " ").title()
+    values = {
+        "ID": args.id,
+        "NAME": name,
+        "AUTHOR": args.author or args.id.split(".", 1)[0],
+        "DESCRIPTION": args.description or f"{name} plugin.",
+        "KINDS": json.dumps(kinds),
+        "ENTRY_POINTS": json.dumps({KINDS[k][0]: KINDS[k][2] for k in kinds}),
+    }
+    os.makedirs(target)
+    with open(os.path.join(TEMPLATES, "manifest.json.tmpl"), encoding="utf-8") as fh:
+        manifest = fill(fh.read(), values)
+    with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(manifest)
+    for kind in kinds:
+        _key, template, entry = KINDS[kind]
+        with open(os.path.join(TEMPLATES, template), encoding="utf-8") as fh:
+            body = fill(fh.read(), values)
+        with open(os.path.join(target, entry), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    if "bar-widget" in kinds:
+        data = json.loads(manifest)
+        data["barWidget"] = {"displayName": name, "category": "Other", "allowMultiple": False, "defaultSection": "right", "defaults": {"label": name}, "schema": [{"key": "label", "type": "string", "label": "Label"}]}
+        with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+    print(f"vgs-plugin: wrote {target}")
+    return cmd_check(argparse.Namespace(dir=target))
+
+
+def cmd_check(args):
+    target = os.path.abspath(args.dir)
+    if not os.path.isfile(os.path.join(target, "manifest.json")):
+        print(f"vgs-plugin: refused: no manifest.json in {target}")
+        return 2
+    status = 0
+    for command in (
+        ["node", os.path.join(REPO, "scripts", "check-manifests.js"), "--", target],
+        [sys.executable, os.path.join(REPO, "scripts", "check-plugin-boundary.py"), "--shell", os.path.join(REPO, "shell"), target],
+    ):
+        proc = subprocess.run(command, check=False)
+        if proc.returncode != 0:
+            status = 1 if proc.returncode == 1 and status != 2 else max(status, proc.returncode)
+    print("vgs-plugin: check " + ("ok" if status == 0 else f"failed={status}"))
+    return status
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    new = sub.add_parser("new")
+    new.add_argument("id")
+    new.add_argument("--kinds", required=True)
+    new.add_argument("--dir", default=os.path.join("shell", "plugins"))
+    new.add_argument("--name")
+    new.add_argument("--author")
+    new.add_argument("--description")
+    new.set_defaults(func=cmd_new)
+    check = sub.add_parser("check")
+    check.add_argument("dir")
+    check.set_defaults(func=cmd_check)
+    args = parser.parse_args(argv[1:])
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

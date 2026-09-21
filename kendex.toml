@@ -5,7 +5,7 @@ schema = 1
 
 [bot-instructions.repo]
 name = "vgs"
-summary = "v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland and loads plugins; every surface and service is a plugin with its own validation row."
+summary = "v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland, hosts surfaces and loads plugins; every surface and service is a plugin with an Omarchy-compatible manifest and its own validation row."
 tracker = "VGS"
 
 [bot-instructions.bots]
@@ -53,19 +53,27 @@ The helper owns parsing and generation; a helper module split is separate work. 
 
 [[bot-instructions.surface]]
 name = "qml"
-globs = ["quickshell/**/*.qml"]
+globs = ["shell/**/*.qml", "shell/**/*.js"]
 reviewer_only = true
 instructions = """
-Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. FolderListModel treats a folder that is not there as the process's working directory rather than as an error, and reports the swap through its own folder property. Compare folder against the folder asked for before reading the listing. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. """
+Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. FolderListModel treats a folder that is not there as the process's working directory rather than as an error, and reports the swap through its own folder property. Compare folder against the folder asked for before reading the listing. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. A JS object passed to createObject as an initial property loses its functions and its nested arrays; hosts assign such properties after creation. The core under shell/ names no plugin and imports no plugin directory; scripts/check-plugin-boundary.py is the check. """
+
+[[bot-instructions.surface]]
+name = "plugins"
+globs = ["shell/plugins/**"]
+reviewer_only = true
+instructions = """
+A plugin is a directory with manifest.json in the Omarchy Quattro schema; shell/Core/PluginLogic.js is the one judge of a manifest and a second validator is a twin. A plugin declares surfaces (kinds), never dependencies; a manifest with a requires key is refused by design. A plugin imports qs.Commons, qs.Ui, Qt and Quickshell modules other than Quickshell.Wayland, and its own files; it names no window type and no other plugin. A core action reaches a plugin only through a capability named in the manifest's vgs block. A new plugin lands with its row in scripts/qml-smoke.sh.
+"""
 
 [[bot-instructions.surface]]
 name = "validation"
-globs = ["scripts/**"]
+globs = ["scripts/**", "bin/**"]
 reviewer_only = true
 instructions = """
-The scripts provide repository checks and regression tests. A failed tool invocation must not become an empty successful result. Check that negative controls reach the intended failure, and that snapshot collection failure stops comparison.
+The scripts provide repository checks and regression tests. A failed tool invocation must not become an empty successful result; exit 77 names what could not run and is not a pass. Check that negative controls reach the intended failure.
 
-Use scripts/validate qml for isolated runtime validation. Never suggest qs -c vshell, qs -p quickshell/vshell, or pkill quickshell. A second shell can strand lock surfaces and black out the live desktop. Other Quickshell applications share the session. The isolated runtime smoke is scripts/qml-smoke.sh --nested.
+scripts/validate is the manifest and scripts/qml-smoke.sh is the isolated runtime row. Never suggest qs -p shell against the live session or pkill quickshell; a second shell can black out the live desktop and other Quickshell applications share the session. The sandbox runtime dir must stay a short path under XDG_RUNTIME_DIR because Hyprland's socket path is limited. qs buffers redirected stdout; the per-instance log.log is the record.
 """
 
 [[bot-instructions.surface]]
@@ -73,7 +81,7 @@ name = "agent-docs"
 globs = ["AGENTS.md", "**/AGENTS.md", "docs/**"]
 reviewer_only = true
 instructions = """
-Root and nested AGENTS.md files hold agent process instructions. docs/architecture contains agent references. AGENTS.local.md is a gitignored machine-local companion. Keep these separate from product documentation in README.md and the packaging README files. Check instructions against code because agents execute their commands literally. backend/methods.json is a machine-read contract checked by scripts/check-backend-inventory.py.
+Root and nested AGENTS.md files hold agent process instructions. docs/architecture contains agent references. AGENTS.local.md is a gitignored machine-local companion. Keep these separate from product documentation in README.md. Check instructions against code because agents execute their commands literally. Every figure in docs/architecture was measured by the script the text names; a figure without its measurement is a defect.
 """
 
 [[bot-instructions.surface]]
@@ -88,7 +96,7 @@ The agent-frontmatter and agent-skills tables contain kendex render configuratio
 name = "workflows"
 globs = [".github/workflows/**"]
 reviewer_only = true
-instructions = "Keep CI coverage consistent with scripts/validate. scripts/check-validation-inventory.py owns CI exceptions. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. Read docs/decisions/D007-ci-single-job-economics.md before changing CI structure."
+instructions = "Keep CI coverage consistent with scripts/validate; a step that runs a script the tree does not hold is a defect. The qml area needs a Wayland session and is not run on the runner. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. The ci-ok context name stays stable."
 
 
 [sources.kendex]
@@ -225,6 +233,10 @@ enabled = true
 
 
 
+
+[skills.vgs-plugin]
+source = "in-place"
+enabled = true
 
 [skills.worktree]
 source = "kendex"
@@ -371,6 +383,11 @@ Quickshell rules for this shell, learned from measured sessions of the previous 
 - Every figure in a docstring, comment or document was measured in the same PR and the text names how. A budget without its measurement is a blocker.
 - A new surface, service or plugin lands with its validation row in the same PR: nested smoke plus the latency and memory budgets docs/architecture/runtime.md names.
 - Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
+- The core names no plugin and a plugin names no other plugin. A plugin declares surfaces (kinds) and capabilities in its manifest, never dependencies; the manager refuses a `requires` key. A kind whose host is absent is not shown and the plugin's other kinds keep working.
+- One judge per decision: `shell/Core/PluginLogic.js` decides manifests, configuration merging and enablement, and every script that needs one of those answers runs it under node.
+- A host assigns a plugin's properties after `createObject`; initial properties lose functions and arrays across the QVariant conversion.
+- A plugin lands with its row in `scripts/qml-smoke.sh`, which reads the shell's per-instance `log.log` and asserts the bar widgets it built; redirected `qs` stdout is buffered and proves nothing.
+- Before writing a plugin, load the vgs-plugin skill; its templates and checklist are the contract in `docs/architecture/plugins.md`.
 """
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only

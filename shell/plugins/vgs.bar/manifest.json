@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.bar",
+  "name": "Bar",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "The top bar. Lays out bar widgets in left, center and right sections.",
+  "license": "MIT",
+  "kinds": ["bar"],
+  "entryPoints": { "bar": "Bar.qml" },
+  "vgs": {
+    "capabilities": []
+  }
+}

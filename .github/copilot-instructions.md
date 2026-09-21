@@ -2,7 +2,7 @@
 
 # vgs
 
-v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland and loads plugins; every surface and service is a plugin with its own validation row.
+v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland, hosts surfaces and loads plugins; every surface and service is a plugin with an Omarchy-compatible manifest and its own validation row.
 
 ## Code review calibration
 
