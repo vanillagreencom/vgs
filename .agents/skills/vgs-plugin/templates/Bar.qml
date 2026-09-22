@@ -2,15 +2,14 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 
-// __NAME__: a replacement bar. The host assigns `shell`, `barConfig` and
-// `screen` after creation. The core builds every widget through
-// shell.widgets.create and hands it its own properties; this file owns
-// layout only and rebuilds when its entry list changes.
+// __NAME__: a replacement bar. The core assigns `shell` and `screen` after
+// creation, mounts every widget into the three section containers declared
+// below and keeps them current. This file owns geometry only: where each
+// section sits, its spacing, the bar's colours and font.
 Item {
     id: bar
 
     property var shell: null
-    property var barConfig: null
     property var screen: null
 
     readonly property color foreground: Color.bar.text
@@ -21,44 +20,11 @@ Item {
     readonly property bool vertical: false
     readonly property int barSize: Style.bar.sizeHorizontal
 
-    // Read straight from barConfig: a change handler runs before a dependent
-    // binding re-evaluates, so a `layout` binding would be stale here.
-    function layoutOf() { return barConfig && barConfig.layout ? barConfig.layout : {}; }
+    readonly property Item leftSection: left
+    readonly property Item centerSection: center
+    readonly property Item rightSection: right
 
-    function entries() {
-        const out = [];
-        for (const section of ["left", "center", "right"])
-            for (const e of (Array.isArray(layoutOf()[section]) ? layoutOf()[section] : []))
-                if (e && typeof e.id === "string") out.push(e);
-        return out;
-    }
-
-    RowLayout {
-        id: row
-        anchors.centerIn: parent
-        spacing: Style.spacing.controlGap
-        property var instances: []
-        property string builtKey: ""
-
-        function rebuild() {
-            if (bar.shell === null || bar.barConfig === null) return;
-            const wanted = bar.entries();
-            const key = JSON.stringify(wanted);
-            if (key === builtKey) return;
-            for (const item of instances) bar.shell.widgets.destroy(item);
-            instances = [];
-            const built = [];
-            for (const entry of wanted) {
-                const widget = bar.shell.widgets.create(entry.id, row, bar, entry);
-                if (widget !== null) built.push(widget);
-            }
-            instances = built;
-            builtKey = key;
-        }
-
-        Component.onDestruction: { for (const item of instances) if (bar.shell !== null) bar.shell.widgets.destroy(item); }
-    }
-
-    onShellChanged: row.rebuild()
-    onBarConfigChanged: row.rebuild()
+    RowLayout { id: left; spacing: Style.spacing.controlGap; anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
+    RowLayout { id: center; spacing: Style.spacing.controlGap; anchors.centerIn: parent }
+    RowLayout { id: right; spacing: Style.spacing.controlGap; anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
 }

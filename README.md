@@ -9,7 +9,7 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 ## Features
 
 - Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
-- One manifest format, the Omarchy Quattro schema.
+- One manifest format, judged once, with every field in [docs/architecture/plugins.md](docs/architecture/plugins.md).
 - A plugin manager: `bin/vgsh plugin list`, `enable`, `disable`, `validate`.
 - Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
 - A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
@@ -27,13 +27,13 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 - `bin/vgsh run` takes the instance lock and starts one shell for the session.
 - The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
 - Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
-- `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen.
+- `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.
 
 ## Settings
 
 - `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
 - `~/.config/vgs/theme.json`: the five palette colours every plugin reads.
-- A widget's settings sit inline on its layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }`.
+- A widget's settings sit inline on its layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }`; every other plugin's sit on its row in `plugins`. A change reaches the running plugin without a restart.
 
 ## Writing a plugin
 

@@ -6,9 +6,10 @@
   "author": "VanillaGreen",
   "description": "The top bar. Lays out bar widgets in left, center and right sections.",
   "license": "MIT",
-  "kinds": ["bar"],
-  "entryPoints": { "bar": "Bar.qml" },
-  "vgs": {
-    "capabilities": []
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
   }
 }

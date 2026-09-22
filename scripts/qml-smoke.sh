@@ -12,9 +12,14 @@
 # Checks, in order: the runner starts the shell and it answers IPC; the
 # instance guard reports true; every bundled plugin loads with no manifest
 # error; one bar surface maps per monitor with the shipped widgets; a widget
-# can be disabled and re-enabled; disabling the bar names the widgets it
-# hides and unloads it; a bare `qs` started beside the runner refuses to
-# draw; the log holds no QML error; resident memory stays under the ceiling.
+# can be disabled and re-enabled with its placement and settings kept;
+# disabling the bar names the widgets it hides, unloads it and unmaps its
+# surface; an unrelated write and a no-op rescan build nothing; a user
+# plugin is discovered, built as a service and a widget, receives exactly
+# the capabilities it named, and takes a settings change without a rebuild;
+# a bare `qs` started beside the runner refuses to draw and to write, and
+# the runner's CLI still reaches the guarded instance; the log holds no QML
+# error; resident memory stays under the ceiling.
 #
 # Exit 0 when every check passed. Exit 77 when a prerequisite is missing,
 # naming it; that is not a pass. Exit 1 when a check failed.
@@ -34,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'qml-smoke: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -135,12 +140,24 @@ fi
 ok "nested compositor up: socket=$nested_socket"
 
 shell_env=("${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" HYPRLAND_INSTANCE_SIGNATURE="$signature")
+hypr() { "${shell_env[@]}" hyprctl -i "$signature" "$@"; }
+
+# The nested output can take a moment to appear. The shell starts after it
+# does, so no bar is built for the placeholder screen Qt invents when a
+# compositor has no output yet.
+monitors=-1
+for _ in $(seq 1 50); do
+  if monitors="$(hypr -j monitors 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)" && [[ $monitors -gt 0 ]]; then break; fi
+  sleep 0.2
+done
+if [[ $monitors -gt 0 ]]; then ok "nested compositor lists $monitors monitor(s)"; else
+  printf 'qml-smoke: status=not-measured missing=nested-monitor\n'; exit 77
+fi
 spawn "$sandbox/qs.log" "${shell_env[@]}" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
 
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
 ipc() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
-hypr() { "${shell_env[@]}" hyprctl -i "$signature" "$@"; }
 
 up=false
 for _ in $(seq 1 $((timeout_s * 5))); do
@@ -185,15 +202,13 @@ if missing or disabled or d["errors"] or d["collisions"]:
 PY
 then ok "bundled plugins discovered, enabled and error-free"; else fail "bundled plugin state"; fi
 
-# Bar surfaces the nested compositor lists; awk so zero matches is 0, not a failure.
-bar_count() { hypr layers | awk '/namespace: vgs:bar/ { n++ } END { print n + 0 }'; }
-# The nested output can take a moment to appear in the monitor list.
-monitors=-1; bars=-1
-for _ in $(seq 1 50); do
-  if monitors="$(hypr -j monitors | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" && [[ $monitors -gt 0 ]]; then break; fi
-  sleep 0.2
-done
-[[ $monitors -gt 0 ]] || fail "hyprctl lists no monitor"
+# Live bar surfaces the nested compositor lists. A layer whose client is
+# gone stays in the list with pid -1 until the compositor drops it, so only
+# a layer with a client counts. Space every monitor reserves for layers is
+# read beside it: a bar that is gone reserves nothing.
+bar_count() { hypr -j layers | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d.values() for lv in m["levels"].values() for l in lv if l["namespace"]=="vgs:bar" and l["pid"]!=-1))'; }
+reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum(m["reserved"]) for m in json.load(sys.stdin)))'; }
+bars=-1
 for _ in $(seq 1 50); do
   if bars="$(bar_count)" && [[ $bars == "$monitors" ]]; then break; fi
   sleep 0.2
@@ -223,17 +238,43 @@ expect_widgets "every bar built the workspaces and clock widgets" '["vgs.workspa
 builds() { ipc shell buildCount; }
 expect "the core built the bar and its two widgets per screen" "$((3 * monitors))" builds
 
+# Disable only lists the id: the layout entry and its settings stay, so
+# re-enabling restores the exact screen. The effective configuration is
+# read back for the entry, the user file for what the manager wrote.
 expect "disabling a widget is allowed" ok ipc shell setPluginEnabled vgs.clock false
 clock_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="vgs.clock"][0])'; }
+clock_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="vgs.clock"]))'; }
+user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
 expect_widgets "the bar dropped the disabled widget" '["vgs.workspaces"]'
 expect "widget reads disabled after the user file changed" False clock_state
+expect "the disabled widget keeps its layout entry and settings" '[{"id": "vgs.clock", "format": "ddd d MMM  HH:mm"}]' clock_entry
+expect "disable wrote only the disabled list" "disabledPlugins,version" user_keys
 expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled vgs.clock true
 expect_widgets "the bar rebuilt the re-enabled widget" '["vgs.workspaces","vgs.clock"]'
+expect "re-enable wrote only the disabled list" "disabledPlugins,version" user_keys
 
 expect "disabling the bar names the widgets it hides" "ok hidden=vgs.clock,vgs.workspaces" ipc shell setPluginEnabled vgs.bar false
 expect_widgets "the bar host unloaded the disabled bar" '[]'
+bars_now=-1
+for _ in $(seq 1 50); do
+  if bars_now="$(bar_count)" && [[ $bars_now == 0 ]]; then break; fi
+  sleep 0.2
+done
+if [[ $bars_now == 0 ]]; then ok "the bar host destroyed its surface with no bar"; else fail "bar surfaces with the bar disabled: $bars_now"; fi
+expect "no bar reserves no screen space" 0 reserved_total
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
 expect_widgets "the bar host rebuilt the re-enabled bar" '["vgs.workspaces","vgs.clock"]'
+for _ in $(seq 1 50); do
+  if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
+  sleep 0.2
+done
+if [[ $bars_now == "$monitors" ]]; then ok "the bar host mapped its surface again"; else fail "bar surfaces after re-enable: $bars_now"; fi
+reserved=0
+for _ in $(seq 1 50); do
+  if reserved="$(reserved_total)" && [[ $reserved -gt 0 ]]; then break; fi
+  sleep 0.2
+done
+if [[ $reserved -gt 0 ]]; then ok "the re-enabled bar reserves screen space again"; else fail "reserved space after re-enable: $reserved"; fi
 if [[ -f "$home/.config/vgs/shell.json" ]]; then ok "manager wrote the user file"; else fail "user file missing"; fi
 
 # An unrelated key in the user file and a no-op rescan build nothing.
@@ -256,18 +297,25 @@ fi
 
 # A fixture plugin in the sandbox user directory: kind service plus a bar
 # widget with the compositor capability. Proves user-directory discovery,
-# the service host, and that a widget receives its own capabilities.
+# the service host, that each instance receives exactly the capabilities
+# its manifest names, and that a settings change reaches a running
+# instance without a rebuild. The rows read the fixture's own properties
+# back through readInstance, never the build records.
 fixture="$home/.config/vgs/plugins/acme.probe"
 mkdir -p "$fixture"
 cat >"$fixture/manifest.json" <<'JSON'
 { "schemaVersion": 1, "id": "acme.probe", "name": "Probe", "version": "0.1.0", "author": "acme", "description": "smoke fixture",
-  "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "barWidget": "Widget.qml" },
-  "barWidget": { "defaultSection": "right", "defaults": { "label": "probe", "tags": ["a", "b"] } },
-  "vgs": { "capabilities": ["compositor"] } }
+  "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml" },
+  "defaultSection": "right", "settings": { "label": "probe", "tags": ["a", "b"] },
+  "capabilities": ["compositor"] }
 JSON
 cat >"$fixture/Service.qml" <<'QML'
 import QtQuick
-Item { property var shell: null }
+Item {
+    property var shell: null
+    readonly property string label: shell === null ? "" : String(shell.settings.label)
+    readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
+}
 QML
 cat >"$fixture/Widget.qml" <<'QML'
 import QtQuick
@@ -276,9 +324,10 @@ BarWidget {
     moduleName: "acme.probe"
     implicitWidth: 10
     implicitHeight: barSize
-    // Written by the core after creation; the smoke reads them back.
-    readonly property bool hasCompositor: shell !== null && typeof shell.compositor === "object"
+    readonly property bool hasCompositor: shell !== null && shell.compositor !== undefined && typeof shell.compositor.focusWorkspace === "function"
     readonly property bool tagsAreArray: Array.isArray(settings.tags)
+    readonly property string label: String(setting("label", ""))
+    readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
 }
 QML
 expect "rescan after adding a user plugin answers ok" ok ipc shell rescanPlugins
@@ -288,32 +337,85 @@ for _ in $(seq 1 25); do if found="$(probe_state)" && [[ $found == False ]]; the
 if [[ $found == False ]]; then ok "user-directory plugin discovered and disabled until enabled"; else fail "fixture after rescan: $found"; fi
 expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
-widget_caps() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); rows=[r for k,v in d.items() if k.startswith("bar:") for r in v if r["id"]=="acme.probe"]; print(",".join(rows[0]["capabilities"]) if rows else "none")'; }
+# The first bar host's key, for reading a widget instance back.
+bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
+read_widget() { ipc shell readInstance "$(bar_key)" acme.probe "$1"; }
+read_service() { ipc shell readInstance service acme.probe "$1"; }
+read_clock() { ipc shell readInstance "$(bar_key)" vgs.clock "$1"; }
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == True ]]; then break; fi; sleep 0.2; done
 if [[ $got == True ]]; then ok "the service host built the fixture service"; else fail "service host: built=$got"; fi
 expect_widgets "the fixture widget joined the right section" '["vgs.workspaces","vgs.clock","acme.probe"]'
-expect "the fixture widget received its own compositor capability" compositor widget_caps
+expect "the fixture widget can call its compositor capability" true read_widget hasCompositor
+expect "the fixture widget's settings array stayed an array" true read_widget tagsAreArray
+expect "the fixture widget's shell holds exactly what it named" '"compositor,manifest,settings"' read_widget shellKeys
+expect "the fixture service's shell holds exactly what it named" '"compositor,manifest,settings"' read_service shellKeys
+expect "the fixture service reads the manifest default" '"probe"' read_service label
+expect "the clock widget reads its layout entry" '"ddd d MMM  HH:mm"' read_clock format
+
+# A settings change reaches the running instance and builds nothing: the
+# service's plugins[] row, then the clock's layout entry.
+if before="$(builds)"; then
+  python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["plugins"] = [{"id": "acme.probe", "label": "changed-service-setting"}]
+json.dump(d, open(p, "w"), indent=2)
+PY
+  expect_poll() { # LABEL WANT CMD...
+    local label="$1" want="$2" got=""
+    shift 2
+    for _ in $(seq 1 25); do
+      if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
+      sleep 0.2
+    done
+    fail "$label: got $got want $want"
+  }
+  expect_poll "the running service received its changed setting" '"changed-service-setting"' read_service label
+  expect "the fixture widget keeps the manifest default its entry does not override" '"probe"' read_widget label
+  expect "a service settings change rebuilds nothing" "$before" builds
+  python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+center = d["bar"]["layout"]["center"]
+[e for e in center if e["id"] == "vgs.clock"][0]["format"] = "HH:mm:ss"
+json.dump(d, open(p, "w"), indent=2)
+PY
+  expect_poll "the running clock received its changed layout entry" '"HH:mm:ss"' read_clock format
+  expect "a widget settings change rebuilds nothing" "$before" builds
+else
+  fail "buildCount unreadable before the settings rows"
+fi
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
 expect_widgets "the fixture widget left the bar" '["vgs.workspaces","vgs.clock"]'
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then break; fi; sleep 0.2; done
 if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
 
-# Control: a bare qs beside the runner must refuse to draw.
+# Control: a bare qs beside the runner must refuse to draw and to write,
+# and the runner's CLI must keep addressing the guarded instance.
 spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
 bare_pid="$spawn_pid"
 instance_count() { "${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-newest_guarded() { "${shell_env[@]}" qs ipc -p "$repo/shell" --newest call shell guarded 2>/dev/null | tail -n 1; }
+bare_ipc() { "${shell_env[@]}" qs ipc --pid "$bare_pid" call "$@" 2>/dev/null | tail -n 1; }
 bare_guarded=""
 for _ in $(seq 1 100); do
-  # Wait until the bare instance is registered, then address the newest.
-  if instances="$(instance_count)" && [[ $instances == 2 ]] && bare_guarded="$(newest_guarded)" && [[ $bare_guarded == true || $bare_guarded == false ]]; then break; fi
+  # Wait until the bare instance is registered, then address it by pid.
+  if instances="$(instance_count)" && [[ $instances == 2 ]] && bare_guarded="$(bare_ipc shell guarded)" && [[ $bare_guarded == true || $bare_guarded == false ]]; then break; fi
   sleep 0.2
 done
 if [[ $bare_guarded == false ]]; then ok "a bare qs beside the runner refuses to draw"; else fail "bare qs guarded=$bare_guarded"; fi
 sleep 0.5
 if bars_after="$(bar_count)" && [[ $bars_after == "$bars" ]]; then ok "the bare qs mapped no bar surface"; else fail "bar surfaces after bare qs: ${bars_after:-unreadable}"; fi
+user_before="$(cat "$home/.config/vgs/shell.json")"
+expect "the bare qs refuses to write configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell setPluginEnabled vgs.clock false
+expect "the bare qs refuses to reload configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell reloadConfig
+expect "the bare qs refuses to rescan" "refused: guard=unowned pid=$bare_pid" bare_ipc shell rescanPlugins
+expect "the bare qs refuses to summon" "refused: guard=unowned pid=$bare_pid" bare_ipc shell summon panel acme.probe '{}'
+if [[ "$(cat "$home/.config/vgs/shell.json")" == "$user_before" ]]; then ok "the refused write left the user file alone"; else fail "the bare qs changed the user file"; fi
+expect "the runner's CLI still reaches the guarded instance beside a bare one" true ipc shell guarded
 kill -TERM "$bare_pid" 2>/dev/null || true
 
 # qs buffers stdout when redirected, so the shell's own per-instance log

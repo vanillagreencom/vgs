@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # vgsh: the v2 shell runner and plugin manager CLI.
 #
-#   vgsh run                       start the shell; holds the instance lock, refuses a second shell
-#   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc, config preselected)
+#   vgsh run                       start the shell in the foreground; holds the instance lock
+#   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
 #   vgsh log <qs log args...>      read the running shell's log
 #   vgsh plugin list               every discovered plugin with its enabled state
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
+#
+# `run` takes no arguments: the shell always runs in the foreground under
+# this process, which is the identity the shell's guard checks. The lock file
+# $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs, and every
+# other command addresses that instance alone, so a shell started any other
+# way is never reached.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal from the shell, 2 on a bad invocation,
@@ -18,20 +24,45 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 root="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 shell_dir="$root/shell"
 rt_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+lock="$rt_dir/vgsh.lock"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 
-usage() { sed -n '2,14p' "$self" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '2,20p' "$self" | sed 's/^# \{0,1\}//' >&2; }
+
+# Prints the pid the lock file records, or returns 69 after the refusal.
+# A pid is only written by the runner after it took the lock, so an empty
+# or absent file means no shell started through the runner. A recorded pid
+# whose process is gone is the same refusal: the runner exec'd into the
+# shell, so its pid is the shell's. Callers exit with the returned status
+# themselves; errexit does not reach a failed command substitution here.
+shell_pid() {
+  local pid
+  if [[ ! -r $lock ]]; then
+    printf 'vgsh: refused: shell=not-running lock=%s\n' "$lock" >&2
+    return 69
+  fi
+  if ! pid="$(head -n 1 -- "$lock")" || [[ ! $pid =~ ^[0-9]+$ ]]; then
+    printf 'vgsh: refused: shell=not-running lock=%s\n' "$lock" >&2
+    return 69
+  fi
+  if [[ ! -d /proc/$pid ]]; then
+    printf 'vgsh: refused: shell=not-running pid=%s\n' "$pid" >&2
+    return 69
+  fi
+  printf '%s\n' "$pid"
+}
 
 # One IPC call. qs prints its own log lines on stdout ahead of the reply;
 # the reply is the last stdout line. stderr passes through untouched.
 ipc() {
-  local out status
+  local pid out status
+  pid="$(shell_pid)" || exit $?
   set +e
-  out="$(qs ipc -p "$shell_dir" call "$@")"
+  out="$(qs ipc --pid "$pid" call "$@")"
   status=$?
   set -e
   if [[ $status -ne 0 ]]; then
-    printf 'vgsh: refused: shell=not-running\n%s\n' "$out" >&2
+    printf 'vgsh: refused: shell=not-running pid=%s\n%s\n' "$pid" "$out" >&2
     exit 69
   fi
   printf '%s\n' "${out##*$'\n'}"
@@ -41,21 +72,31 @@ cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$cmd" in
   run)
+    if [[ $# -gt 0 ]]; then
+      printf 'vgsh: refused: argument=%s\nrun takes no arguments; the shell runs in the foreground under the runner\n' "$1" >&2
+      exit 2
+    fi
     mkdir -p -- "$config_home/vgs"
-    exec 9>"$rt_dir/vgsh.lock"
+    # Opened for append so a runner that loses the race never truncates the
+    # holder's pid; only the holder rewrites the file.
+    exec 9>>"$lock"
     if ! flock -n 9; then
-      printf 'vgsh: refused: lock=%s\nanother vgsh run holds the instance lock; one shell per session\n' "$rt_dir/vgsh.lock" >&2
+      printf 'vgsh: refused: lock=%s\nanother vgsh run holds the instance lock; one shell per session\n' "$lock" >&2
       exit 75
     fi
+    truncate -s 0 -- "$lock"
+    printf '%s\n' "$$" >&9
     # exec keeps this pid and the lock descriptor, so the shell can prove it
     # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
-    VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir" "$@"
+    VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"
     ;;
   ipc)
-    exec qs ipc -p "$shell_dir" "$@"
+    pid="$(shell_pid)" || exit $?
+    exec qs ipc --pid "$pid" "$@"
     ;;
   log)
-    exec qs log -p "$shell_dir" "$@"
+    pid="$(shell_pid)" || exit $?
+    exec qs log --pid "$pid" "$@"
     ;;
   plugin)
     sub="${1:-}"
@@ -64,7 +105,7 @@ case "$cmd" in
       list)
         # Captured first so the not-running exit code is the command's, not
         # the formatter's.
-        reply="$(ipc shell listPlugins)"
+        reply="$(ipc shell listPlugins)" || exit $?
         python3 - "$reply" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
@@ -83,7 +124,7 @@ PY
         id="${1:-}"
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
         enabled=true; [[ $sub == disable ]] && enabled=false
-        reply="$(ipc shell setPluginEnabled "$id" "$enabled")"
+        reply="$(ipc shell setPluginEnabled "$id" "$enabled")" || exit $?
         case "$reply" in
           ok) echo ok ;;
           "ok hidden="*) echo "$reply"; echo "those bar widgets stay enabled and return when a bar is enabled" ;;

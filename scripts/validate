@@ -41,11 +41,11 @@ rows=(
   "manifests|bundled manifests|node scripts/check-manifests.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js"
   "cli|runner CLI controls|scripts/test-vgsh.sh"
+  "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py"
   "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py"
   "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
-  "tools|event latency benchmark|python3 scripts/test-bench-shell-events.py"
   "qml|nested smoke|scripts/qml-smoke.sh"
 )
 

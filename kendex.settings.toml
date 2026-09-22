@@ -23,9 +23,7 @@ ORCH_STATE_DIR = "tmp"
 #
 # `scripts/lib` is matched by name rather than wholesale, because it holds test
 # helpers beside production ones: `*_selftest.py` and `*-testkit.sh` are the
-# test helpers, while `session-snapshot.sh`, which `qml-smoke.sh` and
-# `check-validation-safety.sh` source, and the Python modules those scripts
-# import stay production.
+# test helpers, while the Python modules the checks import stay production.
 #
 # `scripts/lib/*.js` is the exception this rule keeps. It also matches the
 # checker modules `qml-block.js` and `qml-source.js`, which

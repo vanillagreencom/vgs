@@ -6,19 +6,14 @@
   "author": "VanillaGreen",
   "description": "Date and time in the bar.",
   "license": "MIT",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Widget.qml" },
-  "barWidget": {
-    "displayName": "Clock",
-    "category": "Time",
-    "allowMultiple": false,
-    "defaultSection": "center",
-    "defaults": { "format": "ddd d MMM  HH:mm" },
-    "schema": [
-      { "key": "format", "type": "string", "label": "Format" }
-    ]
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "bar-widget": "Widget.qml"
   },
-  "vgs": {
-    "capabilities": []
+  "defaultSection": "center",
+  "settings": {
+    "format": "ddd d MMM  HH:mm"
   }
 }

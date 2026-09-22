@@ -45,7 +45,7 @@ for (const dir of dirs) {
     seen[r.manifest.id] = dir;
     let missing = false;
     for (const kind of r.manifest.kinds) {
-        const entry = path.join(dir, r.manifest.entryPoints[ctx.ENTRY_KEYS[kind]]);
+        const entry = path.join(dir, r.manifest.entryPoints[kind]);
         if (!fs.existsSync(entry)) { console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry); refused += 1; missing = true; }
     }
     if (missing) continue;

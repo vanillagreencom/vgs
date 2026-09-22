@@ -5,43 +5,46 @@ import qs.Core
 import qs.Commons
 
 // One bar surface per screen. The core owns the window; the active bar
-// plugin draws inside the slot. The bar receives its layout as a string
-// key so a configuration write that leaves the layout alone rebuilds
-// nothing.
-PanelWindow {
+// plugin draws inside the slot and receives the screen through the slot's
+// context. The window exists only while a bar instance can be built: a
+// disabled, unknown or broken bar leaves no surface and reserves no space,
+// so the desktop stays whole. A hidden window would keep its layer
+// surface alive; destroying the window is what releases it.
+Item {
     id: host
 
     required property var modelData
-    screen: modelData
+    readonly property var screen: modelData
+    // The screen is null while its Variants entry is torn down.
+    readonly property string hostKey: "bar:" + (screen ? screen.name : "")
 
-    anchors { top: true; left: true; right: true }
-    implicitHeight: Style.bar.sizeHorizontal
-    exclusiveZone: implicitHeight
-    color: Color.bar.background
-    WlrLayershell.namespace: "vgs:bar"
-    WlrLayershell.layer: WlrLayer.Top
+    // The slot key the active bar would load under, or "" when no bar can
+    // be built. A key whose build failed is remembered so the window is not
+    // re-created for it; a registry or configuration change makes a new key.
+    readonly property string wantedKey: Plugins.slotKey(Plugins.activeBarId)
+    property string brokenKey: ""
 
-    readonly property string hostKey: "bar:" + host.screen.name
+    Loader {
+        active: host.wantedKey !== "" && host.wantedKey !== host.brokenKey
+        sourceComponent: PanelWindow {
+            screen: host.screen
 
-    PluginSlot {
-        id: slot
-        kind: "bar"
-        pluginId: Plugins.activeBarId
-        hostKey: host.hostKey
-        anchors.fill: parent
-        onInstanceChanged: host.push()
-    }
+            anchors { top: true; left: true; right: true }
+            implicitHeight: Style.bar.sizeHorizontal
+            exclusiveZone: implicitHeight
+            color: Color.bar.background
+            WlrLayershell.namespace: "vgs:bar"
+            WlrLayershell.layer: WlrLayer.Top
 
-    // The bar reads `barConfig` and `screen` from the host. Both are
-    // assigned, never bound, so the bar decides when to rebuild.
-    function push() {
-        if (slot.instance === null) return;
-        slot.instance.screen = host.screen;
-        slot.instance.barConfig = Config.effective.bar || {};
-    }
-
-    Connections {
-        target: Plugins
-        function onLayoutKeyChanged() { host.push(); }
+            PluginSlot {
+                id: slot
+                kind: "bar"
+                pluginId: Plugins.activeBarId
+                hostKey: host.hostKey
+                context: ({ screen: host.screen })
+                anchors.fill: parent
+                onBuildFailed: key => host.brokenKey = key
+            }
+        }
     }
 }

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """One planted violation per rule of check-plugin-boundary.py, one clean
-fixture, and one row per exemption. Each row builds a throwaway shell tree,
-runs the check on it and asserts the rule key and the exit status."""
+fixture, one row per exemption, and one row per unreadable path class. Each
+row builds a throwaway shell tree, runs the check on it and asserts the rule
+key and the exit status. Unreadable rows need a uid that permissions bind;
+under euid 0 the script reports status=not-measured and exits 77."""
 import os
 import subprocess
 import sys
 import tempfile
 
 CHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-plugin-boundary.py")
+ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 CLEAN_WIDGET = 'import QtQuick\nimport QtQuick.Layouts\nimport Quickshell.Hyprland\nimport qs.Commons\nimport qs.Ui\nimport "./lib"\nBarWidget { }\n'
 CLEAN_CORE = 'import QtQuick\nimport Quickshell\nimport qs.Core\nQtObject { property string prefix: "vgs." }\n'
@@ -33,20 +36,34 @@ ROWS = [
     ("core imports a plugin directory", CLEAN_CORE.replace("import qs.Core", 'import "../plugins/vgs.bar"'), None, "core-plugin-import"),
 ]
 
+# unreadable rows: name, path under the shell tree whose permission bits are removed; the check exits 2 and names that path
+UNREADABLE_ROWS = [
+    ("unreadable nested directory inside a plugin exits 2", "plugins/acme.widget/lib"),
+    ("unreadable directory under the core tree exits 2", "Core"),
+    ("unreadable plugin QML file exits 2", "plugins/acme.widget/Widget.qml"),
+]
+
+
+def build_shell(tmp, widget, core):
+    shell = os.path.join(tmp, "shell")
+    plugin = os.path.join(shell, "plugins", "acme.widget")
+    os.makedirs(os.path.join(plugin, "lib"))
+    os.makedirs(os.path.join(shell, "Core"))
+    with open(os.path.join(plugin, "Widget.qml"), "w", encoding="utf-8") as fh:
+        fh.write(widget)
+    with open(os.path.join(plugin, "lib", "Helper.qml"), "w", encoding="utf-8") as fh:
+        fh.write(CLEAN_WIDGET)
+    with open(os.path.join(shell, "Core", "Thing.qml"), "w", encoding="utf-8") as fh:
+        fh.write(core)
+    return shell
+
 
 def run_row(name, widget, core, want):
     with tempfile.TemporaryDirectory() as tmp:
-        shell = os.path.join(tmp, "shell")
-        plugin = os.path.join(shell, "plugins", "acme.widget")
-        os.makedirs(os.path.join(plugin, "lib"))
-        os.makedirs(os.path.join(shell, "Core"))
         if core is None:
             core, widget = widget, CLEAN_WIDGET
-        with open(os.path.join(plugin, "Widget.qml"), "w", encoding="utf-8") as fh:
-            fh.write(widget)
-        with open(os.path.join(shell, "Core", "Thing.qml"), "w", encoding="utf-8") as fh:
-            fh.write(core)
-        proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False)
+        shell = build_shell(tmp, widget, core)
+        proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False, env=ENV)
         keys = {line.split(" ", 1)[0] for line in proc.stdout.splitlines() if ":" in line and not line.startswith("check-plugin-boundary:")}
         if want is None:
             good = proc.returncode == 0 and not keys
@@ -56,13 +73,32 @@ def run_row(name, widget, core, want):
         return good
 
 
+def run_unreadable_row(name, rel):
+    with tempfile.TemporaryDirectory() as tmp:
+        shell = build_shell(tmp, CLEAN_WIDGET, CLEAN_CORE)
+        target = os.path.join(shell, rel)
+        try:
+            os.chmod(target, 0o000)
+            proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False, env=ENV)
+        finally:
+            os.chmod(target, 0o755)
+        lines = proc.stdout.splitlines()
+        good = proc.returncode == 2 and len(lines) == 1 and lines[0].startswith(f"check-plugin-boundary: unreadable: {target}: ")
+        print(("  ok    " if good else "  FAIL  ") + name + ("" if good else f" (exit={proc.returncode})\n{proc.stdout}{proc.stderr}"))
+        return good
+
+
 def main():
+    if os.geteuid() == 0:
+        print("status=not-measured reason=euid-0")
+        return 77
     results = [run_row(*row) for row in ROWS]
     for label, args in (("unreadable shell dir exits 2", ["--shell", "/nonexistent/shell"]), ("unreadable plugin dir exits 2", ["/nonexistent/plugin"])):
-        proc = subprocess.run([sys.executable, CHECK] + args, capture_output=True, text=True, check=False)
+        proc = subprocess.run([sys.executable, CHECK] + args, capture_output=True, text=True, check=False, env=ENV)
         good = proc.returncode == 2
         print(("  ok    " if good else "  FAIL  ") + label)
         results.append(good)
+    results += [run_unreadable_row(*row) for row in UNREADABLE_ROWS]
     if all(results):
         print("test-check-plugin-boundary: ok")
         return 0

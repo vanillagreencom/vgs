@@ -7,8 +7,10 @@ import "PluginLogic.js" as Logic
 // The plugin registry and manager mechanism. Discovers plugin directories,
 // validates every manifest through PluginLogic.js, derives the enabled set
 // from Config.effective, builds every plugin instance the hosts ask for,
-// and owns enable and disable. Hosts read `manifests`, `generation` and
-// the slot API; they never scan the disk or build a plugin themselves.
+// mounts bar widgets into the active bar's sections, keeps every live
+// instance's settings current, and owns enable and disable. Hosts read
+// `manifests`, `generation` and the slot API; they never scan the disk,
+// build a plugin or assign a plugin property themselves.
 Singleton {
     id: root
 
@@ -35,9 +37,17 @@ Singleton {
     property var hosts: Object.create(null)
 
     // Every instance the core built, keyed by a host-supplied key, for the
-    // IPC introspection the smoke reads. Value: [{ id, capabilities }].
+    // IPC introspection the smoke reads. A row is { id, kind, instance,
+    // capabilities, entry, settingsKey }: `entry` is a bar widget's layout
+    // entry, and `settingsKey` the JSON of the settings the instance holds.
     property var built: Object.create(null)
     property int buildCount: 0
+
+    // Per bar instance, the widgets the core mounted in each of its
+    // sections, keyed by the bar's host key: { row, sections: { <section>:
+    // { idsKey, entryKeys, widgets } } }. Not a binding input; read and
+    // replaced only by the reconciler.
+    property var mounts: Object.create(null)
 
     // Capability name -> the object a plugin receives for it. Adding a
     // capability is one row here and one name in PluginLogic.CAPABILITIES.
@@ -124,7 +134,21 @@ Singleton {
     }
 
     readonly property string activeBarId: Logic.activeBarId(Config.effective, defaultBarId)
-    readonly property string layoutKey: Logic.layoutKey(Config.effective)
+
+    // The key a slot loads plugin `id` under: the id plus the registry
+    // generation while the plugin is enabled, "" when nothing can be built.
+    // Every slot and every host reads this one derivation.
+    function slotKey(id) {
+        return scanned && id !== "" && isEnabled(id) ? id + "@" + generation : "";
+    }
+
+    // A configuration change reaches every live instance through one
+    // reconcile. A registry change rebuilds the slots keyed on the
+    // generation, and a bar rebuilt that way mounts its widgets afresh.
+    Connections {
+        target: Config
+        function onEffectiveChanged() { root.reconcile(); }
+    }
 
     function hiddenByDisabling(id) {
         return Logic.hiddenByDisabling(manifests, Config.effective, id, defaultBarId);
@@ -138,36 +162,29 @@ Singleton {
     // file:// URL of one entry point, or "" when the plugin or kind is absent.
     function entryUrl(id, kind) {
         if (!has(id)) return "";
-        const entry = manifests[id].entryPoints[Logic.ENTRY_KEYS[kind]];
+        const entry = manifests[id].entryPoints[kind];
         if (entry === undefined) return "";
         return "file://" + manifests[id].__sourceDir + "/" + entry;
     }
 
     // REVISIT(D010): a process or engine per plugin would replace this scope.
     // The scoped object a plugin receives as `shell`: its manifest, its
-    // settings, the widget catalogue for a bar, and one provider per
-    // capability its manifest names. Nothing else on it.
-    function facadeFor(manifest, hostKey, layoutEntry) {
-        const facade = {
-            manifest: manifest,
-            settings: Logic.settingsFor(Config.effective, manifest, layoutEntry),
-            widgets: {
-                manifestFor: function (id) { return root.has(id) ? root.manifests[id] : undefined; },
-                create: function (id, parent, bar, entry) { return root.createWidget(id, parent, bar, entry, hostKey); },
-                destroy: function (instance) { root.destroyInstance(instance, hostKey); }
-            }
-        };
-        for (const name of manifest.vgs.capabilities)
+    // settings, and one provider per capability its manifest names. Nothing
+    // else on it.
+    function facadeFor(manifest, settings) {
+        const facade = { manifest: manifest, settings: settings };
+        for (const name of manifest.capabilities)
             facade[name] = providers[name];
         return facade;
     }
 
     // Build one plugin entry point under `parent` and hand it its own
-    // facade. Properties are assigned after creation, never as initial
-    // properties, which cross a QVariant conversion that drops functions
-    // and turns nested lists into non-Array sequences. Returns null after
-    // logging when the plugin cannot be built.
-    function createInstance(id, kind, parent, hostKey, layoutEntry) {
+    // facade. `context` holds host-owned properties the instance receives
+    // by name (a bar's `screen`). Properties are assigned after creation,
+    // never as initial properties, which cross a QVariant conversion that
+    // drops functions and turns nested lists into non-Array sequences.
+    // Returns null after logging when the plugin cannot be built.
+    function createInstance(id, kind, parent, hostKey, layoutEntry, context) {
         if (!has(id) || !isEnabled(id)) { console.warn("plugins: " + id + " is not an enabled plugin"); return null; }
         const url = entryUrl(id, kind);
         if (url === "") { console.warn("plugins: " + id + " declares no " + kind + " entry point"); return null; }
@@ -176,24 +193,32 @@ Singleton {
         const instance = component.createObject(parent);
         if (instance === null) { console.error("plugins: " + id + " created no object"); return null; }
         const manifest = manifests[id];
-        instance.shell = facadeFor(manifest, hostKey, layoutEntry);
-        record(hostKey, { id: id, kind: kind, instance: instance, capabilities: manifest.vgs.capabilities });
+        const settings = Logic.settingsFor(Config.effective, manifest, layoutEntry);
+        instance.shell = facadeFor(manifest, settings);
+        for (const key of Object.keys(context || {}))
+            instance[key] = context[key];
+        const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings) };
+        record(hostKey, row);
+        if (kind === "bar") mountBar(hostKey, row);
         return instance;
     }
 
     // A bar widget: built like any instance, then given the three properties
     // BarWidget declares.
     function createWidget(id, parent, bar, entry, hostKey) {
-        const instance = createInstance(id, "bar-widget", parent, hostKey, entry);
+        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null);
         if (instance === null) return null;
         instance.bar = bar;
         instance.moduleName = id;
-        instance.settings = Logic.settingsFor(Config.effective, manifests[id], entry);
+        instance.settings = instance.shell.settings;
         return instance;
     }
 
+    // Destroy an instance the core built. A bar's mounted widgets go first,
+    // so a bar never outlives the core's record of what it shows.
     function destroyInstance(instance, hostKey) {
         if (instance === null || instance === undefined) return;
+        if (Logic.hasOwn(mounts, hostKey) && mounts[hostKey].row.instance === instance) unmountBar(hostKey);
         forget(hostKey, instance);
         instance.destroy();
     }
@@ -213,11 +238,125 @@ Singleton {
         built = next;
     }
 
+    // The section containers a bar declares: `leftSection`, `centerSection`
+    // and `rightSection`, each an Item the core parents widgets into. A bar
+    // missing one is logged and that section shows nothing.
+    function sectionContainer(row, section) {
+        const container = row.instance[section + "Section"];
+        if (container === null || container === undefined || typeof container !== "object") {
+            console.error("plugins: bar " + row.id + " declares no " + section + "Section");
+            return null;
+        }
+        return container;
+    }
+
+    function mountBar(hostKey, row) {
+        const sections = {};
+        for (const section of Logic.SECTIONS) sections[section] = { idsKey: "", entryKeys: [], widgets: [] };
+        const next = Object.assign(Object.create(null), mounts);
+        next[hostKey] = { row: row, sections: sections };
+        mounts = next;
+        reconcileBar(hostKey, Logic.effectiveLayout(Config.effective, manifests, defaultBarId));
+    }
+
+    function unmountBar(hostKey) {
+        const mount = mounts[hostKey];
+        for (const section of Logic.SECTIONS)
+            for (const widget of mount.sections[section].widgets) { forget(hostKey, widget); widget.destroy(); }
+        const next = Object.assign(Object.create(null), mounts);
+        delete next[hostKey];
+        mounts = next;
+    }
+
+    // Bring one bar's sections to `layout`, the effective layout: the
+    // widgets each section shows with enablement already applied. A section
+    // whose id sequence changed is rebuilt whole, in order; a section whose
+    // ids are unchanged keeps its widgets and only the entries that changed
+    // are handed their new settings, so an unrelated write builds nothing.
+    function reconcileBar(hostKey, layout) {
+        const mount = mounts[hostKey];
+        for (const section of Logic.SECTIONS) {
+            const wanted = layout[section];
+            const state = mount.sections[section];
+            const idsKey = JSON.stringify(wanted.map(e => e.id));
+            const entryKeys = wanted.map(e => JSON.stringify(e));
+            if (idsKey !== state.idsKey) {
+                for (const widget of state.widgets) { forget(hostKey, widget); widget.destroy(); }
+                state.widgets = [];
+                state.entryKeys = [];
+                state.idsKey = "";
+                const container = sectionContainer(mount.row, section);
+                if (container === null) continue;
+                const widgets = [];
+                const keys = [];
+                for (let i = 0; i < wanted.length; i++) {
+                    const widget = createWidget(wanted[i].id, container, mount.row.instance, wanted[i], hostKey);
+                    if (widget === null) continue;
+                    widgets.push(widget);
+                    keys.push(entryKeys[i]);
+                }
+                state.widgets = widgets;
+                state.entryKeys = keys;
+                state.idsKey = idsKey;
+                continue;
+            }
+            for (let i = 0; i < state.widgets.length; i++) {
+                if (entryKeys[i] === state.entryKeys[i]) continue;
+                refreshRow(rowFor(hostKey, state.widgets[i]), wanted[i]);
+                state.entryKeys[i] = entryKeys[i];
+            }
+        }
+    }
+
+    function rowFor(hostKey, instance) {
+        return built[hostKey].filter(row => row.instance === instance)[0];
+    }
+
+    // Hand one live instance the settings the configuration now holds for
+    // it, when they changed. A bar widget's settings come from its layout
+    // entry; every other kind's from its plugins[] row.
+    function refreshRow(row, layoutEntry) {
+        const manifest = manifests[row.id];
+        const settings = Logic.settingsFor(Config.effective, manifest, layoutEntry);
+        const key = JSON.stringify(settings);
+        row.entry = layoutEntry;
+        if (key === row.settingsKey) return;
+        row.settingsKey = key;
+        row.instance.shell = facadeFor(manifest, settings);
+        if (row.kind === "bar-widget") row.instance.settings = settings;
+    }
+
+    // Bring every live instance to the current configuration: each bar's
+    // sections to the effective layout, and every non-widget instance's
+    // settings to its plugins[] row. The layout is derived here, inside the
+    // change handler, because a binding on the same source would still be
+    // stale at this point. Instances a slot is about to destroy are
+    // refreshed for nothing; the slot forgets them next.
+    function reconcile() {
+        const layout = Logic.effectiveLayout(Config.effective, manifests, defaultBarId);
+        for (const hostKey of Object.keys(mounts)) reconcileBar(hostKey, layout);
+        for (const hostKey of Object.keys(built))
+            for (const row of built[hostKey])
+                if (row.kind !== "bar-widget" && has(row.id)) refreshRow(row, null);
+    }
+
     function builtJson() {
         const out = {};
         for (const key of Object.keys(built))
             out[key] = built[key].map(row => ({ id: row.id, kind: row.kind, capabilities: row.capabilities }));
         return JSON.stringify(out);
+    }
+
+    // One property of one built instance as JSON, for validation rows that
+    // read what a plugin actually received. `absent` when no such instance
+    // exists; `undefined` when the instance has no such property.
+    function readInstance(hostKey, id, property) {
+        if (!Logic.hasOwn(built, hostKey)) return "absent";
+        const row = built[hostKey].filter(r => r.id === id)[0];
+        if (row === undefined) return "absent";
+        const value = row.instance[property];
+        const json = JSON.stringify(value);
+        return json === undefined ? "undefined" : json;
     }
 
     // Kind-generic summon, hide and toggle. A host registers itself under

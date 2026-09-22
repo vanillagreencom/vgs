@@ -21,14 +21,17 @@ SKILL = os.path.dirname(HERE)
 REPO = os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
 TEMPLATES = os.path.join(SKILL, "templates")
 
-# kind -> (entry point key, template file, entry file name)
-KINDS = {
-    "bar-widget": ("barWidget", "BarWidget.qml", "Widget.qml"),
-    "bar": ("bar", "Bar.qml", "Bar.qml"),
-    "panel": ("panel", "Panel.qml", "Panel.qml"),
-    "overlay": ("overlay", "Panel.qml", "Overlay.qml"),
-    "menu": ("menu", "Panel.qml", "Menu.qml"),
-    "service": ("service", "Service.qml", "Service.qml"),
+# kind -> (template file, entry file name). Which kinds exist, and every
+# other manifest rule, is the repository's one judge, shell/Core/PluginLogic.js,
+# run through scripts/check-manifests.js before anything is written; this
+# table only selects a template.
+TEMPLATE_FOR = {
+    "bar-widget": ("BarWidget.qml", "Widget.qml"),
+    "bar": ("Bar.qml", "Bar.qml"),
+    "panel": ("Panel.qml", "Panel.qml"),
+    "overlay": ("Panel.qml", "Overlay.qml"),
+    "menu": ("Panel.qml", "Menu.qml"),
+    "service": ("Service.qml", "Service.qml"),
 }
 
 
@@ -40,9 +43,9 @@ def fill(text, values):
 
 def cmd_new(args):
     kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-    unknown = [k for k in kinds if k not in KINDS]
-    if not kinds or unknown:
-        print(f"vgs-plugin: refused: kinds={args.kinds} unknown={','.join(unknown)} known={','.join(KINDS)}")
+    untemplated = [k for k in kinds if k not in TEMPLATE_FOR]
+    if untemplated:
+        print(f"vgs-plugin: refused: no-template={','.join(untemplated)} templated={','.join(TEMPLATE_FOR)}")
         return 2
     base = os.path.join(REPO, args.dir) if not os.path.isabs(args.dir) else args.dir
     target = os.path.join(base, args.id)
@@ -56,7 +59,7 @@ def cmd_new(args):
         "AUTHOR": args.author or args.id.split(".", 1)[0],
         "DESCRIPTION": args.description or f"{name} plugin.",
         "KINDS": json.dumps(kinds),
-        "ENTRY_POINTS": json.dumps({KINDS[k][0]: KINDS[k][2] for k in kinds}),
+        "ENTRY_POINTS": json.dumps({k: TEMPLATE_FOR[k][1] for k in kinds}),
     }
     with open(os.path.join(TEMPLATES, "manifest.json.tmpl"), encoding="utf-8") as fh:
         manifest = fill(fh.read(), values)
@@ -68,25 +71,26 @@ def cmd_new(args):
         with open(os.path.join(probe_dir, "manifest.json"), "w", encoding="utf-8") as fh:
             fh.write(manifest)
         for kind in kinds:
-            with open(os.path.join(probe_dir, KINDS[kind][2]), "w", encoding="utf-8") as fh:
+            with open(os.path.join(probe_dir, TEMPLATE_FOR[kind][1]), "w", encoding="utf-8") as fh:
                 fh.write("")
         judged = subprocess.run(["node", os.path.join(REPO, "scripts", "check-manifests.js"), "--", probe_dir], capture_output=True, text=True, check=False)
         if judged.returncode != 0:
             print(judged.stdout.rstrip())
-            print(f"vgs-plugin: refused: id={args.id}")
+            print(f"vgs-plugin: refused: manifest={args.id}")
             return 2
     os.makedirs(target)
     with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
         fh.write(manifest)
     for kind in kinds:
-        _key, template, entry = KINDS[kind]
+        template, entry = TEMPLATE_FOR[kind]
         with open(os.path.join(TEMPLATES, template), encoding="utf-8") as fh:
             body = fill(fh.read(), values)
         with open(os.path.join(target, entry), "w", encoding="utf-8") as fh:
             fh.write(body)
     if "bar-widget" in kinds:
         data = json.loads(manifest)
-        data["barWidget"] = {"displayName": name, "category": "Other", "allowMultiple": False, "defaultSection": "right", "defaults": {"label": name}, "schema": [{"key": "label", "type": "string", "label": "Label"}]}
+        data["defaultSection"] = "right"
+        data["settings"] = {"label": name}
         with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
             fh.write("\n")

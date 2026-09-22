@@ -6,7 +6,7 @@ Requirements for the shell process, the runner and the measurement tools, and th
 
 ## Process
 
-- One shell per session. `bin/vgsh run` takes `flock` on `$XDG_RUNTIME_DIR/vgsh.lock`, exports its own pid as `VGSH_RUNNER_PID` and execs `qs`, so the shell's pid equals the runner's. `shell.qml` draws only when the two match. A second `vgsh run` exits 75; a bare `qs` on the same config answers `guarded` false and maps nothing.
+- One shell per session. `bin/vgsh run` takes no arguments, takes `flock` on `$XDG_RUNTIME_DIR/vgsh.lock`, writes its own pid as that file's only line, exports the pid as `VGSH_RUNNER_PID` and execs `qs` in the foreground, so the shell's pid equals the runner's. `shell.qml` draws, and accepts a state-changing IPC call, only when the two match; an unguarded instance answers read-only calls and refuses the rest with `refused: guard=unowned`. Every other `vgsh` command reads the pid from the lock file and addresses that instance alone; no pid, a dead pid or a failed call exits 69. A second `vgsh run` exits 75; an argument to `run` exits 2.
 - Never kill Quickshell processes by name. Other Quickshell applications share the seat.
 - Never start a second shell against the live session for a test. Validation runs inside the nested sandbox.
 - `Qt.quit()` and `Qt.exit()` do nothing inside this Quickshell build: the log records `Signal QQmlEngine::quit() emitted, but no receivers connected`. A shell exit goes through the runner.
@@ -45,8 +45,9 @@ Requirements for the shell process, the runner and the measurement tools, and th
 
 ## Validation
 
-- `scripts/validate` is the manifest. `scripts/qml-smoke.sh` is the nested row.
+- `scripts/validate` is the manifest. `scripts/qml-smoke.sh` is the nested row. It waits for the nested monitor before starting the shell, so no bar is built for the placeholder screen Qt invents when a compositor has no output yet.
 - The sandbox needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment and Hyprland, `qs`, `hyprctl`, `python3`, `node`, `flock` and `setsid` on the path. A missing one exits 77 and names it.
 - The sandbox runtime dir is a short name under the host's `XDG_RUNTIME_DIR`. A Unix socket path is limited to 107 bytes and Hyprland adds a 63-character signature under `hypr/`; a runtime dir under a long temporary path made Hyprland refuse IPC.
 - Every check that spawns a process passes its environment explicitly, from `env -i`.
 - A budget in a script names the machine and date it was measured on.
+- The compositor keeps a destroyed layer surface in `hyprctl layers` with pid -1 until it drops it. A row that counts surfaces counts only layers with a client, and reads reserved geometry from `hyprctl monitors` for what the user feels.

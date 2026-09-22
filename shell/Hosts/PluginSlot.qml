@@ -12,10 +12,16 @@ Item {
     property string pluginId: ""
     // Names this slot in the core's build records; the smoke reads them.
     property string hostKey: ""
+    // Host-owned properties the core assigns to the instance by name.
+    property var context: ({})
     property var instance: null
     property string loadedKey: ""
 
-    readonly property string key: Plugins.scanned && pluginId !== "" && Plugins.isEnabled(pluginId) ? pluginId + "@" + Plugins.generation : ""
+    // Emitted with the key whose build produced no instance, so a host can
+    // take the surface down instead of showing an empty one.
+    signal buildFailed(string key)
+
+    readonly property string key: Plugins.slotKey(pluginId)
 
     onKeyChanged: reload()
     Component.onCompleted: reload()
@@ -30,8 +36,8 @@ Item {
         if (key === loadedKey) return;
         unload();
         if (key === "") return;
-        instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null);
-        if (instance === null) return;
+        instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context);
+        if (instance === null) { buildFailed(key); return; }
         instance.anchors.fill = slot;
         loadedKey = key;
     }

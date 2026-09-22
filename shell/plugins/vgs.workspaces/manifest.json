@@ -6,15 +6,14 @@
   "author": "VanillaGreen",
   "description": "Workspace numbers for the bar's screen; click focuses one.",
   "license": "MIT",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Widget.qml" },
-  "barWidget": {
-    "displayName": "Workspaces",
-    "category": "Compositor",
-    "allowMultiple": false,
-    "defaultSection": "left"
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "bar-widget": "Widget.qml"
   },
-  "vgs": {
-    "capabilities": ["compositor"]
-  }
+  "defaultSection": "left",
+  "capabilities": [
+    "compositor"
+  ]
 }

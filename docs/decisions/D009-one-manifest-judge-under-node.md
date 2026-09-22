@@ -21,4 +21,4 @@
 
 **Verification**: `scripts/test-plugin-logic.js` and `scripts/check-manifests.js` both load the same file.
 
-**References**: [D004](D004-omarchy-manifest-plus-one-key.md)
+**References**: [D011](D011-native-manifest-no-cross-shell-compatibility.md)

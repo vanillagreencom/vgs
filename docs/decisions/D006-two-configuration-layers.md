@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Context**: Omarchy keeps one file: once a user customises, the shipped defaults never reach them again. The previous shell had no shipped layer either.
+**Context**: A shell that keeps one configuration file stops delivering shipped defaults the moment a user customises it. The previous shell had no shipped layer.
 
 **Decision**: `config/shell.json` is the shipped layer and `~/.config/vgs/shell.json` the user layer. A user key replaces the shipped key whole, except `plugins`, merged by id with the user entry winning, and `disabledPlugins`, which is the user list. The manager seeds the user `bar` key from the effective bar before its first edit.
 

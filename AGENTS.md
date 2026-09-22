@@ -1,12 +1,12 @@
 # v2
 
-A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Every visible surface and every service is a plugin with an Omarchy-compatible manifest, and each plugin ships with the check that proves it stays fast and stable.
+A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Every visible surface and every service is a plugin with its own manifest, and each plugin ships with the check that proves it is built and handed what it asked for.
 
 ## Commands
 
 - `scripts/validate [AREA]`: the validation manifest. Exit 77 means a check could not run and is not a pass.
 - `scripts/qml-smoke.sh`: the nested sandbox row alone. Needs a Wayland session; never touches the live shell.
-- `bin/vgsh run | ipc | log | plugin`: the runner and plugin manager. `vgsh plugin validate <dir>` checks a manifest offline.
+- `bin/vgsh run | ipc | log | plugin`: the runner and plugin manager. `run` takes no arguments; `vgsh plugin validate <dir>` checks a manifest offline.
 
 ## Conventions
 

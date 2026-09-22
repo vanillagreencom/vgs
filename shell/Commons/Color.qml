@@ -3,9 +3,10 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Palette and per-surface colour roles, named as Omarchy Quattro names them
-// so an Omarchy plugin reads the same tokens here. Values come from the
-// user's theme file when it exists; the defaults below stand otherwise.
+// Palette and per-surface colour roles. Plugins read these instead of
+// literal colours so one theme file restyles every surface. Values come
+// from the user's theme file when it exists; the defaults below stand
+// otherwise.
 Singleton {
     id: root
 

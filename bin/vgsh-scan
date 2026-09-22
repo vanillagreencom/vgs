@@ -1,41 +1,53 @@
 #!/usr/bin/env python3
 """Read every plugin manifest under the given directories.
 
-Prints one JSON array. Each element names the plugin directory and carries
-either the manifest text or the read error. Validation is not done here: the
-shell's PluginLogic.js is the one judge of a manifest, and this script only
-reads bytes. A directory argument that does not exist is skipped, because the
-user plugin directory is absent on a fresh install. A directory that exists
-and cannot be listed is an error element, never a silent skip.
+Prints one JSON array. Each element names a directory and carries either the
+manifest text or the read error. Validation is not done here: the shell's
+PluginLogic.js is the one judge of a manifest, and this script only reads
+bytes. A base directory that does not exist is skipped, because the user
+plugin directory is absent on a fresh install. Every other failure to list,
+stat or open is an error element `{"dir": <path>, "error": "<what>: <strerror>"}`,
+never a silent skip: a base that cannot be listed, an entry that cannot be
+stat'ed, and a manifest that cannot be opened. An entry that is not a
+directory, or a directory with no manifest.json, is not a plugin and is skipped.
 """
 import json
 import os
+import stat
 import sys
+
+
+def scan_base(base, out):
+    try:
+        names = sorted(os.listdir(base))
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
+        return
+    for name in names:
+        plugin_dir = os.path.join(base, name)
+        try:
+            st = os.stat(plugin_dir)
+        except OSError as exc:
+            out.append({"dir": plugin_dir, "error": f"cannot stat: {exc.strerror}"})
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            continue
+        manifest = os.path.join(plugin_dir, "manifest.json")
+        try:
+            with open(manifest, encoding="utf-8") as fh:
+                out.append({"dir": plugin_dir, "text": fh.read()})
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            out.append({"dir": plugin_dir, "error": f"cannot read manifest: {exc.strerror}"})
 
 
 def main(argv):
     out = []
     for base in argv[1:]:
-        if not os.path.exists(base):
-            continue
-        if not os.path.isdir(base):
-            out.append({"dir": base, "error": "not a directory"})
-            continue
-        try:
-            names = sorted(os.listdir(base))
-        except OSError as exc:
-            out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
-            continue
-        for name in names:
-            plugin_dir = os.path.join(base, name)
-            manifest = os.path.join(plugin_dir, "manifest.json")
-            if not os.path.isdir(plugin_dir) or not os.path.isfile(manifest):
-                continue
-            try:
-                with open(manifest, encoding="utf-8") as fh:
-                    out.append({"dir": plugin_dir, "text": fh.read()})
-            except OSError as exc:
-                out.append({"dir": plugin_dir, "error": f"cannot read manifest: {exc.strerror}"})
+        scan_base(base, out)
     json.dump(out, sys.stdout)
     return 0
 
