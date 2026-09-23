@@ -1,5 +1,3 @@
-# Kendex renders are tracked. The install ledger is machine-local.
-/.kendex-lock.json
 /.claude/settings.local.json
 # Session-continuation state, never shared.
 /.claude/RESUME.md
@@ -84,6 +82,5 @@ docs/handoff/
 /trees/
 # kendex:local-state begin
 /tmp/
-/.kendex-lock.json
 /.cache/
 # kendex:local-state end
