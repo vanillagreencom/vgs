@@ -12,10 +12,11 @@ Loader {
     property var release: null
 
     Layout.alignment: Qt.AlignVCenter
-    sourceComponent: modelData === "clock" ? clock : modelData === "workspaces" ? workspaces : null
+    sourceComponent: modelData === "clock" ? clock : modelData === "workspaces" ? workspaces : modelData === "manager" ? manager : null
 
     Component { id: clock; Clock { bar: root.barItem } }
     Component { id: workspaces; Workspaces { bar: root.barItem } }
+    Component { id: manager; Manager { bar: root.barItem } }
 
     Component.onCompleted: if (sourceComponent === null) console.error("bar: no built-in widget named " + JSON.stringify(modelData))
     onLoaded: {

@@ -82,7 +82,7 @@ A capability lands with its name, its provider and a fixture consumer with its s
 
 ## Plugin manager
 
-The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interface does not exist yet.
+The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interface is the shipped bar's `manager` built-in: a button that opens the bar's own panel, which lists every discovered plugin with its enabled state and draws a settings form from each manifest's `schema`. The panel reaches the manager through the `manager` capability, which calls the same `setEnabled` the IPC does and writes a setting to every entry the plugin's instances read; a disabled plugin's setting is refused, since listing a third-party row would enable it. Removing `manager` from the bar's `right` setting hides the button on every screen.
 
 - `vgsh plugin list`, `enable <id>`, `disable <id>`, `validate <dir>`, `add <git url>`, `update <id>`, `remove <id>`. Enable and disable go through the shell's IPC, which writes the user file; the shell watches the file and re-derives the enabled set.
 - Disable lists the id in `disabledPlugins` and changes nothing else: placement, settings rows and the active bar id stay, so re-enabling restores the exact screen. Enable unlists the id and gives a plugin a presence only when it has none: a bar becomes the active bar, an unplaced widget is placed in its default section, an unlisted third-party plugin of another kind is listed. Enabling a plugin that already has its presence is idempotent. `scripts/test-plugin-logic.js` pins each rule.

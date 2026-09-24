@@ -17,7 +17,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
-- Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is a plugin; its mechanism is not.
+- Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the shipped bar's manager built-in, reached through the `manager` capability; its mechanism is core.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion in `scripts/qml-smoke.sh` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 

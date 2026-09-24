@@ -58,6 +58,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` or `refused: argv=...` |
 | `shell.screens.all`, `.current` | capability `screens` | every screen; the screen this instance draws on, null for a service |
 | `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
+| `shell.manager.plugins`, `.setEnabled(id, enabled)`, `.setSetting(id, key, value)` | capability `manager` | every discovered plugin as `{ id, name, version, description, kinds, enabled, schema, settings }`; enabling and disabling as `setPluginEnabled` does; a setting written to every entry the plugin reads, refused for a disabled plugin; each returns the IPC reply |
 | `shell.builtins.register(name, item)` | capability `builtins` | records an item the plugin draws itself under its host key as `<plugin id>/<name>`, kind `builtin`; returns a disposer |
 | `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu on this instance's screen, under `anchor` (an item of the plugin's) when given; returns the IPC reply |
 
@@ -94,6 +95,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `shortcut` | `shell.shortcut` |
 | `surfaces` | `shell.surfaces` |
 | `builtins` | `shell.builtins` |
+| `manager` | `shell.manager` |
 
 ## Allowed imports
 

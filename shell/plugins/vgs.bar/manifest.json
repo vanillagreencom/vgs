@@ -4,22 +4,26 @@
   "name": "Bar",
   "version": "0.2.0",
   "author": "VanillaGreen",
-  "description": "The top bar. Draws its own clock and workspaces and lays out plugin widgets in left, center and right sections.",
+  "description": "The top bar. Draws its own workspaces, clock and plugin manager, and lays out plugin widgets in left, center and right sections.",
   "license": "MIT",
   "kinds": [
-    "bar"
+    "bar",
+    "panel"
   ],
   "entryPoints": {
-    "bar": "Bar.qml"
+    "bar": "Bar.qml",
+    "panel": "ManagerPanel.qml"
   },
   "capabilities": [
     "builtins",
-    "compositor"
+    "compositor",
+    "manager",
+    "surfaces"
   ],
   "settings": {
     "left": ["workspaces"],
     "center": ["clock"],
-    "right": [],
+    "right": ["manager"],
     "clockFormat": "ddd d MMM  HH:mm"
   },
   "schema": {

@@ -132,6 +132,11 @@ Singleton {
         shortcut: ctx => ({
             register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
         }),
+        manager: ctx => ({
+            get plugins() { return Plugins.managerRows; },
+            setEnabled: (id, enabled) => Plugins.setEnabled(id, enabled === true),
+            setSetting: (id, key, value) => Plugins.setSetting(id, key, value)
+        }),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
         }),

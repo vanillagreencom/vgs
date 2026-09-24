@@ -97,6 +97,8 @@ for (const [name, user, p, want] of mergeRows) {
 }
 check("effectiveConfig does not alias shipped", (() => { const c = ctx.effectiveConfig(shipped, null); c.bar.id = "x"; return shipped.bar.id; })(), "vgs.bar");
 check("effectiveConfig does not alias the user file", (() => { const user = { bar: { id: "u.bar" } }; const c = ctx.effectiveConfig(shipped, user); c.bar.id = "x"; return user.bar.id; })(), "u.bar");
+check("layoutEntryOf finds the first entry in section order", ctx.layoutEntryOf({ bar: { layout: { right: [{ id: "a", n: 3 }], center: [{ id: "a", n: 2 }], left: [{ id: "b" }] } } }, "a"), { id: "a", n: 2 });
+check("layoutEntryOf is null for an unplaced id", ctx.layoutEntryOf(shipped, "acme.svc"), null);
 check("activeBarId falls back on an empty id", ctx.activeBarId({ bar: { id: "" } }, "vgs.bar"), "vgs.bar");
 check("layoutIds keeps section order left, center, right", ctx.layoutIds({ bar: { layout: { right: [{ id: "r" }], center: [{ id: "c" }], left: [{ id: "l" }] } } }), ["l", "c", "r"]);
 

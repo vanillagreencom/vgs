@@ -10,7 +10,8 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 
 - Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
 - One manifest format, judged once, with every field in [docs/architecture/plugins.md](docs/architecture/plugins.md).
-- A plugin manager: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
+- A plugin manager in the bar: a panel that switches plugins on and off and edits their settings.
+- A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
 - Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
 - A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
 
@@ -18,7 +19,7 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 
 | Plugin | What it does |
 |---|---|
-| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces and clock and three sections for plugin widgets. |
+| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces, clock and plugin manager, and three sections for plugin widgets. |
 
 ## How it works
 

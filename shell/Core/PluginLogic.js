@@ -9,7 +9,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager"];
 
 // Capabilities whose core object serves one plugin at a time: the session
 // lock and the polkit agent. A second plugin naming one is not built while
@@ -238,6 +238,15 @@ function layoutIds(config) {
 // The active bar id: config.bar.id, or the shipped default bar when absent.
 function activeBarId(config, defaultBarId) {
     return config && config.bar && typeof config.bar.id === "string" && config.bar.id.length > 0 ? config.bar.id : defaultBarId;
+}
+
+// The first layout entry with `id`, in section order, or null.
+function layoutEntryOf(config, id) {
+    for (var i = 0; i < SECTIONS.length; i++) {
+        var hit = sectionEntries(config, SECTIONS[i]).filter(function (entry) { return entry.id === id; })[0];
+        if (hit !== undefined) return hit;
+    }
+    return null;
 }
 
 // The plugins[] row with `id`, or undefined.

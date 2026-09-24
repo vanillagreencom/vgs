@@ -476,6 +476,32 @@ Singleton {
         return Config.writeUser(Logic.withSetting(Config.user, m, key, value, Config.effective, targets));
     }
 
+    // Every discovered plugin as the plugin manager shows it: listing
+    // metadata, whether it is enabled, its settings schema and the settings
+    // it currently receives (a bar widget's from its first layout entry).
+    readonly property var managerRows: Object.keys(manifests).sort().map(id => {
+        const m = manifests[id];
+        return {
+            id: id,
+            name: m.name,
+            version: m.version,
+            description: m.description,
+            kinds: m.kinds,
+            enabled: isEnabled(id),
+            schema: m.schema,
+            settings: Logic.settingsFor(Config.effective, m, Logic.layoutEntryOf(Config.effective, id))
+        };
+    })
+
+    // Write one setting of plugin `id` into every configuration entry its
+    // instances read, for the plugin manager. A disabled plugin is refused:
+    // listing a third-party plugin's row would enable it.
+    function setSetting(id, key, value) {
+        if (!has(id)) return "unknown: " + id;
+        if (!isEnabled(id)) return "refused: disabled=" + id;
+        return writeSetting(id, key, value, Logic.settingTargets(Config.effective, manifests[id]));
+    }
+
     function listJson() {
         const rows = Object.keys(manifests).sort().map(id => ({
             id: id,

@@ -24,7 +24,9 @@
 # none, and releases it on disable, read back from the fixture, the core's
 # lending record, the compositor and a private D-Bus; a panel, an overlay
 # and a menu open on summon, take their placement and close on hide, and a
-# background is drawn on the bottom layer of every screen;
+# background is drawn on the bottom layer of every screen; the bar's
+# manager button opens a panel that lists, toggles and configures plugins,
+# and the bar's settings hide it on every screen;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
 # error; resident memory stays under the ceiling.
@@ -270,6 +272,9 @@ then ok "bundled plugins discovered, enabled and error-free"; else fail "bundled
 # read beside it: a bar that is gone reserves nothing.
 bar_count() { hypr -j layers | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d.values() for lv in m["levels"].values() for l in lv if l["namespace"]=="vgs:bar" and l["pid"]!=-1))'; }
 reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum(m["reserved"]) for m in json.load(sys.stdin)))'; }
+# Live layers with a namespace as [[x, y, w, h], ...], sorted.
+layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
+layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 bars=-1
 for _ in $(seq 1 50); do
   if bars="$(bar_count)" && [[ $bars == "$monitors" ]]; then break; fi
@@ -307,7 +312,7 @@ expect_builtins() { # LABEL EXPECTED_JSON_LIST
   done
   fail "$1: got $got want $want"
 }
-expect_builtins "every bar registered its built-in workspaces and clock" '["vgs.bar/clock","vgs.bar/workspaces"]'
+expect_builtins "every bar registered its built-in workspaces, clock and plugin manager" '["vgs.bar/clock","vgs.bar/manager","vgs.bar/workspaces"]'
 
 # A rebuild counter: the core counts every instance it builds. Rows below
 # assert that an unrelated write and a no-op rescan build nothing.
@@ -322,7 +327,7 @@ tick_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(
 tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
 expect_widgets "the bar dropped the disabled widget" '[]'
-expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/clock","vgs.bar/workspaces"]'
+expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/clock","vgs.bar/manager","vgs.bar/workspaces"]'
 expect "widget reads disabled after the user file changed" False tick_state
 expect "the disabled widget keeps its layout entry and settings" '[{"id": "acme.tick", "format": "ddd d MMM  HH:mm"}]' tick_entry
 expect "disable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
@@ -342,7 +347,8 @@ if [[ $bars_now == 0 ]]; then ok "the bar host destroyed its surface with no bar
 expect "no bar reserves no screen space" 0 reserved_total
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
 expect_widgets "the bar host rebuilt the re-enabled bar" '["acme.tick"]'
-expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/clock","vgs.bar/workspaces"]'
+monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
+expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/clock","vgs.bar/manager","vgs.bar/workspaces"]'
 for _ in $(seq 1 50); do
   if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
   sleep 0.2
@@ -559,7 +565,7 @@ PY
   done
   if [[ $clock_changes -ge 2 ]]; then ok "the shared clock ticks seconds for a seconds format"; else fail "clock text changed $clock_changes times in 2.2 s"; fi
   expect "a bar settings change rebuilds nothing" "$before" builds
-  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/clock","vgs.bar/workspaces"]'
+  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/clock","vgs.bar/manager","vgs.bar/workspaces"]'
 else
   fail "buildCount unreadable before the settings rows"
 fi
@@ -630,6 +636,50 @@ expect_poll "the compositor moved to that workspace" 2 active_ws
 expect_poll "the fixture focuses the first workspace again" ok probe dispatch 'focusWorkspace 1'
 expect_poll "the compositor moved back" 1 active_ws
 
+# The plugin manager: the bar's manager button opens the bar's own panel
+# under it, which lists every plugin, toggles one through the core's
+# setPluginEnabled path and writes a setting through its form.
+read -r mon_w mon_h bar_reserved < <(monitor_size)
+expect "the manager button opens the manager panel" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/manager toggle ''
+panel_top() { layers_of vgs:panel | python3 -c 'import json,sys; print([l[1] for l in json.load(sys.stdin)])'; }
+expect_poll "the manager panel sits under the bar" "[$((bar_reserved + 8))]" panel_top
+manager_rows() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(json.dumps({r["id"]: r["enabled"] for r in rows if r["id"] in ("acme.probe", "acme.bare", "vgs.bar")}, sort_keys=True))'; }
+expect "the manager panel lists every plugin with its state" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
+manager_fields() { ipc shell readInstance panel vgs.bar renderedFields | python3 -c 'import json,sys; f=json.load(sys.stdin); print("acme.probe:label" in f and "vgs.bar:clockFormat" in f and not any(x.startswith("acme.bare:") for x in f))'; }
+expect "the manager panel draws a settings form for each schema" True manager_fields
+probe_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.probe"][0])'; }
+expect "the manager toggles the fixture off" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
+expect_poll "listPlugins reads the fixture disabled" False probe_enabled
+expect_poll "the manager panel shows the fixture disabled" '{"acme.bare": true, "acme.probe": false, "vgs.bar": true}' manager_rows
+expect "the manager refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"x"}'
+expect "the manager toggles the fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
+expect_poll "listPlugins reads the fixture enabled" True probe_enabled
+expect "the manager form writes the fixture's setting" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'
+expect_poll "the running service received the manager's setting" '"via-manager"' read_service label
+expect_poll "the running widget received the manager's setting" '"via-manager"' read_widget label
+expect "the manager refuses a setting outside the schema" "refused: setting=tags undeclared" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"tags","value":"x"}'
+expect "the manager button closes the manager panel" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/manager toggle ''
+expect_poll "the manager panel is gone" 0 layer_count vgs:panel
+bar_row() { # JSON list of built-ins for the right section
+  python3 - "$home/.config/vgs/shell.json" "$1" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+rows = d.setdefault("plugins", [])
+row = [e for e in rows if e["id"] == "vgs.bar"]
+if not row:
+    rows.append({"id": "vgs.bar"})
+    row = rows[-1:]
+row[0]["right"] = json.loads(sys.argv[2])
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+}
+bar_row '[]'
+expect_builtins "hiding the manager in the bar's settings removes it from every screen" '["vgs.bar/clock","vgs.bar/workspaces"]'
+bar_row '["manager"]'
+expect_builtins "listing the manager again brings it back on every screen" '["vgs.bar/clock","vgs.bar/manager","vgs.bar/workspaces"]'
+
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
 expect_widgets "the fixture widget left the bar" '["acme.tick"]'
 got=""
@@ -695,11 +745,6 @@ surfaces_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(an
 expect_poll "the hosts fixture is discovered" True surfaces_known
 expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces true
 
-# Live layers with a namespace as [[x, y, w, h], ...], sorted.
-layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
-layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
-read -r mon_w mon_h bar_reserved < <(monitor_size)
 screen_name="$(bar_key | sed 's/^bar://')"
 
 expect_poll "the background host draws one surface per screen" "$monitors" layer_count vgs:background
