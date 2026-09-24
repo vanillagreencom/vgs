@@ -9,6 +9,8 @@ import "PluginLogic.js" as Logic
 // once. A user file that does not parse keeps the last good value, logs
 // the error and blocks writes until it parses again, so a typo never
 // blanks the desktop and a manager edit never overwrites unread edits.
+// Nothing is built before `ready`: a bar built from the user file alone
+// would draw without the shipped layout and fill in a moment later.
 Singleton {
     id: root
 
@@ -19,7 +21,11 @@ Singleton {
     property var shipped: ({ version: 1 })
     property var user: null
     property bool shippedLoaded: false
+    // True once the user file was read, found absent, or refused as
+    // unparseable; each is a settled first answer.
+    property bool userSettled: false
     property bool userParseFailed: false
+    readonly property bool ready: shippedLoaded && userSettled
     readonly property var effective: Logic.effectiveConfig(shipped, user)
 
     function parse(label, text) {
@@ -52,9 +58,10 @@ Singleton {
             const r = root.parse(path, text());
             root.userParseFailed = !r.ok;
             if (r.ok) root.user = r.value;
+            root.userSettled = true;
         }
         onLoadFailed: error => {
-            if (error === FileViewError.FileNotFound) { root.user = null; root.userParseFailed = false; }
+            if (error === FileViewError.FileNotFound) { root.user = null; root.userParseFailed = false; root.userSettled = true; }
             else console.error("config: user file unreadable at " + path + ": " + error);
         }
         onFileChanged: reload()

@@ -81,7 +81,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `qs.Commons`, `qs.Ui` | |
 | a quoted path | one that leaves the plugin directory |
 
-Names refused anywhere in a plugin's QML: `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock`, `WlSessionLockSurface`, `WlrLayershell`, `Window`, `ApplicationWindow`.
+Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock`, `WlSessionLockSurface`, `WlrLayershell`, `Window`, `ApplicationWindow`, and the types the core lends through a capability: `IpcHandler`, `GlobalShortcut`, `NotificationServer`, `PolkitAgent`. `Hyprland.dispatch` is refused; use `shell.compositor`.
 
 ## Tokens in `qs.Commons`
 
@@ -95,6 +95,8 @@ Names refused anywhere in a plugin's QML: `PanelWindow`, `FloatingWindow`, `Popu
 | `Style.font.family`, `Style.font.size`, `Style.font.small` | string, int, int |
 | `Style.bar.sizeHorizontal`, `Style.bar.sizeVertical` | int |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |
+| `Time.now` | date: the shared wall clock, ticking once a minute |
+| `Time.holdSeconds(item, wanted)` | function: while any item holds it, `Time.now` ticks once a second; release on destruction |
 | `Util.alpha(color, opacity)`, `Util.fileUrl(path)`, `Util.shellQuote(value)` | function |
 
 ## IPC

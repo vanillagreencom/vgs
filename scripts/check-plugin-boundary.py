@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Enforce the plugin boundary docs/architecture/plugins.md states.
 
-Plugin rules, one per QML file under a plugin directory:
+Plugin rules, one per QML or JS file under a plugin directory:
   import-module      a module import starts with QtQuick, QtQml, Qt.labs., qs.Commons,
                      qs.Ui or Quickshell, never Quickshell.Wayland or QtQuick.Window
   import-path        a quoted import stays inside the plugin directory
-  surface-type       no window or layer-shell type is named outside a // comment
+  surface-type       no window or layer-shell type is instantiated
+  core-type          no object the core lends through a capability is instantiated
+                     (IpcHandler, GlobalShortcut, NotificationServer, PolkitAgent) and
+                     Hyprland.dispatch is never called
 Core rules, one per QML or JS file under shell/ outside shell/plugins/:
   core-plugin-name   no first-party plugin id literal (the `vgs.` prefix alone is fine)
   core-plugin-import no import of a plugin directory
+
+Every rule reads code only: line comments, block comments and trailing comments
+are blanked before matching, with line numbers kept. String literals stay, so a
+window type inside a string handed to Qt.createQmlObject is still a finding.
 
 Usage: check-plugin-boundary.py [--shell DIR] [PLUGIN_DIR...]
 With no plugin directories, every directory under DIR/plugins is checked.
@@ -26,9 +33,12 @@ import sys
 ALLOWED_PREFIXES = ("QtQuick", "QtQml", "Qt.labs.", "Quickshell", "qs.Commons", "qs.Ui")
 REFUSED_MODULES = ("Quickshell.Wayland", "QtQuick.Window")
 SURFACE_TYPES = ("PanelWindow", "FloatingWindow", "PopupWindow", "WlSessionLock", "WlSessionLockSurface", "WlrLayershell", "Window", "ApplicationWindow")
-MODULE_IMPORT = re.compile(r"^\s*import\s+([A-Za-z][\w.]*)")
-PATH_IMPORT = re.compile(r"^\s*import\s+\"([^\"]+)\"")
+LENT_TYPES = ("IpcHandler", "GlobalShortcut", "NotificationServer", "PolkitAgent")
+# A QML file imports with `import`, a JS file with `.import`.
+MODULE_IMPORT = re.compile(r"^\s*\.?import\s+([A-Za-z][\w.]*)")
+PATH_IMPORT = re.compile(r"^\s*\.?import\s+\"([^\"]+)\"")
 SURFACE = re.compile(r"\b(" + "|".join(SURFACE_TYPES) + r")\s*\{")
+LENT = re.compile(r"\b(" + "|".join(LENT_TYPES) + r")\s*\{|\b(Hyprland\.dispatch)\s*\(")
 PLUGIN_ID_LITERAL = re.compile(r"[\"'`]vgs\.[a-z]")
 PLUGIN_DIR_IMPORT = re.compile(r"^\s*import\s+\"[^\"]*plugins/")
 
@@ -66,20 +76,78 @@ def source_files(root, suffixes):
                 yield os.path.join(dirpath, name)
 
 
+# A `/` after one of these characters, or at the start of the text, opens a
+# regular expression literal rather than dividing.
+REGEX_AFTER = set("(,=:[!&|?{};~+-*%<>^")
+
+
+def blank_comments(text):
+    """Return `text` with every comment replaced by spaces, newlines kept.
+
+    Strings, template literals and regular expression literals are copied as
+    they are, so a `//` inside `"file://"` or `/\\/\\//` opens no comment. A
+    single- or double-quoted string ends at its line's end even unterminated,
+    so a misread quote cannot hide more than the rest of one line."""
+    out = []
+    i, n = 0, len(text)
+    last = ""
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if c == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append("".join("\n" if ch == "\n" else " " for ch in text[i:end]))
+            i = end
+            continue
+        if c in "\"'`" or (c == "/" and (last == "" or last in REGEX_AFTER)):
+            close = c
+            out.append(c)
+            i += 1
+            in_class = False
+            while i < n:
+                ch = text[i]
+                if ch == "\n" and close != "`":
+                    break
+                out.append(ch)
+                i += 1
+                if ch == "\\" and i < n and text[i] != "\n":
+                    out.append(text[i])
+                    i += 1
+                elif close == "/" and ch == "[":
+                    in_class = True
+                elif close == "/" and ch == "]":
+                    in_class = False
+                elif ch == close and not in_class:
+                    break
+            last = close
+            continue
+        out.append(c)
+        if not c.isspace():
+            last = c
+        i += 1
+    return "".join(out)
+
+
 def source_lines(path):
     try:
         with open(path, encoding="utf-8") as fh:
-            lines = fh.readlines()
+            text = fh.read()
     except OSError as exc:
         raise Unreadable(path, exc.strerror) from exc
-    for number, line in enumerate(lines, 1):
-        if not line.lstrip().startswith("//"):
+    for number, line in enumerate(blank_comments(text).split("\n"), 1):
+        if line.strip():
             yield number, line
 
 
 def check_plugin(plugin_dir, findings):
     real_root = os.path.realpath(plugin_dir)
-    for path in source_files(plugin_dir, (".qml",)):
+    for path in source_files(plugin_dir, (".qml", ".js")):
         for number, line in source_lines(path):
             m = MODULE_IMPORT.match(line)
             if m and not module_allowed(m.group(1)):
@@ -92,6 +160,9 @@ def check_plugin(plugin_dir, findings):
             m = SURFACE.search(line)
             if m:
                 findings.append(f"surface-type {path}:{number} {m.group(1)}")
+            m = LENT.search(line)
+            if m:
+                findings.append(f"core-type {path}:{number} {m.group(1) or m.group(2)}")
 
 
 def check_core(shell_dir, findings):

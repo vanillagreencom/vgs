@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """One planted violation per rule of check-plugin-boundary.py, one clean
-fixture, one row per exemption, and one row per unreadable path class. Each
+fixture, one row per exemption, one row per JS rule, and one row per unreadable path class. Each
 row builds a throwaway shell tree, runs the check on it and asserts the rule
 key and the exit status. Unreadable rows need a uid that permissions bind;
 under euid 0 the script reports status=not-measured and exits 77."""
@@ -29,11 +29,33 @@ ROWS = [
     ("plugin names an application window", CLEAN_WIDGET.replace("BarWidget { }", "ApplicationWindow { }"), CLEAN_CORE, "surface-type"),
     ("plugin names a lock surface", CLEAN_WIDGET.replace("BarWidget { }", "WlSessionLockSurface { }"), CLEAN_CORE, "surface-type"),
     ("a window type in a comment is not a finding", CLEAN_WIDGET + "// PanelWindow { } is core-owned\n", CLEAN_CORE, None),
+    ("a window type in a block comment is not a finding", CLEAN_WIDGET + "/* the host owns\n   PanelWindow { } */\n", CLEAN_CORE, None),
+    ("a window type in a trailing comment is not a finding", CLEAN_WIDGET.replace("BarWidget { }", "BarWidget { } // PanelWindow { }"), CLEAN_CORE, None),
+    ("a // inside a string opens no comment", CLEAN_WIDGET.replace("BarWidget { }", 'BarWidget { property string u: "file://x"; PanelWindow { } }'), CLEAN_CORE, "surface-type"),
+    ("code after a closed block comment is read", CLEAN_WIDGET.replace("BarWidget { }", "/* note */ PanelWindow { }"), CLEAN_CORE, "surface-type"),
+    ("plugin instantiates an IPC handler", CLEAN_WIDGET.replace("BarWidget { }", "IpcHandler { }"), CLEAN_CORE, "core-type"),
+    ("plugin instantiates a global shortcut", CLEAN_WIDGET.replace("BarWidget { }", "GlobalShortcut { }"), CLEAN_CORE, "core-type"),
+    ("plugin instantiates a notification server", CLEAN_WIDGET.replace("BarWidget { }", "NotificationServer { }"), CLEAN_CORE, "core-type"),
+    ("plugin instantiates a polkit agent", CLEAN_WIDGET.replace("BarWidget { }", "PolkitAgent { }"), CLEAN_CORE, "core-type"),
+    ("plugin dispatches to Hyprland directly", CLEAN_WIDGET.replace("BarWidget { }", 'BarWidget { Component.onCompleted: Hyprland.dispatch("workspace 1") }'), CLEAN_CORE, "core-type"),
     ("a window type as a word is not a finding", CLEAN_WIDGET.replace("BarWidget { }", 'BarWidget { property string note: "Window" }'), CLEAN_CORE, None),
     ("core names a plugin id", CLEAN_CORE.replace('"vgs."', '"vgs.bar"'), None, "core-plugin-name"),
     ("core names a plugin id in a template literal", CLEAN_CORE.replace('"vgs."', '`vgs.bar`'), None, "core-plugin-name"),
     ("core names a plugin id in a comment is not a finding", CLEAN_CORE + '// the "vgs.clock" widget\n', None, None),
+    ("core names a plugin id in a block comment is not a finding", CLEAN_CORE + '/* the "vgs.clock"\n   widget */\n', None, None),
     ("core imports a plugin directory", CLEAN_CORE.replace("import qs.Core", 'import "../plugins/vgs.bar"'), None, "core-plugin-import"),
+]
+
+CLEAN_JS = '.pragma library\n.import QtQuick as Q\n.import "./util.js" as U\nvar re = /\\/\\//; // PanelWindow { }\n'
+
+# JS rows: name, text of a .js file inside the plugin, expected rule key or None
+JS_ROWS = [
+    ("clean plugin JS", CLEAN_JS, None),
+    ("plugin JS imports the wayland module", CLEAN_JS.replace(".import QtQuick as Q", ".import Quickshell.Wayland as W"), "import-module"),
+    ("plugin JS path import escapes its directory", CLEAN_JS.replace('"./util.js"', '"../other/util.js"'), "import-path"),
+    ("plugin JS builds a window from a string", CLEAN_JS + 'var w = Qt.createQmlObject("import Quickshell; PanelWindow { }", null);\n', "surface-type"),
+    ("a // inside a regular expression opens no comment", CLEAN_JS + 'var re = /\\/\\//; var w = Qt.createQmlObject("PanelWindow { }", null);\n', "surface-type"),
+    ("plugin JS dispatches to Hyprland directly", CLEAN_JS + 'function go() { Hyprland.dispatch("workspace 1"); }\n', "core-type"),
 ]
 
 # unreadable rows: name, path under the shell tree whose permission bits are removed; the check exits 2 and names that path
@@ -44,7 +66,7 @@ UNREADABLE_ROWS = [
 ]
 
 
-def build_shell(tmp, widget, core):
+def build_shell(tmp, widget, core, js=None):
     shell = os.path.join(tmp, "shell")
     plugin = os.path.join(shell, "plugins", "acme.widget")
     os.makedirs(os.path.join(plugin, "lib"))
@@ -55,14 +77,17 @@ def build_shell(tmp, widget, core):
         fh.write(CLEAN_WIDGET)
     with open(os.path.join(shell, "Core", "Thing.qml"), "w", encoding="utf-8") as fh:
         fh.write(core)
+    if js is not None:
+        with open(os.path.join(plugin, "logic.js"), "w", encoding="utf-8") as fh:
+            fh.write(js)
     return shell
 
 
-def run_row(name, widget, core, want):
+def run_row(name, widget, core, want, js=None):
     with tempfile.TemporaryDirectory() as tmp:
         if core is None:
             core, widget = widget, CLEAN_WIDGET
-        shell = build_shell(tmp, widget, core)
+        shell = build_shell(tmp, widget, core, js)
         proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False, env=ENV)
         keys = {line.split(" ", 1)[0] for line in proc.stdout.splitlines() if ":" in line and not line.startswith("check-plugin-boundary:")}
         if want is None:
@@ -93,6 +118,7 @@ def main():
         print("status=not-measured reason=euid-0")
         return 77
     results = [run_row(*row) for row in ROWS]
+    results += [run_row(name, CLEAN_WIDGET, CLEAN_CORE, want, js) for name, js, want in JS_ROWS]
     for label, args in (("unreadable shell dir exits 2", ["--shell", "/nonexistent/shell"]), ("unreadable plugin dir exits 2", ["/nonexistent/plugin"])):
         proc = subprocess.run([sys.executable, CHECK] + args, capture_output=True, text=True, check=False, env=ENV)
         good = proc.returncode == 2

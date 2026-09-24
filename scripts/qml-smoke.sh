@@ -17,6 +17,7 @@
 # surface; an unrelated write and a no-op rescan build nothing; a user
 # plugin is discovered, built as a service and a widget, receives exactly
 # the capabilities it named, and takes a settings change without a rebuild;
+# the shared clock ticks seconds once a format shows them;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
 # error; resident memory stays under the ceiling.
@@ -39,7 +40,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) printf 'qml-smoke: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -384,6 +385,18 @@ center = d["bar"]["layout"]["center"]
 json.dump(d, open(p, "w"), indent=2)
 PY
   expect_poll "the running clock received its changed layout entry" '"HH:mm:ss"' read_clock format
+  # The shared clock ticks seconds only while a format shows them: three
+  # readings across 2.2 s change at least twice at second precision and at
+  # most once at minute precision.
+  clock_changes=0; clock_last=""
+  for _ in 1 2 3; do
+    if clock_now="$(read_clock displayed)"; then
+      [[ -n $clock_last && $clock_now != "$clock_last" ]] && clock_changes=$((clock_changes + 1))
+      clock_last="$clock_now"
+    fi
+    sleep 1.1
+  done
+  if [[ $clock_changes -ge 2 ]]; then ok "the shared clock ticks seconds for a seconds format"; else fail "clock text changed $clock_changes times in 2.2 s"; fi
   expect "a widget settings change rebuilds nothing" "$before" builds
 else
   fail "buildCount unreadable before the settings rows"

@@ -136,10 +136,12 @@ Singleton {
     readonly property string activeBarId: Logic.activeBarId(Config.effective, defaultBarId)
 
     // The key a slot loads plugin `id` under: the id plus the registry
-    // generation while the plugin is enabled, "" when nothing can be built.
-    // Every slot and every host reads this one derivation.
+    // generation while the plugin is enabled, "" when nothing can be built:
+    // before the first scan, before both configuration files settled, or
+    // while the plugin is disabled. Every slot and every host reads this one
+    // derivation.
     function slotKey(id) {
-        return scanned && id !== "" && isEnabled(id) ? id + "@" + generation : "";
+        return scanned && Config.ready && id !== "" && isEnabled(id) ? id + "@" + generation : "";
     }
 
     // A configuration change reaches every live instance through one
