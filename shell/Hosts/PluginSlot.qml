@@ -19,6 +19,13 @@ Item {
     property var screen: null
     property var instance: null
     property string loadedKey: ""
+    // The host key the instance was built under. A host's key can change
+    // while it is torn down (its screen reads null), so the instance is
+    // destroyed under this one.
+    property string loadedHostKey: ""
+    // Call the instance's close() before destroying it: a summoned kind's
+    // host sets it, so a plugin closed by hide or by being disabled hears it.
+    property bool closeOnUnload: false
 
     // Emitted with the key whose build produced no instance, so a host can
     // take the surface down instead of showing an empty one.
@@ -33,8 +40,19 @@ Item {
     Component.onDestruction: unload()
 
     function unload() {
-        if (instance !== null) { Plugins.destroyInstance(instance, hostKey); instance = null; }
+        if (instance !== null) {
+            if (closeOnUnload) {
+                try {
+                    instance.close();
+                } catch (e) {
+                    console.error("plugin slot: " + pluginId + " close() failed: " + e.message);
+                }
+            }
+            Plugins.destroyInstance(instance, loadedHostKey);
+            instance = null;
+        }
         loadedKey = "";
+        loadedHostKey = "";
     }
 
     function reload() {
@@ -45,6 +63,7 @@ Item {
         if (instance === null) { buildFailed(key); return; }
         instance.anchors.fill = slot;
         loadedKey = key;
+        loadedHostKey = hostKey;
         built(instance);
     }
 }

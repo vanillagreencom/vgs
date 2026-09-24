@@ -20,7 +20,8 @@
 # Output protocol, pinned by scripts/test-sample-shell-memory.sh: every refusal
 # and every report line begins with a key=value field, English follows on its own
 # line. Refusals exit 2 for a bad invocation, an unusable header or a shell that
-# cannot be resolved, and 1 for a log that cannot be read as one session.
+# cannot be resolved, and 1 for a log that cannot be read as one session or a
+# run that ended before the samples --samples asked for (samples-short=).
 # Resolution refuses shell=not-running when $XDG_RUNTIME_DIR/vgsh.lock is
 # missing, holds no pid on its first line or names a pid with no process, and
 # shell=unlisted when `qs list` does not list that pid under this checkout's
@@ -467,3 +468,6 @@ if [[ "$stopped" == 1 ]]; then
   fi
 fi
 report_baseline "$LOG"
+if [[ "$SAMPLES" -gt 0 && "$taken" -lt "$SAMPLES" ]]; then
+  refuse 1 "samples-short=$taken want=$SAMPLES" "The run ended before it took the samples asked for."
+fi

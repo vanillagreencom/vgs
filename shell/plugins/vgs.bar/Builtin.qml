@@ -2,13 +2,15 @@ import QtQuick
 import QtQuick.Layouts
 
 // One built-in widget of the bar, chosen by name, and registered with the
-// core so the build records list it under the bar's screen. A name the bar
+// core as `<section>-<name>` so the build records list it under the bar's
+// screen; the same built-in may sit in two sections. A name the bar
 // does not draw is logged and shows nothing.
 Loader {
     id: root
 
     required property string modelData
     required property Item barItem
+    required property string section
     property var release: null
 
     Layout.alignment: Qt.AlignVCenter
@@ -21,7 +23,7 @@ Loader {
     Component.onCompleted: if (sourceComponent === null) console.error("bar: no built-in widget named " + JSON.stringify(modelData))
     onLoaded: {
         try {
-            release = barItem.shell.builtins.register(modelData, item);
+            release = barItem.shell.builtins.register(section + "-" + modelData, item);
         } catch (e) {
             console.error("bar: built-in " + modelData + " not registered: " + e.message);
         }

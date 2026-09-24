@@ -107,6 +107,7 @@ for (const raw of [bar, clock, svc]) manifests[raw.id] = ctx.validateManifest(ra
 manifests["vgs.workspaces"] = ctx.validateManifest(Object.assign({}, clock, { id: "vgs.workspaces", defaultSection: "left" }), "/p").manifest;
 manifests["vgs.svc"] = ctx.validateManifest(Object.assign({}, svc, { id: "vgs.svc" }), "/p").manifest;
 manifests["acme.bar"] = ctx.validateManifest(Object.assign({}, bar, { id: "acme.bar" }), "/p").manifest;
+manifests["vgs.barpanel"] = ctx.validateManifest(Object.assign({}, bar, { id: "vgs.barpanel", kinds: ["bar", "panel"], entryPoints: { bar: "Bar.qml", panel: "P.qml" } }), "/p").manifest;
 const noSection = Object.assign({}, clock, { id: "acme.widget", settings: { size: 3, tags: ["a"] } });
 delete noSection.defaultSection;
 manifests["acme.widget"] = ctx.validateManifest(noSection, "/p").manifest;
@@ -130,6 +131,8 @@ const enabledRows = [
     ["a placed widget listed in disabledPlugins is disabled", ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.workspaces"] }), "vgs.workspaces", false],
     ["an inactive bar listed for its settings is not enabled", ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.bar", x: 1 }] }), "acme.bar", false],
     ["an unplaced widget listed for its settings is not enabled", ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.widget", size: 1 }] }), "acme.widget", false],
+    ["an inactive first-party bar with a panel kind is not enabled", ctx.effectiveConfig(shipped, { bar: { id: "acme.bar" } }), "vgs.barpanel", false],
+    ["the active first-party bar with a panel kind is enabled", ctx.effectiveConfig(shipped, { bar: { id: "vgs.barpanel" } }), "vgs.barpanel", true],
 ];
 for (const [name, config, id, want] of enabledRows) {
     check("isEnabled: " + name, ctx.isEnabled(config, manifests[id], "vgs.bar"), want);
@@ -248,14 +251,16 @@ const settingRows = [
     ["layout seeds the user bar from the effective bar", null, tunePlaced, ["layout"], "bar.id", "vgs.bar"],
     ["layout sets every entry with the id", twiceTune, ctx.effectiveConfig(shipped, twiceTune), ["layout"], "bar.layout", { left: [{ id: "acme.tune", label: "new" }], center: [], right: [{ id: "acme.tune", label: "new" }] }],
     ["layout leaves plugins alone", null, tunePlaced, ["layout"], "plugins", undefined],
+    ["a locator sets only its own entry", twiceTune, ctx.effectiveConfig(shipped, twiceTune), ["layout"], "bar.layout", { left: [{ id: "acme.tune" }], center: [], right: [{ id: "acme.tune", label: "new" }] }, { section: "right", nth: 0 }],
+    ["a locator counts entries with the same id", { bar: { id: "vgs.bar", layout: { left: [{ id: "acme.tune" }, { id: "b.c" }, { id: "acme.tune" }], center: [], right: [] } } }, tunePlaced, ["layout"], "bar.layout.left", [{ id: "acme.tune" }, { id: "b.c" }, { id: "acme.tune", label: "new" }], { section: "left", nth: 1 }],
     ["plugins adds a row with the id", null, tunePlaced, ["plugins"], "plugins", [{ id: "acme.tune", label: "new" }]],
     ["plugins seeds the row from the effective row", null, shippedTune, ["plugins"], "plugins", [{ id: "acme.tune", size: 9, label: "new" }]],
     ["plugins updates the user row in place", { plugins: [{ id: "acme.tune", size: 4 }, { id: "b.c" }] }, shippedTune, ["plugins"], "plugins", [{ id: "acme.tune", size: 4, label: "new" }, { id: "b.c" }]],
     ["plugins leaves the bar key alone", null, tunePlaced, ["plugins"], "bar", undefined],
     ["writes version 1", null, tunePlaced, ["plugins"], "version", 1],
 ];
-for (const [name, user, effective, targets, p, want] of settingRows) {
-    check("withSetting: " + name, dig(ctx.withSetting(user, tunable, "label", "new", effective, targets), p), want);
+for (const [name, user, effective, targets, p, want, locator] of settingRows) {
+    check("withSetting: " + name, dig(ctx.withSetting(user, tunable, "label", "new", effective, targets, locator || null), p), want);
 }
 check("withSetting does not alias the user file", (() => { const u = { plugins: [{ id: "acme.tune", size: 4 }] }; ctx.withSetting(u, tunable, "label", "new", shippedTune, ["plugins"]); return u.plugins[0]; })(), { id: "acme.tune", size: 4 });
 

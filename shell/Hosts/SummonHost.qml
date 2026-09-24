@@ -8,10 +8,12 @@ import qs.Commons
 // The surfaces of one summonable kind: `panel`, `overlay` or `menu`. A
 // plugin of that kind is drawn only while summoned. `summon` creates a
 // layer surface on the screen it was summoned on, builds the plugin inside
-// it and calls its `open(payloadJson)`; `hide` calls `close()` and destroys
-// the surface, so nothing of a hidden plugin stays mapped. One surface per
-// plugin id; summoning an open one hands it the new payload. A plugin that
-// is disabled while open is closed with its surface.
+// it and calls its `open(payloadJson)`; `hide` destroys the surface, and
+// the slot calls `close()` first, so nothing of a hidden plugin stays
+// mapped. One surface per plugin id; summoning an open one hands it the new
+// payload. A plugin disabled while open is closed the same way. An open()
+// that throws is logged and refuses the summon; a close() that throws is
+// logged and the surface still goes.
 Scope {
     id: host
 
@@ -23,6 +25,8 @@ Scope {
     property var requests: ({})
     // id -> the built instance, set when its slot builds.
     property var instances: ({})
+    // id -> the error its first open() threw, read by summon.
+    property var openErrors: ({})
 
     Component.onCompleted: Plugins.registerHost(kind, host)
 
@@ -41,8 +45,10 @@ Scope {
     // of the item it came from, relative to its screen, and that screen.
     function summon(id, payloadJson, origin) {
         if (PluginLogic.hasOwn(instances, id)) {
-            instances[id].open(payloadJson);
-            return "ok";
+            const error = callOpen(id, instances[id], payloadJson);
+            if (error === "") return "ok";
+            drop(id);
+            return "refused: open-failed=" + id;
         }
         const screen = origin && origin.screen ? origin.screen : focusedScreen();
         if (screen === null) return "refused: screen=none";
@@ -54,13 +60,27 @@ Scope {
             drop(id);
             return "refused: build-failed=" + id;
         }
+        if (PluginLogic.hasOwn(openErrors, id)) {
+            drop(id);
+            return "refused: open-failed=" + id;
+        }
         return "ok";
     }
 
     function hide(id) {
-        if (PluginLogic.hasOwn(instances, id)) instances[id].close();
         drop(id);
         return "ok";
+    }
+
+    // Call one instance's open(); "" when it returned, else the error, logged.
+    function callOpen(id, instance, payloadJson) {
+        try {
+            instance.open(payloadJson);
+            return "";
+        } catch (e) {
+            console.error("summon host: " + id + " open() failed: " + e.message);
+            return e.message;
+        }
     }
 
     function toggle(id, payloadJson, origin) {
@@ -71,7 +91,11 @@ Scope {
         const next = Object.assign({}, instances);
         next[id] = instance;
         instances = next;
-        instance.open(requests[id].payloadJson);
+        const error = callOpen(id, instance, requests[id].payloadJson);
+        if (error === "") return;
+        const errors = Object.assign({}, openErrors);
+        errors[id] = error;
+        openErrors = errors;
     }
 
     function drop(id) {
@@ -79,6 +103,9 @@ Scope {
         const nextInstances = Object.assign({}, instances);
         delete nextInstances[id];
         instances = nextInstances;
+        const nextErrors = Object.assign({}, openErrors);
+        delete nextErrors[id];
+        openErrors = nextErrors;
         openIds = openIds.filter(o => o !== id);
         const nextRequests = Object.assign({}, requests);
         delete nextRequests[id];
@@ -124,6 +151,7 @@ Scope {
                 pluginId: win.modelData
                 hostKey: host.kind
                 screen: win.screen
+                closeOnUnload: true
                 anchors.fill: parent
                 onBuilt: instance => host.built(win.modelData, instance)
                 onBuildFailed: key => Qt.callLater(() => host.drop(win.modelData))

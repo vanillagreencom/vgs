@@ -4,8 +4,10 @@ import qs.Commons
 
 // One settings field from a schema entry: text for a string or a number, a
 // switch for a boolean, and a button cycling through the options of an
-// enum. `apply` carries the new value; the field shows what the
-// configuration holds, so a refused write leaves the old value in place.
+// enum. `apply` carries the new value; the field then shows what the
+// configuration holds again, so a refused write leaves the old value in
+// place. An empty or non-numeric number field sends NaN, which the schema
+// refuses.
 RowLayout {
     id: root
 
@@ -49,7 +51,11 @@ RowLayout {
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.small
-                onEditingFinished: root.apply(root.spec.type === "number" ? Number(text) : text)
+                onEditingFinished: {
+                    const typed = text;
+                    text = Qt.binding(() => String(root.value));
+                    root.apply(root.spec.type === "number" ? (typed.trim() === "" ? NaN : Number(typed)) : typed);
+                }
             }
         }
     }

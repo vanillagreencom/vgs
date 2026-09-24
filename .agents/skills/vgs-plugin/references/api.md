@@ -52,10 +52,10 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.compositor.focusWorkspace(workspace)`, `.focusWindow(address)`, `.moveWindowToWorkspace(address, workspace)`, `.toggleSpecialWorkspace(name)`, `.closeWindow(address)` | capability `compositor` | one dispatch each, through the core's argument check and reply judge; a moved window's workspace does not take focus; returns `ok` or `refused: ...` |
 | `shell.configure.set(key, value)` | capability `configure` | writes one schema-declared setting to the entry this instance reads; returns `ok` or `refused: setting=<key> ...` |
 | `shell.ipc.handle(name, fn)` | capability `ipc` | `vgsh ipc call <plugin id> invoke <name> <arg>` calls `fn(arg)` and answers its result; returns a disposer |
-| `shell.lock.lock(component)`, `.unlock()`, `.locked`, `.secure` | capability `lock` | the session lock; the component declares `property var screen` and is built on every screen |
+| `shell.lock.lock(component)`, `.unlock()`, `.locked`, `.secure`, `.hasContent` | capability `lock` | the session lock; the component declares `property var screen` and is built on every screen. `locked` is what was asked for, `secure` what the compositor confirmed. A holder rebuilt while `locked` is true calls `lock(component)` again: the session stays locked but shows only the background colour until it does |
 | `shell.notifications.subscribe(fn)`, `.tracked` | capability `notifications` | `fn(notification)` for every notification; set `notification.tracked = true` to keep one; returns a disposer |
-| `shell.polkit.agent` | capability `polkit` | the polkit agent: `isActive`, `flow` |
-| `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` or `refused: argv=...` |
+| `shell.polkit.agent`, `.registered` | capability `polkit` | the polkit agent: `isActive`, `flow`; `registered` is false while polkitd has not accepted it |
+| `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` once handed over, or `refused: argv=...`; a program that fails to start is not reported |
 | `shell.screens.all`, `.current` | capability `screens` | every screen; the screen this instance draws on, null for a service |
 | `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
 | `shell.manager.plugins`, `.setEnabled(id, enabled)`, `.setSetting(id, key, value)` | capability `manager` | every discovered plugin as `{ id, name, version, description, kinds, enabled, schema, settings }`; enabling and disabling as `setPluginEnabled` does; a setting written to every entry the plugin reads, refused for a disabled plugin; each returns the IPC reply |
@@ -134,7 +134,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 |---|---|---|
 | `ping` | no | `ok` |
 | `guarded` | no | `true` when started by the runner |
-| `listPlugins` | no | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned` |
+| `listPlugins` | no | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned`; `config` with `ready`, `shipped` and `user` states |
 | `listShellConfig` | no | the effective configuration as JSON |
 | `built` | no | JSON: host key to the instances the core built there, each `id`, `kind`, `capabilities` |
 | `buildCount` | no | instances built since start |
@@ -143,7 +143,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
-| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: kind=<kind> id=<id>`, `refused: disabled=<id>`, `refused: build-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
+| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: kind=<kind> id=<id>`, `refused: disabled=<id>`, `refused: capability=<name> held-by=<id>`, `refused: build-failed=<id>`, `refused: open-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
 | `invokeInstance <hostKey> <id> <function> <arg>` | yes | calls that function of the built instance with one text argument and answers its result; `absent` with no such instance, `no-function` with no such function |
 
 ## Manifest

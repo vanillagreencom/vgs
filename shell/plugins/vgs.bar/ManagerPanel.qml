@@ -14,6 +14,21 @@ Item {
     readonly property var plugins: shell === null ? [] : shell.manager.plugins
     // "<plugin id>:<setting>" for every settings field drawn now.
     property var renderedFields: []
+    // plugin id -> the last refusal the manager answered for it, shown on
+    // its row until a later call for that plugin succeeds.
+    property var replies: ({})
+
+    // Keep one manager reply for plugin `id` and answer it.
+    function keep(id, reply) {
+        const next = Object.assign({}, replies);
+        if (reply === "ok" || reply.indexOf("ok ") === 0) delete next[id];
+        else {
+            next[id] = reply;
+            console.warn("manager panel: " + id + " " + reply);
+        }
+        replies = next;
+        return reply;
+    }
 
     function open(payloadJson) {}
     function close() {}
@@ -23,14 +38,14 @@ Item {
     function toggle(id) {
         const row = plugins.filter(p => p.id === id)[0];
         if (row === undefined) return "unknown: " + id;
-        return shell.manager.setEnabled(id, !row.enabled);
+        return keep(id, shell.manager.setEnabled(id, !row.enabled));
     }
 
     // Write one setting as a form field does. `arg` is JSON
     // {"id", "key", "value"}; answers the manager's reply.
     function applySetting(arg) {
         const a = JSON.parse(arg);
-        return shell.manager.setSetting(a.id, a.key, a.value);
+        return keep(a.id, shell.manager.setSetting(a.id, a.key, a.value));
     }
 
     function fieldShown(name, shown) {
@@ -94,6 +109,16 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
+                        visible: text !== ""
+                        text: root.replies[entry.modelData.id] || ""
+                        color: Color.urgent
+                        wrapMode: Text.Wrap
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.small
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
                         text: entry.modelData.description
                         color: Color.muted
                         wrapMode: Text.Wrap
@@ -112,7 +137,7 @@ Item {
                             spec: entry.modelData.schema[modelData]
                             value: entry.modelData.settings[modelData]
                             editable: entry.modelData.enabled
-                            onApply: v => root.shell.manager.setSetting(pluginId, key, v)
+                            onApply: v => root.keep(pluginId, root.shell.manager.setSetting(pluginId, key, v))
                             Component.onCompleted: root.fieldShown(pluginId + ":" + key, true)
                             Component.onDestruction: root.fieldShown(pluginId + ":" + key, false)
                         }

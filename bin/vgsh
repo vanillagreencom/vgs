@@ -21,7 +21,8 @@
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/plugins/<id>. add lands the plugin
-# disabled. Each ends with `shell=rescanned` when a shell runs, or
+# disabled. Each ends with `shell=rescan-started` or `shell=rescan-queued`
+# when a shell runs (the scan's result is in `vgsh plugin list`), or
 # `shell=not-running` when none does and the next start reads the change.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
@@ -120,7 +121,8 @@ rescan_if_running() {
   if ! shell_pid >/dev/null 2>&1; then echo "shell=not-running"; return 0; fi
   reply="$(ipc shell rescanPlugins)" || exit $?
   case "$reply" in
-    ok|busy) echo "shell=rescanned" ;;
+    ok) echo "shell=rescan-started" ;;
+    busy) echo "shell=rescan-queued" ;;
     *) refuse 1 "rescan=$reply" "the plugin files changed; run vgsh ipc call shell rescanPlugins" ;;
   esac
 }

@@ -272,7 +272,8 @@ function settingsFor(config, manifest, layoutEntry) {
 
 // Whether a plugin is enabled under this configuration.
 // - disabledPlugins[] wins over every other rule.
-// - The active bar is enabled.
+// - A plugin declaring kind bar is enabled only as the active bar; every
+//   other kind it declares comes and goes with its bar.
 // - A bar widget is enabled when placed in a bar section.
 // - A plugin declaring a kind other than bar and bar-widget is enabled when
 //   listed in plugins[], and unlisted when it is first-party (id under the
@@ -281,8 +282,8 @@ function isEnabled(config, manifest, defaultBarId) {
     var disabled = Array.isArray(config.disabledPlugins) ? config.disabledPlugins : [];
     if (disabled.indexOf(manifest.id) !== -1)
         return false;
-    if (manifest.kinds.indexOf("bar") !== -1 && activeBarId(config, defaultBarId) === manifest.id)
-        return true;
+    if (manifest.kinds.indexOf("bar") !== -1)
+        return activeBarId(config, defaultBarId) === manifest.id;
     if (manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1)
         return true;
     var nonBarKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
@@ -396,11 +397,13 @@ function settingTargets(config, manifest) {
 
 // The user-file change that sets one setting of one plugin in each of
 // `targets`. "layout" sets the key on every layout entry with the plugin's
-// id, seeding the user `bar` key from the effective bar first; "plugins"
+// id, or with `locator` { section, nth } on the nth such entry of that
+// section alone, seeding the user `bar` key from the effective bar first;
+// "plugins"
 // sets it on the plugin's plugins[] row, seeding that row from the
 // effective one, since a user row replaces the shipped row whole. The
 // caller checks the value with settingRefusal first.
-function withSetting(user, manifest, key, value, effective, targets) {
+function withSetting(user, manifest, key, value, effective, targets, locator) {
     var out = isPlainObject(user) ? clone(user) : {};
     if (out.version === undefined) out.version = 1;
     if (targets.indexOf("layout") !== -1) {
@@ -408,8 +411,12 @@ function withSetting(user, manifest, key, value, effective, targets) {
             out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
         var layout = isPlainObject(out.bar.layout) ? out.bar.layout : {};
         SECTIONS.forEach(function (section) {
+            if (isPlainObject(locator) && locator.section !== section) return;
+            var seen = 0;
             (Array.isArray(layout[section]) ? layout[section] : []).forEach(function (entry) {
-                if (isPlainObject(entry) && entry.id === manifest.id) entry[key] = clone(value);
+                if (!isPlainObject(entry) || entry.id !== manifest.id) return;
+                if (!isPlainObject(locator) || seen === locator.nth) entry[key] = clone(value);
+                seen += 1;
             });
         });
     }

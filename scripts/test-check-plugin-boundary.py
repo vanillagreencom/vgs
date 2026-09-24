@@ -54,6 +54,7 @@ JS_ROWS = [
     ("plugin JS imports the wayland module", CLEAN_JS.replace(".import QtQuick as Q", ".import Quickshell.Wayland as W"), "import-module"),
     ("plugin JS path import escapes its directory", CLEAN_JS.replace('"./util.js"', '"../other/util.js"'), "import-path"),
     ("plugin JS builds a window from a string", CLEAN_JS + 'var w = Qt.createQmlObject("import Quickshell; PanelWindow { }", null);\n', "surface-type"),
+    ("a regular expression after return hides no code", CLEAN_JS + 'function f(s) { return /^\\/*x/.test(s); }\nvar w = Qt.createQmlObject("PanelWindow { }", null);\n/* end */\n', "surface-type"),
     ("a // inside a regular expression opens no comment", CLEAN_JS + 'var re = /\\/\\//; var w = Qt.createQmlObject("PanelWindow { }", null);\n', "surface-type"),
     ("plugin JS dispatches to Hyprland directly", CLEAN_JS + 'function go() { Hyprland.dispatch("workspace 1"); }\n', "core-type"),
 ]

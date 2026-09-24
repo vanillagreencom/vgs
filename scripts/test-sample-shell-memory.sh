@@ -517,6 +517,32 @@ expect_contains "$(cat "$tmp/count-stdout")" "session=$counted:" "$label"
 kill "$counted" 2>/dev/null || true
 ok "$label"
 
+# A run that ends before its sample count is a refusal after the report.
+label="a run that ends short of its sample count refuses"
+sleep 300 &
+short=$!
+trap 'kill "$victim" "$counted" "$short" 2>/dev/null || true; rm -rf "${tmp:?}"' EXIT INT TERM
+short_listed="[{\"config_path\": \"$shell_dir/shell.qml\", \"pid\": $short}]"
+rm -f -- "${rt:?}/vgsh.lock" "${tmp:?}/short-log.tsv"
+printf '%s\n' "$short" >"$lock"
+env -i PATH="$toolbin:$qsbin" HOME="$tmp/home" XDG_RUNTIME_DIR="$rt" XDG_CACHE_HOME="$tmp/cache" \
+  QS_STUB_PATH="$shell_dir" QS_STUB_REPLY="$short_listed" QS_STUB_STATUS=0 \
+  "$sampler" --interval 1 --samples 50 --log "$tmp/short-log.tsv" >"$tmp/short-stdout" 2>"$tmp/short-stderr" &
+short_sampler=$!
+for _ in $(seq 1 100); do
+  if [[ -f "$tmp/short-log.tsv" ]] && [[ "$(awk 'END { print NR }' "$tmp/short-log.tsv")" -ge 2 ]]; then break; fi
+  sleep 0.1
+done
+kill "$short" 2>/dev/null || true
+wait "$short" 2>/dev/null || true
+rc=0
+wait "$short_sampler" || rc=$?
+[[ "$rc" == 1 ]] || fail "$label" "expected exit 1, got $rc"
+expect_contains "$(cat "$tmp/short-stderr")" "samples-short=" "$label"
+expect_contains "$(cat "$tmp/short-stderr")" "want=50" "$label"
+expect_contains "$(cat "$tmp/short-stdout")" "session=$short:" "$label"
+ok "$label"
+
 echo "=== must-fail controls ==="
 
 # Apply one substitution to a copy of the script. Non-zero when the text is not

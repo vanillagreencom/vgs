@@ -7,8 +7,10 @@ import qs.Commons
 Item {
     id: root
 
+    // The bar goes before its built-ins when a screen goes away, so every
+    // binding reads it through a null check.
     required property Item bar
-    readonly property string format: bar.shell !== null ? String(bar.shell.settings.clockFormat) : ""
+    readonly property string format: bar && bar.shell !== null ? String(bar.shell.settings.clockFormat) : ""
     readonly property string displayed: label.text
 
     // A quoted literal such as 'secs' is not a seconds field.
@@ -18,14 +20,14 @@ Item {
     Component.onDestruction: Time.holdSeconds(root, false)
 
     implicitWidth: label.implicitWidth
-    implicitHeight: bar.barSize
+    implicitHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
 
     Text {
         id: label
         anchors.centerIn: parent
         text: Qt.formatDateTime(Time.now, root.format)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
+        color: (root.bar ? root.bar.foreground : Color.bar.text)
+        font.family: (root.bar ? root.bar.fontFamily : Style.font.family)
         font.pixelSize: Style.font.size
     }
 }

@@ -168,7 +168,7 @@ inst() {
   local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
   shift 6
   set +e
-  out="$("${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY=ok "$repo/bin/vgsh" "$@" 2>"$tmp/err")"
+  out="$("${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "$repo/bin/vgsh" "$@" 2>"$tmp/err")"
   status=$?
   set -e
   printf '%s\n' "$out" >"$tmp/out"
@@ -205,7 +205,7 @@ check "add of a listed plugin reports the user file written" test "$(head -n 1 "
 check "add lands a listed plugin disabled and keeps its settings row" json_is "$cfg/vgs/shell.json" 'd["disabledPlugins"] == ["acme.probe"] and d["plugins"] == [{"id": "acme.probe", "label": "kept"}]'
 
 cfg="$tmp/cfg-live"
-inst "add rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescanned" "" plugin add "$tmp/src/probe.git"
+inst "add rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin add "$tmp/src/probe.git"
 check "the rescan names the runner's pid" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell rescanPlugins"
 
 cfg="$tmp/cfg-refused"
@@ -267,7 +267,7 @@ check "a refused rewrite leaves the checkout alone" test "$(head_of "$plugin")" 
 
 cfg="$tmp/cfg-live"
 source_commit probe "$(manifest acme.probe 0.4.0)"
-inst "update rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescanned" "" plugin update acme.probe
+inst "update rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin update acme.probe
 
 # Remove.
 cfg="$tmp/cfg-add"
@@ -283,7 +283,8 @@ ln -s "$tmp/elsewhere/acme.probe" "$cfg/vgs/plugins/acme.probe"
 inst "remove refuses a symlinked plugin directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: symlink=$cfg/vgs/plugins/acme.probe" plugin remove acme.probe
 check "a refused symlink leaves its target" test -f "$tmp/elsewhere/acme.probe/manifest.json"
 cfg="$tmp/cfg-live"
-inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescanned" "" plugin remove acme.probe
+inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin remove acme.probe
+INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$rt_live" 0 "shell=rescan-queued" "" plugin add "$tmp/src/probe.git"
 
 help_last="$("$repo/bin/vgsh" --help 2>&1 | tail -n 1)"
 if [[ $help_last == *"69 when the shell is not running."* ]]; then ok "help ends with the exit-code line"; else fail "help last line: $help_last"; fi

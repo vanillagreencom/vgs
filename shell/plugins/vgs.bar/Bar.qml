@@ -30,7 +30,12 @@ Item {
     // that leaves the list alone produces the same string, so the section
     // keeps its built-ins instead of rebuilding them.
     function builtinsKey(section) {
-        const names = shell !== null && Array.isArray(shell.settings[section]) ? shell.settings[section] : [];
+        if (shell === null) return "[]";
+        const names = shell.settings[section];
+        if (!Array.isArray(names)) {
+            console.warn("vgs.bar: setting " + section + " is not a list of built-in names: " + JSON.stringify(names));
+            return "[]";
+        }
         return JSON.stringify(names);
     }
     readonly property string leftKey: builtinsKey("left")
@@ -41,18 +46,18 @@ Item {
         id: left
         spacing: Style.spacing.controlGap
         anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom }
-        Repeater { model: JSON.parse(bar.leftKey); Builtin { barItem: bar } }
+        Repeater { model: JSON.parse(bar.leftKey); Builtin { barItem: bar; section: "left" } }
     }
     RowLayout {
         id: center
         spacing: Style.spacing.controlGap
         anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; bottom: parent.bottom }
-        Repeater { model: JSON.parse(bar.centerKey); Builtin { barItem: bar } }
+        Repeater { model: JSON.parse(bar.centerKey); Builtin { barItem: bar; section: "center" } }
     }
     RowLayout {
         id: right
         spacing: Style.spacing.controlGap
         anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom }
-        Repeater { model: JSON.parse(bar.rightKey); Builtin { barItem: bar } }
+        Repeater { model: JSON.parse(bar.rightKey); Builtin { barItem: bar; section: "right" } }
     }
 }

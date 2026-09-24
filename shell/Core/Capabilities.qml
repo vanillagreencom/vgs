@@ -72,7 +72,8 @@ Singleton {
     }
 
     // The providers for one instance: one per capability its manifest
-    // names. `ctx` is { id, manifest, kind, hostKey, screen, onDispose(fn) }; every
+    // names. `ctx` is { id, manifest, kind, hostKey, screen, locator,
+    // onDispose(fn) }, `locator` being a bar widget's { section, nth }; every
     // hold and registration is released through ctx.onDispose.
     function providersFor(ctx) {
         const out = {};
@@ -101,7 +102,7 @@ Singleton {
             closeWindow: address => Compositor.send("closeWindow", [address])
         }),
         configure: ctx => ({
-            set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [ctx.kind === "bar-widget" ? "layout" : "plugins"])
+            set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [ctx.kind === "bar-widget" ? "layout" : "plugins"], ctx.locator)
         }),
         ipc: ctx => ({
             handle: (name, fn) => root.handleIpc(ctx, name, fn)
@@ -112,6 +113,7 @@ Singleton {
                 lock: content => root.lock(ctx, content),
                 unlock: () => root.unlock(),
                 get locked() { return root.lockRequested; },
+                get hasContent() { return root.lockContent !== null; },
                 get secure() { return root.lockSecure; }
             };
         },
@@ -120,7 +122,8 @@ Singleton {
             get tracked() { return notificationLoader.item ? notificationLoader.item.trackedNotifications : null; }
         }),
         polkit: ctx => ({
-            get agent() { return polkitLoader.item; }
+            get agent() { return polkitLoader.item; },
+            get registered() { return polkitLoader.item !== null && polkitLoader.item.isRegistered; }
         }),
         run: ctx => ({
             detached: argv => root.runDetached(argv)
@@ -220,6 +223,9 @@ Singleton {
             const t = { handler: rest[ctx.id].handler, functions: Object.assign({}, rest[ctx.id].functions) };
             delete t.functions[name];
             if (Object.keys(t.functions).length === 0) {
+                // destroy() is deferred; clearing the target unregisters it
+                // now, so a rebuilt plugin's new handler takes the target.
+                t.handler.target = "";
                 t.handler.destroy();
                 delete rest[ctx.id];
             } else {
@@ -251,6 +257,8 @@ Singleton {
     }
 
     // run: a detached process from an argument list. No shell parses it.
+    // `ok` means the list was handed to Quickshell; a program that fails to
+    // start is not reported back.
     function runDetached(argv) {
         if (!Array.isArray(argv) || argv.length === 0 || argv.some(a => typeof a !== "string" || a.length === 0))
             return "refused: argv=" + JSON.stringify(argv);
@@ -321,6 +329,14 @@ Singleton {
         return "ok";
     }
 
+    // A lock the compositor has not confirmed after five seconds leaves the
+    // session unlocked while the holder asked for a lock: said in the log.
+    Timer {
+        interval: 5000
+        running: root.lockRequested && !root.lockSecure
+        onTriggered: console.error("capabilities: lock requested but the compositor has not confirmed it")
+    }
+
     // An instance of the holder is gone. The content it handed over goes
     // with it, but a locked session stays locked: unloading the lock screen
     // never unlocks the desktop.
@@ -342,6 +358,7 @@ Singleton {
             subscribers: subscribers.map(s => s.id),
             notificationServer: notificationLoader.item !== null,
             polkitAgent: polkitLoader.item !== null,
+            polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
             lock: { requested: lockRequested, secure: lockSecure, content: lockContent !== null }
         });
     }

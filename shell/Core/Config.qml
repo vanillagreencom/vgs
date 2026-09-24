@@ -10,7 +10,9 @@ import "PluginLogic.js" as Logic
 // the error and blocks writes until it parses again, so a typo never
 // blanks the desktop and a manager edit never overwrites unread edits.
 // Nothing is built before `ready`: a bar built from the user file alone
-// would draw without the shipped layout and fill in a moment later.
+// would draw without the shipped layout and fill in a moment later. Each
+// file's state is one tagged value; every file settles, so an unreadable
+// file leaves the shell drawing from what it has, never blank.
 Singleton {
     id: root
 
@@ -20,12 +22,12 @@ Singleton {
 
     property var shipped: ({ version: 1 })
     property var user: null
-    property bool shippedLoaded: false
-    // True once the user file was read, found absent, or refused as
-    // unparseable; each is a settled first answer.
-    property bool userSettled: false
-    property bool userParseFailed: false
-    readonly property bool ready: shippedLoaded && userSettled
+    // "pending" until the first answer, then "loaded", "unparseable" or
+    // "unreadable"; the user file may also be "absent". A file that was
+    // loaded once keeps its last good value through a later failure.
+    property string shippedState: "pending"
+    property string userState: "pending"
+    readonly property bool ready: shippedState !== "pending" && userState !== "pending"
     readonly property var effective: Logic.effectiveConfig(shipped, user)
 
     function parse(label, text) {
@@ -43,9 +45,13 @@ Singleton {
         watchChanges: true
         onLoaded: {
             const r = root.parse(path, text());
-            if (r.ok) { root.shipped = r.value; root.shippedLoaded = true; }
+            if (r.ok) root.shipped = r.value;
+            root.shippedState = r.ok ? "loaded" : "unparseable";
         }
-        onLoadFailed: error => console.error("config: shipped defaults unreadable at " + path + ": " + error)
+        onLoadFailed: error => {
+            console.error("config: shipped defaults unreadable at " + path + ": " + error);
+            root.shippedState = "unreadable";
+        }
         onFileChanged: reload()
     }
 
@@ -56,13 +62,17 @@ Singleton {
         printErrors: false
         onLoaded: {
             const r = root.parse(path, text());
-            root.userParseFailed = !r.ok;
             if (r.ok) root.user = r.value;
-            root.userSettled = true;
+            root.userState = r.ok ? "loaded" : "unparseable";
         }
         onLoadFailed: error => {
-            if (error === FileViewError.FileNotFound) { root.user = null; root.userParseFailed = false; root.userSettled = true; }
-            else console.error("config: user file unreadable at " + path + ": " + error);
+            if (error === FileViewError.FileNotFound) {
+                root.user = null;
+                root.userState = "absent";
+                return;
+            }
+            console.error("config: user file unreadable at " + path + ": " + error);
+            root.userState = "unreadable";
         }
         onFileChanged: reload()
         onSaveFailed: error => {
@@ -70,17 +80,24 @@ Singleton {
             root.lastSaveError = String(error);
             root.user = root.userBeforeWrite;
         }
-        onSaved: root.lastSaveError = ""
     }
 
     property var userBeforeWrite: null
     property string lastSaveError: ""
 
-    // Replace the user file whole. The in-memory value moves first so the
-    // screen reacts at once; a failed save restores it and is reported on
-    // the next write. Returns `ok` or the keyed refusal.
+    // Replace the user file whole. Refused unless the file was read or is
+    // absent, so an unparseable or unreadable file is never overwritten
+    // unread. The in-memory value moves first so the screen reacts at once;
+    // a failed save restores it and is reported once, by refusing the next
+    // write with the error. `ok` means the save was queued. Returns `ok` or
+    // the keyed refusal.
     function writeUser(value) {
-        if (lastSaveError !== "") return "refused: user-config=unwritable path=" + userPath + " error=" + lastSaveError;
+        if (userState !== "loaded" && userState !== "absent") return "refused: user-config=" + userState + " path=" + userPath;
+        if (lastSaveError !== "") {
+            const error = lastSaveError;
+            lastSaveError = "";
+            return "refused: user-config=unwritable path=" + userPath + " error=" + error;
+        }
         userBeforeWrite = root.user;
         root.user = value;
         userView.setText(JSON.stringify(value, null, 2) + "\n");

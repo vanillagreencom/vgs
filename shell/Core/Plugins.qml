@@ -132,12 +132,32 @@ Singleton {
     readonly property string activeBarId: Logic.activeBarId(Config.effective, defaultBarId)
 
     // The key a slot loads plugin `id` under: the id plus the registry
-    // generation while the plugin is enabled, "" when nothing can be built:
-    // before the first scan, before both configuration files settled, or
-    // while the plugin is disabled. Every slot and every host reads this one
-    // derivation.
+    // generation while the plugin can be built, "" otherwise: before the
+    // first scan, before both configuration files settled, while the plugin
+    // is disabled, or while another plugin holds an exclusive capability it
+    // names. The last term makes a refused plugin build once the holder lets
+    // go. Every slot and every host reads this one derivation.
     function slotKey(id) {
-        return scanned && Config.ready && id !== "" && isEnabled(id) ? id + "@" + generation : "";
+        const holders = lendSnapshot;
+        if (!scanned || !Config.ready || id === "" || !isEnabled(id)) return "";
+        return Logic.lendRefusal(holders, manifests[id]) === "" ? id + "@" + generation : "";
+    }
+
+    // Who holds each exclusive capability, copied once the change that moved
+    // it settled. slotKey reads the copy: a build acquires holds, and a key
+    // that read the live record would change inside its own evaluation. A
+    // build the stale copy lets through is refused by createInstance, and
+    // the next copy takes its key away. A change also lets a refused bar
+    // widget build, through reconcile.
+    property var lendSnapshot: ({})
+    readonly property string exclusiveKey: JSON.stringify(Capabilities.exclusiveHolders())
+    onExclusiveKeyChanged: Qt.callLater(refreshLending)
+
+    function refreshLending() {
+        const now = Capabilities.exclusiveHolders();
+        if (JSON.stringify(now) === JSON.stringify(lendSnapshot)) return;
+        lendSnapshot = now;
+        reconcile();
     }
 
     // A configuration change reaches every live instance through one
@@ -185,7 +205,7 @@ Singleton {
     // properties, which cross a QVariant conversion that drops functions and
     // turns nested lists into non-Array sequences. Returns null after
     // logging when the plugin cannot be built.
-    function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen) {
+    function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
         if (!has(id) || !isEnabled(id)) { console.warn("plugins: " + id + " is not an enabled plugin"); return null; }
         const url = entryUrl(id, kind);
         if (url === "") { console.warn("plugins: " + id + " declares no " + kind + " entry point"); return null; }
@@ -200,29 +220,48 @@ Singleton {
         const onScreen = screen !== undefined && screen !== null ? screen : (context && context.screen ? context.screen : null);
         const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
         try {
-            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, onDispose: fn => row.disposers.push(fn) });
+            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: fn => row.disposers.push(fn) });
         } catch (e) {
             console.error("plugins: " + id + " capabilities failed: " + e.message);
             for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
             instance.destroy();
             return null;
         }
-        instance.shell = facadeFor(manifest, settings, row.providers);
-        for (const key of Object.keys(context || {}))
-            instance[key] = context[key];
-        record(hostKey, row);
-        if (kind === "bar") mountBar(hostKey, row);
+        try {
+            instance.shell = facadeFor(manifest, settings, row.providers);
+            for (const key of Object.keys(context || {}))
+                instance[key] = context[key];
+            record(hostKey, row);
+            if (kind === "bar") mountBar(hostKey, row);
+        } catch (e) {
+            console.error("plugins: " + id + " " + kind + " not built: " + e.message);
+            if (kind === "bar" && Logic.hasOwn(mounts, hostKey) && mounts[hostKey].row === row) unmountBar(hostKey);
+            if (Logic.hasOwn(built, hostKey) && built[hostKey].indexOf(row) !== -1) destroyBuilt(hostKey, instance);
+            else {
+                for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
+                instance.destroy();
+            }
+            return null;
+        }
         return instance;
     }
 
     // A bar widget: built like any instance on its bar's screen, then given
-    // the three properties BarWidget declares.
-    function createWidget(id, parent, barRow, entry, hostKey) {
-        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null, barRow.screen);
+    // the three properties BarWidget declares. `locator` is { section, nth }:
+    // which layout entry with this id the widget reads, for its configure
+    // capability. A widget that does not declare them is destroyed.
+    function createWidget(id, parent, barRow, entry, hostKey, locator) {
+        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null, barRow.screen, locator);
         if (instance === null) return null;
-        instance.bar = barRow.instance;
-        instance.moduleName = id;
-        instance.settings = instance.shell.settings;
+        try {
+            instance.bar = barRow.instance;
+            instance.moduleName = id;
+            instance.settings = instance.shell.settings;
+        } catch (e) {
+            console.error("plugins: " + id + " bar-widget not built: " + e.message);
+            destroyBuilt(hostKey, instance);
+            return null;
+        }
         return instance;
     }
 
@@ -325,8 +364,9 @@ Singleton {
     // are handed their new settings, so an unrelated write builds nothing.
     function reconcileBar(hostKey, layout) {
         const mount = mounts[hostKey];
+        const holders = Capabilities.exclusiveHolders();
         for (const section of Logic.SECTIONS) {
-            const wanted = layout[section];
+            const wanted = layout[section].filter(e => Logic.lendRefusal(holders, manifests[e.id]) === "");
             const state = mount.sections[section];
             const idsKey = JSON.stringify(wanted.map(e => e.id));
             const entryKeys = wanted.map(e => JSON.stringify(e));
@@ -340,7 +380,8 @@ Singleton {
                 const widgets = [];
                 const keys = [];
                 for (let i = 0; i < wanted.length; i++) {
-                    const widget = createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey);
+                    const nth = wanted.slice(0, i).filter(e => e.id === wanted[i].id).length;
+                    const widget = createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey, { section: section, nth: nth });
                     if (widget === null) continue;
                     widgets.push(widget);
                     keys.push(entryKeys[i]);
@@ -384,10 +425,23 @@ Singleton {
     // refreshed for nothing; the slot forgets them next.
     function reconcile() {
         const layout = Logic.effectiveLayout(Config.effective, manifests, defaultBarId);
-        for (const hostKey of Object.keys(mounts)) reconcileBar(hostKey, layout);
-        for (const hostKey of Object.keys(built))
-            for (const row of built[hostKey])
-                if (row.kind !== "bar-widget" && has(row.id)) refreshRow(row, null);
+        for (const hostKey of Object.keys(mounts)) {
+            try {
+                reconcileBar(hostKey, layout);
+            } catch (e) {
+                console.error("plugins: reconciling " + hostKey + " failed: " + e.message);
+            }
+        }
+        for (const hostKey of Object.keys(built)) {
+            for (const row of built[hostKey]) {
+                if (row.kind === "bar-widget" || row.kind === "builtin" || !has(row.id)) continue;
+                try {
+                    refreshRow(row, null);
+                } catch (e) {
+                    console.error("plugins: " + row.id + " settings not delivered: " + e.message);
+                }
+            }
+        }
     }
 
     function builtJson() {
@@ -424,7 +478,11 @@ Singleton {
         if (!Logic.hasOwn(hosts, kind)) return "refused: no-host=" + kind;
         if (!has(id)) return "unknown: " + id;
         if (manifests[id].kinds.indexOf(kind) === -1) return "refused: kind=" + kind + " id=" + id;
-        if (verb !== "hide" && slotKey(id) === "") return "refused: disabled=" + id;
+        if (verb !== "hide" && !isEnabled(id)) return "refused: disabled=" + id;
+        if (verb !== "hide" && slotKey(id) === "") {
+            const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifests[id]);
+            return lent !== "" ? lent : "refused: not-ready=" + id;
+        }
         if (verb === "hide") return hosts[kind].hide(id);
         return hosts[kind][verb](id, payloadJson, origin || null);
     }
@@ -454,7 +512,6 @@ Singleton {
     // naming why the user file was not written.
     function setEnabled(id, enabled) {
         if (!has(id)) return "unknown: " + id;
-        if (Config.userParseFailed) return "refused: user-config=unparseable path=" + Config.userPath;
         const m = manifests[id];
         const hidden = enabled ? [] : hiddenByDisabling(id);
         const written = Config.writeUser(Logic.withEnabled(Config.user, m, enabled, Config.effective));
@@ -463,17 +520,17 @@ Singleton {
     }
 
     // Write one setting of one plugin into each configuration entry in
-    // `targets` ("layout", "plugins"). The value is checked against the
-    // manifest's schema first. The reply is one keyed line: `ok`,
+    // `targets` ("layout", "plugins"); `locator` { section, nth } narrows
+    // "layout" to one entry. The value is checked against the manifest's
+    // schema first. The reply is one keyed line: `ok` (the save is queued),
     // `unknown: <id>` or a refusal.
-    function writeSetting(id, key, value, targets) {
+    function writeSetting(id, key, value, targets, locator) {
         if (!has(id)) return "unknown: " + id;
-        if (Config.userParseFailed) return "refused: user-config=unparseable path=" + Config.userPath;
         const m = manifests[id];
         const refusal = Logic.settingRefusal(m, key, value);
         if (refusal !== "") return refusal;
         if (targets.length === 0) return "refused: setting=" + key + " entry=none";
-        return Config.writeUser(Logic.withSetting(Config.user, m, key, value, Config.effective, targets));
+        return Config.writeUser(Logic.withSetting(Config.user, m, key, value, Config.effective, targets, locator || null));
     }
 
     // Every discovered plugin as the plugin manager shows it: listing
@@ -510,7 +567,7 @@ Singleton {
             enabled: isEnabled(id),
             dir: manifests[id].__sourceDir
         }));
-        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned });
+        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
     }
 
     Component.onCompleted: {

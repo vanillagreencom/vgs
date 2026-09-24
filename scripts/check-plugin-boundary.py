@@ -76,9 +76,11 @@ def source_files(root, suffixes):
                 yield os.path.join(dirpath, name)
 
 
-# A `/` after one of these characters, or at the start of the text, opens a
-# regular expression literal rather than dividing.
+# A `/` after one of these characters, after one of these keywords, or at the
+# start of the text, opens a regular expression literal rather than dividing.
 REGEX_AFTER = set("(,=:[!&|?{};~+-*%<>^")
+REGEX_AFTER_WORDS = {"return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await", "instanceof"}
+LAST_WORD = re.compile(r"([A-Za-z_$][\w$]*)\s*$")
 
 
 def blank_comments(text):
@@ -91,6 +93,11 @@ def blank_comments(text):
     out = []
     i, n = 0, len(text)
     last = ""
+
+    def after_keyword():
+        m = LAST_WORD.search("".join(out[-24:]))
+        return m is not None and m.group(1) in REGEX_AFTER_WORDS
+
     while i < n:
         c = text[i]
         nxt = text[i + 1] if i + 1 < n else ""
@@ -105,7 +112,7 @@ def blank_comments(text):
             out.append("".join("\n" if ch == "\n" else " " for ch in text[i:end]))
             i = end
             continue
-        if c in "\"'`" or (c == "/" and (last == "" or last in REGEX_AFTER)):
+        if c in "\"'`" or (c == "/" and (last == "" or last in REGEX_AFTER or after_keyword())):
             close = c
             out.append(c)
             i += 1

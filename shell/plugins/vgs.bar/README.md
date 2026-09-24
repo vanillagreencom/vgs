@@ -15,7 +15,7 @@ The bar across the top of every screen. It draws its own workspaces, clock and p
 
 On the bar's row in `plugins` in `~/.config/vgs/shell.json`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`:
 
-- `left`, `center`, `right`: the built-in widgets each section shows, in order, from `workspaces`, `clock` and `manager`. Default: `["workspaces"]`, `["clock"]`, `["manager"]`. An empty list hides them.
+- `left`, `center`, `right`: the built-in widgets each section shows, in order, from `workspaces`, `clock` and `manager`, each name once per section. Default: `["workspaces"]`, `["clock"]`, `["manager"]`. An empty list hides them.
 - `clockFormat`: the clock's format in Qt date format. Default: `ddd d MMM  HH:mm`.
 
 ## Limits
