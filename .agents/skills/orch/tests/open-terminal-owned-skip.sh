@@ -461,9 +461,9 @@ OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --
 assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
 assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"
 assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not reported woken"
-# A wake resumes an existing session through open_wake, which reads no
-# verification timeout: tmux_wait_launched, tmux_wait_composer,
-# tmux_wait_remote_prompt and lane_account_ok are reached only from open_tmux.
+# A wake resumes an existing session through open_wake, which reads neither
+# bound. open-terminal's validation gate names both settings' readers, and all
+# of them are reached only from open_tmux.
 # So a malformed ORCH_TMUX_VERIFY_SECS must not abort one, in the shape
 # oversee.md hands a wake: from inside tmux, with the lane argument and its
 # launch flags kept, a lane launch naming no model and no effort being refused
@@ -593,26 +593,27 @@ done
 # nothing else: it runs the shared ownership reader deliberately, with
 # PROC_BIN off the PATH.
 #
-# That reader is a `ps -A` piped through an awk that moves the command name
-# into a field of its own and strips the executable path macOS puts in `comm`,
-# and a matcher that compares the harness name against the third field it
+# That reader captures `ps -A` before an awk moves the command name into a
+# field of its own and strips the executable path macOS puts in `comm`. Its
+# matcher compares the harness name against the third field the transform
 # prints. Let either transform regress and no name matches, the pid loop never
 # runs, lane_session_state prints idle, the pane's idle rung stands and the
 # wake resumes beside a live session: the fail-open this branch closes, with
 # every wake row still green.
 #
-# The row reads the two lines out of the shared library under test rather than
-# spelling them again, so a change to either moves it. Only the two transforms
+# The row reads the three lines out of the shared library under test rather
+# than spelling them again, so a change to any moves it. Only the transforms
 # are pinned, not the awk's every detail: the substr offset that trims ps's column
 # padding has no consumer, since the matcher and the parent-tree scan below it
 # both re-split on whitespace, and a row asserting it would be pinning a
 # spelling rather than a guarantee. The path strip is pinned by a wake row
 # instead, the macOS one in the table below, which asserts what the wake does
 # rather than a count.
-REAL_TABLE_READ="$(sed -n 's/^  table="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_TABLE_READ="$(sed -n 's/^  raw="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_TABLE_TRANSFORM="$(sed -n 's/^  table="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
-assert_eq "table=$(grep -c . <<<"$REAL_TABLE_READ") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
-  "table=1 match=1" "the real reader and its matcher are each one line of the script under test"
+assert_eq "read=$(grep -c . <<<"$REAL_TABLE_READ") transform=$(grep -c . <<<"$REAL_TABLE_TRANSFORM") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
+  "read=1 transform=1 match=1" "the real reader, transform and matcher are each one line of the script under test"
 
 # The first runs both against THIS box, with PROC_BIN off the PATH, and asks
 # for the pid of the shell running this suite under its own command name. It
@@ -622,7 +623,8 @@ real_rc=0
 real_found="$(
   HARNESS="${BASH##*/}"
   set -- unused "$HARNESS"
-  table="$(eval "$REAL_TABLE_READ")" || exit 3
+  raw="$(eval "$REAL_TABLE_READ")" || exit 3
+  table="$(eval "$REAL_TABLE_TRANSFORM")" || exit 3
   pids="$(eval "$REAL_PID_MATCH")" || exit 4
   grep -cx -- "$SUITE_PID" <<<"$pids" || true
 )" || real_rc=$?

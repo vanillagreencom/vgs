@@ -226,6 +226,7 @@
   ".agents/skills/github/scripts/lib/github-api.sh",
   ".agents/skills/github/scripts/lib/group-leader.sh",
   ".agents/skills/github/scripts/lib/kendex-env.sh",
+  ".agents/skills/github/scripts/lib/merge-queue.sh",
   ".agents/skills/github/scripts/lib/verify-lib.sh",
   ".agents/skills/github/tests/bounded-signal.test.sh",
   ".agents/skills/github/tests/ci-classify-refusal.test.sh",
@@ -629,6 +630,7 @@
   ".agents/skills/orch/workflows/dev-fix.md",
   ".agents/skills/orch/workflows/dev-start.md",
   ".agents/skills/orch/workflows/handoff.md",
+  ".agents/skills/orch/workflows/merge-pr-admin.md",
   ".agents/skills/orch/workflows/merge-pr-restack.md",
   ".agents/skills/orch/workflows/merge-pr.md",
   ".agents/skills/orch/workflows/micro.md",
@@ -932,5 +934,8 @@
   ".pi/kendex/hooks/lane-mail-halt.sh",
   ".pi/kendex/hooks/pre-commit-check.sh",
   ".pi/kendex/hooks/reviewer-read-only.sh",
-  "CLAUDE.md"
+  "CLAUDE.md",
+  "scripts/CLAUDE.md",
+  "shell/CLAUDE.md",
+  "shell/plugins/CLAUDE.md"
 ]

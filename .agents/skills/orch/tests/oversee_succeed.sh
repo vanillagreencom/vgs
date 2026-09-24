@@ -71,16 +71,17 @@ STUB
 # `claude` stub above cannot hold the pane — it records its argv, and the
 # successor's row would be the caller's.
 #
-# A COPY of the shell, never a script named for the harness: the kernel names a
-# `#!` script's process for its interpreter, so tmux reports such a pane as `sh`
-# and the shape rule never sees the harness word at all.
-cp "$(command -v sh)" "$BIN/hclaude"
+# A COPY of sleep, never a shell or script named for the harness: both can reset
+# the process name tmux reads, so the shape rule never sees the harness word.
+cp "$(command -v sleep)" "$BIN/hclaude"
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
-# move with the setting instead of pinning 80 and 79 by hand.
-TRIGGER=20
+# move with the setting instead of pinning 90 and 89 by hand. It follows the
+# script's own default, which the rows below leave unset; the two rows that
+# pin the SHIPPED default state their figures literally and say why.
+TRIGGER=10
 AT_TRIGGER=$((100 - TRIGGER))
 ABOVE_TRIGGER=$((100 - TRIGGER - 1))
 
@@ -93,7 +94,7 @@ make_fetcher "$FETCHER"
 # The caller's own account is .claude. The second claude lane stands walled by
 # default so every row that does not speak about it picks .claude as before;
 # a row exercising the headroom trigger gives it room of its own.
-claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 codex_usage() { # USED_PCT
   jq -n --argjson u "$1" '{rate_limit: {primary_window: {used_percent: $u, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}'
@@ -121,6 +122,10 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 # A codex caller reads its own shape: the status line is the final non-empty
 # row, and the reset its account carries is parsed from a Unix epoch.
 CODEX_SCREEN='  Context 48% left'
+# A tier LANE_CONTEXT_DEFAULT_WINDOWS leaves out, on a line naming no window
+# either: the parse then prints three empty fields before the model, the one
+# shape a split that collapses a tab run reads as a shifted row.
+NO_TABLE_TIER='  kendex (ken-1453) Sonnet 4.5 47% (fixture@example.com)     /rc'
 
 # The same script over a lane-context.sh whose window table is empty, which is
 # what this reader did before the table existed.
@@ -130,6 +135,10 @@ SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# The owner of which reading a session takes of its own account, asked directly
+# by the row that pins the pick's bound. See § the pick reading.
+# shellcheck source=../scripts/lib/lane-context.sh
+source "$SRC_DIR/lib/lane-context.sh"
 # script_copy DIR — the script tree at DIR as symlinks to the real files, with
 # lib/ a real directory of symlinks so a caller can drop ONE library file and
 # write its own in that place while every other dependency stays the real one.
@@ -170,6 +179,14 @@ new_caller() {
   exit 1
 }
 
+# A pane whose command establishes its harness but whose screen has no context
+# line. The account triggers can use that identity without guessing a model or
+# context window.
+new_known_claude_caller() {
+  new_caller "$1" "$1" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
+  tm display-message -p -t "$CALLER_PANE" 'fixture: known caller command=#{pane_current_command}'
+}
+
 # succeed-env ROW PREFERENCE ARGS... — the script under an explicit, whole
 # environment, with TMUX and TMUX_PANE taken from the caller of this file: the
 # test passes them, and a pane's own shell already carries them.
@@ -190,12 +207,18 @@ lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
 cm=""
 [ -z "\${CONTEXT_TOKENS:-}" ] || cm="ORCH_HANDOFF_CONTEXT_TOKENS=\$CONTEXT_TOKENS"
+# A lanes setting the row can spoil, for the one row that needs the account
+# judge itself to fail rather than answer.
+ttl=""
+[ -z "\${USAGE_TTL:-}" ] || ttl="ORCH_LANES_USAGE_TTL=\$USAGE_TTL"
+wall="ORCH_OVERSEER_WALL_MINUTES=\${WALL_MINUTES:-0}"
+successors="ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=\${SUCCESSOR_ACCOUNTS:-0}"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp \$cm "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm \$ttl \$wall \$successors "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -218,6 +241,27 @@ run_succeed() {
   rm -f "${TMP_ROOT:?}"/argv.*
   RC=0
   OUT="$(exec_succeed "$@" 2>&1)" || RC=$?
+}
+
+# stage_usage_pair ROW CURRENT PRIOR GAP — write the cache record the row will
+# read, then make its displaced sample explicit. PRIOR=none leaves one sample.
+stage_usage_pair() {
+  local row="$1" current="$2" prior="$3" gap="$4" state="$TMP_ROOT/state-$1" f now
+  rm -rf -- "${state:?}"
+  claude_usage "$current" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
+    FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$state" \
+    ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
+    "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)
+  [[ "$prior" != none ]] || return 0
+  now="$(date +%s)"
+  for f in "$state"/usage/*.json; do
+    [[ "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    jq --argjson at "$((now - gap))" --argjson usage "$(claude_usage "$prior" 20 5 Opus)" \
+      '.prior = {fetched_at: $at, usage: $usage}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    return 0
+  done
+  return 1
 }
 
 # keyed KEY TEXT — the lines of TEXT from the one starting with KEY, so a row
@@ -330,6 +374,46 @@ check "an unreadable account config refuses the successor and keeps the caller" 
   "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trust-missing "$OUT" | sed -n 1p)" \
   "1|yes|0|none|oversee-succeed: launch-trust-missing lane=$H/.codex dir=$TRUSTFAIL_CWD reason=config-unreadable"
 
+# A NAMED entry's launch takes the model and effort words its OWN row writes,
+# and out of the flags after -- everything but that pair. Those flags are the
+# claude caller's: codex has no effort flag at all, so a successor handed
+# --effort high does not start, and --model fable beside the -m gpt-6-astra
+# this entry chose names a model the pick was never judged on. Which two words
+# to drop is lib/lane-launch.sh's row for the CALLER's harness, so nothing here
+# spells them and a row added there reaches both halves. The caller word this
+# fixture carries through states nothing about permissions: what a caller's
+# permission switches should do at a successor of ANOTHER harness is a
+# separate question from the pair this strip owns.
+new_caller "$MARK"
+STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
+run_succeed stripflags 'codex:1:high' -- --model fable --effort high --verbose
+check "a named entry keeps the caller's other words and drops its model and effort" \
+  "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
+  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--verbose;$BRIEF;"
+
+# The must-fail inverse on the same fixture: with the entry test at the filter
+# gone, every entry takes the caller's flags whole, and the codex successor is
+# launched with a second --model and an --effort its own launch form has no
+# flag for. The append it stood as before the filter.
+UNSTRIPPED="$TMP_ROOT/unstripped"
+script_copy "$UNSTRIPPED"
+rm -f -- "${UNSTRIPPED:?}/oversee-succeed"
+awk -v line='  if [[ "$chosen" == caller ]]; then' \
+  '$0 == line { print "  if true; then"; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SUCCEED" > "$UNSTRIPPED/oversee-succeed"
+chmod +x "$UNSTRIPPED/oversee-succeed"
+check "control: the mutant really keeps the caller's flags for every entry" \
+  "$(cmp -s "$UNSTRIPPED/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+UNSTRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+UNSTRIP_HOME="$(lane_codex_home_path "$H/.codex" "$UNSTRIP_CWD")"
+SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" run_succeed unstripped 'codex:1:high' \
+  -- --model fable --effort high --verbose
+check "control: unfiltered, the codex entry is launched with a second model and an effort flag it has none of" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--verbose;$BRIEF;"
+
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
 # open-terminal READS a launch's choices back with launch_choice_value and
@@ -406,7 +490,7 @@ run_succeed headroom-wall 'claude:1:high,codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "every account under the trigger: refusal names the account and its reset" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=2 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
+  "3|oversee-succeed: no-lane-qualifies entries=2 fallback=claude walled=5 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The entry's model is resolved before its lane, because the lane is judged on
@@ -426,7 +510,7 @@ check "an entry whose rank the ladder cannot answer refuses model-failed and sto
 # left the successor to take whatever account the tmux server hands a new pane,
 # never the one judged. The pane runs a harness-named process, which is what
 # lets that owner name the account from the default alone.
-new_caller "$MARK" '(fixture@example.com)' "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+new_caller "$MARK" '(fixture@example.com)' "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
 CALLER_LANE=none run_succeed callerdefault ''
 check "a caller entry naming no account variable launches on the account its room was measured on" \
   "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
@@ -441,42 +525,59 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexwall 'codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "a codex overseer's refusal names its reset as a time, not an epoch" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=codex walled=2 unmeasured=0 mark=headroom account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
 
-# A pane id is not a session: ids restart at %0 on every tmux server, a claim
-# from another server survives the read as a row of its own, and the caller's
-# row is appended last. Keyed on the pane id alone the account mark would take
-# that foreign account's headroom of 5 and succeed an overseer whose own
-# account holds 80.
+# The account judged is the one this session's own environment names, and a
+# claim is not that answer: pane ids restart at %0 on every tmux server, so a
+# claim from another server can carry this pane's number while naming an
+# unrelated account. Here that foreign account holds 5 percent headroom and the
+# caller's own holds 80; reading the claim would succeed an overseer with room.
 new_caller "$UNDER_MARK"
 write_foreign_claim foreign-pane "$CALLER_PANE" "$H/.eclaude"
 run_succeed foreign-pane 'claude:1:high'
-check "a foreign server's claim on the caller's pane number is not the caller's row" \
+check "a foreign server's claim on the caller's pane number does not name the judged account" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|none"
 
-# A `lanes context` that cannot answer says nothing about this account: the
-# lane reports no headroom, the context mark decides alone, and the cause rides
-# the message. A claims path that is a file rather than a directory is what
-# `lanes` refuses `context-claims` on.
+# An account judge that cannot answer says nothing about this account: the run
+# reports no headroom, the context mark decides alone, and the cause rides the
+# message rather than ending the run. A usage TTL that is not a whole number of
+# seconds is what `lanes` refuses before it measures anything.
 new_caller "$UNDER_MARK"
-mkdir -p "$TMP_ROOT/state-ctxfail"
-: > "$TMP_ROOT/state-ctxfail/claims"
-run_succeed ctxfail 'claude:1:high'
-check "an unanswerable lanes context leaves the account mark unfired, not the run refused" \
+USAGE_TTL=forever run_succeed lanesfail 'claude:1:high'
+check "an unanswerable account judge leaves the account mark unfired, not the run refused" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=unreadable|0|none"
 
-# A preference naming another harness walks that harness's lanes alone, so the
-# caller's own claude account with 80 headroom is not what ran out. The refusal
-# says which mark fired and names no account at the context mark.
+# A preference naming another harness, every account of it walled. The walk
+# does not end there: it falls through to the fleet-wide sweep of the CALLER'S
+# harness, whose account holds 80 percent headroom, and the successor opens on
+# it. Before the fallback was unconditional this one-entry preference refused
+# with nine claude accounts unexamined, which is the fleet this was measured on.
 new_caller "$MARK"
 codex_usage 95 > "$FIXTURE_DIR/.codex.json"
 run_succeed crossharness 'codex:1:high'
+check "a one-entry preference whose harness is walled falls through to the caller-harness sweep" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;|none"
+
+# The must-fail inverse of that row, on the same fixture: with the fallback
+# entry never appended, the walk is the preference and nothing else, so the one
+# walled codex entry refuses and every claude account stands unexamined. The
+# mutant must differ from the source or the control proves nothing.
+NOFALLBACK="$TMP_ROOT/nofallback"
+script_copy "$NOFALLBACK"
+rm -f -- "${NOFALLBACK:?}/oversee-succeed"
+sed '/^  ENTRIES+=(caller)$/d' "$SUCCEED" > "$NOFALLBACK/oversee-succeed"
+chmod +x "$NOFALLBACK/oversee-succeed"
+check "control: the mutant really drops the fallback entry" \
+  "$(cmp -s "$NOFALLBACK/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+SUCCEED_BIN="$NOFALLBACK/oversee-succeed" run_succeed nofallback 'codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
-check "context mark with another harness walled: the refusal names no account" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
+check "control: without the fallback the same preference refuses with the caller's harness unwalked" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=none walled=1 unmeasured=0 mark=context|yes|0|none"
 
 # SCHED_SLACK — the seconds a loaded runner adds to a figure taken off the
 # clock, over whatever the script under test decided. Every wait below is
@@ -592,6 +693,161 @@ run_succeed checkunder '' --check-marks
 check "--check-marks under both marks: the below-mark line, nothing launched" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes"
+
+# The projected wall is measured from the displaced cache sample. A fast burn
+# reaches the setting. A slow burn does not. Missing, close, and flat samples
+# are each reported as unmeasured rather than read as a safe rate.
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+stage_usage_pair ratefast 40 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed ratefast '' --check-marks
+check "a sixty-point headroom burning two points a minute fires the rate trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude|0"
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed ratefast ''
+check "a rate trigger moves off the caller account even when it has more headroom" \
+  "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+stage_usage_pair rateslow 22 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=30 run_succeed rateslow '' --check-marks
+check "a projected wall beyond the setting does not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=78|0"
+for rate_row in \
+  "rateone|40|none|0|one-sample" \
+  "rateclose|40|20|30|samples-too-close" \
+  "rateflat|20|20|600|not-increasing"; do
+  IFS='|' read -r rate_name rate_current rate_prior rate_gap rate_reason <<<"$rate_row"
+  stage_usage_pair "$rate_name" "$rate_current" "$rate_prior" "$rate_gap"
+  new_caller "$UNDER_MARK"
+  WALL_MINUTES=30 run_succeed "$rate_name" '' --check-marks
+  check "an unmeasurable rate reports $rate_reason" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+    "0|oversee-succeed: mark-unmeasured kind=rate reason=$rate_reason succession=on|0"
+done
+new_caller "$UNDER_MARK"
+WALL_MINUTES=bad run_succeed badwall '' --check-marks
+check "a malformed projected-wall setting is refused before judgement" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: invalid-wall-minutes ORCH_OVERSEER_WALL_MINUTES=bad"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=bad run_succeed badsuccessors '' --check-marks
+check "a malformed successor-account setting is refused before judgement" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: invalid-successor-accounts ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=bad"
+stage_usage_pair rateleadingzero 40 20 600
+new_caller "$UNDER_MARK"
+WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
+check "a leading-zero wall setting remains valid decimal input" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude"
+
+# The chooser itself counts successor accounts after omitting this session.
+# Two leave the overseer in place. One fires and moves it to that account.
+make_lane "$H" nclaude
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+THREE_LANES="$H/.claude:$H/.eclaude:$H/.nclaude"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingtwo '' --check-marks
+check "two successor accounts do not fire the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=40|0"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=01 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
+check "one successor account fires the named qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on|0"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
+check "the qualifying-set trigger succeeds onto the remaining account" \
+  "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+new_caller "$UNDER_MARK"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.eclaude" SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" \
+  run_succeed qualifyingstable '' --check-marks
+check "the successor stays in place when no remaining account has more headroom" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingequal '' --check-marks
+check "an equal-headroom successor does not fire the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50"
+
+# A known harness remains enough to judge account triggers when its context
+# line is absent. The account read receives no model, and the context reading
+# remains unmeasured when none of those triggers fires.
+NO_CONTEXT='fixture known claude without context'
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+new_known_claude_caller "$NO_CONTEXT"
+run_succeed knownheadroom '' --check-marks
+check "a known harness with no context line still fires the headroom trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=2026-07-27T06:00:00Z"
+
+stage_usage_pair knownrate 40 20 600
+new_known_claude_caller "$NO_CONTEXT"
+WALL_MINUTES=30 run_succeed knownrate '' --check-marks
+check "a known harness with no context line still fires the rate trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude"
+
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_known_claude_caller "$NO_CONTEXT"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownqualifying '' --check-marks
+check "a known harness with no context line still fires the qualifying-set trigger" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
+
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+new_known_claude_caller "$NO_CONTEXT"
+SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed knownunmeasured '' --check-marks
+check "a known harness with no account trigger reports its context as unmeasured" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on"
+new_caller "$NO_CONTEXT" "$NO_CONTEXT"
+run_succeed unknowncontext '' --check-marks
+check "a pane with no known harness and no context line still refuses" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "1|oversee-succeed: no-status-line pane=$CALLER_PANE"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.nclaude.json"
+
+NORATE="$TMP_ROOT/no-rate-trigger"
+script_copy "$NORATE"
+rm -f -- "${NORATE:?}/oversee-succeed"
+awk '{ condition=$0; sub(/^[[:space:]]*/, "", condition) }
+     condition == "elif (( WALL_MINUTES > 0 )) && [[ \"$RATE_STATE\" == measured ]] \\" { sub(/elif.*/, "elif false; then"); print; getline; hits++; next }
+     { print } END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NORATE/oversee-succeed"
+chmod +x "$NORATE/oversee-succeed"
+stage_usage_pair ratecontrol 40 20 600
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NORATE/oversee-succeed" WALL_MINUTES=30 run_succeed ratecontrol '' --check-marks
+check "control: without the rate trigger the fast burn stays below the context mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=60"
+
+NOQUALIFY="$TMP_ROOT/no-qualifying-trigger"
+script_copy "$NOQUALIFY"
+rm -f -- "${NOQUALIFY:?}/oversee-succeed"
+awk '$0 == "  if [[ \"$QUALIFYING_STATE\" == measured ]] \\" {
+       print "  if false; then MARK_KIND=qualifying; fi"; getline; getline; hits++; next } { print }
+     END { if (hits != 1) exit 1 }' "$SUCCEED" > "$NOQUALIFY/oversee-succeed"
+chmod +x "$NOQUALIFY/oversee-succeed"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NOQUALIFY/oversee-succeed" SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" \
+  run_succeed qualifyingcontrol '' --check-marks
+check "control: without the qualifying-set trigger one successor does not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
 # The account mark leads, and only its line names the account and the reset the
 # operator waits on: at the context mark the overseer's own account either has
@@ -737,6 +993,12 @@ check "--print-launch-line prints the caller's own line, judges no mark and laun
   "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|yes|0|none"
 
+new_caller "$UNDER_MARK"
+WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
+check "malformed trigger settings do not block a non-judging launch-line print" \
+  "$RC|$OUT|$(overseers)" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0"
+
 # The preference names where a LATER successor goes; the printed line records
 # what THIS session runs, so it walks the caller entry whatever it says and
 # reads no account at all.
@@ -802,11 +1064,16 @@ done
 # at the trigger the caller's lane is not kept, `lanes pick` naming the lane
 # instead. A codex caller therefore never carries lane_context_caller_cfg's
 # answer into a live launch, and the rows above are where that arm is read.
+#
+# The account mark still reads a figure here, and the account it reads is the
+# codex default: this session names no account variable, and the harness its
+# own status line names is what turns that silence into a directory. The codex
+# fixture holds 80 percent headroom, well above the trigger.
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE=none run_succeed codexnowindow ''
 check "a codex caller with room ends at the context mark, its status line naming no window" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
-  "0|oversee-succeed: window-below-mark window=none source=none headroom=none|yes|0"
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=80|yes|0"
 
 # Printing launches nothing, so the setting that governs launching does not
 # gate it: the record is what an owner's later relaunch by hand reads.
@@ -848,9 +1115,9 @@ check "succession off refuses the relaunch, and the dead window stays as it was"
 # refuses before tmux is asked anything.
 : > "$TMP_ROOT/empty-line"
 for row in \
-  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1|permission flags beside a recorded line" \
-  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0|a print asked of a dead pane" \
-  "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0|a mark judged on a dead pane" \
+  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1 walled-pane=none|permission flags beside a recorded line" \
+  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0 walled-pane=none|a print asked of a dead pane" \
+  "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0 walled-pane=none|a mark judged on a dead pane" \
   "--check-marks -- --verbose|mode-conflict check=1 print=0 line-file=none flags=1 handoff=0 wait-secs=0|permission flags beside a judgement that launches nothing" \
   "--check-marks --print-launch-line|mode-conflict check=1 print=1 line-file=none flags=0 handoff=0 wait-secs=0|a judgement and a printed line at once" \
   "--check-marks --handoff tmp/other.md|mode-conflict check=1 print=0 line-file=none flags=0 handoff=1 wait-secs=0|a handoff path for a run that opens no window" \
@@ -916,7 +1183,7 @@ for row in \
 done
 
 # A valid NON-DEFAULT trigger, read end to end: the caller sits at 50 headroom,
-# which is above the default 20 and at or below 60, so only a setting that is
+# which is above the default 10 and at or below 60, so only a setting that is
 # actually read fires the account mark here.
 new_caller "$UNDER_MARK"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -945,6 +1212,36 @@ check "caller one percent above the trigger falls through to the context mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=$((TRIGGER + 1))|0|none"
 
+# The SHIPPED default, which no row above pins: every one of them derives its
+# fixtures from TRIGGER, so a default that drifts carries them along with it.
+# These two rows state their figures literally instead. The 15 in each sits
+# above the default and below twice it, so a default raised to that doubled
+# figure flips both answers, and between them the pair covers both jobs the
+# one number does.
+#
+# The mark side: a caller with room to spare under the shipped default is not
+# succeeded on its account, and the context mark answers for it instead.
+new_caller "$UNDER_MARK"
+claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed defaultspares 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+check "the shipped default leaves a caller at 15 percent headroom unsucceeded" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=15|0|none"
+
+# The floor side, which is the job the shipped default answers: the caller is
+# past its own mark and the only candidate sits at 15, so the successor opens
+# there. A larger default rules that candidate out and refuses the succession.
+new_caller "$UNDER_MARK"
+claude_usage 92 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed defaultfloor 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "the shipped default opens the successor on a candidate at 15 percent headroom" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
 # The same boundary on the pick side: the only candidate sits exactly at the
 # trigger and must be refused, then one percent above it and must be chosen.
 new_caller "$MARK"
@@ -953,7 +1250,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed pickatbound 'claude:1:high'
 check "a candidate at exactly the trigger is refused, not picked" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=4 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 new_caller "$MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
@@ -991,7 +1288,7 @@ mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "an unmeasured caller with every lane of its harness walled refuses at the context mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=1 unmeasured=1 mark=context|yes|0|none"
 
 # The same wall with the caller's own account MEASURED at the trigger: the
 # refusal names that account and when its binding bucket frees up, and the
@@ -1004,12 +1301,12 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a caller at the trigger with every lane walled refuses at the account mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
-# The account mark on the OTHER caller-row path: a claim from this server
-# already names the caller's pane, so the flag goes onto that record instead of
-# onto an appended one. Lose the flag there and no row is the caller's, the
-# account reads as unmeasured, and this row stops at the context mark.
+# A claim from this server already naming the caller's pane changes nothing
+# about which account the mark judges: that is the account this session's own
+# environment names, whatever the claim store holds, and at the trigger the
+# mark fires and the successor goes to the lane the pick names.
 new_caller "$UNDER_MARK"
 write_own_claim claimedcaller "$CALLER_PANE" "$H/.claude"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
@@ -1017,7 +1314,7 @@ claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed claimedcaller ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-check "a caller pane a claim already names is the flagged row, and its account mark fires" \
+check "a claim on the caller pane does not move the judged account, and its account mark fires" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
 
@@ -1036,13 +1333,138 @@ check "a caller with room above the trigger keeps its own lane, not the roomier 
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;"
 
-# A model wall alone is not the whole question for this caller. The second
-# claude lane has room for the model this entry passes, its Fable window being
-# at 10, and none of its own, its Opus window being at 95 so its headroom is 5.
-# Opened there, the successor reads that headroom at its own account mark on the
-# first judgement it makes and succeeds itself again, costing a window swap and
-# a handoff per cycle. The pick is held to the trigger on BOTH walls, so the
-# entry is skipped and the run refuses; without the floor this row launches.
+# The account mark reads the buckets THIS session spends. The caller's status
+# line names Fable, and its account's only spent window is scoped to Opus at
+# exactly the trigger: that window walls no Fable turn, so the mark does not
+# fire and the run falls through to the context mark, which reports the
+# model-scoped headroom it read. The caller's model is what decides it, so the
+# matched row below moves the same percentage onto the Fable window and the
+# mark fires.
+new_caller "$UNDER_MARK"
+jq -n --argjson m "$AT_TRIGGER" '{
+  five_hour: {utilization: 0, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 0, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+run_succeed unmatchedbucket 'claude:1:high'
+check "a spent window scoped to a model this overseer does not run leaves the account mark unfired" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=100|0|none"
+
+# The must-fail inverse: the account judged with no model named, which is what
+# the mark read before. Every window then counts, so the same fixture fires on
+# the Opus window and hands the session over for a bucket neither overseer
+# spends. The successor lands on the very account that fired it, because the
+# entry's pick reads the Fable window there and finds it empty — the succession
+# loop, paid in a window swap and a handoff, with a roomier second lane sitting
+# unused beside it.
+WIDEMARK="$TMP_ROOT/widemark"
+script_copy "$WIDEMARK"
+rm -f -- "${WIDEMARK:?}/oversee-succeed"
+sed 's/ \${CALLER_MODEL:+--model "\$CALLER_MODEL"}//' "$SUCCEED" > "$WIDEMARK/oversee-succeed"
+chmod +x "$WIDEMARK/oversee-succeed"
+check "control: the mutant really drops the model from the account judge" \
+  "$(cmp -s "$WIDEMARK/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$UNDER_MARK"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+SUCCEED_BIN="$WIDEMARK/oversee-succeed" run_succeed widemark 'claude:1:high'
+check "control: judged on every window the same account fires the mark and hands over to itself" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
+# The matched side of the same rule: the spent window is scoped to the model
+# the caller's own status line names, so it walls this session and the mark
+# fires. Nothing but the window's label differs from the row above.
+new_caller "$UNDER_MARK"
+jq -n --argjson m "$AT_TRIGGER" '{
+  five_hour: {utilization: 0, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 0, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+run_succeed matchedbucket 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a spent window scoped to the model this overseer runs fires the account mark" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
+# The model reaches the account mark on every claude tier, not only the ones
+# the window table names. This caller runs Sonnet, which that table leaves out,
+# so its line carries no window and the parse prints three empty fields before
+# the model. Read with a split that collapses a tab run, the model lands in the
+# token field and the mark is judged with no model at all: this account's only
+# spent window is scoped to Opus at exactly the trigger, so it would fire and
+# hand the session over for a window no Sonnet turn draws on.
+new_caller "$NO_TABLE_TIER"
+jq -n --argjson m "$AT_TRIGGER" '{
+  five_hour: {utilization: 0, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 0, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+run_succeed tiernotintable 'claude:1:high'
+check "a tier the window table leaves out still carries its model into the account mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=100|0|none"
+
+# The must-fail inverse of that row, on the same screen and the same fixture:
+# with the model gone from the account judge the Opus window counts, the mark
+# fires, and the successor opens.
+new_caller "$NO_TABLE_TIER"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+SUCCEED_BIN="$WIDEMARK/oversee-succeed" run_succeed tiermutant 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "control: with no model in the judge the same Sonnet caller fires on its Opus window" \
+  "$RC|$(layout)|$(caller_open)" \
+  "0|1 overseer;|no"
+
+# The caller fallback entry names no model in the LAUNCH, and its pick is still
+# judged on one: that successor carries this overseer's own flags, so it runs
+# the model this pane runs. The second claude lane has room for it, its shared
+# windows reading 5 and 20, and its Opus window at 95 walls nothing either
+# overseer will draw on. Judged with no model the pick reads that 95 and
+# refuses an account that would have carried the successor.
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.eclaude.json"
+run_succeed callerfallbackmodel ''
+check "the caller fallback pick is judged on the model this overseer runs" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+# The must-fail inverse: the caller entry judged with no model, which is what
+# that pick read before. The Opus window then walls the only lane with room and
+# the run refuses with the caller still at its trigger.
+NOCALLERMODEL="$TMP_ROOT/nocallermodel"
+script_copy "$NOCALLERMODEL"
+rm -f -- "${NOCALLERMODEL:?}/oversee-succeed"
+sed 's/^    pick_model="\$CALLER_MODEL"$/    pick_model=""/' "$SUCCEED" > "$NOCALLERMODEL/oversee-succeed"
+chmod +x "$NOCALLERMODEL/oversee-succeed"
+check "control: the mutant really drops the caller model from its pick" \
+  "$(cmp -s "$NOCALLERMODEL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NOCALLERMODEL/oversee-succeed" run_succeed nocallermodel ''
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "control: judged with no model the caller fallback refuses the lane that had room" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+
+# The successor pick and the successor's own first judgement read ONE bucket.
+# The second claude lane has room for the model this entry passes, its Fable
+# window being at 10, and its Opus window is at 95. The entry launches Fable, so
+# the Opus window walls nothing that successor will run: it is picked, and at
+# its own account mark it reads the same Fable-scoped figure and keeps running.
+# Held to the account-wide bucket instead, the pick would refuse this lane over
+# a window neither overseer spends and the fleet would sit on a walled caller.
 new_caller "$UNDER_MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 jq -n '{
@@ -1056,9 +1478,82 @@ jq -n '{
 run_succeed bindingfloor 'claude:1:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-check "a lane with room for the entry's model and none of its own is not opened on" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+check "a lane with room for the entry's model and none outside it is opened on" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
+# Which reading the pick is held to is lib/lane-context.sh's answer, because it
+# is the reading THAT file takes off the successor's own status line later. A
+# claude line names the model, so the pick names it too and the two judgements
+# read one bucket. A codex line names none, so a codex successor is judged on
+# the account's binding bucket whatever model it was launched on, and the pick
+# is held there with --binding-floor. The RULE is pinned here, where it is
+# decided; the row below it pins the FORWARDING of the flag that rule selects,
+# over a stubbed judge, because no usage fixture can distinguish the two walls
+# for codex: lanes' codex parser reports no model-scoped window at all, so a
+# local codex account's two readings are already one number, and only the host
+# accounts protocol carries a scoped codex window.
+check "the pick reading follows the harness whose status line names the model" \
+  "$(lane_context_mark_model claude fable)|$(lane_context_mark_model codex gpt-6-astra)|$(lane_context_mark_model claude '')|$(lane_context_mark_model '' fable)" \
+  "fable|||"
+
+# The forwarding itself, over a `lanes` that answers the two picks a succession
+# makes and distinguishes the two walls by the one flag under test. It stands
+# in for the account the finding names: a hosted codex account whose binding
+# bucket is a model window this launch will not pass, so the model reading has
+# room and the account has none of its own. The caller's own mark is at the
+# trigger, so the succession fires; the caller-harness sweep is walled, so the
+# walk ends in a refusal whenever the codex sweep refuses.
+STUB_LANES="$TMP_ROOT/stub-lanes"
+cat > "$STUB_LANES" <<STUB
+#!/bin/sh
+set -eu
+args=" \$* "
+case "\$args" in
+  *" --lane "*)
+    printf '%s\n' '{"wall": 97, "alias": "fixture@example.com", "binding_resets_at": "2026-09-22T00:00:00Z"}'
+    exit 3 ;;
+  *" --harness codex "*)
+    case "\$args" in
+      *" --binding-floor "*) ;;
+      *) printf '%s\n' '{"config_dir": "$H/.codex"}'; exit 0 ;;
+    esac ;;
+esac
+printf '%s\n' '{"walled": 1, "unmeasured": 0}'
+exit 3
+STUB
+chmod +x "$STUB_LANES"
+FLOORFWD="$TMP_ROOT/floorfwd"
+script_copy "$FLOORFWD"
+rm -f -- "${FLOORFWD:?}/lanes"
+cp "$STUB_LANES" "$FLOORFWD/lanes"
+new_caller "$MARK"
+SUCCEED_BIN="$FLOORFWD/oversee-succeed" run_succeed floorfwd 'codex:1:high'
+check "the codex sweep is asked with the binding floor, so an account walled on its own bucket is refused" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=2 unmeasured=0 mark=headroom account=fixture@example.com resets=2026-09-22T00:00:00Z|yes|0|none"
+
+# The must-fail inverse: with the floor expansion dropped from the pick call,
+# the same stub answers the codex sweep with room and the successor opens on
+# the very account whose own first mark would succeed it again.
+FLOORDROP="$TMP_ROOT/floordrop"
+script_copy "$FLOORDROP"
+rm -f -- "${FLOORDROP:?}/lanes" "${FLOORDROP:?}/oversee-succeed"
+cp "$STUB_LANES" "$FLOORDROP/lanes"
+awk -v line='    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+    -v repl='    ${exclude[@]+"${exclude[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+  '$0 == line { print repl; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SUCCEED" > "$FLOORDROP/oversee-succeed"
+chmod +x "$FLOORDROP/oversee-succeed"
+check "control: the mutant really drops the binding floor from the pick" \
+  "$(cmp -s "$FLOORDROP/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+FLOORDROP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+FLOORDROP_HOME="$(lane_codex_home_path "$H/.codex" "$FLOORDROP_CWD")"
+SUCCEED_BIN="$FLOORDROP/oversee-succeed" run_succeed floordrop 'codex:1:high'
+check "control: without the floor the same account is picked and the successor opens on it" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
@@ -1418,6 +1913,174 @@ rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
 # end-to-end outcome is identical. What the rows above do hold is the deadline
 # itself and the deciding read's bound, which is what a caller and an operator
 # see.
+
+echo "=== an overseer whose ACCOUNT is spent, which reaches none of the marks either ==="
+# A walled overseer is not dead: its harness is running and its pane still
+# draws a status line, so nothing here needs a recorded line. What it cannot
+# do is take a turn, so it never reaches the marks that hand a session over.
+# `--walled-pane` is therefore the succession with the wall in place of the
+# mark: no mark judged, the caller's own account never kept, every entry
+# through `lanes pick`.
+#
+# The world every row below runs in is the one the `callerhasroom` row above
+# uses, and for the same reason: the caller holds 50 percent headroom, which
+# a live succession KEEPS, and the other claude lane holds 90, which the pick
+# names. A fixture where both answers agree would pass whether the walled
+# rule is read or not.
+walled_world() { claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"; }
+walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"; }
+
+new_caller "$MARK"
+walled_world
+run_succeed walledpane '' --walled-pane "$CALLER_PANE"
+WALLED_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer '$BRIEF'"
+check "--walled-pane opens the successor on the lane the pick named, never on the caller's own" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+# The line is on stdout ahead of every keyed line, and in the fleet state: the
+# caller is oversee-watch, which reports the recovery it just performed, and a
+# later death must not relaunch from the walled session's own line.
+check "the walled recovery prints the line it built and records it for a later relaunch" \
+  "$(sed -n 1p <<<"$OUT")|$(recorded_line)" \
+  "$WALLED_LINE|$WALLED_LINE"
+
+# The context mark well under its trigger and the account mark well over its
+# own: a live succession ends at `context-below-mark` here and launches
+# nothing. The walled run launches, because the wall is its trigger.
+new_caller "$UNDER_MARK"
+run_succeed walledmarkless ''
+check "the same world under both marks: a live succession launches nothing" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50|yes|0"
+new_caller "$UNDER_MARK"
+run_succeed walledundermark '' --walled-pane "$CALLER_PANE"
+check "and the walled recovery of it launches, judging no mark at all" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+# Succession off launches nothing here as everywhere else: the operator's
+# setting is read before the pane is.
+new_caller "$MARK"
+SUCCESSION=off run_succeed walledoff '' --walled-pane "$CALLER_PANE"
+check "succession off refuses the walled recovery and keeps the caller's window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off|yes|0|none"
+
+# Every claude lane at or below the trigger. The refusal is exit 3, the status
+# `lanes pick` itself answers "no lane clears the bound" with, so the caller
+# can tell a fleet with no room from a launch that broke; it carries
+# `mark=wall` and names no account, no mark having been judged to name one by.
+new_caller "$MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed wallednoroom '' --walled-pane "$CALLER_PANE"
+walled_world
+check "no account above the trigger: the walled recovery refuses at exit 3 under mark=wall" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=wall|yes|0|none"
+
+# The successor keeps THIS session's model, effort and permission flags and
+# changes the account alone. The preference names where a later successor
+# goes at a MARK and is not walked here, so launch_choice_write writes no
+# model or effort beside the ones the caller's own flags already carry: a
+# command naming two models runs on whichever the harness reads last, which
+# is a model no pick judged.
+new_caller "$MARK"
+walled_world
+run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --verbose
+check "--walled-pane keeps this session's own model and effort, and the preference writes none beside them" \
+  "$RC|$(recorded claude)|$(recorded codex)" \
+  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;|none"
+
+# The one account this recovery may never open on is the one it is recovering
+# from. The caller's own lane is given the MOST room here, so the pick names
+# it: an inventory that has not caught up with the wall on that pane reads
+# exactly like this. The entry is skipped and the run refuses rather than
+# relaunching into the wall.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed walledspent '' --walled-pane "$CALLER_PANE"
+walled_world
+check "a pick naming the walled account itself is skipped, not opened on" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(keyed successor-lane-spent "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|yes|0|none"
+
+# The same account under a spelling the pick does not use. This side is
+# whatever the operator's shell exported and the pick's side is whatever lane
+# discovery produced, so the two are compared through the pairing
+# lane_account_check compares an observed account against a picked one with,
+# and never as strings. A trailing slash is the cheapest way to have one
+# account spelled twice; without that pairing the guard does not fire and the
+# successor opens on the account that just walled.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" run_succeed walledspentslash '' --walled-pane "$CALLER_PANE"
+walled_world
+check "the walled account spelled another way is still the walled account" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude/ entry=caller|yes|0|none"
+
+# Control: account identity decided as a bare string, which is what the guard
+# read before. The one spelling difference is then two accounts and the
+# successor opens straight back into the wall.
+SPENTCTL="$TMP_ROOT/spentctl"
+script_copy "$SPENTCTL"
+rm -f -- "${SPENTCTL:?}/oversee-succeed"
+sed 's|^    if \[\[ "\$MODE" == walled && "\$(lane_account_id "\$PICKED_DIR")" == "\$WALLED_LANE_ID" \]\]; then$|    if [[ "$MODE" == walled \&\& "$PICKED_DIR" == "$WALLED_LANE" ]]; then|' \
+  "$SUCCEED" > "$SPENTCTL/oversee-succeed"
+chmod +x "$SPENTCTL/oversee-succeed"
+check "control: the copy really compares the two spellings as strings" \
+  "$(cmp -s "$SPENTCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$SPENTCTL/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" SUCCEED_BIN="$SPENTCTL/oversee-succeed" \
+  run_succeed spentctl '' --walled-pane "$CALLER_PANE"
+walled_world
+check "control: compared as strings the successor opens on the account that walled" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;$BRIEF;"
+
+# What this mode refuses of the other four. A combination read as one of them
+# would send a line built for another pane, judge a mark against a pane that
+# takes no turn, or reopen on the account that walled. Every row refuses
+# before tmux is asked anything.
+for row in \
+  "--walled-pane %9 --dead-pane %8 --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%8 print=0 check=0 flags=0 walled-pane=%9|a walled pane beside a dead one" \
+  "--walled-pane %9 --print-launch-line|mode-conflict walled-pane=%9 print=1 check=0 line-file=none|a print asked of a walled pane" \
+  "--walled-pane %9 --check-marks|mode-conflict walled-pane=%9 print=0 check=1 line-file=none|a mark judged on a walled pane" \
+  "--walled-pane %9 --line-file $TMP_ROOT/line-file|mode-conflict walled-pane=%9 print=0 check=0 line-file=$TMP_ROOT/line-file|a recorded line beside a re-picked account" \
+  "--walled-pane fleet:5|invalid-walled-pane value=fleet:5|a window target where a pane id belongs"; do
+  IFS='|' read -r row_args row_want row_label <<<"$row"
+  new_caller "$MARK"
+  # shellcheck disable=SC2086
+  run_succeed walledguard '' $row_args
+  check "$row_label: refused, nothing launched" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+    "1|oversee-succeed: $row_want|0|yes"
+done
+
+# Control: the pick gate naming `succeed` alone, which is what it said before
+# this mode existed. The caller entry then keeps the account the walled
+# session was spending, and the successor opens straight back into the wall.
+WALLCTL="$TMP_ROOT/wallctl"
+script_copy "$WALLCTL"
+rm -f -- "${WALLCTL:?}/oversee-succeed"
+sed 's/^  if \[\[ "\$MODE" == succeed || "\$MODE" == walled \]\] \\$/  if [[ "$MODE" == succeed ]] \\/' \
+  "$SUCCEED" > "$WALLCTL/oversee-succeed"
+chmod +x "$WALLCTL/oversee-succeed"
+check "control: the copy really leaves the walled mode out of the pick gate" \
+  "$(cmp -s "$WALLCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$WALLCTL/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$MARK"
+SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
+check "control: without that gate the successor opens on the account that walled" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;$BRIEF;"
+walled_world_reset
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

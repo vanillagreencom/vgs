@@ -71,9 +71,7 @@ personal overrides):
                               from the link location.
   WORKTREE_COPIES             Space-separated files copied only from the main
                               checkout when neither checkout's Git index owns
-                              them.
-                              Git-owned files stay with their checkout. In a
-                              standalone checkout, configured copies do nothing.
+                              them. Git-owned files stay with their checkout.
   WORKTREE_MKDIRS             Space-separated directories created inside each
                               worktree with mkdir -p (gitignored scratch dirs
                               such as tmp).
@@ -81,6 +79,11 @@ personal overrides):
   BOT_SIGNING_KEY             SSH signing key path
   BOT_REMOTE_NAME             Remote name for push (default: origin)
   BOT_REMOTE_URL              URL for the bot remote (added on create if set)
+
+Same-checkout setup:
+  Setup does nothing when the checkout is both the source and the destination,
+  as in a standalone clone or the main checkout: every configured entry would
+  act on its own source.
 
 Setup-path hardening:
   Configured setup paths (WORKTREE_SYMLINKS, WORKTREE_COPIES, WORKTREE_MKDIRS,
@@ -177,10 +180,13 @@ implementer.
   - A fresh worktree is unclaimed: create never claims a session-guard lease.
 
 Options:
-  --base BRANCH   Checkout an existing remote branch into the worktree;
-                  the default branch instead starts a new issue branch from it
-                  (it is always checked out in the main checkout and is never
-                  issue-ownership evidence)
+  --base BRANCH   Checkout an existing branch into the worktree; a BRANCH
+                  other than the default must be on origin. One that is not
+                  is refused: fetch it if it is only on another remote, then
+                  push it, or `git switch` to it in the main checkout and
+                  pass --transfer instead. The default branch instead starts
+                  a new issue branch from it (it is always checked out in
+                  the main checkout and is never issue-ownership evidence)
   --from REF      Create a new branch (named after ID) starting from REF
                   (branch, tag, or commit) after the normal ownership claim
                   gate

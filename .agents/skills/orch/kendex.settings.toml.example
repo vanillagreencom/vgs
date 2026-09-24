@@ -102,8 +102,31 @@ ORCH_MERGE_AUTONOMY = "auto"
 # bypass for the merging account is the org's decision.
 ORCH_MERGE_BYPASS = "off"
 
+# The gh config directory on the control host holding the owner credential the
+# overseer merges a gate-met PR with, through `github.sh pr-merge
+# --admin-credential`. Empty turns the route off and every lane takes the
+# queue; no lane ever holds the credential.
+ORCH_ADMIN_MERGE_GH_CONFIG_DIR = ""
+
+# Change classes that route may merge, comma- or space-separated. Empty means
+# every class; only an empty ORCH_ADMIN_MERGE_GH_CONFIG_DIR turns the route
+# off. A set value names classes the change classifier answers: render,
+# trivial, micro, small and standard. The class comes from that classifier
+# alone, and a classifier that cannot be reached or read refuses the merge
+# with class-unreadable.
+ORCH_ADMIN_MERGE_CLASSES = ""
+
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
+
+# Seconds a hosted lane waits for its remote shell prompt after the ssh line is
+# typed. Its own bound, not the one above: it measures a route coming up and
+# another machine's login. A bound spent with ssh still on the pane interrupts
+# that client and waits the bound again for the pane's own shell; the ssh line
+# is typed again only once that shell is back, because the pane has to be out
+# of ssh before a line pasted into it is run rather than typed into the stalled
+# session. The refusal counts the ssh lines typed in its attempts field.
+ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
 # inventory is always discovered — this only renames it. ORCH_LANE_DIRS
@@ -145,19 +168,31 @@ ORCH_OVERSEER_LANES = "3"
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live
 # overseer writes its handoff and asks the user to start the next session. A
-# dead overseer cannot ask, so the watch reports the death and leaves a notice
-# for a manual replacement.
+# dead or walled overseer cannot ask, so the watch reports the case and leaves
+# a notice for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
+# Minutes before the projected account wall that starts overseer succession.
+# Zero disables the rate trigger.
+ORCH_OVERSEER_WALL_MINUTES = "30"
+
+# Maximum number of better successor accounts that starts succession.
+# Zero disables the qualifying-account trigger.
+ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
+
 # Consecutive oversee-watch passes the overseer's own pane must read exited
-# before the watch reports overseer-dead and relaunches. One pass is a poll
-# that caught a live session between its harness and its shell.
+# before the watch reports overseer-dead, or walled before it reports
+# overseer-walled, and relaunches. One pass is a poll that caught a live
+# session between its harness and its shell. A walled reading also needs the
+# account judged at or below ORCH_OVERSEER_HEADROOM_PCT: that pane carries the
+# limit banners the watch relays about other lanes, and passes alone never
+# close a window whose harness is alive.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # Account headroom, in percent of the binding bucket, at or below which
 # oversee-succeed succeeds the overseer and refuses its turn end through the
 # lane-mail-check hook. No successor is opened on an account at or below it.
-# ORCH_OVERSEER_HEADROOM_PCT = "20"
+# ORCH_OVERSEER_HEADROOM_PCT = "10"
 
 # Watch passes a standing overseer-mark waits before oversee-watch reports it
 # again. The first crossing is always reported; this only bounds how often a
