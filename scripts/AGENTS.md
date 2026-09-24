@@ -4,7 +4,7 @@ Validation and measurement scripts. A script here reads the repository and the n
 
 - `scripts/validate` owns the validation manifest. A check is added there with its implementation, and CI runs the manifest, not a second list.
 - A failed tool invocation never becomes an empty successful result. A check that cannot run exits 77 and names what is missing; 77 is not a pass.
-- Every check ships one must-fail control beside it, named `test-<check>` (for `check-manifests.js`, `check-plugin-boundary.py`) or `test-<subject>` for a script under `bin/` or `shell/Core/` (`test-vgsh.sh`, `test-vgsh-scan.py`, `test-plugin-logic.js`), that plants the defect the check exists to catch. `validate` and `qml-smoke.sh` are the runners and have none.
+- Every check ships one must-fail control beside it, named `test-<check>` (for `check-manifests.js`, `check-plugin-boundary.py`) or `test-<subject>` for a script under `bin/` or `shell/Core/` (`test-vgsh.sh`, `test-vgsh-scan.py`, `test-plugin-logic.js`, `test-dispatch.js`), that plants the defect the check exists to catch. `validate` and `qml-smoke.sh` are the runners and have none.
 - `qml-smoke.sh` is the only place a shell starts from here. Its sandbox is built from the repository alone, its runtime dir is a short name under the host's `XDG_RUNTIME_DIR`, and it reads the shell's per-instance log file, not redirected stdout.
 - A check that judges a manifest calls `shell/Core/PluginLogic.js` through node; it never re-implements a rule.
 - A script that inspects the filesystem reports what it could not read as an error, never as absence; a walk that hit an unreadable path certifies nothing.

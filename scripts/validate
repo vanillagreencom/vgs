@@ -38,6 +38,7 @@ run() { # LABEL CMD...
 # rows: area  label  command
 rows=(
   "logic|plugin logic table|node scripts/test-plugin-logic.js"
+  "logic|dispatch table|node scripts/test-dispatch.js"
   "manifests|bundled manifests|node scripts/check-manifests.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js"
   "cli|runner CLI controls|scripts/test-vgsh.sh"

@@ -3,32 +3,36 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import "Dispatch.js" as Dispatch
 
-// The one place the shell dispatches to Hyprland. Every dispatch runs
-// through hyprctl and its reply is judged by text: Hyprland answers a
-// refused dispatcher with exit 0 and an error sentence, so exit status alone
-// says nothing. A dispatch while one is in flight is refused and logged
-// rather than queued, so a stuck compositor cannot pile up processes.
+// The one place the shell dispatches to Hyprland. Dispatch.js builds every
+// request in the session's syntax and refuses an argument that could break
+// out of it; the request runs through hyprctl and its reply is judged by
+// text: Hyprland answers a refused dispatcher with exit 0 and an error
+// sentence, so exit status alone says nothing. A dispatch while one is in
+// flight is refused and logged rather than queued, so a stuck compositor
+// cannot pile up processes.
 Singleton {
     id: root
 
     property string pending: ""
 
-    function focusWorkspace(id) {
-        const request = Hyprland.usingLua
-            ? "hl.dsp.focus({ workspace = \"" + String(id) + "\" })"
-            : "workspace " + String(id);
-        dispatch(request);
-    }
-
-    function dispatch(request) {
-        if (proc.running) {
-            console.error("compositor: dispatch refused while " + JSON.stringify(pending) + " is in flight: " + request);
-            return;
+    // Send one dispatcher Dispatch.js knows. Returns `ok` once the request
+    // is running, or the keyed refusal; the reply is judged when it lands.
+    function send(name, args) {
+        const r = Dispatch.request(name, args, Hyprland.usingLua);
+        if (!r.ok) {
+            console.error("compositor: " + r.error);
+            return r.error;
         }
-        pending = request;
-        proc.command = ["hyprctl", "dispatch", request];
+        if (proc.running) {
+            console.error("compositor: dispatch refused while " + JSON.stringify(pending) + " is in flight: " + r.request);
+            return "refused: in-flight=" + pending;
+        }
+        pending = r.request;
+        proc.command = ["hyprctl", "dispatch", r.request];
         proc.running = true;
+        return "ok";
     }
 
     Process {

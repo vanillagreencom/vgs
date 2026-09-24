@@ -1,6 +1,6 @@
 # Runtime
 
-Covers: scripts/**, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, .github/workflows/**
+Covers: scripts/**, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, .github/workflows/**
 
 Requirements for the shell process, the runner and the measurement tools, and the Quickshell facts the implementation rests on.
 
@@ -30,8 +30,9 @@ Requirements for the shell process, the runner and the measurement tools, and th
 ## Hyprland
 
 - Every dispatch goes through `shell/Core/Compositor.qml`, which runs `hyprctl dispatch` and judges the reply by its text: anything but `ok` is logged with the request. Exit status alone says nothing; a refused dispatcher exits 0 with an error sentence.
+- `shell/Core/Dispatch.js` builds every request. Each argument must match a pattern that admits no quote, backslash, space or comma, so no argument ends the Lua string or the classic argument list it is spliced into. `scripts/test-dispatch.js` pins both syntaxes of every dispatcher and one refusal per argument class.
 - A dispatch while one is in flight is refused and logged, never queued.
-- A Lua session and a classic session take different dispatcher syntax. `Hyprland.usingLua` selects it; a new dispatcher carries both forms.
+- A Lua session and a classic session take different dispatcher syntax. `Hyprland.usingLua` selects it; a new dispatcher carries both forms. The Lua window dispatchers accept unknown table keys without complaint and `hl.dsp.window.move` answers `ok` for an address that names no window, so only a read of the compositor's state after the reply proves a dispatcher acted.
 
 ## QML
 

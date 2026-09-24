@@ -1,6 +1,6 @@
 # Plugins
 
-Covers: shell/plugins/**, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Config.qml, shell/Commons/**, shell/Ui/**, shell/Hosts/**, config/shell.json, bin/vgsh-scan, bin/vgsh-plugin-judge, .agents/skills/vgs-plugin/**
+Covers: shell/plugins/**, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Capabilities.qml, shell/Core/Config.qml, shell/Commons/**, shell/Ui/**, shell/Hosts/**, config/shell.json, bin/vgsh-scan, bin/vgsh-plugin-judge, .agents/skills/vgs-plugin/**
 
 The plugin contract: what a plugin is, what the core builds for it, what it may use, and how the core keeps a running plugin in step with the configuration.
 
@@ -18,6 +18,7 @@ A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogi
 | `entryPoints` | yes | One QML file per declared kind, keyed by the kind name, relative to the plugin root and inside it. A key naming an undeclared kind is refused. |
 | `capabilities` | no | Core APIs the plugin uses beyond its kinds, from the table under § Capabilities. |
 | `settings` | no | The plugin's default settings, an object without an `id` key. The configuration entry for the plugin overrides them key by key. |
+| `schema` | no | The settings a user or the plugin itself may change, keyed by setting name: `type` (`string`, `number`, `boolean` or `enum`), `label`, optional `description`, and `options` for an `enum`. Every entry needs a default of its type in `settings`. Required with capability `configure`. |
 | `defaultSection` | no | `left`, `center` or `right`: where `vgsh plugin enable` places a bar widget that has no placement yet. Needs kind `bar-widget`; `center` when absent. |
 
 ## Kinds
@@ -31,7 +32,7 @@ A kind names a surface the core can host. A plugin declares every kind it can fi
 | `service` | a headless `Item` | `ServiceHost` | enabled |
 | `panel`, `overlay`, `menu` | an `Item` with `open(payloadJson)` and `close()` | none yet | never, until each host lands with the first plugin of its kind |
 
-Enabled means: the active bar; a bar widget placed in a section; a plugin listed in `plugins`; a first-party plugin declaring a kind other than `bar` and `bar-widget`. `disabledPlugins` wins over every other rule: a placed widget listed there leaves the bar and its layout entry stays in the file.
+Enabled means: the active bar; a bar widget placed in a section; a plugin declaring a kind other than `bar` and `bar-widget` that is listed in `plugins` or is first-party. A bar's settings row in `plugins` enables nothing. `disabledPlugins` wins over every other rule: a placed widget listed there leaves the bar and its layout entry stays in the file.
 
 Disabling the active bar hides every enabled bar widget and the manager's reply names them. They stay enabled and return with the next bar. Enabling a bar makes it the active bar.
 
@@ -56,13 +57,27 @@ Every configuration change reaches every running instance through one reconcile 
 
 ## Capabilities
 
-A capability is a core API named in the manifest's `capabilities` and delivered as `shell.<name>`. `PluginLogic.js` owns the name list and `Plugins.qml` maps each name to its provider; an unknown name refuses the manifest. An instance's `shell` holds exactly `manifest`, `settings` and the capabilities it named; the smoke reads the key list back from its fixture.
+A capability is a core API named in the manifest's `capabilities` and delivered as `shell.<name>`. `PluginLogic.js` owns the name list and `Capabilities.qml` holds one provider per name; an unknown name refuses the manifest, and a name without a provider is logged at start. An instance's `shell` holds exactly `manifest`, `settings` and the capabilities it named; the smoke reads the key list back from two fixtures, one naming every capability and one naming none.
+
+- The core makes each provider for one instance when it builds the instance. A settings change hands over a new `shell` holding the same providers.
+- Every registration a provider makes returns a disposer, and the instance's build record keeps each one. Destroying the instance runs them all, newest first, so disabling a plugin releases every shortcut, IPC target, subscriber and hold it made. The smoke asserts each release after disabling its fixture, from the core's lending record and from the compositor or bus the capability reaches.
+- `lock` and `polkit` are exclusive: while one plugin holds one, another plugin naming it is not built and the refusal is logged. `PluginLogic.lendRefusal` decides it and `scripts/test-plugin-logic.js` pins it.
+- The notification server and the polkit agent exist only while a plugin holds their capability, so a shell with no such plugin claims neither role. The notification server's D-Bus name stays owned by the shell process after its last holder is disabled; the smoke observed the name held five seconds after the server was destroyed.
+- A registration name a plugin chooses is lower case, digits and dashes. A second registration of the same shortcut or IPC name throws an `Error` whose message starts `refused:`.
 
 | Capability | Gives the plugin |
 |---|---|
-| `compositor` | `shell.compositor.focusWorkspace(id)`: one dispatch through the core's reply judge, in Lua or classic syntax as the session needs |
+| `compositor` | `focusWorkspace(workspace)`, `focusWindow(address)`, `moveWindowToWorkspace(address, workspace)` without following, `toggleSpecialWorkspace(name)`, `closeWindow(address)`. `shell/Core/Dispatch.js` builds each in the session's syntax and refuses an argument that could break out of it; the reply is judged by the core. Each returns `ok` or a keyed refusal. |
+| `configure` | `set(key, value)`: writes one setting to the configuration entry this instance reads, after the manifest's `schema` accepts the key and value. Needs a `schema`. |
+| `ipc` | `handle(name, fn)`: one IPC target named for the plugin id, whose `invoke <name> <arg>` calls `fn(arg)` and answers its result as text. |
+| `lock` | `lock(component)`, `unlock()`, `locked`, `secure`: the one session lock. The component is built on every screen inside the lock surface and receives `screen`. Unloading the holder keeps a locked session locked. |
+| `notifications` | `subscribe(fn)`: every notification the one server receives, in subscription order; `tracked`, the server's tracked notifications. A subscriber sets `tracked` on a notification it keeps. |
+| `polkit` | `agent`: the one polkit agent. |
+| `run` | `detached(argv)`: starts a detached process from an argument list; no shell parses it. |
+| `screens` | `all`, every screen; `current`, the screen this instance draws on, or null for a service. |
+| `shortcut` | `register(name, description, onPressed)`: a global shortcut Hyprland binds as `global, <plugin id>:<name>`. |
 
-A capability lands with its name, its provider row and one consuming plugin in the same PR.
+A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 
 ## Isolation
 
@@ -91,4 +106,4 @@ The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interf
 
 ## Decisions
 
-[D003](../decisions/D003-everything-is-a-plugin.md), [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D006](../decisions/D006-two-configuration-layers.md), [D007](../decisions/D007-install-runs-no-plugin-code.md), [D009](../decisions/D009-one-manifest-judge-under-node.md), [D010](../decisions/D010-facade-scope-not-sandbox.md) and [D011](../decisions/D011-native-manifest-no-cross-shell-compatibility.md).
+[D003](../decisions/D003-everything-is-a-plugin.md), [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D006](../decisions/D006-two-configuration-layers.md), [D007](../decisions/D007-install-runs-no-plugin-code.md), [D009](../decisions/D009-one-manifest-judge-under-node.md), [D010](../decisions/D010-facade-scope-not-sandbox.md), [D011](../decisions/D011-native-manifest-no-cross-shell-compatibility.md) and [D012](../decisions/D012-core-owns-lent-objects.md).

@@ -32,6 +32,11 @@ ShellRoot {
         sourceComponent: ServiceHost {}
     }
 
+    LazyLoader {
+        active: root.guarded
+        LockHost {}
+    }
+
     IpcHandler {
         target: "shell"
 
@@ -41,6 +46,7 @@ ShellRoot {
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
         function built(): string { return Plugins.builtJson(); }
         function buildCount(): int { return Plugins.buildCount; }
+        function lent(): string { return Capabilities.lentJson(); }
         function readInstance(hostKey: string, id: string, property: string): string { return Plugins.readInstance(hostKey, id, property); }
         function reloadConfig(): string { if (!root.guarded) return root.guardRefusal; Config.reload(); return "ok"; }
         function rescanPlugins(): string { return root.guarded ? Plugins.rescan() : root.guardRefusal; }

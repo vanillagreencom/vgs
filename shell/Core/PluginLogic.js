@@ -8,14 +8,24 @@
 var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service"];
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
-// refused. Plugins.qml maps each name to its provider.
-var CAPABILITIES = ["compositor"];
+// refused. Capabilities.qml maps each name to its provider.
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut"];
+
+// Capabilities whose core object serves one plugin at a time: the session
+// lock and the polkit agent. A second plugin naming one is not built while
+// another plugin holds it.
+var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];
+
+// The types a settings schema entry may declare, and the keys an entry may
+// carry.
+var SETTING_TYPES = ["string", "number", "boolean", "enum"];
+var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options"];
 
 var SECTIONS = ["left", "center", "right"];
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "defaultSection"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection"];
 
 function hasOwn(obj, key) {
     return obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
@@ -31,11 +41,70 @@ function isPlainObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function clone(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+// Why `value` does not fit a schema entry, or "" when it does.
+function settingError(entry, value) {
+    if (entry.type === "string") return typeof value === "string" ? "" : "want=string";
+    if (entry.type === "number") return typeof value === "number" && isFinite(value) ? "" : "want=number";
+    if (entry.type === "boolean") return typeof value === "boolean" ? "" : "want=boolean";
+    if (entry.type === "enum") return entry.options.indexOf(value) !== -1 ? "" : "want=one-of:" + entry.options.join("|");
+    throw new Error("settingError: schema entry type " + JSON.stringify(entry.type) + " passed validation but has no rule");
+}
+
+// The first defect of a settings schema, or "". Every entry names a type
+// from SETTING_TYPES and a label; an enum entry lists its options; every
+// entry has a default of its type in `settings`, so a form always has a
+// value to show.
+function schemaError(schema, settings) {
+    if (!isPlainObject(schema))
+        return "schema must be an object";
+    if (hasOwn(schema, "id"))
+        return "schema must not carry an id key";
+    var keys = Object.keys(schema);
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var entry = schema[key];
+        var at = "schema." + key;
+        if (!isPlainObject(entry))
+            return at + " must be an object";
+        var entryKeys = Object.keys(entry);
+        for (var u = 0; u < entryKeys.length; u++) {
+            if (SCHEMA_ENTRY_KEYS.indexOf(entryKeys[u]) === -1)
+                return at + " has unknown key " + JSON.stringify(entryKeys[u]);
+        }
+        if (SETTING_TYPES.indexOf(entry.type) === -1)
+            return at + ".type must be one of " + SETTING_TYPES.join(", ") + ", got " + JSON.stringify(entry.type);
+        if (typeof entry.label !== "string" || entry.label.length === 0)
+            return at + ".label must be a non-empty string";
+        if (entry.description !== undefined && typeof entry.description !== "string")
+            return at + ".description must be a string when present";
+        if (entry.type === "enum") {
+            if (!Array.isArray(entry.options) || entry.options.length === 0)
+                return at + ".options must be a non-empty array for type enum";
+            for (var o = 0; o < entry.options.length; o++) {
+                if (typeof entry.options[o] !== "string" || entry.options[o].length === 0 || entry.options.indexOf(entry.options[o]) !== o)
+                    return at + ".options must hold distinct non-empty strings";
+            }
+        } else if (entry.options !== undefined) {
+            return at + ".options needs type enum";
+        }
+        if (!hasOwn(settings, key))
+            return at + " has no default in settings";
+        var bad = settingError(entry, settings[key]);
+        if (bad !== "")
+            return "settings." + key + " does not fit its schema: " + bad;
+    }
+    return "";
+}
+
 // Validate one manifest object. Returns { ok: true, manifest } with the
 // normalized manifest, or { ok: false, error } naming the first defect.
 // `sourceDir` is recorded on the manifest so entry points resolve later.
-// A normalized manifest always carries `capabilities` (array) and
-// `settings` (object), and `defaultSection` only when declared.
+// A normalized manifest always carries `capabilities` (array), `settings`
+// and `schema` (objects), and `defaultSection` only when declared.
 function validateManifest(raw, sourceDir) {
     if (!isPlainObject(raw))
         return { ok: false, error: "manifest is not a JSON object" };
@@ -90,6 +159,12 @@ function validateManifest(raw, sourceDir) {
         return { ok: false, error: "settings must be an object" };
     if (hasOwn(settings, "id"))
         return { ok: false, error: "settings must not carry an id key" };
+    var schema = raw.schema === undefined ? {} : raw.schema;
+    var badSchema = schemaError(schema, settings);
+    if (badSchema !== "")
+        return { ok: false, error: badSchema };
+    if (capabilities.indexOf("configure") !== -1 && Object.keys(schema).length === 0)
+        return { ok: false, error: "capability configure needs a schema" };
     if (raw.defaultSection !== undefined) {
         if (raw.kinds.indexOf("bar-widget") === -1)
             return { ok: false, error: "defaultSection needs kind bar-widget" };
@@ -99,6 +174,7 @@ function validateManifest(raw, sourceDir) {
     var manifest = JSON.parse(JSON.stringify(raw));
     manifest.capabilities = capabilities.slice();
     manifest.settings = JSON.parse(JSON.stringify(settings));
+    manifest.schema = JSON.parse(JSON.stringify(schema));
     manifest.__sourceDir = sourceDir;
     return { ok: true, manifest: manifest };
 }
@@ -154,6 +230,13 @@ function activeBarId(config, defaultBarId) {
     return config && config.bar && typeof config.bar.id === "string" && config.bar.id.length > 0 ? config.bar.id : defaultBarId;
 }
 
+// The plugins[] row with `id`, or undefined.
+function pluginRow(config, id) {
+    return (config && Array.isArray(config.plugins) ? config.plugins : []).filter(function (entry) {
+        return isPlainObject(entry) && entry.id === id;
+    })[0];
+}
+
 // The settings a plugin receives: its manifest's `settings` under the entry
 // the configuration holds for it. A bar widget's entry is its layout entry
 // (`layoutEntry`, passed by the core when it mounts the widget); every
@@ -162,12 +245,7 @@ function activeBarId(config, defaultBarId) {
 function settingsFor(config, manifest, layoutEntry) {
     var out = {};
     Object.keys(manifest.settings).forEach(function (k) { out[k] = manifest.settings[k]; });
-    var entry = layoutEntry;
-    if (!isPlainObject(entry)) {
-        entry = (Array.isArray(config.plugins) ? config.plugins : []).filter(function (e) {
-            return isPlainObject(e) && e.id === manifest.id;
-        })[0];
-    }
+    var entry = isPlainObject(layoutEntry) ? layoutEntry : pluginRow(config, manifest.id);
     if (isPlainObject(entry))
         Object.keys(entry).forEach(function (k) { if (k !== "id") out[k] = entry[k]; });
     return JSON.parse(JSON.stringify(out));
@@ -177,9 +255,9 @@ function settingsFor(config, manifest, layoutEntry) {
 // - disabledPlugins[] wins over every other rule.
 // - The active bar is enabled.
 // - A bar widget is enabled when placed in a bar section.
-// - Anything else is enabled when listed in plugins[], and a first-party
-//   plugin (id under the `vgs.` prefix) declaring a kind other than bar and
-//   bar-widget is enabled unlisted.
+// - A plugin declaring a kind other than bar and bar-widget is enabled when
+//   listed in plugins[], and unlisted when it is first-party (id under the
+//   `vgs.` prefix). A bar's settings row in plugins[] enables nothing.
 function isEnabled(config, manifest, defaultBarId) {
     var disabled = Array.isArray(config.disabledPlugins) ? config.disabledPlugins : [];
     if (disabled.indexOf(manifest.id) !== -1)
@@ -188,13 +266,10 @@ function isEnabled(config, manifest, defaultBarId) {
         return true;
     if (manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1)
         return true;
-    var listed = (Array.isArray(config.plugins) ? config.plugins : []).some(function (entry) {
-        return isPlainObject(entry) && entry.id === manifest.id;
-    });
-    if (listed)
-        return true;
     var nonBarKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
-    return nonBarKinds.length > 0 && manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0;
+    if (nonBarKinds.length === 0)
+        return false;
+    return pluginRow(config, manifest.id) !== undefined || manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0;
 }
 
 // The widgets each bar section shows: the layout entries whose plugin is
@@ -275,4 +350,73 @@ function withEnabled(user, manifest, enabled, effective) {
         }
     }
     return out;
+}
+
+// Why `value` may not be written to setting `key` of this plugin, or "".
+// Only a key the manifest's schema declares is writable, and only with a
+// value of its type. The reply is one keyed line.
+function settingRefusal(manifest, key, value) {
+    if (!hasOwn(manifest.schema, key))
+        return "refused: setting=" + key + " undeclared";
+    var bad = settingError(manifest.schema[key], value);
+    return bad === "" ? "" : "refused: setting=" + key + " " + bad;
+}
+
+// The configuration entries a plugin's instances read their settings from:
+// "layout" when it is a bar widget placed in the bar, "plugins" when it
+// declares any other kind. A running instance writes only the entry it
+// reads; the plugin manager writes every entry the plugin reads.
+function settingTargets(config, manifest) {
+    var out = [];
+    if (manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1)
+        out.push("layout");
+    if (manifest.kinds.some(function (k) { return k !== "bar-widget"; }))
+        out.push("plugins");
+    return out;
+}
+
+// The user-file change that sets one setting of one plugin in each of
+// `targets`. "layout" sets the key on every layout entry with the plugin's
+// id, seeding the user `bar` key from the effective bar first; "plugins"
+// sets it on the plugin's plugins[] row, seeding that row from the
+// effective one, since a user row replaces the shipped row whole. The
+// caller checks the value with settingRefusal first.
+function withSetting(user, manifest, key, value, effective, targets) {
+    var out = isPlainObject(user) ? clone(user) : {};
+    if (out.version === undefined) out.version = 1;
+    if (targets.indexOf("layout") !== -1) {
+        if (!isPlainObject(out.bar))
+            out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
+        var layout = isPlainObject(out.bar.layout) ? out.bar.layout : {};
+        SECTIONS.forEach(function (section) {
+            (Array.isArray(layout[section]) ? layout[section] : []).forEach(function (entry) {
+                if (isPlainObject(entry) && entry.id === manifest.id) entry[key] = clone(value);
+            });
+        });
+    }
+    if (targets.indexOf("plugins") !== -1) {
+        var plugins = Array.isArray(out.plugins) ? out.plugins : [];
+        var row = pluginRow(out, manifest.id);
+        if (row === undefined) {
+            var shippedRow = pluginRow(effective, manifest.id);
+            row = shippedRow !== undefined ? clone(shippedRow) : { id: manifest.id };
+            plugins.push(row);
+        }
+        row[key] = clone(value);
+        out.plugins = plugins;
+    }
+    return out;
+}
+
+// Why this plugin may not be built while `held` maps each exclusive
+// capability to the plugin holding it, or "". A plugin may hold what it
+// already holds, so its second instance builds.
+function lendRefusal(held, manifest) {
+    for (var i = 0; i < manifest.capabilities.length; i++) {
+        var name = manifest.capabilities[i];
+        if (EXCLUSIVE_CAPABILITIES.indexOf(name) === -1) continue;
+        if (hasOwn(held, name) && held[name] !== manifest.id)
+            return "refused: capability=" + name + " held-by=" + held[name];
+    }
+    return "";
 }

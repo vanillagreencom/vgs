@@ -46,7 +46,17 @@ A bar never creates, destroys or reads a widget.
 |---|---|---|
 | `shell.manifest` | always | this plugin's validated manifest |
 | `shell.settings` | always | the manifest's `settings` under the plugin's configuration entry |
-| `shell.compositor.focusWorkspace(id)` | capability `compositor` | one dispatch through the core's reply judge |
+| `shell.compositor.focusWorkspace(workspace)`, `.focusWindow(address)`, `.moveWindowToWorkspace(address, workspace)`, `.toggleSpecialWorkspace(name)`, `.closeWindow(address)` | capability `compositor` | one dispatch each, through the core's argument check and reply judge; returns `ok` or `refused: ...` |
+| `shell.configure.set(key, value)` | capability `configure` | writes one schema-declared setting to the entry this instance reads; returns `ok` or `refused: setting=<key> ...` |
+| `shell.ipc.handle(name, fn)` | capability `ipc` | `vgsh ipc call <plugin id> invoke <name> <arg>` calls `fn(arg)` and answers its result; returns a disposer |
+| `shell.lock.lock(component)`, `.unlock()`, `.locked`, `.secure` | capability `lock` | the session lock; the component declares `property var screen` and is built on every screen |
+| `shell.notifications.subscribe(fn)`, `.tracked` | capability `notifications` | `fn(notification)` for every notification; set `notification.tracked = true` to keep one; returns a disposer |
+| `shell.polkit.agent` | capability `polkit` | the polkit agent: `isActive`, `flow` |
+| `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` or `refused: argv=...` |
+| `shell.screens.all`, `.current` | capability `screens` | every screen; the screen this instance draws on, null for a service |
+| `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
+
+A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
 
 Nothing else is on it. A capability the manifest did not name is absent, not null.
 
@@ -69,6 +79,14 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | Name | Grants |
 |---|---|
 | `compositor` | `shell.compositor` |
+| `configure` | `shell.configure`; needs a manifest `schema` |
+| `ipc` | `shell.ipc` |
+| `lock` | `shell.lock`; exclusive |
+| `notifications` | `shell.notifications` |
+| `polkit` | `shell.polkit`; exclusive |
+| `run` | `shell.run` |
+| `screens` | `shell.screens` |
+| `shortcut` | `shell.shortcut` |
 
 ## Allowed imports
 
@@ -111,6 +129,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `listShellConfig` | no | the effective configuration as JSON |
 | `built` | no | JSON: host key to the instances the core built there, each `id`, `kind`, `capabilities` |
 | `buildCount` | no | instances built since start |
+| `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `lock` |
 | `readInstance <hostKey> <id> <property>` | no | that property of the built instance as JSON; `absent` with no such instance, `undefined` with no such property |
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |

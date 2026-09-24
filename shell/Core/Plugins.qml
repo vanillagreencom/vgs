@@ -38,8 +38,10 @@ Singleton {
 
     // Every instance the core built, keyed by a host-supplied key, for the
     // IPC introspection the smoke reads. A row is { id, kind, instance,
-    // capabilities, entry, settingsKey }: `entry` is a bar widget's layout
-    // entry, and `settingsKey` the JSON of the settings the instance holds.
+    // capabilities, entry, settingsKey, providers, disposers, screen }:
+    // `entry` is a bar widget's layout entry, `settingsKey` the JSON of the
+    // settings the instance holds, `providers` the capability providers
+    // made for it, and `disposers` what destroying it releases.
     property var built: Object.create(null)
     property int buildCount: 0
 
@@ -48,12 +50,6 @@ Singleton {
     // { idsKey, entryKeys, widgets } } }. Not a binding input; read and
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
-
-    // Capability name -> the object a plugin receives for it. Adding a
-    // capability is one row here and one name in PluginLogic.CAPABILITIES.
-    readonly property var providers: ({
-        compositor: { focusWorkspace: function (id) { Compositor.focusWorkspace(id); } }
-    })
 
     function has(id) { return Logic.hasOwn(manifests, id); }
 
@@ -171,9 +167,10 @@ Singleton {
 
     // REVISIT(D010): a process or engine per plugin would replace this scope.
     // The scoped object a plugin receives as `shell`: its manifest, its
-    // settings, and one provider per capability its manifest names. Nothing
-    // else on it.
-    function facadeFor(manifest, settings) {
+    // settings, and the providers made for this instance, one per capability
+    // its manifest names. Nothing else on it. A settings change hands over a
+    // new object holding the same providers.
+    function facadeFor(manifest, settings, providers) {
         const facade = { manifest: manifest, settings: settings };
         for (const name of manifest.capabilities)
             facade[name] = providers[name];
@@ -182,35 +179,48 @@ Singleton {
 
     // Build one plugin entry point under `parent` and hand it its own
     // facade. `context` holds host-owned properties the instance receives
-    // by name (a bar's `screen`). Properties are assigned after creation,
-    // never as initial properties, which cross a QVariant conversion that
-    // drops functions and turns nested lists into non-Array sequences.
-    // Returns null after logging when the plugin cannot be built.
-    function createInstance(id, kind, parent, hostKey, layoutEntry, context) {
+    // by name (a bar's `screen`); `screen` is the screen the instance draws
+    // on, which its `screens` capability reports, taken from the context
+    // when absent. Properties are assigned after creation, never as initial
+    // properties, which cross a QVariant conversion that drops functions and
+    // turns nested lists into non-Array sequences. Returns null after
+    // logging when the plugin cannot be built.
+    function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen) {
         if (!has(id) || !isEnabled(id)) { console.warn("plugins: " + id + " is not an enabled plugin"); return null; }
         const url = entryUrl(id, kind);
         if (url === "") { console.warn("plugins: " + id + " declares no " + kind + " entry point"); return null; }
+        const manifest = manifests[id];
+        const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifest);
+        if (lent !== "") { console.error("plugins: " + id + " " + lent); return null; }
         const component = Qt.createComponent(url);
         if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return null; }
         const instance = component.createObject(parent);
         if (instance === null) { console.error("plugins: " + id + " created no object"); return null; }
-        const manifest = manifests[id];
         const settings = Logic.settingsFor(Config.effective, manifest, layoutEntry);
-        instance.shell = facadeFor(manifest, settings);
+        const onScreen = screen !== undefined && screen !== null ? screen : (context && context.screen ? context.screen : null);
+        const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
+        try {
+            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, screen: onScreen, onDispose: fn => row.disposers.push(fn) });
+        } catch (e) {
+            console.error("plugins: " + id + " capabilities failed: " + e.message);
+            for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
+            instance.destroy();
+            return null;
+        }
+        instance.shell = facadeFor(manifest, settings, row.providers);
         for (const key of Object.keys(context || {}))
             instance[key] = context[key];
-        const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings) };
         record(hostKey, row);
         if (kind === "bar") mountBar(hostKey, row);
         return instance;
     }
 
-    // A bar widget: built like any instance, then given the three properties
-    // BarWidget declares.
-    function createWidget(id, parent, bar, entry, hostKey) {
-        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null);
+    // A bar widget: built like any instance on its bar's screen, then given
+    // the three properties BarWidget declares.
+    function createWidget(id, parent, barRow, entry, hostKey) {
+        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null, barRow.screen);
         if (instance === null) return null;
-        instance.bar = bar;
+        instance.bar = barRow.instance;
         instance.moduleName = id;
         instance.settings = instance.shell.settings;
         return instance;
@@ -221,6 +231,22 @@ Singleton {
     function destroyInstance(instance, hostKey) {
         if (instance === null || instance === undefined) return;
         if (Logic.hasOwn(mounts, hostKey) && mounts[hostKey].row.instance === instance) unmountBar(hostKey);
+        destroyBuilt(hostKey, instance);
+    }
+
+    // Release everything one instance registered, newest first, then forget
+    // and destroy it. A disposer that throws is logged and the rest still run.
+    function destroyBuilt(hostKey, instance) {
+        const row = Logic.hasOwn(built, hostKey) ? rowFor(hostKey, instance) : undefined;
+        if (row === undefined) throw new Error("plugins: destroying an instance with no build record under " + hostKey);
+        for (let i = row.disposers.length - 1; i >= 0; i--) {
+            try {
+                row.disposers[i]();
+            } catch (e) {
+                console.error("plugins: " + row.id + " disposer failed: " + e.message);
+            }
+        }
+        row.disposers = [];
         forget(hostKey, instance);
         instance.destroy();
     }
@@ -264,7 +290,7 @@ Singleton {
     function unmountBar(hostKey) {
         const mount = mounts[hostKey];
         for (const section of Logic.SECTIONS)
-            for (const widget of mount.sections[section].widgets) { forget(hostKey, widget); widget.destroy(); }
+            for (const widget of mount.sections[section].widgets) destroyBuilt(hostKey, widget);
         const next = Object.assign(Object.create(null), mounts);
         delete next[hostKey];
         mounts = next;
@@ -283,7 +309,7 @@ Singleton {
             const idsKey = JSON.stringify(wanted.map(e => e.id));
             const entryKeys = wanted.map(e => JSON.stringify(e));
             if (idsKey !== state.idsKey) {
-                for (const widget of state.widgets) { forget(hostKey, widget); widget.destroy(); }
+                for (const widget of state.widgets) destroyBuilt(hostKey, widget);
                 state.widgets = [];
                 state.entryKeys = [];
                 state.idsKey = "";
@@ -292,7 +318,7 @@ Singleton {
                 const widgets = [];
                 const keys = [];
                 for (let i = 0; i < wanted.length; i++) {
-                    const widget = createWidget(wanted[i].id, container, mount.row.instance, wanted[i], hostKey);
+                    const widget = createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey);
                     if (widget === null) continue;
                     widgets.push(widget);
                     keys.push(entryKeys[i]);
@@ -324,7 +350,7 @@ Singleton {
         row.entry = layoutEntry;
         if (key === row.settingsKey) return;
         row.settingsKey = key;
-        row.instance.shell = facadeFor(manifest, settings);
+        row.instance.shell = facadeFor(manifest, settings, row.providers);
         if (row.kind === "bar-widget") row.instance.settings = settings;
     }
 
@@ -390,6 +416,20 @@ Singleton {
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";
     }
 
+    // Write one setting of one plugin into each configuration entry in
+    // `targets` ("layout", "plugins"). The value is checked against the
+    // manifest's schema first. The reply is one keyed line: `ok`,
+    // `unknown: <id>` or a refusal.
+    function writeSetting(id, key, value, targets) {
+        if (!has(id)) return "unknown: " + id;
+        if (Config.userParseFailed) return "refused: user-config=unparseable path=" + Config.userPath;
+        const m = manifests[id];
+        const refusal = Logic.settingRefusal(m, key, value);
+        if (refusal !== "") return refusal;
+        if (targets.length === 0) return "refused: setting=" + key + " entry=none";
+        return Config.writeUser(Logic.withSetting(Config.user, m, key, value, Config.effective, targets));
+    }
+
     function listJson() {
         const rows = Object.keys(manifests).sort().map(id => ({
             id: id,
@@ -401,5 +441,10 @@ Singleton {
         return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned });
     }
 
-    Component.onCompleted: rescan()
+    Component.onCompleted: {
+        for (const name of Logic.CAPABILITIES)
+            if (!Logic.hasOwn(Capabilities.factories, name))
+                console.error("plugins: capability " + name + " has no provider in Capabilities.qml");
+        rescan();
+    }
 }

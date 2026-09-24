@@ -15,6 +15,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-21 | D009 | — | One manifest judge, PluginLogic.js, shared by shell and scripts under node | A second copy is a twin; pure functions test in milliseconds | A decision needs QML types node cannot host | Active | [Full](D009-one-manifest-judge-under-node.md) |
 | 2026-09-21 | D010 | — | Static import check plus scoped API object, not a process sandbox | Process per plugin multiplies resident size before any plugin justifies it | Budgets measured against process-per-plugin fit, or credentials need protection | Active | [Full](D010-facade-scope-not-sandbox.md) |
 | 2026-09-21 | D011 | — | The manifest and plugin API are v2's own; no other shell's plugins are supported | Shared names had drifted in meaning and nothing tested the promise | A marketplace with a stable versioned schema is worth joining | Active | [Full](D011-native-manifest-no-cross-shell-compatibility.md) |
+| 2026-09-23 | D012 | — | The core owns every session-wide object and lends it per instance with disposers | One owner per object removes collisions and makes disable a complete release | Quickshell releases the notification name on destroy, or two plugins must share a lent object | Active | [Full](D012-core-owns-lent-objects.md) |
 
 ---
 

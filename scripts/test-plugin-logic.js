@@ -53,6 +53,22 @@ const manifestRows = [
     ["defaultSection without the widget kind", { defaultSection: "left" }, "defaultSection needs kind bar-widget"],
     ["defaultSection unknown", { kinds: ["bar-widget"], entryPoints: { "bar-widget": "W.qml" }, defaultSection: "top" }, "defaultSection must be one of"],
     ["known capability", { capabilities: ["compositor"] }, null],
+    ["schema not an object", { schema: [] }, "schema must be an object"],
+    ["schema carrying an id", { settings: { id: 1 } , schema: { id: { type: "string", label: "x" } } }, "settings must not carry an id key"],
+    ["schema entry carrying the id key", { schema: { id: { type: "string", label: "x" } } }, "schema must not carry an id key"],
+    ["schema entry not an object", { settings: { a: "x" }, schema: { a: "string" } }, "schema.a must be an object"],
+    ["schema entry with an unknown key", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", min: 1 } } }, "schema.a has unknown key"],
+    ["schema entry with an unknown type", { settings: { a: "x" }, schema: { a: { type: "color", label: "A" } } }, "schema.a.type must be one of"],
+    ["schema entry without a label", { settings: { a: "x" }, schema: { a: { type: "string" } } }, "schema.a.label must be a non-empty string"],
+    ["schema entry with a non-string description", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", description: 1 } } }, "schema.a.description must be a string"],
+    ["enum entry without options", { settings: { a: "x" }, schema: { a: { type: "enum", label: "A" } } }, "schema.a.options must be a non-empty array"],
+    ["enum entry with a repeated option", { settings: { a: "x" }, schema: { a: { type: "enum", label: "A", options: ["x", "x"] } } }, "schema.a.options must hold distinct"],
+    ["options on a non-enum entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", options: ["x"] } } }, "schema.a.options needs type enum"],
+    ["schema entry without a default", { schema: { a: { type: "string", label: "A" } } }, "schema.a has no default in settings"],
+    ["default of the wrong type", { settings: { a: 3 }, schema: { a: { type: "string", label: "A" } } }, "settings.a does not fit its schema: want=string"],
+    ["enum default outside its options", { settings: { a: "z" }, schema: { a: { type: "enum", label: "A", options: ["x", "y"] } } }, "settings.a does not fit its schema: want=one-of:x|y"],
+    ["configure without a schema", { capabilities: ["configure"] }, "capability configure needs a schema"],
+    ["configure with a schema", { capabilities: ["configure"], settings: { a: true }, schema: { a: { type: "boolean", label: "A" } } }, null],
 ];
 for (const [name, patch, want] of manifestRows) {
     const raw = Object.assign(JSON.parse(JSON.stringify(bar)), patch);
@@ -61,6 +77,7 @@ for (const [name, patch, want] of manifestRows) {
 }
 check("validateManifest does not alias its input", (() => { const raw = JSON.parse(JSON.stringify(bar)); const m = ctx.validateManifest(raw, "/p").manifest; m.kinds.push("x"); return raw.kinds; })(), ["bar"]);
 check("validateManifest normalizes capabilities and settings", (() => { const m = ctx.validateManifest(bar, "/p").manifest; return [m.capabilities, m.settings, m.defaultSection]; })(), [[], {}, undefined]);
+check("validateManifest normalizes an absent schema to an object", ctx.validateManifest(bar, "/p").manifest.schema, {});
 check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").manifest.__sourceDir, "/p");
 
 const shipped = { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "vgs.workspaces" }], center: [{ id: "vgs.clock" }], right: [] } }, plugins: [{ id: "acme.svc", x: 1 }], disabledPlugins: [] };
@@ -109,6 +126,8 @@ const enabledRows = [
     ["first-party service disabled when listed", ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.svc"] }), "vgs.svc", false],
     ["first-party widget is not enabled unplaced", shipped, "acme.widget", false],
     ["a placed widget listed in disabledPlugins is disabled", ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.workspaces"] }), "vgs.workspaces", false],
+    ["an inactive bar listed for its settings is not enabled", ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.bar", x: 1 }] }), "acme.bar", false],
+    ["an unplaced widget listed for its settings is not enabled", ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.widget", size: 1 }] }), "acme.widget", false],
 ];
 for (const [name, config, id, want] of enabledRows) {
     check("isEnabled: " + name, ctx.isEnabled(config, manifests[id], "vgs.bar"), want);
@@ -181,6 +200,73 @@ for (const [name, user, effective, id, enabled, p, want] of withRows) {
     check("withEnabled: " + name, dig(ctx.withEnabled(user, manifests[id], enabled, effective), p), want);
 }
 check("withEnabled does not alias the user file", (() => { const u = { bar: { layout: { left: [], center: [], right: [] } } }; ctx.withEnabled(u, manifests["acme.widget"], true, ctx.effectiveConfig(shipped, u)); return u.bar.layout.center; })(), []);
+
+// A plugin with a settings schema, for the setting rows.
+const tunable = ctx.validateManifest({ schemaVersion: 1, id: "acme.tune", name: "T", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" },
+    settings: { label: "x", size: 2, on: true, mode: "a", free: 1 },
+    schema: { label: { type: "string", label: "Label" }, size: { type: "number", label: "Size" }, on: { type: "boolean", label: "On" }, mode: { type: "enum", label: "Mode", options: ["a", "b"] } } }, "/p").manifest;
+if (tunable === undefined) { console.log("fixture manifest refused: acme.tune"); process.exit(1); }
+
+// settingRefusal rows: [name, key, value, want]
+const refusalRows = [
+    ["a string fits a string entry", "label", "y", ""],
+    ["a number fits a number entry", "size", 3.5, ""],
+    ["a boolean fits a boolean entry", "on", false, ""],
+    ["an option fits an enum entry", "mode", "b", ""],
+    ["a key outside the schema is undeclared", "free", 2, "refused: setting=free undeclared"],
+    ["a prototype name is undeclared", "constructor", 1, "refused: setting=constructor undeclared"],
+    ["a number is not a string", "label", 1, "refused: setting=label want=string"],
+    ["a numeric string is not a number", "size", "3", "refused: setting=size want=number"],
+    ["NaN is not a number", "size", NaN, "refused: setting=size want=number"],
+    ["a string is not a boolean", "on", "true", "refused: setting=on want=boolean"],
+    ["a value outside the options", "mode", "c", "refused: setting=mode want=one-of:a|b"],
+];
+for (const [name, key, value, want] of refusalRows) {
+    check("settingRefusal: " + name, ctx.settingRefusal(tunable, key, value), want);
+}
+
+// settingTargets rows: [name, config, manifest, want]
+const tunePlaced = ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "acme.tune" }] } } });
+const targetRows = [
+    ["a placed widget writes its layout entry", shipped, manifests["vgs.clock"], ["layout"]],
+    ["an unplaced widget has no entry", ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [] } } }), manifests["vgs.clock"], []],
+    ["a service writes its plugins row", shipped, manifests["acme.svc"], ["plugins"]],
+    ["a bar writes its plugins row", shipped, manifests["vgs.bar"], ["plugins"]],
+    ["a placed widget-plus-service writes both", tunePlaced, tunable, ["layout", "plugins"]],
+];
+for (const [name, config, manifest, want] of targetRows) {
+    check("settingTargets: " + name, ctx.settingTargets(config, manifest), want);
+}
+
+// withSetting rows: [name, user, effective, targets, path, want]
+const shippedTune = Object.assign({}, tunePlaced, { plugins: [{ id: "acme.tune", size: 9 }] });
+const twiceTune = { bar: { id: "vgs.bar", layout: { left: [{ id: "acme.tune" }], center: [], right: [{ id: "acme.tune", label: "r" }] } } };
+const settingRows = [
+    ["layout sets the key on the placed entry", null, tunePlaced, ["layout"], "bar.layout.right", [{ id: "acme.tune", label: "new" }]],
+    ["layout seeds the user bar from the effective bar", null, tunePlaced, ["layout"], "bar.id", "vgs.bar"],
+    ["layout sets every entry with the id", twiceTune, ctx.effectiveConfig(shipped, twiceTune), ["layout"], "bar.layout", { left: [{ id: "acme.tune", label: "new" }], center: [], right: [{ id: "acme.tune", label: "new" }] }],
+    ["layout leaves plugins alone", null, tunePlaced, ["layout"], "plugins", undefined],
+    ["plugins adds a row with the id", null, tunePlaced, ["plugins"], "plugins", [{ id: "acme.tune", label: "new" }]],
+    ["plugins seeds the row from the effective row", null, shippedTune, ["plugins"], "plugins", [{ id: "acme.tune", size: 9, label: "new" }]],
+    ["plugins updates the user row in place", { plugins: [{ id: "acme.tune", size: 4 }, { id: "b.c" }] }, shippedTune, ["plugins"], "plugins", [{ id: "acme.tune", size: 4, label: "new" }, { id: "b.c" }]],
+    ["plugins leaves the bar key alone", null, tunePlaced, ["plugins"], "bar", undefined],
+    ["writes version 1", null, tunePlaced, ["plugins"], "version", 1],
+];
+for (const [name, user, effective, targets, p, want] of settingRows) {
+    check("withSetting: " + name, dig(ctx.withSetting(user, tunable, "label", "new", effective, targets), p), want);
+}
+check("withSetting does not alias the user file", (() => { const u = { plugins: [{ id: "acme.tune", size: 4 }] }; ctx.withSetting(u, tunable, "label", "new", shippedTune, ["plugins"]); return u.plugins[0]; })(), { id: "acme.tune", size: 4 });
+
+// lendRefusal rows: [name, held, capabilities, want]
+const lendRows = [
+    ["a free exclusive capability lends", {}, ["lock"], ""],
+    ["an exclusive capability held by another plugin refuses", { lock: "acme.other" }, ["lock", "run"], "refused: capability=lock held-by=acme.other"],
+    ["a plugin may hold what it already holds", { polkit: "acme.tune" }, ["polkit"], ""],
+    ["a shared capability is never refused", { lock: "acme.other" }, ["run", "screens"], ""],
+];
+for (const [name, held, capabilities, want] of lendRows) {
+    check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
+}
 
 if (failures > 0) { console.log("test-plugin-logic: " + failures + " failing"); process.exit(1); }
 console.log("test-plugin-logic: ok");
