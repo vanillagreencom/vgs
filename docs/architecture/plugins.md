@@ -1,6 +1,6 @@
 # Plugins
 
-Covers: shell/plugins/**, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Config.qml, shell/Commons/**, shell/Ui/**, shell/Hosts/**, config/shell.json, bin/vgsh-scan, .agents/skills/vgs-plugin/**
+Covers: shell/plugins/**, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Config.qml, shell/Commons/**, shell/Ui/**, shell/Hosts/**, config/shell.json, bin/vgsh-scan, bin/vgsh-plugin-judge, .agents/skills/vgs-plugin/**
 
 The plugin contract: what a plugin is, what the core builds for it, what it may use, and how the core keeps a running plugin in step with the configuration.
 
@@ -75,12 +75,12 @@ A capability lands with its name, its provider row and one consuming plugin in t
 
 The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interface does not exist yet.
 
-- `vgsh plugin list`, `enable <id>`, `disable <id>`, `validate <dir>`. Enable and disable go through the shell's IPC, which writes the user file; the shell watches the file and re-derives the enabled set.
+- `vgsh plugin list`, `enable <id>`, `disable <id>`, `validate <dir>`, `add <git url>`, `update <id>`, `remove <id>`. Enable and disable go through the shell's IPC, which writes the user file; the shell watches the file and re-derives the enabled set.
 - Disable lists the id in `disabledPlugins` and changes nothing else: placement, settings rows and the active bar id stay, so re-enabling restores the exact screen. Enable unlists the id and gives a plugin a presence only when it has none: a bar becomes the active bar, an unplaced widget is placed in its default section, an unlisted third-party plugin of another kind is listed. Enabling a plugin that already has its presence is idempotent. `scripts/test-plugin-logic.js` pins each rule.
 - Configuration is `config/shell.json` merged with `~/.config/vgs/shell.json`, [D006](../decisions/D006-two-configuration-layers.md). `scripts/test-plugin-logic.js` pins each merge rule and the seeding of the user `bar` key.
 - A user file that does not parse keeps the last good value and refuses every write until it parses again. A write the disk refuses restores the value in memory and refuses the next write with the error.
 - Only the shell the runner started accepts a state-changing call; [runtime.md § Process](runtime.md#process).
-- Not yet written: `add <git url>`, `update`, `remove`, [D007](../decisions/D007-install-runs-no-plugin-code.md).
+- `add` clones into a staging directory beside `~/.config/vgs/plugins/`, runs the manifest judge, refuses an id another plugin owns or an occupied target, lists the id in `disabledPlugins` when the configuration would already enable it, then moves it to `~/.config/vgs/plugins/<id>/`. `update` refuses a modified checkout, prints the incoming diff, fast-forwards only and rolls back a version the judge refuses. `remove` deletes only `~/.config/vgs/plugins/<id>` holding that id, never a bundled plugin or a symlink. None runs plugin code or a git hook; each rescans a running shell. `bin/vgsh-plugin-judge` makes their decisions through `PluginLogic.js`, and `scripts/test-vgsh.sh` pins each rule, [D007](../decisions/D007-install-runs-no-plugin-code.md).
 
 ## Budgets
 

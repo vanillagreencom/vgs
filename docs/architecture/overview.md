@@ -16,7 +16,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load.
-- Plugin manager: the core component that discovers, validates, enables and disables plugins, and will install, update and remove them. Its user interface is a plugin; its mechanism is not.
+- Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is a plugin; its mechanism is not.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion in `scripts/qml-smoke.sh` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
@@ -24,7 +24,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 
 - Core: depends on Quickshell, Qt, the Hyprland socket and `config/shell.json`. Contains no plugin code and no plugin name. Enforced by `scripts/check-plugin-boundary.py`.
 - Plugin: depends on the import set [plugins.md § Isolation](plugins.md#isolation) lists, the capabilities its manifest names, and its own directory. Enforced by the same check.
-- Plugin manager: depends on the core and git. Runs no code from a plugin. Enforced by the manager's rows in `scripts/validate` once install exists.
+- Plugin manager: depends on the core and git. Runs no code from a plugin. Enforced by the install rows in `scripts/test-vgsh.sh`.
 - Validation: depends on the nested compositor sandbox, built from the repository alone, with its runtime dir beside the host's. Never touches the live session.
 - The plugin boundary is a static import check plus a scoped API object. It is not a process sandbox. Read [plugins.md § Isolation](plugins.md#isolation) before relying on it.
 
@@ -34,7 +34,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 2. Every Wayland object the shell creates is dispatched or destroyed. No check enforces it yet; a long sampled session with `scripts/sample-shell-memory.sh` is the instrument.
 3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/qml-smoke.sh`, which read the compositor's layer list and reserved geometry. That no object of it remains is not checked.
 4. A plugin receives exactly the capabilities its own manifest names, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/qml-smoke.sh`, which read the fixture instance back.
-5. The plugin manager runs no plugin code and asks for no privilege. Enforced by its rows once install exists.
+5. The plugin manager runs no plugin code and asks for no privilege. Enforced by the install rows in `scripts/test-vgsh.sh`, which run every git call with hooks off and install from local repositories.
 6. Every decision about a manifest, the merged configuration, enablement and placement is made once in `shell/Core/PluginLogic.js`. Enforced by `scripts/test-plugin-logic.js` and by `scripts/check-manifests.js`, which loads the same file.
 7. A figure in a document names the tool and the run that produced it. Enforced by review; `docs/architecture/memory.md` names its provenance in its first paragraph.
 

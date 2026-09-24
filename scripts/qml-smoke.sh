@@ -15,8 +15,9 @@
 # can be disabled and re-enabled with its placement and settings kept;
 # disabling the bar names the widgets it hides, unloads it and unmaps its
 # surface; an unrelated write and a no-op rescan build nothing; a user
-# plugin is discovered, built as a service and a widget, receives exactly
-# the capabilities it named, and takes a settings change without a rebuild;
+# plugin installed with `vgsh plugin add` from a local repository is
+# discovered, built as a service and a widget, receives exactly the
+# capabilities it named, and takes a settings change without a rebuild;
 # the shared clock ticks seconds once a format shows them;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
@@ -50,7 +51,7 @@ repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-576968}"
 
 missing=()
-for tool in Hyprland qs hyprctl python3 node flock setsid; do
+for tool in Hyprland qs hyprctl python3 node flock setsid git; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 [[ -n ${WAYLAND_DISPLAY:-} ]] || missing+=("WAYLAND_DISPLAY")
@@ -99,8 +100,15 @@ hl.config({
 })
 LUA
 
+# node on PATH may be a version-manager shim that reads the developer's own
+# configuration and fails under the sandbox HOME; the sandbox PATH leads with
+# the directory of the binary it resolves to.
+if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
+  printf 'qml-smoke: status=not-measured missing=node-binary\n'
+  exit 77
+fi
 sandbox_env=(env -i
-  HOME="$home" PATH="$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
+  HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
   XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
   XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache")
 
@@ -302,7 +310,7 @@ fi
 # its manifest names, and that a settings change reaches a running
 # instance without a rebuild. The rows read the fixture's own properties
 # back through readInstance, never the build records.
-fixture="$home/.config/vgs/plugins/acme.probe"
+fixture="$sandbox/src/acme.probe"
 mkdir -p "$fixture"
 cat >"$fixture/manifest.json" <<'JSON'
 { "schemaVersion": 1, "id": "acme.probe", "name": "Probe", "version": "0.1.0", "author": "acme", "description": "smoke fixture",
@@ -331,7 +339,17 @@ BarWidget {
     readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
 }
 QML
-expect "rescan after adding a user plugin answers ok" ok ipc shell rescanPlugins
+# The fixture reaches the user directory the way a user's plugin does:
+# committed to a repository and installed with `vgsh plugin add`.
+fixture_git() { "${sandbox_env[@]}" git -C "$fixture" -c user.name=smoke -c user.email=smoke@invalid "$@" >>"$sandbox/git.log" 2>&1; }
+if fixture_git init -q && fixture_git add -A && fixture_git commit -q -m fixture; then ok "fixture committed to a local repository"; else fail "fixture repository: $(tail -n 3 "$sandbox/git.log")"; fi
+add_out=""
+if add_out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin add "file://$fixture" 2>>"$sandbox/ipc.log")" \
+  && [[ $add_out == $'ok added=acme.probe path='"$home/.config/vgs/plugins/acme.probe"$' config=unchanged\nshell=rescanned' ]]; then
+  ok "vgsh plugin add installs the fixture and rescans the shell"
+else
+  fail "vgsh plugin add: $add_out"
+fi
 probe_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.probe"][0])' 2>/dev/null || echo absent; }
 found=""
 for _ in $(seq 1 25); do if found="$(probe_state)" && [[ $found == False ]]; then break; fi; sleep 0.2; done
