@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+// The decisions `vgsh plugin add`, `update` and `remove` need, made by the
+// shell's own judge, shell/Core/PluginLogic.js, loaded here under node.
+//
+//   vgsh-plugin-judge id <plugin-dir>
+//       print the `id` the manifest names; the manifest need not validate
+//   vgsh-plugin-judge owners <id>
+//       read `bin/vgsh-scan` JSON on stdin and print each directory whose
+//       manifest the judge accepts with that id, one per line: the plugins
+//       the shell's registry would hold under it
+//   vgsh-plugin-judge land-disabled <shipped-config> <user-config> <plugin-dir>
+//       when the configuration would enable the plugin, list it in the user
+//       file's disabledPlugins; print `written` or `unchanged`
+//
+// Every refusal is one line on stderr, `vgsh: refused: <key>=<value>`, and
+// exits 1. A scan element carrying an error exits 1 too: a directory that
+// could not be read may hold the id, so its absence is never assumed.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const repo = path.join(__dirname, "..");
+const logic = {};
+vm.runInNewContext(fs.readFileSync(path.join(repo, "shell", "Core", "PluginLogic.js"), "utf8").replace(/^\.pragma library\n/, ""), logic);
+
+function refuse(first) {
+    process.stderr.write("vgsh: refused: " + first + "\n");
+    process.exit(1);
+}
+
+function readJson(file, key) {
+    let text;
+    try {
+        text = fs.readFileSync(file, "utf8");
+    } catch (e) {
+        refuse(key + "=unreadable path=" + file + " error=" + e.code);
+    }
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        refuse(key + "=unparseable path=" + file);
+    }
+}
+
+function manifestOf(dir) {
+    return readJson(path.join(dir, "manifest.json"), "manifest");
+}
+
+function validated(dir) {
+    const r = logic.validateManifest(manifestOf(dir), dir);
+    if (!r.ok) refuse("manifest=" + dir + " error=" + r.error);
+    return r.manifest;
+}
+
+// Replace a file by rename, so a shell watching it never reads half of it.
+function replaceFile(file, text) {
+    const tmp = file + ".vgsh-" + process.pid;
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(tmp, text);
+        fs.renameSync(tmp, file);
+    } catch (e) {
+        fs.rmSync(tmp, { force: true });
+        refuse("user-config=unwritable path=" + file + " error=" + e.code);
+    }
+}
+
+const [command, ...args] = process.argv.slice(2);
+switch (command) {
+case "id": {
+    const raw = manifestOf(args[0]);
+    if (!logic.isPlainObject(raw) || typeof raw.id !== "string") refuse("manifest-id=missing path=" + args[0]);
+    console.log(raw.id);
+    break;
+}
+case "owners": {
+    let entries;
+    try {
+        entries = JSON.parse(fs.readFileSync(0, "utf8"));
+    } catch (e) {
+        refuse("scan=unparseable");
+    }
+    for (const entry of entries) {
+        if (entry.error !== undefined) refuse("unreadable=" + entry.dir + " error=" + entry.error);
+        let raw;
+        try {
+            raw = JSON.parse(entry.text);
+        } catch (e) {
+            // The registry refuses a manifest that does not parse, so it owns no id.
+            continue;
+        }
+        const r = logic.validateManifest(raw, entry.dir);
+        if (r.ok && r.manifest.id === args[0]) console.log(entry.dir);
+    }
+    break;
+}
+case "land-disabled": {
+    const [shippedPath, userPath, dir] = args;
+    const shipped = readJson(shippedPath, "shipped-config");
+    const user = fs.existsSync(userPath) ? readJson(userPath, "user-config") : null;
+    const manifest = validated(dir);
+    const effective = logic.effectiveConfig(shipped, user);
+    const defaultBarId = logic.activeBarId(shipped, "");
+    if (!logic.isEnabled(effective, manifest, defaultBarId)) {
+        console.log("unchanged");
+        break;
+    }
+    replaceFile(userPath, JSON.stringify(logic.withEnabled(user, manifest, false, effective), null, 2) + "\n");
+    console.log("written");
+    break;
+}
+default:
+    process.stderr.write("vgsh-plugin-judge: refused: command=" + (command || "missing") + "\n");
+    process.exit(2);
+}
