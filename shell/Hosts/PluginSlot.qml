@@ -14,12 +14,17 @@ Item {
     property string hostKey: ""
     // Host-owned properties the core assigns to the instance by name.
     property var context: ({})
+    // The screen the instance draws on, when the host knows one the
+    // context does not carry.
+    property var screen: null
     property var instance: null
     property string loadedKey: ""
 
     // Emitted with the key whose build produced no instance, so a host can
     // take the surface down instead of showing an empty one.
     signal buildFailed(string key)
+    // Emitted with every instance the slot builds.
+    signal built(var instance)
 
     readonly property string key: Plugins.slotKey(pluginId)
 
@@ -36,9 +41,10 @@ Item {
         if (key === loadedKey) return;
         unload();
         if (key === "") return;
-        instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context);
+        instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context, screen);
         if (instance === null) { buildFailed(key); return; }
         instance.anchors.fill = slot;
         loadedKey = key;
+        built(instance);
     }
 }

@@ -13,5 +13,7 @@ Steps, in order. Each step names the command or file and the check that proves i
    - a service: a property proving its action ran, and the record gone after disable;
    - a bar widget: the widget listed in its section and a property it derives from its settings;
    - a bar: the widgets mounted per section and the surface and reserved space read from `hyprctl`;
+   - a panel, overlay or menu: `summon` answers `ok`, the payload read back from the instance, the surface and its geometry read from `hyprctl layers`, and the surface gone after `hide`;
+   - a background: the surface on the bottom layer per screen and the `screen` it received;
    - a capability: a property proving the delivered API is callable.
 9. Never test against the live shell. `scripts/qml-smoke.sh` is the only place a second shell starts.

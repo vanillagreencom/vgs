@@ -48,4 +48,4 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 ## References
 
 - [`references/api.md`](references/api.md): what a plugin receives and may call, per kind.
-- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Bar.qml`.
+- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Bar.qml`, `Background.qml`.

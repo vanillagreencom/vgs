@@ -37,6 +37,20 @@ ShellRoot {
         LockHost {}
     }
 
+    Variants {
+        model: root.guarded ? Quickshell.screens : []
+        BackgroundHost {}
+    }
+
+    LazyLoader {
+        active: root.guarded
+        Scope {
+            SummonHost { kind: "panel" }
+            SummonHost { kind: "overlay" }
+            SummonHost { kind: "menu" }
+        }
+    }
+
     IpcHandler {
         target: "shell"
 
@@ -48,11 +62,12 @@ ShellRoot {
         function buildCount(): int { return Plugins.buildCount; }
         function lent(): string { return Capabilities.lentJson(); }
         function readInstance(hostKey: string, id: string, property: string): string { return Plugins.readInstance(hostKey, id, property); }
+        function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.guarded ? Plugins.invokeInstance(hostKey, id, name, arg) : root.guardRefusal; }
         function reloadConfig(): string { if (!root.guarded) return root.guardRefusal; Config.reload(); return "ok"; }
         function rescanPlugins(): string { return root.guarded ? Plugins.rescan() : root.guardRefusal; }
         function setPluginEnabled(id: string, enabled: bool): string { return root.guarded ? Plugins.setEnabled(id, enabled) : root.guardRefusal; }
-        function summon(kind: string, id: string, payloadJson: string): string { return root.guarded ? Plugins.route("summon", kind, id, payloadJson) : root.guardRefusal; }
-        function hide(kind: string, id: string): string { return root.guarded ? Plugins.route("hide", kind, id, "") : root.guardRefusal; }
-        function toggle(kind: string, id: string, payloadJson: string): string { return root.guarded ? Plugins.route("toggle", kind, id, payloadJson) : root.guardRefusal; }
+        function summon(kind: string, id: string, payloadJson: string): string { return root.guarded ? Plugins.route("summon", kind, id, payloadJson, null) : root.guardRefusal; }
+        function hide(kind: string, id: string): string { return root.guarded ? Plugins.route("hide", kind, id, "", null) : root.guardRefusal; }
+        function toggle(kind: string, id: string, payloadJson: string): string { return root.guarded ? Plugins.route("toggle", kind, id, payloadJson, null) : root.guardRefusal; }
     }
 }

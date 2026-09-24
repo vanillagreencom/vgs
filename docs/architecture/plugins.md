@@ -14,7 +14,7 @@ A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogi
 | `id` | yes | Dotted and author-namespaced, lower case: `author.name`. `vgs.*` is first-party. |
 | `name`, `version`, `author`, `description` | yes | Listing metadata, non-empty strings. |
 | `license` | no | SPDX identifier, non-empty when present. |
-| `kinds` | yes | One or more of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, each once. |
+| `kinds` | yes | One or more of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`, each once. |
 | `entryPoints` | yes | One QML file per declared kind, keyed by the kind name, relative to the plugin root and inside it. A key naming an undeclared kind is refused. |
 | `capabilities` | no | Core APIs the plugin uses beyond its kinds, from the table under § Capabilities. |
 | `settings` | no | The plugin's default settings, an object without an `id` key. The configuration entry for the plugin overrides them key by key. |
@@ -30,9 +30,12 @@ A kind names a surface the core can host. A plugin declares every kind it can fi
 | `bar-widget` | an `Item` extending `BarWidget` from `qs.Ui` | the active bar's sections | placed in a bar section, enabled, and a bar is active |
 | `bar` | an `Item` declaring `leftSection`, `centerSection` and `rightSection` | `BarHost`, one per screen | it is the active bar; one at a time |
 | `service` | a headless `Item` | `ServiceHost` | enabled |
-| `panel`, `overlay`, `menu` | an `Item` with `open(payloadJson)` and `close()` | none yet | never, until each host lands with the first plugin of its kind |
+| `background` | an `Item` declaring `screen` | `BackgroundHost`, one per screen, on the layer under every window | enabled |
+| `panel`, `overlay`, `menu` | an `Item` with `open(payloadJson)` and `close()` | `SummonHost`, one per kind | enabled and summoned, until hidden |
 
 Enabled means: the active bar; a bar widget placed in a section; a plugin declaring a kind other than `bar` and `bar-widget` that is listed in `plugins` or is first-party. A bar's settings row in `plugins` enables nothing. `disabledPlugins` wins over every other rule: a placed widget listed there leaves the bar and its layout entry stays in the file.
+
+`summon <kind> <id> <payloadJson>`, `hide <kind> <id>` and `toggle` reach the summonable kinds, over IPC or through the plugin's own `surfaces` capability. A summon creates a layer surface on the screen it came from (the focused monitor for IPC), builds the plugin in it and calls `open(payloadJson)`; summoning an open plugin calls `open` again with the new payload and builds nothing. `hide` calls `close()` and destroys the surface, so a hidden plugin keeps no Wayland object. A panel is placed under the widget that summoned it, centred on it and clamped to the screen, or, with no anchor, at the plugin's `placement` setting (`top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom`, `bottom-right`; `center` when absent) clear of reserved space. A menu is placed the same way on the overlay layer; an overlay covers its screen. `PluginLogic.surfacePlacement` decides the geometry. An anchor's rectangle is read in its window's coordinates, which are screen coordinates for an item in a bar at the screen's top-left corner. A plugin disabled while summoned is closed with its surface.
 
 Disabling the active bar hides every enabled bar widget and the manager's reply names them. They stay enabled and return with the next bar. Enabling a bar makes it the active bar.
 
@@ -76,6 +79,7 @@ A capability is a core API named in the manifest's `capabilities` and delivered 
 | `run` | `detached(argv)`: starts a detached process from an argument list; no shell parses it. |
 | `screens` | `all`, every screen; `current`, the screen this instance draws on, or null for a service. |
 | `shortcut` | `register(name, description, onPressed)`: a global shortcut Hyprland binds as `global, <plugin id>:<name>`. |
+| `surfaces` | `summon(kind, payloadJson, anchor)`, `hide(kind)`, `toggle(kind, payloadJson, anchor)`: the plugin's own summonable kinds, on this instance's screen, placed under `anchor` when one is given. Each returns the IPC reply. |
 
 A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 

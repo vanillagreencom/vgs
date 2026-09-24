@@ -9,9 +9,12 @@ What a plugin receives and may call. The core owns every table here; a value not
 | `bar-widget` | `bar-widget` | `BarWidget` from `qs.Ui` | the active bar's sections | placed in `bar.layout.<section>`, not in `disabledPlugins`, and a bar is active |
 | `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration |
 | `service` | `service` | `Item` | the service host | enabled |
-| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()` | none | never, until the panel host lands |
-| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | none | never, until the overlay host lands |
-| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()` | none | never, until the menu host lands |
+| `background` | `background` | `Item` declaring `property var screen: null` | the background host, one per screen, under every window | enabled |
+| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host, on the top layer | summoned, until hidden |
+| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen | summoned, until hidden |
+| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host, on the overlay layer | summoned, until hidden |
+
+A summoned kind is built on summon and destroyed on hide. Summoning an open one calls `open` again with the new payload. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
 
 ## Properties every instance receives
 
@@ -55,6 +58,7 @@ A bar never creates, destroys or reads a widget.
 | `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` or `refused: argv=...` |
 | `shell.screens.all`, `.current` | capability `screens` | every screen; the screen this instance draws on, null for a service |
 | `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
+| `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu on this instance's screen, under `anchor` (an item of the plugin's) when given; returns the IPC reply |
 
 A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
 
@@ -87,6 +91,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `run` | `shell.run` |
 | `screens` | `shell.screens` |
 | `shortcut` | `shell.shortcut` |
+| `surfaces` | `shell.surfaces` |
 
 ## Allowed imports
 
@@ -134,7 +139,8 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
-| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `refused: no-host=<kind>` until that kind has a host |
+| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: kind=<kind> id=<id>`, `refused: disabled=<id>`, `refused: build-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
+| `invokeInstance <hostKey> <id> <function> <arg>` | yes | calls that function of the built instance with one text argument and answers its result; `absent` with no such instance, `no-function` with no such function |
 
 ## Manifest
 

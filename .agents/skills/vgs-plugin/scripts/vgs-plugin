@@ -32,6 +32,7 @@ TEMPLATE_FOR = {
     "overlay": ("Panel.qml", "Overlay.qml"),
     "menu": ("Panel.qml", "Menu.qml"),
     "service": ("Service.qml", "Service.qml"),
+    "background": ("Background.qml", "Background.qml"),
 }
 
 

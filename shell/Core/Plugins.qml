@@ -387,19 +387,43 @@ Singleton {
         return json === undefined ? "undefined" : json;
     }
 
-    // Kind-generic summon, hide and toggle. A host registers itself under
-    // its kind on completion; a kind with no host answers so.
+    // Kind-generic summon, hide and toggle for the summonable kinds. A host
+    // registers itself under its kind on completion. `origin` is null for
+    // an IPC call, which opens on the focused screen, or { anchor, screen }
+    // for a plugin summoning its own surface. The reply is one keyed line.
     function registerHost(kind, host) {
         const next = Object.assign(Object.create(null), hosts);
         next[kind] = host;
         hosts = next;
     }
 
-    function route(verb, kind, id, payloadJson) {
+    function route(verb, kind, id, payloadJson, origin) {
+        if (Logic.SUMMONABLE_KINDS.indexOf(kind) === -1) return "refused: not-summonable=" + kind;
         if (!Logic.hasOwn(hosts, kind)) return "refused: no-host=" + kind;
         if (!has(id)) return "unknown: " + id;
         if (manifests[id].kinds.indexOf(kind) === -1) return "refused: kind=" + kind + " id=" + id;
-        return hosts[kind][verb](id, payloadJson);
+        if (verb !== "hide" && slotKey(id) === "") return "refused: disabled=" + id;
+        if (verb === "hide") return hosts[kind].hide(id);
+        return hosts[kind][verb](id, payloadJson, origin || null);
+    }
+
+    // The settings plugin `id` receives from its plugins[] row, for a host
+    // that reads a plugin's settings for itself.
+    function settingsOf(id) {
+        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], null) : {};
+    }
+
+    // Call one function of one built instance with one text argument and
+    // answer its result as text, for validation rows that drive what a
+    // user would click. `absent` when no such instance exists; `no-function`
+    // when it has no such function.
+    function invokeInstance(hostKey, id, name, arg) {
+        if (!Logic.hasOwn(built, hostKey)) return "absent";
+        const row = built[hostKey].filter(r => r.id === id)[0];
+        if (row === undefined) return "absent";
+        if (typeof row.instance[name] !== "function") return "no-function";
+        const result = row.instance[name](arg);
+        return result === undefined ? "" : String(result);
     }
 
     // Enable or disable one plugin. The reply is one keyed line the CLI

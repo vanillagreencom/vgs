@@ -5,11 +5,11 @@
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
-var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service"];
+var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "background"];
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces"];
 
 // Capabilities whose core object serves one plugin at a time: the session
 // lock and the polkit agent. A second plugin naming one is not built while
@@ -22,6 +22,16 @@ var SETTING_TYPES = ["string", "number", "boolean", "enum"];
 var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options"];
 
 var SECTIONS = ["left", "center", "right"];
+
+// Kinds a host shows on demand: `summon`, `hide` and `toggle` reach them.
+// Every other kind is shown for as long as it is enabled.
+var SUMMONABLE_KINDS = ["panel", "overlay", "menu"];
+
+// Where a summoned panel or menu may sit when no anchor places it, read
+// from the plugin's `placement` setting. `center` when the setting is
+// absent.
+var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"];
+
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
@@ -419,4 +429,45 @@ function lendRefusal(held, manifest) {
             return "refused: capability=" + name + " held-by=" + held[name];
     }
     return "";
+}
+
+// The layer-shell geometry of one summoned surface.
+//
+// `kind` is the summoned kind; `settings` the plugin's settings; `anchor`
+// null or { x, y, width, height }, the rectangle of the item it was
+// summoned from, relative to the screen; `size` { width, height } of the
+// surface; `screen` { width, height }; `gap` the distance kept from an edge
+// or an anchor.
+//
+// Returns { anchors: { top, bottom, left, right }, margins: { top, bottom,
+// left, right }, exclusion: "normal" | "ignore", placement, error }. An overlay
+// fills its screen. An anchored surface sits under its anchor, centred on
+// it and clamped to the screen, or above it when there is no room below,
+// positioned from the screen's top-left corner so the bar's reserved space
+// does not move it. An unanchored surface takes its `placement` setting and
+// keeps clear of reserved space. An unknown placement centres the surface
+// and names the setting in `error`, which is "" otherwise.
+function surfacePlacement(kind, settings, anchor, size, screen, gap) {
+    var zero = { top: 0, bottom: 0, left: 0, right: 0 };
+    if (kind === "overlay")
+        return { anchors: { top: true, bottom: true, left: true, right: true }, margins: zero, exclusion: "ignore", placement: "fill", error: "" };
+    if (isPlainObject(anchor)) {
+        var left = Math.round(anchor.x + anchor.width / 2 - size.width / 2);
+        left = Math.max(0, Math.min(left, screen.width - size.width));
+        var below = anchor.y + anchor.height + gap;
+        var top = below + size.height <= screen.height ? below : Math.max(0, anchor.y - gap - size.height);
+        return { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: top, bottom: 0, left: left, right: 0 }, exclusion: "ignore", placement: "anchor", error: "" };
+    }
+    var asked = isPlainObject(settings) ? settings.placement : undefined;
+    var known = asked === undefined || PLACEMENTS.indexOf(asked) !== -1;
+    var placement = asked !== undefined && known ? asked : "center";
+    var anchors = { top: false, bottom: false, left: false, right: false };
+    var margins = { top: 0, bottom: 0, left: 0, right: 0 };
+    var parts = placement.split("-");
+    parts.forEach(function (edge) {
+        if (edge === "center") return;
+        anchors[edge] = true;
+        margins[edge] = gap;
+    });
+    return { anchors: anchors, margins: margins, exclusion: "normal", placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
 }

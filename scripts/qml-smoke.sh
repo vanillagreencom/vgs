@@ -21,7 +21,9 @@
 # the shared clock ticks seconds once a format shows them; every capability
 # delivers its object to the plugin that named it, none to one that named
 # none, and releases it on disable, read back from the fixture, the core's
-# lending record, the compositor and a private D-Bus;
+# lending record, the compositor and a private D-Bus; a panel, an overlay
+# and a menu open on summon, take their placement and close on hide, and a
+# background is drawn on the bottom layer of every screen;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
 # error; resident memory stays under the ceiling.
@@ -583,6 +585,110 @@ expect "disable destroyed the polkit agent" false lent polkitAgent
 expect_poll "the compositor dropped the fixture's shortcut" 0 hypr_shortcuts
 expect "qs lists no IPC target for the disabled fixture" 0 ipc_targets
 expect "disabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare false
+
+# Hosts: a fixture of every summonable kind plus a background and a bar
+# widget. Each summonable kind opens on demand in its own layer surface and
+# is destroyed on hide; the background is drawn on every screen while
+# enabled. Geometry is read from the compositor's layer list.
+surf="$home/.config/vgs/plugins/acme.surfaces"
+mkdir -p "$surf"
+cat >"$surf/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.surfaces", "name": "Surfaces", "version": "0.1.0", "author": "acme", "description": "smoke fixture for the hosts",
+  "kinds": ["panel", "overlay", "menu", "background", "bar-widget"],
+  "entryPoints": { "panel": "Summoned.qml", "overlay": "Summoned.qml", "menu": "Summoned.qml", "background": "Background.qml", "bar-widget": "Widget.qml" },
+  "defaultSection": "right", "settings": { "placement": "top-right" }, "capabilities": ["surfaces"] }
+JSON
+cat >"$surf/Summoned.qml" <<'QML'
+import QtQuick
+Item {
+    property var shell: null
+    property int opened: 0
+    property string lastPayload: ""
+    implicitWidth: 200
+    implicitHeight: 120
+    function open(payloadJson) { opened += 1; lastPayload = payloadJson; }
+    function close() {}
+}
+QML
+cat >"$surf/Background.qml" <<'QML'
+import QtQuick
+Item {
+    property var shell: null
+    property var screen: null
+    readonly property string screenName: screen === null ? "" : screen.name
+}
+QML
+cat >"$surf/Widget.qml" <<'QML'
+import QtQuick
+import qs.Ui
+BarWidget {
+    id: root
+    moduleName: "acme.surfaces"
+    implicitWidth: 30
+    implicitHeight: barSize
+    function summonHere() { return shell.surfaces.summon("panel", "{\"from\":\"widget\"}", root); }
+    function geometry() { const p = mapToItem(null, 0, 0); return JSON.stringify([p.x, p.y, width, height]); }
+}
+QML
+expect "rescan after adding the hosts fixture answers ok" ok ipc shell rescanPlugins
+surfaces_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.surfaces" for p in json.load(sys.stdin)["plugins"]))'; }
+expect_poll "the hosts fixture is discovered" True surfaces_known
+expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces true
+
+# Live layers with a namespace as [[x, y, w, h], ...], sorted.
+layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
+layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
+read -r mon_w mon_h bar_reserved < <(monitor_size)
+screen_name="$(bar_key | sed 's/^bar://')"
+
+expect_poll "the background host draws one surface per screen" "$monitors" layer_count vgs:background
+expect "the background sits on the bottom layer" True python3 -c 'import json,subprocess,sys; print(any(l["namespace"]=="vgs:background" and l["pid"]!=-1 for m in json.loads(sys.stdin.read()).values() for l in m["levels"]["0"]))' < <(hypr -j layers)
+expect "the background receives its screen" "\"$screen_name\"" ipc shell readInstance "background:$screen_name" acme.surfaces screenName
+
+expect "a panel summons over IPC" ok ipc shell summon panel acme.surfaces '{"n":1}'
+expect "the panel received its payload" '"{\"n\":1}"' ipc shell readInstance panel acme.surfaces lastPayload
+expect_poll "the panel host maps one surface" 1 layer_count vgs:panel
+expect_poll "the panel takes its top-right placement below the bar" "[[$((mon_w - 8 - 200)), $((bar_reserved + 8)), 200, 120]]" layers_of vgs:panel
+if before="$(builds)"; then
+  expect "summoning an open panel is allowed" ok ipc shell summon panel acme.surfaces '{"n":2}'
+  expect "the open panel received the new payload" 2 ipc shell readInstance panel acme.surfaces opened
+  expect "summoning an open panel builds nothing" "$before" builds
+else
+  fail "buildCount unreadable before the summon rows"
+fi
+expect "hiding the panel is allowed" ok ipc shell hide panel acme.surfaces
+expect "the hidden panel leaves the build records" absent ipc shell readInstance panel acme.surfaces opened
+expect_poll "the panel host destroyed its surface" 0 layer_count vgs:panel
+expect "toggle opens a closed panel" ok ipc shell toggle panel acme.surfaces '{}'
+expect_poll "the toggled panel is mapped" 1 layer_count vgs:panel
+expect "toggle closes an open panel" ok ipc shell toggle panel acme.surfaces '{}'
+expect_poll "the toggled panel is gone" 0 layer_count vgs:panel
+
+expect "an overlay summons over IPC" ok ipc shell summon overlay acme.surfaces '{}'
+expect_poll "the overlay covers its screen" "[[0, 0, $mon_w, $mon_h]]" layers_of vgs:overlay
+expect "hiding the overlay is allowed" ok ipc shell hide overlay acme.surfaces
+expect_poll "the overlay host destroyed its surface" 0 layer_count vgs:overlay
+expect "a menu summons over IPC" ok ipc shell summon menu acme.surfaces '{}'
+expect_poll "the menu host maps one surface" 1 layer_count vgs:menu
+expect "hiding the menu is allowed" ok ipc shell hide menu acme.surfaces
+expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
+
+# A panel the plugin summons from its own bar widget sits under the widget,
+# centred on it.
+expect "the widget summons its panel under itself" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
+widget_geometry="$(ipc shell invokeInstance "bar:$screen_name" acme.surfaces geometry '')"
+anchored_want="$(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); mw=int(sys.argv[2]); left=max(0, min(round(x + w/2 - 100), mw - 200)); print(json.dumps([[left, int(y + h + 8), 200, 120]]))' "$widget_geometry" "$mon_w")"
+expect_poll "the anchored panel sits under its widget" "$anchored_want" layers_of vgs:panel
+expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc shell readInstance panel acme.surfaces lastPayload
+
+expect "a background is not summonable" "refused: not-summonable=background" ipc shell summon background acme.surfaces '{}'
+expect "a plugin without the kind is refused" "refused: kind=panel id=vgs.clock" ipc shell summon panel vgs.clock '{}'
+expect "an unknown plugin is refused" "unknown: acme.nope" ipc shell summon panel acme.nope '{}'
+expect "disabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces false
+expect_poll "disabling closes its open panel" 0 layer_count vgs:panel
+expect_poll "disabling removes the background surface" 0 layer_count vgs:background
+expect "a disabled plugin is not summoned" "refused: disabled=acme.surfaces" ipc shell summon panel acme.surfaces '{}'
 
 # Control: a bare qs beside the runner must refuse to draw and to write,
 # and the runner's CLI must keep addressing the guarded instance.

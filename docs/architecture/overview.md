@@ -10,7 +10,7 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 
 - Core: the runner, the instance lock, the Hyprland connection and its reply judge, the theme tokens, the hosts, the plugin registry, the plugin manager and the IPC surface. `scripts/check-plugin-boundary.py` draws the line.
 - Plugin: a directory with `manifest.json` at its root, in the schema [plugins.md](plugins.md) states, plus one QML entry point per kind.
-- Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`. A kind is a surface the core can host. The core owns the list; a new kind is a core change.
+- Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`. A kind is a surface the core can host, and every kind has a host. The core owns the list; a new kind is a core change.
 - Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own.
 - Bar: the plugin of kind `bar` that is active. It declares three section containers the core mounts bar widgets into; it owns geometry only.
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.

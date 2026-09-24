@@ -268,5 +268,29 @@ for (const [name, held, capabilities, want] of lendRows) {
     check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
 }
 
+// surfacePlacement rows: [name, kind, settings, anchor, want subset]
+const size = { width: 200, height: 100 };
+const screenArea = { width: 1000, height: 600 };
+const placementRows = [
+    ["an overlay fills its screen", "overlay", {}, null, { anchors: { top: true, bottom: true, left: true, right: true }, exclusion: "ignore", placement: "fill" }],
+    ["an overlay ignores an anchor", "overlay", {}, { x: 10, y: 0, width: 20, height: 26 }, { placement: "fill" }],
+    ["an anchored panel sits under its anchor, centred", "panel", {}, { x: 400, y: 0, width: 100, height: 26 }, { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: 34, bottom: 0, left: 350, right: 0 }, exclusion: "ignore", placement: "anchor" }],
+    ["an anchored panel is clamped to the left edge", "panel", {}, { x: 0, y: 0, width: 20, height: 26 }, { margins: { top: 34, bottom: 0, left: 0, right: 0 } }],
+    ["an anchored panel is clamped to the right edge", "panel", {}, { x: 980, y: 0, width: 20, height: 26 }, { margins: { top: 34, bottom: 0, left: 800, right: 0 } }],
+    ["an anchored menu with no room below sits above", "menu", {}, { x: 400, y: 574, width: 100, height: 26 }, { margins: { top: 466, bottom: 0, left: 350, right: 0 } }],
+    ["no placement setting centres", "panel", {}, null, { anchors: { top: false, bottom: false, left: false, right: false }, exclusion: "normal", placement: "center" }],
+    ["top-right keeps a gap from both edges", "panel", { placement: "top-right" }, null, { anchors: { top: true, bottom: false, left: false, right: true }, margins: { top: 8, bottom: 0, left: 0, right: 8 }, placement: "top-right" }],
+    ["bottom anchors one edge", "menu", { placement: "bottom" }, null, { anchors: { top: false, bottom: true, left: false, right: false }, placement: "bottom" }],
+    ["an unknown placement is reported and centres", "panel", { placement: "middle" }, null, { placement: "center", error: "placement=\"middle\" unknown" }],
+];
+for (const [name, kind, settings, anchor, want] of placementRows) {
+    const got = ctx.surfacePlacement(kind, settings, anchor, size, screenArea, 8);
+    const picked = {};
+    for (const k of Object.keys(want)) picked[k] = got[k];
+    check("surfacePlacement: " + name, picked, want);
+}
+
+check("SUMMONABLE_KINDS are kinds", ctx.SUMMONABLE_KINDS.every(k => ctx.KINDS.indexOf(k) !== -1), true);
+
 if (failures > 0) { console.log("test-plugin-logic: " + failures + " failing"); process.exit(1); }
 console.log("test-plugin-logic: ok");

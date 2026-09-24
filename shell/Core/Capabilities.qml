@@ -131,8 +131,23 @@ Singleton {
         }),
         shortcut: ctx => ({
             register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
+        }),
+        surfaces: ctx => ({
+            summon: (kind, payloadJson, anchor) => Plugins.route("summon", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor)),
+            hide: kind => Plugins.route("hide", kind, ctx.id, "", null),
+            toggle: (kind, payloadJson, anchor) => Plugins.route("toggle", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor))
         })
     })
+
+    // Where a plugin summons its own surface from: this instance's screen,
+    // and the rectangle of `anchor`, an item of the plugin's, in its
+    // window's coordinates. A bar spans its screen from the top-left
+    // corner, so for an item in a bar those are screen coordinates too.
+    function origin(ctx, anchor) {
+        if (anchor === undefined || anchor === null) return ctx.screen ? { anchor: null, screen: ctx.screen } : null;
+        const at = anchor.mapToItem(null, 0, 0);
+        return { anchor: { x: at.x, y: at.y, width: anchor.width, height: anchor.height }, screen: ctx.screen };
+    }
 
     // shortcut: one GlobalShortcut per name under the plugin id, bound in
     // Hyprland as `global, <plugin id>:<name>`. A second registration of
