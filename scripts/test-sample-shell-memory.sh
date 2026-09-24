@@ -355,6 +355,7 @@ arg_case "an option with no value is refused by name" "missing-value=--interval"
 arg_case "a non-numeric interval is refused with its value" "bad-interval=abc" 2 --interval abc
 arg_case "a zero interval is refused with its value" "bad-interval=0" 2 --interval 0
 arg_case "a non-numeric hours is refused with its value" "bad-hours=soon" 2 --hours soon
+arg_case "a non-numeric sample count is refused with its value" "bad-samples=two" 2 --samples two
 arg_case "an unreadable log is refused with its path" "unreadable-log=$tmp/missing.tsv" 2 --report "$tmp/missing.tsv"
 
 echo "=== pid resolution ==="
@@ -494,6 +495,26 @@ expect_contains "$err" "pid-exited=$victim" "$label"
 expect_contains "$out" "session=$victim:$victim_session samples=" "$label"
 [[ "$(grep -c . "$tmp/run-log.tsv" || true)" -ge 3 ]] ||
   fail "$label" "the log holds fewer than a header and two rows"
+ok "$label"
+
+# A sample count ends the run by itself while the process lives on: the log
+# holds the header and exactly that many rows, and the report follows.
+label="a sample count stops the run after that many samples"
+sleep 300 &
+counted=$!
+trap 'kill "$victim" "$counted" 2>/dev/null || true; rm -rf "${tmp:?}"' EXIT INT TERM
+counted_listed="[{\"config_path\": \"$shell_dir/shell.qml\", \"pid\": $counted}]"
+rm -f -- "${rt:?}/vgsh.lock" "${tmp:?}/count-log.tsv"
+printf '%s\n' "$counted" >"$lock"
+rc=0
+timeout 30 env -i PATH="$toolbin:$qsbin" HOME="$tmp/home" XDG_RUNTIME_DIR="$rt" XDG_CACHE_HOME="$tmp/cache" \
+  QS_STUB_PATH="$shell_dir" QS_STUB_REPLY="$counted_listed" QS_STUB_STATUS=0 \
+  "$sampler" --interval 1 --samples 2 --log "$tmp/count-log.tsv" >"$tmp/count-stdout" 2>"$tmp/count-stderr" || rc=$?
+[[ "$rc" == 0 ]] || fail "$label" "expected exit 0, got $rc (stderr: $(cat "$tmp/count-stderr"))"
+[[ "$(awk 'END { print NR }' "$tmp/count-log.tsv")" == 3 ]] || fail "$label" "the log does not hold a header and exactly two rows"
+kill -0 "$counted" 2>/dev/null || fail "$label" "the sampled process is gone, so the count did not end the run"
+expect_contains "$(cat "$tmp/count-stdout")" "session=$counted:" "$label"
+kill "$counted" 2>/dev/null || true
 ok "$label"
 
 echo "=== must-fail controls ==="

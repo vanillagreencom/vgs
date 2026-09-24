@@ -93,10 +93,10 @@ The manager is core: the `Plugins` singleton plus `vgsh plugin`. Its user interf
 
 ## Budgets
 
-- `scripts/qml-smoke.sh` runs the shell with every bundled plugin and one fixture plugin in the nested sandbox, asserts the widgets each bar built, the capabilities and settings each instance received, the surface and reserved space the bar host holds, and the resident-size ceiling its header states. That ceiling catches a startup allocation blow-up and nothing else.
+- `scripts/qml-smoke.sh` runs the shell with every bundled plugin and its fixture plugins in the nested sandbox, asserts the widgets each bar built, the capabilities and settings each instance received, the surfaces each host holds, and the ceilings its header states: resident size, the time from the runner's exec to the first bar surface, and the time from a `setPluginEnabled` reply to the build records reflecting it. The resident-size ceiling catches a startup allocation blow-up and nothing else.
 - A service owns every watcher, poller and subprocess it starts, one owner per source, inside its own tree.
 - A plugin holds no cache keyed by data other applications supply without a ceiling.
-- No latency row exists yet. A per-plugin latency or memory budget is a target until a row measures it; the current smoke pass is not evidence for one.
+- The two latency ceilings measure the whole shell. A per-plugin latency or memory budget is a target until a row measures it; the current smoke pass is not evidence for one.
 
 ## Decisions
 

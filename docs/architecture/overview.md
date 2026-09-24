@@ -1,6 +1,6 @@
 # v2 architecture
 
-A Quickshell shell for Hyprland. A small fixed core owns the process, the compositor connection, the theme tokens, the surface hosts, the plugin loader and the plugin manager. Everything a user sees or a service does is a plugin, and every plugin carries the validation row that proves it is built, shown and handed what it asked for. Per-plugin latency and memory budgets are a target until a row measures them.
+A Quickshell shell for Hyprland. A small fixed core owns the process, the compositor connection, the theme tokens, the surface hosts, the plugin loader and the plugin manager. Everything a user sees or a service does is a plugin, and every plugin carries the validation row that proves it is built, shown and handed what it asked for. The smoke measures the shell's startup and reconcile latency against budgets; per-plugin latency and memory budgets are a target until a row measures them.
 
 ## The one idea
 

@@ -47,8 +47,10 @@ Requirements for the shell process, the runner and the measurement tools, and th
 ## Validation
 
 - `scripts/validate` is the manifest. `scripts/qml-smoke.sh` is the nested row. It waits for the nested monitor before starting the shell, so no bar is built for the placeholder screen Qt invents when a compositor has no output yet.
-- The sandbox needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment and Hyprland, `qs`, `hyprctl`, `python3`, `node`, `flock` and `setsid` on the path. A missing one exits 77 and names it.
+- The sandbox needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment and Hyprland, `qs`, `hyprctl`, `python3`, `node`, `flock`, `setsid`, `git`, `dbus-daemon` and `gdbus` on the path. A missing one exits 77 and names it.
+- The sandbox runs two private D-Bus daemons with no service directories as the session and system buses, so the shell's notification server and polkit agent never reach the user's buses and nothing is activated on them.
+- A nested compositor that fails to allocate its output buffers stops laying out surfaces, and every geometry row after it reads zeros. The smoke then exits 77 with `nested-compositor=buffer-allocation-failed`, read from the nested compositor's own log. Re-run it; that result is not a pass.
 - The sandbox runtime dir is a short name under the host's `XDG_RUNTIME_DIR`. A Unix socket path is limited to 107 bytes and Hyprland adds a 63-character signature under `hypr/`; a runtime dir under a long temporary path made Hyprland refuse IPC.
 - Every check that spawns a process passes its environment explicitly, from `env -i`.
-- A budget in a script names the machine and date it was measured on.
+- A budget in a script names the machine and date it was measured on. Each latency reading in the smoke carries its poll interval: 10 ms for the first bar, one `qs ipc` round trip for the build records.
 - The compositor keeps a destroyed layer surface in `hyprctl layers` with pid -1 until it drops it. A row that counts surfaces counts only layers with a client, and reads reserved geometry from `hyprctl monitors` for what the user feels.

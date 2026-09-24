@@ -11,6 +11,7 @@
 #
 #   scripts/sample-shell-memory.sh                 sample until interrupted
 #   scripts/sample-shell-memory.sh --hours 26      sample for 26 hours
+#   scripts/sample-shell-memory.sh --samples 3     take three samples
 #   scripts/sample-shell-memory.sh --report FILE   summarise an existing log
 #
 # The log is one TSV row per sample. Every row carries the sampled pid with the
@@ -34,6 +35,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 
 INTERVAL=60
 HOURS=0
+SAMPLES=0
 LOG=""
 REPORT=""
 SHELL_DIR="$repo_root/shell"
@@ -60,11 +62,12 @@ refuse() {
 
 usage() {
   cat <<'USAGE'
-Usage: sample-shell-memory.sh [--interval SECONDS] [--hours N] [--log FILE]
+Usage: sample-shell-memory.sh [--interval SECONDS] [--hours N] [--samples N] [--log FILE]
        sample-shell-memory.sh --report FILE
 
   --interval    seconds between samples (default 60)
   --hours       stop after N hours (default: run until interrupted)
+  --samples     stop after N samples (default: no limit)
   --log         where to append samples (default ~/.cache/vgs/memory-samples.tsv)
   --report      summarise an existing log and exit
 
@@ -75,11 +78,12 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --interval | --hours | --log | --report)
+    --interval | --hours | --samples | --log | --report)
       [[ $# -ge 2 ]] || refuse 2 "missing-value=$1" "This option takes a value."
       case "$1" in
         --interval) INTERVAL="$2" ;;
         --hours) HOURS="$2" ;;
+        --samples) SAMPLES="$2" ;;
         --log) LOG="$2" ;;
         --report) REPORT="$2" ;;
       esac
@@ -97,6 +101,8 @@ done
   refuse 2 "bad-interval=$INTERVAL" "Seconds between samples must be a positive integer."
 [[ "$HOURS" =~ ^[0-9]+$ ]] ||
   refuse 2 "bad-hours=$HOURS" "Hours to sample for must be a non-negative integer."
+[[ "$SAMPLES" =~ ^[0-9]+$ ]] ||
+  refuse 2 "bad-samples=$SAMPLES" "The number of samples must be a non-negative integer."
 
 COLUMNS_HEADER=$'epoch\tpid\tsession\tuptime_s\trss_kb\tanon_kb\tfile_kb\tswap_kb'
 COLUMNS_HEADER+=$'\tthp_kb\thwm_kb\tjsheap_kb\tjit_kb\tgpu_kb\tthreads\tfds\tmaps\tcpu_ticks'
@@ -427,6 +433,7 @@ printf 'sample-shell-memory: sampling=%s:%s interval_s=%s log=%s\n' \
   "$PID" "$SESSION" "$INTERVAL" "$LOG" >&2
 
 stopped=0
+taken=0
 while true; do
   # A row that fails ends the loop, not the script: the closing report is the
   # point of the run. Why it failed is decided below, not here, because the
@@ -437,7 +444,11 @@ while true; do
     break
   fi
   printf '%s\n' "$row" >>"$LOG"
+  taken=$((taken + 1))
   if [[ "$deadline" -gt 0 && "$(date +%s)" -ge "$deadline" ]]; then
+    break
+  fi
+  if [[ "$SAMPLES" -gt 0 && "$taken" -ge "$SAMPLES" ]]; then
     break
   fi
   sleep "$INTERVAL"

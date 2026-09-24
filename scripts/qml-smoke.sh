@@ -32,7 +32,9 @@
 # error; resident memory stays under the ceiling.
 #
 # Exit 0 when every check passed. Exit 77 when a prerequisite is missing,
-# naming it; that is not a pass. Exit 1 when a check failed.
+# naming it, or when the nested compositor failed to allocate its output
+# buffers during a run with failures; that is not a pass. Exit 1 when a
+# check failed.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
 # the end of the run. It catches a startup allocation blow-up and nothing
@@ -41,6 +43,15 @@
 # default is twice the rss_kib this script printed on the owner's machine on
 # 2026-09-21 with the three bundled plugins on one nested monitor. The
 # high-water mark is printed beside it as the reproducible reading.
+#
+# VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
+# to the first bar surface with a client in the compositor's layer list.
+# VGSH_SMOKE_RECONCILE_BUDGET_MS: ceiling on the time from a
+# setPluginEnabled reply to the build records no longer listing the
+# disabled widget, polled with qs ipc. Both defaults are twice the highest
+# reading of twelve runs of this script on the owner's machine (host cachy,
+# AMD Ryzen 9 9950X) on 2026-09-23, which read 100 to 127 ms and 12 to
+# 15 ms, each carrying its poll interval.
 set -euo pipefail
 
 timeout_s=60
@@ -57,6 +68,8 @@ done
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-576968}"
+first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-254}"
+reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
 
 missing=()
 for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus; do
@@ -217,8 +230,23 @@ cat >"$home/.config/vgs/shell.json" <<'JSON'
 { "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } } }
 JSON
 
+now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+start_ms="$(now_ms)"
 spawn "$sandbox/qs.log" "${shell_env[@]}" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
+
+# Latency from the runner's exec to the first bar surface with a client,
+# polled every 10 ms from the compositor's layer list, which answers in a
+# few milliseconds; the reading carries at most one poll interval.
+first_bar_ms=""
+for _ in $(seq 1 $((timeout_s * 100))); do
+  if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
+    first_bar_ms=$(( $(now_ms) - start_ms ))
+    break
+  fi
+  kill -0 "$shell_pid" 2>/dev/null || break
+  sleep 0.01
+done
 
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
 ipc() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
@@ -322,7 +350,20 @@ expect "the core built the bar and its placed widget per screen, and no built-in
 # Disable only lists the id: the layout entry and its settings stay, so
 # re-enabling restores the exact screen. The effective configuration is
 # read back for the entry, the user file for what the manager wrote.
-expect "disabling a widget is allowed" ok ipc shell setPluginEnabled acme.tick false
+# Latency from a setPluginEnabled reply to `built` reflecting it, polled
+# with qs ipc against the shell's pid; the reading carries one IPC round trip.
+reconcile_ms=""
+if disable_reply="$(ipc shell setPluginEnabled acme.tick false)"; then
+  replied_ms="$(now_ms)"
+  for _ in $(seq 1 500); do
+    if built_now="$("${shell_env[@]}" qs ipc --pid "$shell_pid" call shell built 2>>"$sandbox/ipc.log" | tail -n 1)" && [[ -n $built_now && $built_now != *'"id":"acme.tick"'* ]]; then
+      reconcile_ms=$(( $(now_ms) - replied_ms ))
+      break
+    fi
+    sleep 0.005
+  done
+fi
+if [[ $disable_reply == ok ]]; then ok "disabling a widget is allowed"; else fail "disabling a widget is allowed: got $disable_reply"; fi
 tick_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.tick"][0])'; }
 tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
@@ -840,15 +881,38 @@ else
   ok "shell log holds no error ($instance_log)"
 fi
 
+echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$first_bar_budget_ms"
+if [[ -n $first_bar_ms && $first_bar_ms -le $first_bar_budget_ms ]]; then ok "the first bar maps within its budget"; else fail "first bar latency ${first_bar_ms:-unmeasured} ms over budget $first_bar_budget_ms ms"; fi
+echo "  latency_reconcile_ms=${reconcile_ms:-unmeasured} budget_ms=$reconcile_budget_ms"
+if [[ -n $reconcile_ms && $reconcile_ms -le $reconcile_budget_ms ]]; then ok "a disable reaches the build records within its budget"; else fail "reconcile latency ${reconcile_ms:-unmeasured} ms over budget $reconcile_budget_ms ms"; fi
+
+# The memory sampler finds the shell `vgsh run` started through the runner's
+# lock file and the instance list, and samples it by pid.
+sampler_rows() { awk -F'\t' -v pid="$shell_qs_pid" 'NR > 1 && $2 == pid { n++ } END { print n + 0 }' "$sandbox/memory.tsv"; }
+if "${shell_env[@]}" "$repo/scripts/sample-shell-memory.sh" --interval 1 --samples 2 --log "$sandbox/memory.tsv" >"$sandbox/sampler.out" 2>"$sandbox/sampler.err"; then
+  expect "the memory sampler logged two samples of the runner's shell" 2 sampler_rows
+else
+  fail "memory sampler exited non-zero: $(head -n 2 "$sandbox/sampler.err")"
+fi
+
 rss_kib=0; hwm_kib=0
 if ! rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "resident size unreadable for pid $shell_qs_pid"; fi
 if ! hwm_kib="$(awk '/^VmHWM:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "high-water mark unreadable for pid $shell_qs_pid"; fi
 echo "  rss_kib=$rss_kib hwm_kib=$hwm_kib ceiling_kib=$rss_ceiling_kib"
 if [[ $rss_kib -gt 0 && $rss_kib -le $rss_ceiling_kib ]]; then ok "resident size under the ceiling"; else fail "resident size $rss_kib KiB over ceiling $rss_ceiling_kib KiB"; fi
 
+# A nested compositor that cannot allocate its output buffers stops laying
+# out surfaces, so every geometry row after that reads zeros. Such a run
+# measured the sandbox, not the shell: it reports not-measured, which is
+# never a pass, and names the cause.
+if [[ $failures -gt 0 ]] && grep -q -s 'Failed to allocate a GBM buffer' "$rt_dir"/hypr/*/hyprland.log; then
+  printf 'qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=%s\n' "$failures"
+  exit 77
+fi
 if [[ $failures -gt 0 ]]; then
   echo "qml-smoke: failed=$failures"
   echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true
+  echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null || true
   exit 1
 fi
 echo "qml-smoke: ok"
