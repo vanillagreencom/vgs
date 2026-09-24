@@ -2,9 +2,11 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 
-// The bar: three sections across the surface. The core mounts every widget
-// into the section containers this file declares and keeps them current;
-// this file owns geometry only. `shell` and `screen` are assigned by the
+// The bar: three sections across the surface. Each section shows the bar's
+// own built-in widgets first, in the order its `left`, `center` and `right`
+// settings list them, then the plugin widgets the core mounts into the
+// same container. The core owns every plugin widget; this file owns the
+// geometry and the built-ins. `shell` and `screen` are assigned by the
 // core after creation.
 Item {
     id: bar
@@ -24,7 +26,33 @@ Item {
     readonly property Item centerSection: center
     readonly property Item rightSection: right
 
-    RowLayout { id: left; spacing: Style.spacing.controlGap; anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
-    RowLayout { id: center; spacing: Style.spacing.controlGap; anchors.centerIn: parent }
-    RowLayout { id: right; spacing: Style.spacing.controlGap; anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
+    // The built-in names one section lists, as text: a settings change
+    // that leaves the list alone produces the same string, so the section
+    // keeps its built-ins instead of rebuilding them.
+    function builtinsKey(section) {
+        const names = shell !== null && Array.isArray(shell.settings[section]) ? shell.settings[section] : [];
+        return JSON.stringify(names);
+    }
+    readonly property string leftKey: builtinsKey("left")
+    readonly property string centerKey: builtinsKey("center")
+    readonly property string rightKey: builtinsKey("right")
+
+    RowLayout {
+        id: left
+        spacing: Style.spacing.controlGap
+        anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom }
+        Repeater { model: JSON.parse(bar.leftKey); Builtin { barItem: bar } }
+    }
+    RowLayout {
+        id: center
+        spacing: Style.spacing.controlGap
+        anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; bottom: parent.bottom }
+        Repeater { model: JSON.parse(bar.centerKey); Builtin { barItem: bar } }
+    }
+    RowLayout {
+        id: right
+        spacing: Style.spacing.controlGap
+        anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom }
+        Repeater { model: JSON.parse(bar.rightKey); Builtin { barItem: bar } }
+    }
 }

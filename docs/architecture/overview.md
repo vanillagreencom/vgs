@@ -12,7 +12,8 @@ The plugin is the unit of change and the core is the foundation it stands on. Th
 - Plugin: a directory with `manifest.json` at its root, in the schema [plugins.md](plugins.md) states, plus one QML entry point per kind.
 - Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`. A kind is a surface the core can host, and every kind has a host. The core owns the list; a new kind is a core change.
 - Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own.
-- Bar: the plugin of kind `bar` that is active. It declares three section containers the core mounts bar widgets into; it owns geometry only.
+- Bar: the plugin of kind `bar` that is active. It declares three section containers the core mounts bar widgets into; it owns their geometry and its own built-in widgets.
+- Built-in widget: a widget a plugin draws itself inside its own surface, such as the shipped bar's clock. It is part of that plugin, not a plugin; the plugin registers it so the build records list it.
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.

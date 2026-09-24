@@ -30,7 +30,7 @@ Declare it as `property var shell: null`; the templates do.
 |---|---|---|
 | `bar` | object | the bar API below |
 | `moduleName` | string | the plugin id; the template sets it |
-| `settings` | object | the manifest's `settings` under the widget's layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }`; reassigned when the entry changes |
+| `settings` | object | the manifest's `settings` under the widget's layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; reassigned when the entry changes |
 
 `BarWidget` adds `vertical`, `barSize` and `setting(name, fallback)`.
 
@@ -41,7 +41,7 @@ Declare it as `property var shell: null`; the templates do.
 | `screen` | received | ShellScreen | the screen this bar draws on |
 | `leftSection`, `centerSection`, `rightSection` | declared | Item | the containers the core parents widgets into, in layout order; a `RowLayout` in the template |
 
-A bar never creates, destroys or reads a widget.
+A bar never creates, destroys or reads a plugin widget. It may draw built-in widgets of its own ahead of them in each container and register each with `shell.builtins`.
 
 ## The shell object
 
@@ -49,7 +49,7 @@ A bar never creates, destroys or reads a widget.
 |---|---|---|
 | `shell.manifest` | always | this plugin's validated manifest |
 | `shell.settings` | always | the manifest's `settings` under the plugin's configuration entry |
-| `shell.compositor.focusWorkspace(workspace)`, `.focusWindow(address)`, `.moveWindowToWorkspace(address, workspace)`, `.toggleSpecialWorkspace(name)`, `.closeWindow(address)` | capability `compositor` | one dispatch each, through the core's argument check and reply judge; returns `ok` or `refused: ...` |
+| `shell.compositor.focusWorkspace(workspace)`, `.focusWindow(address)`, `.moveWindowToWorkspace(address, workspace)`, `.toggleSpecialWorkspace(name)`, `.closeWindow(address)` | capability `compositor` | one dispatch each, through the core's argument check and reply judge; a moved window's workspace does not take focus; returns `ok` or `refused: ...` |
 | `shell.configure.set(key, value)` | capability `configure` | writes one schema-declared setting to the entry this instance reads; returns `ok` or `refused: setting=<key> ...` |
 | `shell.ipc.handle(name, fn)` | capability `ipc` | `vgsh ipc call <plugin id> invoke <name> <arg>` calls `fn(arg)` and answers its result; returns a disposer |
 | `shell.lock.lock(component)`, `.unlock()`, `.locked`, `.secure` | capability `lock` | the session lock; the component declares `property var screen` and is built on every screen |
@@ -58,6 +58,7 @@ A bar never creates, destroys or reads a widget.
 | `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings; returns `ok` or `refused: argv=...` |
 | `shell.screens.all`, `.current` | capability `screens` | every screen; the screen this instance draws on, null for a service |
 | `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
+| `shell.builtins.register(name, item)` | capability `builtins` | records an item the plugin draws itself under its host key as `<plugin id>/<name>`, kind `builtin`; returns a disposer |
 | `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu on this instance's screen, under `anchor` (an item of the plugin's) when given; returns the IPC reply |
 
 A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
@@ -92,6 +93,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `screens` | `shell.screens` |
 | `shortcut` | `shell.shortcut` |
 | `surfaces` | `shell.surfaces` |
+| `builtins` | `shell.builtins` |
 
 ## Allowed imports
 

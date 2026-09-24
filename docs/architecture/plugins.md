@@ -47,7 +47,8 @@ Disabling the active bar hides every enabled bar widget and the manager's reply 
 - The core builds an entry point with `Qt.createComponent` on a `file://` URL and assigns its properties after creation, never as initial properties: initial properties cross a QVariant conversion that drops functions and turns nested lists into sequences `Array.isArray` rejects. A host hands the core the properties it owns (a bar's `screen`) through the slot's `context`; no host assigns a plugin property itself.
 - Every instance receives `shell`: its manifest, its settings, and one provider per capability its manifest names. A bar widget also receives `bar`, `moduleName` and `settings`. A bar also receives `screen`.
 - Settings are the manifest's `settings` under the configuration entry for the plugin: the layout entry for a bar widget, the `plugins` row for every other kind.
-- The core mounts bar widgets into the active bar's section containers, in layout order, and records every widget under the bar's host key. A bar owns geometry only: it never builds, destroys or interprets a widget.
+- The core mounts bar widgets into the active bar's section containers, in layout order, and records every widget under the bar's host key. A bar never builds, destroys or interprets a plugin widget.
+- A bar may draw built-in widgets of its own in the same containers, ahead of the plugin widgets. It registers each through its `builtins` capability, which records it under the bar's host key as `<bar id>/<name>` with kind `builtin`; the core did not build it, so the build counter does not move. The shipped bar draws its workspaces and clock this way, chosen by its own `left`, `center` and `right` settings, and reaches the compositor through its own `compositor` capability.
 - Quickshell watches only files reached from `shell.qml` by static import, so an edit inside a plugin reloads nothing. `vgsh ipc call shell rescanPlugins` re-reads manifests; a changed set bumps the generation every slot keys on.
 
 ## Reconciliation
@@ -68,18 +69,7 @@ A capability is a core API named in the manifest's `capabilities` and delivered 
 - The notification server and the polkit agent exist only while a plugin holds their capability, so a shell with no such plugin claims neither role. The notification server's D-Bus name stays owned by the shell process after its last holder is disabled; the smoke observed the name held five seconds after the server was destroyed.
 - A registration name a plugin chooses is lower case, digits and dashes. A second registration of the same shortcut or IPC name throws an `Error` whose message starts `refused:`.
 
-| Capability | Gives the plugin |
-|---|---|
-| `compositor` | `focusWorkspace(workspace)`, `focusWindow(address)`, `moveWindowToWorkspace(address, workspace)` without following, `toggleSpecialWorkspace(name)`, `closeWindow(address)`. `shell/Core/Dispatch.js` builds each in the session's syntax and refuses an argument that could break out of it; the reply is judged by the core. Each returns `ok` or a keyed refusal. |
-| `configure` | `set(key, value)`: writes one setting to the configuration entry this instance reads, after the manifest's `schema` accepts the key and value. Needs a `schema`. |
-| `ipc` | `handle(name, fn)`: one IPC target named for the plugin id, whose `invoke <name> <arg>` calls `fn(arg)` and answers its result as text. |
-| `lock` | `lock(component)`, `unlock()`, `locked`, `secure`: the one session lock. The component is built on every screen inside the lock surface and receives `screen`. Unloading the holder keeps a locked session locked. |
-| `notifications` | `subscribe(fn)`: every notification the one server receives, in subscription order; `tracked`, the server's tracked notifications. A subscriber sets `tracked` on a notification it keeps. |
-| `polkit` | `agent`: the one polkit agent. |
-| `run` | `detached(argv)`: starts a detached process from an argument list; no shell parses it. |
-| `screens` | `all`, every screen; `current`, the screen this instance draws on, or null for a service. |
-| `shortcut` | `register(name, description, onPressed)`: a global shortcut Hyprland binds as `global, <plugin id>:<name>`. |
-| `surfaces` | `summon(kind, payloadJson, anchor)`, `hide(kind)`, `toggle(kind, payloadJson, anchor)`: the plugin's own summonable kinds, on this instance's screen, placed under `anchor` when one is given. Each returns the IPC reply. |
+Each capability's members are listed in [`.agents/skills/vgs-plugin/references/api.md` § The shell object](../../.agents/skills/vgs-plugin/references/api.md#the-shell-object). Three carry rules of their own: `compositor` builds every request through `shell/Core/Dispatch.js`, which refuses an argument that could break out of the session's syntax; `configure` writes only a key the manifest's `schema` declares, with a value of its type, to the configuration entry the calling instance reads; `lock` keeps a locked session locked when its holder is unloaded.
 
 A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 

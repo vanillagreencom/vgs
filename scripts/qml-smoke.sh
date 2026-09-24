@@ -11,7 +11,8 @@
 #
 # Checks, in order: the runner starts the shell and it answers IPC; the
 # instance guard reports true; every bundled plugin loads with no manifest
-# error; one bar surface maps per monitor with the shipped widgets; a widget
+# error; one bar surface maps per monitor, registers its built-in
+# workspaces and clock and mounts a placed plugin widget; a widget
 # can be disabled and re-enabled with its placement and settings kept;
 # disabling the bar names the widgets it hides, unloads it and unmaps its
 # surface; an unrelated write and a no-op rescan build nothing; a user
@@ -191,6 +192,29 @@ done
 if [[ $monitors -gt 0 ]]; then ok "nested compositor lists $monitors monitor(s)"; else
   printf 'qml-smoke: status=not-measured missing=nested-monitor\n'; exit 77
 fi
+# The shipped bar carries its clock and workspaces as built-ins, so the
+# widget rows use a third-party widget placed in the user file before the
+# shell starts.
+tick="$home/.config/vgs/plugins/acme.tick"
+mkdir -p "$tick"
+cat >"$tick/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.tick", "name": "Tick", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget",
+  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Widget.qml" }, "defaultSection": "center", "settings": { "format": "HH:mm" } }
+JSON
+cat >"$tick/Widget.qml" <<'QML'
+import QtQuick
+import qs.Ui
+BarWidget {
+    moduleName: "acme.tick"
+    readonly property string format: String(setting("format", ""))
+    implicitWidth: 20
+    implicitHeight: barSize
+}
+QML
+cat >"$home/.config/vgs/shell.json" <<'JSON'
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } } }
+JSON
+
 spawn "$sandbox/qs.log" "${shell_env[@]}" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
 
@@ -222,17 +246,17 @@ expect() {
 
 expect "instance guard accepts the runner's shell" true ipc shell guarded
 
-# Plugins scan asynchronously; wait for the bundled three.
+# Plugins scan asynchronously; wait for the bundled bar and the placed widget.
 plugins_json=""
 for _ in $(seq 1 100); do
-  if plugins_json="$(ipc shell listPlugins)" && python3 -c 'import json,sys; d=json.load(sys.stdin); ids={p["id"] for p in d["plugins"]}; sys.exit(0 if {"vgs.bar","vgs.clock","vgs.workspaces"} <= ids else 1)' <<<"$plugins_json"; then break; fi
+  if plugins_json="$(ipc shell listPlugins)" && python3 -c 'import json,sys; d=json.load(sys.stdin); ids={p["id"] for p in d["plugins"]}; sys.exit(0 if {"vgs.bar","acme.tick"} <= ids else 1)' <<<"$plugins_json"; then break; fi
   sleep 0.2
 done
 if python3 - "$plugins_json" <<'PY'
 import json, sys
 d = json.loads(sys.argv[1])
 by = {p["id"]: p for p in d["plugins"]}
-missing = [i for i in ("vgs.bar", "vgs.clock", "vgs.workspaces") if i not in by]
+missing = [i for i in ("vgs.bar", "acme.tick") if i not in by]
 disabled = [i for i in by if i.startswith("vgs.") and not by[i]["enabled"]]
 if missing or disabled or d["errors"] or d["collisions"]:
     print("missing=%s disabled=%s errors=%s collisions=%s" % (missing, disabled, d["errors"], d["collisions"]))
@@ -269,30 +293,46 @@ expect_widgets() { # LABEL EXPECTED_JSON_LIST
   done
   fail "$1: got $got want $want"
 }
-expect_widgets "every bar built the workspaces and clock widgets" '["vgs.workspaces","vgs.clock"]'
+expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
+# Built-in widget ids every bar registered, sorted.
+bar_builtins() {
+  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:sorted(r["id"] for r in v if r["kind"]=="builtin") for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
+}
+expect_builtins() { # LABEL EXPECTED_JSON_LIST
+  local want got=""
+  if ! want="$(python3 -c 'import json,sys; print(json.dumps([json.loads(sys.argv[1])]*int(sys.argv[2])))' "$2" "$monitors")"; then fail "$1: expected list unreadable"; return; fi
+  for _ in $(seq 1 25); do
+    if got="$(bar_builtins)" && [[ $got == "$want" ]]; then ok "$1"; return; fi
+    sleep 0.2
+  done
+  fail "$1: got $got want $want"
+}
+expect_builtins "every bar registered its built-in workspaces and clock" '["vgs.bar/clock","vgs.bar/workspaces"]'
 
 # A rebuild counter: the core counts every instance it builds. Rows below
 # assert that an unrelated write and a no-op rescan build nothing.
 builds() { ipc shell buildCount; }
-expect "the core built the bar and its two widgets per screen" "$((3 * monitors))" builds
+expect "the core built the bar and its placed widget per screen, and no built-in" "$((2 * monitors))" builds
 
 # Disable only lists the id: the layout entry and its settings stay, so
 # re-enabling restores the exact screen. The effective configuration is
 # read back for the entry, the user file for what the manager wrote.
-expect "disabling a widget is allowed" ok ipc shell setPluginEnabled vgs.clock false
-clock_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="vgs.clock"][0])'; }
-clock_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="vgs.clock"]))'; }
+expect "disabling a widget is allowed" ok ipc shell setPluginEnabled acme.tick false
+tick_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.tick"][0])'; }
+tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
-expect_widgets "the bar dropped the disabled widget" '["vgs.workspaces"]'
-expect "widget reads disabled after the user file changed" False clock_state
-expect "the disabled widget keeps its layout entry and settings" '[{"id": "vgs.clock", "format": "ddd d MMM  HH:mm"}]' clock_entry
-expect "disable wrote only the disabled list" "disabledPlugins,version" user_keys
-expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled vgs.clock true
-expect_widgets "the bar rebuilt the re-enabled widget" '["vgs.workspaces","vgs.clock"]'
-expect "re-enable wrote only the disabled list" "disabledPlugins,version" user_keys
+expect_widgets "the bar dropped the disabled widget" '[]'
+expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/clock","vgs.bar/workspaces"]'
+expect "widget reads disabled after the user file changed" False tick_state
+expect "the disabled widget keeps its layout entry and settings" '[{"id": "acme.tick", "format": "ddd d MMM  HH:mm"}]' tick_entry
+expect "disable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
+expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled acme.tick true
+expect_widgets "the bar rebuilt the re-enabled widget" '["acme.tick"]'
+expect "re-enable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
 
-expect "disabling the bar names the widgets it hides" "ok hidden=vgs.clock,vgs.workspaces" ipc shell setPluginEnabled vgs.bar false
+expect "disabling the bar names the widgets it hides" "ok hidden=acme.tick" ipc shell setPluginEnabled vgs.bar false
 expect_widgets "the bar host unloaded the disabled bar" '[]'
+expect_builtins "the disabled bar's built-ins left the build records" '[]'
 bars_now=-1
 for _ in $(seq 1 50); do
   if bars_now="$(bar_count)" && [[ $bars_now == 0 ]]; then break; fi
@@ -301,7 +341,8 @@ done
 if [[ $bars_now == 0 ]]; then ok "the bar host destroyed its surface with no bar"; else fail "bar surfaces with the bar disabled: $bars_now"; fi
 expect "no bar reserves no screen space" 0 reserved_total
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
-expect_widgets "the bar host rebuilt the re-enabled bar" '["vgs.workspaces","vgs.clock"]'
+expect_widgets "the bar host rebuilt the re-enabled bar" '["acme.tick"]'
+expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/clock","vgs.bar/workspaces"]'
 for _ in $(seq 1 50); do
   if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
   sleep 0.2
@@ -439,11 +480,12 @@ service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys
 bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
 read_widget() { ipc shell readInstance "$(bar_key)" acme.probe "$1"; }
 read_service() { ipc shell readInstance service acme.probe "$1"; }
-read_clock() { ipc shell readInstance "$(bar_key)" vgs.clock "$1"; }
+read_clock() { ipc shell readInstance "$(bar_key)" vgs.bar/clock "$1"; }
+read_tick() { ipc shell readInstance "$(bar_key)" acme.tick "$1"; }
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == True ]]; then break; fi; sleep 0.2; done
 if [[ $got == True ]]; then ok "the service host built the fixture service"; else fail "service host: built=$got"; fi
-expect_widgets "the fixture widget joined the right section" '["vgs.workspaces","vgs.clock","acme.probe"]'
+expect_widgets "the fixture widget joined the right section" '["acme.tick","acme.probe"]'
 expect "the fixture widget can call its compositor capability" true read_widget hasCompositor
 expect "the fixture widget's settings array stayed an array" true read_widget tagsAreArray
 all_caps='"compositor,configure,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut"'
@@ -460,7 +502,15 @@ expect_poll() { # LABEL WANT CMD...
 }
 expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc shell readInstance service acme.bare shellKeys
 expect "the fixture service reads the manifest default" '"probe"' read_service label
-expect "the clock widget reads its layout entry" '"ddd d MMM  HH:mm"' read_clock format
+expect "a placed widget reads its layout entry" '"ddd d MMM  HH:mm"' read_tick format
+expect "the built-in clock reads the bar's clock format" '"ddd d MMM  HH:mm"' read_clock format
+
+# The built-in workspaces focus through the bar's own compositor capability.
+active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
+expect "the built-in workspaces focus a workspace" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/workspaces focusWorkspace 2
+expect_poll "the compositor moved to the clicked workspace" 2 active_ws
+expect_poll "the built-in workspaces focus the first workspace again" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/workspaces focusWorkspace 1
+expect_poll "the compositor moved back to the first workspace" 1 active_ws
 
 # A settings change reaches the running instance and builds nothing: the
 # service's plugins[] row, then the clock's layout entry.
@@ -481,11 +531,21 @@ import json, os, sys
 p = sys.argv[1]
 d = json.load(open(p))
 center = d["bar"]["layout"]["center"]
-[e for e in center if e["id"] == "vgs.clock"][0]["format"] = "HH:mm:ss"
+[e for e in center if e["id"] == "acme.tick"][0]["format"] = "HH:mm:ss"
 json.dump(d, open(p + ".tmp", "w"), indent=2)
 os.replace(p + ".tmp", p)
 PY
-  expect_poll "the running clock received its changed layout entry" '"HH:mm:ss"' read_clock format
+  expect_poll "the running widget received its changed layout entry" '"HH:mm:ss"' read_tick format
+  expect "a widget settings change rebuilds nothing" "$before" builds
+  python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["plugins"] = [e for e in d.get("plugins", []) if e["id"] != "vgs.bar"] + [{"id": "vgs.bar", "clockFormat": "HH:mm:ss"}]
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+  expect_poll "the built-in clock received the bar's changed setting" '"HH:mm:ss"' read_clock format
   # The shared clock ticks seconds only while a format shows them: three
   # readings across 2.2 s change at least twice at second precision and at
   # most once at minute precision.
@@ -498,7 +558,8 @@ PY
     sleep 1.1
   done
   if [[ $clock_changes -ge 2 ]]; then ok "the shared clock ticks seconds for a seconds format"; else fail "clock text changed $clock_changes times in 2.2 s"; fi
-  expect "a widget settings change rebuilds nothing" "$before" builds
+  expect "a bar settings change rebuilds nothing" "$before" builds
+  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/clock","vgs.bar/workspaces"]'
 else
   fail "buildCount unreadable before the settings rows"
 fi
@@ -560,7 +621,6 @@ expect "a service draws on no screen" true read_service noCurrentScreen
 expect "the fixture widget draws on its bar's screen" "\"$(bar_key | sed 's/^bar://')\"" read_widget currentScreen
 
 special_ws() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["specialWorkspace"]["name"])'; }
-active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
 expect "the fixture toggles a special workspace" ok probe dispatch 'toggleSpecialWorkspace probe'
 expect_poll "the compositor shows the special workspace" "special:probe" special_ws
 expect_poll "the fixture closes the special workspace again" ok probe dispatch 'toggleSpecialWorkspace probe'
@@ -571,7 +631,7 @@ expect_poll "the fixture focuses the first workspace again" ok probe dispatch 'f
 expect_poll "the compositor moved back" 1 active_ws
 
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
-expect_widgets "the fixture widget left the bar" '["vgs.workspaces","vgs.clock"]'
+expect_widgets "the fixture widget left the bar" '["acme.tick"]'
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then break; fi; sleep 0.2; done
 if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
@@ -678,12 +738,14 @@ expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
 # centred on it.
 expect "the widget summons its panel under itself" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 widget_geometry="$(ipc shell invokeInstance "bar:$screen_name" acme.surfaces geometry '')"
+widget_rows() { python3 -c 'import json,sys; g=json.loads(sys.argv[1]); print(g[1], g[3])' "$widget_geometry"; }
+expect "a mounted widget spans the bar's height" "0 $bar_reserved" widget_rows
 anchored_want="$(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); mw=int(sys.argv[2]); left=max(0, min(round(x + w/2 - 100), mw - 200)); print(json.dumps([[left, int(y + h + 8), 200, 120]]))' "$widget_geometry" "$mon_w")"
 expect_poll "the anchored panel sits under its widget" "$anchored_want" layers_of vgs:panel
 expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc shell readInstance panel acme.surfaces lastPayload
 
 expect "a background is not summonable" "refused: not-summonable=background" ipc shell summon background acme.surfaces '{}'
-expect "a plugin without the kind is refused" "refused: kind=panel id=vgs.clock" ipc shell summon panel vgs.clock '{}'
+expect "a plugin without the kind is refused" "refused: kind=panel id=acme.tick" ipc shell summon panel acme.tick '{}'
 expect "an unknown plugin is refused" "unknown: acme.nope" ipc shell summon panel acme.nope '{}'
 expect "disabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces false
 expect_poll "disabling closes its open panel" 0 layer_count vgs:panel
@@ -706,7 +768,7 @@ if [[ $bare_guarded == false ]]; then ok "a bare qs beside the runner refuses to
 sleep 0.5
 if bars_after="$(bar_count)" && [[ $bars_after == "$bars" ]]; then ok "the bare qs mapped no bar surface"; else fail "bar surfaces after bare qs: ${bars_after:-unreadable}"; fi
 user_before="$(cat "$home/.config/vgs/shell.json")"
-expect "the bare qs refuses to write configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell setPluginEnabled vgs.clock false
+expect "the bare qs refuses to write configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell setPluginEnabled acme.tick false
 expect "the bare qs refuses to reload configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell reloadConfig
 expect "the bare qs refuses to rescan" "refused: guard=unowned pid=$bare_pid" bare_ipc shell rescanPlugins
 expect "the bare qs refuses to summon" "refused: guard=unowned pid=$bare_pid" bare_ipc shell summon panel acme.probe '{}'

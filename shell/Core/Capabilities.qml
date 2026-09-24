@@ -72,7 +72,7 @@ Singleton {
     }
 
     // The providers for one instance: one per capability its manifest
-    // names. `ctx` is { id, manifest, kind, screen, onDispose(fn) }; every
+    // names. `ctx` is { id, manifest, kind, hostKey, screen, onDispose(fn) }; every
     // hold and registration is released through ctx.onDispose.
     function providersFor(ctx) {
         const out = {};
@@ -131,6 +131,9 @@ Singleton {
         }),
         shortcut: ctx => ({
             register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
+        }),
+        builtins: ctx => ({
+            register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
         }),
         surfaces: ctx => ({
             summon: (kind, payloadJson, anchor) => Plugins.route("summon", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor)),

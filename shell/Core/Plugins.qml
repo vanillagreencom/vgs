@@ -200,7 +200,7 @@ Singleton {
         const onScreen = screen !== undefined && screen !== null ? screen : (context && context.screen ? context.screen : null);
         const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
         try {
-            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, screen: onScreen, onDispose: fn => row.disposers.push(fn) });
+            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, onDispose: fn => row.disposers.push(fn) });
         } catch (e) {
             console.error("plugins: " + id + " capabilities failed: " + e.message);
             for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
@@ -255,7 +255,29 @@ Singleton {
         const next = Object.assign(Object.create(null), built);
         next[hostKey] = (next[hostKey] || []).concat([row]);
         built = next;
-        buildCount += 1;
+        if (row.kind !== "builtin") buildCount += 1;
+    }
+
+    // Record a widget a plugin draws itself (a bar's clock) under the
+    // plugin's host key as `<plugin id>/<name>`, kind `builtin`, so the
+    // build records list everything on the surface. The core built none of
+    // it, so the build counter does not move. Returns the disposer, which
+    // the plugin calls when the widget goes and the core calls when the
+    // plugin's instance goes.
+    function recordBuiltin(ctx, name, item) {
+        Capabilities.checkName("builtin", name);
+        const id = ctx.id + "/" + name;
+        if (Logic.hasOwn(built, ctx.hostKey) && built[ctx.hostKey].some(r => r.id === id))
+            throw new Error("refused: builtin=" + id + " held host=" + ctx.hostKey);
+        record(ctx.hostKey, { id: id, kind: "builtin", instance: item, capabilities: [], entry: null, settingsKey: "", providers: {}, disposers: [], screen: ctx.screen });
+        let live = true;
+        const dispose = () => {
+            if (!live) return;
+            live = false;
+            root.forget(ctx.hostKey, item);
+        };
+        ctx.onDispose(dispose);
+        return dispose;
     }
 
     function forget(hostKey, instance) {

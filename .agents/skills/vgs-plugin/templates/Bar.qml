@@ -3,9 +3,10 @@ import QtQuick.Layouts
 import qs.Commons
 
 // __NAME__: a replacement bar. The core assigns `shell` and `screen` after
-// creation, mounts every widget into the three section containers declared
-// below and keeps them current. This file owns geometry only: where each
-// section sits, its spacing, the bar's colours and font.
+// creation, mounts every plugin widget into the three section containers
+// declared below and keeps them current. This file owns their geometry:
+// where each section sits, its spacing, the bar's colours and font. Each
+// container spans the bar's height so a widget is centred in it.
 Item {
     id: bar
 
@@ -24,7 +25,7 @@ Item {
     readonly property Item centerSection: center
     readonly property Item rightSection: right
 
-    RowLayout { id: left; spacing: Style.spacing.controlGap; anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
-    RowLayout { id: center; spacing: Style.spacing.controlGap; anchors.centerIn: parent }
-    RowLayout { id: right; spacing: Style.spacing.controlGap; anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; verticalCenter: parent.verticalCenter } }
+    RowLayout { id: left; spacing: Style.spacing.controlGap; anchors { left: parent.left; leftMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom } }
+    RowLayout { id: center; spacing: Style.spacing.controlGap; anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; bottom: parent.bottom } }
+    RowLayout { id: right; spacing: Style.spacing.controlGap; anchors { right: parent.right; rightMargin: Style.spacing.controlPaddingX; top: parent.top; bottom: parent.bottom } }
 }

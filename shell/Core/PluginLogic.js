@@ -9,7 +9,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins"];
 
 // Capabilities whose core object serves one plugin at a time: the session
 // lock and the polkit agent. A second plugin naming one is not built while

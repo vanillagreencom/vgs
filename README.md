@@ -1,6 +1,6 @@
 # VGS v2
 
-A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, every widget in it, every panel, every background service. A small fixed core starts the shell, hosts the surfaces and loads plugins, and each plugin ships with the check that keeps it fast and stable.
+A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the widgets you add to it, every panel, every background service. A small fixed core starts the shell, hosts the surfaces and loads plugins, and each plugin ships with the check that keeps it fast and stable.
 
 ## Install
 
@@ -18,9 +18,7 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 
 | Plugin | What it does |
 |---|---|
-| [Bar](shell/plugins/vgs.bar/README.md) | The bar. Three sections of widgets across the top of every screen. |
-| [Clock](shell/plugins/vgs.clock/README.md) | Date and time in the bar. |
-| [Workspaces](shell/plugins/vgs.workspaces/README.md) | Workspace numbers in the bar. Click one to focus it. |
+| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces and clock and three sections for plugin widgets. |
 
 ## How it works
 
@@ -33,7 +31,7 @@ Not yet. The first release comes with its install command. From a checkout, `bin
 
 - `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
 - `~/.config/vgs/theme.json`: the five palette colours every plugin reads.
-- A widget's settings sit inline on its layout entry, for example `{ "id": "vgs.clock", "format": "HH:mm" }`; every other plugin's sit on its row in `plugins`. A change reaches the running plugin without a restart.
+- A widget's settings sit inline on its layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; every other plugin's sit on its row in `plugins`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`. A change reaches the running plugin without a restart.
 
 ## Writing a plugin
 

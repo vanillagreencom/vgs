@@ -1,17 +1,23 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
-import qs.Ui
 
-// Workspace numbers. The id list comes from the shared Workspaces token, so
-// every screen reads one derivation. Focusing one goes through this
-// plugin's own compositor capability, which judges the reply.
-BarWidget {
+// Workspace numbers from the shared Workspaces token. Focusing one goes
+// through the bar's own compositor capability, which checks the argument
+// and judges the reply.
+Item {
     id: root
-    moduleName: "vgs.workspaces"
+
+    required property Item bar
 
     implicitWidth: row.implicitWidth
-    implicitHeight: barSize
+    implicitHeight: bar.barSize
+
+    // Focus workspace `id`; answers the capability's reply. Not `focus`,
+    // which every Item already has as a property.
+    function focusWorkspace(id) {
+        return root.bar.shell.compositor.focusWorkspace(Number(id));
+    }
 
     RowLayout {
         id: row
@@ -26,21 +32,21 @@ BarWidget {
                 readonly property bool focused: Workspaces.focusedId === modelData
 
                 Layout.preferredWidth: Style.space(5)
-                Layout.preferredHeight: root.barSize - Style.spacing.md
+                Layout.preferredHeight: root.bar.barSize - Style.spacing.md
                 radius: Style.cornerRadius
                 color: focused ? Color.bar.active : "transparent"
 
                 Text {
                     anchors.centerIn: parent
                     text: String(parent.modelData)
-                    color: parent.focused ? Color.background : Color.bar.text
-                    font.family: Style.font.family
+                    color: parent.focused ? Color.background : root.bar.foreground
+                    font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.size
                 }
 
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: root.shell.compositor.focusWorkspace(parent.modelData)
+                    onClicked: root.focusWorkspace(parent.modelData)
                 }
             }
         }
