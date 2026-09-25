@@ -141,7 +141,11 @@ case "${1:-}" in
     n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
     echo "$OT_TMUX_SERVER_PID %$n" ;;
   list-panes)
-    i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
+    # The pane ids alone where the read asks for nothing more, as tmux prints them.
+    i=1; while [[ "$i" -le "$n" ]]; do
+      if [[ "${*: -1}" == '#{pane_id}' ]]; then echo "%$i"; else echo "$OT_TMUX_SERVER_PID %$i"; fi
+      i=$((i + 1))
+    done ;;
   list-windows) echo "1" ;;
   show-environment)
     # The tmux environment a new pane inherits, which is not the launcher's own.
@@ -319,7 +323,7 @@ run_ot() {
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$RUN/remote" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
-    TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
+    TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree.path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" ${flag_args[@]+"${flag_args[@]}"} "$@" 2>&1)
@@ -974,7 +978,7 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash 
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
 run_ot "ORCH_LANE_ALIASES=eclaude=work;flags=-m gpt-6-astra -c model_reasoning_effort=high" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex $Q-c$Q ${Q}check_for_update_on_startup=false$Q $Q-m$Q ${Q}gpt-6-astra$Q $Q-c$Q ${Q}model_reasoning_effort=high$Q resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \
   "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
 # The lane comes up idle, so the launcher owes the operator a record saying the
@@ -1001,7 +1005,7 @@ if command -v codex >/dev/null 2>&1; then
   # escape, which is what the remote shell does before codex sees its argv.
   RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex .*\)'.*/\1/p" "$RUN/tmux.log" \
     | tail -1 | sed "s/'\\\\''/'/g")"
-  assert_eq "${RENDERED:-MISSING}" "codex '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
+  assert_eq "${RENDERED:-MISSING}" "codex '-c' 'check_for_update_on_startup=false' '-m' 'gpt-6-astra' '-c' 'model_reasoning_effort=high' resume --last" \
     "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
   CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
@@ -1337,7 +1341,7 @@ orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes" "$SCRIPTREPO/scripts/lane-marker"
 git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
+  TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$TMP_ROOT/caller.tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
   --cmd "true --model opus --effort high" CC-20 ) >/dev/null 2>&1
@@ -1353,7 +1357,7 @@ git -C "$SCRIPTREPO" remote add origin git@github.com:script-owner/script-repo.g
 git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.git
 REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
+  TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
   OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto \
   --cmd 'true {repo} --model opus --effort high' CC-21 ) >/dev/null 2>&1
@@ -1395,7 +1399,7 @@ run_bad_repo() {
   mkdir -p "$caller"
   git -C "$caller" init -q
   ( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    GH_REPO="$BAD_REPO" TMUX=stub,1,0 OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
+    GH_REPO="$BAD_REPO" TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$script" --harness claude --lane auto \
@@ -1437,7 +1441,7 @@ marked() {
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
   out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
     OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
     "$script" --harness claude --cmd true CC-40 2>&1 )" || rc=$?
   wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
@@ -1674,7 +1678,7 @@ lane_launch() {
   [[ "$late" != gated ]] || gate="$runs/gate"
   "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" & tree=$!
   out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
+    TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_LAUNCHED_GATE="$gate" \
     OT_WT_LOG="$runs/worktree.log" OT_WT_FIXED="$fixed_wt" OVERSEE_WATCH_STATE_DIR="$runs/state" \
@@ -1963,7 +1967,7 @@ run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.ucla
 assert_eq "$(observe "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \
   "rc=1 launched=nolog modelmissing=none unreadable=lane=$H/.uclaude,model=sonnet,step=windows" \
   "the space-spelled model is judged against that lane's own window, which measures nothing for it"
-mutant_repo ctl-take "$LAUNCH_LIB" 'tokens\[i+1\]'
+mutant_repo ctl-take "$LAUNCH_LIB" 'printf.*tokens\[i+1\]'
 OPEN_TERMINAL="$TMP_ROOT/ctl-take/scripts/open-terminal"
 run_ot "cmd=true --model sonnet --effort high" --harness claude --lane "$H/.uclaude" CC-66
 assert_eq "$(observe "rc=1 launched=nolog unreadable=none modelmissing=harness=claude,lane=$H/.uclaude,spellings=--model")" \

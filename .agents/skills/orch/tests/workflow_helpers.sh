@@ -41,6 +41,38 @@ assert_file_contains() {
   fi
 }
 
+# Plants one literal substitution in a copy of a workflow doc and asserts the
+# contract PREDICATE, green on the real doc, goes red on the copy. OLD must
+# occur on exactly one line, and the copy must differ from the source.
+DOC_MUTANT_SEQ=0
+assert_doc_mutant_fails() {
+  local predicate="$1" source="$2" old="$3" new="$4" label="$5" mutant count
+  DOC_MUTANT_SEQ=$((DOC_MUTANT_SEQ + 1))
+  mutant="$TMP_ROOT/doc-mutant-$DOC_MUTANT_SEQ.md"
+  count="$(grep -Fc -- "$old" "$source" || true)"
+  assert_eq "$count" "1" "control: $label has one mutation target"
+  if [[ -L "$source" ]]; then
+    fail "control: $label mutation source must not be a symlink"
+    return 0
+  fi
+  # Literal, through the environment and index/substr: sub() reads its
+  # pattern as a regex, and these rules carry brackets and backticks.
+  MUT_OLD="$old" MUT_NEW="$new" awk '
+    {
+      old = ENVIRON["MUT_OLD"]
+      at = index($0, old)
+      if (at) { $0 = substr($0, 1, at - 1) ENVIRON["MUT_NEW"] substr($0, at + length(old)) }
+      print
+    }' "$source" >"$mutant"
+  assert_eq "$(cmp -s "$mutant" "$source" && echo same || echo differs)" "differs" \
+    "control: the mutant for $label changes the file"
+  if "$predicate" "$mutant"; then
+    fail "must-fail: $label must fail its contract"
+  else
+    pass "must-fail: $label fails its contract"
+  fi
+}
+
 orch_docs() {
   printf '%s\n' "$SKILL_DIR/SKILL.md" "$SKILL_DIR/README.md" "$SKILL_DIR/DEVELOPMENT.md"
   find "$SKILL_DIR/workflows" "$SKILL_DIR/references" "$SKILL_DIR/schemas" -type f -name '*.md'
@@ -296,11 +328,28 @@ for wf in dev-fix review-pr-comments; do
   fi
 done
 
-# The gate resolution is implemented once, in approval-wait. A workflow that
-# re-derives it from the raw settings keys will drift from the engine switch.
-for wf in submit-pr merge-pr ci-fix micro; do
+# Approval-wait owns gate-mode resolution for workflows that wait on a
+# reviewer. The micro route reads its class exemption from review-policy.
+#
+# Under an ACTIVE class policy the resolver refuses a call with no range, so a
+# --resolve-mode call whose endpoints nothing binds is a step that cannot run.
+# Every workflow that resolves a mode therefore reads the pull request's own
+# endpoints first, in the call below, and every --resolve-mode line it carries
+# names both flags.
+for wf in submit-pr merge-pr ci-fix; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'approval-wait --resolve-mode' "$wf resolves the gate mode through approval-wait"
+  assert_file_contains "$doc" "gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'" \
+    "$wf binds the endpoints the resolver needs"
+  # The invocation spelling carries the script path; the preamble's prose
+  # mention of the flag is not a step and is not counted.
+  resolve_lines="$(grep -c -- 'scripts/approval-wait --resolve-mode' "$doc" || true)"
+  ranged_lines="$(grep -c -- 'scripts/approval-wait --resolve-mode --base ' "$doc" || true)"
+  if [ "$resolve_lines" -gt 0 ] && [ "$resolve_lines" -eq "$ranged_lines" ]; then
+    pass "$wf passes a range on every one of its $resolve_lines --resolve-mode calls"
+  else
+    fail "$wf has $resolve_lines --resolve-mode call(s) and $ranged_lines carrying a range"
+  fi
   if grep -Fq 'orch-env PR_APPROVAL_GATE' "$doc" || grep -Fq 'orch-env PR_REVIEW_GATE' "$doc"; then
     fail "$wf re-derives the gate mode from settings instead of --resolve-mode"
   else
@@ -308,40 +357,105 @@ for wf in submit-pr merge-pr ci-fix micro; do
   fi
 done
 
-micro_workflow="$SKILL_DIR/workflows/micro.md"
-merge_refusal_route() { # merge-doc
-  awk '
-    /^   Exit `1` BLOCKED on any other path/ {
-      starts++
-      inside = 1
-    }
-    /^   \*\*The `--auto` arm\*\*/ {
-      if (inside) {
-        inside = 0
-        ends++
-      }
-      next
-    }
-    inside { print }
-    END {
-      if (starts != 1 || ends != 1 || inside) exit 1
-    }
-  ' "$1"
+# The merged short-circuit is only a short-circuit while it precedes the reads
+# it skips: below them, a resolution that refuses for want of an orphaned head
+# stands between a completed merge and its cleanup.
+already_merged_line="$(grep -n -F '`[ALREADY_MERGED]=true` skips to step 2' "$merge_workflow" | cut -d: -f1 || true)"
+resolve_line="$(grep -n -F 'approval-wait --resolve-mode --base [PREPARED_BASE]' "$merge_workflow" | cut -d: -f1 || true)"
+if [[ -n "$already_merged_line" && -n "$resolve_line" && "$already_merged_line" -lt "$resolve_line" ]]; then
+  pass "merge-pr sends an already-merged PR to step 2 before it resolves a mode"
+else
+  fail "merge-pr must short-circuit an already-merged PR above the gate-mode resolution (short-circuit=${already_merged_line:-absent}, resolve=${resolve_line:-absent})"
+fi
+
+# A waiver is only pinned while the rows that apply it say which head it was
+# resolved for. Both gate rows name the recorded head, and the mode is written
+# beside that head in one write, so no future mode can be recorded without one.
+submit_workflow="$SKILL_DIR/workflows/submit-pr.md"
+pinned_waiver_is_closed() { # submit-doc
+  grep -Fq '`exempt` at the live endpoints: neither term applies' "$1" &&
+    grep -Fq '`exempt` at the live endpoints, and `off`: not applicable' "$1" &&
+    grep -Fq 'workflow-state set [ISSUE_ID] pr_review.head_sha [HEAD_SHA]' "$1" &&
+    grep -Fq 'Gates 3 and 4 waive on that fresh answer alone' "$1" &&
+    grep -Fq 'The recorded pair says what the last resolution saw and gates nothing' "$1"
 }
 
-micro_review_gate_is_closed() { # micro-doc merge-doc
-  local merge_route=""
-  if ! merge_route="$(merge_refusal_route "$2")"; then
-    return 1
+if pinned_waiver_is_closed "$submit_workflow"; then
+  pass "submit-pr waives gates 3 and 4 on a live resolution, not on the recorded pair"
+else
+  fail "submit-pr must waive gates 3 and 4 on a live resolution, not on the recorded pair"
+fi
+
+waiver_mutant="$TMP_ROOT/submit-pr-unpinned.md"
+waiver_rule='The recorded pair says what the last resolution saw and gates nothing'
+waiver_rule_count="$(grep -Fc -- "$waiver_rule" "$submit_workflow" || true)"
+assert_eq "$waiver_rule_count" "1" "control: the pinned waiver has one mutation target"
+if [[ -L "$submit_workflow" ]]; then
+  fail "control: the submit workflow mutation source must not be a symlink"
+else
+  awk -v old="$waiver_rule" -v new='The recorded pair decides gates 3 and 4.' \
+    '{ if (index($0, old)) sub(old, new); print }' "$submit_workflow" >"$waiver_mutant"
+  assert_eq "$(cmp -s "$waiver_mutant" "$submit_workflow" && echo same || echo differs)" "differs" \
+    "control: the waiver mutant makes the record decide"
+  if pinned_waiver_is_closed "$waiver_mutant"; then
+    fail "must-fail: a waiver decided from the record must fail the live-answer contract"
+  else
+    pass "must-fail: a waiver decided from the record fails the live-answer contract"
   fi
-  [[ -n "$merge_route" ]] &&
-    grep -Fq 'with no `review_fetch_failed:` issue' "$1" &&
-    grep -Fq '| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |' "$1" &&
-    grep -Fq '| `APPROVED` | Continue. Save this state as proof that GitHub'"'"'s required review is complete. |' "$1" &&
-    grep -Fq '| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |' "$1" &&
-    grep -Fq '`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;' <<<"$merge_route" &&
-    grep -Fq '`APPROVED` grants no exception.' <<<"$merge_route"
+fi
+
+micro_head_is_pinned() { # merge-doc
+  grep -Fq 'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' "$1" &&
+    grep -Fq 'Any other answer arms nothing and escapes by micro.md condition 9' "$1"
 }
+
+if micro_head_is_pinned "$merge_workflow"; then
+  pass "merge-pr continues a micro entry only on a fresh exempt answer at the classified head"
+else
+  fail "merge-pr must continue a micro entry only on a fresh exempt answer at the classified head"
+fi
+
+assert_doc_mutant_fails micro_head_is_pinned "$merge_workflow" \
+  'A `[MICRO_ENTRY]` run continues only where the mode resolved above is `exempt` AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`' \
+  'A `[MICRO_ENTRY]` run continues' \
+  "a micro entry continued on a stale answer"
+
+micro_workflow="$SKILL_DIR/workflows/micro.md"
+micro_policy_is_closed() { # micro-doc
+  grep -Fq 'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid' "$1" &&
+    grep -Fq 'review-gate/scripts/review-policy --event pull_request --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]' "$1" &&
+    grep -Fq 'The exact answer `change_class=micro review_evidence=none policy=active` continues.' "$1" &&
+    grep -Fq 'independent of the repository'"'"'s `approval` or `review` gate mode' "$1" &&
+    grep -Fq 'an inactive policy, an unresolved class, another class, or another evidence policy escapes' "$1" &&
+    grep -Fq 'Require a valid readiness object for an open pull request.' "$1" &&
+    grep -Fq 'binding `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`.' "$1" &&
+    grep -Fq '9. merge-pr.md § 5 step 1 refuses: the mode it resolves over the prepared endpoints is not `exempt`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`.' "$1" &&
+    ! grep -Fq 'approval-wait --resolve-mode' "$1"
+}
+
+if micro_policy_is_closed "$micro_workflow"; then
+  pass "micro continues only on its active no-review class policy"
+else
+  fail "micro must escape when its no-review class policy cannot be proved"
+fi
+
+policy_mutant="$TMP_ROOT/micro-policy-open.md"
+policy_rule='The exact answer `change_class=micro review_evidence=none policy=active` continues.'
+policy_mutant_rule='Any answer carrying `change_class=micro` continues.'
+policy_rule_count="$(grep -Fc -- "$policy_rule" "$micro_workflow" || true)"
+assert_eq "$policy_rule_count" "1" "control: the micro class policy has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  awk -v old="$policy_rule" -v new="$policy_mutant_rule" '{ if (index($0, old)) sub(old, new); print }' "$micro_workflow" >"$policy_mutant"
+  assert_eq "$(cmp -s "$policy_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the policy mutant changes the active route"
+  if micro_policy_is_closed "$policy_mutant"; then
+    fail "must-fail: accepting an unresolved evidence policy must fail the micro contract"
+  else
+    pass "must-fail: accepting an unresolved evidence policy fails the micro contract"
+  fi
+fi
 
 micro_dirty_transfer_is_owned() { # micro-doc
   local route=""
@@ -359,75 +473,7 @@ micro_dirty_transfer_is_owned() { # micro-doc
 }
 
 assert_file_contains "$micro_workflow" 'pr-merge [PR_NUMBER] --check' \
-  "micro asks the canonical merge gate for required-review state before merge"
-if micro_review_gate_is_closed "$micro_workflow" "$merge_workflow"; then
-  pass "micro accepts only the two safe review states and limits the pending-review auto arm"
-else
-  fail "micro must fail closed on every unproved review state and limit the pending-review auto arm"
-fi
-
-review_mutant="$TMP_ROOT/micro-review-open.md"
-review_fallback='| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |'
-review_fallback_mutant='| Any other value, including an empty value | Continue. Save this state for merge. |'
-review_fallback_count="$(grep -Fxc -- "$review_fallback" "$micro_workflow" || true)"
-assert_eq "$review_fallback_count" "1" "control: the fail-closed review route has one mutation target"
-if [[ -L "$micro_workflow" ]]; then
-  fail "control: the micro workflow mutation source must not be a symlink"
-else
-  awk -v old="$review_fallback" -v new="$review_fallback_mutant" '{ if ($0 == old) $0 = new; print }' \
-    "$micro_workflow" >"$review_mutant"
-  assert_eq "$(cmp -s "$review_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
-    "control: the review mutant changes the fallback route"
-  if micro_review_gate_is_closed "$review_mutant" "$merge_workflow"; then
-    fail "must-fail: allowing every review state must fail the micro gate contract"
-  else
-    pass "must-fail: allowing every review state fails the micro gate contract"
-  fi
-fi
-
-merge_review_mutant="$TMP_ROOT/micro-merge-review-open.md"
-merge_route_start='   Exit `1` BLOCKED on any other path'
-unsafe_merge_route='   Exit `1` BLOCKED on any other path → classify the refusal. Its `cause: ci_pending` or `cause: none` takes the `--auto` arm below. `[MICRO_REVIEW_STATE]` of `APPROVED` also takes that arm. Every other state or cause returns to § 3.2.'
-safe_none_reference='`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;'
-safe_approved_reference='`APPROVED` grants no exception.'
-merge_route_start_count="$(grep -Fc -- "$merge_route_start" "$merge_workflow" || true)"
-assert_eq "$merge_route_start_count" "1" "control: the merge refusal route has one mutation target"
-if [[ -L "$merge_workflow" ]]; then
-  fail "control: the merge workflow mutation source must not be a symlink"
-else
-  awk -v start="$merge_route_start" -v replacement="$unsafe_merge_route" \
-    -v safe_none="$safe_none_reference" -v safe_approved="$safe_approved_reference" '
-    index($0, start) == 1 { print replacement; replaced++; next }
-    { print }
-    END {
-      if (replaced != 1) exit 1
-      print ""
-      print "Unused reference: " safe_none " " safe_approved
-    }
-  ' "$merge_workflow" >"$merge_review_mutant"
-  assert_eq "$(cmp -s "$merge_review_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
-    "control: the merge mutant changes the active refusal route"
-  merge_review_route=""
-  if merge_review_route="$(merge_refusal_route "$merge_review_mutant")" &&
-    grep -Fq '`APPROVED` also takes that arm.' <<<"$merge_review_route" &&
-    ! grep -Fq -- "$safe_none_reference" <<<"$merge_review_route" &&
-    ! grep -Fq -- "$safe_approved_reference" <<<"$merge_review_route"; then
-    pass "control: the active mutant route grants APPROVED and excludes the safe clauses"
-  else
-    fail "control: the active mutant route must grant APPROVED and exclude the safe clauses"
-  fi
-  if grep -Fq -- "$safe_none_reference" "$merge_review_mutant" &&
-    grep -Fq -- "$safe_approved_reference" "$merge_review_mutant"; then
-    pass "control: the merge mutant keeps the old whole-document matches outside the route"
-  else
-    fail "control: the merge mutant must keep the old whole-document matches outside the route"
-  fi
-  if micro_review_gate_is_closed "$micro_workflow" "$merge_review_mutant"; then
-    fail "must-fail: granting APPROVED an auto-merge exception must fail the micro gate contract"
-  else
-    pass "must-fail: granting APPROVED an auto-merge exception fails the micro gate contract"
-  fi
-fi
+  "micro asks the canonical merge gate to enforce required checks and merge conflicts"
 
 if micro_dirty_transfer_is_owned "$micro_workflow"; then
   pass "micro routes dirty main-checkout escapes 2 through 4 through transfer"
@@ -453,6 +499,120 @@ else
     pass "must-fail: leaving dirty edits in main fails the transfer contract"
   fi
 fi
+
+# On a hosted fleet the overseer's main-checkout route runs on the control VM,
+# which runs none of the toolchain the rest of the route starts: the refusal
+# stands between START and STOP, scoped to that route, ahead of the first
+# tracker read, handoff resume or route step, so nothing is resumed,
+# activated or created first.
+refuses_control_host() { # FILE KEY START STOP
+  local head=""
+  if ! head=$(START="$3" STOP="$4" awk '
+    !inside && $0 ~ ENVIRON["START"] { inside = 1; print; next }
+    inside && $0 ~ ENVIRON["STOP"] { exit }
+    inside { print }
+  ' "$1"); then
+    return 1
+  fi
+  [[ -n "$head" ]] &&
+    grep -Fxq '**Main checkout only.** Read the lane host before anything else:' <<<"$head" &&
+    grep -Fxq '.agents/skills/orch/scripts/lane-host resolve' <<<"$head" &&
+    grep -Fq 'Any answer but `local` refuses the run here' <<<"$head" &&
+    grep -Fq "\`$2 host=[HOST]\`" <<<"$head" &&
+    grep -Fq 'launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement' <<<"$head"
+}
+micro_refuses_control_host() { refuses_control_host "$1" micro-control-host '^## 1\. ' 'linear\.sh|^## 2\.'; } # micro-doc
+start_workflow="$SKILL_DIR/workflows/start.md"
+# start.md's head runs to its first section, so the refusal precedes § 0's
+# handoff resume and its `handoff.resumed_at` stamp.
+start_refuses_control_host() { refuses_control_host "$1" start-control-host '^# ' '^## '; } # start-doc
+
+if micro_refuses_control_host "$micro_workflow"; then
+  pass "micro refuses the main-checkout route on a resolved remote lane host"
+else
+  fail "micro must refuse the main-checkout route on a resolved remote lane host"
+fi
+if start_refuses_control_host "$start_workflow"; then
+  pass "start refuses the main-checkout route on a resolved remote lane host"
+else
+  fail "start must refuse the main-checkout route on a resolved remote lane host"
+fi
+
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  'Any answer but `local` refuses the run here, with nothing read, activated or changed;' \
+  'Any answer continues the run;' \
+  "a micro run continuing on a remote lane host"
+assert_doc_mutant_fails micro_refuses_control_host "$micro_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a micro refusal that also binds a lane"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  'Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created;' \
+  'Any answer continues the run;' \
+  "a start run continuing on a remote lane host"
+assert_doc_mutant_fails start_refuses_control_host "$start_workflow" \
+  '**Main checkout only.** Read the lane host before anything else:' \
+  'Read the lane host before anything else:' \
+  "a start refusal that also binds a lane"
+
+# The refusal moved back below § 0 keeps every pinned line and lets a handoff
+# resume first.
+start_move_mutant="$TMP_ROOT/start-refusal-after-resume.md"
+start_marker='**Main checkout only.** Read the lane host before anything else:'
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_workflow" || true)" "1" \
+  "control: the start refusal has one block to move"
+MARKER="$start_marker" awk '
+  $0 == ENVIRON["MARKER"] { held = 1 }
+  held && /^## 0\. / { held = 0 }
+  held { block = block $0 "\n"; next }
+  /^## 1\. / { printf "%s", block }
+  { print }
+' "$start_workflow" >"$start_move_mutant"
+assert_eq "$(grep -Fxc -- "$start_marker" "$start_move_mutant" || true)" "1" \
+  "control: the moved start refusal keeps its marker"
+assert_eq "$(cmp -s "$start_move_mutant" "$start_workflow" && echo same || echo differs)" "differs" \
+  "control: the mutant moves the start refusal below § 0"
+if start_refuses_control_host "$start_move_mutant"; then
+  fail "must-fail: a start refusal after the handoff resume must fail its contract"
+else
+  pass "must-fail: a start refusal after the handoff resume fails its contract"
+fi
+
+# A guard sees only the top-level call, so every script that reads a listed
+# `setting` through orch-env and runs it needs its own `path` line in the
+# control-host list. The readers are derived from the scripts, never listed.
+toolchain_conf="$SKILL_DIR/references/control-host-toolchain.conf"
+SETTING_RUNNERS_FOUND=0
+setting_runners_listed() { # CONF
+  local keys="" key runners="" runner rc=0 listed=0
+  SETTING_RUNNERS_FOUND=0
+  keys="$(awk '$1 == "setting" { print $2 }' "$1")" || return 2
+  for key in $keys; do
+    rc=0
+    runners="$(grep -rlE "orch-env\"?[[:space:]]+$key([^A-Za-z0-9_]|\$)" "$REPO_ROOT"/skills/*/scripts)" || rc=$?
+    [[ "$rc" -le 1 ]] || return 2
+    for runner in $runners; do
+      SETTING_RUNNERS_FOUND=$((SETTING_RUNNERS_FOUND + 1))
+      grep -Fxq "path .agents/${runner#"$REPO_ROOT"/}" "$1" || listed=1
+    done
+  done
+  return "$listed"
+}
+
+if setting_runners_listed "$toolchain_conf"; then
+  pass "every script running a listed setting has its own path line"
+else
+  fail "every script running a listed setting must have its own path line"
+fi
+if [[ "$SETTING_RUNNERS_FOUND" -ge 2 ]]; then
+  pass "the setting-runner scan finds the orch-env readers"
+else
+  fail "the setting-runner scan found $SETTING_RUNNERS_FOUND orch-env readers (floor 2): its extraction is broken"
+fi
+assert_doc_mutant_fails setting_runners_listed "$toolchain_conf" \
+  'path .agents/skills/orch/scripts/post-merge' \
+  '# post-merge dropped' \
+  "a listed setting whose runner has no path line"
 
 echo
 echo "=== frozen cross-skill contracts ==="

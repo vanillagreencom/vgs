@@ -62,6 +62,18 @@
 LANE_MODEL_JQ='
 def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 
+# The statuses that can carry a usage reading, named once so both guards below
+# and the record `lanes` emits agree. `rate_limited` carries one only where the
+# endpoint refused a usage REFRESH while the host still held its last figures:
+# those windows were read from the account, and usage_age_s says how old they
+# are. Treating that lane as unmeasured would wall every launch on the host for
+# the length of a transient burst, which is the whole cost the status exists
+# to remove. A `rate_limited` lane with no figure, a token renewal refused with
+# 429 or a usage 429 with nothing cached, passes this test too and reaches null
+# only through the headroom_pct check in binding_bucket and the null-pct filter
+# in max_binding, which must stay.
+def lane_measured: (.status == "ok" or .status == "rate_limited");
+
 def wall_rank:
   if .bucket == "weekly" then 2
   elif .bucket == "model" then 1
@@ -97,7 +109,7 @@ def model_binding($model):
 # A record whose usage could not be read answers null whatever its other fields
 # say: a window nobody read is not an empty one.
 def binding_bucket:
-  if (.status != "ok" or .headroom_pct == null
+  if ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -106,7 +118,7 @@ def binding_bucket:
   end;
 
 def lane_binding($model):
-  if .status != "ok" then null
+  if (lane_measured | not) then null
   elif $model != "" then model_binding($model)
   else binding_bucket
   end;
@@ -165,6 +177,20 @@ def with_lane_binding($model; $binding_floor):
             else null end)};
 
 def lane_public: del(._rate_prior, ._rate_elapsed_s);
+
+# One spelling for every reset a lane record carries: whole-second UTC with a
+# Z, the form Codex resets are rendered in. The Claude usage endpoint writes
+# fractional seconds and +00:00, and a provider row carries whatever its
+# timestamp is; a reader parsing the stamp (the BSD `date` arm cannot read the
+# fraction) or comparing two of them by equality, as with_lane_binding does
+# with the prior sample, needs one form. emit_lane applies it to the current
+# windows and to the prior sample alike, so the comparison stays like with like.
+def utc_stamp: if type == "string" then sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") else . end;
+def utc_resets:
+  (if (.resets | type) == "object" then .resets |= map_values(utc_stamp) else . end)
+  | (if (.model_buckets | type) == "array"
+     then .model_buckets |= map(if type == "object" then .resets_at |= utc_stamp else . end)
+     else . end);
 
 # wall_verdict($max) over ONE percentage from lane_binding above: the
 # one word both pick forms answer with. Room, walled, or unmeasured.

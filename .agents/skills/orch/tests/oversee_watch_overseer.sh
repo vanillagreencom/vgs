@@ -71,6 +71,10 @@ case "${1:-}" in
     else echo "claude -n overseer 'brief'"; fi
     exit 0 ;;
   --check-marks)
+    # The lane-read window this judgement inherits, recorded per call: the
+    # watch names its own pass interval there so the reader inside serves a
+    # figure it has not come round for yet instead of posting for it again.
+    printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/succeed.max-age"
     rc=0; [[ ! -f "$STUB_DIR/succeed.check-rc" ]] || rc="$(cat "$STUB_DIR/succeed.check-rc")"
     # stdout is handed away before the wait: the watch reads this mode in a
     # command substitution, which stays open while any writer holds that pipe,
@@ -380,20 +384,12 @@ assert_eq "marks=$(marks_seen)" "marks=0" \
 # spent its whole interval there would delay every other event it carries.
 if command -v timeout >/dev/null 2>&1; then
   # The copy shortens the ceiling so the row need not wait out the real one.
-  CEILING_DIR="$TMP_ROOT/ceiling"
-  mkdir -p "$CEILING_DIR/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
-  sed 's/^MARK_CEILING=60$/MARK_CEILING=1/' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
-  chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-    "differs" "the shortened-ceiling copy really differs from the watch"
+  shortened_ceiling_watch
   overseer_case mark_ceiling idle
   state_with "$LINE"
   mark_stands
   touch "$STUB_DIR/succeed.check-hang"
-  WATCH_BIN="$CEILING_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+  WATCH_BIN="$CEILING_WATCH" run TMUX_PANE="$PANE" -- --max-loops 1
   assert_eq "rc=$RC marks=$(marks_seen)" "rc=0 marks=0" \
     "a judgement the ceiling abandoned reports no mark and ends no pass" "$ERR"
   assert_contains "$(cat "$ERR")" "oversee-watch: overseer-mark-unjudged path=" \
@@ -931,6 +927,34 @@ run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "judged=$(succeed_calls --check-marks) marks=$(grep -c '^EVENT overseer-mark' <<<"$OUT" || true)" \
   "judged=1 marks=1" \
   "the refuted wall reports the standing context mark off the one reading it took" "$ERR"
+
+# The usage endpoint answered every account 429 on the control host because
+# each watch, each judgement and each pick refreshed the same accounts
+# independently. A pass names two of its OWN intervals to the lane reader
+# inside the judgement: consecutive judgements are one interval of sleep plus a
+# pass's work apart, so the previous reading is served rather than posted for
+# again. A larger setting is kept, since this variable outranks the settings
+# ladder, and one `lanes` cannot read is passed on for it to refuse. One pass
+# per row, so the interval is never slept.
+for row in \
+  "two intervals, with no setting||90" \
+  "a larger setting kept rather than narrowed|1000|1000" \
+  "a smaller setting widened to two intervals|60|90" \
+  "an unreadable setting passed on for lanes to refuse|4m|4m"; do
+  IFS='|' read -r label setting want <<<"$row"
+  overseer_case mark_interval walled
+  state_with "$LINE"
+  printf '%s\n' "oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80" \
+    > "$STUB_DIR/succeed.check"
+  if [[ -n "$setting" ]]; then
+    run TMUX_PANE="$PANE" ORCH_LANES_USAGE_MAX_AGE="$setting" -- --max-loops 1 --interval 45
+  else
+    run TMUX_PANE="$PANE" -- --max-loops 1 --interval 45
+  fi
+  assert_eq "judged=$(succeed_calls --check-marks) age=$(paste -sd, "$STUB_DIR/succeed.max-age") accounts=$(paste -sd, "$STUB_DIR/lanes.max-age")" \
+    "judged=1 age=$want accounts=$want" \
+    "the usage window of both account reads: $label" "$ERR"
+done
 
 # One reading is a poll, exactly as it is for a death.
 overseer_case walled_one_pass walled

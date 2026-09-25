@@ -144,6 +144,24 @@ to still be at its recorded original head, checks that branch out, clears the
 record, and re-applies worktree setup, refusing and keeping the record when the
 branch has moved or the checkout fails.
 
+Conflicted hooks: a harness re-reads its hooks on every event, and conflict
+markers in one make it fail every tool call and turn end. So when a paused
+restack's conflicts include a path that a tracked harness hook declaration
+runs (any JSON file whose top-level 'hooks' entries carry a 'command', such as
+.claude/settings.json, .codex/hooks.json or .pi/kendex/hooks.json), that path
+takes one side of the conflict, its conflicted content is saved beside it as
+<path>.restack-conflict, and one 'worktree-restack-hook-held:' line names
+every such path. Resolve the markers in the saved copy, then replace the hook
+in one step with 'mv <path>.restack-conflict <path>', stage the hook, and
+unstage the copy with 'git rm -q --cached --ignore-unmatch --
+<path>.restack-conflict'. continue and skip refuse with
+'worktree-restack-hook-unconsumed:' while a saved copy is in the worktree or
+the index; deleting it, staging the path and unstaging the copy keeps the held
+side. abort removes the saved copies. The held set is the paths a declaration's command names,
+not the files those hooks source. When the declarations cannot be read, for
+example with jq missing, every conflicted path is held the same way.
+Conflicts in every other path keep their markers in place.
+
 On completion, continue and skip report one 'rebase-map: <old-sha>
 <new-sha|dropped>' line per rewritten commit on stderr and append the same
 lines, under a 'rebase-hop:' line of their own, to 'kendex-rebase-map' in the
@@ -232,7 +250,8 @@ Reuse rebase conflicts:
        conflicted.
   With no conflict, --restack completes the same rebase as --reuse. The
   guarded actions fail closed on missing, stale, or unrelated state
-  (restack --help).
+  (restack --help). A conflicted path a harness runs as a hook is held at a
+  parseable side instead of left with markers (restack --help).
 
 Rewritten commits:
   A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
@@ -426,14 +445,32 @@ worktrees).
 
 Force-with-lease authorization: after the auto-rebase, the push uses a scoped
 --force-with-lease pinned to the target branch OID known before the rebase.
-'create --reuse' and the supported 'create --restack' conflict-recovery flow
-persist the same narrowly scoped authorization in the worktree: it records
-the exact observed remote OID and the exact successfully restacked local
-head. push accepts that rewritten head or later commits built on it, still
-pins the force-with-lease to the recorded remote OID, and consumes the
-authorization after success. A different local rewrite, remote movement while
-conflict resolution is pending, or a moved remote at push time fails closed.
+Every verb that rewrites the branch persists the same narrowly scoped
+authorization in the worktree before it rewrites: this auto-rebase, 'create
+--reuse' and the supported 'create --restack' conflict-recovery flow. It
+records the exact observed remote OID and the exact successfully rewritten
+local head. push accepts that rewritten head or later commits built on it,
+still pins the force-with-lease to the recorded remote OID, and consumes the
+authorization after success. Only success consumes it: a pre-push hook that
+refuses leaves the rewrite and its authorization standing, so the run that
+fixes what the hook named publishes without redoing that rebase and without a
+hand-run git command. A default branch that advanced since is rebased onto
+again under the same authorization. A different local rewrite, remote
+movement while conflict resolution is pending, or a moved remote at push time
+fails closed.
 Plain pushes are still used with --no-rebase.
+
+A remote OID the local branch does not contain is
+'worktree-push-remote-uncontained', and the route it names follows what the
+branch holds. Where the remote carries work the branch lacks, it names the
+fetch and rebase. Where the branch already carries every commit on the remote
+branch under rewritten SHAs, fetching and rebasing would replay work that
+rewrite superseded, so the refusal says so: no recorded authorization covers
+the rewrite. Running a rewrite verb on that branch now rewrites nothing and
+records nothing, so the refusal names the git push that republishes the
+branch, pinned to the remote OID it read. A rewrite push or the guarded
+restack recorded but could not map is refused on that record before this
+check, so that route is never named for it.
 
 rebase-map: when the auto-rebase rewrites branch commits, push prints one
 'rebase-map: <old-sha> <new-sha>' line per rewritten commit on stdout

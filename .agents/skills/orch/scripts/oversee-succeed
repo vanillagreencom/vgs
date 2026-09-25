@@ -102,11 +102,9 @@
 #        preference naming a rank that does not exist is a setting to fix, not
 #        a lane to pass over. An entry with no qualifying lane IS skipped.
 #        A named entry's LAUNCH carries the model and effort words its own row
-#        writes and, out of the flags after --, everything but that pair:
-#        those flags are the CALLER's, spelled for the caller's harness, so
-#        handing their pair on would give this successor a second model beside
-#        the one its pick was judged on, and an effort flag its own harness may
-#        not have at all.
+#        writes. A same-harness entry keeps the caller's permission words
+#        exactly. A cross-harness entry transfers only a full-bypass posture
+#        that both rows define, then writes the target row's spelling.
 #        The walk ALWAYS ends in one further entry, the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
@@ -159,6 +157,36 @@
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
 #        any closed window.
+#     6. Hand the fleet watch to the successor pane, arranged before step 5
+#        because nothing after the close can be counted on to run: the close
+#        ends the harness that ran this script, and one that kills its tool
+#        call's process group then takes this script with it. The repeat-mode
+#        `oversee-watch` recorded in oversee-watch.pid beside the fleet state
+#        (`workflow-state path oversee`) is named: `watch-absent` where none
+#        runs, and otherwise `watch-handover pid=<N> pane=<pane> log=<path>`,
+#        with a helper, this script's internal `--watch-restart` run, started
+#        through lib/lane-launch.sh's lane_run_detached: in a session of its
+#        own where setsid exists, and elsewhere clear of the hangup alone, so
+#        there a process-group kill takes the helper too, and the successor's
+#        own watch start taking over the watch of the closed pane is the
+#        recovery. The helper waits for the caller window to close and starts
+#        the watch again with its recorded command in its recorded directory
+#        under this run's environment, except that TMUX_PANE names the
+#        successor pane, the flags after `--` are the successor's, and the
+#        account variable names the successor's account. The restarted watch's
+#        own start stops the old one, whose pane is gone: `oversee-watch` is
+#        the one place a live watch is replaced. The helper writes how that
+#        went, `watch-restarted pid=<N> pane=<pane>` or the notice
+#        `watch-restart-failed step=<step>`, to oversee-watch.err, the
+#        restarted watch's stderr beside its stdout in oversee-watch.log, and
+#        the next watch start from anywhere but a succession prints both. A
+#        close that never happens leaves the watch serving the caller, which
+#        keeps running, and the helper records `step=close`. The helper waits
+#        at most WATCH_STOP_SECS (lib/watch-pid.sh) for the close, and twice
+#        that for the start, which includes that stop, none of it inside this
+#        run. Only this mode hands over: `--dead-pane` and `--walled-pane` are
+#        run by the watch itself, which stops once its successor holds the
+#        window.
 #   A failure at any step, or a TERM, INT or HUP from the launch until the
 #   close, leaves the caller's window running and closes a successor window
 #   already opened. All three are ignored during the close: it is the commit
@@ -176,15 +204,14 @@
 #                    confirming read can settle in. At 1 that floor is the whole
 #                    budget and the running-turn wait gets a single probe; at 2
 #                    and 3 each wait gets one second (default 60)
-#   -- FLAGS...      Passed to the harness word by word, each quoted: the
-#                    permission flags the overseer runs under, plus its own
-#                    model and effort. The walk always ends in the caller's own
-#                    harness, and a successor opened THERE is the only one that
-#                    takes those two words from here; a named preference entry
-#                    takes the permission flags and the model and effort its
-#                    own row writes. Print mode always needs the current model
-#                    and effort because it records this session, not the
-#                    preference.
+#   -- FLAGS...      Passed to the harness word by word, each quoted. A caller,
+#                    print or walled entry carries every word unchanged. A
+#                    named same-harness entry replaces model and effort but
+#                    keeps permission words exact. A named cross-harness entry
+#                    accepts one transferable full-bypass posture, and no other
+#                    permission word, and writes the target harness's spelling.
+#                    A mix refuses before launch. Print mode records this
+#                    session rather than a later preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --check-marks    Judge the triggers of step 2 against this overseer's own
 #                    pane and account, print the one keyed line that says what
@@ -212,7 +239,10 @@
 #                    successor goes. A codex line still carries the folder-trust
 #                    preparation of step 4, because the pane that replays it is
 #                    as unattended as the one a live succession opens, and the
-#                    home that trust was made in is part of the line.
+#                    home that trust was made in is part of the line. It also
+#                    carries -c check_for_update_on_startup=false once, ahead of
+#                    the flags after --, so the replayed pane never opens on the
+#                    Codex update prompt.
 #                    Exit 0 with the line on stdout
 #   --dead-pane PANE The tmux pane of an overseer that has already died, in
 #                    place of the caller's own: no mark is judged, no lane is
@@ -251,9 +281,11 @@
 # and `mark-unmeasured` are on stdout
 # and end the run at exit 0. `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
-# form the lane reached the harness by. `successor-working` goes to stdout only
-# after the close succeeded, and a real handoff has ended this script's window
-# by then.
+# form the lane reached the harness by. `watch-handover` and `watch-absent` are
+# on stdout too and settle nothing either, printed before the close, and a
+# `watch-restart-failed step=state-path` there is a notice on stderr.
+# `successor-working` goes to stdout only after the close succeeded, and a real
+# handoff has ended this script's window by then.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -291,7 +323,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
-    launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
+    launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
@@ -305,6 +337,10 @@ message() { # KEY FIELD=VALUE...
     successor-lane-unknown) text='The account check returned an outcome this script does not know; the successor was closed rather than trusted.' ;;
     successor-working) text='The successor is running in the caller window slot.' ;;
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
+    watch-handover) text='The fleet watch serving the caller pane is restarted from the successor pane once this window closes, by a helper in a session of its own where setsid exists; elsewhere a kill of this run process group can take the helper too, and the successor watch start then takes over the old watch instead. How the restart went is written to the log field, which the next watch start prints.' ;;
+    watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output goes beside the fleet state until the successor starts its own watch, which takes it over and prints that output.' ;;
+    watch-absent) text='No watch runs on the fleet state, so none is restarted. The successor starts its own.' ;;
+    watch-restart-failed) text='The fleet watch was not restarted from the successor pane; the succession stands and the step field names what failed. Where the old watch still runs it serves a pane tmux no longer lists, and the successor start takes it over; at step=close the caller window never closed and the old watch still serves it.' ;;
   esac
   printf 'oversee-succeed: %s' "$key"
   printf ' %s' "$@"
@@ -357,6 +393,66 @@ source "$SCRIPT_DIR/lib/lane-state.sh"
 # script reaches for it.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/watch-pid.sh
+source "$SCRIPT_DIR/lib/watch-pid.sh"
+
+# The internal `--watch-restart STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME
+# [FLAG...]` run, step 6's helper, which the succession starts before its
+# close, in a session of its own where setsid exists (header step 6). Every
+# line it prints goes to oversee-watch.err, where the handover pointed its
+# stdout and stderr, so the next watch start on the state other than a
+# succession's prints it. Each outcome is one keyed line, and none is a refusal
+# of anything: the succession has already committed.
+watch_restart() { # STATE CALLER_WINDOW PANE LANE_VAR LANE_HOME [FLAG...]
+  local state="$1" window="$2" pane="$3" var="$4" home="$5" windows deadline
+  local -a flags=()
+  shift 5
+  [[ $# -eq 0 ]] || flags=(-- "$@")
+  deadline=$((SECONDS + WATCH_STOP_SECS))
+  while :; do
+    if ! windows="$(tmux list-windows -a -F '#{window_id}' 2>"$DEP_ERR")"; then
+      message watch-restart-failed step=close "window=$window"
+      cat -- "$DEP_ERR"
+      return 0
+    fi
+    grep -qxF -- "$window" <<<"$windows" || break
+    if (( SECONDS >= deadline )); then
+      message watch-restart-failed step=close "window=$window"
+      return 0
+    fi
+    sleep 0.1
+  done
+  if ! watch_pid_live "$state"; then
+    message watch-absent "path=$state"
+    return 0
+  fi
+  watch_argv_read "$state" || { message watch-restart-failed step=argv "pid=$WATCH_PID"; return 0; }
+  if ! ( cd -- "$WATCH_CWD" && lane_run_detached "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
+      env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession \
+      "$WATCH_SCRIPT" ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"} ${flags[@]+"${flags[@]}"} ); then
+    message watch-restart-failed step=start "dir=$WATCH_CWD"
+    return 0
+  fi
+  # The watch this run started, known by the record it writes of itself: any
+  # other live record, one about to exit or one the successor started by hand,
+  # is not the restart this line reports. Its start stops the old watch first,
+  # which WATCH_STOP_SECS bounds, so it is given that and as long again.
+  deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
+  until watch_pid_live "$state" && [[ "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$pane" ]]; do
+    if (( SECONDS >= deadline )); then
+      message watch-restart-failed step=start "log=$WATCH_ERR_FILE"
+      return 0
+    fi
+    sleep 0.1
+  done
+  message watch-restarted "pid=$WATCH_PID" "pane=$pane"
+}
+if [[ "${1:-}" == --watch-restart ]]; then
+  shift
+  [[ $# -ge 5 ]] || die unknown-option "arg=--watch-restart"
+  watch_restart "$@"
+  exit 0
+fi
 
 # One account directory as its comparable identity, empty for an empty input.
 # The pairing is lib/lane-launch.sh's own, the one lane_account_check compares
@@ -1023,26 +1119,39 @@ else
   # spelling that launcher would refuse. A caller-entry successor passes no model,
   # and the writer then names neither word.
   choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
-  [[ -z "$choice_words" ]] || cmd+=" $choice_words"
-  # One place decides the model and effort words a launch carries, and for a
-  # NAMED entry that place is the writer above. The flags after -- are the
-  # CALLER's, spelled for the caller's own harness and naming the model this
-  # pane runs, so a named entry keeps their permission flags and drops that
-  # pair: codex has no effort flag at all, so a claude caller's --effort would
-  # keep the successor from starting, and a claude entry would carry a second
-  # --model that need not be the one its own pick was judged on. The caller
-  # entry keeps them whole — same harness, same spelling, and they are what
-  # hands on the model that pick WAS judged on. Which words those are is
-  # lib/lane-launch.sh's row for the caller's harness, so no spelling is
-  # written here; a harness that row cannot answer for refuses, because keeping
-  # the pair unread is the corruption itself.
+  # The successor's flag words as argv, from which the command is written in
+  # one place below and which the fleet watch restarted from the successor
+  # pane is handed, so the two cannot name different flags. The writers print
+  # printf %q words, which eval reads back as exactly the words written.
+  SUCC_FLAGS=()
+  [[ -z "$choice_words" ]] || eval "SUCC_FLAGS=($choice_words)"
+  # A caller entry keeps every word. A same-harness named entry strips model
+  # and effort but keeps the caller's exact permission spelling. A cross-harness
+  # entry accepts one full-bypass spelling whose meaning the shared row can
+  # prove and no other permission word, writes the target spelling, and strips
+  # all caller choices.
   if [[ "$chosen" == caller ]]; then
     LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
-  else
+  elif [[ "$harness" == "$CALLER_HARNESS" ]]; then
     launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
       || die launch-choice-failed "harness=$CALLER_HARNESS"
+  else
+    launch_choice_permission_transferable "$CALLER_HARNESS" "${HARNESS_FLAGS[*]}" \
+      || die launch-choice-failed reason=permission-transfer \
+        "source=$CALLER_HARNESS" "target=$harness"
+    permission_words="$(launch_choice_permission_write "$harness")" \
+      || die launch-choice-failed reason=permission-transfer \
+        "source=$CALLER_HARNESS" "target=$harness"
+    eval "SUCC_FLAGS+=($permission_words)"
+    launch_choice_strip "$CALLER_HARNESS" --permissions \
+      ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+      || die launch-choice-failed "harness=$CALLER_HARNESS"
   fi
-  for flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+  # The harness's launch settings lead the flags kept, once: a codex successor
+  # otherwise opens on the startup update prompt in a pane nobody is at.
+  launch_choice_lead_settings "$harness" ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}
+  SUCC_FLAGS+=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
+  for flag in ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; do
     cmd+=" $(printf %q "$flag")"
   done
   cmd+=" '$brief'"
@@ -1259,6 +1368,21 @@ done
 # rather than about whatever came up first. Before the commit point, so a
 # disagreement still costs nothing but the successor.
 account_verdict "$(succ_budget_bound)" final
+
+# Step 6 (header), arranged here, before the close, because nothing after it
+# can be counted on to run. The helper is started before the commit point
+# ignores any signal, so it inherits none of those ignores.
+if [[ "$MODE" == succeed ]]; then
+  if ! watch_state="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")"; then
+    message watch-restart-failed step=state-path >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  elif ! watch_pid_live "$watch_state"; then
+    message watch-absent "path=$watch_state"
+  else
+    message watch-handover "pid=$WATCH_PID" "pane=$SUCC_PANE" "log=$WATCH_ERR_FILE"
+    lane_run_detached "$WATCH_ERR_FILE" "$WATCH_ERR_FILE" "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" --watch-restart "$watch_state" "$CALLER_WINDOW" "$SUCC_PANE" "$lane_var" "$launch_home" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}
+  fi
+fi
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT
