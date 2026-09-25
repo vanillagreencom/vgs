@@ -14,6 +14,14 @@ metadata:
 tags: [plugins, quickshell]
 ---
 
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
 # vgs-plugin
 
 Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`](../../../docs/architecture/plugins.md); this skill holds the steps, the scaffold command and the templates.

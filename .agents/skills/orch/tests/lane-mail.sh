@@ -5,7 +5,7 @@
 # tests/fixtures/lane-host in its directory-backed mode. The peer cases build a
 # second checkout, the overseer of another repository. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
-# inbox --after, the already-answered drain filter, the ownership rule, the
+# the receipts cursor, the already-answered drain filter, the ownership rule, the
 # overseer inbox's answer exception, the one-spelling rule, the self-target
 # rule, the hosted append, and the lock and terminator that `scripts/lib` owns,
 # whose controls run a library copy with one of those rules removed.
@@ -58,7 +58,7 @@ lm() { # ARGS...
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 
-# The count field of the header drain and inbox --after open with; the header's
+# The count field of the header drain and inbox --peek open with; the header's
 # first= field has its own row.
 count_line() {
   local header
@@ -127,6 +127,70 @@ lm send --item KEN-1 --root "$LANE" --re some-ask --file "$(text a 'Answered.')"
 lm inbox --item KEN-1
 assert_eq "$RC=$OUT" "0=" "an answer belongs to the wait that asked for it, never to the inbox"
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor still passes the answer it did not hand over"
+
+# A mailbox read before its first line leaves a cursor of one numeric line,
+# never an empty file: a reader outside lane-mail, the fleet's state sync,
+# takes nothing else. A peek writes the same count. The cursor starts
+# absent, or empty as an inbox that created it with no count left it.
+# FIRST_CURSOR is the exit status and the cursor's bytes in hex, 300a for `0`
+# and its newline, or `absent`.
+first_inbox() { # NAME absent|empty [INBOX-FLAG]
+  new_lane "$1"
+  if [ "$2" = empty ]; then
+    mkdir -p "$LANE/tmp/lane-mail/KEN-1"
+    : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  fi
+  lm inbox --item KEN-1 ${3:+"$3"}
+  FIRST_CURSOR="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
+}
+for row in 'first_inbox|absent|' 'first_peek|absent|--peek' 'first_empty|empty|' 'first_empty_peek|empty|--peek'; do
+  IFS='|' read -r NAME SEED FLAG <<<"$row"
+  first_inbox "$NAME" "$SEED" "$FLAG"
+  assert_eq "$FIRST_CURSOR" "0=300a" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves a cursor holding 0"
+done
+
+# A peek on a mailbox whose cursor holds no count and whose directory takes
+# no write still lists what is unread: the hooks peek before every tool call,
+# so a peek refused on a full disk would refuse the call that frees it. The
+# cursor is empty, or absent beside its lock as a plain inbox refused
+# write-failed leaves it, where neither the count nor the empty create lands.
+unwritable_peek() { # NAME empty|absent
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Free the disk.')"
+  [ "$2" = absent ] || : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  : > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock"
+  chmod 0555 "$LANE/tmp/lane-mail/KEN-1"
+  lm inbox --item KEN-1 --peek
+  chmod 0755 "$LANE/tmp/lane-mail/KEN-1"
+  UNWRITABLE_PEEK="$RC=$(sed -n '/^{/p' <<<"$OUT" | jq -r 'select(.kind == "directive") | .text')"
+}
+for SEED in empty absent; do
+  unwritable_peek "peek_unwritable_$SEED" "$SEED"
+  assert_eq "$UNWRITABLE_PEEK" "0=Free the disk." "a peek over an $SEED cursor it cannot write still lists the unread directive"
+done
+
+# A first peek, then pending: the peek leaves a cursor beside the lock, so
+# pending reads a lane that has not read yet rather than a read that missed.
+# Where the count cannot land, an mv that always fails, the cursor it leaves
+# is empty. PEEK_PENDING is pending's exit status, the cursor's bytes in hex
+# and the directive pending lists.
+NO_MV_BIN="$TMP_ROOT/no-mv-bin"
+mkdir -p "$NO_MV_BIN"
+printf '#!/bin/sh\nexit 1\n' > "$NO_MV_BIN/mv"
+chmod +x "$NO_MV_BIN/mv"
+peek_pending() { # NAME [SHIM-BIN]
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Unread.')"
+  PATH="${2:+$2:}$PATH" lm inbox --item KEN-1 --peek
+  lm pending --item KEN-1 --root "$LANE"
+  PEEK_PENDING="$RC=$(od -An -tx1 "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" 2>/dev/null | tr -d ' \n' || echo absent)"
+  PEEK_PENDING+="=$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")"
+}
+for row in 'peek_pending||300a' "peek_pending_no_mv|$NO_MV_BIN|"; do
+  IFS='|' read -r NAME SHIM WANT <<<"$row"
+  peek_pending "$NAME" "$SHIM"
+  assert_eq "$PEEK_PENDING" "0=$WANT=Unread." "a first peek${SHIM:+ whose count cannot land}, then pending, lists the directive as unread"
+done
 
 # The receipt a send prints, and the repeat it refuses. A sender reads silence
 # as a send that did not land, and a wrapper run twice delivers nothing twice.
@@ -235,21 +299,69 @@ lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')
 assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=later" \
   "the refusal names the most recent copy, never an older one behind it"
 
-# --after is the caller's own cursor: a file cursor unlike both it and the count
-# is neither read nor moved.
-after_lane() { # NAME
+# The cursor moves only past what an inbox hands over. A read that finds
+# nothing new leaves the file as it was, and a --receipts read lists the
+# cursor no further than the lines it listed. QUIET is whether the second
+# inbox left the cursor file's inode alone; CLAMPED the receipts line under a
+# cursor planted past the file's end.
+cursor_lane() { # NAME
   new_lane "$1"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
-  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
-  printf '0\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
-  cp "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" "$TMP_ROOT/cursor.before"
-  lm inbox --item KEN-1 --after 1
-  AFTER_READ="$RC=$(count_line)=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
-  CURSOR_KEPT="$(cmp -s "$TMP_ROOT/cursor.before" "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" && echo kept || echo rewritten)"
+  LANE_MAIL_BIN="${LANE_MAIL_BIN:-$LANE_MAIL}" lm inbox --item KEN-1
+  ls -i "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" > "$TMP_ROOT/inode.before"
+  lm inbox --item KEN-1
+  QUIET="$(ls -i "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" | cmp -s - "$TMP_ROOT/inode.before" && echo kept || echo rewritten)"
+  printf '5\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm drain --item KEN-1 --root "$LANE" --after 0 --receipts
+  CLAMPED="$(grep '^receipts ' <<<"$OUT" | sed 's/ first=.*//')"
 }
-after_lane inbox_after
-assert_eq "$AFTER_READ" "0=count=2=Second." "inbox --after prints the count and only the envelopes after line N"
-assert_eq "$CURSOR_KEPT" "kept" "inbox --after leaves the file cursor byte-identical"
+# A cursor above 0 over a listing of no line: the append-only file was read
+# short, so the receipts line says missed rather than clamping to 0.
+empty_listing() { # NAME
+  new_lane "$1"
+  mkdir -p "$LANE/tmp/lane-mail/KEN-1"
+  printf '3\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm drain --item KEN-1 --root "$LANE" --after 0 --receipts
+  EMPTY_LISTING="$RC=$(grep '^receipts ' <<<"$OUT" | sed 's/ first=.*//')"
+}
+empty_listing receipts_empty_listing
+assert_eq "$EMPTY_LISTING" "0=receipts cursor=missed count=0" \
+  "drain --receipts reports a cursor over a listing of no line as missed"
+# A lane that read its directive, whose cursor then reads as not there beside
+# the lock that read left, as a hosted cursor read that misses once does:
+# pending refuses rather than list the directive the lane read as unread.
+missed_pending() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Read already.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  rm -- "${LANE:?}/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm pending --item KEN-1 --root "$LANE"
+  MISSED_PENDING="$RC=$ERR lock=$([ -e "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor.lock" ] && echo kept || echo gone)"
+  MISSED_PENDING+=" listed=$(jq -rs 'map(select(.kind == "directive")) | length' <<<"$OUT")"
+}
+missed_pending pending_missed
+assert_eq "$MISSED_PENDING" "2=lane-mail: mail-read-failed=KEN-1 cursor=missed lock=kept listed=0" \
+  "pending refuses a cursor read that missed and lists nothing"
+cursor_lane inbox_quiet
+assert_eq "$QUIET" "kept" "an inbox that hands nothing over leaves the cursor file alone"
+assert_eq "$CLAMPED" "receipts cursor=1 count=1" "drain --receipts lists the cursor no further than the lines it read"
+lm inbox --item KEN-1 --after 1
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--after" "inbox takes no --after: the cursor is its one position"
+lm inbox --item KEN-1 --receipts
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--receipts" "--receipts is drain's alone"
+
+# An answer the lane read, then a directive: the answer's line is on the
+# cursor's scale, so pending lists the directive as unread.
+answered_lane() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --re some-ask --file "$(text a 'Merge it.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Unread.')"
+  lm pending --item KEN-1 --root "$LANE"
+  PENDING_DIRECTIVE="$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")"
+}
+answered_lane pending_after_answer
+assert_eq "$PENDING_DIRECTIVE" "Unread." "pending lists a directive past an answer the lane read"
 
 # A Stop hook peeks, then a workflow wait point hands a later line over, then
 # the hook acknowledges its older count. ACK_CURSOR is what that leaves.
@@ -336,6 +448,15 @@ assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "overse
 lm send --item overseer --directive --file "$(text d 'Owner note.')"
 assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" "owner" \
   "a send into the overseer's own mailbox is the owner's"
+# No hook halts an overseer, and the watch acknowledges this mailbox with
+# --ack, which stops short of an unread halt: one would stand for good.
+overseer_halt() {
+  lm send --item overseer --halt --file "$(text d 'Stop.')"
+  HALT_SENT="$RC=$ERR lines=$(wc -l < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl" | tr -d ' ')"
+}
+overseer_halt
+assert_eq "$HALT_SENT" "2=lane-mail: option-conflict=--item=overseer,--halt lines=1" \
+  "a halt into the overseer mailbox is refused before any append"
 
 lm peer ask --repo peer_b --file "$(text q 'Do you own KEN-9?')" --options yes,no
 PEER_ASK="${OUT#id=}"
@@ -344,7 +465,11 @@ assert_eq "$(jq -r '.id + " " + .from + " " + .kind + " " + .text' < "$PEER_B/tm
   "$PEER_ASK overseer:peer_a ask Do you own KEN-9?" \
   "peer ask lands in the peer's overseer mailbox under one id, naming the repository that sent it"
 lm pending --item overseer
-assert_eq "$(jq -r '.id' <<<"$OUT")" "$PEER_ASK" "the asker's own pending owes the peer's answer"
+assert_eq "$(jq -r 'select(.kind == "ask") | .id' <<<"$OUT")" "$PEER_ASK" "the asker's own pending owes the peer's answer"
+# The other half of pending: what was sent to this mailbox and not yet read,
+# judged by its cursor, so a read takes it off the list.
+assert_eq "$(jq -r 'select(.kind == "directive") | .text' <<<"$OUT")" "Owner note." \
+  "pending lists a directive the mailbox's cursor has not passed"
 
 # The peer answers from its own checkout, naming the asker by path.
 PEER_A="$LANE"
@@ -356,7 +481,7 @@ assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .
 assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the receipt send prints"
 LANE="$PEER_A"
 lm pending --item overseer
-assert_eq "$RC=$OUT" "0=" "the answered peer ask is no longer pending"
+assert_eq "$RC=$(jq -c 'select(.kind == "ask")' <<<"$OUT")" "0=" "the answered peer ask is no longer pending"
 lm wait --item overseer --id "$PEER_ASK" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox returns the peer's answer"
 
@@ -365,6 +490,8 @@ assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox r
 lm inbox --item overseer
 assert_eq "$(jq -rs 'map(.kind) | join(",")' <<<"$OUT")" "directive,answer" \
   "inbox hands the overseer its own note and the peer's answer"
+lm pending --item overseer
+assert_eq "$RC=$OUT" "0=" "a directive the inbox has read is no longer pending"
 lm send --item KEN-1 --root "$PEER_A" --re some-ask --file "$(text a 'Lane answer.')"
 lm inbox --item KEN-1
 assert_eq "$RC=$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "0=directive" \
@@ -952,7 +1079,7 @@ LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE
 assert_eq "$(count_line)" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
-mutant inbox-cursor-frozen 's@^  mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@  rm -f -- "$WORK_DIR/cursor"@'
+mutant inbox-cursor-frozen 's@ && mv -- "\$WORK_DIR/cursor" "\$CURSOR"$@ \&\& rm -f -- "$WORK_DIR/cursor"@'
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"
 LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
@@ -961,14 +1088,59 @@ LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
 
-mutant inbox-after-cursor 's@^    if \[ -n "\$AFTER" \]; then$@    if false; then@'
-after_lane control_after
-assert_eq "$AFTER_READ" "0=count=2=First.
-Second." "control: an --after that reads the file cursor hands over what line 1 already covers"
+mutant inbox-cursor-churn 's@^    \[ "\$PEEK" -eq 1 \] || \[ "\$COUNT" = "\$SEEN" \] || lm_cursor_write "\$COUNT"$@    [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"@'
+cursor_lane control_quiet
+assert_eq "$QUIET" "rewritten" "control: a cursor written on every inbox is replaced by a read that found nothing"
 
-mutant inbox-after-cursor-write 's@^    if \[ -z "\$AFTER" \]; then$@    if true; then@'
-after_lane control_after_write
-assert_eq "$CURSOR_KEPT" "rewritten" "control: an --after that writes the file cursor changes it"
+mutant cursor-uncreated 's@^        lm_cursor_write 0$@        :@'
+first_inbox control_first_inbox absent
+assert_eq "$FIRST_CURSOR" "0=absent" "control: without the create a first inbox on an empty mailbox leaves no cursor"
+
+mutant cursor-absent-only 's@^    if \[ "\$CURSOR_COUNTED" -eq 0 \]; then$@    if [ "$CURSOR_ABSENT" -eq 1 ]; then@'
+first_inbox control_first_empty empty
+assert_eq "$FIRST_CURSOR" "0=" "control: a create judged on absence alone leaves an empty cursor empty"
+
+PEEK_CREATE='^        lm_cursor_put 0 2>/dev/null || { : >>"\$CURSOR"; } 2>/dev/null || :$'
+mutant peek-writes "s@$PEEK_CREATE@        lm_cursor_write 0@"
+unwritable_peek control_peek_unwritable empty
+assert_eq "${UNWRITABLE_PEEK%%=*}" "2" "control: a peek that writes the count is refused where the write cannot land"
+
+mutant peek-uncreated "s@$PEEK_CREATE@        :@"
+peek_pending control_peek_pending
+assert_eq "${PEEK_PENDING%%=*}" "2" "control: a first peek that leaves no cursor has pending judge the read missed"
+
+mutant peek-count-only "s@$PEEK_CREATE@        lm_cursor_put 0 2>/dev/null || :@"
+peek_pending control_peek_pending_no_mv "$NO_MV_BIN"
+assert_eq "${PEEK_PENDING%%=*}" "2" "control: a peek whose count cannot land and creates nothing has pending judge the read missed"
+
+mutant peek-create-refuses "s@$PEEK_CREATE@        lm_cursor_put 0 2>/dev/null || { : >>\"\$CURSOR\"; } 2>/dev/null@"
+unwritable_peek control_peek_unwritable_absent absent
+assert_eq "$([ "${UNWRITABLE_PEEK%%=*}" -ne 0 ] && echo nonzero || echo zero)" "nonzero" \
+  "control: a peek whose empty create fails without the last no-refuse clause exits nonzero"
+
+mutant directives-alone 's@foreach inputs as \$raw (0; \. + 1;@foreach (inputs | select(test("directive"))) as $raw (0; . + 1;@'
+answered_lane control_pending_answer
+assert_eq "$PENDING_DIRECTIVE" "" "control: directive lines numbered alone drop an unread directive from pending"
+
+mutant receipts-unclamped 's@^        \[ "\$SEEN" -le "\$COUNT" \] || SEEN="\$COUNT"$@        :@'
+cursor_lane control_clamp
+assert_eq "$CLAMPED" "receipts cursor=5 count=1" "control: an unclamped cursor claims lines the read never listed"
+
+mutant absent-as-zero 's@^        \[ "\$LM_FETCH_ABSENT" -eq 1 \] || SEEN=missed$@        :@'
+missed_pending control_pending_missed
+assert_eq "$MISSED_PENDING" "0= lock=kept listed=1" \
+  "control: an absent cursor read as 0 lists the directive the lane read as unread"
+
+mutant receipts-empty-clamped 's@^      if \[ "\$SEEN" -gt 0 \] && \[ "\$COUNT" -eq 0 \]; then$@      if false; then@'
+empty_listing control_empty_listing
+assert_eq "$EMPTY_LISTING" "0=receipts cursor=0 count=0" \
+  "control: a cursor clamped over an empty listing reads as a lane that has read nothing"
+
+mutant overseer-halt 's@^    \[ "\$HALT" -eq 0 \] || \[ "\$ITEM" != overseer \] || refuse option-conflict .*$@    :@'
+new_lane control_overseer_halt
+lm send --item overseer --directive --file "$(text d 'Owner note.')"
+overseer_halt
+assert_eq "$HALT_SENT" "0= lines=2" "control: without the refusal the halt lands in the overseer mailbox"
 
 mutant ack-backward 's@^      \[ "\$ACK" -le "\$SEEN" \] || lm_cursor_write "\$ACK"$@      lm_cursor_write "$ACK"@'
 stale_ack control_ack
@@ -1028,11 +1200,19 @@ assert_eq "$RC=$(jq -r '.text' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" 
   "control: without the self-target rule a caller writes its own overseer mailbox as a peer"
 LANE="$PEER_A"
 
-mutant answer-hidden 's@\$item == "overseer" or @@'
+# The overseer exception through the cursor-backed read the watch makes, from
+# the start of PEER_A's mailbox: its peek hands the peer's answer over.
+overseer_peek_answers() {
+  rm -f -- "${PEER_A:?}/tmp/lane-mail/overseer/to-lane.cursor"
+  lm inbox --item overseer --peek
+  PEEK_ANSWERS="$RC=$(tail -n +2 <<<"$OUT" | jq -rs 'map(select(.kind == "answer")) | length')"
+}
 LANE="$PEER_A"
-LANE_MAIL_BIN="$MUTANT_DIR/answer-hidden" lm inbox --item overseer --after 0
-assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(select(.kind == "answer")) | length')" "0" \
-  "control: without the overseer exception the peer's answer reaches nothing"
+LANE_MAIL_BIN="$LANE_MAIL" overseer_peek_answers
+assert_eq "$PEEK_ANSWERS" "0=1" "an overseer inbox --peek hands over the peer's answer"
+mutant answer-hidden 's@\$item == "overseer" or @@'
+overseer_peek_answers
+assert_eq "$PEEK_ANSWERS" "0=0" "control: without the overseer exception the peer's answer reaches nothing"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

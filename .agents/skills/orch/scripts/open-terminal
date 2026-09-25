@@ -41,6 +41,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
+    launch-question-tool-missing) text='This lane launch leaves the harness question tool on, and a lane that calls it stops at a dialog nobody at the pane answers. Nothing was launched. Put the words this line names, in that order, inside the --cmd command; a launch without --cmd is given them by this launcher. A lane asks its overseer through lane-mail ask.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
     launch-trusted) text='The launch directory is trusted in the config this codex launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch.' ;;
@@ -67,6 +68,17 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
+    cap-reached) text='A launch here would put the fleet over ORCH_OVERSEER_LANES. cap names that setting, running the lane records in the fleet state whose status is running or preparing, and claims the live launch claims and reservations this fleet wrote that name the window of no such record: a lane whose record is neither while its pane still runs, or a launch not yet recorded. Nothing was launched. Wait for a lane to close, launch with --wait-slot to wait for one here, or pass --over-cap for one deliberate exception.' ;;
+    account-cap-reached) text='A launch here would put the account over ORCH_LANE_ACCOUNT_CLAIMS. lane names the account, cap that setting, and claims the lanes on that account: records, the running or preparing records of this fleet on it, plus claims-other, the live launch claims and reservations on it that are not the claims of those records, lanes of other fleets among them. A claim is the claim of a record where it names the window and account of that record and this fleet or none. Nothing was launched. Wait for a lane on that account to close, launch with --wait-slot to wait for one here (under --lane auto it moves to an account with room), name a lane on another account, or pass --over-cap for one deliberate exception. 0 turns this cap off.' ;;
+    cap-unreadable) text='The lanes in flight could not be counted, so neither cap can be judged. Nothing was launched. source=state is the fleet state named by --state-dir; source=claims is the claim store, whose own keyed lane-claims line above names what failed.' ;;
+    cap-lock-failed) text='A launch lock, the fleet one or the claim store one that lock names, was not taken inside its bound, so the count and the reservation write cannot be one step. Nothing was launched. Another launch holds it; the lock line above names a stale mutex where flock is absent.' ;;
+    cap-reserve-failed) text='The reservation that holds this launch'"'"'s place in the count could not be written to the claim store that store names, so the next count would not see this launch. Nothing was launched. Check that directory: a store that cannot take a reservation cannot take the claim that follows it either.' ;;
+    reserve-unremoved) text='The reservation this launch wrote could not be removed. Until the lane record is written the count holds this lane twice; after the lane stops, the reservation still counts as a lane in flight until this launcher exits, when it lapses.' ;;
+    cap-option-unanchored) text='This option answers the fleet caps, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
+    over-cap-items) text='--over-cap admits one launch past a cap. Nothing was launched. Pass one item.' ;;
+    over-cap-admitted) text='The launch goes past the caps named in passed on --over-cap, and its lane record carries them as over_cap.' ;;
+    lock-waiting) text='Another launch into this fleet, or onto this claim store from any fleet, holds the launch lock that lock names, so this one waits for it, at most wait-s seconds.' ;;
+    slot-waiting) text='A cap is reached, so this launch waits under --wait-slot: it counts again every few seconds without holding the launch lock, judges its lane again, and counts and reserves under the lock once both caps have room. The fields are the count it waits on, printed again whenever that count changes.' ;;
     state-absent) text='No oversee workflow state exists at the address this wake resolved, so nothing was ever launched into it. Nothing woken. Point the wake at the fleet state with --state-dir, the directory holding the file workflow-state path oversee prints from the overseer checkout.' ;;
     tmux-opened) text='The tmux window is open.' ;;
     launch-confirmed) text='The lane started while its composer was checked. No further text was sent.' ;;
@@ -80,7 +92,7 @@ ot_message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
-    claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
+    claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
@@ -104,7 +116,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Mail reaches a lane only while it still takes a tool call or ends a turn, so a refusal is a state and not a remedy: the refusal table in the oversee workflow, under Talking to a lane, says what each reason licenses.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Mail reaches a lane only while it still takes a tool call or ends a turn, so a refusal is a state and not a remedy: the refusal table in the orch lane-reach reference, under Wake refusals, says what each reason licenses.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -148,8 +160,9 @@ Options:
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced.
                     It is the WHOLE command: it is rendered verbatim and no
                     launch flag is appended to it, so a --cmd launch names its
-                    own model, reasoning effort and permission posture inside
-                    the command. --launch-flags beside it reach nothing and are
+                    own model, reasoning effort, permission posture and
+                    question-tool words (see --launch-flags) inside the
+                    command. --launch-flags beside it reach nothing and are
                     refused as launch-flags-unreachable, rather than gating and
                     recording a model the harness never runs.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
@@ -312,6 +325,15 @@ Options:
                     check_for_update_on_startup=false ahead of these flags,
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
+                    EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
+                    AWAY, ahead of these flags; a lane asks through lane-mail.
+                      claude    --disallowedTools=AskUserQuestion,EnterPlanMode
+                      codex     -c features.default_mode_request_user_input=false
+                      pi        --exclude-tools question
+                    An opencode lane keeps its tool: no flag turns it off. A
+                    --cmd launch on a harness with words carries them in its
+                    command, --lane or not, or is refused as
+                    launch-question-tool-missing, one word= field per word.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -374,8 +396,8 @@ Options:
                     asking, walled, exited or unjudged. Mail reaches a lane
                     only while it still takes a tool call or ends a turn, so
                     a refusal is a state and not a remedy: the refusal table
-                    in the oversee workflow, under Talking to a lane, says
-                    what each reason licenses.
+                    in the orch lane-reach reference, under Wake refusals,
+                    says what each reason licenses.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the
@@ -418,13 +440,14 @@ when absent); a launch with no --state-dir names no fleet, records nothing
 and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
 issue-N for a GitHub item, carrying the tracker, repository, harness, window,
-account dir, host, mail_root, surface, model, session_id, launched_at and
+account dir, host, mail_root, surface, model, session_id, launched_at,
 status `running`, or `preparing` with its `prepare` record for a hosted lane
-handed to a background job (see --host);
+handed to a background job (see --host), and over_cap, the caps an
+--over-cap launch passed;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
-entry that already names the item; --relaunch rewrites every field but item
-and launched_at and sets status back to running; --wake rewrites session_id
+entry that already names the item; --relaunch rewrites every field but item,
+launched_at and over_cap and sets status back to running; --wake rewrites session_id
 and status, and an item no entry names is record-missing, since this launcher
 never launched it. A state that cannot be created refuses the whole launch as
 state-unwritable before any window opens; a wake creates no state, and one
@@ -434,6 +457,49 @@ be written
 into it is record-write-failed: the window stands, the item counts as failed,
 and the watch will not carry it until the record is written, by hand per
 oversee.md § 3 Lane record or by a relaunch once the window is closed.
+
+Every launch and relaunch under --state-dir is judged on two caps before its
+worktree, under two locks taken in this order, one beside the fleet state and
+one beside the claim store the account cap counts, both held from the count
+through a reservation written into the claim store, which every later count
+sees as this launch's lane until its claim or record stands, or the item
+ends, so two launchers cannot both pass on one count, fleets sharing a claim
+store included; a launch that finds a lock held prints lock-waiting and waits
+for it. The worktree and host creates run with no lock held. A reservation
+that cannot be written refuses the launch as cap-reserve-failed.
+The fleet cap, ORCH_OVERSEER_LANES (default 3), counts the records whose
+status is running or preparing (a hosted lane handed to a background job,
+see --host) plus the live launch claims and reservations this fleet wrote
+that no such record names (a claim store several fleets share counts each
+fleet's own claims here, and every fleet's toward an account); a
+launch that would pass it is refused as cap-reached, naming the cap, those
+records and the claims. The account cap, ORCH_LANE_ACCOUNT_CLAIMS
+(default 3, 0 turns it off), counts the lanes on the account the launch
+would use: this fleet's running or preparing records on it, which count a
+GUI lane and one whose claim was never written, plus the live launch claims
+and reservations on it that are not those records' own, other fleets' lanes
+among them (a claim is a record's own where it names the record's window and
+account and this fleet or none); a launch that would pass it is refused as
+account-cap-reached, naming the lane, the cap, that count as claims, and its
+two parts as records and claims-other. Both settings are read through
+orch-env. A refusal stops the batch, and so does a claim this run failed to
+write under --lane auto, whose re-pick reads claims, as claim-unrecorded. A store that cannot be read refuses as cap-unreadable, and
+a lock not taken as cap-lock-failed. A --relaunch meets the fleet cap where
+the item has no running or preparing record, and the account cap where it
+has none or moves to another account. --wake is not judged. Both flags below need
+--state-dir, and are refused as cap-option-unanchored without it:
+  --wait-slot       Wait for room instead of refusing: count again every 5
+                    seconds, holding no lock between counts, and count and
+                    reserve under the lock once both caps have room. The
+                    lane is judged again first: `--lane auto` picks again,
+                    also on each count where only the account cap is full,
+                    and a named lane is refused as lane-model-walled if its
+                    window walled during the wait. slot-waiting prints the
+                    count waited on, again whenever it changes.
+  --over-cap        Admit one launch past whichever caps it would pass, printed
+                    as over-cap-admitted and recorded in its lane record as
+                    over_cap (fleet, account, or fleet,account). One item
+                    only, refused as over-cap-items otherwise.
 
 Exit codes:
   0   at least one lane launched or handed to a background job and none
@@ -474,6 +540,8 @@ parse_argv() {
   STATE_DIR=""
   RELAUNCH=false
   WAKE=false
+  WAIT_SLOT=false
+  OVER_CAP=false
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -500,6 +568,8 @@ parse_argv() {
       --state-dir=*) STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$STATE_DIR"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
       --wake) WAKE=true; shift ;;
+      --wait-slot) WAIT_SLOT=true; shift ;;
+      --over-cap) OVER_CAP=true; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -538,6 +608,8 @@ kendex_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/file-lock.sh
+source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
@@ -594,6 +666,11 @@ FLEET=false
 WORKFLOW_STATE_ARGS=()
 [[ -z "$STATE_DIR" ]] || { FLEET=true; WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR"); }
 [[ ${#ITEMS[@]} -gt 0 ]] || { ot_message items-missing "count=0" >&2; exit 1; }
+if [[ "$FLEET" != true ]]; then
+  [[ "$WAIT_SLOT" != true ]] || { ot_message cap-option-unanchored "option=--wait-slot" >&2; exit 1; }
+  [[ "$OVER_CAP" != true ]] || { ot_message cap-option-unanchored "option=--over-cap" >&2; exit 1; }
+fi
+[[ "$OVER_CAP" != true || ${#ITEMS[@]} -eq 1 ]] || { ot_message over-cap-items "count=${#ITEMS[@]}" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
@@ -871,6 +948,24 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   [[ "$launch_choice_missing" != true ]] || exit 1
 fi
 
+# A lane never holds its harness question tool: every command start_cmd builds
+# carries the words that take it away, and a --cmd template, rendered verbatim,
+# has to carry them itself. Keyed on the same harness as the gate above and
+# asked whether or not a --lane is named, because an item launched here is a
+# lane on any account; a launch naming no harness has no row and is not asked.
+# A reading of the words that fails is refused as their absence, never skipped.
+LAUNCH_QUESTION_OFF=""
+if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
+   || { [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_QUESTION_OFF" ]] \
+        && ! launch_choice_words_present "$LAUNCH_QUESTION_OFF" "$CMD_TEMPLATE"; }; then
+  question_words=()
+  question_fields=()
+  read -r -a question_words <<<"$LAUNCH_QUESTION_OFF"
+  for question_word in ${question_words[@]+"${question_words[@]}"}; do question_fields+=("word=$question_word"); done
+  ot_message launch-question-tool-missing "harness=$LAUNCH_HARNESS" ${question_fields[@]+"${question_fields[@]}"} >&2
+  exit 1
+fi
+
 # Handoff is unattended. A harness whose row names a permission posture stalls
 # at its first approval prompt when the caller supplies none. Rows carrying the
 # `-` sentinel have no permission word to require here. Warn loudly, but launch:
@@ -891,6 +986,7 @@ fi
 # one decision: a launcher named for the lane's config directory where this
 # machine has one, an env prefix where it does not.
 LANE_AUTO=false
+LANE_GATE=false
 LANE_HARNESS=""
 CLAIM_WRITE_FAILED=false
 # The item's pane once its window is open, and the preparation a hosted launch
@@ -978,6 +1074,90 @@ host_account_read() { # CONFIG_DIR HARNESS
     0) HOST_ACCOUNT=held ;;
     1) HOST_ACCOUNT=missing ;;
     *) ot_message host-accounts-unanswered "host=$LANE_HOST" "exit=$match_rc" >&2 ;;
+  esac
+}
+# The usage judge for a lane the caller NAMED, asked of `lanes pick --lane` on
+# the model the launch passes. Returns 1 with its refusal printed. The block
+# that calls it below says why each answer is what it is.
+named_lane_judge() {
+  local lane_rc=0 lane_record lane_wall lane_bucket lane_status
+  # `held`, `missing` or `unanswered`, and empty until something asks. Only the
+  # unmeasured arm below reads it, so that arm is the one place that asks.
+  HOST_ACCOUNT=""
+  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
+  lane_rc=0
+  lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
+    --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
+  case "$lane_rc" in
+    0) ;;
+    # 4 is `lanes` holding no record for this directory — a config dir outside
+    # the discovery glob, or outside ORCH_LANE_DIRS where that is set. There is
+    # nothing to judge and never was; --help says such a dir is used as given,
+    # so the launch proceeds exactly as it did before this gate existed.
+    4) ;;
+    3)
+      lane_wall="$(jq -er '.wall' <<<"$lane_record")" || {
+        ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-wall" >&2
+        return 1
+      }
+      lane_bucket="$(jq -er '.binding_bucket' <<<"$lane_record")" || {
+        ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
+        return 1
+      }
+      ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+        "pct=$lane_wall" "bucket=$lane_bucket" >&2
+      return 1
+      ;;
+    # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
+    # which: a RELAUNCH onto an account it reports holding proceeds, because
+    # the copy running that session is the provider's and the harness's own
+    # banner after the resume is the gate oversee-watch reads as usage-limit;
+    # a FRESH launch on an account it reports holding names the login the
+    # owner can renew, since an account the provider names is one this
+    # machine's copy either seeded or shadows; anything else refuses on the
+    # unread window, which is not an empty one.
+    #
+    # `expired` and no wider for the login remedy: that status is the only one
+    # `lanes` reports for a credential this machine holds and cannot renew, and
+    # it reaches claude lanes alone, since the expiry it reads is the claude
+    # token's. A codex account whose local auth.json is dead reads
+    # `unreachable`, which an offline read produces too, so widening to it
+    # would print a login remedy to an operator whose network is down. A
+    # rate-limited read is `rate_limited`: one the host still holds a figure
+    # for is judged on that figure, and one with none carries no window, which
+    # this arm refuses as lane-model-unreadable like any other unread window.
+    # --help and the message say the remedy is reported for claude lanes.
+    5)
+      # A record this script cannot read names no status, which reads as the
+      # unmeasured window it is rather than as any of the answers below.
+      lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
+      # The provider is asked here and nowhere else: this refusal is the only
+      # one its answer changes, so a launch that never reaches this arm never
+      # reaches the provider. Asked for every hosted lane that gets here, with
+      # no second reading of the conditions the branches below judge on —
+      # asking only for the shapes that act on the answer would state each of
+      # those conditions twice, and a rule stated twice is a rule that can be
+      # changed in one place.
+      [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
+      if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
+        ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+      elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
+        ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+        return 1
+      else
+        ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
+        return 1
+      fi
+      ;;
+    # An unreadable claim store is not among these: this gate asks for a wall,
+    # which no claim count enters, so `lanes` reports the store on stderr as a
+    # notice and answers the wall anyway. The same policy as the claim write
+    # below, which is never fatal either.
+    #
+    # Anything else is the judge itself failing, including the threshold it
+    # refused as malformed. Its own keyed `lanes:` line is already on stderr
+    # above this one and names which, so this line names none.
+    *) ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=$lane_rc" >&2; return 1 ;;
   esac
 }
 if [[ -n "$LANE" ]]; then
@@ -1077,88 +1257,11 @@ if [[ -n "$LANE" ]]; then
   # Asked for claude and codex, and only where the CALLER named the lane:
   # `--lane auto` asked the same question inside its own pick, so a second
   # judgment here would report on a choice already made.
-  lane_gate=false
-  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
-  # `held`, `missing` or `unanswered`, and empty until something asks. Only the
-  # unmeasured arm below reads it, so that arm is the one place that asks.
-  HOST_ACCOUNT=""
-  if [[ "$lane_gate" == true ]]; then
-    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-    lane_rc=0
-    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-      --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
-    case "$lane_rc" in
-      0) ;;
-      # 4 is `lanes` holding no record for this directory — a config dir outside
-      # the discovery glob, or outside ORCH_LANE_DIRS where that is set. There is
-      # nothing to judge and never was; --help says such a dir is used as given,
-      # so the launch proceeds exactly as it did before this gate existed.
-      4) ;;
-      3)
-        lane_wall="$(jq -er '.wall' <<<"$lane_record")" || {
-          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-wall" >&2
-          exit 1
-        }
-        lane_bucket="$(jq -er '.binding_bucket' <<<"$lane_record")" || {
-          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
-          exit 1
-        }
-        ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-          "pct=$lane_wall" "bucket=$lane_bucket" >&2
-        exit 1
-        ;;
-      # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
-      # which: a RELAUNCH onto an account it reports holding proceeds, because
-      # the copy running that session is the provider's and the harness's own
-      # banner after the resume is the gate oversee-watch reads as usage-limit;
-      # a FRESH launch on an account it reports holding names the login the
-      # owner can renew, since an account the provider names is one this
-      # machine's copy either seeded or shadows; anything else refuses on the
-      # unread window, which is not an empty one.
-      #
-      # `expired` and no wider for the login remedy: that status is the only one
-      # `lanes` reports for a credential this machine holds and cannot renew, and
-      # it reaches claude lanes alone, since the expiry it reads is the claude
-      # token's. A codex account whose local auth.json is dead reads
-      # `unreachable`, which an offline read produces too, so widening to it
-      # would print a login remedy to an operator whose network is down. A
-      # rate-limited read is `rate_limited`: one the host still holds a figure
-      # for is judged on that figure, and one with none carries no window, which
-      # this arm refuses as lane-model-unreadable like any other unread window.
-      # --help and the message say the remedy is reported for claude lanes.
-      5)
-        # A record this script cannot read names no status, which reads as the
-        # unmeasured window it is rather than as any of the answers below.
-        lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
-        # The provider is asked here and nowhere else: this refusal is the only
-        # one its answer changes, so a launch that never reaches this arm never
-        # reaches the provider. Asked for every hosted lane that gets here, with
-        # no second reading of the conditions the branches below judge on —
-        # asking only for the shapes that act on the answer would state each of
-        # those conditions twice, and a rule stated twice is a rule that can be
-        # changed in one place.
-        [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
-        if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
-          ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
-        elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
-          ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
-          exit 1
-        else
-          ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
-          exit 1
-        fi
-        ;;
-      # An unreadable claim store is not among these: this gate asks for a wall,
-      # which no claim count enters, so `lanes` reports the store on stderr as a
-      # notice and answers the wall anyway. The same policy as the claim write
-      # below, which is never fatal either.
-      #
-      # Anything else is the judge itself failing, including the threshold it
-      # refused as malformed. Its own keyed `lanes:` line is already on stderr
-      # above this one and names which, so this line names none.
-      *) ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=$lane_rc" >&2; exit 1 ;;
-    esac
-  fi
+  #
+  # A --wait-slot launch asks again once its wait ends, the window having had
+  # that long to move.
+  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || LANE_GATE=true
+  [[ "$LANE_GATE" != true ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
 fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
@@ -1366,7 +1469,8 @@ session_id_of() { # HARNESS SESSION_FILE
 # of what a mode writes of it. A launch writes the whole record, rewriting
 # every field of an entry that already names the item; a relaunch rewrites
 # what a relaunch can change (a lane moved to another account, host or window)
-# and keeps launched_at, the fleet start the watch is given as --since; a wake
+# and keeps launched_at, the fleet start the watch is given as --since, and
+# over_cap, the exception its launch was admitted on; a wake
 # rewrites the session it resumed and nothing else, and an item no entry names
 # is refused with status 2, since a lane this launcher never launched has no
 # record to rewrite. A launch created the state on the first item, before its
@@ -1396,13 +1500,14 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" --arg status "$status" --argjson prepare "${LAUNCH_PREPARE:-null}" \
-    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: $status}
+    --arg over_cap "$CAP_PASSED" \
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + (if $prepare == null then {} else {prepare: $prepare} end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     '(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at) else . end) as $patch
+     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap) else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
@@ -1456,15 +1561,15 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # the launch directory and the lane starts on a different model, or none.
   # Trailing space only when flags are present, so an unflagged launch renders
   # the exact command a human would type rather than a double-spaced one.
-  # The harness's launch-only settings lead, once, on every command built here
-  # and never inside a --cmd template, which returned above as the caller's
-  # whole command.
+  # The harness's launch-only settings and its question-tool words lead, once,
+  # on every command built here and never inside a --cmd template, which
+  # returned above as the caller's whole command.
   local flags="" tok
   local -a flag_tokens=()
   # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
   # would expand the very brackets this quoting exists to protect.
   read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
-  launch_choice_lead_settings "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
+  launch_choice_lead_settings --question-off "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
   for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
@@ -1892,11 +1997,13 @@ launchable_dir() { # DIR TITLE
 # background task runs through, or, for Claude, its session file does not read
 # idle. Language and MCP servers are non-shell children an idle session keeps,
 # so only shells count. Codex gives no idle signal, so a live codex session
-# with no shell under it is unjudged, never idle. The cwd and the environment
-# are read through /proc.
+# with no shell under it is unjudged, never idle. The environment is read
+# through /proc, which has no other reader, so on a host without /proc any
+# process named for the harness leaves the lane unjudged, wherever it runs.
 lane_session_state() { # DIR — prints busy, idle or unjudged
   local table pid state config
   lane_owned_processes "$1" "$HARNESS" || { printf unjudged; return 0; }
+  lane_proc_readable || [[ -z "$LANE_OWNED_PROCESS_CANDIDATES" ]] || { printf unjudged; return 0; }
   table="$LANE_OWNED_PROCESS_TABLE"
   for pid in $LANE_OWNED_PROCESS_PIDS; do
     state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }
@@ -2040,7 +2147,8 @@ launch_session_resolve() { # TITLE
   LAUNCH_SESSION="$session"
 }
 
-# The item's window and its lane claim, the pane left in LAUNCH_PANE. A hosted
+# The item's window and its lane claim, which replaces the item's reservation,
+# the pane left in LAUNCH_PANE. A hosted
 # launch handed to a background job opens it before the hand-off, so the next
 # item's pick counts this account while the host is still preparing.
 tmux_window_open() { # DIR TITLE
@@ -2069,11 +2177,13 @@ tmux_window_open() { # DIR TITLE
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
+    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" "$CAP_FLEET"; then
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true
       ot_message claim-write-failed "item=$title" >&2
+    else
+      cap_unreserve
     fi
   fi
   LAUNCH_PANE="$pane"
@@ -2485,6 +2595,270 @@ launch_prepared() { # LOG
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
+# The two caps a fleet launch is judged on. ORCH_OVERSEER_LANES bounds the lanes
+# the fleet runs; ORCH_LANE_ACCOUNT_CLAIMS bounds the lanes one account carries,
+# 0 turning that cap off, because a fleet inside its total can still stack
+# every lane on one account and wall it inside one usage window. A launch naming
+# no fleet has no records to count, and a wake rouses a lane the fleet already
+# counts, so neither is judged. A relaunch is judged on what it adds: a lane
+# where the item has no running or preparing record, an account where it lands
+# on another.
+#
+# The count and the reservation write are one step under two locks, taken per
+# item and released once the reservation stands: two launchers that each
+# counted before either wrote would both pass. The reservation is the item's
+# lane in every later count until its claim or record replaces it, so the
+# worktree and host creates, which can run for minutes, hold no lock. The first
+# lock sits beside the fleet state, the one address every launch into the fleet
+# names; the second beside the claim store, which several fleets may share and
+# whose claims the account cap counts across all of them. They are taken in
+# that order and released together.
+CAP_GATED=false
+# 0 for a launch that is not judged, which turns off the account cap's claim
+# check in the item loop.
+ACCOUNT_CAP=0
+[[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
+if [[ "$CAP_GATED" == true ]]; then
+  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
+  FLEET_CAP="$("$SCRIPT_DIR/orch-env" ORCH_OVERSEER_LANES 3)" || exit 1
+  # The measured rate behind the default is kendex.settings.toml.example's.
+  ACCOUNT_CAP="$("$SCRIPT_DIR/orch-env" ORCH_LANE_ACCOUNT_CLAIMS 3)" || exit 1
+  FLEET_CAP=$((10#$FLEET_CAP))
+  ACCOUNT_CAP=$((10#$ACCOUNT_CAP))
+fi
+# The locks are held on descriptors 7 (the fleet's) and 8 (the claim store's),
+# and a flock stays held while any copy of its descriptor is open. They are
+# held only across the count and the reservation write, whose children all
+# exit before cap_release, so no child of the launch itself inherits them.
+CAP_LOCK=""
+CAP_STORE_LOCK=""
+# The lock the last take failed on, which cap-lock-failed names.
+CAP_LOCK_FAILED=""
+# The fleet a judged launch belongs to: its oversee state file, canonical, which
+# every claim it writes carries so a claim store several fleets share still
+# tells their lanes apart. Empty for a launch that is not judged.
+CAP_FLEET=""
+CAP_HELD=false
+# The current item's reservation, empty once its claim stands or the item ends.
+CAP_RESERVE=""
+# Far past any queue of counts; a wait that reaches it is a holder that is
+# stuck.
+CAP_LOCK_WAIT_SECS=900
+# How often --wait-slot counts again, holding no lock between counts.
+WAIT_SLOT_POLL_SECS=5
+# The caps the current item's --over-cap launch passed, comma-separated, empty
+# for a launch inside both; lane_record_write records it as over_cap.
+CAP_PASSED=""
+
+cap_release() {
+  [[ "$CAP_HELD" == true ]] || return 0
+  exec 7>&- 8>&-
+  orch_release_lock
+  CAP_HELD=false
+}
+
+# Writes the admitted item's reservation into the claim store and releases the
+# locks. Returns 1 with the refusal printed when it cannot be written: the next
+# count would not see this launch.
+cap_reserve() { # ITEM WINDOW
+  local lane_dir="" store
+  [[ -z "$LANE_ENV" ]] || lane_dir="${LANE_ENV#*=}"
+  store="$(lane_claims_dir "$CLAIM_ROOT")"
+  if ! lane_claim_reserve "$store" "$$" "$lane_dir" "$2" "$CAP_FLEET"; then
+    cap_release
+    ot_message cap-reserve-failed "item=$1" "store=$store" >&2
+    return 1
+  fi
+  CAP_RESERVE="$LANE_CLAIM_PATH"
+  cap_release
+}
+
+# Drops the item's reservation once its claim stands or the item ends. One
+# that cannot be removed lapses when this launcher exits, its pid being the
+# reservation's liveness.
+cap_unreserve() {
+  [[ -n "$CAP_RESERVE" ]] || return 0
+  rm -f -- "$CAP_RESERVE" || ot_message reserve-unremoved "path=$CAP_RESERVE" >&2
+  CAP_RESERVE=""
+}
+
+# Takes one launch lock on FD, printing lock-waiting once when another launch
+# holds it, so a long wait reads as a wait. The first try's own diagnostic is
+# dropped: it is the one-second probe, and the bounded wait that follows
+# reports its own.
+cap_lock_take() { # FD LOCK ITEM
+  CAP_LOCK_FAILED="$2"
+  case "$1" in
+    7) exec 7>"$2" || return 1 ;;
+    8) exec 8>"$2" || return 1 ;;
+  esac
+  if ! orch_take_lock "$1" "$2" 1 2>/dev/null; then
+    ot_message lock-waiting "item=$3" "lock=$2" "wait-s=$CAP_LOCK_WAIT_SECS"
+    orch_take_lock "$1" "$2" "$CAP_LOCK_WAIT_SECS" || return 1
+  fi
+}
+
+# Takes the fleet's lock, then the claim store's. A take that fails releases
+# whatever it holds.
+cap_take() { # ITEM
+  local state
+  if [[ -z "$CAP_LOCK" ]]; then
+    state="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" || return 1
+    CAP_FLEET="$(lane_claims_canon "${state%/*}")/${state##*/}"
+    CAP_LOCK="$CAP_FLEET.launch.lock"
+    CAP_STORE_LOCK="$(lane_claims_dir "$CLAIM_ROOT").launch.lock"
+  fi
+  CAP_HELD=true
+  cap_lock_take 7 "$CAP_LOCK" "$1" && mkdir -p -- "${CAP_STORE_LOCK%/*}" && cap_lock_take 8 "$CAP_STORE_LOCK" "$1" && return 0
+  cap_release
+  return 1
+}
+
+# Sets CAP_RUNNING (records lib/lane-claims.sh's LANE_RUNNING_JQ calls held,
+# running or preparing), CAP_INFLIGHT (live claims and reservations naming this
+# fleet that are no held record's own: a lane whose pane outlived its record's
+# running status, or a launch not yet recorded), CAP_ACCOUNT (the lanes on
+# LANE, canonical: CAP_ACCOUNT_RECORDS, this fleet's held records whose account
+# is LANE, plus CAP_ACCOUNT_OTHER, the live claims and reservations on LANE
+# that are no held record's own, which are other fleets' lanes and lanes
+# nothing recorded), and CAP_ITEM_HELD and CAP_ITEM_ACCOUNT (whether KEY's own
+# record is held, and the account it names). For the fleet count a claim of
+# this fleet is a held record's own where it names the record's window, so a
+# relaunch onto another account is not a second lane of the fleet. For the
+# account count it is one where it names the record's window and account and
+# this fleet or none, lib/lane-claims.sh's header saying which claims carry
+# none. A record's window is `SESSION:WINDOW`, or bare where written by hand,
+# and a claim's is the bare name, so the two are compared on the name. The
+# records are this fleet's durable count: a GUI launch writes no claim and a
+# claim write can fail, and either lane still has its record. They are read
+# after the claim store, because a launch writes its record before it drops
+# its reservation: a lane whose reservation the claim read missed is a record
+# this read finds. Returns 1 on a store it could not read: a count missing a
+# lane is a cap that admits one lane too many.
+cap_count() { # ITEM KEY LANE
+  local lanes out held owned="" claims counts tag account window rc=0
+  claims="$(lane_claims_read "$(lane_claims_dir "$CLAIM_ROOT")" count)" || rc=$?
+  [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=claims" >&2; return 1; }
+  lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')" || rc=$?
+  # One line per held record, tagged and joined by the unit separator, which
+  # keeps an empty account or window a field of its own.
+  [[ "$rc" -eq 0 ]] && out="$(jq -r --arg key "$2" "$LANE_RUNNING_JQ"'
+    ([.[] | objects | select(.item == $key)] | first) as $own
+    | (if $own == null then "absent" elif ($own | held) then "held" else "stopped" end),
+      ($own.account // ""),
+      (.[] | select(held) | ["held", (.account // ""), (.window // "" | sub("^[^:]*:"; ""))] | join("\u001f"))' <<<"$lanes")" || rc=1
+  [[ "$rc" -eq 0 ]] || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
+  { read -r CAP_ITEM_HELD; read -r CAP_ITEM_ACCOUNT; held="$(cat)"; } <<<"$out"
+  CAP_RUNNING=0
+  CAP_ACCOUNT_RECORDS=0
+  while IFS=$'\037' read -r tag account window; do
+    [[ "$tag" == held ]] || continue
+    CAP_RUNNING=$((CAP_RUNNING + 1))
+    account="$(lane_claims_canon "$account")" || { ot_message cap-unreadable "item=$1" "source=state" >&2; return 1; }
+    [[ -z "$window" ]] || owned+="$window"$'\t'"$account"$'\n'
+    [[ -z "$3" || -z "$account" || "$account" != "$3" ]] || CAP_ACCOUNT_RECORDS=$((CAP_ACCOUNT_RECORDS + 1))
+  done <<<"$held"
+  # A held record's own claims are that record's lane, counted above; this
+  # fleet's other claims are the fleet cap's in-flight lanes.
+  counts="$(CAP_OWNED="$owned" CAP_FLEET="$CAP_FLEET" CAP_LANE="$3" awk -F'\t' '
+    BEGIN {
+      n = split(ENVIRON["CAP_OWNED"], w, "\n")
+      for (i = 1; i <= n; i++) if (w[i] != "") { owned[w[i]] = 1; sub(/\t.*/, "", w[i]); window[w[i]] = 1 }
+    }
+    NF && $5 == ENVIRON["CAP_FLEET"] && !($2 in window) { f++ }
+    NF && ENVIRON["CAP_LANE"] != "" && $1 == ENVIRON["CAP_LANE"] &&
+      !(($5 == ENVIRON["CAP_FLEET"] || $5 == "") && (($2 "\t" $1) in owned)) { a++ }
+    END { print f + 0, a + 0 }' <<<"$claims")"
+  CAP_INFLIGHT="${counts% *}"
+  CAP_ACCOUNT_OTHER="${counts#* }"
+  CAP_ACCOUNT=$((CAP_ACCOUNT_RECORDS + CAP_ACCOUNT_OTHER))
+}
+
+# Judges the launch lane again once a --wait-slot wait has let its usage
+# window move: `--lane auto` picks again, which also follows whichever account
+# has room, and a named lane goes back to named_lane_judge. Returns 1 with the
+# refusal printed.
+lane_rejudge() { # ITEM
+  local next rc=0
+  if [[ "$LANE_AUTO" == true ]]; then
+    next="$(pick_auto_lane)" || rc=$?
+    if [[ "$rc" -eq 3 ]]; then
+      ot_message lane-unavailable "harness=$LANE_HARNESS" "item=$1" "launched=$launched" >&2; return 1
+    elif [[ "$rc" -ne 0 ]]; then
+      ot_message lane-resolution-failed "exit=$rc" "item=$1" "launched=$launched" >&2; return 1
+    fi
+    ! lane_value_error "$next" || return 1
+    [[ "$next" == "$LANE_ENV" ]] || { LANE_ENV="$next"; ot_message lane-selected "lane=$LANE_ENV"; }
+  elif [[ "$LANE_GATE" == true ]]; then
+    named_lane_judge
+  fi
+}
+
+# Returns 0 with the item's reservation written and the locks released when
+# this item may launch, and 1 having released them when it may not, its
+# refusal printed. --over-cap admits the
+# launch past whichever caps it meets and names them in CAP_PASSED;
+# --wait-slot counts again every WAIT_SLOT_POLL_SECS until both caps have room,
+# printing slot-waiting whenever the count it waits on changes, and judges the
+# lane again before the count that admits it.
+cap_gate() { # ITEM KEY WINDOW
+  local item="$1" key="$2" lane over stale=false waited_on=""
+  CAP_PASSED=""
+  while :; do
+    lane=""
+    [[ -z "$LANE_ENV" ]] || lane="$(lane_claims_canon "${LANE_ENV#*=}")"
+    cap_take "$item" || { ot_message cap-lock-failed "item=$item" "lock=$CAP_LOCK_FAILED" >&2; return 1; }
+    cap_count "$item" "$key" "$lane" || { cap_release; return 1; }
+    over=""
+    # A relaunch of a held record replaces its lane, and on the same account
+    # its claim.
+    if [[ "$RELAUNCH" != true || "$CAP_ITEM_HELD" != held ]]; then
+      (( CAP_RUNNING + CAP_INFLIGHT < FLEET_CAP )) || over=fleet
+    fi
+    if [[ -n "$lane" ]] && (( ACCOUNT_CAP > 0 && CAP_ACCOUNT >= ACCOUNT_CAP )) &&
+      [[ "$RELAUNCH" != true || "$CAP_ITEM_HELD" != held || "$(lane_claims_canon "$CAP_ITEM_ACCOUNT")" != "$lane" ]]; then
+      over="${over:+$over,}account"
+    fi
+    if [[ -z "$over" ]]; then
+      [[ "$stale" == true ]] || { cap_reserve "$item" "$3"; return; }
+      cap_release
+      lane_rejudge "$item" || return 1
+      stale=false
+      continue
+    fi
+    if [[ "$OVER_CAP" == true ]]; then
+      cap_reserve "$item" "$3" || return 1
+      CAP_PASSED="$over"
+      ot_message over-cap-admitted "item=$item" "passed=$over" "cap=$FLEET_CAP" "running=$CAP_RUNNING" \
+        "claims=$CAP_INFLIGHT" "lane=$lane" "account-cap=$ACCOUNT_CAP" "account-claims=$CAP_ACCOUNT" >&2
+      return 0
+    fi
+    cap_release
+    if [[ "$WAIT_SLOT" != true ]]; then
+      if [[ "$over" == account ]]; then
+        ot_message account-cap-reached "item=$item" "lane=$lane" "cap=$ACCOUNT_CAP" "claims=$CAP_ACCOUNT" \
+          "records=$CAP_ACCOUNT_RECORDS" "claims-other=$CAP_ACCOUNT_OTHER" >&2
+      else
+        ot_message cap-reached "item=$item" "cap=$FLEET_CAP" "running=$CAP_RUNNING" "claims=$CAP_INFLIGHT" >&2
+      fi
+      return 1
+    fi
+    # Only the account is full: an auto lane moves to whichever account has room.
+    if [[ "$stale" == true && "$over" == account && "$LANE_AUTO" == true ]]; then
+      lane_rejudge "$item" || return 1
+      stale=false
+      continue
+    fi
+    if [[ "$waited_on" != "$over $CAP_RUNNING $CAP_INFLIGHT $lane $CAP_ACCOUNT" ]]; then
+      waited_on="$over $CAP_RUNNING $CAP_INFLIGHT $lane $CAP_ACCOUNT"
+      ot_message slot-waiting "item=$item" "over=$over" "cap=$FLEET_CAP" "running=$CAP_RUNNING" \
+        "claims=$CAP_INFLIGHT" "lane=$lane" "account-cap=$ACCOUNT_CAP" "account-claims=$CAP_ACCOUNT"
+    fi
+    sleep "$WAIT_SLOT_POLL_SECS"
+    stale=true
+  done
+}
+
 repo="$(resolve_repo)"
 launched=0
 preparing=0
@@ -2507,6 +2881,10 @@ state_ready=false
 # that turned out to be owned by another session.
 lanes_seen=""
 for raw in "${ITEMS[@]}"; do
+  # The previous item's launch lock and reservation end here, whichever path
+  # left that item.
+  cap_release
+  cap_unreserve
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
     # git-context owns the canonical spelling of a tracker item, so this brief,
@@ -2552,31 +2930,26 @@ for raw in "${ITEMS[@]}"; do
   # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
   # surface a re-pick would re-read numbers nothing has moved.
   attempted=$((attempted + 1))
-  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
-    if [[ "$CLAIM_WRITE_FAILED" == true ]]; then
-      ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
-      failed=$((failed + 1))
-      break
-    fi
-    lane_rc=0
-    next_lane="$(pick_auto_lane)" || lane_rc=$?
-    if [[ "$lane_rc" -ne 0 ]]; then
-      if [[ "$lane_rc" -eq 3 ]]; then
-        ot_message lane-unavailable "harness=$LANE_HARNESS" "item=$item" "launched=$launched" >&2
-      else
-        ot_message lane-resolution-failed "exit=$lane_rc" "item=$item" "launched=$launched" >&2
-      fi
-      failed=$((failed + 1))
-      break
-    fi
-    if lane_value_error "$next_lane"; then
-      failed=$((failed + 1))
-      break
-    fi
-    if [[ "$next_lane" != "$LANE_ENV" ]]; then
-      LANE_ENV="$next_lane"
-      ot_message lane-selected "lane=$LANE_ENV"
-    fi
+  # A claim an earlier item failed to write is a lane an auto re-pick, which
+  # reads claims, cannot see, so it would not move off that account. That stops
+  # the batch, before this item's re-pick. The account cap counts the lane by
+  # its record and needs no stop.
+  if [[ "$CLAIM_WRITE_FAILED" == true && "$LANE_AUTO" == true ]]; then
+    ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
+    failed=$((failed + 1))
+    break
+  fi
+  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]] && ! lane_rejudge "$item"; then
+    failed=$((failed + 1))
+    break
+  fi
+  # Judged once the lane is settled, since the account cap counts that lane,
+  # and before the worktree, so a refused item leaves no tree behind. A
+  # refusal stops the batch: the count it refused on stands for every later
+  # item.
+  if [[ "$CAP_GATED" == true ]] && ! cap_gate "$item" "$wt_id" "$title"; then
+    failed=$((failed + 1))
+    break
   fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo")"
   cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
@@ -2719,6 +3092,8 @@ for raw in "${ITEMS[@]}"; do
   # turned out to be owned elsewhere never carried a session.
   [[ -z "$LANE_ENV" ]] || grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
 done
+cap_release
+cap_unreserve
 
 # Every recorded lane ends with a newline. Lane paths cannot contain one.
 lanes_used="${lanes_seen//[!$'\n']/}"

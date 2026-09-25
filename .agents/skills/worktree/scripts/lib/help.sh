@@ -9,7 +9,8 @@ Usage: worktree <command> [ID|/path] [options]
 
 Portable git worktree manager. Worktrees live outside the repo root at
 <parent-of-checkout>/.worktrees/<checkout-name>/<id>; WORKTREE_BASE_DIR
-overrides the parent directory.
+overrides the parent directory. A hosted lane's worktree lives elsewhere
+(create --help, --hosted).
 
 Commands:
   create ID        Claim a new issue worktree. Refuses implicit reuse when a
@@ -21,6 +22,7 @@ Commands:
                    (remove --help)
   cleanup          Remove worktrees whose branches are merged (cleanup --help)
   path ID          Print the worktree path for an issue ID
+  path --hosted    Print the one path a hosted lane's worktree takes
   exists ID        Check whether a worktree exists for an issue ID
   merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
@@ -39,13 +41,14 @@ Each mutating command's full contract is its own --help.
 Path arguments and canonicalization:
   The project root resolves via git rev-parse (at any depth, inside worktrees
   too). Issue IDs that derive paths must match [A-Za-z0-9][A-Za-z0-9._-]* and
-  must not contain '..'. Issue-ID resolution prefers the configured base dir
-  and falls back to the worktree registered for the issue branch; there is no
-  auto-migration. Path comparisons are canonical (physical, symlink-resolved
-  on both sides). Direct path arguments for mutating commands must be
-  registered worktrees of this repository's common Git directory: fix-links,
-  codex-setup, codex-branch, claude-setup, and remove refuse the main checkout
-  and foreign worktrees. Codex app-created worktrees are registered git
+  must not contain '..'. Issue-ID resolution prefers the configured base dir,
+  then the worktree registered for the issue branch, then a hosted tree that
+  records the issue (create --help, --hosted); there is no auto-migration.
+  Path comparisons are canonical (physical, symlink-resolved on both sides).
+  Direct path arguments for mutating commands must be registered worktrees of
+  this repository's common Git directory: fix-links, codex-setup,
+  codex-branch, claude-setup, and remove refuse the main checkout and foreign
+  worktrees. Codex app-created worktrees are registered git
   worktrees and are accepted even outside WORKTREE_BASE_DIR.
 
 Configuration (loaded lowest to highest: kendex.settings.toml [env], then
@@ -58,6 +61,9 @@ personal overrides):
                               ../.worktrees/<checkout-name>, an external
                               per-repo sibling dir. Do not point it inside the
                               repo root.
+  WORKTREE_HOSTED_NAME        The last segment of the path create --hosted
+                              gives a new worktree (create --help); one path
+                              segment in the issue-ID alphabet. Default: lane.
   WORKTREE_DEFAULT_BRANCH     Default branch name (auto-detected if unset;
                               fallback: main)
   WORKTREE_SYMLINKS           Space-separated paths symlinked from the main
@@ -151,15 +157,22 @@ runs (any JSON file whose top-level 'hooks' entries carry a 'command', such as
 .claude/settings.json, .codex/hooks.json or .pi/kendex/hooks.json), that path
 takes one side of the conflict, its conflicted content is saved beside it as
 <path>.restack-conflict, and one 'worktree-restack-hook-held:' line names
-every such path. Resolve the markers in the saved copy, then replace the hook
-in one step with 'mv <path>.restack-conflict <path>', stage the hook, and
+every such path. Resolve the markers in the saved copy, then replace the path
+in one step with 'mv <path>.restack-conflict <path>', stage the path, and
 unstage the copy with 'git rm -q --cached --ignore-unmatch --
 <path>.restack-conflict'. continue and skip refuse with
 'worktree-restack-hook-unconsumed:' while a saved copy is in the worktree or
 the index; deleting it, staging the path and unstaging the copy keeps the held
-side. abort removes the saved copies. The held set is the paths a declaration's command names,
-not the files those hooks source. When the declarations cannot be read, for
-example with jq missing, every conflicted path is held the same way.
+side. abort removes the saved copies. The held set is the paths a
+declaration's command names and the libraries those hooks source, directly or
+through another library, read from the '# shellcheck source=' directive above
+each 'source' or '.' line, at the pre-restack head, the paused HEAD and the
+commit being replayed. A directive resolves against the sourcing file's
+directory; one that climbs out of it ('../skills/<skill>/...') matches every
+tracked path ending in the rest of it, since the hook finds that library by
+searching. When any read that discovery makes fails, the lookup of the
+commit being replayed included, or jq is missing, every conflicted path is
+held the same way.
 Conflicts in every other path keep their markers in place.
 
 On completion, continue and skip report one 'rebase-map: <old-sha>
@@ -224,6 +237,19 @@ Options:
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
+  --hosted        The create runs for a hosted lane, on a clone that holds one
+                  lane worktree: a new tree lands at
+                  ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside
+                  the checkout whatever WORKTREE_BASE_DIR says (path
+                  --hosted), the same path in every lane whose clone sits at
+                  the same path, so a build there hits compile-cache entries
+                  keyed by another lane's identical source path. The tree
+                  records its issue, so the issue ID finds it with HEAD
+                  detached. With --reuse or --restack a tree the issue already
+                  has is reused where it stands; without them create refuses
+                  it (exit 75) as for any existing tree. A path another
+                  issue's tree holds exits 75. Without --hosted, the new tree
+                  is keyed by the issue ID so several can coexist
 
 Transfer form:
   --transfer BRANCH
@@ -250,8 +276,9 @@ Reuse rebase conflicts:
        conflicted.
   With no conflict, --restack completes the same rebase as --reuse. The
   guarded actions fail closed on missing, stale, or unrelated state
-  (restack --help). A conflicted path a harness runs as a hook is held at a
-  parseable side instead of left with markers (restack --help).
+  (restack --help). A conflicted path a harness runs as a hook, or a library
+  such a hook sources, is held at a parseable side instead of left with
+  markers (restack --help).
 
 Rewritten commits:
   A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
