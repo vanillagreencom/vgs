@@ -90,7 +90,6 @@ Singleton {
         // wins, as the later of the two.
         onLoaded: {
             root.reloading = false;
-            root.userLoads += 1;
             const content = text();
             if (content === root.persistedUser.text && root.persistedUser.state === "loaded") {
                 // The disk holds what it held: a write's own notification,
@@ -114,7 +113,6 @@ Singleton {
         }
         onLoadFailed: error => {
             root.reloading = false;
-            root.userLoads += 1;
             if (error === FileViewError.FileNotFound) {
                 const settled = root.userText === root.persistedUser.text;
                 root.persistedUser = { value: null, text: null, state: "absent" };
@@ -159,16 +157,6 @@ Singleton {
     property bool reloading: false
     property bool reloadRequested: false
     property string lastSaveError: ""
-    // Counts every change of `effective` and every completed read of the
-    // user file, for the validation rows that assert one write is
-    // published once: its own file notification is read and found
-    // identical.
-    property int changes: 0
-    property int userLoads: 0
-    onEffectiveChanged: changes += 1
-    // No save or read in flight or wanted.
-    readonly property bool settled: activeSave === null && !reloading && !reloadRequested
-
     // Run the one operation the file view may carry: FileView completes a
     // write in flight synchronously inside a second setText, and a reload
     // during a write starts nothing, so a read and a write never overlap.

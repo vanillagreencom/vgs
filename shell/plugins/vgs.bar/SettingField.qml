@@ -17,10 +17,6 @@ RowLayout {
     property var value
     property bool editable: true
     signal apply(var value)
-    // The text editor a string or number field draws; null for a switch or
-    // an enum.
-    readonly property var editor: loader.item !== null && loader.item.input !== undefined ? loader.item.input : null
-
     spacing: Style.spacing.lg
 
     Text {
@@ -41,7 +37,6 @@ RowLayout {
     Component {
         id: text
         Rectangle {
-            readonly property alias input: input
             implicitHeight: input.implicitHeight + Style.spacing.md
             color: "transparent"
             border.color: Color.muted

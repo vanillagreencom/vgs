@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Window
 import Quickshell
 import Quickshell.Wayland
 import qs.Core
@@ -37,13 +36,6 @@ Item {
             WlrLayershell.namespace: "vgs:bar"
             WlrLayershell.layer: WlrLayer.Top
 
-            // Every frame this window swaps is counted by the core, so a
-            // validation row that needs the shell to draw can tell a
-            // stalled sandbox from a defect.
-            Connections {
-                target: slot.Window.window
-                function onFrameSwapped() { Plugins.noteFrame(); }
-            }
             PluginSlot {
                 id: slot
                 kind: "bar"

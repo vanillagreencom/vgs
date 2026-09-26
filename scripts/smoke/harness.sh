@@ -79,6 +79,26 @@ sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
 rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
 home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 
+# Add the observer to a copy; the live checkout never imports test code.
+python3 - "$repo" "$sandbox/repo" <<'PY'
+import pathlib, shutil, sys
+source, target = map(pathlib.Path, sys.argv[1:])
+for directory in ("shell", "bin", "config", "scripts"):
+    shutil.copytree(source / directory, target / directory)
+shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
+path = target / "shell/shell.qml"
+text = path.read_text()
+needle = "ShellRoot {\n"
+assert text.count(needle) == 1, "smoke root insertion must match once"
+path.write_text(text.replace(needle, needle + "    Probe {}\n"))
+path = target / "shell/Core/Config.qml"
+text = path.read_text()
+needle = "    id: root\n"
+assert text.count(needle) == 1, "smoke Config alias insertion must match once"
+path.write_text(text.replace(needle, needle + "    property alias smokeUserView: userView\n"))
+PY
+repo="$sandbox/repo"
+
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 hl.config({
@@ -240,7 +260,15 @@ for _ in $(seq 1 $((timeout_s * 100))); do
 done
 
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
-ipc() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
+ipc() {
+  local target="$1"; shift
+  if [[ $target == shell ]]; then
+    case "$1" in
+      buildCount|frames|configChanges|configUserLoads|configSettled|readInstance|instanceGeometry|invokeInstance) target=smoke ;;
+    esac
+  fi
+  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$target" "$@" 2>>"$sandbox/ipc.log" | tail -n 1
+}
 
 up=false
 for _ in $(seq 1 $((timeout_s * 5))); do

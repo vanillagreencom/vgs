@@ -27,15 +27,6 @@ Singleton {
     // instance holds, `providers` the capability providers made for it, and
     // `lifetime` owns its pending releases.
     property var built: Object.create(null)
-    property int buildCount: 0
-    // Frames the bar windows swapped, for validation rows whose subject
-    // only shows once the shell draws again: a layout's arrangement, a
-    // popup's move. A nested compositor the host does not show sends no
-    // frame callback, and the shell then draws nothing after its first
-    // frame.
-    property int frames: 0
-    function noteFrame() { frames += 1; }
-
     // Per bar instance, the widgets the core mounted in each of its
     // sections, keyed by the bar's host key: { row, sections: { <section>:
     // { idsKey, entries } } }, `entries` one { key, widget } per wanted
@@ -213,7 +204,6 @@ Singleton {
         const next = Object.assign(Object.create(null), built);
         next[hostKey] = (next[hostKey] || []).concat([row]);
         built = next;
-        if (row.origin === "core") buildCount += 1;
     }
 
     // Record a widget a plugin draws itself (a bar's clock) under the
@@ -382,31 +372,6 @@ Singleton {
         return JSON.stringify(out);
     }
 
-    // The screen-relative rectangle of one built instance as JSON
-    // [x, y, width, height], from Item.mapToGlobal, for validation rows
-    // that read where a surface was placed. A popup's window position is
-    // relative to the window it was anchored in. `absent` when no such
-    // instance exists.
-    function geometryOf(hostKey, id) {
-        if (!Logic.hasOwn(built, hostKey)) return "absent";
-        const row = built[hostKey].filter(r => r.id === id)[0];
-        if (row === undefined) return "absent";
-        const at = row.instance.mapToGlobal(0, 0);
-        return JSON.stringify([at.x, at.y, row.instance.width, row.instance.height]);
-    }
-
-    // One property of one built instance as JSON, for validation rows that
-    // read what a plugin actually received. `absent` when no such instance
-    // exists; `undefined` when the instance has no such property.
-    function readInstance(hostKey, id, property) {
-        if (!Logic.hasOwn(built, hostKey)) return "absent";
-        const row = built[hostKey].filter(r => r.id === id)[0];
-        if (row === undefined) return "absent";
-        const value = row.instance[property];
-        const json = JSON.stringify(value);
-        return json === undefined ? "undefined" : json;
-    }
-
     // Kind-generic summon, hide and toggle for the summonable kinds. A host
     // registers itself under its kind on completion. `origin` is null for
     // an IPC call, which opens on the focused screen, or { anchor, screen }
@@ -426,19 +391,6 @@ Singleton {
         const refusal = Registry.buildRefusal(id);
         if (refusal !== "") return refusal;
         return hosts[kind][verb](id, payloadJson, origin || null);
-    }
-
-    // Call one function of one built instance with one text argument and
-    // answer its result as text, for validation rows that drive what a
-    // user would click. `absent` when no such instance exists; `no-function`
-    // when it has no such function.
-    function invokeInstance(hostKey, id, name, arg) {
-        if (!Logic.hasOwn(built, hostKey)) return "absent";
-        const row = built[hostKey].filter(r => r.id === id)[0];
-        if (row === undefined) return "absent";
-        if (typeof row.instance[name] !== "function") return "no-function";
-        const result = row.instance[name](arg);
-        return result === undefined ? "" : String(result);
     }
 
     // Enable or disable one plugin. The reply is one keyed line the CLI

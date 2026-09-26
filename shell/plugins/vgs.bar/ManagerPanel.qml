@@ -48,81 +48,6 @@ Item {
         return keep(id, shell.manager.setSetting(id, key, value));
     }
 
-    // writeSetting from one text argument, for the validation rows: `arg`
-    // is JSON {"id", "key", "value"}.
-    function applySetting(arg) {
-        const a = JSON.parse(arg);
-        return writeSetting(a.id, a.key, a.value);
-    }
-
-    // plugin id -> the number of settings fields its form has drawn, read
-    // from each form's Repeater, so a row tells a drawn form from the
-    // schema handed to the panel.
-    readonly property var drawnFields: {
-        const out = {};
-        for (let i = 0; i < rows.count; i++) {
-            const item = rows.itemAt(i);
-            if (item !== null) out[item.modelData.id] = item.fieldCount;
-        }
-        return out;
-    }
-
-    // The drawn field for setting `key` of plugin `id`, or null.
-    function fieldOf(id, key) {
-        for (let i = 0; i < rows.count; i++) {
-            const item = rows.itemAt(i);
-            if (item !== null && item.modelData.id === id) return item.field(key);
-        }
-        return null;
-    }
-
-    // An edit under way in one drawn text field, for the validation rows
-    // that prove an unrelated change leaves it alone. `holdField` takes
-    // JSON {"id", "key", "text"}: it focuses the field's editor, types
-    // `text` into it as a user who has not left the field yet, and answers
-    // the editor's rectangle as JSON [x, y, width, height] in the
-    // coordinates of the window this panel was anchored in, or `absent`
-    // when no such text editor is drawn. `heldFieldState` answers JSON
-    // { same, focus, activeFocus, text, cursor }: `same` says the drawn
-    // field is still the object held, `activeFocus` is true only while
-    // the compositor gives this window keyboard focus.
-    property var heldField: null
-    function holdField(arg) {
-        const a = JSON.parse(arg);
-        const field = fieldOf(a.id, a.key);
-        const editor = field === null ? null : field.editor;
-        if (editor === null) return "absent";
-        editor.forceActiveFocus();
-        editor.text = a.text;
-        editor.cursorPosition = 1;
-        heldField = { id: a.id, key: a.key, field: field, editor: editor };
-        const at = editor.mapToGlobal(0, 0);
-        return JSON.stringify([at.x, at.y, editor.width, editor.height]);
-    }
-
-    function heldFieldState() {
-        if (heldField === null) return "absent";
-        return JSON.stringify({
-            same: fieldOf(heldField.id, heldField.key) === heldField.field,
-            focus: heldField.editor.focus,
-            activeFocus: heldField.editor.activeFocus,
-            text: heldField.editor.text,
-            cursor: heldField.editor.cursorPosition
-        });
-    }
-
-    // Emit one drawn field's `apply`, as an edit in the form does, for the
-    // validation rows: `arg` is JSON {"id", "key", "value"}. Answers
-    // `applied` or `absent` when the form drew no such field; the write's
-    // own reply is kept as a refusal on the plugin's row.
-    function applyField(arg) {
-        const a = JSON.parse(arg);
-        const field = fieldOf(a.id, a.key);
-        if (field === null) return "absent";
-        field.apply(a.value);
-        return "applied";
-    }
-
     implicitWidth: Style.space(90)
     implicitHeight: Math.min(list.implicitHeight + 2 * Style.spacing.xl, Style.space(150))
 
@@ -155,14 +80,6 @@ Item {
                 ColumnLayout {
                     id: entry
                     required property var modelData
-                    readonly property int fieldCount: fields.count
-                    function field(key) {
-                        for (let i = 0; i < fields.count; i++) {
-                            const item = fields.itemAt(i);
-                            if (item !== null && item.key === key) return item;
-                        }
-                        return null;
-                    }
                     Layout.fillWidth: true
                     spacing: Style.spacing.sm
 

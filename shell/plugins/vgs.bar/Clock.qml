@@ -11,7 +11,6 @@ Item {
     // a screen goes away, so the read is null-checked.
     required property Item bar
     readonly property string format: bar && bar.shell !== null ? String(bar.shell.settings.clockFormat) : ""
-    readonly property string displayed: label.text
 
     // A quoted literal such as 'secs' is not a seconds field.
     readonly property bool showsSeconds: format.replace(/'[^']*'/g, "").indexOf("s") !== -1

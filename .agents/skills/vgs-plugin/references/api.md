@@ -136,14 +136,11 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `listPlugins` | no | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned`; `config` with `ready`, `shipped` and `user` states |
 | `listShellConfig` | no | the effective configuration as JSON |
 | `built` | no | JSON: host key to the records on that surface, each `id`, `kind`, `origin` (`core` for an instance the core built, `plugin` for a registered built-in) and `capabilities` |
-| `buildCount` | no | instances of origin `core` built since start |
 | `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `polkitRegistered`, `lock` |
-| `readInstance <hostKey> <id> <property>` | no | that property of the built instance as JSON; `absent` with no such instance, `undefined` with no such property |
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
 | `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: no-host=<kind>`, `refused: kind=<kind> id=<id>`, `refused: scan=pending`, `refused: config=<state>` (the state `Config.notReady` names, [`plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds)), `refused: disabled=<id>`, `refused: capability=<name> held-by=<id>`, `refused: screen=none`, `refused: build-failed=<id>`, `refused: open-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
-| `invokeInstance <hostKey> <id> <function> <arg>` | yes | calls that function of the built instance with one text argument and answers its result; `absent` with no such instance, `no-function` with no such function |
 
 ## Manifest
 
