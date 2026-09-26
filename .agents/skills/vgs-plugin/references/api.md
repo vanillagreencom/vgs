@@ -7,11 +7,11 @@ What a plugin receives and may call. The core owns every table here; a value not
 | Kind | Entry point key | Base | Host today | Built when |
 |---|---|---|---|---|
 | `bar-widget` | `bar-widget` | `BarWidget` from `qs.Ui` | the active bar's sections | placed in `bar.layout.<section>`, not in `disabledPlugins`, and a bar is active |
-| `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration |
+| `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration and is not in `disabledPlugins` |
 | `service` | `service` | `Item` | the service host | enabled |
 | `background` | `background` | `Item` declaring `property var screen: null` | the background host, one per screen, under every window | enabled |
 | `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host: a popup under its anchor item with a focus grab, or a layer surface on the top layer without one | enabled and summoned, until hidden |
-| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen on the overlay layer | enabled and summoned, until hidden |
+| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host: an anchored popup, or a layer surface covering its screen without an anchor | enabled and summoned, until hidden |
 | `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host: a popup under its anchor item with a focus grab, or a layer surface on the overlay layer without one | enabled and summoned, until hidden |
 
 Enabled is defined in [`docs/architecture/plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds); `PluginLogic.isEnabled` is the judge.
@@ -24,7 +24,7 @@ A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` th
 |---|---|---|---|
 | `shell` | object | the core, after creation and again when the plugin's settings change | this plugin's scoped object, table below |
 
-Declare it as `property var shell: null`; the templates do.
+Declare it as `property var shell: null`, or inherit it from `BarWidget`.
 
 ## Properties a bar widget also receives
 
@@ -32,7 +32,7 @@ Declare it as `property var shell: null`; the templates do.
 |---|---|---|
 | `bar` | object | the bar API below |
 | `moduleName` | string | the plugin id; the core assigns it after creation |
-| `settings` | object | the manifest's `settings` under the widget's layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; reassigned when the entry changes |
+| `settings` | object | the manifest's `settings` under the widget's layout entry, for example `{ "units": "metric" }`; the entry id is excluded; reassigned when the entry changes |
 
 `BarWidget` adds `barSize` and `setting(name, fallback)`.
 
