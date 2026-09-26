@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The validation manifest. Every check the repository runs is listed here
-# once, and CI runs this file, not a second list.
+# The product validation manifest. Local runs and CI use this table.
+# Kendex's repository guards run in the commit hook and CI workflow.
 #
 # Usage: scripts/validate [AREA] [--changed BASE] [--list]
 #   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,

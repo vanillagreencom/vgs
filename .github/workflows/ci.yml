@@ -66,6 +66,9 @@ jobs:
           fi
           echo "VGS_VALIDATE_BASE=$base" >>"$GITHUB_ENV"
 
+      - name: Preflight
+        run: .agents/skills/preflight/scripts/preflight --base "$VGS_VALIDATE_BASE"
+
       - name: ruff for the commit guards' py-names lane
         run: |
           set -euo pipefail
