@@ -211,6 +211,21 @@ PY
 "${base_env[@]}" git -C "$d" commit -q -m control
 row "removing the source dependency makes the planted defect escape" "$d" 0 "" "validate: ok"
 
+d="$tmp/arguments"; fresh "$d"
+argument_cases=(
+  'missing|--changed|changed-base=missing-or-repeated'
+  'empty|--changed|changed-base=missing-or-repeated'
+  'dash-prefixed|--changed --list|changed-base=missing-or-repeated'
+  'repeated|--changed HEAD --changed HEAD|changed-base=missing-or-repeated'
+  'second-area|logic|extra-argument=logic'
+)
+for spec in "${argument_cases[@]}"; do
+  IFS='|' read -r name arguments refusal <<<"$spec"
+  read -r -a test_args <<<"$arguments"
+  [[ $name == empty ]] && test_args+=("")
+  row "invalid $name argument is refused" "$d" 2 "" "validate: refused: $refusal"
+done
+
 if [[ $failures -gt 0 ]]; then
   echo "test-validate: failed=$failures"
   exit 1
