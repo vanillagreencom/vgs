@@ -25,10 +25,14 @@ Item {
     Connections {
         target: Registry
         function onChanged() {
-            const next = {};
-            for (const id of Object.keys(host.brokenKeys))
-                if (Registry.has(id)) next[id] = host.brokenKeys[id];
-            host.brokenKeys = next;
+            // Plugins prunes its failure records on this same signal.
+            Qt.callLater(() => {
+                const ids = Object.keys(host.brokenKeys);
+                const next = {};
+                for (const id of ids)
+                    if (Plugins.failedRevision(host.hostKey, "background", id) !== null) next[id] = host.brokenKeys[id];
+                if (Object.keys(next).length !== ids.length) host.brokenKeys = next;
+            });
         }
     }
     readonly property var ids: Registry.enabledOfKind("background").filter(id => {

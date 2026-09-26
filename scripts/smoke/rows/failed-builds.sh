@@ -27,6 +27,16 @@ expect_poll "the nonvisual background leaves no surface" 0 layer_count vgs:backg
 expect "disabling the nonvisual root is allowed" ok ipc shell setPluginEnabled acme.broken false
 background_failures() { sed -n 's/.*smoke: backgroundFailures=//p' "$instance_log" | tail -n 1; }
 expect_poll "the host remembers the installed broken background" 1 background_failures
+printf 'import QtQuick\nItem { property var shell: null; property var screen: null }\n' >"$broken/Item.qml"
+expect "rescan after repairing the disabled plugin answers ok" ok ipc shell rescanPlugins
+expect_poll "a source repair releases its stale background failure record" 0 background_failures
+printf 'import QtQuick\nQtObject { property var shell: null; property var screen: null }\n' >"$broken/Item.qml"
+scans_before_removal_control="$(scans_done)"
+expect "the removal control's broken source is rescanned" ok ipc shell rescanPlugins
+expect_log "the broken source is registered before the removal control" "$((scans_before_removal_control + 1))" 'plugins: scan complete '
+expect "the removal control enables the broken plugin" ok ipc shell setPluginEnabled acme.broken true
+expect_poll "the removal control reaches a retained failure record" 1 background_failures
+expect "the removal control disables the broken plugin" ok ipc shell setPluginEnabled acme.broken false
 python3 - "$broken" <<'PY'
 import shutil, sys
 shutil.rmtree(sys.argv[1])
