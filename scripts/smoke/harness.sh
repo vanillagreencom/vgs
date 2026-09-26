@@ -96,6 +96,11 @@ text = path.read_text()
 needle = "    id: root\n"
 assert text.count(needle) == 1, "smoke Config alias insertion must match once"
 path.write_text(text.replace(needle, needle + "    property alias smokeUserView: userView\n"))
+path = target / "shell/Hosts/BackgroundHost.qml"
+text = path.read_text()
+needle = "    id: host\n"
+assert text.count(needle) == 1, "smoke background observer insertion must match once"
+path.write_text(text.replace(needle, needle + '    onBrokenKeysChanged: console.info("smoke: backgroundFailures=" + Object.keys(brokenKeys).length)\n'))
 PY
 repo="$sandbox/repo"
 

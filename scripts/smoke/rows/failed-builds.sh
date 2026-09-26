@@ -25,6 +25,14 @@ expect "the nonvisual root has no build record" False record_exists acme.broken
 expect "the nonvisual root keeps no capability hold" null lent holders.lock
 expect_poll "the nonvisual background leaves no surface" 0 layer_count vgs:background
 expect "disabling the nonvisual root is allowed" ok ipc shell setPluginEnabled acme.broken false
+background_failures() { sed -n 's/.*smoke: backgroundFailures=//p' "$instance_log" | tail -n 1; }
+expect_poll "the host remembers the installed broken background" 1 background_failures
+python3 - "$broken" <<'PY'
+import shutil, sys
+shutil.rmtree(sys.argv[1])
+PY
+expect "rescan after removing the broken plugin answers ok" ok ipc shell rescanPlugins
+expect_poll "removing the plugin releases its background failure record" 0 background_failures
 
 # A bar widget that cannot take what the core assigns is not built, and the
 # section's entries stay aligned with the layout: an edit to the entry after
