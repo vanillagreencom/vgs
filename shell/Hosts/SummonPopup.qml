@@ -4,7 +4,9 @@ import Quickshell
 import qs.Commons
 
 // The anchor's window owns the popup; the compositor adjusts its position
-// at screen edges. Losing that window or a menu grab closes the instance.
+// at screen edges. Every anchored surface takes the focus grab: it is what
+// gives the popup keyboard focus under a bar whose layer takes none, and
+// what closes it on a click outside. Losing the anchor closes it too.
 PopupWindow {
     id: popup
 
@@ -19,7 +21,7 @@ PopupWindow {
     anchor.edges: Edges.Bottom
     anchor.gravity: Edges.Bottom
     anchor.adjustment: PopupAdjustment.Flip | PopupAdjustment.Slide
-    grabFocus: kind === "menu"
+    grabFocus: true
     visible: anchorItem !== null
     implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
     implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1

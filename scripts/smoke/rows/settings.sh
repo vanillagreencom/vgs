@@ -1,19 +1,38 @@
-# Settings edits and the dispatch queue. A manager write is published
-# once: its own file notification is read and found identical. An
-# unrelated change keeps an edit in progress: the same drawn field, its
-# focus, its text and its cursor. Dispatches asked for back to back run in
-# order behind one process, the queue has a bound, and a process that
-# cannot start does not stop the queue.
+# Settings edits and the dispatch queue. The manager panel opens from a
+# real click on its button, so its popup takes the focus grab a user's
+# click gives it, and a click on a text field gives that field keyboard
+# focus. A manager write is published once: its own file notification is
+# read and found identical. An unrelated change keeps an edit in progress:
+# the same drawn field, its focus, its text and its cursor. Dispatches
+# asked for back to back run in order behind one process, the queue has a
+# bound, and a process that cannot start does not stop the queue.
 set -euo pipefail
-expect "the manager button opens the manager panel for the edit rows" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+click_centre() { # HOST_KEY ID: one click on the centre of a built instance
+  local rect
+  rect="$(ipc shell instanceGeometry "$1" "$2")" || return
+  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
+  click "$cx" "$cy"
+}
+manager_open() { [[ $(ipc shell instanceGeometry panel vgs.bar) != absent ]] && echo open || echo closed; }
+if click_centre "$(bar_key)" vgs.bar/right-manager >/dev/null; then ok "a click lands on the manager button"; else fail "the click on the manager button failed"; fi
+expect_poll "the manager button's click opens the manager panel" open manager_open
 expect_poll "the manager panel draws the fixture's label field again" '[1, 1, 0]' manager_drawn
 expect "an edit begins in the fixture's label field" held ipc shell invokeInstance panel vgs.bar holdField '{"id":"acme.probe","key":"label","text":"draft"}'
+held_editor() { ipc shell invokeInstance panel vgs.bar heldFieldGeometry ''; }
+read -r field_x field_y field_w field_h < <(held_editor | python3 -c 'import json,sys; print(*(int(v) for v in json.load(sys.stdin)))')
+expect "a click lands on the held field" "clicked $((field_x + field_w / 2)) $((field_y + field_h / 2))" click "$((field_x + field_w / 2))" "$((field_y + field_h / 2))"
+held_state() { ipc shell invokeInstance panel vgs.bar heldFieldState ''; }
+# The click also puts the cursor where it landed; the state read after it
+# is what the unrelated changes must preserve.
+held_focused() { held_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["same"] and d["focus"] and d["activeFocus"] and d["text"] == "draft")'; }
+expect_poll "the clicked field holds keyboard focus with its draft" True held_focused
+held_before="$(held_state)" || fail "held field state unreadable"
 expect "the manager toggles the bare fixture off around the edit" ok ipc shell invokeInstance panel vgs.bar toggle acme.bare
 expect_poll "the manager panel shows the bare fixture disabled" '{"acme.bare": false, "acme.probe": true, "vgs.bar": true}' manager_rows
-expect "the edit in progress survives the unrelated change" '{"same":true,"focus":true,"text":"draft","cursor":1}' ipc shell invokeInstance panel vgs.bar heldFieldState ''
+expect "the edit in progress survives the unrelated change" "$held_before" held_state
 expect "the manager toggles the bare fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.bare
 expect_poll "the manager panel shows the bare fixture enabled" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
-expect "the edit in progress survives the second unrelated change" '{"same":true,"focus":true,"text":"draft","cursor":1}' ipc shell invokeInstance panel vgs.bar heldFieldState ''
+expect "the edit in progress survives the second unrelated change" "$held_before" held_state
 
 config_changes() { ipc shell configChanges; }
 user_loads() { ipc shell configUserLoads; }

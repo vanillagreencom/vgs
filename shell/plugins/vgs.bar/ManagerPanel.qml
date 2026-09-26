@@ -105,17 +105,29 @@ Item {
         return "held";
     }
 
-    // What became of the held field: JSON { same, focus, text, cursor }
-    // where `same` says the drawn field is still the object held, and the
-    // rest is read from that editor. `absent` with nothing held.
+    // What became of the held field: JSON { same, focus, activeFocus,
+    // text, cursor } where `same` says the drawn field is still the object
+    // held, and the rest is read from that editor; `activeFocus` is true
+    // only while the compositor gives this window keyboard focus. `absent`
+    // with nothing held.
     function heldFieldState() {
         if (heldField === null) return "absent";
         return JSON.stringify({
             same: fieldOf(heldField.id, heldField.key) === heldField.field,
             focus: heldField.editor.focus,
+            activeFocus: heldField.editor.activeFocus,
             text: heldField.editor.text,
             cursor: heldField.editor.cursorPosition
         });
+    }
+
+    // The held editor's rectangle as JSON [x, y, width, height] in the
+    // coordinates of the window this panel was anchored in, for a row that
+    // clicks it. `absent` with nothing held.
+    function heldFieldGeometry() {
+        if (heldField === null) return "absent";
+        const at = heldField.editor.mapToGlobal(0, 0);
+        return JSON.stringify([at.x, at.y, heldField.editor.width, heldField.editor.height]);
     }
 
     // Emit one drawn field's `apply`, as an edit in the form does, for the

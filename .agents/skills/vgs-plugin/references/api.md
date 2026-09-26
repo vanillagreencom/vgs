@@ -10,13 +10,13 @@ What a plugin receives and may call. The core owns every table here; a value not
 | `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration |
 | `service` | `service` | `Item` | the service host | enabled |
 | `background` | `background` | `Item` declaring `property var screen: null` | the background host, one per screen, under every window | enabled |
-| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host: a popup under its anchor item, or a layer surface on the top layer without one | enabled and summoned, until hidden |
+| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host: a popup under its anchor item with a focus grab, or a layer surface on the top layer without one | enabled and summoned, until hidden |
 | `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen on the overlay layer | enabled and summoned, until hidden |
 | `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host: a popup under its anchor item with a focus grab, or a layer surface on the overlay layer without one | enabled and summoned, until hidden |
 
 Enabled is defined in [`docs/architecture/plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds); `PluginLogic.isEnabled` is the judge.
 
-A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` that throws refuses the summon with `refused: open-failed=<id>`, so a payload that does not parse is left to throw. Summoning an open one calls `open` again with the new payload. Pass the item the surface belongs to as `anchor`. The compositor places an anchored surface beside that item in its own window and adjusts it at screen edges. Moving the item moves the popup. A menu closes on a click outside and receives `close()`. The popup also closes when its anchor is hidden or destroyed. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
+A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` that throws refuses the summon with `refused: open-failed=<id>`, so a payload that does not parse is left to throw. Summoning an open one calls `open` again with the new payload. Pass the item the surface belongs to as `anchor`. The compositor places an anchored surface beside that item in its own window and adjusts it at screen edges. Moving the item moves the popup. An anchored surface takes keyboard focus and closes on a click outside, receiving `close()`. The popup also closes when its anchor is hidden or destroyed. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
 
 ## Properties every instance receives
 

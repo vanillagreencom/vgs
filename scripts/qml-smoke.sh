@@ -29,7 +29,7 @@
 # the core's lending record, the compositor and a private D-Bus; a panel,
 # an overlay and a menu open on summon, take their placement and close on
 # hide, an anchored panel or menu opens as a popup under its item, follows
-# it, and a menu closes on a click outside while a panel stays, and a
+# it, takes keyboard focus and closes on a click outside, and a
 # background is drawn on the bottom layer of every screen; the bar's
 # manager button opens a panel that lists, toggles and configures plugins,
 # and the bar's settings hide it on every screen; an edit in progress in

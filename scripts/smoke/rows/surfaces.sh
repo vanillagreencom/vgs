@@ -102,10 +102,10 @@ expect "the rightmost widget opens a menu" ok ipc shell invokeInstance "bar:$scr
 geometry expect_poll "the menu at the screen edge stays fully on screen" placed placed_below menu "bar:$screen_name" geometry
 expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 
-# A menu takes a focus grab, so a click outside it closes it and calls the
-# plugin's close(); a panel takes none and stays. The clicks go through the
-# nested compositor's virtual pointer. The first click lands on the widget
-# itself, as a user's would before its menu opens.
+# An anchored surface takes a focus grab, so a click outside it closes it
+# and calls the plugin's close(). The clicks go through the nested
+# compositor's virtual pointer. The first click lands on the widget itself,
+# as a user's would before its menu opens.
 read -r widget_x widget_y widget_w widget_h < <(ipc shell invokeInstance "bar:$screen_name" acme.surfaces geometry '' | python3 -c 'import json,sys; print(*json.load(sys.stdin))')
 expect "a click lands on the widget" "clicked $((widget_x + widget_w / 2)) $((widget_y + widget_h / 2))" click "$((widget_x + widget_w / 2))" "$((widget_y + widget_h / 2))"
 expect "the widget opens a menu with a close marker" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces menuHere "{\"closeMarker\":\"$sandbox/closed-by-click\"}"
@@ -113,12 +113,10 @@ expect_poll "the menu is open before the outside click" 1 ipc shell readInstance
 expect "a click lands outside the menu" "clicked $((mon_w / 2)) $((mon_h / 2))" click "$((mon_w / 2))" "$((mon_h / 2))"
 expect_poll "the outside click called the menu's close()" yes marker "$sandbox/closed-by-click"
 expect_poll "the outside click removed the menu from the build records" absent ipc shell readInstance menu acme.surfaces opened
-expect "the widget opens a panel with a close marker" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
+expect "the widget opens an anchored panel" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 expect_poll "the panel is open before the outside click" 1 ipc shell readInstance panel acme.surfaces opened
 expect "a click lands outside the panel" "clicked $((mon_w / 2)) $((mon_h / 2))" click "$((mon_w / 2))" "$((mon_h / 2))"
-expect "the shell answers after the click" ok ipc shell ping
-expect "a panel takes no grab, so the outside click leaves it open" 1 ipc shell readInstance panel acme.surfaces opened
-expect "hiding the anchored panel after the click is allowed" ok ipc shell hide panel acme.surfaces
+expect_poll "the outside click closes an anchored panel too" absent ipc shell readInstance panel acme.surfaces opened
 
 expect "the panel opens again for the disable check" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 
