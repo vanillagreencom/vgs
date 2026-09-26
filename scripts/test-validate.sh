@@ -29,6 +29,7 @@ base_env=(env -i PATH="$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" LC_ALL=
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z)
 
 failures=0
+test_args=()
 ok() { printf '  ok    %s\n' "$*"; }
 fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 
@@ -56,7 +57,7 @@ row() {
   local name="$1" dir="$2" want_exit="$3" extra="$4" out status=0 line missing=""
   shift 4
   # shellcheck disable=SC2086
-  out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" 2>&1)" || status=$?
+  out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" "${test_args[@]}" 2>&1)" || status=$?
   for line in "$@"; do
     grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
   done
@@ -123,6 +124,92 @@ with open(path, "w") as target:
 PY
 row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" \
   "validate: failed=smoke fixture manifests (exit 1)"
+
+# Selection is checked through the command the caller will run. Expected
+# plans name consumers independently of the dependency table under test.
+repo_plan=$'whitespace_check\nrows_cover_tests'
+heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
+dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\n'"$repo_plan"
+cases=(
+  "docs|docs/architecture/overview.md|$repo_plan"
+  "heap|scripts/attribute-heap-profile.py|$heap_plan"
+  "suite|scripts/test-attribute-heap-profile.py|$heap_plan"
+  "dispatch|shell/Core/Dispatch.js|$dispatch_plan"
+)
+for spec in "${cases[@]}"; do
+  name="${spec%%|*}"; rest="${spec#*|}"
+  file="${rest%%|*}"; wanted="${rest#*|}"
+  d="$tmp/plan-$name"; fresh "$d"
+  mkdir -p -- "$d/$(dirname -- "$file")"
+  printf 'changed\n' >"$d/$file"
+  for state in untracked staged committed deleted; do
+    case "$state" in
+      staged) "${base_env[@]}" git -C "$d" add -- "$file" ;;
+      committed) "${base_env[@]}" git -C "$d" commit -q -m change ;;
+      deleted)
+        # Compare the deletion against a base that actually contains it.
+        "${base_env[@]}" git -C "$d" update-ref refs/remotes/origin/trunk HEAD
+        rm -- "${d:?}/$file" ;;
+    esac
+    status=0
+    out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed refs/remotes/origin/trunk --list 2>"$tmp/plan.err")" || status=$?
+    if [[ $status == 0 && $out == "$wanted" ]]; then ok "$name selects its consumers when $state"; else fail "$name $state plan: $out"; fi
+  done
+done
+
+d="$tmp/plan-rename"; fresh "$d"
+mkdir -p "$d/shell/Core"
+printf 'source\n' >"$d/shell/Core/Dispatch.js"
+"${base_env[@]}" git -C "$d" add shell/Core/Dispatch.js
+"${base_env[@]}" git -C "$d" commit -q -m source
+"${base_env[@]}" git -C "$d" mv shell/Core/Dispatch.js README.md
+if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$dispatch_plan" ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
+
+d="$tmp/plan-shared"; fresh "$d"
+printf 'changed\n' >"$d/scripts/qml-library.js"
+out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")"
+for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node scripts/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
+  if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
+done
+if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
+
+d="$tmp/plan-full"; fresh "$d"
+full_plan="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --list 2>"$tmp/plan.err")"
+for reason in unknown unreadable policy; do
+  base=HEAD
+  case "$reason" in
+    unknown) printf 'new\n' >"$d/new-source.rs" ;;
+    unreadable) rm -- "${d:?}/new-source.rs"; base=missing-ref ;;
+    policy) printf '\n' >>"$d/scripts/validate" ;;
+  esac
+  if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed "$base" --list 2>"$tmp/plan.err")" && [[ $out == "$full_plan" ]]; then ok "$reason input selects the full area"; else fail "$reason input omitted a suite: $out"; fi
+done
+
+# Exercise the real selected guard, then remove only its dependency edge.
+# The policy mutation is committed into the fixture's base, so selection
+# still judges the same changed source rather than its own policy edit.
+d="$tmp/selected-guard"; fresh "$d"
+cp -R "$repo/scripts/." "$d/scripts/"
+cp -R "$repo/shell" "$repo/bin" "$d/"
+"${base_env[@]}" git -C "$d" add -A
+"${base_env[@]}" git -C "$d" commit -q -m fixture
+printf 'import "../plugins/vgs.bar"\nQtObject {}\n' >"$d/shell/Core/Bad.qml"
+test_area=offline
+test_args=(--changed HEAD)
+row "a changed core import runs and fails its boundary check" "$d" 1 "" \
+  "validate: failed=plugin boundary (exit 1)"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+edge = 'plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan'
+assert source.count(edge) == 1
+path.write_text(source.replace(edge, edge.replace('shell/* ', '')))
+PY
+"${base_env[@]}" git -C "$d" add scripts/validate
+"${base_env[@]}" git -C "$d" commit -q -m control
+row "removing the source dependency makes the planted defect escape" "$d" 0 "" "validate: ok"
 
 if [[ $failures -gt 0 ]]; then
   echo "test-validate: failed=$failures"

@@ -2,13 +2,17 @@
 # The validation manifest. Every check the repository runs is listed here
 # once, and CI runs this file, not a second list.
 #
-# Usage: scripts/validate [AREA]
+# Usage: scripts/validate [AREA] [--changed BASE] [--list]
 #   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
-#   qml, all (default: all). One area per call; a second argument is
-#   refused. repo holds the checks this file makes itself, the whitespace
+#   qml, all (default: all). One area per call.
+#   repo holds the checks this file makes itself, the whitespace
 #   row and the self-check that every scripts/test-* file has a row;
 #   scripts/test-validate.sh, under tools, is their control. offline runs
-#   every row but the nested smoke; CI runs it.
+#   every row but the nested smoke.
+#   --changed BASE selects rows whose inputs changed against BASE, including
+#   staged, unstaged and untracked files. Renames include both paths. Unknown
+#   inputs or an unreadable diff select the whole area. Repository checks
+#   always run. --list prints selected commands without executing them.
 #
 # VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
 #   CI sets it to the change's base. Unset, whitespace_base below says where
@@ -23,11 +27,29 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 cd -- "$repo"
 
-if [[ $# -gt 1 ]]; then
-  printf 'validate: refused: extra-argument=%s\none area per call\n' "$2" >&2
-  exit 2
-fi
-area="${1:-all}"
+area="all"
+area_given=false
+change_base=""
+list_only=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --changed)
+      if [[ $# -lt 2 || -z $2 || $2 == -* || -n $change_base ]]; then
+        echo 'validate: refused: changed-base=missing-or-repeated' >&2; exit 2
+      fi
+      change_base="$2"; shift 2 ;;
+    --list) list_only=true; shift ;;
+    *)
+      if [[ $area_given == true ]]; then
+        printf 'validate: refused: extra-argument=%s\none area per call\n' "$1" >&2; exit 2
+      fi
+      area="$1"; area_given=true; shift ;;
+  esac
+done
+case "$area" in
+  logic|manifests|boundary|cli|tools|repo|offline|qml|all) ;;
+  *) printf 'validate: refused: area=%s\n' "$area" >&2; exit 2 ;;
+esac
 failed=()
 skipped=()
 
@@ -43,27 +65,28 @@ run() { # LABEL CMD...
   esac
 }
 
-# rows: area  label  command
+# Rows: area | label | command | additional input globs, space-delimited.
+# Command paths are also inputs. Local runs and CI use this same table.
 rows=(
-  "logic|plugin logic table|node scripts/test-plugin-logic.js"
-  "logic|dispatch table|node scripts/test-dispatch.js"
-  "logic|instance lifetime cleanup|node scripts/test-lifetime.js"
-  "logic|library loader controls|node scripts/test-qml-library.js"
-  "manifests|bundled manifests|node scripts/check-manifests.js"
-  "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins"
-  "manifests|manifest check controls|node scripts/test-check-manifests.js"
-  "cli|runner CLI controls|scripts/test-vgsh.sh"
-  "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py"
-  "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py"
-  "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py"
-  "boundary|smoke fixture boundary|python3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures"
-  "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
-  "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
-  "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
-  "repo|whitespace errors against the base|whitespace_check"
-  "repo|every test file has a row|rows_cover_tests"
-  "tools|validate self-check controls|scripts/test-validate.sh"
-  "qml|nested smoke|scripts/qml-smoke.sh"
+  "logic|plugin logic table|node scripts/test-plugin-logic.js|shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js scripts/qml-library.js"
+  "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js scripts/qml-library.js"
+  "logic|library loader controls|node scripts/test-qml-library.js|scripts/qml-library.js"
+  "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "cli|runner CLI controls|scripts/test-vgsh.sh|bin/vgsh* shell/Core/PluginLogic.js scripts/check-manifests.js scripts/qml-library.js config/shell.json shell/plugins/*"
+  "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py|bin/vgsh-scan"
+  "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py|.agents/skills/vgs-plugin/scripts/* .agents/skills/vgs-plugin/templates/* shell/Core/PluginLogic.js bin/vgsh-scan scripts/check-manifests.js scripts/check-plugin-boundary.py scripts/qml-library.js"
+  "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan"
+  "boundary|smoke fixture boundary|python3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures|scripts/smoke/fixtures/* bin/vgsh-scan"
+  "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py|scripts/check-plugin-boundary.py bin/vgsh-scan"
+  "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
+  "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
+  "repo|whitespace errors against the base|whitespace_check|"
+  "repo|every test file has a row|rows_cover_tests|"
+  "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js bin/vgsh-scan scripts/smoke/fixtures/*"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* scripts/smoke/* scripts/sample-shell-memory.sh scripts/qml-library.js"
 )
 
 # The commit the whitespace row compares against, printed on stdout. On
@@ -157,6 +180,7 @@ rows_cover_tests() {
   for row in "${rows[@]}"; do
     command="${row#*|}"
     command="${command#*|}"
+    command="${command%%|*}"
     read -r -a split <<<"$command"
     for word in "${split[@]}"; do words+="$word "; done
   done
@@ -171,25 +195,64 @@ rows_cover_tests() {
   echo "validate: every test file has a row"
 }
 
-matched=false
-for row in "${rows[@]}"; do
-  IFS='|' read -r row_area label command <<<"$row"
-  selected=false
+# Match all rows before filtering by area, so runtime-only inputs do not
+# cause an offline run to select unrelated suites.
+affected=()
+for i in "${!rows[@]}"; do affected[i]=true; done
+if [[ -n $change_base ]]; then
+  paths_file="$(mktemp)"
+  trap 'rm -f -- "${paths_file:?}"' EXIT
+  if ! git diff --name-only --no-renames -z "$change_base" -- >"$paths_file" ||
+     ! git ls-files -z --others --exclude-standard >>"$paths_file"; then
+    echo 'validate: selection=full reason=diff-unreadable' >&2
+  else
+    mapfile -d '' -t changed_paths <"$paths_file"
+    for i in "${!rows[@]}"; do affected[i]=false; done
+    full=false
+    for path in "${changed_paths[@]}"; do
+      case "$path" in scripts/validate|.github/workflows/*) full=true; break ;; esac
+      known=false
+      for i in "${!rows[@]}"; do
+        IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
+        [[ $row_area == repo ]] && continue
+        read -r -a patterns <<<"$command $inputs"
+        for pattern in "${patterns[@]}"; do
+          [[ $pattern == */* ]] || continue
+          if [[ $path == $pattern ]]; then affected[i]=true; known=true; break; fi
+        done
+      done
+      if [[ $known == false ]]; then
+        case "$path" in
+          *.md|*.markdown|docs/*) ;;
+          *) printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
+        esac
+      fi
+    done
+    if [[ $full == true ]]; then
+      for i in "${!rows[@]}"; do affected[i]=true; done
+    fi
+  fi
+fi
+
+selected_count=0
+for i in "${!rows[@]}"; do
+  IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
   case "$area" in
-    all) selected=true ;;
-    offline) [[ $row_area == qml ]] || selected=true ;;
-    *) [[ $area == "$row_area" ]] && selected=true ;;
+    all) ;;
+    offline) [[ $row_area == qml ]] && continue ;;
+    *) [[ $area != "$row_area" ]] && continue ;;
   esac
-  if [[ $selected == true ]]; then
-    matched=true
+  [[ ${affected[i]} == true || $row_area == repo ]] || continue
+  selected_count=$((selected_count + 1))
+  if [[ $list_only == true ]]; then
+    printf '%s\n' "$command"
+  else
     # shellcheck disable=SC2086
     run "$label" $command
   fi
 done
-if [[ $matched != true ]]; then
-  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, repo, offline, qml, all\n' "$area" >&2
-  exit 2
-fi
+printf 'validate: selected=%s area=%s\n' "$selected_count" "$area" >&2
+[[ $list_only == true ]] && exit 0
 
 if [[ ${#failed[@]} -gt 0 ]]; then
   printf 'validate: failed=%s\n' "$(IFS=';'; echo "${failed[*]}")"
