@@ -30,6 +30,22 @@ The prefix is an environment precondition, not part of the required command — 
 
 The classifier rejects some porcelain verbs outright, top-level `git rebase` among them; no user authorization or delegation lifts it. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
 
+## Standing watch
+
+Codex starts no turn for output that arrives after a turn ended, from a detached process or from a running exec session. The oversee watch ([watch-delivery.md](watch-delivery.md)) is held inside the turn by the unified exec tools. The limits are the Codex CLI tool descriptions (0.156.1):
+
+| Step | Call | Limit |
+|------|------|-------|
+| Arm | `exec_command`, `cmd` the numbered follow command of [watch-delivery.md](watch-delivery.md), `yield_time_ms` 30000 | `yield_time_ms` takes 250-30000 ms. The call returns the first output and a `session_id` while the follow runs. |
+| Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | An empty poll waits 5000-300000 ms; `background_terminal_max_timeout` sets the ceiling, 300000 by default. It returns the output written since the previous call. |
+| Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. Every poll return, empty, with output or with an `exit_code`, is an expiry: run the watch-delivery.md checks before the next poll. An `exit_code` ended the follow: arm again from the line after the last number handled. |
+
+Each call is one simple command, so the classifier above passes it.
+
+## Lane mailbox
+
+A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. The overseer follows each `lane-mail send` to a Codex lane with `open-terminal --wake` ([oversee.md § Talking to a lane](../workflows/oversee.md#talking-to-a-lane)), which resumes the lane's newest session in print mode with one line that runs `lane-mail inbox`. Codex publishes no idle signal, so the wake refuses a lane whose Codex process still runs, as `working` or `unjudged` ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). The wake refuses a hosted Codex lane as `wake-invalid`. Mail to a Codex lane the wake refuses takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
+
 ## Spawning Codex collaboration agents
 
 Spawn generated agents with `fork_context: false` — a full-history fork inherits the parent agent type and the runtime rejects the spawn. Resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`: the canonical hyphenated name is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. After the spawn, `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.

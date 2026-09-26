@@ -23,6 +23,9 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 ORCH_ENV="$REPO_ROOT/skills/orch/scripts/orch-env"
+# mutant_scripts and mutate_file, the two halves of the control at the end.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 PASS=0
 FAIL=0
@@ -149,9 +152,8 @@ got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_EN
 assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
 
 # Test 13: the same unrecognized value read directly. ../workflows/oversee.md
-# § 3 Launch and ../workflows/submit-pr.md § 6.2 pick a question template from
-# what this prints, so it reads back as the mode the composition above already
-# took it for.
+# § 3 Launch picks a question template from what this prints, so it reads
+# back as the mode the composition above already took it for.
 got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE ceo)"
 assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
 
@@ -162,16 +164,9 @@ got="$(cd "$proj_override" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE e
 assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
 
 # Must-fail control: a private copy with the composition branch removed must
-# hand back the caller's default where test 8 read the composed value. The copy
-# takes the whole scripts directory because orch-env sources lib/ beside it.
-MUTANT_SCRIPTS="$TMP_ROOT/mutant-scripts"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_SCRIPTS"
-MUTANT="$MUTANT_SCRIPTS/orch-env"
-assert_eq "$(grep -Fc '  composed_value "$VAR_NAME"' "$MUTANT")" "1" \
-  "composition control finds exactly one live mapping call"
-sed -i.bak 's/^    composed_value "\$VAR_NAME"$/    COMPOSED=/' "$MUTANT"
-assert_eq "$([[ ! -L "$MUTANT" ]] && ! cmp -s "$MUTANT" "$ORCH_ENV" && echo changed)" "changed" \
-  "composition control changes the private copy"
+# hand back the caller's default where test 8 read the composed value.
+MUTANT="$(mutant_scripts mutant-scripts orch-env)/orch-env" || exit 1
+mutate_file "$MUTANT" '    composed_value "$VAR_NAME"' '    COMPOSED='
 got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
 assert_eq "$got" "ask" "must-fail control: without the mapping ceo falls back to the caller default"
 
