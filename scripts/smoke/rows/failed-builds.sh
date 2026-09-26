@@ -36,6 +36,13 @@ expect "the removal control's broken source is rescanned" ok ipc shell rescanPlu
 expect_log "the broken source is registered before the removal control" "$((scans_before_removal_control + 1))" 'plugins: scan complete '
 expect "the removal control enables the broken plugin" ok ipc shell setPluginEnabled acme.broken true
 expect_poll "the removal control reaches a retained failure record" 1 background_failures
+failed_output=SMOKE-FAILED
+expect "a failed plugin can meet a new monitor" ok hypr output create headless "$failed_output"
+expect_poll "the new monitor records its refused background" 1 ipc smoke failedBuilds "background:$failed_output"
+expect "the failed background's monitor can be removed" ok hypr output remove "$failed_output"
+expect_poll "the removed monitor leaves no background failure record" 0 ipc smoke failedBuilds "background:$failed_output"
+expect "monitor removal preserves the screenless service failure" 1 ipc smoke failedBuilds service
+expect "monitor removal preserves the remaining background failure" 1 ipc smoke failedBuilds "background:$(bar_key | sed 's/^bar://')"
 expect "the removal control disables the broken plugin" ok ipc shell setPluginEnabled acme.broken false
 python3 - "$broken" <<'PY'
 import shutil, sys

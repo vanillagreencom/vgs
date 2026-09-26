@@ -121,6 +121,9 @@ Scope {
         function frames(): int { return root.frames; }
         function configChanges(): int { return root.changes; }
         function configUserLoads(): int { return root.userLoads; }
+        function failedBuilds(hostKey: string): int {
+            return Object.keys(Plugins.failedBuilds).filter(key => JSON.parse(key)[0] === hostKey).length;
+        }
         function configSettled(): bool { return Config.activeSave === null && !Config.reloading && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }

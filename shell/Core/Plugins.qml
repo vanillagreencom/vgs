@@ -34,9 +34,10 @@ Singleton {
     // later entry keeps its own settings. Not a binding input; read and
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
-    // JSON [hostKey, kind, id] -> { id, revision }: the source revision whose
+    // JSON [hostKey, kind, id] -> { id, revision, screenName }: the source revision whose
     // build failed at that address. A settings change cannot repair code, so
     // the address is not tried again until its plugin's revision changes.
+    // Screen names outlive screen objects so removal can expire the records.
     property var failedBuilds: Object.create(null)
 
     // The source revisions of every instance the core built, which a scan
@@ -61,16 +62,26 @@ Singleton {
         target: Registry
         function onLendingChanged() { root.reconcile(); }
         function onChanged() {
-            const manifests = Registry.manifests;
-            const failures = Object.create(null);
-            for (const key of Object.keys(root.failedBuilds)) {
-                const failure = root.failedBuilds[key];
-                if (Logic.hasOwn(manifests, failure.id) && manifests[failure.id].__revision === failure.revision)
-                    failures[key] = failure;
-            }
-            root.failedBuilds = failures;
+            root.pruneFailures();
             Qt.callLater(root.reconcile);
         }
+    }
+    Connections {
+        target: Quickshell
+        function onScreensChanged() { root.pruneFailures(); }
+    }
+
+    function pruneFailures() {
+        const manifests = Registry.manifests;
+        const screens = Quickshell.screens.map(screen => screen.name);
+        const failures = Object.create(null);
+        for (const key of Object.keys(failedBuilds)) {
+            const failure = failedBuilds[key];
+            if (Logic.hasOwn(manifests, failure.id) && manifests[failure.id].__revision === failure.revision
+                && (failure.screenName === null || screens.indexOf(failure.screenName) !== -1))
+                failures[key] = failure;
+        }
+        failedBuilds = failures;
     }
 
     // The scoped object a plugin receives as `shell`: its manifest, its
@@ -100,7 +111,7 @@ Singleton {
         if (manifest === undefined) { console.error("plugins: unknown: " + id); return null; }
         if (failedRevision(hostKey, kind, id) === manifest.__revision) return null;
         const result = attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator);
-        if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision);
+        if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision, screen);
         return result.state === "built" ? result.instance : null;
     }
 
@@ -109,9 +120,9 @@ Singleton {
         return Logic.hasOwn(failedBuilds, key) ? failedBuilds[key].revision : null;
     }
 
-    function rememberFailure(hostKey, kind, id, revision) {
+    function rememberFailure(hostKey, kind, id, revision, screen) {
         const failures = Object.assign(Object.create(null), failedBuilds);
-        failures[JSON.stringify([hostKey, kind, id])] = { id: id, revision: revision };
+        failures[JSON.stringify([hostKey, kind, id])] = { id: id, revision: revision, screenName: screen ? screen.name : null };
         failedBuilds = failures;
     }
 
@@ -181,7 +192,7 @@ Singleton {
         } catch (e) {
             console.error("plugins: " + id + " bar-widget not built: " + e.message);
             destroyBuilt(hostKey, instance);
-            rememberFailure(hostKey, "bar-widget", id, Registry.manifests[id].__revision);
+            rememberFailure(hostKey, "bar-widget", id, Registry.manifests[id].__revision, barRow.screen);
             return null;
         }
         return instance;
