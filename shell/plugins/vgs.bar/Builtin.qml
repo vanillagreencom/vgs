@@ -4,7 +4,9 @@ import QtQuick.Layouts
 // One built-in widget of the bar, chosen by name, and registered with the
 // core as `<section>-<name>` so the build records list it under the bar's
 // screen; the same built-in may sit in two sections. A name the bar
-// does not draw is logged and shows nothing.
+// does not draw is logged and shows nothing. The bar lists each name once
+// per section, so the registration is never a repeat; the core's refusal
+// of one would throw here and be logged by the engine.
 Loader {
     id: root
 
@@ -21,12 +23,6 @@ Loader {
     Component { id: manager; Manager { bar: root.barItem } }
 
     Component.onCompleted: if (sourceComponent === null) console.error("bar: no built-in widget named " + JSON.stringify(modelData))
-    onLoaded: {
-        try {
-            release = barItem.shell.builtins.register(section + "-" + modelData, item);
-        } catch (e) {
-            console.error("bar: built-in " + modelData + " not registered: " + e.message);
-        }
-    }
+    onLoaded: release = barItem.shell.builtins.register(section + "-" + modelData, item)
     Component.onDestruction: if (release !== null) release()
 }

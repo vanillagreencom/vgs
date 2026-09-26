@@ -121,7 +121,7 @@ Scope {
             required property string modelData
             readonly property var request: host.requests[modelData]
             readonly property var place: {
-                const settings = Plugins.settingsOf(modelData);
+                const settings = Plugins.settingsOf(modelData, host.kind);
                 const size = { width: implicitWidth, height: implicitHeight };
                 const area = { width: screen ? screen.width : 0, height: screen ? screen.height : 0 };
                 return PluginLogic.surfacePlacement(host.kind, settings, request ? request.anchor : null, size, area, Style.spacing.lg);
@@ -136,7 +136,7 @@ Scope {
             implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
             color: "transparent"
             WlrLayershell.namespace: "vgs:" + host.kind
-            WlrLayershell.layer: host.kind === "panel" ? WlrLayer.Top : WlrLayer.Overlay
+            WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
             // Dropped after the current change settles, never from inside the

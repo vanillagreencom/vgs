@@ -10,7 +10,7 @@
 
 **Context**: The previous shell supported Hyprland and Niri. Every compositor-facing path existed twice and every review covered both.
 
-**Decision**: v2 targets Hyprland alone. There is no compositor abstraction and no second compositor. `shell/Core/Compositor.qml` is the one dispatch path and speaks both Hyprland config dialects.
+**Decision**: v2 targets Hyprland alone. There is no compositor abstraction and no second compositor. `shell/Core/Compositor.qml` is the one dispatch path; `shell/Core/Dispatch.js` builds every request and speaks both Hyprland config dialects.
 
 **Rationale**:
 

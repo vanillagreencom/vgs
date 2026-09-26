@@ -55,13 +55,6 @@ qmlcache/
 *.qmlc
 *.jsc
 
-# Quickshell/vshell live state belongs in ~/.config/vshell, not source snapshots
-config/vshell/session.json
-config/vshell/cache.json
-config/vshell/theme.json
-config/vshell/generated/
-config/vshell/runtime/
-
 # Editor and OS metadata
 .idea/
 .vscode/
@@ -74,8 +67,7 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
-# Session handoff (single file, never committed) — see AGENTS.md § Conventions
-docs/handoff/
+# The owner's local preview assets.
 assets/
 
 # Machine-local wiring belongs outside the tracked configuration.

@@ -13,7 +13,6 @@ Item {
     property string moduleName: ""
     property var settings: ({})
 
-    readonly property bool vertical: bar ? bar.vertical : false
     readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
 
     // One setting with a fallback for a missing or null value.

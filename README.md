@@ -1,10 +1,10 @@
 # VGS v2
 
-A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the widgets you add to it, every panel, every background service. A small fixed core starts the shell, hosts the surfaces and loads plugins, and each plugin ships with the check that keeps it fast and stable.
+A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the widgets you add to it, every panel, every background service. A small fixed core starts the shell, hosts the surfaces and loads plugins, and each plugin ships with the check that proves it is built and handed what it asked for.
 
 ## Install
 
-Not yet. The first release comes with its install command. From a checkout, `bin/vgsh run` starts the shell.
+There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 
 ## Features
 

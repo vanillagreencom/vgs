@@ -10,7 +10,7 @@
 
 **Context**: Quickshell moves fast and its module imports, path helpers and CLI flags changed between 0.2 and 0.3.
 
-**Decision**: Every recipe with a version slot requires Quickshell 0.3.1 or newer. Every QML type, property and signal the shell uses is taken from the 0.3.1 reference, cited, never from memory.
+**Decision**: The shell requires Quickshell 0.3.1 or newer. Every QML type, property and signal the shell uses is taken from the 0.3.1 reference, cited, never from memory.
 
 **Rationale**:
 

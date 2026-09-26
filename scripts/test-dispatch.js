@@ -1,21 +1,12 @@
 #!/usr/bin/env node
-// Table-driven checks for shell/Core/Dispatch.js, run under node with the
-// `.pragma library` line stripped: every dispatcher in both syntaxes, and
-// one refusal per argument class. The Lua forms are the ones
-// scripts/qml-smoke.sh sends to a nested Hyprland; the classic forms are
-// pinned here only.
+// Table-driven checks for shell/Core/Dispatch.js, loaded under node through
+// scripts/qml-library.js: every dispatcher in both syntaxes, and one refusal
+// per argument class. The Lua forms are the ones scripts/qml-smoke.sh sends
+// to a nested Hyprland; the classic forms are pinned here only.
 "use strict";
-const fs = require("fs");
 const path = require("path");
-const vm = require("vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "shell", "Core", "Dispatch.js"), "utf8");
-if (!source.startsWith(".pragma library\n")) {
-    console.error("test-dispatch: Dispatch.js must start with `.pragma library`");
-    process.exit(1);
-}
-const ctx = {};
-vm.runInNewContext(source.slice(".pragma library\n".length), ctx);
+const ctx = require("./qml-library.js").load(path.join(__dirname, "..", "shell", "Core", "Dispatch.js"));
 
 let failures = 0;
 function check(name, got, want) {
@@ -33,7 +24,6 @@ const formRows = [
     ["moveWindowToWorkspace", ["0xabc", 3], "hl.dsp.window.move({ workspace = \"3\", window = \"address:0xabc\", follow = false })", "movetoworkspacesilent 3,address:0xabc"],
     ["toggleSpecialWorkspace", ["magic"], "hl.dsp.workspace.toggle_special(\"magic\")", "togglespecialworkspace magic"],
     ["closeWindow", ["0xabc"], "hl.dsp.window.close({ window = \"address:0xabc\" })", "closewindow address:0xabc"],
-    ["global", ["acme.probe:ping"], "hl.dsp.global(\"acme.probe:ping\")", "global acme.probe:ping"],
 ];
 for (const [name, args, lua, classic] of formRows) {
     check("lua " + name + " " + JSON.stringify(args), ctx.request(name, args, true), { ok: true, request: lua });
@@ -41,6 +31,7 @@ for (const [name, args, lua, classic] of formRows) {
 }
 for (const name of ctx.PLUGIN_DISPATCHERS)
     check("plugin dispatcher " + name + " has a form row", formRows.some(r => r[0] === name), true);
+check("every dispatcher is a plugin dispatcher", ctx.PLUGIN_DISPATCHERS.slice().sort(), Object.keys(ctx.DISPATCHERS).sort());
 
 // rows: [name, dispatcher, args, want error]
 const refusalRows = [
@@ -54,7 +45,6 @@ const refusalRows = [
     ["an address must be hexadecimal", "focusWindow", ["0xzz"], "refused: dispatcher=focusWindow argument=0 value=\"0xzz\""],
     ["a backslash is refused", "focusWorkspace", ["a\\"], "refused: dispatcher=focusWorkspace argument=0 value=\"a\\\\\""],
     ["NaN is not a workspace", "focusWorkspace", [NaN], "refused: dispatcher=focusWorkspace argument=0 value=null"],
-    ["a shortcut names its plugin", "global", ["ping"], "refused: dispatcher=global argument=0 value=\"ping\""],
 ];
 for (const [name, dispatcher, args, want] of refusalRows) {
     const r = ctx.request(dispatcher, args, true);

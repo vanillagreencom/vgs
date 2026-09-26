@@ -1,36 +1,69 @@
 #!/usr/bin/env node
 // Validate plugin manifests offline through the shell's own judge,
-// shell/Core/PluginLogic.js. With no arguments it checks every directory
-// under shell/plugins; with arguments it checks those plugin directories.
-// Prints one line per plugin. Exit 0 when every manifest is valid, 1 when
-// any is refused, 2 when a directory cannot be read.
+// shell/Core/PluginLogic.js, loaded through scripts/qml-library.js.
+//
+//   check-manifests.js [--base DIR] [--] [PLUGIN_DIR...]
+//
+// With no plugin directories it checks every plugin under the base
+// (default shell/plugins), listed the way the shell lists them: by
+// bin/vgsh-scan, so a directory with no manifest.json is not a plugin and a
+// directory the scan cannot read ends the run. With plugin directories it
+// checks those. Prints one line per plugin. Exit 0 when every manifest is
+// valid, 1 when any is refused, 2 when a directory or file cannot be read or
+// the invocation is bad, each as one keyed line:
+//   check-manifests: unreadable: <path>: <cause>
+//   check-manifests: refused: option=<argument>
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const vm = require("vm");
+const { spawnSync } = require("child_process");
 
 const repo = path.join(__dirname, "..");
-const source = fs.readFileSync(path.join(repo, "shell", "Core", "PluginLogic.js"), "utf8");
-const ctx = {};
-vm.runInNewContext(source.replace(/^\.pragma library\n/, ""), ctx);
+const ctx = require("./qml-library.js").load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 
-let dirs = process.argv.slice(2).filter(a => a !== "--");
-if (dirs.length === 0) {
-    const base = path.join(repo, "shell", "plugins");
-    dirs = fs.readdirSync(base).map(n => path.join(base, n)).filter(p => fs.statSync(p).isDirectory());
+function unreadable(where, cause) {
+    console.log("check-manifests: unreadable: " + where + ": " + cause);
+    process.exit(2);
+}
+
+// Options end at the first `--`; every later argument is a plugin directory.
+let base = path.join(repo, "shell", "plugins");
+const argv = process.argv.slice(2);
+const dirs = [];
+let optionsDone = false;
+for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (optionsDone || !arg.startsWith("-")) { dirs.push(arg); continue; }
+    if (arg === "--") { optionsDone = true; continue; }
+    if (arg === "--base" && i + 1 < argv.length) { base = path.resolve(argv[++i]); continue; }
+    console.log("check-manifests: refused: option=" + arg);
+    process.exit(2);
+}
+
+// [{ dir, text }] for every plugin to check: the scan's listing of the base,
+// or the manifest of each named directory read here.
+function manifests() {
+    if (dirs.length > 0) {
+        return dirs.map(dir => {
+            const file = path.join(dir, "manifest.json");
+            try {
+                return { dir: dir, text: fs.readFileSync(file, "utf8") };
+            } catch (e) {
+                return unreadable(file, e.code);
+            }
+        });
+    }
+    const scan = spawnSync(path.join(repo, "bin", "vgsh-scan"), ["--require-base", base], { encoding: "utf8", env: { PATH: process.env.PATH, LC_ALL: "C" } });
+    if (scan.status !== 0) return unreadable(base, "vgsh-scan exited " + scan.status);
+    const entries = JSON.parse(scan.stdout);
+    for (const entry of entries)
+        if (entry.error !== undefined) unreadable(entry.dir, entry.error);
+    return entries;
 }
 
 let refused = 0;
 const seen = {};
-for (const dir of dirs) {
-    const file = path.join(dir, "manifest.json");
-    let text;
-    try {
-        text = fs.readFileSync(file, "utf8");
-    } catch (e) {
-        console.log("check-manifests: unreadable: " + file + ": " + e.message);
-        process.exit(2);
-    }
+for (const { dir, text } of manifests()) {
     let raw;
     try {
         raw = JSON.parse(text);
@@ -46,7 +79,14 @@ for (const dir of dirs) {
     let missing = false;
     for (const kind of r.manifest.kinds) {
         const entry = path.join(dir, r.manifest.entryPoints[kind]);
-        if (!fs.existsSync(entry)) { console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry); refused += 1; missing = true; }
+        try {
+            fs.statSync(entry);
+        } catch (e) {
+            if (e.code !== "ENOENT") unreadable(entry, e.code);
+            console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry);
+            refused += 1;
+            missing = true;
+        }
     }
     if (missing) continue;
     console.log("ok       " + r.manifest.id + " " + r.manifest.version + " kinds=" + r.manifest.kinds.join(","));

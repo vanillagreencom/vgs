@@ -1,11 +1,7 @@
 # scripts/
 
-Validation and measurement scripts. A script here reads the repository and the nested sandbox; it never signals, restarts or drives the live shell.
+Validation and measurement scripts. A script here reads the repository and the nested sandbox.
 
-- `scripts/validate` owns the validation manifest. A check is added there with its implementation, and CI runs the manifest, not a second list.
-- A failed tool invocation never becomes an empty successful result. A check that cannot run exits 77 and names what is missing; 77 is not a pass.
-- Every check ships one must-fail control beside it, named `test-<check>` (for `check-manifests.js`, `check-plugin-boundary.py`) or `test-<subject>` for a script under `bin/` or `shell/Core/` (`test-vgsh.sh`, `test-vgsh-scan.py`, `test-plugin-logic.js`, `test-dispatch.js`), that plants the defect the check exists to catch. `validate` and `qml-smoke.sh` are the runners and have none.
-- `qml-smoke.sh` is the only place a shell starts from here. Its sandbox is built from the repository alone, its runtime dir is a short name under the host's `XDG_RUNTIME_DIR`, and it reads the shell's per-instance log file, not redirected stdout.
-- A check that judges a manifest calls `shell/Core/PluginLogic.js` through node; it never re-implements a rule.
-- A script that inspects the filesystem reports what it could not read as an error, never as absence; a walk that hit an unreadable path certifies nothing.
-- The memory sampler addresses the shell `bin/vgsh run` started, through the pid in its lock file; `docs/architecture/memory.md` records what each figure there was measured on. A budget quoted anywhere names the tool and the run that produced it.
+- A check is a row in `scripts/validate` with its must-fail control beside it, named `test-<subject>` for the script it exercises. `qml-smoke.sh` is a runner and has none; the checks `validate` makes itself have theirs in `test-validate.sh`.
+- What the sandbox needs, how it exits and where the shell's log is: `docs/architecture/runtime.md` § Validation and § Process.
+- What a memory figure may claim and how the sampler finds the shell: `docs/architecture/memory.md`.

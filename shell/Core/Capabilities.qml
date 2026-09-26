@@ -6,6 +6,7 @@ import Quickshell.Hyprland
 import Quickshell.Services.Notifications
 import Quickshell.Services.Polkit
 import "PluginLogic.js" as Logic
+import "Dispatch.js" as Dispatch
 
 // The provider behind every capability name in PluginLogic.CAPABILITIES.
 // Plugins.qml asks for one plugin instance's providers when it builds the
@@ -55,7 +56,7 @@ Singleton {
     }
 
     function acquire(name, id) {
-        const next = JSON.parse(JSON.stringify(held));
+        const next = Logic.clone(held);
         if (!Logic.hasOwn(next, name)) next[name] = {};
         next[name][id] = (next[name][id] || 0) + 1;
         held = next;
@@ -64,7 +65,7 @@ Singleton {
     function release(name, id) {
         if (!Logic.hasOwn(held, name) || !Logic.hasOwn(held[name], id))
             throw new Error("capabilities: release of " + name + " by " + id + " which holds none");
-        const next = JSON.parse(JSON.stringify(held));
+        const next = Logic.clone(held);
         next[name][id] -= 1;
         if (next[name][id] === 0) delete next[name][id];
         if (Object.keys(next[name]).length === 0) delete next[name];
@@ -93,16 +94,19 @@ Singleton {
             throw new Error("refused: " + kind + "=" + JSON.stringify(name) + " malformed");
     }
 
+    // compositor: one function per dispatcher in Dispatch.PLUGIN_DISPATCHERS,
+    // taking that dispatcher's arguments in order; Compositor checks them.
+    function compositorProvider() {
+        const out = {};
+        for (const name of Dispatch.PLUGIN_DISPATCHERS)
+            out[name] = (...args) => Compositor.send(name, args);
+        return out;
+    }
+
     readonly property var factories: ({
-        compositor: ctx => ({
-            focusWorkspace: workspace => Compositor.send("focusWorkspace", [workspace]),
-            focusWindow: address => Compositor.send("focusWindow", [address]),
-            moveWindowToWorkspace: (address, workspace) => Compositor.send("moveWindowToWorkspace", [address, workspace]),
-            toggleSpecialWorkspace: name => Compositor.send("toggleSpecialWorkspace", [name]),
-            closeWindow: address => Compositor.send("closeWindow", [address])
-        }),
+        compositor: ctx => root.compositorProvider(),
         configure: ctx => ({
-            set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [ctx.kind === "bar-widget" ? "layout" : "plugins"], ctx.locator)
+            set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [Logic.settingTargetOf(ctx.kind)], ctx.locator)
         }),
         ipc: ctx => ({
             handle: (name, fn) => root.handleIpc(ctx, name, fn)
@@ -137,7 +141,7 @@ Singleton {
         }),
         manager: ctx => ({
             get plugins() { return Plugins.managerRows; },
-            setEnabled: (id, enabled) => Plugins.setEnabled(id, enabled === true),
+            setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
             setSetting: (id, key, value) => Plugins.setSetting(id, key, value)
         }),
         builtins: ctx => ({
@@ -153,7 +157,9 @@ Singleton {
     // Where a plugin summons its own surface from: this instance's screen,
     // and the rectangle of `anchor`, an item of the plugin's, in its
     // window's coordinates. A bar spans its screen from the top-left
-    // corner, so for an item in a bar those are screen coordinates too.
+    // corner, so for an item in a bar those are screen coordinates too. An
+    // instance with no screen (a service) and no anchor returns null, so
+    // its summon lands on the focused monitor as an IPC summon does.
     function origin(ctx, anchor) {
         if (anchor === undefined || anchor === null) return ctx.screen ? { anchor: null, screen: ctx.screen } : null;
         const at = anchor.mapToItem(null, 0, 0);
@@ -329,8 +335,9 @@ Singleton {
         return "ok";
     }
 
-    // A lock the compositor has not confirmed after five seconds leaves the
-    // session unlocked while the holder asked for a lock: said in the log.
+    // A lock request the compositor has not confirmed by the time this
+    // timer fires leaves the session unlocked while the holder asked for a
+    // lock; the log says so.
     Timer {
         interval: 5000
         running: root.lockRequested && !root.lockSecure

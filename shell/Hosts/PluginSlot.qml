@@ -14,8 +14,7 @@ Item {
     property string hostKey: ""
     // Host-owned properties the core assigns to the instance by name.
     property var context: ({})
-    // The screen the instance draws on, when the host knows one the
-    // context does not carry.
+    // The screen the instance draws on; null for a kind with no screen.
     property var screen: null
     property var instance: null
     property string loadedKey: ""

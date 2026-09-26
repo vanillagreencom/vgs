@@ -12,7 +12,6 @@
 var WORKSPACE = /^[A-Za-z0-9_.:+-]+$/;
 var ADDRESS = /^0x[0-9a-fA-F]+$/;
 var SPECIAL = /^[A-Za-z0-9_-]+$/;
-var SHORTCUT = /^[a-z0-9]+(\.[a-z0-9-]+)+:[a-z0-9][a-z0-9-]*$/;
 
 // name -> { args: [pattern per argument], lua(args), classic(args) }
 var DISPATCHERS = {
@@ -40,17 +39,12 @@ var DISPATCHERS = {
         args: [ADDRESS],
         lua: function (a) { return "hl.dsp.window.close({ window = \"address:" + a[0] + "\" })"; },
         classic: function (a) { return "closewindow address:" + a[0]; }
-    },
-    global: {
-        args: [SHORTCUT],
-        lua: function (a) { return "hl.dsp.global(\"" + a[0] + "\")"; },
-        classic: function (a) { return "global " + a[0]; }
     }
 };
 
-// The dispatchers a plugin may call through its compositor capability.
-// `global` is the core's own, for triggering a registered shortcut.
-var PLUGIN_DISPATCHERS = ["focusWorkspace", "focusWindow", "moveWindowToWorkspace", "toggleSpecialWorkspace", "closeWindow"];
+// The dispatchers a plugin may call through its compositor capability:
+// every one above. Capabilities.qml builds the provider from this list.
+var PLUGIN_DISPATCHERS = Object.keys(DISPATCHERS);
 
 // Build one request. Returns { ok: true, request } or { ok: false, error }
 // with a keyed error line naming the dispatcher and the refused argument.

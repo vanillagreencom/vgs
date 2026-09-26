@@ -9,7 +9,7 @@ Steps, in order. Each step names the command or file and the check that proves i
 5. For every core API the plugin uses (the compositor, a shortcut, IPC, its own settings, a process, notifications, the lock, polkit, screens), add the capability to `capabilities` and call `shell.<capability>` from the entry point. The capability table in [`../references/api.md`](../references/api.md) lists each. A plugin that writes its own settings declares a `schema`.
 6. Check again after editing: `.agents/skills/vgs-plugin/scripts/vgs-plugin check <dir>`. Fix every line it prints.
 7. Place it: for a bar widget, `bin/vgsh plugin enable <id>` against a running shell puts it in its default section; for other kinds, the same command lists it. Without a running shell, edit `~/.config/vgs/shell.json` (or the file under `XDG_CONFIG_HOME`).
-8. Prove it in the sandbox with rows in `scripts/qml-smoke.sh` beside the fixture plugin's rows, then run `scripts/validate qml`. Presence in `built` proves bookkeeping only; each kind needs its behaviour read back from the instance through `readInstance`, plus one planted-defect control that turns the row red:
+8. Prove it in the sandbox with rows in `scripts/qml-smoke.sh` beside the fixture plugin's rows, then run `scripts/validate qml`. A row that reads `built` alone is not enough: every kind needs a row that reads a delivered property back from the instance through `readInstance`, plus one planted-defect control that turns the row red:
    - a service: a property proving its action ran, and the record gone after disable;
    - a bar widget: the widget listed in its section and a property it derives from its settings;
    - a bar: the widgets mounted per section and the surface and reserved space read from `hyprctl`;

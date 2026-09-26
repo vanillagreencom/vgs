@@ -18,7 +18,7 @@ Report all findings about the current diff in one round. Write one comment per r
 
 Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence. Name the user-visible consequence in every finding.
 
-Review changes to the merge checks, scripts, review policy, lock and idle handling, greeter, install channels, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
+Review changes to the merge checks, scripts, review policy, the instance lock and the session lock, `vgsh plugin add` and the other plugin manager commands, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
 
 ## no-preferences
 
@@ -30,7 +30,7 @@ The helper owns parsing and generation; a helper module split is separate work. 
 
 Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed. Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation. Before reporting an output as missing or hard-coded, read the full line and the lines it prints; a value already emitted there answers the finding. Before reporting coverage or a reference as missing on a branch, check main and the sibling PRs the body names; a series lands its halves in separate PRs and a branch cut from an earlier main lacks the sibling's files by construction.
 
-The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence is disabled in kendex.settings.toml.
+The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence comes only from the reviewer REVIEW_GATE_COMMENT_REVIEWERS names in kendex.settings.toml.
 
 The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
 

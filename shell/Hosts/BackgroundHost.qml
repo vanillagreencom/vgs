@@ -21,10 +21,10 @@ Item {
     // Slot keys whose build failed; a registry or configuration change
     // makes new keys, so a fixed plugin is tried again.
     property var brokenKeys: []
-    readonly property var ids: Plugins.scanned ? Plugins.enabledOfKind("background").filter(id => {
+    readonly property var ids: Plugins.enabledOfKind("background").filter(id => {
         const key = Plugins.slotKey(id);
         return key !== "" && host.brokenKeys.indexOf(key) === -1;
-    }) : []
+    })
 
     Loader {
         active: host.ids.length > 0
@@ -49,6 +49,7 @@ Item {
                     kind: "background"
                     pluginId: modelData
                     hostKey: host.hostKey
+                    screen: host.screen
                     context: ({ screen: host.screen })
                     onBuildFailed: key => Qt.callLater(() => { host.brokenKeys = host.brokenKeys.concat([key]); })
                 }

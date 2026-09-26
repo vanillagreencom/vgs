@@ -8,7 +8,6 @@ Singleton {
     id: root
 
     readonly property int cornerRadius: 6
-    readonly property string fontFamily: "monospace"
 
     function space(units) { return Math.round(units * 4); }
 
@@ -18,18 +17,15 @@ Singleton {
         readonly property int md: 6
         readonly property int lg: 8
         readonly property int xl: 10
-        readonly property int controlGap: 8
-        readonly property int controlPaddingX: 10
     }
 
     readonly property QtObject font: QtObject {
-        readonly property string family: root.fontFamily
+        readonly property string family: "monospace"
         readonly property int size: 13
         readonly property int small: 11
     }
 
     readonly property QtObject bar: QtObject {
         readonly property int sizeHorizontal: 26
-        readonly property int sizeVertical: 28
     }
 }

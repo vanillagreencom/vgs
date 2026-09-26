@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One temp tree per row for bin/vgsh-scan. Each row plants files under a
 throwaway directory, removes permission bits where the row says so, runs the
-scanner on the named base and asserts the JSON elements it prints (the dir,
+scanner on the named base, with the row's options, and asserts the JSON elements it prints (the dir,
 and either a text entry or the start of the error) plus the exit status.
 Permission rows need a uid that permissions bind; under euid 0 the script
 reports status=not-measured and exits 77 instead of passing vacuously."""
@@ -14,9 +14,10 @@ import tempfile
 SCAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "vgsh-scan")
 MANIFEST = '{"id": "acme.widget"}'
 
-# rows: name, files {relative path: text}, modes {relative path: mode}, base (relative), want [(dir, "text" | "error:<prefix>")]
+# rows: name, files {relative path: text}, modes {relative path: mode}, base (relative), want [(dir, "text" | "error:<prefix>")], options
 ROWS = [
     ("absent base is skipped", {}, {}, "plugins", []),
+    ("absent base under --require-base is an error", {}, {}, "plugins", [("plugins", "error:cannot list: ")], ["--require-base"]),
     ("base that is a file is an error", {"plugins": "x"}, {}, "plugins", [("plugins", "error:cannot list: ")]),
     ("plugin dir without a manifest is skipped", {"plugins/a/Widget.qml": ""}, {}, "plugins", []),
     ("entry that is a file is skipped", {"plugins/README": ""}, {}, "plugins", []),
@@ -48,7 +49,7 @@ def matches(got, want):
     return True
 
 
-def run_row(name, files, modes, base, want):
+def run_row(name, files, modes, base, want, options=()):
     with tempfile.TemporaryDirectory() as tmp:
         for rel, text in files.items():
             path = os.path.join(tmp, rel)
@@ -58,7 +59,7 @@ def run_row(name, files, modes, base, want):
         try:
             for rel, mode in modes.items():
                 os.chmod(os.path.join(tmp, rel), mode)
-            proc = subprocess.run([sys.executable, SCAN, os.path.join(tmp, base)], capture_output=True, text=True, check=False,
+            proc = subprocess.run([sys.executable, SCAN, *options, os.path.join(tmp, base)], capture_output=True, text=True, check=False,
                                   env={"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"})
         finally:
             for rel in modes:

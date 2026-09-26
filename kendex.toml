@@ -18,15 +18,6 @@ qodo_best_practices = false
 qodo_review_md = false
 macroscope = false
 
-[bot-instructions.cadence]
-coderabbit_incremental = true
-coderabbit_drafts = false
-qodo_commands = ["/agentic_review"]
-qodo_push_trigger = false
-
-[bot-instructions.tone]
-coderabbit = "Terse and technical. Give the defect, its triggering input, and the consequence. No praise, diff restatement, or summary. One finding per thread. If unsure, name the part you could not verify."
-
 [bot-instructions.exclusions]
 derive_render = true
 
@@ -38,10 +29,10 @@ derive_render = true
 [bot-instructions.doctrine.append]
 scope = "Apply the local AGENTS.md for each changed path. The generated .github/instructions files hold additional path-specific review rules; read the files whose applyTo paths match the change."
 severity = """
-Review changes to the merge checks, scripts, review policy, lock and idle handling, greeter, install channels, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
+Review changes to the merge checks, scripts, review policy, the instance lock and the session lock, `vgsh plugin add` and the other plugin manager commands, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
 """
 declined = """
-The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence is disabled in kendex.settings.toml.
+The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence comes only from the reviewer REVIEW_GATE_COMMENT_REVIEWERS names in kendex.settings.toml.
 
 The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
 
@@ -63,7 +54,7 @@ name = "plugins"
 globs = ["shell/plugins/**"]
 reviewer_only = true
 instructions = """
-A plugin is a directory with manifest.json in the schema docs/architecture/plugins.md states; shell/Core/PluginLogic.js is the one judge of a manifest and a second validator is a twin. A plugin declares surfaces (kinds), never dependencies; an unknown manifest key is refused by design. A plugin imports qs.Commons, qs.Ui, Qt and Quickshell modules other than Quickshell.Wayland, and its own files; it names no window type and no other plugin. A core action reaches a plugin only through a capability named in the manifest's capabilities list. A bar owns the geometry of its sections and its own built-in widgets; the core mounts every plugin widget into its sections. A new plugin lands with its rows in scripts/qml-smoke.sh, read back from the built instance.
+A plugin is a directory with manifest.json in the schema docs/architecture/plugins.md states; shell/Core/PluginLogic.js is the one judge of a manifest and a second validator is a twin. A plugin declares surfaces (kinds), never dependencies; an unknown manifest key is refused by design. A plugin imports qs.Commons, qs.Ui, Qt and Quickshell modules other than Quickshell.Wayland and QtQuick.Window (REFUSED_MODULES in scripts/check-plugin-boundary.py), and its own files; it names no window type and no other plugin. A core action reaches a plugin only through a capability named in the manifest's capabilities list. A bar owns the geometry of its sections and its own built-in widgets; the core mounts every plugin widget into its sections. A new plugin lands with its rows in scripts/qml-smoke.sh, read back from the built instance.
 """
 
 [[bot-instructions.surface]]
@@ -266,10 +257,6 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[hooks.task-completed-check]
-source = "kendex"
-enabled = true
-
 [hooks.block-argv-kill]
 source = "kendex"
 enabled = true
@@ -332,7 +319,14 @@ harnesses = [
 
 [hooks.skill-load-check]
 source = "kendex"
-harnesses = ["claude"]
+harnesses = [
+    "claude",
+    "pi",
+]
+
+[hooks.command-safety]
+source = "kendex"
+enabled = true
 
 [agent-skills]
 generalist = [
@@ -371,23 +365,13 @@ scout = [
 [skill-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
 code-quality = """
-Quickshell rules for this shell, learned from measured sessions of the previous one. They add to the rules above.
+Quickshell rules for this shell. They add to the rules above.
 
-- One shell per session. Validation runs in the nested compositor sandbox; never start a second shell against the live session and never kill Quickshell processes by name.
-- Every Wayland object the shell creates is dispatched or destroyed. An undispatched event queue grew at 120 MiB per hour in the previous shell. A plugin draws inside a core-owned surface and creates none of its own.
-- One owner per watcher, poller and subprocess. A lookup that costs a process runs once per set, never per item, and a map replaces itself whole so bindings re-evaluate once.
-- No disk walk per keystroke and no unconditional sleep on an apply path. Read first, write and wait only on change.
-- Bound every cache whose keys other applications supply.
-- Judge a hyprctl reply by its text through the one shared reply judge, never by exit status alone, and never discard a dispatch reply.
-- FolderListModel substitutes the working directory for a missing folder: compare its folder property with the folder asked for before reading. Process.exited precedes running becoming false; a command that fails to start emits no exited.
-- Every figure in a docstring, comment or document was measured in the same PR and the text names how. A budget without its measurement is a blocker.
-- A new surface, service or plugin lands with its validation row in the same PR: nested smoke plus the latency and memory budgets docs/architecture/runtime.md names.
+- The runtime facts the code rests on are in `docs/architecture/runtime.md`: § QML for FolderListModel, Process, createObject and property-handler order; § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
 - Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
-- The core names no plugin and a plugin names no other plugin. A plugin declares surfaces (kinds) and capabilities in its manifest, never dependencies; the manager refuses a `requires` key. A kind whose host is absent is not shown and the plugin's other kinds keep working.
-- One judge per decision: `shell/Core/PluginLogic.js` decides manifests, configuration merging and enablement, and every script that needs one of those answers runs it under node.
-- A host assigns a plugin's properties after `createObject`; initial properties lose functions and arrays across the QVariant conversion.
-- A plugin lands with its row in `scripts/qml-smoke.sh`, which reads the shell's per-instance `log.log` and asserts the bar widgets it built; redirected `qs` stdout is buffered and proves nothing.
-- Before writing a plugin, load the vgs-plugin skill; its templates and checklist are the contract in `docs/architecture/plugins.md`.
+- A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
+- A smoke row goes in `scripts/qml-smoke.sh` beside the others and follows its header's shape: the ceiling, the machine and date it was measured on, and the poll interval of each latency reading. A new check's row goes in `scripts/validate` with its control (D008).
+- One judge per decision: `shell/Core/PluginLogic.js` for manifests, configuration merging and enablement; `shell/Core/Dispatch.js` for every Hyprland request. A script that needs one of those answers runs the file under node.
 """
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
@@ -441,7 +425,7 @@ NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step 
 
 The list query carries `url` so the triage table is actionable; `body` is fetched per issue rather than for all 50, and every field the description needs comes from these commands alone — no extra lookup.
 
-Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret); no decision record covers it.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope: `area(VGS-12): imperative summary`.
 

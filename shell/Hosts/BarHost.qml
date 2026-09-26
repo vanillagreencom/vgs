@@ -41,6 +41,7 @@ Item {
                 kind: "bar"
                 pluginId: Plugins.activeBarId
                 hostKey: host.hostKey
+                screen: host.screen
                 context: ({ screen: host.screen })
                 anchors.fill: parent
                 onBuildFailed: key => host.brokenKey = key
