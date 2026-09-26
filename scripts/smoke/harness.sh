@@ -72,10 +72,7 @@ cleanup() {
 trap cleanup EXIT
 
 sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
-# The runtime dir holds Unix sockets, whose paths are limited to 107 bytes,
-# and Hyprland's socket path adds a 63-character signature under hypr/. A
-# sandbox under a long TMPDIR made Hyprland refuse IPC, so the runtime dir
-# is a short name beside the host's own runtime files.
+# Keep the runtime path short to leave room for Hyprland's IPC socket names.
 rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
 home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 

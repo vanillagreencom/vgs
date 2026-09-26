@@ -36,7 +36,7 @@ function verify(library) {
 verify(load(file));
 
 // Keep release execution intact but retain its entry. The same suite must
-// reject the defect that repeated early release previously left behind.
+// reject retained entries after early release.
 const source = fs.readFileSync(file, "utf8");
 const unlink = "entry.pending.splice(entry.pending.indexOf(release), 1);";
 assert.equal(source.split(unlink).length, 2);
