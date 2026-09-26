@@ -12,8 +12,8 @@
 # Exit 0 when every check passed. Exit 77 when a prerequisite is missing,
 # naming it, or when a run whose only failures are geometry or render rows
 # met a sandbox fault: the nested compositor failed to allocate its output
-# buffers, or the host showed the nested window no frame so the shell never
-# drew again; that is not a pass. Exit 1 when a check failed.
+# buffers, or the host withheld frame callbacks so the shell never drew
+# again; that is not a pass. Exit 1 when a check failed.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
 # the end of the run. It catches a startup allocation blow-up and nothing

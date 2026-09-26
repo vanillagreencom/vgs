@@ -26,8 +26,8 @@ failures=0
 # runs under `geometry`; a row whose subject shows only once the shell
 # draws a frame runs under `render`; every other failure counts as
 # behaviour. Only a run whose failures are all geometry or render can be
-# excused by a sandbox fault: the compositor's buffers, or a nested window
-# the host never shows, which then sends the shell no frame callback.
+# excused by a sandbox fault: the compositor's buffers, or a host that
+# withholds frame callbacks from the nested window.
 behaviour_failures=0
 stalled_render=false
 row_class=behaviour
@@ -408,7 +408,7 @@ fi
 # never a pass, and names the cause. Any behaviour failure is a failure.
 if [[ $failures -gt 0 && $behaviour_failures -eq 0 && $stalled_render == true ]]; then
   printf 'qml-smoke: status=not-measured nested-window=not-drawn failed=%s\n' "$failures"
-  echo "the host compositor sent the nested window no frame; show that window (a host rule may park it on a special workspace) and run the smoke again"
+  echo "the nested window stopped drawing; enable render_unfocused for class aquamarine in the host Hyprland window rules, or keep the window visible, then run the smoke again"
   exit 77
 fi
 if [[ $failures -gt 0 && $behaviour_failures -eq 0 ]] && grep -q -s 'Failed to allocate a GBM buffer' "$rt_dir"/hypr/*/hyprland.log; then
