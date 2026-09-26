@@ -67,9 +67,9 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 |-------|----------|
 | `ci-infra` | CI, review gates, runners, and repo tooling — the validation suite, `.github/workflows/`, packaging automation. |
 | `test` | Testing itself: coverage, harnesses, fixtures, flakes. Pairs with `ci-infra` when the harness is CI-owned. |
-| `app` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
-| `design` | Visual design language, tokens, typography, surface layout — the language in `docs/architecture/design-language.md`. |
-| `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
+| `app` | UI-surface work: shell surfaces under `shell/Hosts/` and plugin interfaces under `shell/plugins/`. |
+| `design` | Visual design, tokens, typography and surface layout; theme rules are in `docs/architecture/configuration.md`. |
+| `component` | Reusable widget/control work, especially primitives in `shell/Ui/`. |
 | `releases` | Cutting a release, versioning, and publishing to the distribution channels. |
 
 Priority rule: `ci-infra` implies Urgent unless the issue deliberately records why it is lower. Everything VGS uses to decide whether a change is safe to merge lives in that category, so a defect there invalidates the evidence behind every other issue's "verified" claim.
@@ -111,7 +111,7 @@ These are live in the workspace and must never be assigned in VGS. The reason ma
 |-------|-----------|
 | `Agent` | Group/parent label. Assign one of its children, never the group itself. |
 | `Platform` | Group/parent label, same rule. |
-| `ios` | VGS is a Wayland shell for Hyprland or Niri. Can never apply. |
+| `ios` | VGS is a Linux Wayland shell for Hyprland. Can never apply. |
 | `macos` | Same. |
 | `windows` | Same. |
 | `cross-platform` | Same — VGS targets exactly one platform, so nothing here is cross-platform. |
@@ -120,8 +120,8 @@ These are live in the workspace and must never be assigned in VGS. The reason ma
 | `agent:rust` | Same. |
 | `iced` | Same. |
 | `rust-core` | Same. |
-| `1.0` | Kendex's own 1.0 release set, workspace-level only because Linear's API cannot scope an existing label to a team (`IssueLabelUpdateInput` has no `teamId`). All 11 issues carrying it are in team KEN and none are VGS's. |
-| `feature` | Duplicate of `enhancement` ("New capability or product behavior" vs "New feature or request"). VGS uses `enhancement`; `feature` is on zero VGS issues. It is workspace-level and may serve another team, so do not delete it — just do not assign it here. |
+| `1.0` | Kendex's release label. It does not classify VGS work. |
+| `feature` | VGS uses `enhancement` for new functionality. The workspace-level `feature` label may serve another team; do not delete it or assign it here. |
 
 <!-- kendex:project-instructions:end -->
 
