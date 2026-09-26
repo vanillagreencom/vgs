@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Sample the live shell's memory read-only and report growth per class.
 #
-# Resolving which process is the shell reads the Quickshell instance registry
-# once, through bin/vshell instances list. Every sample after that is /proc
-# alone. Nothing here signals, restarts or drives the shell, so it is safe to
-# leave running across a whole session. It is a diagnostic tool, not a validation
-# check: scripts/validate exercises only its --report mode, which reads a TSV and
-# needs neither the registry nor a running shell, through
-# scripts/test-sample-shell-memory.sh.
+# Resolving which process is the shell asks the runner (`bin/vgsh pid`) and reads
+# the Quickshell instance list once. Every sample after that is /proc alone. Nothing
+# here signals, restarts or drives the shell, so it is safe to leave running
+# across a whole session. It is a diagnostic tool, not a validation check:
+# scripts/validate drives it through scripts/test-sample-shell-memory.sh, whose
+# --report cases read a TSV and need no running shell and whose pid-resolution
+# cases run against a lock file and an instance list the test writes.
 #
 #   scripts/sample-shell-memory.sh                 sample until interrupted
 #   scripts/sample-shell-memory.sh --hours 26      sample for 26 hours
+#   scripts/sample-shell-memory.sh --samples 3     take three samples
 #   scripts/sample-shell-memory.sh --report FILE   summarise an existing log
 #
 # The log is one TSV row per sample. Every row carries the sampled pid with the
@@ -18,8 +19,14 @@
 #
 # Output protocol, pinned by scripts/test-sample-shell-memory.sh: every refusal
 # and every report line begins with a key=value field, English follows on its own
-# line. Refusals exit 2 for a bad invocation or an unusable header, and 1 for a
-# log that cannot be read as one session. --report reports the newest session in
+# line. Refusals exit 2 for a bad invocation, an unusable header or a shell that
+# cannot be resolved, and 1 for a log that cannot be read as one session or a
+# run that ended before the samples --samples asked for (samples-short=).
+# Resolution refuses with the runner's own key (shell=not-running when
+# $XDG_RUNTIME_DIR/vgsh.lock is missing, holds no pid on its first line or names
+# a pid with no process), runner=missing when this checkout has no bin/vgsh, and
+# shell=unlisted when `qs list` does not list that pid under this checkout's
+# shell. --report reports the newest session in
 # the log alone and emits, for that session: one mark= line for each of 1 h, 8 h,
 # 24 h of uptime and the last sample; one rate=window line over the session's
 # whole logged span; and one rate= line for each consecutive pair of marks. Every
@@ -30,9 +37,11 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 
 INTERVAL=60
 HOURS=0
+SAMPLES=0
 LOG=""
 REPORT=""
-SHELL_PATH="$repo_root/quickshell/vshell/shell.qml"
+SHELL_DIR="$repo_root/shell"
+RUNNER="$repo_root/bin/vgsh"
 
 # The shortest span that can carry a rate. Per-minute deltas swing between
 # negative and several megabytes, so anything shorter reports sampling noise.
@@ -55,28 +64,29 @@ refuse() {
 
 usage() {
   cat <<'USAGE'
-Usage: sample-shell-memory.sh [--interval SECONDS] [--hours N] [--log FILE]
-                              [--shell-path PATH]
+Usage: sample-shell-memory.sh [--interval SECONDS] [--hours N] [--samples N] [--log FILE]
        sample-shell-memory.sh --report FILE
 
   --interval    seconds between samples (default 60)
   --hours       stop after N hours (default: run until interrupted)
-  --log         where to append samples (default ~/.cache/vshell/memory-samples.tsv)
-  --shell-path  shell entrypoint whose running instance to sample
-                (default: this checkout's quickshell/vshell/shell.qml)
+  --samples     stop after N samples (default: no limit)
+  --log         where to append samples (default ~/.cache/vgs/memory-samples.tsv)
   --report      summarise an existing log and exit
+
+The sampled process is the shell bin/vgsh run started in this session: the pid
+in $XDG_RUNTIME_DIR/vgsh.lock, confirmed against `qs list` for this checkout.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --interval | --hours | --log | --shell-path | --report)
+    --interval | --hours | --samples | --log | --report)
       [[ $# -ge 2 ]] || refuse 2 "missing-value=$1" "This option takes a value."
       case "$1" in
         --interval) INTERVAL="$2" ;;
         --hours) HOURS="$2" ;;
+        --samples) SAMPLES="$2" ;;
         --log) LOG="$2" ;;
-        --shell-path) SHELL_PATH="$2" ;;
         --report) REPORT="$2" ;;
       esac
       shift 2
@@ -93,6 +103,8 @@ done
   refuse 2 "bad-interval=$INTERVAL" "Seconds between samples must be a positive integer."
 [[ "$HOURS" =~ ^[0-9]+$ ]] ||
   refuse 2 "bad-hours=$HOURS" "Hours to sample for must be a non-negative integer."
+[[ "$SAMPLES" =~ ^[0-9]+$ ]] ||
+  refuse 2 "bad-samples=$SAMPLES" "The number of samples must be a non-negative integer."
 
 COLUMNS_HEADER=$'epoch\tpid\tsession\tuptime_s\trss_kb\tanon_kb\tfile_kb\tswap_kb'
 COLUMNS_HEADER+=$'\tthp_kb\thwm_kb\tjsheap_kb\tjit_kb\tgpu_kb\tthreads\tfds\tmaps\tcpu_ticks'
@@ -122,7 +134,7 @@ AWK_PRELUDE='
 '
 
 # Report from a finished log. Reads nothing from the live process, so it works
-# after the sampled session has ended and needs no instance registry.
+# after the sampled session has ended and needs no lock file or instance list.
 report_baseline() {
   local log="$1" rc=0
   # -f as well as -r: a directory is readable and would reach awk as an input it
@@ -132,7 +144,7 @@ report_baseline() {
   awk -F'\t' -v floor="$RATE_FLOOR_S" -v tol="$MARK_TOLERANCE_S" "$AWK_PRELUDE"'
     {
       # pid alone does not identify a session: the kernel reuses pids, and
-      # vshell.service restarts the shell. The start time separates them.
+      # the runner restarts the shell. The start time separates them.
       key = session_key()
       if (!(key in seen)) { seen[key] = 1; keys[++nk] = key }
       n = ++count[key]
@@ -240,10 +252,9 @@ if [[ -n "$REPORT" ]]; then
   exit 0
 fi
 
-# Sampling needs the instance registry; the report above does not. Sourcing here
-# keeps --report runnable from a copy that has no repository beside it.
-# shellcheck source=scripts/lib/session-snapshot.sh
-source "$repo_root/scripts/lib/session-snapshot.sh"
+# Everything below is the sampling path. It is the only part that reads the
+# lock file, runs qs or touches the checkout, so --report stays runnable from a
+# copy that has no repository beside it.
 
 # /proc/<pid>/stat's comm field holds spaces and parens, so fields are counted
 # after the last ')': index 1 is field 3, so field 22 (starttime) is index 20 and
@@ -258,31 +269,50 @@ stat_fields() {
   printf '%s\n' "$@"
 }
 
-# Resolve the live shell through the instance registry that bin/vshell owns, so
-# this script states no second opinion on what a running shell is. The listing is
-# scoped to one shell entrypoint; --shell-path addresses a shell launched from
-# another checkout. Any count but one is a refusal: a wrong pid yields a
-# plausible log that describes nothing.
+# Resolve the live shell: the runner reads its own lock file (`bin/vgsh pid`
+# is the one reader of it; bin/vgsh run writes its pid there and execs qs, so
+# that pid is the shell's) and its refusal is passed on under its own key. The
+# pid must then appear in the Quickshell instance list for this checkout's
+# shell: a stale lock whose pid the kernel reused, or a shell started from
+# another checkout, would otherwise yield a plausible log that describes
+# nothing. The instance list is stdout JSON; when no instance runs, qs prints a
+# sentence there instead, which reads as an empty list and refuses the same way.
 resolve_pid() {
-  local listing rc=0 count
-  listing="$(vgs_snapshot_instances "$SHELL_PATH")" || rc=$?
-  if [[ "$rc" == 2 ]]; then
-    refuse 2 "no-registry=quickshell" "Quickshell is not installed, so there is no instance registry."
+  local first="" listing rc=0 verdict runner_key=""
+  [[ -x "$RUNNER" ]] ||
+    refuse 2 "runner=missing path=$RUNNER" "This checkout has no runner to ask for the shell's pid."
+  # The runner prints the pid alone on success and its keyed refusal alone on
+  # failure, so one capture holds whichever it answered.
+  if ! first="$("$RUNNER" pid 2>&1)"; then
+    runner_key="${first%%$'\n'*}"
+    runner_key="${runner_key#vgsh: refused: }"
+    refuse 2 "$runner_key" "The runner could not name the shell's pid; its message was:" "$first"
   fi
+  command -v qs >/dev/null 2>&1 ||
+    refuse 2 "qs=missing" "Quickshell is not installed, so no instance list can confirm the pid."
+  listing="$(qs list -p "$SHELL_DIR" -j)" || rc=$?
   [[ "$rc" == 0 ]] ||
-    refuse 2 "registry-unreadable=$SHELL_PATH" "The registry error is above."
-  # grep -c exits 1 on a listing with no lines, which is the real answer "none
-  # running", so the count is read in condition position rather than assigned
-  # bare: under errexit a bare assignment would end the run before the refusal
-  # below could name the count.
-  if ! count="$(printf '%s' "$listing" | grep -c .)"; then
-    count=0
-  fi
-  [[ "$count" == 1 ]] ||
-    refuse 2 "instance-count=$count path=$SHELL_PATH" \
-      "Exactly one running instance can be sampled." \
-      "Pass --shell-path for a shell launched from another checkout."
-  printf '%s\n' "${listing%% *}"
+    refuse 2 "qs-list-failed=$rc path=$SHELL_DIR" "The instance list could not be read; its error is above."
+  verdict="$(LISTING="$listing" WANT="$first" python3 -c '
+import json, os
+try:
+    entries = json.loads(os.environ["LISTING"])
+except ValueError:
+    entries = []
+if not isinstance(entries, list):
+    entries = []
+pids = {str(e.get("pid")) for e in entries if isinstance(e, dict)}
+print("listed" if os.environ["WANT"] in pids else "unlisted")
+')" || refuse 2 "qs-list-unjudged=$SHELL_DIR" "The instance list could not be judged; the error is above."
+  case "$verdict" in
+    listed) ;;
+    unlisted)
+      refuse 2 "shell=unlisted pid=$first path=$SHELL_DIR" \
+        "The lock names pid $first, but qs list does not list it under this checkout's shell." \
+        "The listing was:" "$listing" ;;
+    *) refuse 2 "internal=verdict value=$verdict" "The listing judge printed neither listed nor unlisted." ;;
+  esac
+  printf '%s\n' "$first"
 }
 
 PID="$(resolve_pid)"
@@ -293,7 +323,7 @@ SESSION="${FIELDS[19]}"
 CLK_TCK="$(getconf CLK_TCK)"
 
 if [[ -z "$LOG" ]]; then
-  LOG="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/memory-samples.tsv"
+  LOG="${XDG_CACHE_HOME:-$HOME/.cache}/vgs/memory-samples.tsv"
 fi
 # The log path is an argument, so every way it can be unusable is a bad
 # invocation and refuses with a key, not a raw mkdir, redirection or awk error.
@@ -404,6 +434,7 @@ printf 'sample-shell-memory: sampling=%s:%s interval_s=%s log=%s\n' \
   "$PID" "$SESSION" "$INTERVAL" "$LOG" >&2
 
 stopped=0
+taken=0
 while true; do
   # A row that fails ends the loop, not the script: the closing report is the
   # point of the run. Why it failed is decided below, not here, because the
@@ -414,7 +445,11 @@ while true; do
     break
   fi
   printf '%s\n' "$row" >>"$LOG"
+  taken=$((taken + 1))
   if [[ "$deadline" -gt 0 && "$(date +%s)" -ge "$deadline" ]]; then
+    break
+  fi
+  if [[ "$SAMPLES" -gt 0 && "$taken" -ge "$SAMPLES" ]]; then
     break
   fi
   sleep "$INTERVAL"
@@ -433,3 +468,6 @@ if [[ "$stopped" == 1 ]]; then
   fi
 fi
 report_baseline "$LOG"
+if [[ "$SAMPLES" -gt 0 && "$taken" -lt "$SAMPLES" ]]; then
+  refuse 1 "samples-short=$taken want=$SAMPLES" "The run ended before it took the samples asked for."
+fi

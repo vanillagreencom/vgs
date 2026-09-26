@@ -2,7 +2,7 @@
 
 # vgs
 
-VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell 0.3.1, the supported baseline. QML provides the interface, a Go daemon provides system integration, and the Python helper owns parsing, generation and privileged writes. The runtime and CLI are named vshell.
+v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland, hosts surfaces and loads plugins; every surface and service is a plugin with its own manifest and its own validation row.
 
 ## Code review
 

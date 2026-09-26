@@ -1,3 +1,0 @@
-# scripts/check-format-lint.sh supplies the file list, including bin/vshell-helper.
-[lint]
-select = ["F", "E9"]

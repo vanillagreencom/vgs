@@ -1,7 +1,0 @@
-# Terminal-only ANSI slots: the diff colours a terminal paints, where the
-# palette's own red and green collide in hue, are too grey, or are too dark
-# on the background. The shell's derived roles, pi and every other app
-# template keep the palette's slots.
-
-# green: added lines in a diff.
-color2 = "#80a079"

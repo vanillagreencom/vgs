@@ -1,3 +1,5 @@
+# Kendex renders are tracked. The install ledger is machine-local.
+/.kendex-lock.json
 /.claude/settings.local.json
 # Session-continuation state, never shared.
 /.claude/RESUME.md
@@ -53,13 +55,6 @@ qmlcache/
 *.qmlc
 *.jsc
 
-# Quickshell/vshell live state belongs in ~/.config/vshell, not source snapshots
-config/vshell/session.json
-config/vshell/cache.json
-config/vshell/theme.json
-config/vshell/generated/
-config/vshell/runtime/
-
 # Editor and OS metadata
 .idea/
 .vscode/
@@ -72,8 +67,8 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
-# Session handoff (single file, never committed) — see AGENTS.md § Conventions
-docs/handoff/
+# The owner's local preview assets.
+assets/
 
 # Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md
@@ -83,4 +78,5 @@ docs/handoff/
 # kendex:local-state begin
 /tmp/
 /.cache/
+/.kendex-lock.v10.json
 # kendex:local-state end

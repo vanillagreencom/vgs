@@ -71,7 +71,7 @@ NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step 
 
 The list query carries `url` so the triage table is actionable; `body` is fetched per issue rather than for all 50, and every field the description needs comes from these commands alone — no extra lookup.
 
-Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret); no decision record covers it.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope: `area(VGS-12): imperative summary`.
 
@@ -156,6 +156,8 @@ Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before 
 ## Attachments
 
 `issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Images embed as markdown in the description/body. On `issues update` without `--description`, the embed appends to the existing description rather than replacing it. Other files become Linear attachments on issues, or markdown links on comments (comments have no attachment surface). An unreadable path refuses before any API call; an attachment failure after a successful issue write reports `partial: true` and exits non-zero.
+
+`issues create` and attach-only `issues update` report `attachments_requested`, the number of non-image records requested, and `attachments`, one `{url, repo_path}` object per record in request order once every `attachmentCreate` succeeded. On `issues create` they appear in the default JSON response only, so a create that needs this verification takes the default output: `--format=ids` prints the identifier alone and discards both fields. Those fields are the immediate verification: an attachment write does not make the local attachment manifest current, so `cache attachments list` can still be empty for a record that landed. Run `linear.sh sync --reconcile` before reading the cache to verify a just-written attachment.
 
 ### Resolve a cited artifact
 

@@ -20,6 +20,7 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -74,8 +75,9 @@ run_check() {
 json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order. Plain names are JSON result fields (`files` compact); a
+# in EXPECT's order. Plain names are JSON result fields; a
 # key the result does not carry reads ABSENT, so `null` means a real null.
+# `files` and `near_ceiling` read compact.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
@@ -97,6 +99,8 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
+      near_ceiling) value="$(json '.near_ceiling | tojson')" ;;
+      validate_time) value="$(json '.validate_time | tojson')" ;;
       help_sections)
         value=""
         grep -q '^Gates ordered:' <<<"$OUT" && value="$value,gates"
@@ -133,8 +137,8 @@ R="1750000000-4242"
 ARTIFACT="$WT/tmp/dev-return-$ISSUE-$R.json"
 "$STATE" --state-dir "$WT/tmp" init "$ISSUE" --worktree "$WT" --branch test >/dev/null
 export ORCH_STATE_DIR="$WT/tmp"
-VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
-VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
+VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","validate_time":{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:55:00Z","seconds":3300},"qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
+VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","validate_mode":"range","validate_time":null,"summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
 ROUND_ARGS="--worktree $WT --issue $ISSUE --round-id $R"
 
 # receipt_table ROW... — one artifact shape, one run, one assertion per row:
@@ -220,7 +224,7 @@ receipt_table \
   "a valid implement at an explicit path, no validate_note key reads null^impl^^$FILE_ARGS^rc=0 reason=valid validate_note=null" \
   "a matching --round-id in file mode^impl^^$FILE_ARGS --round-id $R^reason=valid" \
   "a mismatched --round-id in file mode^impl^^$FILE_ARGS --round-id NOPE-1^reason=invalid" \
-  "a missing file reports the stable shape with null qualifiers^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null"
+  "a missing file reports the stable shape with null qualifiers and an empty near-ceiling list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing validate=null validate_note=null near_ceiling=[] near_ceiling_error=null"
 
 echo "=== usage errors end in the parser ==="
 receipt_table \
@@ -248,11 +252,11 @@ echo "=== the writers round-trip and the persisted round record is the delegated
 # empty means the set cannot be established: exit 2, never a weaker gate.
 RT="$(new_repo rt issue-9 5-6)"
 RT_HEAD="$(git -C "$RT" rev-parse HEAD)"
-rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$RT_HEAD" --validate pass)"
+rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$VRUN")"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes || echo no)" "yes" "the writer produced the round-scoped implement artifact"
 ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5-6
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
-"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"
 
@@ -260,12 +264,12 @@ RR="$(new_repo rr issue-9 seed 1000000)"
 RR_HEAD="$(git -C "$RR" rev-parse HEAD)"
 round_write --worktree "$RR" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "an artifact covering the persisted round set is valid" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "the record is not consumed: a repeat check stays valid" "$ERR"
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a >/dev/null
 round_write --worktree "$RR" --issue issue-9 --round-id 8-9 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 8-9 --expect-items-from-round
@@ -291,7 +295,7 @@ done
 # The count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
 # the record cannot be that misuse, so the from-round path never emits it even
 # when the shapes coincide (the inline form is the control).
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$VRUN" --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
 run_check --file "$RR/tmp/dev-return-issue-9-16-16.json" --expect-items 3
 assert_eq "$(observe "reason=incomplete hint_present=true")" "reason=incomplete hint_present=true" "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint" "$ERR"
 round_write --worktree "$RR" --issue issue-9 --round-id 16-16 --item 3 "only item three" "tools/guard on a staged render" >/dev/null
@@ -318,7 +322,7 @@ for f in .agents/skills/orch/scripts/installed-check crates/new-parser/lib.rs he
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 1-1 --expect-items-from-round
 ADDS_EXPECT="rc=1 ok=false verdict=retry path=$AD/tmp/dev-return-issue-826-1-1.json reason=unapproved_additions files=[\".agents/skills/orch/scripts/installed-check\",\"crates/new-parser/lib.rs\",\"helpers/root-helper.ts\",\"pkg/test_helpers/nested.ts\",\"skills/orch/scripts/new-check\",\"src/test_utils.rs\",\"test/support/root-support.sh\",\"tools/new\\nline\",\"tools/new-tool\",\"ui/src/test/round-helper.ts\"]"
 assert_eq "$(observe "$ADDS_EXPECT")" "$ADDS_EXPECT" "unlisted protected additions refuse the round, route to retry and name every file" "$ERR"
@@ -331,7 +335,7 @@ for f in crates/allowed/lib.rs skills/orch/scripts/allowed-check "tools/allowed;
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m allowed-additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "each addition the round named is accepted" "$ERR"
 
@@ -341,7 +345,7 @@ git -C "$AD" commit -q -m pre-move
 round_write --worktree "$AD" --issue issue-826 --round-id 3-3 --item 1 "move existing file" "tools/guard on a staged render" >/dev/null
 git -C "$AD" mv ordinary.txt tools/moved.txt
 git -C "$AD" commit -q -m move
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "a moved file is not an addition" "$ERR"
 
@@ -389,7 +393,7 @@ git -C "$RB" add crates/upstream/lib.rs
 git -C "$RB" commit -q -m upstream-advance
 git -C "$RB" checkout -q feature
 git -C "$RB" rebase -q main >/dev/null
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round
 assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable files=[]")" "ok=false verdict=retry reason=additions_unattributable files=[]" "an orphaned base refuses the round and names no file" "$ERR"
 # Control: without the stop the round is billed the file main merged, which
@@ -408,7 +412,7 @@ mkdir -p "$RB/tools"
 printf 'round machinery\n' > "$RB/tools/round-tool"
 git -C "$RB" add tools/round-tool
 git -C "$RB" commit -q -m round-addition
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 'reason=unapproved_additions files=["tools/round-tool"]' "a round whose base survived the restack is gated on its own addition alone" "$ERR"
 
@@ -451,19 +455,66 @@ echo "=== the validation note reaches the orchestrator ==="
 # artifact is echoed; the note is optional beside the required verdict, and a
 # wrong-typed or empty note is a malformed receipt.
 NOTE="80/80-on-rerun,first-run-flaked-on-release-tests"
+SUITES_NOTE="scoped-suites-green:dev_validate_run.sh-232/0"
 # A real note carries spaces, a semicolon and parentheses; the echo is by-value
 # through jq --arg, asserted outside the table since expect tokens split on
-# whitespace.
-REAL_NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
+# whitespace. It also carries a literal TAB, which is what emit() joins its
+# surfaced fields with: `tojson` escapes the tab inside the value, so the split
+# stays exact and the note comes back whole.
+REAL_NOTE="$(printf '80/80 on re-run;\tfirst run flaked on Rust Tests (release)')"
 printf '%s' "$VALID_IMPL" | jq -c --arg n "$REAL_NOTE" '.validate_note=$n' > "$ARTIFACT"
 run_check --file "$ARTIFACT"
 assert_eq "$(json .validate_note)" "$REAL_NOTE" "a note with spaces and punctuation is echoed verbatim" "$ERR"
 receipt_table \
   "a validate_note is echoed with the verdict^impl^.validate_note=\"$NOTE\"^$FILE_ARGS^reason=valid validate=pass validate_note=$NOTE" \
+  "a range validate_mode is echoed beside the verdict, for submit to refuse reusing^impl^.validate_mode=\"range\"^$FILE_ARGS^reason=valid validate=pass validate_mode=range" \
+  "a missing validate_mode is invalid^impl^del(.validate_mode)^$FILE_ARGS^reason=invalid" \
+  "a validate_mode outside full and range is invalid^impl^.validate_mode=\"class\"^$FILE_ARGS^reason=invalid" \
+  "a null validate_mode beside a pass is invalid^impl^.validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a null validate_mode beside a failing validate is valid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^$FILE_ARGS^reason=valid validate_mode=null" \
+  "a null validate_mode beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$NOTE\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a no-verdict validate, a battery the timeout cut off, is accepted with its suites named^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept reason=valid validate=no-verdict" \
+  "a no-verdict validate naming no suites is invalid^impl^.validate=\"no-verdict\"^$FILE_ARGS^verdict=retry reason=invalid" \
+  "a failing validate on the same receipt is retried^impl^.validate=\"FAILING: lint\"^$FILE_ARGS^verdict=retry reason=valid" \
   "an empty validate_note is invalid^impl^.validate_note=\"\"^$FILE_ARGS^reason=invalid" \
   "a numeric validate_note is invalid^impl^.validate_note=42^$FILE_ARGS^reason=invalid" \
   "a boolean validate_note is invalid^impl^.validate_note=true^$FILE_ARGS^reason=invalid" \
   "an array validate_note is invalid^impl^.validate_note=[]^$FILE_ARGS^reason=invalid"
+
+echo "=== the validation wall time reaches the orchestrator ==="
+# The lane status file and the overseer's report show minutes per round from
+# this echo, so a recorded time is echoed whole; the key is required, null only
+# where no run can have ended, and a time is the run's own: UTC ends and
+# seconds their difference.
+receipt_table \
+  "a validate_time is echoed beside the verdict^impl^.^$FILE_ARGS^reason=valid validate=pass validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300}" \
+  "a null validate_time beside a failing validate is valid and echoed null^fix^.^$FILE_ARGS^reason=valid validate_time=null" \
+  "a missing validate_time beside a failing validate is invalid^fix^del(.validate_time)^$FILE_ARGS^reason=invalid" \
+  "a null validate_time beside a pass is invalid^impl^.validate_time=null^$FILE_ARGS^reason=invalid" \
+  "a no-verdict validate_time is echoed beside the verdict^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\"^$FILE_ARGS^verdict=accept validate=no-verdict validate_time={\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300}" \
+  "a null validate_time beside no-verdict is invalid^impl^.validate=\"no-verdict\" | .validate_note=\"$SUITES_NOTE\" | .validate_time=null^$FILE_ARGS^reason=invalid" \
+  "a validate_time beside no validation mode is invalid^impl^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null^$FILE_ARGS^reason=invalid" \
+  "a validate_time whose seconds are not its span is invalid^impl^.validate_time.seconds=60^$FILE_ARGS^reason=invalid" \
+  "a validate_time with a non-UTC start is invalid^impl^.validate_time.started_at=\"2026-01-01 00:00:00\"^$FILE_ARGS^reason=invalid" \
+  "a validate_time that ends before it starts is invalid^impl^.validate_time.started_at=\"2026-01-01T00:55:00Z\" | .validate_time.ended_at=\"2026-01-01T00:00:00Z\" | .validate_time.seconds=-3300^$FILE_ARGS^reason=invalid" \
+  "a validate_time that is not an object is invalid^impl^.validate_time=3300^$FILE_ARGS^reason=invalid"
+
+echo "=== the near-ceiling lines reach the orchestrator ==="
+# The next round's brief plans the split from these, so a line stored in the
+# artifact is echoed verbatim; a receipt that carries none, or carries the key
+# with a shape the writer never produces, reads as an empty list rather than a
+# missing key the caller must special-case.
+# A tab here too, on the other side of the join: a value carrying the join
+# character must not split the field that follows it.
+NEAR_LINE="$(printf 'byte-ceiling: near-ceiling=crates/core/src/engine/deps.rs:189000:204800:92\tfrom the pre-commit run')"
+printf '%s' "$VALID_IMPL" | jq -c --arg l "$NEAR_LINE" '.near_ceiling=[$l]' > "$ARTIFACT"
+run_check --file "$ARTIFACT"
+assert_eq "$(json '.near_ceiling[0]')" "$NEAR_LINE" "a near-ceiling line with spaces and punctuation is echoed verbatim" "$ERR"
+receipt_table \
+  "two near-ceiling lines are echoed in order^impl^.near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]^$FILE_ARGS^reason=valid near_ceiling=[\"a:1:2:91\",\"b:3:4:95\"]" \
+  "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]" \
+  "a null near_ceiling, a probe that did not answer, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait

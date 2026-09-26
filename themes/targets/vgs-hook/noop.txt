@@ -1,1 +1,0 @@
-vgs-theme {theme_type} {accent}

@@ -1,4 +1,3 @@
-backend/vendor/** -text -whitespace
 # Vendored kendex renders: upstream bytes, not this repo's whitespace to police.
 .agents/** -whitespace
 .claude/** -whitespace
@@ -14,5 +13,3 @@ backend/vendor/** -text -whitespace
 *.wav binary
 *.ttf binary
 *.mp4 binary
-config/vshell/icons/Yaru/cursors/** binary
-bin/vshell-asdcontrol binary

@@ -1,7 +1,0 @@
-# Terminal-only ANSI slots. colors.toml holds the upstream value for every
-# ANSI slot and the cursor; this slot is a VGS green the upstream publishes
-# nowhere, and D017 permits it by name. The shell's derived roles, pi and
-# every other app template keep the palette's slot.
-
-# bright green: added words in a diff.
-color10 = "#3eb419"

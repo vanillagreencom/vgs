@@ -1,6 +1,0 @@
-{
-  "app": "kcolorscheme",
-  "template": "vgs.colors",
-  "destination": "~/.local/share/color-schemes/Vgs.colors",
-  "curatedFile": "kcolorscheme.colors"
-}

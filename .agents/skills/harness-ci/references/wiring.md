@@ -1,6 +1,6 @@
 # Wiring shapes
 
-Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else.
+Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else. A repository under the organization ruleset, which requires one `CI` context beside `Review gate`, copies [the CI template](#the-ci-template) instead, which assembles shapes 3 and 4 under that name.
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
@@ -169,6 +169,12 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       contents: read
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
+    env:
+      # The event and its endpoints, spelled once for every step that reads
+      # the range, so no two steps can judge different ones.
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
     steps:
       - name: the classifier, from the default branch
         uses: actions/checkout@v4
@@ -180,23 +186,36 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
         with:
           fetch-depth: 0
           path: subject
+      # change-class reads kendex and the mirror only on its render branch,
+      # which it takes where harness-only answers harness_only=true. This is
+      # that same read, so the two network steps below run only where the
+      # render class is reachable.
+      - id: render-reach
+        run: >-
+          classifier/.agents/skills/harness-ci/scripts/harness-only
+          --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
       - name: kendex, for the render class
+        if: steps.render-reach.outputs.harness_only == 'true'
         env:
-          KENDEX_VERSION: main-build-98-1-c702f94961a9e8ebf90a5bf766cdd55029d4bb67
+          # The first release whose `kendex verify --json` prints a version 1
+          # document; the render proof reads that document and nothing else.
+          # Replace the placeholder with one of the kendex repository's
+          # per-main-build pre-release tags, spelled as below, whose
+          # `kendex verify --json` prints a version 1 document; copied as it
+          # stands, the install fails and this job fails with it.
+          KENDEX_VERSION: main-build-<n>-<attempt>-<sha>
         run: curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
       - name: the source mirror the render proof re-renders from
+        if: steps.render-reach.outputs.harness_only == 'true'
         run: kendex source refresh
         working-directory: subject
       - id: classify
         env:
-          EVENT: ${{ github.event_name }}
           ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
           # ORCH_SIZE_TEST_PATHS: <globs>
           # Uncomment where this repository's test files live outside orch's
           # default test globs; the classifier reads neither of these two out
           # of the tree it judges.
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
           classifier/.agents/skills/harness-ci/scripts/change-class
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
@@ -204,12 +223,38 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
 
 Publish `change_class` as the job output in place of `harness_only`, and feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`. `aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
 
+### Through the composite action
+
+The classify step can instead call the composite action kendex publishes, which wraps the same shipped `change-class` and decides nothing itself:
+
+```yaml
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+        env:
+          # As in the step above: the classifier reads these from its own
+          # environment and never out of the tree it judges.
+          ORCH_SIZE_RENDER_ROOTS: .agents .claude .codex .pi
+          # ORCH_SIZE_TEST_PATHS: <globs>
+        with:
+          repo: subject
+          event: ${{ env.EVENT }}
+          base: ${{ env.BASE }}
+          head: ${{ env.HEAD }}
+```
+
+- **The classifier is kendex's, at the ref the step names.** The action reads `skills/harness-ci/scripts` out of its own tree, so a fix to the classifier reaches the consumer with no pull request of its own, and the class is never read out of the `classifier` checkout above. A repository outside the organization pins a tag in place of `@main`.
+- **`classifier` names another checkout root to read those scripts from.** kendex's own CI passes its default-branch checkout there, because in kendex the action's tree is the pull request's tree. No input carries a class.
+- **Its outputs** are `change_class`; `docs_only`, the `--mode docs` verdict for the same diff; `changed_skills`, `changed_crates` and `changed_workflows`, the blank-separated first path segments under `skills/`, `crates/` and `.github/workflows/`; and `changed_paths`, one changed path per line. Publish the ones the lanes read as job outputs, as with `change_class` above.
+- **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action and behind the same `render-reach` step and `if:` gates. That step reads `harness-only` out of the `classifier` checkout, so a consumer that wants the gate keeps that checkout for it; one that drops both pays the network install on every diff.
+- **Every refusal exits 2**, and stderr carries a line starting `change-class-action: wiring-error: cause=`, after anything the wrapped scripts printed, so the step goes red rather than publishing an empty class.
+
 ### What each class needs, and what it costs to leave out
 
 `standard` needs nothing and is what every unproven diff answers, so a consumer reading `standard` on every pull request is reading a missing prerequisite, not a judgement about its code.
 
-- **`render` needs a `kendex` on the runner AND a primed source mirror**, which is what the two steps above give it. `kendex verify` re-renders out of the local mirror and never fetches it, so on a runner that has never fetched the source every package reports that where it comes from is unavailable, the proof fails and the answer is `standard`. The priming step fetches the marketplaces the judged tree's own manifest declares into the runner's cache and leaves `subject` exactly as it was committed: it installs nothing and writes no file there. That matters because the classifier refuses a `subject` whose working tree differs from its own HEAD — a step that wrote renders back would have the proof attest to its own repair instead of to the commit it was checked out at. That HEAD is the pull request's merge ref here, since the `subject` checkout names no `ref:`, and the merge-ref checkout is what `kendex verify` weighs, while the changed paths come from a range ending at `--head`; every way those two commits differ costs a package its row, so the difference is conservative rather than exact. The proof also reads the wording of `kendex verify`'s rows and its closing counts, which is why the install step pins a version: a kendex that prints either differently answers `standard` rather than failing, and the pin is the consumer's own to move once a newer build has been tried against its lanes. **That pin names a main build rather than the v5.0.1 release, and it has to.** The v5.0.1 binary writes no `.kendex-generated.json` and prints no `✓ shim <path> [claude]` row, so on it `harness-only` finds no inventory at either endpoint and every diff answers `standard cause=unreadable-base-inventory`, the `render` class included. Both landed after that release. The repository publishes one pre-release per main build, tagged `main-build-<n>-<attempt>-<sha>`, and the installer takes that tag as a version like any other; it then tries a desktop AppImage the tag does not name, which 404s, says so and leaves the command installed. Move the pin to the first release after v5.0.1 once it has been tried against these lanes. A consumer that will not pay for these steps has no `render` class and keeps publishing `harness_only` beside `change_class` to gate its lanes.
-- **`render` reaches only the paths `kendex verify` itself names.** Each changed path has to be the Claude instruction shim that run listed, whose shim IS the whole file. Every other changed path answers `standard` with `cause=render-path-unowned`, kendex's own `.kendex-lock.json` and `.kendex-generated.json` included: no row names those two, and they decide the proof's own scope, the inventory being what a path's generated ownership is read from and the record what `kendex verify` walks. So today `render` is reached by a shim-only diff, and every refresh answers `standard`, both because it rewrites the record and because a rendered skill, agent, hook or command is a path no row names. The wider reach is KEN-1673, where `kendex verify` prints the rendered positions of each row it prints and the classifier owns paths from those rows; until then nothing about the install record is weighed, because it is a file the pull request's own branch writes. `.gemini/settings.json` is refused for a second reason besides: the shim row kendex prints for it weighs one key of a document whose other keys decide what that harness runs, so it is a configuration source and answers `standard` ahead of every render. Every other registry file a harness executes as configuration is refused there too, with `cause=configuration-source` rather than `cause=render-path-unowned`; `DEVELOPMENT.md` § Invariants lists the set.
+- **`render` needs a `kendex` on the runner AND a primed source mirror**, which is what the two steps above give it. `kendex verify` re-renders out of the local mirror and never fetches it, so on a runner that has never fetched the source every package reports that where it comes from is unavailable, the proof fails and the answer is `standard`. The priming step fetches the marketplaces the judged tree's own manifest declares into the runner's cache and installs nothing in `subject`. `kendex verify` weighs a private checkout of `--head` that the classifier makes itself, never `subject`'s working tree, which here sits at the pull request's merge ref because the `subject` checkout names no `ref:`. The proof reads the document `kendex verify --scope project --json` prints, and nothing else kendex prints: one record per checked item with its state and the positions it occupies, under a `version` the classifier pins. That is why the install step pins a version: a kendex that rejects `--json` answers `standard cause=verify-refused`, one that accepts the flag but prints no such document, or another version of it, answers `standard cause=verify-document-unreadable`, neither fails the job, and the pin is the consumer's own to move once a newer build has been tried against its lanes. **The pin has to name a build whose `kendex verify --json` prints a version 1 document**, which every release up to and including v5.0.1 lacks; on those every diff answers `standard`, the `render` class included. The repository publishes one pre-release per main build, tagged `main-build-<n>-<attempt>-<sha>`, and the installer takes that tag as a version like any other; it then tries a desktop AppImage the tag does not name, which 404s, says so and leaves the command installed. A consumer that will not pay for these steps has no `render` class and keeps publishing `harness_only` beside `change_class` to gate its lanes.
+- **`render` reaches only the paths a passing record of that run owns.** Each record carries the positions the engine resolved for it: a file kendex owns whole, a tree it owns whole, or keys inside a shared registry file. A file position owns exactly its path; a tree position owns its path and the paths under it. A keys position owns its path only where the same record says `foreign: unchanged` — kendex's own judgement, made with the base revision the classifier hands `kendex verify --base` off `harness-only`'s `base-rev:` line, that the rest of that file is as the base held it — and answers `standard cause=render-path-partial` otherwise. A changed path no passing position covers answers `standard cause=render-path-unowned`. kendex's own `.kendex-lock.json` and `.kendex-generated.json` are the positions of the `record` and `inventory` records, which pass only where kendex found each file as it would write it, so a refresh is a render and a hand edit to either is not; nothing about the install record is weighed by the classifier itself, because it is a file the pull request's own branch writes. `.gemini/settings.json` is refused ahead of every render as a configuration source: the record kendex prints for it weighs one key of a document whose other keys decide what that harness runs. `DEVELOPMENT.md` § Invariants lists the registry files that refuse the measured classes below the render branch.
+- **On `pull_request` the `render` verdict describes the head commit alone.** The proof weighs `--head`, not the merge of the head with a base that moved since. The merged tree is proved again only on `merge_group`, or on the push to the default branch; a consumer with no merge queue gets no second proof before the merge.
 - **The proof's cost grows with the installed item count, not with the diff.** `kendex verify --scope project` re-renders every installed item whatever the change touched, which is why the job carries a `timeout-minutes` of its own ahead of every lane.
 - **`ORCH_SIZE_RENDER_ROOTS` belongs in the classify step's `env:`**, as above. The classifier fixes its render roots from its own environment and will not read them out of the judged tree, so a consumer whose harness directories differ from `.agents .claude .codex .pi` sets them there; otherwise a source and the render mirroring it are counted twice and the measured classes come out more conservative.
 - **`ORCH_SIZE_TEST_PATHS` belongs there too, where the defaults do not fit.** The classifier passes it from its own environment for the same reason, so a consumer whose test files live outside orch's default test globs sets it in that step; otherwise every one of those files is counted as production code and a diff that is mostly tests loses `micro` or `small`. Left unset, orch's defaults apply.
@@ -217,6 +262,17 @@ Publish `change_class` as the job output in place of `harness_only`, and feed it
 - **`--base` must name a commit the `subject` checkout holds**, which `fetch-depth: 0` gives. The classifier measures the range this call names, so nothing depends on what the runner thinks the default branch is called.
 
 **The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, takes no flag that would carry one, and reads no configuration out of the tree it judges.
+
+## The CI template
+
+[`../templates/ci.yml`](../templates/ci.yml) is the workflow a repository copies to `.github/workflows/ci.yml`. The organization ruleset requires two contexts on every repository, `Review gate` and `CI`, so the template fixes the names every repository reports: the job carrying `CI`, and the classifying job `Classify the diff`. Keep both names and change the rest to fit.
+
+- **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds. Replace the placeholder `test` job with the repository's lanes, one job each, and give each lane the same `needs:` and `if:`. Name each lane in CI's `needs:` and in a `--skippable` of CI's aggregate step. Copied as it stands, the placeholder fails, and `CI` fails with it.
+- **The merge queue runs the class job set its pull request ran.** The template runs on `pull_request` and `merge_group`, the classifier judges each event's own diff, and every lane reads the classifier's one `lanes` output on both. A `render` or `trivial` diff runs no lane, and every other class runs them all. The `lanes` output is the one place that set is spelled, and CI's waiver reads the same output.
+- **The render prerequisites are Shape 4's.** The template pins a kendex main build and reads its installer at the same sha. Move both together, to a build whose `kendex verify --json` prints a version 1 document. Neither network step fails the job, and neither does the step ahead of them that reads `harness-only` out of the default branch, which the adoption pull request and its merge group do not have yet. Without any of the three the `render` class is out of reach, and every other class is judged as usual.
+- **CI is Shape 3's aggregate.** It runs under `always()`, and `aggregate-needs` accepts a skipped lane only where the classifier succeeded and its `lanes` output stood the lanes down.
+
+`tests/ci-template.test.sh` evaluates the template's job conditions per event and class and hands its waiver to the real `aggregate-needs`.
 
 ## Verifying an adoption
 

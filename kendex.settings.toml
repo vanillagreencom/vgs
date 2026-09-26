@@ -1,6 +1,7 @@
-# Public kendex settings. Keep secrets in .env.local. A kendex skill script
-# resolves a key from the environment, then .env.local, then .kendex/settings.toml,
-# then this [env] table, then its own built-in default. `.env` is never read.
+# Public kendex settings for the v2 shell. Keep secrets in .env.local. A kendex
+# skill script resolves a key from the environment, then .env.local, then
+# .kendex/settings.toml, then this [env] table, then its own built-in default.
+# `.env` is never read.
 
 [env]
 CI_FIX_MAX_CYCLES = "6"
@@ -8,32 +9,20 @@ CI_FIX_MAX_CYCLES = "6"
 # fallback when a reviewer submits no review object.
 PR_REVIEW_GATE = "review"
 DECISIONS_DIR = "docs/decisions"
+# The decision log the decider compares against.
+DECISIONS_BASE_REF = "origin/main"
 # Issue branches use the vgs Linear identifier: vgs-<n>-<slug>.
 GH_ISSUE_PATTERN = "vgs-[0-9]+"
-GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 ORCH_USER_MODE = "ceo"
 
 # Extra test-path globs branch-size-check adds to its built-in test rule, which
-# names none of them. The suites `scripts/validate` runs, the helpers under
-# `scripts/lib` they import, and the Go package tests are validation code;
+# names none of them. The controls `scripts/validate` runs are validation code;
 # counting their added lines as production growth spends a branch's stated
-# allowance on its tests. A glob's `*` spans `/`, so `backend/*_test.go` reaches
-# every package.
-#
-# `scripts/lib` is matched by name rather than wholesale, because it holds test
-# helpers beside production ones: `*_selftest.py` and `*-testkit.sh` are the
-# test helpers, while `session-snapshot.sh`, which `qml-smoke.sh` and
-# `check-validation-safety.sh` source, and the Python modules those scripts
-# import stay production.
-#
-# `scripts/lib/*.js` is the exception this rule keeps. It also matches the
-# checker modules `qml-block.js` and `qml-source.js`, which
-# `check-display-config-fixtures.js` imports, so their added lines score as
-# test. Narrowing it would re-measure every JavaScript branch against a
-# different split, which belongs to its own change.
-ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js scripts/test-*.py scripts/test-*.sh scripts/check-*-tests.py scripts/lib/*_selftest.py scripts/lib/*-testkit.sh backend/*_test.go"
+# allowance on its tests. Every control is a `scripts/test-*` file in one of
+# three languages; the checks and runners beside them stay production.
+ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/test-*.py scripts/test-*.sh"
 
 # File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
@@ -42,19 +31,12 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "1080"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vgs"
-WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
 WORKTREE_COPIES = ".kendex-lock.json"
+# Every worktree branches from main and every PR targets main.
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = ""
 WORKTREE_SYMLINKS = ".env.local .cache"
-
-# Seconds of reviewer silence on a head before the one nudge; a push resets
-# the clock. "0" disables.
-PR_REVIEW_NUDGE_SECS = "600"
-
-# The reviewer nudge body. Empty requests a native GitHub re-review.
-PR_REVIEW_NUDGE = ""
 
 # Optional trusted check-run or commit-status name accepted as review
 # evidence on the current head. Empty accepts review objects only. Names
@@ -63,7 +45,7 @@ PR_REVIEW_CHECK = ""
 
 # Seconds ci-wait keeps polling before failing when no CI checks registered
 # yet; raise for approval-gated CI with slow dispatch.
-CI_WAIT_NO_CHECKS_GRACE = "180"
+CI_WAIT_NO_CHECKS_GRACE = "600"
 
 # Total concurrent reviewer-session budget, including the primary session.
 # Zero allows all reviewers. A bounded budget runs sequential waves and
@@ -110,7 +92,7 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 
 # Comment reviewers use login:binding-prefix entries. The author login
 # authenticates the reviewer; the literal prefix binds its comment to a commit.
-# Empty disables comment evidence.
+# The owner's clean-review comment is evidence on the commit it names.
 REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
 
 # Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
@@ -136,22 +118,29 @@ REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 # trusted reviewer evidence or the operator override.
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 
-# Carry ancestor evidence for documentation changes. Comment carry is disabled
+# Carry ancestor evidence for documentation changes. Comment carry is off
 # because its line classifier cannot recognize enclosing strings or heredocs.
 REVIEW_GATE_CARRY_FORWARD = "docs"
 
 # Enforce requires review evidence. Off posts a disabled-by-settings status
 # and skips the reviewer wait; CI remains required.
 REVIEW_GATE_MODE = "enforce"
-# Require fresh evidence for policy instructions and installation guidance.
-# Exclude harness trees as a whole so new rendered skills inherit this rule.
-# Code paths are also excluded to retain this boundary if comment carry is enabled.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.macroscope/*;third_party/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*;.agents/skills/bot-instructions/*"
+# Require fresh evidence for policy instructions and the checks. Harness trees
+# are excluded whole so a new rendered skill inherits the rule; scripts/ is
+# excluded so the validation code never carries stale evidence.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;.agents/skills/bot-instructions/*"
 
-# Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
-# Non-empty makes `issues create` refuse a create carrying none of them —
-# such an issue is invisible to agent routing. Empty = guard off.
-LINEAR_AGENT_LABELS = ""
+# Which change classes need review evidence and from whom. Docs-only changes
+# need none. Values as kendex sets them.
+REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
+REVIEW_GATE_DOCS_ONLY = "none"
+
+# The agent-routing labels the project-management taxonomy declares. A create
+# carrying none of them is refused: such an issue is invisible to routing.
+LINEAR_AGENT_LABELS = "agent:generalist, agent:multi, agent:human, agent:researcher"
+
+# Every created issue names what reaches it in a `Reached by:` line.
+LINEAR_REQUIRE_REACH = "1"
 
 # Total review-wait budget in seconds before the on-timeout policy applies;
 # an explicit max_wait argument always wins.
@@ -168,18 +157,9 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# Repository instruction files appended to the review prompt.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
-
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 ORCH_LANE_SSH_PROMPT_SECS = "60"
-
-# Exclusion globs DECLARED to match no tracked path yet, so the selftest
-# accepts them; a declaration not in the exclude list is an orphan and
-# fails the selftest.
-# The bot package requires Macroscope policy paths to invalidate prior evidence.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ".macroscope/*"
 
 # Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
 # every merge gate is green; "ask" presents the merge decision.
@@ -208,15 +188,6 @@ PM_CREATE_AUTONOMY = "auto"
 # Matched at the start of the body only (first line); a review quoting a
 # pattern in later text stays evidence. Empty disables.
 REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
-
-# Used by: orch (`approval-wait`). Comma-separated reviewer logins that must
-# EACH have a review pinned to the current head — with zero unresolved
-# threads — before the review gate opens, in either mode. The multi-bot
-# enqueue gate: one bot's pass cannot open the gate while a listed sibling
-# has not yet reacted to this head; findings hold the gate as threads.
-# Empty = off. The wait deadline and PR_REVIEW_ON_TIMEOUT still bound a
-# dead reviewer.
-PR_REVIEW_QUORUM = ""
 
 # Cross-model review selects an available roster entry distinct from this session.
 # See the second-opinion skill for selection rules.
@@ -253,9 +224,9 @@ COMMIT_GUARDS_MD_REFS_PATHS = "*.md"
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
 
-# The full manifest minus the rows that address the running shell, which a
-# worktree never owns; those rows run from the checkout that does.
-DEV_VALIDATE_CMD = "scripts/validate --no-live all"
+# Every validation row that runs without a Wayland session. The qml row needs
+# the desktop and runs from the checkout that has one.
+DEV_VALIDATE_CMD = "scripts/validate offline"
 
 # Optional extra verification command for GitHub-side checks; empty means
 # none beyond the guard chain.
@@ -283,3 +254,8 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # errors: enabling "vendored" over an empty set, or an entry naming no
 # literal path text ("*", "*/*").
 REVIEW_GATE_VENDORED_PATHS = ""
+
+# The kendex command-safety hook refuses a systemd-run command whose MemoryMax
+# or MemoryHigh value is a number followed by K or M; a value in G, a bare
+# byte count or a percentage passes.
+COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^;|&]*Memory(Max|High)=[0-9]+[KkMm]([^[:alnum:]]|$)"
