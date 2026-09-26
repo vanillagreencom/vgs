@@ -5,7 +5,7 @@ schema = 1
 
 [bot-instructions.repo]
 name = "vgs"
-summary = "VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell 0.3.1, the supported baseline. QML provides the interface, a Go daemon provides system integration, and the Python helper owns parsing, generation and privileged writes. The runtime and CLI are named vshell."
+summary = "v2 is a desktop shell for Hyprland on Quickshell 0.3.1. A small fixed core starts the shell, holds the instance lock, talks to Hyprland, hosts surfaces and loads plugins; every surface and service is a plugin with its own manifest and its own validation row."
 tracker = "VGS"
 
 [bot-instructions.bots]
@@ -18,45 +18,21 @@ qodo_best_practices = false
 qodo_review_md = false
 macroscope = false
 
-[bot-instructions.cadence]
-coderabbit_incremental = true
-coderabbit_drafts = false
-qodo_commands = ["/agentic_review"]
-qodo_push_trigger = false
-
-[bot-instructions.tone]
-coderabbit = "Terse and technical. Give the defect, its triggering input, and the consequence. No praise, diff restatement, or summary. One finding per thread. If unsure, name the part you could not verify."
-
 [bot-instructions.exclusions]
 derive_render = true
 
-[[bot-instructions.exclusions.path]]
-glob = "**/*.png"
-reason = "Raster theme previews and artwork have no reviewable source text."
 
-[[bot-instructions.exclusions.path]]
-glob = "**/*.jpg"
-reason = "Raster theme previews and artwork have no reviewable source text."
 
-[[bot-instructions.exclusions.path]]
-glob = "**/*.cur"
-reason = "Cursor binaries have no reviewable source text."
 
-[[bot-instructions.exclusions.path]]
-glob = "config/vshell/icons/**/*.svg"
-reason = "Pinned icon artwork is reviewed at its upstream source."
 
-[[bot-instructions.exclusions.path]]
-glob = "config/vshell/icons/**/*.theme"
-reason = "Pinned icon-theme metadata is reviewed at its upstream source."
 
 [bot-instructions.doctrine.append]
 scope = "Apply the local AGENTS.md for each changed path. The generated .github/instructions files hold additional path-specific review rules; read the files whose applyTo paths match the change."
 severity = """
-Review changes to the merge checks, scripts, review policy, lock and idle handling, greeter, install channels, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
+Review changes to the merge checks, scripts, review policy, the instance lock and the session lock, `vgsh plugin add` and the other plugin manager commands, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
 """
 declined = """
-The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence counts only from the logins REVIEW_GATE_COMMENT_REVIEWERS in kendex.settings.toml names, bound to the head sha.
+The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence comes only from the reviewer REVIEW_GATE_COMMENT_REVIEWERS names in kendex.settings.toml.
 
 The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
 
@@ -68,70 +44,27 @@ The helper owns parsing and generation; a helper module split is separate work. 
 
 [[bot-instructions.surface]]
 name = "qml"
-globs = ["quickshell/vshell/**/*.qml"]
+globs = ["shell/**/*.qml", "shell/**/*.js"]
 reviewer_only = true
 instructions = """
-Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. FolderListModel treats a folder that is not there as the process's working directory rather than as an error, and reports the swap through its own folder property. Compare folder against the folder asked for before reading the listing. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. Resolve helper calls through Paths.vshellCli.
+Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. FolderListModel treats a folder that is not there as the process's working directory rather than as an error, and reports the swap through its own folder property. Compare folder against the folder asked for before reading the listing. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. A JS object passed to createObject as an initial property loses its functions and its nested arrays; hosts assign such properties after creation. The core under shell/ names no plugin and imports no plugin directory; scripts/check-plugin-boundary.py is the check. """
 
-Parsing, generation and privileged writes belong in bin/vshell_helper.py. QML calls them through the vshell dispatcher.
+[[bot-instructions.surface]]
+name = "plugins"
+globs = ["shell/plugins/**"]
+reviewer_only = true
+instructions = """
+A plugin is a directory with manifest.json in the schema docs/architecture/plugins.md states; shell/Core/PluginLogic.js is the one judge of a manifest and a second validator is a twin. A plugin declares surfaces (kinds), never dependencies; an unknown manifest key is refused by design. A plugin imports qs.Commons, qs.Ui, Qt and Quickshell modules other than Quickshell.Wayland and QtQuick.Window (REFUSED_MODULES in scripts/check-plugin-boundary.py), and its own files; it names no window type and no other plugin. A core action reaches a plugin only through a capability named in the manifest's capabilities list. A bar owns the geometry of its sections and its own built-in widgets; the core mounts every plugin widget into its sections. A new plugin lands with its rows in scripts/qml-smoke.sh, read back from the built instance.
 """
 
 [[bot-instructions.surface]]
 name = "validation"
-globs = ["scripts/**"]
+globs = ["scripts/**", "bin/**"]
 reviewer_only = true
 instructions = """
-The scripts provide repository checks and regression tests. A failed tool invocation must not become an empty successful result. Check that negative controls reach the intended failure, and that snapshot collection failure stops comparison.
+The scripts provide repository checks and regression tests. A failed tool invocation must not become an empty successful result; exit 77 names what could not run and is not a pass. Check that negative controls reach the intended failure.
 
-Use scripts/validate qml for isolated runtime validation. Never suggest qs -c vshell, qs -p quickshell/vshell, or pkill quickshell. A second shell can strand lock surfaces and black out the live desktop. Other Quickshell applications share the session. The isolated runtime smoke is scripts/qml-smoke.sh --nested.
-"""
-
-[[bot-instructions.surface]]
-name = "helper"
-globs = ["bin/**"]
-reviewer_only = true
-instructions = """
-The helper owns parsing, generation and privileged operations. bin/vshell stays a thin dispatcher. A helper module split is separate work. External commands use argument arrays. Secrets and raw frame payloads must not enter logs. See docs/architecture/helper.md for the operation contracts.
-"""
-
-[[bot-instructions.surface]]
-name = "backend"
-globs = ["backend/**/*.go"]
-reviewer_only = true
-instructions = """
-Every registered backend method requires a capability in backend/methods.json. scripts/check-backend-inventory.py checks method inventory and rejects raw version comparisons in its scanned QML callers. QML uses advertised capabilities or methods and retains a fallback when they are absent. Each watcher, poller and daemon needs one resource owner. Unix socket paths must fit the socket address limit.
-"""
-
-[[bot-instructions.surface]]
-name = "go-vendor"
-globs = ["backend/vendor/**"]
-reviewer_only = true
-instructions = "Byte-exact upstream Go modules. Report a real defect as an upstream issue. Changes to vendored bytes belong in an upstream update."
-
-[[bot-instructions.surface]]
-name = "nvim-vendor"
-globs = ["config/vshell/nvim/colorschemes/**"]
-reviewer_only = true
-instructions = "Third-party Neovim colourschemes are carried verbatim. Report defects as upstream issues. ATTRIBUTION.md is VGS-owned; check its directory, repository and licence mappings when they change."
-
-[[bot-instructions.surface]]
-name = "sound-vendor"
-globs = ["quickshell/vshell/assets/sounds/plasma/**"]
-reviewer_only = true
-instructions = "The Dream Sounds: Harmony sound theme is carried verbatim with its licence and README. Report defects as upstream issues."
-
-[[bot-instructions.surface]]
-name = "third-party"
-globs = ["third_party/**"]
-reviewer_only = true
-instructions = "Pinned artifacts are carried verbatim under the convention each directory's README records. Report artifact defects as upstream issues. The maintenance README files are VGS-owned and remain in review scope."
-
-[[bot-instructions.surface]]
-name = "themes"
-globs = ["themes/**"]
-reviewer_only = true
-instructions = """
-Palettes marked source: curated pass through the engine unchanged. Contrast enforcement applies to generated palettes. Per-theme app files intentionally share structure so each theme package works independently. Generated app targets must use VGS-owned output paths. See docs/architecture/theme.md, and docs/architecture/agent-cli-themes.md for the agent CLI targets and the curated Claude Code files.
+scripts/validate is the manifest and scripts/qml-smoke.sh is the isolated runtime row. Never suggest qs -p shell against the live session or pkill quickshell; a second shell can black out the live desktop and other Quickshell applications share the session. The sandbox runtime dir must stay a short path under XDG_RUNTIME_DIR because Hyprland's socket path is limited. qs buffers redirected stdout; the per-instance log.log is the record.
 """
 
 [[bot-instructions.surface]]
@@ -139,7 +72,7 @@ name = "agent-docs"
 globs = ["AGENTS.md", "**/AGENTS.md", "docs/**"]
 reviewer_only = true
 instructions = """
-Root and nested AGENTS.md files hold agent process instructions. docs/architecture contains agent references. AGENTS.local.md is a gitignored machine-local companion. Keep these separate from product documentation in README.md and the packaging README files. Check instructions against code because agents execute their commands literally. backend/methods.json is a machine-read contract checked by scripts/check-backend-inventory.py.
+Root and nested AGENTS.md files hold agent process instructions. docs/architecture contains agent references. AGENTS.local.md is a gitignored machine-local companion. Keep these separate from product documentation in README.md. Check instructions against code because agents execute their commands literally. Every figure in docs/architecture was measured by the script the text names; a figure without its measurement is a defect.
 """
 
 [[bot-instructions.surface]]
@@ -151,22 +84,11 @@ The agent-frontmatter and agent-skills tables contain kendex render configuratio
 """
 
 [[bot-instructions.surface]]
-name = "owned-skills"
-globs = [".agents/skills/vgs-distro-publish/**", ".agents/skills/vgs-release/**", ".agents/skills/vshell-dev/**"]
-reviewer_only = true
-instructions = "These skills are VGS-owned under source = in-place in kendex.toml. Review their instructions against implementation. Release and publication commands must match scripts and packaging."
-
-[[bot-instructions.surface]]
 name = "workflows"
 globs = [".github/workflows/**"]
 reviewer_only = true
-instructions = "Keep CI coverage consistent with scripts/validate. scripts/check-validation-inventory.py owns CI exceptions. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. Read docs/decisions/D007-ci-single-job-economics.md before changing CI structure."
+instructions = "Keep CI coverage consistent with scripts/validate; a step that runs a script the tree does not hold is a defect. The qml area needs a Wayland session and is not run on the runner. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. The ci-ok context name stays stable."
 
-[[bot-instructions.surface]]
-name = "session"
-globs = ["quickshell/vshell/shell.qml", "quickshell/vshell/Modules/Lock/**", "quickshell/vshell/Modules/Greetd/**", "quickshell/vshell/VGSGreeter.qml", "quickshell/vshell/Services/GreeterUsersService.qml", "quickshell/vshell/Services/IdleService.qml", "quickshell/vshell/Services/SessionService.qml", "config/vshell/settings.default.json"]
-reviewer_only = true
-instructions = "Review lock, idle and greeter changes in full depth. Lock must remain a direct root child with the persistent properties before the session-lock object. scripts/check-lock-reload-order.py checks that order. docs/architecture/session.md records the activity gates, recovery and idle ownership contracts."
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -300,15 +222,10 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.vgs-distro-publish]
-source = "in-place"
-enabled = true
 
-[skills.vgs-release]
-source = "in-place"
-enabled = true
 
-[skills.vshell-dev]
+
+[skills.vgs-plugin]
 source = "in-place"
 enabled = true
 
@@ -337,10 +254,6 @@ source = "kendex"
 enabled = true
 
 [hooks.pre-commit-check]
-source = "kendex"
-enabled = true
-
-[hooks.task-completed-check]
 source = "kendex"
 enabled = true
 
@@ -406,7 +319,14 @@ harnesses = [
 
 [hooks.skill-load-check]
 source = "kendex"
-harnesses = ["claude"]
+harnesses = [
+    "claude",
+    "pi",
+]
+
+[hooks.command-safety]
+source = "kendex"
+enabled = true
 
 [agent-skills]
 generalist = [
@@ -444,6 +364,15 @@ scout = [
 
 [skill-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+code-quality = """
+Quickshell rules for this shell. They add to the rules above.
+
+- The runtime facts the code rests on are in `docs/architecture/runtime.md`: § QML for FolderListModel, Process, createObject and property-handler order; § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
+- Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
+- A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
+- A smoke row goes in `scripts/qml-smoke.sh` beside the others and follows its header's shape: the ceiling, the machine and date it was measured on, and the poll interval of each latency reading. A new check's row goes in `scripts/validate` with its control (D008).
+- One judge per decision: `shell/Core/PluginLogic.js` for manifests, configuration merging and enablement; `shell/Core/Dispatch.js` for every Hyprland request. A script that needs one of those answers runs the file under node.
+"""
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
@@ -496,7 +425,7 @@ NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step 
 
 The list query carries `url` so the triage table is actionable; `body` is fetched per issue rather than for all 50, and every field the description needs comes from these commands alone — no extra lookup.
 
-Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret); no decision record covers it.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope: `area(VGS-12): imperative summary`.
 
@@ -561,7 +490,7 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 | `app` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
-| `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
+| `releases` | Cutting a release, versioning, and publishing to the distribution channels. |
 
 Priority rule: `ci-infra` implies Urgent unless the issue deliberately records why it is lower. Everything VGS uses to decide whether a change is safe to merge lives in that category, so a defect there invalidates the evidence behind every other issue's "verified" claim.
 
@@ -585,7 +514,7 @@ Priority rule: `ci-infra` implies Urgent unless the issue deliberately records w
 | `needs-research` | Blocked on unresolved research. Prefer a blocking relation to a research issue when one exists. |
 | `needs-review` | Requires an explicit review gate before execution/merge/close. |
 | `needs-safety-audit` | Concurrency, lock-free, memory/thread safety, or safety-critical validation required. |
-| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. For the shell's toplevel view rebuild after a Hyprland workspace event, the benchmark row in `scripts/validate qml` satisfies it (docs/architecture/shell.md § Invariants); any other path needs its own measurement. |
+| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. |
 | `critical-path` | Blocks or enables major project progress; align priority accordingly. |
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |

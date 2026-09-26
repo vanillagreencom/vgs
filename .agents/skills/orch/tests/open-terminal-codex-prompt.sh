@@ -24,6 +24,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 # The brief ends at the start command; start.md owns completion.
 TC=""
+# The words every codex command leads with, quoted per token as start_cmd
+# quotes each flag: the launch-only setting that keeps Codex off its startup
+# update prompt, then the feature switch that keeps its question tool away.
+CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false' '-c' 'features.default_mode_request_user_input=false'"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -152,7 +156,7 @@ set -e
 assert_eq "$c1_code" "0" "linear:codex launch succeeds"
 if wait_capture "$CAP1"; then
   c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737${TC}'" \
+  assert_contains "$c1_cmd" "codex $CODEX_SETTINGS 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737${TC}'" \
     "linear:codex emits the prose kickoff naming SKILL.md and the item"
   assert_not_contains "$c1_cmd" '$' "linear:codex command contains no \$"
   assert_not_contains "$c1_cmd" '`' "linear:codex command contains no backtick"
@@ -170,7 +174,7 @@ set -e
 assert_eq "$c2_code" "0" "github:codex launch succeeds"
 if wait_capture "$CAP2"; then
   c2_cmd="$(cat "$CAP2")"
-  assert_contains "$c2_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42${TC}'" \
+  assert_contains "$c2_cmd" "codex $CODEX_SETTINGS 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42${TC}'" \
     "github:codex emits the prose kickoff carrying repo#item"
   assert_not_contains "$c2_cmd" '$' "github:codex command contains no \$"
   assert_not_contains "$c2_cmd" '`' "github:codex command contains no backtick"

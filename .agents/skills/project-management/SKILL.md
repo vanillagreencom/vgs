@@ -70,7 +70,7 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 | `app` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
-| `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
+| `releases` | Cutting a release, versioning, and publishing to the distribution channels. |
 
 Priority rule: `ci-infra` implies Urgent unless the issue deliberately records why it is lower. Everything VGS uses to decide whether a change is safe to merge lives in that category, so a defect there invalidates the evidence behind every other issue's "verified" claim.
 
@@ -94,7 +94,7 @@ Priority rule: `ci-infra` implies Urgent unless the issue deliberately records w
 | `needs-research` | Blocked on unresolved research. Prefer a blocking relation to a research issue when one exists. |
 | `needs-review` | Requires an explicit review gate before execution/merge/close. |
 | `needs-safety-audit` | Concurrency, lock-free, memory/thread safety, or safety-critical validation required. |
-| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. For the shell's toplevel view rebuild after a Hyprland workspace event, the benchmark row in `scripts/validate qml` satisfies it (docs/architecture/shell.md § Invariants); any other path needs its own measurement. |
+| `needs-perf-test` | Benchmark/profiling/performance validation required before acceptance. |
 | `critical-path` | Blocks or enables major project progress; align priority accordingly. |
 | `blocked` | External blocker only (vendor/license/access/manual dependency). For issue dependencies, use blocking relations instead. |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed. |
@@ -148,7 +148,7 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
 
 ## Planning artifacts
 
-Planning, research, roadmap, and audit files under `docs/` are tracked repository content. Temporary review output belongs under `tmp/reviews/`. Attach each produced artifact and each cited planning input to the Linear issues the wrapper creates or updates. After the planned mutations for an issue, run `issues update [ISSUE_ID] --attach [PATH]`, repeated per file, as an attach-only call. Include companion files needed to read the artifact, such as roadmap JSON and research metadata. Keep its returned `attachments[]` entries and add an `**Artifacts**` list to the issue description: one `[repository-relative path](url)` link per entry. Replace the prior link for the same path and preserve links to other inputs. Those links identify the published version even when older attachments share the path. Verify every attachment and description write before reporting completion. A run with no issue writes keeps its files locally until creation; it creates no issue only to hold files.
+Planning, research, roadmap, and audit files under `docs/` are tracked repository content. A plan or report with no caller-supplied path lives at `docs/plans/<slug>.md` (a research report at `docs/plans/<slug>-research.md`), tracked, never under `tmp/`; the full rule, with its roadmap exception, is `agents/planner.md` § Plan Artifacts. Temporary review output belongs under `tmp/reviews/`. Attach each produced artifact and each cited planning input to the Linear issues the wrapper creates or updates. After the planned mutations for an issue, run `issues update [ISSUE_ID] --attach [PATH]`, repeated per file, as an attach-only call. Include companion files needed to read the artifact, such as roadmap JSON and research metadata. Keep its returned `attachments[]` entries and add an `**Artifacts**` list to the issue description: one `[repository-relative path](url)` link per entry. Replace the prior link for the same path and preserve links to other inputs. Those links identify the published version even when older attachments share the path. Verify every attachment and description write before reporting completion. A run with no issue writes keeps its files locally until creation; it creates no issue only to hold files.
 
 Keep repository-relative references in the brief. Linear attachments are the fallback when a fresh clone lacks a cited file. Resolve it through [linear SKILL.md § Resolve a cited artifact](../linear/SKILL.md#resolve-a-cited-artifact).
 
