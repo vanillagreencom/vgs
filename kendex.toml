@@ -56,7 +56,7 @@ severity = """
 Review changes to the merge checks, scripts, review policy, lock and idle handling, greeter, install channels, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
 """
 declined = """
-The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence is disabled in kendex.settings.toml.
+The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence counts only from the logins REVIEW_GATE_COMMENT_REVIEWERS in kendex.settings.toml names, bound to the head sha.
 
 The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
 
