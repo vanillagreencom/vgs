@@ -35,9 +35,9 @@ Singleton {
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
     // JSON [hostKey, kind, id] -> { id, revision, screenName }: the source revision whose
-    // build failed at that address. A settings change cannot repair code, so
-    // the address is not tried again until its plugin's revision changes.
-    // Screen names outlive screen objects so removal can expire the records.
+    // build failed at that address. A settings change cannot repair code.
+    // A source change or screen removal expires the record. Stored screen
+    // names survive the destruction of the screen objects they identify.
     property var failedBuilds: Object.create(null)
 
     // The source revisions of every instance the core built, which a scan
@@ -103,9 +103,8 @@ Singleton {
     // properties, which cross a QVariant conversion that drops functions and
     // turns nested lists into non-Array sequences. Returns null after
     // logging when the plugin cannot be built. A failure in the plugin's
-    // own code is remembered for this host, kind and id until the plugin's
-    // source revision changes; a refusal on enablement or lending is not,
-    // since either changes without a source edit.
+    // own code is remembered for this host, kind and id; a refusal on
+    // enablement or lending is not, since either can change independently.
     function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
         const manifest = Registry.manifests[id];
         if (manifest === undefined) { console.error("plugins: unknown: " + id); return null; }
