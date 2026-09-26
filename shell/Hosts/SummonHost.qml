@@ -25,7 +25,7 @@ Scope {
     property var requests: ({})
     // id -> the built instance, set when its slot builds.
     property var instances: ({})
-    // id -> the error its first open() threw, read by summon.
+    // id -> the error open() threw, read by summon.
     property var openErrors: ({})
 
     Component.onCompleted: Plugins.registerHost(kind, host)
@@ -99,6 +99,9 @@ Scope {
         const errors = Object.assign({}, openErrors);
         errors[id] = error;
         openErrors = errors;
+        Qt.callLater(() => {
+            if (host.instances[id] === instance) host.drop(id);
+        });
     }
 
     function drop(id) {

@@ -132,6 +132,11 @@ Singleton {
         if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return failed; }
         const instance = component.createObject(parent);
         if (instance === null) { console.error("plugins: " + id + " created no object"); return failed; }
+        if (!(instance instanceof Item)) {
+            console.error("plugins: " + id + " " + kind + " not built: entry point must be an Item");
+            instance.destroy();
+            return failed;
+        }
         const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(kind), layoutEntry);
         const onScreen = screen !== undefined && screen !== null ? screen : null;
         const row = { id: id, kind: kind, origin: "core", revision: manifest.__revision, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, lifetime: Lifetime.create(e => console.error("plugins: " + id + " disposer failed: " + e.message)), screen: onScreen };

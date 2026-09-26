@@ -116,6 +116,26 @@ expect_poll "the panel is open before the outside click" 1 ipc shell readInstanc
 click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the panel failed"
 expect_poll "the outside click closes an anchored panel too" absent ipc shell readInstance panel acme.surfaces opened
 
+# Replacing an open plugin runs open() on the replacement. A refusal must
+# remove its surface just as a refusal during the first summon does.
+expect "the panel opens before its source changes" ok ipc shell summon panel acme.surfaces '{}'
+cp -- "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml" "$sandbox/Summoned.good"
+python3 - "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml" <<'PYEDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = 'if (JSON.parse(payloadJson).fail === true)'
+assert s.count(old) == 1
+p.write_text(s.replace(old, 'if (true)'))
+PYEDIT
+expect "the changed open plugin is rescanned" ok ipc shell rescanPlugins
+expect_poll "a replacement whose open throws is removed" absent ipc shell readInstance panel acme.surfaces opened
+expect_poll "the refused replacement leaves no panel surface" 0 layer_count vgs:panel
+mv -T -- "$sandbox/Summoned.good" "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml"
+scans_before_repair="$(scans_done)"
+expect "the repaired surface plugin is rescanned" ok ipc shell rescanPlugins
+expect_log "the repaired surface revision is available" "$((scans_before_repair + 1))" 'plugins: scan complete '
+
 expect "the panel opens again for the disable check" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 
 expect "a background is not summonable" "refused: not-summonable=background" ipc shell summon background acme.surfaces '{}'

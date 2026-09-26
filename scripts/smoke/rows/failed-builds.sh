@@ -14,6 +14,17 @@ expect "the broken fixture keeps no capability hold" null lent holders.lock
 expect_poll "the background host shows no surface for a failed build" 0 layer_count vgs:background
 expect "disabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken false
 
+# A nonvisual root can accept the facade but cannot belong to a host.
+printf 'import QtQuick\nQtObject { property var shell: null; property var screen: null }\n' >"$broken/Item.qml"
+expect "rescan after changing the broken root answers ok" ok ipc shell rescanPlugins
+expect_poll "the new broken revision is scanned" '' scan_error
+expect "enabling the nonvisual root is allowed" ok ipc shell setPluginEnabled acme.broken true
+expect_log "both nonvisual roots are refused before publication" 2 'plugins: acme\.broken (service|background) not built: entry point must be an Item'
+expect "the nonvisual root has no build record" False record_exists acme.broken
+expect "the nonvisual root keeps no capability hold" null lent holders.lock
+expect_poll "the nonvisual background leaves no surface" 0 layer_count vgs:background
+expect "disabling the nonvisual root is allowed" ok ipc shell setPluginEnabled acme.broken false
+
 # A bar widget that cannot take what the core assigns is not built, and the
 # section's entries stay aligned with the layout: an edit to the entry after
 # it reaches that entry's own widget, never a neighbour's settings.
