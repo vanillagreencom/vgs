@@ -32,11 +32,13 @@ import argparse
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 
 SCAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "vgsh-scan")
 # The scan runs under this environment and nothing inherited beyond it.
+scan_sources = runpy.run_path(SCAN)["source_files"]
 SCAN_ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 ALLOWED_PREFIXES = ("QtQuick", "QtQml", "Qt.labs.", "Quickshell", "qs.Commons", "qs.Ui")
@@ -49,7 +51,7 @@ PATH_IMPORT = re.compile(r"^\s*\.?import\s+\"([^\"]+)\"")
 SURFACE = re.compile(r"\b(" + "|".join(SURFACE_TYPES) + r")\s*\{")
 LENT = re.compile(r"\b(" + "|".join(LENT_TYPES) + r")\s*\{|\b(Hyprland\.dispatch)\s*\(")
 PLUGIN_ID_LITERAL = re.compile(r"[\"'`]vgs\.[a-z]")
-PLUGIN_DIR_IMPORT = re.compile(r"^\s*import\s+\"[^\"]*plugins/")
+PLUGIN_DIR_IMPORT = re.compile(r"^\s*\.?import\s+\"[^\"]*plugins/")
 
 
 def module_allowed(name):
@@ -72,17 +74,6 @@ class Unreadable(Exception):
         super().__init__(f"{path}: {strerror}")
         self.path = path
         self.strerror = strerror
-
-
-def raise_unreadable(exc):
-    raise Unreadable(exc.filename, exc.strerror) from exc
-
-
-def source_files(root, suffixes):
-    for dirpath, _dirs, files in os.walk(root, onerror=raise_unreadable):
-        for name in sorted(files):
-            if name.endswith(suffixes):
-                yield os.path.join(dirpath, name)
 
 
 # A `/` after one of these characters, after one of these keywords, or at the
@@ -150,47 +141,50 @@ def blank_comments(text):
     return "".join(out)
 
 
-def source_lines(path):
+def source_lines(root):
     try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
+        for relative, _executable, data in scan_sources(root):
+            if not relative.endswith((".qml", ".js")):
+                continue
+            path = os.path.join(root, relative)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeError as exc:
+                raise Unreadable(path, str(exc)) from exc
+            for number, line in enumerate(blank_comments(text).split("\n"), 1):
+                if line.strip():
+                    yield path, number, line
     except OSError as exc:
-        raise Unreadable(path, exc.strerror) from exc
-    for number, line in enumerate(blank_comments(text).split("\n"), 1):
-        if line.strip():
-            yield number, line
+        raise Unreadable(exc.filename, exc.strerror) from exc
 
 
 def check_plugin(plugin_dir, findings):
     real_root = os.path.realpath(plugin_dir)
-    for path in source_files(plugin_dir, (".qml", ".js")):
-        for number, line in source_lines(path):
-            m = MODULE_IMPORT.match(line)
-            if m and not module_allowed(m.group(1)):
-                findings.append(f"import-module {path}:{number} {m.group(1)}")
-            m = PATH_IMPORT.match(line)
-            if m:
-                target = os.path.realpath(os.path.join(os.path.dirname(path), m.group(1)))
-                if not target.startswith(real_root + os.sep) and target != real_root:
-                    findings.append(f"import-path {path}:{number} {m.group(1)}")
-            m = SURFACE.search(line)
-            if m:
-                findings.append(f"surface-type {path}:{number} {m.group(1)}")
-            m = LENT.search(line)
-            if m:
-                findings.append(f"core-type {path}:{number} {m.group(1) or m.group(2)}")
-
+    for path, number, line in source_lines(plugin_dir):
+        m = MODULE_IMPORT.match(line)
+        if m and not module_allowed(m.group(1)):
+            findings.append(f"import-module {path}:{number} {m.group(1)}")
+        m = PATH_IMPORT.match(line)
+        if m:
+            target = os.path.realpath(os.path.join(os.path.dirname(path), m.group(1)))
+            if not target.startswith(real_root + os.sep) and target != real_root:
+                findings.append(f"import-path {path}:{number} {m.group(1)}")
+        m = SURFACE.search(line)
+        if m:
+            findings.append(f"surface-type {path}:{number} {m.group(1)}")
+        m = LENT.search(line)
+        if m:
+            findings.append(f"core-type {path}:{number} {m.group(1) or m.group(2)}")
 
 def check_core(shell_dir, findings):
     plugins_root = os.path.join(shell_dir, "plugins")
-    for path in source_files(shell_dir, (".qml", ".js")):
+    for path, number, line in source_lines(shell_dir):
         if path.startswith(plugins_root + os.sep):
             continue
-        for number, line in source_lines(path):
-            if PLUGIN_ID_LITERAL.search(line):
-                findings.append(f"core-plugin-name {path}:{number} {line.strip()}")
-            if PLUGIN_DIR_IMPORT.match(line):
-                findings.append(f"core-plugin-import {path}:{number} {line.strip()}")
+        if PLUGIN_ID_LITERAL.search(line):
+            findings.append(f"core-plugin-name {path}:{number} {line.strip()}")
+        if PLUGIN_DIR_IMPORT.match(line):
+            findings.append(f"core-plugin-import {path}:{number} {line.strip()}")
 
 
 def plugin_directories(base):

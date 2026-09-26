@@ -46,6 +46,7 @@ function row(name, build, wantStatus, wantLine, forbidLine) {
 
 row("valid plugin passes", tmp => { const d = path.join(tmp, "a"); plugin(d, good, true); return ["--", d]; }, 0, "ok       acme.one");
 row("missing entry point is refused and prints no ok line", tmp => { const d = path.join(tmp, "a"); plugin(d, good, false); return ["--", d]; }, 1, "entry point for service missing", "ok       acme.one");
+row("entry point directory is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, good, false); fs.mkdirSync(path.join(d, "Service.qml")); return ["--", d]; }, 1, "entry point for service not a file", "ok       acme.one");
 row("duplicate id across directories is refused", tmp => { const a = path.join(tmp, "a"), b = path.join(tmp, "b"); plugin(a, good, true); plugin(b, good, true); return ["--", a, b]; }, 1, "already used by");
 row("unparseable manifest is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, "{not json", true); return ["--", d]; }, 1, "manifest does not parse");
 row("a manifest the judge refuses is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ requires: [] }, good), true); return ["--", d]; }, 1, 'unknown key "requires"', "ok       acme.one");

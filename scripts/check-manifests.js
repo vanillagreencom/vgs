@@ -80,7 +80,11 @@ for (const { dir, text } of manifests()) {
     for (const kind of r.manifest.kinds) {
         const entry = path.join(dir, r.manifest.entryPoints[kind]);
         try {
-            fs.statSync(entry);
+            if (!fs.statSync(entry).isFile()) {
+                console.log("refused  " + dir + ": entry point for " + kind + " not a file: " + entry);
+                refused += 1;
+                missing = true;
+            }
         } catch (e) {
             if (e.code !== "ENOENT") unreadable(entry, e.code);
             console.log("refused  " + dir + ": entry point for " + kind + " missing: " + entry);

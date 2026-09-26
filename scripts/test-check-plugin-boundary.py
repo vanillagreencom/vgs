@@ -49,6 +49,7 @@ ROWS = [
     ("core names a plugin id in a comment is not a finding", CLEAN_CORE + '// the "vgs.clock" widget\n', None, None),
     ("core names a plugin id in a block comment is not a finding", CLEAN_CORE + '/* the "vgs.clock"\n   widget */\n', None, None),
     ("core imports a plugin directory", CLEAN_CORE.replace("import qs.Core", 'import "../plugins/vgs.bar"'), None, "core-plugin-import"),
+    ("core JS imports a plugin directory", CLEAN_CORE.replace("import qs.Core", '.import "../plugins/acme.widget/logic.js" as P'), None, "core-plugin-import"),
 ]
 
 CLEAN_JS = '.pragma library\n.import QtQuick as Q\n.import "./util.js" as U\nvar re = /\\/\\//; // PanelWindow { }\n'
@@ -154,6 +155,19 @@ def main():
         print(("  ok    " if good else "  FAIL  ") + label)
         results.append(good)
     results += [run_unreadable_row(*row) for row in UNREADABLE_ROWS]
+    for cycle in (False, True):
+        with tempfile.TemporaryDirectory() as tmp:
+            shell = build_shell(tmp, CLEAN_WIDGET, CLEAN_CORE)
+            plugin = os.path.join(shell, "plugins", "acme.widget")
+            external = os.path.join(tmp, "external")
+            os.mkdir(external)
+            with open(os.path.join(external, "Bad.qml"), "w", encoding="utf-8") as fh:
+                fh.write("PanelWindow {}\n")
+            os.symlink(plugin if cycle else external, os.path.join(plugin, "linked"))
+            proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, env=ENV)
+            good = (proc.returncode == 2 and "directory cycle" in proc.stdout) if cycle else (proc.returncode == 1 and f"surface-type {plugin}/linked/Bad.qml:1 PanelWindow" in proc.stdout)
+            print(("  ok    " if good else "  FAIL  ") + ("cyclic source tree is refused" if cycle else "linked source is checked"))
+            results.append(good)
     results.append(run_absent_plugins_row())
     if all(results):
         print("test-check-plugin-boundary: ok")
