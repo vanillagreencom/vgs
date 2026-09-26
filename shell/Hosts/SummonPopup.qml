@@ -29,11 +29,10 @@ PopupWindow {
     onVisibleChanged: if (!visible) dismissed()
     onAnchorItemChanged: if (anchorItem === null) dismissed()
 
-    // PopupAnchor does not track movement. Observe every parent because
-    // layout can move the anchor without changing its own x or y. The
-    // update is logged once per move: Quickshell sends the compositor the
-    // new anchor on the popup's next frame, which a validation row reads
-    // back only when the shell draws.
+    // The anchor is re-read on every move of the item or an ancestor, since
+    // a layout can move the item without changing its own x or y. The
+    // compositor learns the new anchor on the popup's next frame; the log
+    // line is the validation rows' readback until then.
     function followAnchor() {
         console.info("summon popup: anchor updated for " + pluginId);
         anchor.updateAnchor();

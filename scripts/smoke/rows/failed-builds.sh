@@ -6,12 +6,10 @@ mkdir -p "$broken"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.broken/." "$broken/"
 expected_errors+=('plugins: acme\.broken (service|background) not built: ')
 expect "rescan after adding the broken fixture answers ok" ok ipc shell rescanPlugins
-broken_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.broken" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the broken fixture is discovered" True broken_known
+expect_poll "the broken fixture is discovered" True plugin_known acme.broken
 expect "enabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken true
-broken_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.broken" for rows in json.load(sys.stdin).values() for r in rows))'; }
 expect_log "the core logged both refused builds of the broken fixture" 2 'plugins: acme\.broken (service|background) not built: '
-expect "the broken fixture has no build record" False broken_built
+expect "the broken fixture has no build record" False record_exists acme.broken
 expect "the broken fixture keeps no capability hold" null lent holders.lock
 expect_poll "the background host shows no surface for a failed build" 0 layer_count vgs:background
 expect "disabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken false
@@ -24,8 +22,7 @@ mkdir -p "$nowidget"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.nowidget/." "$nowidget/"
 expected_errors+=('plugins: acme\.nowidget bar-widget not built: ')
 expect "rescan after adding the widget that cannot be built answers ok" ok ipc shell rescanPlugins
-nowidget_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.nowidget" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the widget that cannot be built is discovered" True nowidget_known
+expect_poll "the widget that cannot be built is discovered" True plugin_known acme.nowidget
 python3 - "$home/.config/vgs/shell.json" <<'PY'
 import json, os, sys
 p = sys.argv[1]

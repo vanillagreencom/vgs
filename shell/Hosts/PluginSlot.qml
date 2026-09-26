@@ -32,7 +32,7 @@ Item {
     // Emitted with every instance the slot builds.
     signal built(var instance)
 
-    readonly property string key: Plugins.slotKey(pluginId)
+    readonly property string key: Registry.slotKey(pluginId)
 
     onKeyChanged: reload()
     Component.onCompleted: reload()

@@ -18,16 +18,15 @@ manager_fields() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'im
 expect "the manager panel holds the schema keys its form draws" '[["label"], ["clockFormat"], []]' manager_fields
 manager_drawn() { ipc shell readInstance panel vgs.bar drawnFields | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.probe"), d.get("vgs.bar"), d.get("acme.bare")]))'; }
 expect_poll "the manager panel draws one field per schema key" '[1, 1, 0]' manager_drawn
-probe_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.probe"][0])'; }
 expect "the manager toggles the fixture off" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
-expect_poll "listPlugins reads the fixture disabled" False probe_enabled
+expect_poll "listPlugins reads the fixture disabled" False plugin_enabled acme.probe
 expect_poll "the manager panel shows the fixture disabled" '{"acme.bare": true, "acme.probe": false, "vgs.bar": true}' manager_rows
 # The panel logs each refusal it shows on a row.
 expected_errors+=('manager panel: acme\.probe refused: disabled=acme\.probe' 'manager panel: acme\.probe refused: setting=tags undeclared')
 expect "the manager refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"x"}'
 expect "the manager panel shows the refusal on the plugin's row" '{"acme.probe":"refused: disabled=acme.probe"}' ipc shell readInstance panel vgs.bar replies
 expect "the manager toggles the fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
-expect_poll "listPlugins reads the fixture enabled" True probe_enabled
+expect_poll "listPlugins reads the fixture enabled" True plugin_enabled acme.probe
 expect "the manager form writes the fixture's setting" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'
 expect "a successful write clears the row's refusal" '{}' ipc shell readInstance panel vgs.bar replies
 expect_poll "the running service received the manager's setting" '"via-manager"' read_service label

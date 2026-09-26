@@ -9,8 +9,7 @@ surf="$home/.config/vgs/plugins/acme.surfaces"
 mkdir -p "$surf"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.surfaces/." "$surf/"
 expect "rescan after adding the hosts fixture answers ok" ok ipc shell rescanPlugins
-surfaces_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.surfaces" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the hosts fixture is discovered" True surfaces_known
+expect_poll "the hosts fixture is discovered" True plugin_known acme.surfaces
 expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces true
 
 screen_name="$(bar_key | sed 's/^bar://')"
@@ -106,16 +105,15 @@ expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 # and calls the plugin's close(). The clicks go through the nested
 # compositor's virtual pointer. The first click lands on the widget itself,
 # as a user's would before its menu opens.
-read -r widget_x widget_y widget_w widget_h < <(ipc shell invokeInstance "bar:$screen_name" acme.surfaces geometry '' | python3 -c 'import json,sys; print(*json.load(sys.stdin))')
-expect "a click lands on the widget" "clicked $((widget_x + widget_w / 2)) $((widget_y + widget_h / 2))" click "$((widget_x + widget_w / 2))" "$((widget_y + widget_h / 2))"
+click_centre "bar:$screen_name" acme.surfaces || fail "the click on the widget failed"
 expect "the widget opens a menu with a close marker" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces menuHere "{\"closeMarker\":\"$sandbox/closed-by-click\"}"
 expect_poll "the menu is open before the outside click" 1 ipc shell readInstance menu acme.surfaces opened
-expect "a click lands outside the menu" "clicked $((mon_w / 2)) $((mon_h / 2))" click "$((mon_w / 2))" "$((mon_h / 2))"
+click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the menu failed"
 expect_poll "the outside click called the menu's close()" yes marker "$sandbox/closed-by-click"
 expect_poll "the outside click removed the menu from the build records" absent ipc shell readInstance menu acme.surfaces opened
 expect "the widget opens an anchored panel" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 expect_poll "the panel is open before the outside click" 1 ipc shell readInstance panel acme.surfaces opened
-expect "a click lands outside the panel" "clicked $((mon_w / 2)) $((mon_h / 2))" click "$((mon_w / 2))" "$((mon_h / 2))"
+click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the panel failed"
 expect_poll "the outside click closes an anchored panel too" absent ipc shell readInstance panel acme.surfaces opened
 
 expect "the panel opens again for the disable check" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''

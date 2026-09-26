@@ -22,7 +22,7 @@ Item {
     // The slot key the active bar would load under, or "" when no bar can
     // be built. A key whose build failed is remembered so the window is not
     // re-created for it; a source revision change makes a new key.
-    readonly property string wantedKey: Plugins.slotKey(Plugins.activeBarId)
+    readonly property string wantedKey: Registry.slotKey(Registry.activeBarId)
     property string brokenKey: ""
 
     Loader {
@@ -47,7 +47,7 @@ Item {
             PluginSlot {
                 id: slot
                 kind: "bar"
-                pluginId: Plugins.activeBarId
+                pluginId: Registry.activeBarId
                 hostKey: host.hostKey
                 screen: host.screen
                 context: ({ screen: host.screen })

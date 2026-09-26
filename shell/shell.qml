@@ -62,7 +62,7 @@ ShellRoot {
 
         function ping(): string { return "ok"; }
         function guarded(): bool { return root.guarded; }
-        function listPlugins(): string { return Plugins.listJson(); }
+        function listPlugins(): string { return Registry.listJson(); }
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
         function built(): string { return Plugins.builtJson(); }
         function buildCount(): int { return Plugins.buildCount; }
@@ -75,7 +75,7 @@ ShellRoot {
         function instanceGeometry(hostKey: string, id: string): string { return Plugins.geometryOf(hostKey, id); }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.ifGuarded(() => Plugins.invokeInstance(hostKey, id, name, arg)); }
         function reloadConfig(): string { return root.ifGuarded(() => { Config.reload(); return "ok"; }); }
-        function rescanPlugins(): string { return root.ifGuarded(() => Plugins.rescan()); }
+        function rescanPlugins(): string { return root.ifGuarded(() => Registry.rescan()); }
         function setPluginEnabled(id: string, enabled: bool): string { return root.ifGuarded(() => Plugins.setEnabled(id, enabled)); }
         function summon(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("summon", kind, id, payloadJson, null)); }
         function hide(kind: string, id: string): string { return root.ifGuarded(() => Plugins.route("hide", kind, id, "", null)); }

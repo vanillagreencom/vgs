@@ -7,20 +7,14 @@
 # asked for back to back run in order behind one process, the queue has a
 # bound, and a process that cannot start does not stop the queue.
 set -euo pipefail
-click_centre() { # HOST_KEY ID: one click on the centre of a built instance
-  local rect
-  rect="$(ipc shell instanceGeometry "$1" "$2")" || return
-  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
-  click "$cx" "$cy"
-}
 manager_open() { [[ $(ipc shell instanceGeometry panel vgs.bar) != absent ]] && echo open || echo closed; }
-if click_centre "$(bar_key)" vgs.bar/right-manager >/dev/null; then ok "a click lands on the manager button"; else fail "the click on the manager button failed"; fi
+click_centre "$(bar_key)" vgs.bar/right-manager || fail "the click on the manager button failed"
 expect_poll "the manager button's click opens the manager panel" open manager_open
 expect_poll "the manager panel draws the fixture's label field again" '[1, 1, 0]' manager_drawn
-expect "an edit begins in the fixture's label field" held ipc shell invokeInstance panel vgs.bar holdField '{"id":"acme.probe","key":"label","text":"draft"}'
-held_editor() { ipc shell invokeInstance panel vgs.bar heldFieldGeometry ''; }
-read -r field_x field_y field_w field_h < <(held_editor | python3 -c 'import json,sys; print(*(int(v) for v in json.load(sys.stdin)))')
-expect "a click lands on the held field" "clicked $((field_x + field_w / 2)) $((field_y + field_h / 2))" click "$((field_x + field_w / 2))" "$((field_y + field_h / 2))"
+held_rect="$(ipc shell invokeInstance panel vgs.bar holdField '{"id":"acme.probe","key":"label","text":"draft"}')" || fail "holdField failed"
+if [[ $held_rect == \[* ]]; then ok "an edit begins in the fixture's label field"; else fail "an edit begins in the fixture's label field: got $held_rect"; fi
+read -r field_x field_y field_w field_h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$held_rect")
+click "$((field_x + field_w / 2))" "$((field_y + field_h / 2))" || fail "the click on the held field failed"
 held_state() { ipc shell invokeInstance panel vgs.bar heldFieldState ''; }
 # The click also puts the cursor where it landed; the state read after it
 # is what the unrelated changes must preserve.
@@ -63,20 +57,21 @@ expect "the manager button closes the manager panel after the edit rows" ok ipc 
 expect_poll "the manager panel is gone after the edit rows" 0 layer_count vgs:panel
 
 # The dispatch queue, driven through the fixture's compositor capability.
+# Every queue row ends on workspace 2 and is reset to workspace 1 without
+# a row of its own; the reset is the same dispatch the row just proved.
+reset_workspace() { probe dispatch "focusWorkspace 1" >/dev/null && expect_poll "the compositor is back on the first workspace" 1 active_ws; }
 expect "two workspace requests are accepted back to back" "ok,ok" probe batch "focusWorkspace 2;focusWorkspace 1"
 expect_poll "the compositor ends on the later of two queued requests" 1 active_ws
 expect "two workspace requests in the other order are accepted" "ok,ok" probe batch "focusWorkspace 1;focusWorkspace 2"
 expect_poll "the compositor ends on the later request in that order too" 2 active_ws
-expect "the compositor returns to the first workspace" ok probe dispatch "focusWorkspace 1"
-expect_poll "the compositor moved back to the first workspace after the queue rows" 1 active_ws
+reset_workspace
 if queue_limit="$(node -e 'process.stdout.write(String(require("./scripts/qml-library.js").load("shell/Core/Dispatch.js").QUEUE_LIMIT))')"; then
   expected_errors+=('compositor: refused: dispatch-queue=full ')
   overflow() { probe flood "$((queue_limit + 2)) focusWorkspace 1" | sed 's/ request=.*//'; }
   expect "the request past the queue bound is refused" "refused: dispatch-queue=full limit=$queue_limit" overflow
   expect "a request after the overflow is accepted" ok probe dispatch "focusWorkspace 2"
   expect_poll "the queue drains after the overflow" 2 active_ws
-  expect "the compositor returns to the first workspace after the overflow" ok probe dispatch "focusWorkspace 1"
-  expect_poll "the compositor moved back after the overflow rows" 1 active_ws
+  reset_workspace
 else
   fail "Dispatch.QUEUE_LIMIT unreadable"
 fi
@@ -89,5 +84,4 @@ expect_log "the failed start is logged with its request" 1 'compositor: dispatch
 shim_hyprctl real
 expect "a request after the failed start is accepted" ok probe dispatch "focusWorkspace 2"
 expect_poll "the queue runs again after a failed start" 2 active_ws
-expect "the compositor returns to the first workspace after the failed start rows" ok probe dispatch "focusWorkspace 1"
-expect_poll "the compositor moved back after the failed start rows" 1 active_ws
+reset_workspace

@@ -25,10 +25,7 @@ if add_out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin add "file://$fixture" 2>
 else
   fail "vgsh plugin add: $add_out"
 fi
-probe_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.probe"][0])' 2>/dev/null || echo absent; }
-found=""
-for _ in $(seq 1 25); do if found="$(probe_state)" && [[ $found == False ]]; then break; fi; sleep 0.2; done
-if [[ $found == False ]]; then ok "user-directory plugin discovered and disabled until enabled"; else fail "fixture after rescan: $found"; fi
+expect_poll "user-directory plugin discovered and disabled until enabled" False plugin_enabled acme.probe
 expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare true
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }

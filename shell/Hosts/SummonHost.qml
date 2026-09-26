@@ -123,7 +123,7 @@ Scope {
 
             required property string modelData
             readonly property var request: host.requests[modelData]
-            readonly property bool live: Plugins.slotKey(modelData) !== ""
+            readonly property bool live: Registry.slotKey(modelData) !== ""
             onLiveChanged: if (!live) Qt.callLater(() => host.drop(entry.modelData))
 
             Loader {
@@ -149,7 +149,7 @@ Scope {
 
                     readonly property var request: entry.request
                     readonly property var place: {
-                        const settings = Plugins.settingsOf(entry.modelData, host.kind);
+                        const settings = Registry.settingsOf(entry.modelData, host.kind);
                         return PluginLogic.surfacePlacement(host.kind, settings, Style.spacing.lg);
                     }
 

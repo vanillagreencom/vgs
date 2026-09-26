@@ -8,7 +8,7 @@
 
 **Research**: —
 
-**Context**: [D004](D004-manifest-schema-borrowed-from-another-shell.md) borrowed another shell's manifest schema so that a plugin written for either shell would validate in both. A review of the implementation showed the shared names had already drifted in meaning (the spacing function scaled differently, the font tokens were named differently), that widget-centric fields were the wrong home for the settings of a service or a panel, and that no plugin from the other shell had ever been loaded. The owner decided the other shell is inspiration only: nothing in this repository names it or promises to run its plugins.
+**Context**: The first design borrowed another Hyprland shell's manifest schema, with v2 additions under one reserved key, so that a plugin written for either shell would validate in both. A review of the implementation showed the shared names had already drifted in meaning (the spacing function scaled differently, the font tokens were named differently), that widget-centric fields were the wrong home for the settings of a service or a panel, and that no plugin from the other shell had ever been loaded. The owner decided the other shell is inspiration only: nothing in this repository names it or promises to run its plugins.
 
 **Decision**: `manifest.json` is v2's own schema, judged once by `shell/Core/PluginLogic.js`: `entryPoints` keyed by kind name, `capabilities` and `settings` at the top level for every kind, `defaultSection` for a bar widget, and every unknown key refused. `qs.Commons`, `qs.Ui` and the `shell` object carry v2's own names with v2's own semantics. A user who wants a plugin from another shell asks the vgs-plugin skill to write a v2 plugin from it; no translation layer, compatibility fixture or shared namespace exists.
 
@@ -22,4 +22,4 @@
 
 **Verification**: `scripts/test-plugin-logic.js` pins the unknown-key refusal and every field rule; `scripts/check-manifests.js` validates every bundled manifest.
 
-**References**: [D004](D004-manifest-schema-borrowed-from-another-shell.md), [D009](D009-one-manifest-judge-under-node.md)
+**References**: [D009](D009-one-manifest-judge-under-node.md)

@@ -1,37 +1,17 @@
 pragma Singleton
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import "PluginLogic.js" as Logic
 import "Lifetime.js" as Lifetime
 
-// The plugin registry and manager mechanism. Discovers plugin directories,
-// validates every manifest through PluginLogic.js, derives the enabled set
-// from Config.effective, builds every plugin instance the hosts ask for,
-// mounts bar widgets into the active bar's sections, keeps every live
-// instance's settings current, and owns enable and disable. Hosts read
-// `manifests` and the slot API; they never scan the disk,
-// build a plugin or assign a plugin property themselves.
+// Every live plugin instance. Builds each instance the hosts ask for from
+// the Registry's manifests, mounts bar widgets into the active bar's
+// sections, keeps every live instance's settings current, releases what
+// an instance registered when it goes, owns enable and disable, and
+// answers the readbacks the validation rows use. Hosts call the slot API;
+// they never build a plugin or assign a plugin property themselves.
 Singleton {
     id: root
-
-    // The shipped configuration names the default bar; the core never does.
-    readonly property string defaultBarId: Logic.activeBarId(Config.shipped, "")
-    readonly property string bundledDir: Quickshell.shellDir + "/plugins"
-    readonly property string userDir: Config.userDir + "/plugins"
-    readonly property string sourceDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgsh-sources-" + Quickshell.processId
-
-    // id -> validated manifest, a prototype-free object replaced whole on
-    // every scan whose result differs, so bindings re-evaluate once.
-    property var manifests: Object.create(null)
-    // { dir, error } for every directory whose manifest was refused.
-    property var errors: []
-    // ids seen in a lower-precedence directory after a higher one claimed them.
-    property var collisions: []
-    // Why the last scan produced no result, or "" when it did.
-    property string scanError: ""
-    property bool scanned: false
-    property bool rescanPending: false
 
     // Hosts by kind, registered on completion. summon/hide/toggle route here.
     property var hosts: Object.create(null)
@@ -68,181 +48,38 @@ Singleton {
     // the address is not tried again until its plugin's revision changes.
     property var failedBuilds: Object.create(null)
 
-    function has(id) { return Logic.hasOwn(manifests, id); }
-
-    function rescan() {
-        if (scanner.running) { rescanPending = true; return "busy"; }
-        const command = [Quickshell.shellDir + "/../bin/vgsh-scan", "--snapshot-dir", sourceDir];
-        const keep = Object.create(null);
-        for (const id of Object.keys(manifests)) keep[manifests[id].__revision] = true;
+    // The source revisions of every instance the core built, which a scan
+    // keeps on disk while the instance lives.
+    function liveRevisions() {
+        const out = Object.create(null);
         for (const hostKey of Object.keys(built))
             for (const row of built[hostKey])
-                if (row.origin === "core") keep[row.revision] = true;
-        for (const revision of Object.keys(keep)) command.push("--retain", revision);
-        scanner.command = command.concat([root.userDir, root.bundledDir]);
-        scanner.running = true;
-        return "ok";
+                if (row.origin === "core") out[row.revision] = true;
+        return Object.keys(out);
     }
 
-    function applyScan(text) {
-        let entries;
-        try {
-            entries = JSON.parse(text);
-        } catch (e) {
-            scanError = "scan output does not parse: " + e.message;
-            console.error("plugins: " + scanError);
-            retry.start();
-            return;
-        }
-        const next = Object.create(null);
-        const errs = [];
-        const cols = [];
-        for (const entry of entries) {
-            if (entry.error !== undefined) { errs.push({ dir: entry.dir, error: entry.error }); continue; }
-            let raw;
-            try {
-                raw = JSON.parse(entry.text);
-            } catch (e) {
-                errs.push({ dir: entry.dir, error: "manifest does not parse: " + e.message });
-                continue;
-            }
-            const r = Logic.validateManifest(raw, entry.dir);
-            if (!r.ok) { errs.push({ dir: entry.dir, error: r.error }); continue; }
-            if (Logic.hasOwn(next, r.manifest.id)) { cols.push(r.manifest.id + " at " + entry.dir); continue; }
-            r.manifest.__revision = entry.revision;
-            r.manifest.__loadUrl = entry.loadUrl;
-            next[r.manifest.id] = r.manifest;
-        }
-        for (const e of errs) console.error("plugins: " + e.dir + ": " + e.error);
-        const changed = JSON.stringify(next) !== JSON.stringify(root.manifests);
-        if (JSON.stringify(cols) !== JSON.stringify(root.collisions))
-            for (const c of cols) console.warn("plugins: hidden by a higher-precedence plugin with the same id: " + c);
-        root.errors = errs;
-        root.collisions = cols;
-        root.scanError = "";
-        if (changed) {
-            const failures = Object.create(null);
-            for (const key of Object.keys(failedBuilds)) {
-                const failure = failedBuilds[key];
-                if (Logic.hasOwn(next, failure.id) && next[failure.id].__revision === failure.revision)
-                    failures[key] = failure;
-            }
-            failedBuilds = failures;
-            root.manifests = next;
-        }
-        root.scanned = true;
-        if (changed) Qt.callLater(root.reconcile);
-        // One line per completed scan, the smoke's readback for a scan that
-        // changed nothing and so leaves no other trace.
-        console.info("plugins: scan complete changed=" + changed);
-    }
-
-    Process {
-        id: scanner
-        stdout: StdioCollector { onStreamFinished: root.applyScan(text) }
-        onExited: (code, status) => {
-            if (code !== 0) {
-                root.scanError = "vgsh-scan exited " + code;
-                console.error("plugins: " + root.scanError);
-                retry.start();
-            }
-        }
-        onRunningChanged: if (!running && root.rescanPending) {
-            root.rescanPending = false;
-            root.rescan();
-        }
-    }
-
-    // One retry after a failed scan; a second failure stays visible in scanError.
-    Timer {
-        id: retry
-        interval: 2000
-        repeat: false
-        onTriggered: if (!root.scanned) root.rescan()
-    }
-
-    function isEnabled(id) {
-        // Read both inputs on every path so the binding's dependency set is
-        // the same whichever branch returns.
-        const config = Config.effective;
-        const bar = defaultBarId;
-        return has(id) && Logic.isEnabled(config, manifests[id], bar);
-    }
-
-    readonly property string activeBarId: Logic.activeBarId(Config.effective, defaultBarId)
-
-    // Why plugin `id` is not an enabled plugin, or "": `unknown: <id>` or
-    // `refused: disabled=<id>`.
-    function enableRefusal(id) {
-        if (!has(id)) return "unknown: " + id;
-        return isEnabled(id) ? "" : "refused: disabled=" + id;
-    }
-
-    // Why plugin `id` cannot be built now, or "": the scan is pending, the
-    // configuration is not ready (Config.notReady names why: pending, or
-    // the shipped file's failure), the plugin is unknown or
-    // disabled, or another plugin holds an exclusive capability it names
-    // (from the settled copy of the holders, so a refused plugin builds once
-    // the holder lets go). Every input is read on every path so a binding on
-    // the result re-evaluates on any of them. slotKey and route consume it.
-    function buildRefusal(id) {
-        const holders = lendSnapshot;
-        const isScanned = scanned;
-        const notReady = Config.notReady;
-        const enable = enableRefusal(id);
-        if (!isScanned) return "refused: scan=pending";
-        if (notReady !== "") return "refused: config=" + notReady;
-        if (enable !== "") return enable;
-        return Logic.lendRefusal(holders, manifests[id]);
-    }
-
-    // The key a slot loads plugin `id` under: its id and source revision
-    // while buildRefusal is empty, "" otherwise. Every slot and
-    // every host reads this one derivation.
-    function slotKey(id) {
-        return buildRefusal(id) === "" ? id + "@" + manifests[id].__revision : "";
-    }
-
-    // Who holds each exclusive capability, copied once the change that moved
-    // it settled. slotKey reads the copy: a build acquires holds, and a key
-    // that read the live record would change inside its own evaluation. A
-    // build the stale copy lets through is refused by createInstance, and
-    // the next copy takes its key away. A change also lets a refused bar
-    // widget build, through reconcile.
-    property var lendSnapshot: ({})
-    readonly property string exclusiveKey: JSON.stringify(Capabilities.exclusiveHolders())
-    onExclusiveKeyChanged: Qt.callLater(refreshLending)
-
-    function refreshLending() {
-        const now = Capabilities.exclusiveHolders();
-        if (JSON.stringify(now) === JSON.stringify(lendSnapshot)) return;
-        lendSnapshot = now;
-        reconcile();
-    }
-
-    // A configuration change reaches every live instance through one
-    // reconcile. A source change moves that plugin's slot key, so only its
-    // slots rebuild; its bar widgets rebuild inside reconcileBar.
+    // Every change reaches every live instance through one reconcile: a
+    // configuration change at once; a settled lending change at once; a
+    // registry change after the slots keyed on it have moved, having first
+    // dropped the failure memory of plugins that are gone or changed.
     Connections {
         target: Config
         function onEffectiveChanged() { root.reconcile(); }
     }
-
-    function hiddenByDisabling(id) {
-        return Logic.hiddenByDisabling(manifests, Config.effective, id, defaultBarId);
-    }
-
-    // Ids of enabled plugins declaring `kind`, sorted.
-    function enabledOfKind(kind) {
-        return Object.keys(manifests).filter(id => manifests[id].kinds.indexOf(kind) !== -1 && isEnabled(id)).sort();
-    }
-
-    // file:// URL of one entry point, or "" when the plugin or kind is absent.
-    function entryUrl(id, kind) {
-        if (!has(id)) return "";
-        const entry = manifests[id].entryPoints[kind];
-        if (entry === undefined) return "";
-        return manifests[id].__loadUrl + "/" + entry.split("/").map(encodeURIComponent).join("/");
+    Connections {
+        target: Registry
+        function onLendingChanged() { root.reconcile(); }
+        function onChanged() {
+            const manifests = Registry.manifests;
+            const failures = Object.create(null);
+            for (const key of Object.keys(root.failedBuilds)) {
+                const failure = root.failedBuilds[key];
+                if (Logic.hasOwn(manifests, failure.id) && manifests[failure.id].__revision === failure.revision)
+                    failures[key] = failure;
+            }
+            root.failedBuilds = failures;
+            Qt.callLater(root.reconcile);
+        }
     }
 
     // The scoped object a plugin receives as `shell`: its manifest, its
@@ -268,7 +105,7 @@ Singleton {
     // source revision changes; a refusal on enablement or lending is not,
     // since either changes without a source edit.
     function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
-        const manifest = manifests[id];
+        const manifest = Registry.manifests[id];
         if (manifest === undefined) { console.error("plugins: unknown: " + id); return null; }
         if (failedRevision(hostKey, kind, id) === manifest.__revision) return null;
         const result = attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator);
@@ -293,11 +130,11 @@ Singleton {
     function attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
         const refused = { state: "refused" };
         const failed = { state: "failed" };
-        const enable = enableRefusal(id);
+        const enable = Registry.enableRefusal(id);
         if (enable !== "") { console.error("plugins: " + enable); return refused; }
-        const url = entryUrl(id, kind);
+        const url = Registry.entryUrl(id, kind);
         if (url === "") { console.error("plugins: " + id + " declares no " + kind + " entry point"); return failed; }
-        const manifest = manifests[id];
+        const manifest = Registry.manifests[id];
         const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifest);
         if (lent !== "") { console.error("plugins: " + id + " " + lent); return refused; }
         const component = Qt.createComponent(url);
@@ -348,7 +185,7 @@ Singleton {
         } catch (e) {
             console.error("plugins: " + id + " bar-widget not built: " + e.message);
             destroyBuilt(hostKey, instance);
-            rememberFailure(hostKey, "bar-widget", id, manifests[id].__revision);
+            rememberFailure(hostKey, "bar-widget", id, Registry.manifests[id].__revision);
             return null;
         }
         return instance;
@@ -420,7 +257,7 @@ Singleton {
         const next = Object.assign(Object.create(null), mounts);
         next[hostKey] = { row: row, sections: sections };
         mounts = next;
-        reconcileBar(hostKey, Logic.effectiveLayout(Config.effective, manifests, defaultBarId));
+        reconcileBar(hostKey, Logic.effectiveLayout(Config.effective, Registry.manifests, Registry.defaultBarId));
     }
 
     function unmountBar(hostKey) {
@@ -442,6 +279,7 @@ Singleton {
     // included, so an edit to one entry reaches that entry's widget alone.
     function reconcileBar(hostKey, layout) {
         const mount = mounts[hostKey];
+        const manifests = Registry.manifests;
         const holders = Capabilities.exclusiveHolders();
         for (const section of Logic.SECTIONS) {
             const wanted = layout[section].filter(e => Logic.lendRefusal(holders, manifests[e.id]) === "");
@@ -500,7 +338,7 @@ Singleton {
     // it, when they changed. A bar widget's settings come from its layout
     // entry; every other kind's from its plugins[] row.
     function refreshRow(row, layoutEntry) {
-        const manifest = manifests[row.id];
+        const manifest = Registry.manifests[row.id];
         const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(row.kind), layoutEntry);
         const key = JSON.stringify(settings);
         row.entry = layoutEntry;
@@ -517,7 +355,7 @@ Singleton {
     // stale at this point. Instances a slot is about to destroy are
     // refreshed for nothing; the slot forgets them next.
     function reconcile() {
-        const layout = Logic.effectiveLayout(Config.effective, manifests, defaultBarId);
+        const layout = Logic.effectiveLayout(Config.effective, Registry.manifests, Registry.defaultBarId);
         for (const hostKey of Object.keys(mounts)) {
             try {
                 reconcileBar(hostKey, layout);
@@ -527,7 +365,7 @@ Singleton {
         }
         for (const hostKey of Object.keys(built)) {
             for (const row of built[hostKey]) {
-                if (row.kind === "bar-widget" || row.origin === "plugin" || !has(row.id)) continue;
+                if (row.kind === "bar-widget" || row.origin === "plugin" || !Registry.has(row.id)) continue;
                 try {
                     refreshRow(row, null);
                 } catch (e) {
@@ -582,18 +420,12 @@ Singleton {
     function route(verb, kind, id, payloadJson, origin) {
         if (Logic.SUMMONABLE_KINDS.indexOf(kind) === -1) return "refused: not-summonable=" + kind;
         if (!Logic.hasOwn(hosts, kind)) return "refused: no-host=" + kind;
-        if (!has(id)) return "unknown: " + id;
-        if (manifests[id].kinds.indexOf(kind) === -1) return "refused: kind=" + kind + " id=" + id;
+        if (!Registry.has(id)) return "unknown: " + id;
+        if (Registry.manifests[id].kinds.indexOf(kind) === -1) return "refused: kind=" + kind + " id=" + id;
         if (verb === "hide") return hosts[kind].hide(id);
-        const refusal = buildRefusal(id);
+        const refusal = Registry.buildRefusal(id);
         if (refusal !== "") return refusal;
         return hosts[kind][verb](id, payloadJson, origin || null);
-    }
-
-    // The settings an instance of `kind` of plugin `id` receives from its
-    // plugins[] row, for a host that reads a plugin's settings for itself.
-    function settingsOf(id, kind) {
-        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], Logic.settingTargetOf(kind), null) : {};
     }
 
     // Call one function of one built instance with one text argument and
@@ -614,9 +446,9 @@ Singleton {
     // takes those widgets off the screen, `unknown: <id>`, or a refusal
     // naming why the user file was not written.
     function setEnabled(id, enabled) {
-        if (!has(id)) return "unknown: " + id;
-        const m = manifests[id];
-        const hidden = enabled ? [] : hiddenByDisabling(id);
+        if (!Registry.has(id)) return "unknown: " + id;
+        const m = Registry.manifests[id];
+        const hidden = enabled ? [] : Registry.hiddenByDisabling(id);
         const written = Config.writeUser(Logic.withEnabled(Config.user, m, enabled, Config.effective));
         if (written !== "ok") return written;
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";
@@ -628,56 +460,26 @@ Singleton {
     // schema first. The reply is one keyed line: `ok` (the save is queued),
     // `unknown: <id>` or a refusal.
     function writeSetting(id, key, value, targets, locator) {
-        if (!has(id)) return "unknown: " + id;
-        const m = manifests[id];
+        if (!Registry.has(id)) return "unknown: " + id;
+        const m = Registry.manifests[id];
         const refusal = Logic.settingRefusal(m, key, value);
         if (refusal !== "") return refusal;
         if (targets.length === 0) return "refused: setting=" + key + " entry=none";
         return Config.writeUser(Logic.withSetting(Config.user, m, key, value, Config.effective, targets, locator || null));
     }
 
-    // Every discovered plugin as the plugin manager shows it: listing
-    // metadata, whether it is enabled, its settings schema and the settings
-    // it currently receives (a bar widget's from its first layout entry).
-    readonly property var managerRows: Object.keys(manifests).sort().map(id => {
-        const m = manifests[id];
-        return {
-            id: id,
-            name: m.name,
-            version: m.version,
-            description: m.description,
-            kinds: m.kinds,
-            enabled: isEnabled(id),
-            schema: m.schema,
-            settings: Logic.managerSettings(Config.effective, m)
-        };
-    })
-
     // Write one setting of plugin `id` into every configuration entry its
     // instances read, for the plugin manager. A disabled plugin is refused:
     // listing a third-party plugin's row would enable it.
     function setSetting(id, key, value) {
-        if (!has(id)) return "unknown: " + id;
-        if (!isEnabled(id)) return "refused: disabled=" + id;
-        return writeSetting(id, key, value, Logic.settingTargets(Config.effective, manifests[id]));
-    }
-
-    function listJson() {
-        const rows = Object.keys(manifests).sort().map(id => ({
-            id: id,
-            version: manifests[id].version,
-            kinds: manifests[id].kinds,
-            enabled: isEnabled(id),
-            dir: manifests[id].__sourceDir,
-            revision: manifests[id].__revision
-        }));
-        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
+        if (!Registry.has(id)) return "unknown: " + id;
+        if (!Registry.isEnabled(id)) return "refused: disabled=" + id;
+        return writeSetting(id, key, value, Logic.settingTargets(Config.effective, Registry.manifests[id]));
     }
 
     Component.onCompleted: {
         for (const name of Logic.CAPABILITIES)
             if (!Logic.hasOwn(Capabilities.factories, name))
                 console.error("plugins: capability " + name + " has no provider in Capabilities.qml");
-        rescan();
     }
 }

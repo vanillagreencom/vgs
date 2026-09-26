@@ -22,8 +22,8 @@ Item {
     // record stays as small as the plugin set. A source revision change
     // makes a new key, so a fixed plugin is tried again.
     property var brokenKeys: ({})
-    readonly property var ids: Plugins.enabledOfKind("background").filter(id => {
-        const key = Plugins.slotKey(id);
+    readonly property var ids: Registry.enabledOfKind("background").filter(id => {
+        const key = Registry.slotKey(id);
         return key !== "" && host.brokenKeys[id] !== key;
     })
 

@@ -3,15 +3,13 @@ locker="$home/.config/vgs/plugins/acme.locker"
 mkdir -p "$locker"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.locker/." "$locker/"
 expect "rescan after adding the lock fixture answers ok" ok ipc shell rescanPlugins
-locker_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.locker" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the lock fixture is discovered" True locker_known
+expect_poll "the lock fixture is discovered" True plugin_known acme.locker
 expect "enabling a second lock plugin is allowed" ok ipc shell setPluginEnabled acme.locker true
-locker_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.locker" for r in json.load(sys.stdin).get("service",[])))'; }
 expect_poll "the lock stays with its first holder" '["acme.probe"]' lent holders.lock
-expect "the second lock plugin is not built while the lock is held" False locker_built
+expect "the second lock plugin is not built while the lock is held" False record_exists acme.locker
 
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
-expect_poll "the second lock plugin builds once the holder is disabled" True locker_built
+expect_poll "the second lock plugin builds once the holder is disabled" True record_exists acme.locker
 expect_poll "the lock moved to the second plugin" '["acme.locker"]' lent holders.lock
 expect "disabling the second lock plugin is allowed" ok ipc shell setPluginEnabled acme.locker false
 expect_widgets "the fixture widget left the bar" '["acme.tick"]'

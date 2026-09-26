@@ -216,7 +216,15 @@ start_ms="$(now_ms)"
 spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
 # click X Y: one left click at that layout position on the nested seat.
-click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h"; }
+# click_centre HOST_KEY ID: the same on the centre of a built instance.
+# Each prints nothing on success; a row reads its status.
+click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
+click_centre() {
+  local rect
+  rect="$(ipc shell instanceGeometry "$1" "$2")" || return
+  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
+  click "$cx" "$cy"
+}
 
 # Latency from the runner's exec to the first bar surface with a client,
 # polled every 10 ms from the compositor's layer list, which answers in a
@@ -356,6 +364,13 @@ expect_builtins() { # LABEL EXPECTED_JSON_LIST
 # assert that an unrelated write and a rescan that changes nothing build
 # nothing, and what a rescan that adds a disabled plugin builds.
 builds() { ipc shell buildCount; }
+
+# One plugin's row in the registry listing: `plugin_known ID` prints True or
+# False, `plugin_enabled ID` its enabled flag or `absent`. `record_exists ID`
+# prints True when any build record under any host names ID.
+plugin_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]==sys.argv[1] for p in json.load(sys.stdin)["plugins"]))' "$1"; }
+plugin_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; rows=[p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]==sys.argv[1]]; print(rows[0] if rows else "absent")' "$1"; }
+record_exists() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]==sys.argv[1] for rows in json.load(sys.stdin).values() for r in rows))' "$1"; }
 
 smoke_finish() {
 if [[ $failures -gt 0 ]]; then

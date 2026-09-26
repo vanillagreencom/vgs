@@ -76,40 +76,30 @@ Item {
         return null;
     }
 
-    // The text editor inside one drawn field, or null for a field that
-    // draws none (a switch, an enum).
-    function editorOf(field) {
-        if (field === null) return null;
-        for (let i = 0; i < field.children.length; i++) {
-            const child = field.children[i];
-            if (child.item !== undefined && child.item !== null && child.item.children.length > 0
-                    && child.item.children[0].cursorPosition !== undefined)
-                return child.item.children[0];
-        }
-        return null;
-    }
-
-    // The field an edit is under way in, for the validation rows: `arg` is
-    // JSON {"id", "key", "text"}. Focuses the field's editor and types
-    // `text` into it, as a user who has not left the field yet. Answers
-    // `held`, or `absent` when no such editor is drawn.
+    // An edit under way in one drawn text field, for the validation rows
+    // that prove an unrelated change leaves it alone. `holdField` takes
+    // JSON {"id", "key", "text"}: it focuses the field's editor, types
+    // `text` into it as a user who has not left the field yet, and answers
+    // the editor's rectangle as JSON [x, y, width, height] in the
+    // coordinates of the window this panel was anchored in, or `absent`
+    // when no such text editor is drawn. `heldFieldState` answers JSON
+    // { same, focus, activeFocus, text, cursor }: `same` says the drawn
+    // field is still the object held, `activeFocus` is true only while
+    // the compositor gives this window keyboard focus.
     property var heldField: null
     function holdField(arg) {
         const a = JSON.parse(arg);
-        const editor = editorOf(fieldOf(a.id, a.key));
+        const field = fieldOf(a.id, a.key);
+        const editor = field === null ? null : field.editor;
         if (editor === null) return "absent";
         editor.forceActiveFocus();
         editor.text = a.text;
         editor.cursorPosition = 1;
-        heldField = { id: a.id, key: a.key, field: fieldOf(a.id, a.key), editor: editor };
-        return "held";
+        heldField = { id: a.id, key: a.key, field: field, editor: editor };
+        const at = editor.mapToGlobal(0, 0);
+        return JSON.stringify([at.x, at.y, editor.width, editor.height]);
     }
 
-    // What became of the held field: JSON { same, focus, activeFocus,
-    // text, cursor } where `same` says the drawn field is still the object
-    // held, and the rest is read from that editor; `activeFocus` is true
-    // only while the compositor gives this window keyboard focus. `absent`
-    // with nothing held.
     function heldFieldState() {
         if (heldField === null) return "absent";
         return JSON.stringify({
@@ -119,15 +109,6 @@ Item {
             text: heldField.editor.text,
             cursor: heldField.editor.cursorPosition
         });
-    }
-
-    // The held editor's rectangle as JSON [x, y, width, height] in the
-    // coordinates of the window this panel was anchored in, for a row that
-    // clicks it. `absent` with nothing held.
-    function heldFieldGeometry() {
-        if (heldField === null) return "absent";
-        const at = heldField.editor.mapToGlobal(0, 0);
-        return JSON.stringify([at.x, at.y, heldField.editor.width, heldField.editor.height]);
     }
 
     // Emit one drawn field's `apply`, as an edit in the form does, for the

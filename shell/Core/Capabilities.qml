@@ -140,7 +140,7 @@ Singleton {
             register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
         }),
         manager: ctx => ({
-            get plugins() { return Plugins.managerRows; },
+            get plugins() { return Registry.managerRows; },
             setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
             setSetting: (id, key, value) => Plugins.setSetting(id, key, value)
         }),

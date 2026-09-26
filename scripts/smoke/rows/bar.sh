@@ -48,12 +48,11 @@ if disable_reply="$(ipc shell setPluginEnabled acme.tick false)"; then
   done
 fi
 if [[ $disable_reply == ok ]]; then ok "disabling a widget is allowed"; else fail "disabling a widget is allowed: got $disable_reply"; fi
-tick_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.tick"][0])'; }
 tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
 expect_widgets "the bar dropped the disabled widget" '[]'
 expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-expect "widget reads disabled after the user file changed" False tick_state
+expect "widget reads disabled after the user file changed" False plugin_enabled acme.tick
 expect "the disabled widget keeps its layout entry and settings" '[{"id": "acme.tick", "format": "ddd d MMM  HH:mm"}]' tick_entry
 expect "disable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
 expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled acme.tick true
@@ -121,10 +120,8 @@ PY
   mkdir -p "$idle"
   cp -R "$repo/scripts/smoke/fixtures/plugins/acme.idle/." "$idle/"
   expect "a rescan after adding a plugin answers ok" ok ipc shell rescanPlugins
-  idle_state() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.idle"][0])' 2>/dev/null || echo absent; }
-  expect_poll "the rescan discovered the plugin, disabled" False idle_state
-  idle_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.idle" for rows in json.load(sys.stdin).values() for r in rows))'; }
-  expect "a rescan that adds a disabled plugin does not build it" False idle_built
+  expect_poll "the rescan discovered the plugin, disabled" False plugin_enabled acme.idle
+  expect "a rescan that adds a disabled plugin does not build it" False record_exists acme.idle
   expect "a rescan that adds a plugin rebuilds no other plugin" "$before" builds
 else
   fail "buildCount unreadable"
