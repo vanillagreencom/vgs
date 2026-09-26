@@ -23,6 +23,8 @@ MANIFEST = '{"id": "acme.widget"}\n'
 # rows: name, plugin file text, core file text, expected rule key or None
 ROWS = [
     ("clean tree", CLEAN_WIDGET, CLEAN_CORE, None),
+    ("a byte order mark cannot hide a forbidden module", '\ufeffimport Quickshell.Wayland\nItem {}\n', CLEAN_CORE, "import-module"),
+    ("a byte order mark cannot hide a core plugin import", '\ufeffimport "../plugins/acme.widget"\nQtObject {}\n', None, "core-plugin-import"),
     ("plugin imports a core module", CLEAN_WIDGET.replace("import qs.Ui", "import qs.Core"), CLEAN_CORE, "import-module"),
     ("plugin imports the wayland module", CLEAN_WIDGET.replace("import qs.Ui", "import Quickshell.Wayland"), CLEAN_CORE, "import-module"),
     ("plugin imports the Qt window module", CLEAN_WIDGET.replace("import qs.Ui", "import QtQuick.Window"), CLEAN_CORE, "import-module"),
@@ -169,15 +171,17 @@ def main():
             good = (proc.returncode == 2 and "directory cycle" in proc.stdout) if cycle else (proc.returncode == 1 and f"surface-type {plugin}/linked/Bad.qml:1 PanelWindow" in proc.stdout)
             print(("  ok    " if good else "  FAIL  ") + ("cyclic source tree is refused" if cycle else "linked source is checked"))
             results.append(good)
-    with tempfile.TemporaryDirectory() as tmp:
-        shell = build_shell(tmp, CLEAN_WIDGET, CLEAN_CORE)
-        invalid = os.path.join(shell, "plugins", "acme.widget", "Widget.qml")
-        with open(invalid, "wb") as fh:
-            fh.write(b"\xff")
-        proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, env=ENV)
-        good = proc.returncode == 2 and proc.stdout.startswith(f"check-plugin-boundary: unreadable: {invalid}: ")
-        print(("  ok    " if good else "  FAIL  ") + "invalid source encoding is unreadable, never a clean check")
-        results.append(good)
+    for filename, status in (("Widget.qml", 2), ("icon.png", 0)):
+        with tempfile.TemporaryDirectory() as tmp:
+            shell = build_shell(tmp, CLEAN_WIDGET, CLEAN_CORE)
+            invalid = os.path.join(shell, "plugins", "acme.widget", filename)
+            with open(invalid, "wb") as fh:
+                fh.write(b"\xff")
+            proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, env=ENV)
+            expected = f"check-plugin-boundary: unreadable: {invalid}: " if status == 2 else "check-plugin-boundary: ok plugins=1\n"
+            good = proc.returncode == status and proc.stdout.startswith(expected)
+            print(("  ok    " if good else "  FAIL  ") + f"binary bytes in {filename}: exit {status}")
+            results.append(good)
     results.append(run_absent_plugins_row())
     if all(results):
         print("test-check-plugin-boundary: ok")

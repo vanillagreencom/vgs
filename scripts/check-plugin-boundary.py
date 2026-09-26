@@ -148,7 +148,7 @@ def source_lines(root):
                 continue
             path = os.path.join(root, relative)
             try:
-                text = data.decode("utf-8")
+                text = data.decode("utf-8-sig")
             except UnicodeError as exc:
                 raise Unreadable(path, str(exc)) from exc
             for number, line in enumerate(blank_comments(text).split("\n"), 1):
