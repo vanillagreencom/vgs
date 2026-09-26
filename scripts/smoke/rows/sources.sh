@@ -118,3 +118,28 @@ expect_poll "the fixture service counted the press" 1 read_service presses
 expect "a rescan that changes nothing answers ok before the state check" ok ipc shell rescanPlugins
 expect_log "that rescan completed" "$((scans_before + 3))" 'plugins: scan complete '
 expect "the running service kept its in-memory state across the rescans" 1 read_service presses
+
+# The scanner's output is usable only after a successful exit. Each bad
+# scanner is installed in the sandbox copy, never in the live checkout.
+scan_error() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanError"])'; }
+cp -p -- "$repo/bin/vgsh-scan" "$sandbox/vgsh-scan.good"
+scan_plugins_before="$(ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["plugins"])')"
+scan_plugins() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["plugins"])'; }
+expected_errors+=('plugins: vgsh-scan exited 9 status=0' 'plugins: vgsh-scan did not start' 'plugins: scan output does not parse: ')
+printf '#!/bin/sh\nprintf "[]\\n"\nexit 9\n' >"$repo/bin/vgsh-scan"
+expect "a scanner that exits nonzero accepts the scan request" ok ipc shell rescanPlugins
+expect_poll "the nonzero scanner exit is reported" 'vgsh-scan exited 9 status=0' scan_error
+expect "valid-looking output from a failed scanner keeps the registry" "$scan_plugins_before" scan_plugins
+chmod 000 "$repo/bin/vgsh-scan"
+expect "an unstartable scanner accepts the scan request" ok ipc shell rescanPlugins
+expect_poll "the scanner failed start is reported" 'vgsh-scan did not start' scan_error
+expect "a failed start keeps the registry" "$scan_plugins_before" scan_plugins
+chmod 755 "$repo/bin/vgsh-scan"
+printf '#!/bin/sh\nprintf "{}\\n"\n' >"$repo/bin/vgsh-scan"
+expect "a malformed scanner accepts the scan request" ok ipc shell rescanPlugins
+expect_poll "a non-list scan result is reported" 'scan output does not parse: expected an entry list' scan_error
+expect "a malformed result keeps the registry" "$scan_plugins_before" scan_plugins
+mv -T -- "$sandbox/vgsh-scan.good" "$repo/bin/vgsh-scan"
+expect "a repaired scanner accepts the scan request" ok ipc shell rescanPlugins
+expect_poll "a successful scan clears the error" '' scan_error
+expect "the repaired scan preserves the plugin list" "$scan_plugins_before" scan_plugins

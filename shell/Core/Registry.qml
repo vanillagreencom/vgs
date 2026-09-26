@@ -34,6 +34,7 @@ Singleton {
     property string scanError: ""
     property bool scanned: false
     property bool rescanPending: false
+    property var completion: null
 
     // The manifest map was replaced: a plugin appeared, went, or changed
     // its source revision.
@@ -54,6 +55,7 @@ Singleton {
         for (const revision of Plugins.liveRevisions()) keep[revision] = true;
         for (const revision of Object.keys(keep)) command.push("--retain", revision);
         scanner.command = command.concat([root.userDir, root.bundledDir]);
+        completion = null;
         scanner.running = true;
         return "ok";
     }
@@ -62,10 +64,9 @@ Singleton {
         let entries;
         try {
             entries = JSON.parse(text);
+            if (!Array.isArray(entries)) throw new Error("expected an entry list");
         } catch (e) {
             scanError = "scan output does not parse: " + e.message;
-            console.error("plugins: " + scanError);
-            retry.start();
             return;
         }
         const next = Object.create(null);
@@ -105,26 +106,21 @@ Singleton {
 
     Process {
         id: scanner
-        stdout: StdioCollector { onStreamFinished: root.applyScan(text) }
-        onExited: (code, status) => {
-            if (code !== 0) {
-                root.scanError = "vgsh-scan exited " + code;
-                console.error("plugins: " + root.scanError);
-                retry.start();
+        stdout: StdioCollector { id: output }
+        onExited: (code, status) => { root.completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            if (root.completion === null)
+                root.scanError = "vgsh-scan did not start";
+            else if (root.completion.code !== 0 || root.completion.status !== 0)
+                root.scanError = "vgsh-scan exited " + root.completion.code + " status=" + root.completion.status;
+            else root.applyScan(output.text);
+            if (root.scanError !== "") console.error("plugins: " + root.scanError);
+            if (root.rescanPending) {
+                root.rescanPending = false;
+                root.rescan();
             }
         }
-        onRunningChanged: if (!running && root.rescanPending) {
-            root.rescanPending = false;
-            root.rescan();
-        }
-    }
-
-    // One retry after a failed scan; a second failure stays visible in scanError.
-    Timer {
-        id: retry
-        interval: 2000
-        repeat: false
-        onTriggered: if (!root.scanned) root.rescan()
     }
 
     function isEnabled(id) {

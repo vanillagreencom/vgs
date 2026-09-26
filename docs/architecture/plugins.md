@@ -48,7 +48,7 @@ Disabling the active bar hides every enabled bar widget and the manager's reply 
 - Settings are the manifest's `settings` under the configuration entry for the plugin: the layout entry for a bar widget, the `plugins` row for every other kind.
 - The core mounts bar widgets into the active bar's section containers, in layout order, and records every widget under the bar's host key. A bar never builds, destroys or interprets a plugin widget.
 - A bar may draw built-in widgets of its own in the same containers, ahead of the plugin widgets, and registers each through its `builtins` capability: [overview.md § Vocabulary](overview.md#vocabulary) defines the built-in widget and [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md) records the choice. The core built none of it, so the build counter does not move.
-- Quickshell watches only files reached from `shell.qml` by static import, so an edit inside a plugin reloads nothing by itself. `vgsh ipc call shell rescanPlugins` re-reads every plugin; a plugin whose files changed gets a new revision and is rebuilt, from its new snapshot, and every other plugin keeps its instances. A rescan asked for while one runs is queued and starts when it ends.
+- Quickshell watches only files reached from `shell.qml` by static import, so an edit inside a plugin reloads nothing by itself. `vgsh ipc call shell rescanPlugins` re-reads every plugin; a plugin whose files changed gets a new revision and is rebuilt, from its new snapshot, and every other plugin keeps its instances. A rescan asked for while one runs is queued and starts when it ends. The registry accepts output only after a successful scanner exit. A failed start, exit or parse keeps the last registry and reports `scanError`. Recovery requires another rescan; failures do not start a retry timer.
 
 ## Reconciliation
 
@@ -90,4 +90,4 @@ A capability lands with its name, its provider and a fixture consumer with its s
 
 ## Decisions
 
-[D003](../decisions/D003-everything-is-a-plugin.md), [D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D006](../decisions/D006-two-configuration-layers.md), [D007](../decisions/D007-install-runs-no-plugin-code.md), [D009](../decisions/D009-one-manifest-judge-under-node.md), [D010](../decisions/D010-facade-scope-not-sandbox.md), [D011](../decisions/D011-native-manifest-no-cross-shell-compatibility.md), [D012](../decisions/D012-core-owns-lent-objects.md), [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md) and [D014](../decisions/D014-source-revisions-are-published-snapshots.md).
+The [decision index](../decisions/INDEX.md) records these contracts and their reasons.
