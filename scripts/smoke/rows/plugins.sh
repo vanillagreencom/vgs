@@ -49,7 +49,8 @@ expect "the fixture service reads the manifest default" '"probe"' read_service l
 expect "a placed widget reads its layout entry" '"ddd d MMM  HH:mm"' read_tick format
 expect "the built-in clock reads the bar's clock format" '"ddd d MMM  HH:mm"' read_clock format
 
-# The built-in workspaces focus through the bar's own compositor capability.
+# The built-in receives the bar's capability, independently of fixture grants.
+expect "the built-in workspaces receive a callable compositor action" true ipc smoke hasWorkspaceAction "$(bar_key)" vgs.bar/left-workspaces
 active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
 
 # A settings change reaches the running instance and builds nothing: the

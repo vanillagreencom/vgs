@@ -16,8 +16,9 @@ expect "disabling the broken fixture is allowed" ok ipc shell setPluginEnabled a
 
 # A nonvisual root can accept the facade but cannot belong to a host.
 printf 'import QtQuick\nQtObject { property var shell: null; property var screen: null }\n' >"$broken/Item.qml"
+scans_before_nonvisual="$(scans_done)"
 expect "rescan after changing the broken root answers ok" ok ipc shell rescanPlugins
-expect_poll "the new broken revision is scanned" '' scan_error
+expect_log "the new broken revision is scanned" "$((scans_before_nonvisual + 1))" 'plugins: scan complete '
 expect "enabling the nonvisual root is allowed" ok ipc shell setPluginEnabled acme.broken true
 expect_log "both nonvisual roots are refused before publication" 2 'plugins: acme\.broken (service|background) not built: entry point must be an Item'
 expect "the nonvisual root has no build record" False record_exists acme.broken

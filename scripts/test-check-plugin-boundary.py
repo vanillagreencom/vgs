@@ -49,7 +49,7 @@ ROWS = [
     ("core names a plugin id in a comment is not a finding", CLEAN_CORE + '// the "vgs.clock" widget\n', None, None),
     ("core names a plugin id in a block comment is not a finding", CLEAN_CORE + '/* the "vgs.clock"\n   widget */\n', None, None),
     ("core imports a plugin directory", CLEAN_CORE.replace("import qs.Core", 'import "../plugins/vgs.bar"'), None, "core-plugin-import"),
-    ("core JS imports a plugin directory", CLEAN_CORE.replace("import qs.Core", '.import "../plugins/acme.widget/logic.js" as P'), None, "core-plugin-import"),
+    ("core JS imports a plugin directory", '.pragma library\n.import "../plugins/acme.widget/logic.js" as P\n', None, "core-plugin-import"),
 ]
 
 CLEAN_JS = '.pragma library\n.import QtQuick as Q\n.import "./util.js" as U\nvar re = /\\/\\//; // PanelWindow { }\n'
@@ -85,7 +85,8 @@ def build_shell(tmp, widget, core, js=None, manifest=MANIFEST):
         fh.write(widget)
     with open(os.path.join(plugin, "lib", "Helper.qml"), "w", encoding="utf-8") as fh:
         fh.write(CLEAN_WIDGET)
-    with open(os.path.join(shell, "Core", "Thing.qml"), "w", encoding="utf-8") as fh:
+    core_file = "Thing.js" if core.startswith(".pragma library") else "Thing.qml"
+    with open(os.path.join(shell, "Core", core_file), "w", encoding="utf-8") as fh:
         fh.write(core)
     if js is not None:
         with open(os.path.join(plugin, "logic.js"), "w", encoding="utf-8") as fh:
@@ -168,6 +169,15 @@ def main():
             good = (proc.returncode == 2 and "directory cycle" in proc.stdout) if cycle else (proc.returncode == 1 and f"surface-type {plugin}/linked/Bad.qml:1 PanelWindow" in proc.stdout)
             print(("  ok    " if good else "  FAIL  ") + ("cyclic source tree is refused" if cycle else "linked source is checked"))
             results.append(good)
+    with tempfile.TemporaryDirectory() as tmp:
+        shell = build_shell(tmp, CLEAN_WIDGET, CLEAN_CORE)
+        invalid = os.path.join(shell, "plugins", "acme.widget", "Widget.qml")
+        with open(invalid, "wb") as fh:
+            fh.write(b"\xff")
+        proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, env=ENV)
+        good = proc.returncode == 2 and proc.stdout.startswith(f"check-plugin-boundary: unreadable: {invalid}: ")
+        print(("  ok    " if good else "  FAIL  ") + "invalid source encoding is unreadable, never a clean check")
+        results.append(good)
     results.append(run_absent_plugins_row())
     if all(results):
         print("test-check-plugin-boundary: ok")

@@ -317,7 +317,18 @@ drive_sample_row() {
     CLK_TCK="$(getconf CLK_TCK)"
     mapfile -t f < <(stat_fields "$PID")
     SESSION="${f[19]}"
-    [[ "$session_mode" == same ]] || SESSION=$((SESSION + 1))
+    if [[ "$session_mode" == changed ]]; then
+      SESSION=$((SESSION + 1))
+    elif [[ "$session_mode" == changed-after-read ]]; then
+      initial_fields=("${f[@]}")
+      rm -f -- "${tmp:?}/stat-was-read"
+      stat_fields() {
+        local -a answer=("${initial_fields[@]}")
+        [[ ! -e "$tmp/stat-was-read" ]] || answer[19]=$((SESSION + 1))
+        touch "$tmp/stat-was-read"
+        printf '%s\n' "${answer[@]}"
+      }
+    fi
     export PID SESSION CLK_TCK
     sample_row
   )" || rc=$?
@@ -342,11 +353,13 @@ else
 fi
 ok "$label"
 
-label="a reused pid cannot publish a sample under the original session"
-rc=0
-drive_sample_row "$sampler" changed || rc=$?
-[[ "$rc" == 1 && -z "$row" ]] || fail "$label" "expected no row and exit 1, got exit $rc and $row"
-ok "$label"
+for session_mode in changed changed-after-read; do
+  label="a reused pid cannot publish a sample under the original session ($session_mode)"
+  rc=0
+  drive_sample_row "$sampler" "$session_mode" || rc=$?
+  [[ "$rc" == 1 && -z "$row" ]] || fail "$label" "expected no row and exit 1, got exit $rc and $row"
+  ok "$label"
+done
 
 echo "=== argument refusals ==="
 

@@ -124,6 +124,12 @@ Scope {
         function configSettled(): bool { return Config.activeSave === null && !Config.reloading && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
+        function hasWorkspaceAction(hostKey: string, id: string): bool {
+            const item = root.instance(hostKey, id);
+            if (item === null || !item.bar || !item.bar.shell) return false;
+            const compositor = item.bar.shell.compositor;
+            return compositor !== undefined && typeof compositor.focusWorkspace === "function";
+        }
         function textOf(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             const label = item === null ? undefined : root.descendants(item).find(child => child instanceof Text);
