@@ -8,6 +8,8 @@ The shell's configuration files: two layers of `shell.json` merged by entry id, 
 
 `config/shell.json` is the shipped layer and `~/.config/vgs/shell.json` (under `XDG_CONFIG_HOME` when set) the user layer, [D006](../decisions/D006-two-configuration-layers.md). `PluginLogic.effectiveConfig` merges them: a user key replaces the shipped key whole, except `plugins`, merged by id with the user entry winning, and `disabledPlugins`, which is the user list when present. `scripts/test-plugin-logic.js` pins each merge rule and the seeding of the user `bar` key.
 
+An enable or disable edit starts with the effective disabled list. This preserves inherited exclusions when the user file has no list. An explicit empty user list still overrides the shipped exclusions.
+
 ## shell.json keys
 
 Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. A key outside this table is carried untouched.

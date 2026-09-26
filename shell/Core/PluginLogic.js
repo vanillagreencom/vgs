@@ -420,7 +420,7 @@ function hiddenByDisabling(manifests, config, id, defaultBarId) {
 function withEnabled(user, manifest, enabled, effective) {
     var out = isPlainObject(user) ? clone(user) : {};
     if (out.version === undefined) out.version = CONFIG_VERSION;
-    var disabled = Array.isArray(out.disabledPlugins) ? out.disabledPlugins.slice() : [];
+    var disabled = Array.isArray(effective.disabledPlugins) ? effective.disabledPlugins.slice() : [];
     if (!enabled) {
         if (disabled.indexOf(manifest.id) === -1) disabled.push(manifest.id);
         out.disabledPlugins = disabled;

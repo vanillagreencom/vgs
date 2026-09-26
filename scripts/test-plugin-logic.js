@@ -205,6 +205,9 @@ check("managerSettings shows a service its plugins row", ctx.managerSettings(ctx
 const placedClock = { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "vgs.workspaces" }], center: [{ id: "vgs.clock", format: "HH:mm:ss" }], right: [] } } };
 const listedSvc = { version: 1, plugins: [{ id: "acme.svc", x: 1 }] };
 const withRows = [
+    ["disable preserves inherited disabled plugins", null, Object.assign({}, shipped, { disabledPlugins: ["vgs.clock"] }), "acme.svc", false, "disabledPlugins", ["vgs.clock", "acme.svc"]],
+    ["enable removes only its inherited disabled entry", null, Object.assign({}, shipped, { disabledPlugins: ["vgs.clock", "acme.svc"] }), "acme.svc", true, "disabledPlugins", ["vgs.clock"]],
+    ["an explicit empty disabled list overrides shipped entries", { disabledPlugins: [] }, ctx.effectiveConfig(Object.assign({}, shipped, { disabledPlugins: ["vgs.clock"] }), { disabledPlugins: [] }), "acme.svc", false, "disabledPlugins", ["acme.svc"]],
     ["disable bar lists it", null, shipped, "vgs.bar", false, "disabledPlugins", ["vgs.bar"]],
     ["disable twice lists it once", { disabledPlugins: ["vgs.bar"] }, shipped, "vgs.bar", false, "disabledPlugins", ["vgs.bar"]],
     ["enable bar unlists it", { disabledPlugins: ["vgs.bar"] }, shipped, "vgs.bar", true, "disabledPlugins", []],
