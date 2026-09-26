@@ -67,7 +67,8 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
-# The owner's local preview assets.
+# An archived copy of another project's Quickshell work, kept locally as a
+# reference only. Nothing in v2 reads, runs or links to it.
 assets/
 
 # Machine-local wiring belongs outside the tracked configuration.
