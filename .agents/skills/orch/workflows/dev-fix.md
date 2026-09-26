@@ -74,14 +74,18 @@ Cancel ends the workflow; a selection goes to § 2.
 
    A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
-4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
-   ```
+4. **Stamp the round**, as separate tool calls immediately before delegating, the round-start prune between the two stamps, then arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/round-prune [ISSUE_ID]
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
@@ -163,6 +167,8 @@ Cancel ends the workflow; a selection goes to § 2.
    `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and made no commit.
 
    A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
+
+   First run [dev-start.md § Store Validation Time](dev-start.md#store-validation-time) for every `reason` but `missing` and `invalid`, before B or the reason routes the round, as [dev-start.md § 3](dev-start.md#3-accept-the-round) states; no row below names it again.
 
    | A (verdict) | B (git) | Action |
    |---|---|---|

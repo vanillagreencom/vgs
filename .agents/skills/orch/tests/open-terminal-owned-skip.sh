@@ -34,7 +34,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
-SRC_LIB_DIR="$SCRIPTS_DIR/lib"
+# A control whose defect is planted in one of open-terminal's libraries reruns
+# this suite with this naming the planted copy of the directory.
+SRC_LIB_DIR="${OPEN_TERMINAL_LIB_UNDER_TEST:-$SCRIPTS_DIR/lib}"
 # lane_codex_home_path, so the relaunch row below names a private launch home
 # the way the launcher builds one rather than spelling its checksum.
 # shellcheck source=../scripts/lib/lane-home.sh
@@ -384,12 +386,15 @@ CODEX_QUESTION_OFF="'-c' 'features.default_mode_request_user_input=false'"
 PI_QUESTION_OFF="'--exclude-tools' 'question'"
 # occurrences TEXT NEEDLE — how many times NEEDLE stands in TEXT.
 occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) / ${#2} ))"; }
-RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints."
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222" "codex|codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $CODEX444" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"; do
-  IFS='|' read -r harness expected <<<"$row"
+# A claude or pi lane re-arms its mailbox monitor; a codex lane arms none,
+# since Codex starts no turn for a monitor's output.
+RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
+REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
+for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM" "codex|codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM"; do
+  IFS='|' read -r harness expected rearm <<<"$row"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
-  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE'" "$harness relaunch resumes with the continuation line"
+  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE$rearm.'" "$harness relaunch resumes with the continuation line"
 done
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
@@ -889,15 +894,16 @@ fi
 PROC_HIDDEN_PIDS=""
 
 if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
-  CLAUDE_MUTANT="$TMP_ROOT/open-terminal-claude-recursive"
-  cp "$SRC_OT" "$CLAUDE_MUTANT"
+  CLAUDE_MUTANT_LIB="$TMP_ROOT/lib-claude-recursive"
+  cp -R "$SRC_LIB_DIR" "$CLAUDE_MUTANT_LIB"
+  CLAUDE_MUTANT="$CLAUDE_MUTANT_LIB/lane-relaunch.sh"
   assert_eq "$(grep -cF 'find -H "$root" -mindepth 2 -maxdepth 2 -type f' "$CLAUDE_MUTANT")" "1" "control finds the Claude lead-only scan"
   sed -i.bak 's/find -H "$root" -mindepth 2 -maxdepth 2 -type f/find -H "$root" -type f/' "$CLAUDE_MUTANT"
   rm -f -- "$CLAUDE_MUTANT.bak"
   assert_eq "$(grep -cF 'find -H "$root" -mindepth 2 -maxdepth 2 -type f' "$CLAUDE_MUTANT")" "0" "control removes the Claude lead-only scan"
-  if cmp -s "$SRC_OT" "$CLAUDE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the Claude scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the Claude scan\n'; fi
+  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$CLAUDE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the Claude scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the Claude scan\n'; fi
   set +e
-  OPEN_TERMINAL_UNDER_TEST="$CLAUDE_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/claude-control.out" 2>&1
+  OPEN_TERMINAL_LIB_UNDER_TEST="$CLAUDE_MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/claude-control.out" 2>&1
   CLAUDE_CONTROL_RC=$?
   set -e
   assert_eq "$CLAUDE_CONTROL_RC" "1" "control: recursive Claude selection chooses the newer child transcript"
@@ -926,28 +932,30 @@ if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   set -e
   assert_eq "$MERGED_CONTROL_RC" "1" "control: without the arm a merged item is handed to the reuse rebase"
 
-  MUTANT="$TMP_ROOT/open-terminal-pi-default"
-  cp "$SRC_OT" "$MUTANT"
+  MUTANT_LIB="$TMP_ROOT/lib-pi-default"
+  cp -R "$SRC_LIB_DIR" "$MUTANT_LIB"
+  MUTANT="$MUTANT_LIB/lane-relaunch.sh"
   assert_eq "$(grep -cF 'roots="$(pi_relaunch_root "$cwd" "$home")" || return 2' "$MUTANT")" "1" "control finds the Pi settings root"
   sed -i.bak 's@roots="$(pi_relaunch_root "$cwd" "$home")" || return 2@roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"@' "$MUTANT"
   rm -f -- "$MUTANT.bak"
   assert_eq "$(grep -cF 'roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"' "$MUTANT")" "1" "control changes the Pi session root"
-  if cmp -s "$SRC_OT" "$MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the launcher\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the launcher\n'; fi
+  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the relaunch lookup\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the relaunch lookup\n'; fi
   set +e
-  OPEN_TERMINAL_UNDER_TEST="$MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/control.out" 2>&1
+  OPEN_TERMINAL_LIB_UNDER_TEST="$MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/control.out" 2>&1
   CONTROL_RC=$?
   set -e
   assert_eq "$CONTROL_RC" "1" "control: the old Pi root misses settings-based sessions"
 
-  HOME_MUTANT="$TMP_ROOT/open-terminal-codex-home-raw"
-  cp "$SRC_OT" "$HOME_MUTANT"
+  HOME_MUTANT_LIB="$TMP_ROOT/lib-codex-home-raw"
+  cp -R "$SRC_LIB_DIR" "$HOME_MUTANT_LIB"
+  HOME_MUTANT="$HOME_MUTANT_LIB/lane-relaunch.sh"
   assert_eq "$(grep -cF 'config="$(launch_ambient_codex_home)"' "$HOME_MUTANT")" "1" "control finds the codex scan's account"
   sed -i.bak 's@config="$(launch_ambient_codex_home)"@config="${CODEX_HOME:-$home/.codex}"@' "$HOME_MUTANT"
   rm -f -- "${HOME_MUTANT:?}.bak"
   assert_eq "$(grep -cF 'config="${CODEX_HOME:-$home/.codex}"' "$HOME_MUTANT")" "1" "control takes the codex scan's account raw"
-  if cmp -s "$SRC_OT" "$HOME_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the codex scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the codex scan\n'; fi
+  if cmp -s "$SRC_LIB_DIR/lane-relaunch.sh" "$HOME_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the codex scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the codex scan\n'; fi
   set +e
-  OPEN_TERMINAL_UNDER_TEST="$HOME_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/home-control.out" 2>&1
+  OPEN_TERMINAL_LIB_UNDER_TEST="$HOME_MUTANT_LIB" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/home-control.out" 2>&1
   HOME_CONTROL_RC=$?
   set -e
   assert_eq "$HOME_CONTROL_RC" "1" "control: a private launch home taken raw scans a store the account's rollouts are not in"

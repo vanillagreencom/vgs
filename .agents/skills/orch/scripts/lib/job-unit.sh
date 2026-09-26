@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job as a transient systemd user unit
-# where a user manager answers, under setsid elsewhere, and stop it by what its
-# launch recorded. It bounds a job's lifetime and nothing else: no memory, CPU
-# or task limit. It holds the manager probe, the unit name, the systemd-run
-# launch, the setsid fallback, the unit stop and the process-group kill for
-# the jobs that use it; dev-validate-run is the first. Run it, or source it for
-# the same functions; Bash 3.2.
+# where a user manager answers, under setsid elsewhere, and stop it by what
+# its launch recorded. It bounds a job's lifetime and, when asked, its
+# memory, and nothing else: no CPU or task limit. It holds the manager probe, the unit name, the
+# systemd-run launch, the setsid fallback, the unit stop and the process-group
+# kill for the jobs that use it: dev-validate-run, every job
+# references/waiter-launch.md starts (the repeat watch among them), and
+# oversee-succeed's watch restart.
+# A job with no --cap, one that runs for the session, is a unit only where the
+# user manager lingers, since one that does not is stopped, with its units,
+# when the user's last login session ends.
+# Run it, or source it for the same functions; Bash 3.2.
 #
 # A unit holds every process the job starts: when the job's main process exits
 # or reaches the unit's RuntimeMaxSec, systemd kills every process left in it,
@@ -20,9 +25,11 @@
 # Usage:
 #   job-unit.sh name NAME PID
 #       Print the unit name orch-NAME-PID.
-#   job-unit.sh launch NAME RECORD --cap SECS -- ARGV...
-#       Start ARGV detached, as the unit orch-NAME-PID where a manager answers,
-#       PID being this launch's own process, and print its runner line. RECORD
+#   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
+#       Start ARGV detached, as the unit orch-NAME-PID where a manager
+#       answers (and, with no --cap, lingers), PID being this launch's own
+#       process, in this launch's own working directory and environment, and
+#       print its runner line. RECORD
 #       is written whole before each launch attempt, so the job can read how it
 #       runs the moment it starts:
 #         runner=systemd|setsid
@@ -30,14 +37,18 @@
 #         line=RUNNER_LINE
 #       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
 #       has: set above that bound plus the kill grace, so the job's own bound
-#       fires first.
+#       fires first. A job with no timeout, which runs until it is stopped,
+#       passes none, and its unit has no RuntimeMaxSec.
+#       --memory-max is the unit's MemoryMax in MiB; no process group holds a
+#       memory bound, so a launch that would run under setsid refuses it.
 #       A systemd-run that fails after the probe answered falls back to setsid
 #       only where the manager has no unit of that name: its call can time out
 #       while the manager still starts the unit, which is then the job.
 #       Exit 0 launched; 1 RECORD could not be written (record-unwritable); 2
 #       no setsid where the fallback needs it (missing-command); 3 usage; 4
 #       the job was not started (launch-failed: setsid's exit status, or a
-#       unit the manager would not describe).
+#       unit the manager would not describe); 5 --memory-max where the job
+#       would run under setsid (memory-max-unheld, with the runner line).
 #   job-unit.sh end RECORD LEADER_PID
 #       The job's own last call. Under setsid, tear down the process group
 #       LEADER_PID leads, the caller being a member; under a unit, nothing,
@@ -131,20 +142,39 @@ job_unit_read() { # RECORD
   esac
 }
 
-job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
-  local job="$1" record="$2" cap="${4:-}" probe_err="" launch_err="" load nofile name arg
-  local unit_env=() unit_argv=()
+job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg
+  local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
-  [[ $# -ge 6 && "$3" == --cap && "$5" == -- && "$cap" =~ ^[1-9][0-9]*$ ]] \
+  [[ $# -lt 2 ]] || shift 2
+  while [[ "${1:-}" == --cap || "${1:-}" == --memory-max ]] && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; do
+    case "$1" in
+      --cap) unit_props+=(-p "RuntimeMaxSec=$2"); capped=yes ;;
+      --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;
+    esac
+    shift 2
+  done
+  [[ -n "$job" && -n "$record" && $# -ge 2 && "$1" == -- ]] \
     || { job_unit_fail usage subcommand=launch 3; return; }
-  shift 5
+  shift
   JOB_UNIT_RUNNER=setsid
   JOB_UNIT_NAME=""
-  # The probe starts a unit, since that is the question: `systemctl
+  # A user manager that does not linger is stopped when the user's last
+  # login session ends, SSH disconnects included, and every unit in it with
+  # it, while tmux and the lanes in the login session run on: a job there
+  # would die with no status written. So a job with no --cap, which runs for
+  # the session, is a unit only where the manager lingers, and a Linger that
+  # cannot be read is no linger. A capped job is bounded anyway and keeps its
+  # unit, so nothing it starts outlives it. The probe
+  # then starts a unit, since that is the question: `systemctl
   # is-system-running` exits non-zero on a degraded manager that still runs
   # units.
   if ! command -v systemd-run >/dev/null 2>&1; then
     JOB_UNIT_LINE="runner=setsid reason=no-systemd-run"
+  elif [[ -z "$capped" ]] && ! linger="$(loginctl show-user "$UID" -p Linger --value </dev/null 2>&1)"; then
+    JOB_UNIT_LINE="runner=setsid reason=linger-unread detail=${linger%%$'\n'*}"
+  elif [[ -z "$capped" && "$linger" != yes ]]; then
+    JOB_UNIT_LINE="runner=setsid reason=no-linger"
   elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then
     JOB_UNIT_RUNNER=systemd
     JOB_UNIT_NAME="$(job_unit_name "$job" "$$")"
@@ -157,17 +187,21 @@ job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
 
   if [[ "$JOB_UNIT_RUNNER" == systemd ]]; then
     job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
-    # A user unit inherits the manager's environment and resource limits, not
-    # the caller's, so every exported name is handed over (--setenv=NAME takes
-    # the value from systemd-run's own environment) and so are the caller's
-    # own open-file limits, which a build and test battery exhausts first; the
-    # manager caps a value above its own ceiling at that ceiling. They are the
-    # caller's numbers, never the runner's.
+    # A service ignores SIGPIPE unless told not to, where a process the caller
+    # starts takes its default; IgnoreSIGPIPE=no gives the job the caller's.
+    # A user unit inherits the manager's environment, working directory and
+    # resource limits, not the caller's, so every exported name is handed over
+    # (--setenv=NAME takes the value from systemd-run's own environment), the
+    # caller's directory is named, and so are the caller's own open-file
+    # limits, which a build and test battery exhausts first; the manager caps a
+    # value above its own ceiling at that ceiling. They are the caller's
+    # numbers, never the runner's.
     for name in $(compgen -e); do unit_env+=("--setenv=$name"); done
     for arg in "$@"; do unit_argv+=("$(job_unit_arg "$arg")"); done
     nofile="$(job_unit_nofile -S):$(job_unit_nofile -H)"
     if launch_err="$(systemd-run --user --quiet --collect --unit="$JOB_UNIT_NAME" \
-      -p "RuntimeMaxSec=$cap" -p "TimeoutStopSec=$JOB_UNIT_KILL_GRACE" \
+      --working-directory="$PWD" ${unit_props[@]+"${unit_props[@]}"} \
+      -p "TimeoutStopSec=$JOB_UNIT_KILL_GRACE" -p IgnoreSIGPIPE=no \
       -p "LimitNOFILE=$nofile" ${unit_env[@]+"${unit_env[@]}"} \
       -- "${unit_argv[@]}" </dev/null 2>&1 >/dev/null)"; then
       return 0
@@ -191,6 +225,7 @@ job_unit_launch() { # NAME RECORD --cap SECS -- ARGV...
     JOB_UNIT_NAME=""
     JOB_UNIT_LINE="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
   fi
+  [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
   # setsid -f returns once it has forked; a status here is a fork it could not
   # make or an argv it could not start.
@@ -288,7 +323,7 @@ job_unit_main() {
       sed -n '2,/^$/p' < "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       return 0 ;;
     name) [[ $# -eq 2 ]] || rc=3 ;;
-    launch) [[ $# -ge 6 ]] || rc=3 ;;
+    launch) [[ $# -ge 4 ]] || rc=3 ;;
     end) [[ $# -eq 2 ]] || rc=3 ;;
     stop) [[ $# -eq 1 ]] || rc=3 ;;
     kill-group) [[ $# -eq 2 ]] || rc=3 ;;

@@ -13,8 +13,11 @@ WATCH="$SKILL_DIR/references/watch-delivery.md"
 CODEX="$SKILL_DIR/references/codex-runtime.md"
 PI="$SKILL_DIR/references/pi-runtime.md"
 MODES="$SKILL_DIR/references/communication-modes.md"
-BG_TASKS="$REPO_ROOT/pi-extensions/pi-background-tasks/instructions.md"
-BG_TOOLS="$REPO_ROOT/pi-extensions/pi-background-tasks/extensions/registrations.ts"
+# The render copy sits under .agents/, where md.sh's REPO_ROOT is .agents/
+# itself; the package lives at the work tree's top level in both copies.
+PKG_DIR="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)/pi-extensions/pi-background-tasks"
+BG_TASKS="$PKG_DIR/instructions.md"
+BG_TOOLS="$PKG_DIR/extensions/registrations.ts"
 BG_HEADING='## pi-background-tasks — `bg_task` and `bg_status`'
 DELIVERY="# Watch delivery"
 
@@ -33,7 +36,7 @@ rule "a read that fails is never read as no watch" "$WATCH" "$DELIVERY" \
 rule "every delivery and expiry reads the process before the status" \
   "$WATCH" "$DELIVERY" 'run that read first' 'test -s "[RUN_DIR]/watch.exit"'
 rule "a stop signals only the group the read proved" "$WATCH" "$DELIVERY" \
-  '`kill -TERM -- -[PID]`' 'the group it proved'
+  'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]' 'the group the read proved'
 rule "a stop marks the status file before its kill" "$WATCH" "$DELIVERY" \
   'write `stopped` into `[RUN_DIR]/watch.exit`' 'then run the read'
 rule "the stop mark ends oversight with no restart" "$WATCH" "$DELIVERY" \

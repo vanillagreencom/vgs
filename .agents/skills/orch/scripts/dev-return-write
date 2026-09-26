@@ -38,8 +38,8 @@
 # claim nothing is near the wall, and the orchestrator replaces its carried list
 # with whatever it reads.
 #
-# --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
-# machine-checkable. --validate-note is the additive channel for a QUALIFIED
+# --validate stays strictly enumerated ("pass", "no-verdict" or "FAILING:…") so
+# it remains machine-checkable. --validate-note is the additive channel for a QUALIFIED
 # result the enumeration cannot express — a lane that passed only on re-run, a
 # flake that had to be investigated, a caveat worth carrying.
 # Without it the caveat is lost from the record orch treats as authoritative,
@@ -48,14 +48,19 @@
 # --validate-run-dir is the run directory the round's dev-validate-run printed.
 # `dev-validate-run --record` owns that directory's format and answers for it:
 # validate_mode is its mode, never typed by the agent, and a --validate pass
-# needs a run whose sentinel is guard-exit=0. A FAILING result is accepted
-# beside any run: --validate judges every gate of the round, and a passing run
+# needs a run whose sentinel is guard-exit=0. no-verdict needs a run the bound
+# ended, whose record is verdict=no-verdict: that run was cut off, not refuted,
+# so it is neither a pass nor a failure, and the scoped suites the round ran in
+# its place are its evidence, named in --validate-note, which it requires. A FAILING result is accepted beside
+# any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses only a full
 # pass, so a range pass recorded as full, or a failed run recorded as a pass,
-# would stand in for the whole battery. A pass requires the
+# would stand in for the whole battery. A pass or no-verdict requires the
 # run. A failing round may omit it, because dev-validate-run refuses some
 # failures, an empty DEV_VALIDATE_CMD among them, before any run directory
-# exists; validate_mode is then null.
+# exists; validate_mode is then null. validate_time is the run's wall time as
+# --record reports it, a no-verdict run's included, and null where no run is
+# named or the run is unfinished.
 #
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
@@ -69,10 +74,14 @@
 #     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
 #     "baseline_lines": 138,                  // implement only; additions + deletions
 #                                             // outside the render mirror, floor 1
-#     "validate": "pass" | "FAILING: c1,c2",  // required
+#     "validate": "pass" | "no-verdict" | "FAILING: c1,c2", // required
 #     "validate_mode": "full" | "range" | null, // read from --validate-run-dir;
 #                                             // null only for a FAILING round
 #                                             // with no run
+#     "validate_time": {"started_at": "…", "ended_at": "…", "seconds": 3300} | null,
+#                                             // read from --validate-run-dir;
+#                                             // null with no run or an
+#                                             // unfinished one
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "near_ceiling": ["…"] | null,           // byte-ceiling near-ceiling lines
@@ -134,9 +143,9 @@ die() {
       unknown-argument) printf 'The argument is not supported.\n' ;;
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
-      invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
+      invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
-      validate-disagrees) printf 'A pass needs a run that passed; this run did not.\n' ;;
+      validate-disagrees) printf 'A pass needs a run that passed, and no-verdict a run the timeout ended; this run is neither.\n' ;;
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
@@ -161,16 +170,20 @@ Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path
 An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
-REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
+REASONING must be non-empty. --validate is "pass", "no-verdict" or begins
+with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (the
 test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
 worth recording); it never relaxes --validate. Outside that named ceiling a
 failing validation ends the round and is never re-run into a pass.
 --validate-run-dir RUN_DIR is the run directory dev-validate-run printed;
 validate_mode is the mode dev-validate-run --record reports for it, full or
-range, and a --validate pass needs a run that passed; a FAILING result is
-accepted beside any run. A pass requires it; a FAILING round with no run omits it and
-records validate_mode null. Submit reuses only a full pass.
+range, and a --validate pass needs a run that passed, no-verdict a run the
+timeout ended and a --validate-note naming the scoped suites that passed; a
+FAILING result is accepted beside any run. A pass or no-verdict requires it; a FAILING round with no run omits it and
+records validate_mode null. Submit reuses only a full pass. validate_time is
+the run's wall time --record reports, a no-verdict run's included, and null
+with no run or an unfinished one.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
@@ -243,6 +256,9 @@ validate=""
 validate_note=""
 validate_mode=""
 validate_run_dir=""
+validate_seconds=""
+validate_started_at=""
+validate_ended_at=""
 baseline_lines=null
 summary_file=""
 summary_file_given=false
@@ -335,7 +351,7 @@ check_id_token --round-id "$round_id"
 [[ -n "$branch" ]]   || die required option=--branch
 [[ -n "$commit" ]]   || die required option=--commit
 [[ -n "$validate" ]] || die required option=--validate
-[[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
+[[ "$validate" == "pass" || "$validate" == "no-verdict" || "$validate" == FAILING:* ]] \
   || die invalid-validate "value=$validate"
 if [[ "$validate_run_dir_given" == "true" ]]; then
   [[ -n "$validate_run_dir" ]] || die required option=--validate-run-dir
@@ -343,16 +359,23 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
     IFS= read -r run_cause <<<"$run_record" || true
     die run-record-unreadable "path=$validate_run_dir" "cause=$run_cause"
   fi
-  # The one line --record prints: validate-mode=M verdict=V.
-  validate_mode="${run_record#validate-mode=}"
-  validate_mode="${validate_mode%% *}"
-  run_verdict="${run_record##* verdict=}"
-  case "$run_verdict:$validate" in
-    pass:pass | *:FAILING*) ;;
-    *) die validate-disagrees "validate=$validate" "run=$run_verdict" ;;
-  esac
-elif [[ "$validate" == "pass" ]]; then
-  die required option=--validate-run-dir validate=pass
+  # The one line --record prints: validate-mode=M verdict=V, then seconds=N
+  # started-at=T ended-at=T where the run finished, the bound's end included.
+  run_verdict=""
+  read -r -a run_fields <<<"$run_record"
+  for field in ${run_fields[@]+"${run_fields[@]}"}; do
+    case "$field" in
+      validate-mode=*) validate_mode="${field#*=}" ;;
+      verdict=*) run_verdict="${field#*=}" ;;
+      seconds=*) validate_seconds="${field#*=}" ;;
+      started-at=*) validate_started_at="${field#*=}" ;;
+      ended-at=*) validate_ended_at="${field#*=}" ;;
+    esac
+  done
+  [[ "$validate" == FAILING:* || "$validate" == "$run_verdict" ]] \
+    || die validate-disagrees "validate=$validate" "run=$run_verdict"
+elif [[ "$validate" != FAILING:* ]]; then
+  die required option=--validate-run-dir "validate=$validate"
 fi
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".
@@ -360,6 +383,9 @@ if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
   [[ -n "${validate_note//[[:space:]]/}" ]] \
     || die empty-text option=--validate-note
 fi
+# A no-verdict with no suites named would accept a round on no evidence.
+[[ "$validate" != no-verdict || -n "$validate_note" ]] \
+  || die required option=--validate-note validate=no-verdict
 # One summary source only — accepting both would need a precedence rule, and a
 # silently ignored flag is exactly the class of quiet misrecording this writer
 # exists to prevent. Exclusion is by flag PRESENCE, not value: "--summary-file
@@ -508,6 +534,9 @@ jq -n \
   --argjson baseline_lines "$baseline_lines" \
   --arg validate "$validate" \
   --arg validate_mode "$validate_mode" \
+  --arg validate_seconds "$validate_seconds" \
+  --arg validate_started_at "$validate_started_at" \
+  --arg validate_ended_at "$validate_ended_at" \
   --arg validate_note "$validate_note" \
   --argjson qa_labels "$qa_json" \
   --argjson near_ceiling "$near_json" \
@@ -526,6 +555,8 @@ jq -n \
      commit: $commit,
      validate: $validate,
      validate_mode: (if $validate_mode == "" then null else $validate_mode end),
+     validate_time: (if $validate_seconds == "" then null
+       else {started_at: $validate_started_at, ended_at: $validate_ended_at, seconds: ($validate_seconds | tonumber)} end),
      validate_note: (if $validate_note == "" then null else $validate_note end),
      qa_labels: $qa_labels,
      near_ceiling: $near_ceiling,

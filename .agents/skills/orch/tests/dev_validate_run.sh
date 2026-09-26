@@ -76,7 +76,7 @@ run_script() { # SCRIPT ARG...
   # suite also runs under dev-validate-run itself, which sets one. A row that
   # means to hand one in names it in INHERITED_CLASS.
   OUT="$(env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_TIMEOUT_SECS -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_BASE \
-    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS -u WORKTREE_DEFAULT_BRANCH \
     ${INHERITED_CLASS:+DEV_VALIDATE_CLASS=$INHERITED_CLASS} \
     PATH="${RUN_PATH:-$PATH}" "$script" "$@" 2>"$err")"
   RC=$?
@@ -91,7 +91,7 @@ run_dir_of() { # OUTPUT
 
 # The verdict fields a caller acts on, in a fixed order, from the last line.
 verdict_of() { # OUTPUT
-  sed -n 's/^\(state=[a-z]*\) \(guard-exit=[0-9]*\) at=[^ ]* \(validate=[A-Za-z]*\).*$/\1 \2 \3/p;s/^\(state=timeout\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=lost\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=running\) elapsed-secs=[0-9]* \(cap-secs=[0-9]*\).*$/\1 \2/p' <<<"$1" | sed -n '$p'
+  sed -n 's/^\(state=[a-z]*\) \(guard-exit=[0-9]*\) at=[^ ]* \(validate=[A-Za-z-]*\).*$/\1 \2 \3/p;s/^\(state=timeout\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=lost\) elapsed-secs=[0-9]* cap-secs=\([0-9]*\) \(validate=[A-Za-z]*\).*$/\1 cap-secs=\2 \3/p;s/^\(state=running\) elapsed-secs=[0-9]* \(cap-secs=[0-9]*\).*$/\1 \2/p' <<<"$1" | sed -n '$p'
 }
 
 # One whole protocol line with only its elapsed seconds folded away, so every
@@ -122,7 +122,7 @@ MUTANT=""
 mutant() { # NAME OLD NEW
   local dir="$TMP_ROOT/$1" file="${MUTANT_FILE:-dev-validate-run}"
   mkdir -p "$dir/lib"
-  cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$dir/"
+  cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$dir/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
   chmod +x "$dir/dev-validate-run" "$dir/orch-env"
   assert_eq "$(grep -c -F -- "$2" "$dir/$file")" "1" "control $1 finds one line to mutate"
@@ -200,11 +200,15 @@ fi
 ROWS=(
   "a command that succeeds records a zero sentinel and passes|echo built; exit 0|20|state=done guard-exit=0 validate=pass|0"
   "a command that fails records its own status and fails the round|echo broke; exit 7|20|state=done guard-exit=7 validate=FAILING|1"
-  "a command that outlives the bound is killed at it and fails the round|sleep 30|2|state=done guard-exit=124 validate=FAILING|1"
+  "a command that exits 124 itself inside the bound fails the round|exit 124|20|state=done guard-exit=124 validate=FAILING|1"
+  "a command that exits 137 itself fails the round|exit 137|20|state=done guard-exit=137 validate=FAILING|1"
+  "a command that outlives the bound is cut off at it: no verdict, neither pass nor FAILING|sleep 30|2|state=done guard-exit=124 validate=no-verdict|1"
 )
+row_n=0
 for row in "${ROWS[@]}"; do
   IFS='|' read -r label cmd secs want_verdict want_rc <<<"$row"
-  proj="$(make_proj "proj-$want_rc-$secs" "$cmd" "$secs")"
+  row_n=$((row_n + 1))
+  proj="$(make_proj "proj-row-$row_n" "$cmd" "$secs")"
   run_script "$RUN" --worktree "$proj" --poll 1
   assert_eq "$(verdict_of "$OUT")" "$want_verdict" "$label" "$ERR"
   assert_eq "$RC" "$want_rc" "$label — exit status" "$ERR"
@@ -213,20 +217,42 @@ done
 # The last run above is the timeout one; its own sentinel and log are the files
 # a waiter in another process reads.
 timeout_dir="$(run_dir_of "$OUT")"
-assert_eq "$(sed 's/ at=.*$//' "$timeout_dir/exit")" "guard-exit=124" \
-  "the sentinel file carries the guard-exit line on its own"
-assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\(.*\)$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
+assert_eq "$(sed 's/ at=[^ ]*//' "$timeout_dir/exit")" "guard-exit=124 verdict=no-verdict" \
+  "the sentinel file carries the guard-exit line and the bound's verdict on one line"
+assert_eq "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit" | grep -c -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" "1" \
   "and one UTC timestamp beside it"
+# The wall time beside it: its three lines, its end the sentinel's own at=, its
+# seconds that span, and the span the command's, which a 2-second bound killed.
+# A missing file reads empty, so its rows fail rather than end the suite.
+timing_field() { sed -n "s/^$1=//p" "$timeout_dir/timing" 2>/dev/null || true; }
+t_start="$(timing_field started-at)"
+t_end="$(timing_field ended-at)"
+t_secs="$(timing_field seconds)"
+assert_eq "$(sed 's/=.*//' "$timeout_dir/timing" 2>/dev/null | tr '\n' ' ' || true)" "started-at ended-at seconds " \
+  "the timing file carries the start, the end and the seconds on their own"
+assert_eq "$t_end" "$(sed -n 's/^guard-exit=[0-9]* at=\([^ ]*\).*$/\1/p' "$timeout_dir/exit")" \
+  "and its end is the time the sentinel records"
+assert_eq "$t_secs" "$(jq -n --arg a "$t_start" --arg b "$t_end" '($b | fromdateiso8601) - ($a | fromdateiso8601)')" \
+  "and its seconds are the span from its start to its end"
+assert_eq "$([[ "$t_secs" -ge 2 ]] && echo within || echo "outside:$t_secs")" "within" \
+  "and the span is the command's: at least its 2-second bound"
 run_script "$RUN" --record --run-dir "$timeout_dir"
-assert_eq "$OUT rc=$RC" "validate-mode=full verdict=FAILING rc=0" \
-  "the record of a run killed at its bound reads FAILING, never pass" "$ERR"
+assert_eq "$OUT rc=$RC" "validate-mode=full verdict=no-verdict seconds=$t_secs started-at=$t_start ended-at=$t_end rc=0" \
+  "the record of a run killed at its bound reads no-verdict, never pass or FAILING, and carries its wall time" "$ERR"
 
-# Control: a record that reads every finished run as a pass hands the receipt a
-# pass for that same killed run.
-mutant mutant-record-pass 'record_verdict=FAILING' 'record_verdict=pass'
+# Control: a sentinel reader that files the bound's verdict with the failures
+# hands the receipt a FAILING for that same cut-off run.
+mutant mutant-cut-failing '*" verdict=no-verdict") SENTINEL_VERDICT=no-verdict ;;' '*" verdict=no-verdict") SENTINEL_VERDICT=FAILING ;;'
 run_script "$MUTANT" --record --run-dir "$timeout_dir"
-assert_eq "$OUT" "validate-mode=full verdict=pass" \
-  "control: with the sentinel's status unread the killed run's record reads pass" "$ERR"
+assert_eq "$OUT" "validate-mode=full verdict=FAILING seconds=$t_secs started-at=$t_start ended-at=$t_end" \
+  "control: with the bound's verdict unread the cut-off run's record reads FAILING" "$ERR"
+
+# Control: with the own-exit marker never written, a command's own exit 124
+# reads as the bound's.
+mutant mutant-no-own-exit 'rc=$?; : > "$2"; exit "$rc"' 'rc=$?; exit "$rc"'
+run_script "$MUTANT" --worktree "$(make_proj proj-own-124 "exit 124" 20)" --poll 1
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
+  "control: without the own-exit marker a command's own 124 reads as the bound's" "$ERR"
 
 # --- The command's output goes to the log, never into the verdict -------------
 proj_log="$(make_proj proj-log "echo first; echo second >&2; exit 0" 20)"
@@ -338,7 +364,9 @@ for row in "${MODE_ROWS[@]}"; do
   assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
     "$label — the start record names the mode and base that ran" "$ERR"
   run_script "$RUN" --record --run-dir "$mode_dir"
-  assert_eq "$OUT" "validate-mode=$want_mode verdict=pass" "$label — the run's record names that mode and the pass" "$ERR"
+  assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
+    "validate-mode=$want_mode verdict=pass seconds=N started-at=T ended-at=T" \
+    "$label — the run's record names that mode, the pass and its wall time" "$ERR"
 done
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
@@ -356,19 +384,82 @@ run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode range --base HE
 assert_eq "$(output_of "$OUT")" "full" \
   "control: with the range setting unread the range run logs the full battery" "$ERR"
 
+# --- A range base a rebase left off the branch ---------------------------------
+# A branch that forked from main, committed b1 (the round's recorded base, the
+# pre-rebase head), and was then rebased over the three commits main gained and
+# given the round's own commit r1. The range command prints the files the range
+# it was handed holds.
+orphan_commit() { # DIR FILE — one commit adding FILE
+  : > "$1/$2"
+  git -C "$1" add -- "$2"
+  git -C "$1" -c user.name=t -c user.email=t@example.com commit -q -m "$2"
+}
+proj_orphan="$(make_proj proj-orphan "echo full" 20)"
+printf 'DEV_VALIDATE_RANGE_CMD = "git diff --name-only $DEV_VALIDATE_BASE HEAD"\n' >> "$proj_orphan/kendex.settings.toml"
+git -C "$proj_orphan" config gc.auto 0
+git -C "$proj_orphan" config maintenance.auto false
+git -C "$proj_orphan" checkout -q -b main
+orphan_commit "$proj_orphan" base
+git -C "$proj_orphan" checkout -q -b ken-1
+orphan_commit "$proj_orphan" b1
+pre_rebase="$(git -C "$proj_orphan" rev-parse HEAD)"
+git -C "$proj_orphan" checkout -q main
+for f in m1 m2 m3; do orphan_commit "$proj_orphan" "$f"; done
+git -C "$proj_orphan" update-ref refs/remotes/origin/main main
+git -C "$proj_orphan" checkout -q ken-1
+git -C "$proj_orphan" -c user.name=t -c user.email=t@example.com rebase -q main
+rebased_b1="$(git -C "$proj_orphan" rev-parse HEAD)"
+orphan_commit "$proj_orphan" r1
+fork="$(git -C "$proj_orphan" rev-parse main)"
+
+# Control: a run that keeps the orphaned base spans the commits main gained,
+# and the first row's range and record redden on it.
+mutant mutant-keep-orphaned-base 'base_sha="$(git merge-base HEAD "refs/remotes/origin/$base_branch")"' 'base_sha="$orphaned_sha"'
+# label|script|--base|files the range holds|validate-base|validate-base-orphaned
+ORPHAN_ROWS=(
+  "a base the rebase left off the branch validates the branch's own diff|$RUN|$pre_rebase|b1 r1 |$fork|$pre_rebase"
+  "a base still on the branch validates from that base, as before|$RUN|$rebased_b1|r1 |$rebased_b1|"
+  "control: a run that keeps the orphaned base spans main's commits|$MUTANT|$pre_rebase|m1 m2 m3 r1 |$pre_rebase|$pre_rebase"
+)
+for row in "${ORPHAN_ROWS[@]}"; do
+  IFS='|' read -r label script base want_range want_base want_orphaned <<<"$row"
+  run_script "$script" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$base"
+  orphan_dir="$(run_dir_of "$OUT")"
+  assert_eq "$RC $(output_of "$OUT" | tr '\n' ' ')" "0 $want_range" "$label" "$ERR"
+  assert_eq "$(start_line "$orphan_dir" validate-base)|$(start_line "$orphan_dir" validate-base-orphaned)" \
+    "$want_base|$want_orphaned" "$label — the start record names the base that ran and the orphaned one" "$ERR"
+done
+
+# An orphaned base with no origin base branch to take a fork point from is
+# refused, never run over the orphaned range.
+git -C "$proj_orphan" update-ref -d refs/remotes/origin/main
+run_script "$RUN" --worktree "$proj_orphan" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(grep '^dev-validate-run: ' <<<"$ERR")" "2 dev-validate-run: orphaned-base-unresolved base=$pre_rebase" \
+  "an orphaned base with no origin base branch is refused, naming the base"
+
+# A project with no range command runs its whole battery on an orphaned base,
+# which needs no fork point, so a missing origin base branch refuses nothing.
+proj_orphan_full="$TMP_ROOT/proj-orphan-full"
+cp -R "$proj_orphan" "$proj_orphan_full"
+grep -v '^DEV_VALIDATE_RANGE_CMD' "$proj_orphan/kendex.settings.toml" > "$proj_orphan_full/kendex.settings.toml"
+run_script "$RUN" --worktree "$proj_orphan_full" --poll 1 --validate-mode range --base "$pre_rebase"
+assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" validate-mode)" "0 full full" \
+  "an orphaned base in a project with no range command runs the whole battery" "$ERR"
+
 # --- A command that ignores SIGTERM is still ended inside the bound -----------
-# A bound with no kill escalation is one signal, which such a command outlives:
-# the run holds open past the setting with no verdict, no sentinel and no owner,
-# and fixtures in this repository trap TERM by construction. The elapsed
-# assertion is what reddens on that; the command would otherwise run forty
-# seconds and the waiter would report the cap instead.
+# Fixtures in this repository trap TERM by construction. The bound's TERM ends
+# the wrapper the command runs under, whatever the command does with it, and
+# the teardown ends the command after the verdict. A run held open past the
+# setting would leave no sentinel: the elapsed assertion is what reddens on
+# that; the command would otherwise run forty seconds and the waiter would
+# report the cap instead.
 proj_term="$(make_proj proj-term "trap '' TERM; sleep 40" 2)"
 term_start="$(date +%s)"
 run_script "$RUN" --worktree "$proj_term" --poll 5
 term_elapsed=$(( $(date +%s) - term_start ))
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=137 validate=FAILING" \
-  "a command that ignores SIGTERM is killed anyway and records that kill as its verdict" "$ERR"
-assert_eq "$RC" "1" "and the round fails on it" "$ERR"
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
+  "a command that ignores SIGTERM still ends the run at its bound with the bound's verdict" "$ERR"
+assert_eq "$RC" "1" "and exits 1, which is never a pass" "$ERR"
 assert_eq "$([[ "$term_elapsed" -le 20 ]] && echo within || echo "over:$term_elapsed")" "within" \
   "with the sentinel landing inside the bound plus the grace, not at the command's own length"
 
@@ -643,6 +734,15 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^class: class=\([a-z]*\) 
 
 # label|arguments after the worktree or run directory|refusal's first line
 proj_refuse="$(make_mode_proj proj-mode-refuse "$RANGE_CMD")"
+# A verdict with no wall time beside it, and one wall time per malformed field.
+for name in untimed badtimed badstart badend; do
+  mkdir -p "$TMP_ROOT/$name"
+  printf 'validate-mode=full\n' > "$TMP_ROOT/$name/start"
+  printf 'guard-exit=0 at=2026-01-01T00:55:00Z\n' > "$TMP_ROOT/$name/exit"
+done
+printf 'started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:55:00Z\nseconds=soon\n' > "$TMP_ROOT/badtimed/timing"
+printf 'started-at=2026-01-01 00:00:00\nended-at=2026-01-01T00:55:00Z\nseconds=3300\n' > "$TMP_ROOT/badstart/timing"
+printf 'started-at=2026-01-01T00:00:00Z\nended-at=soon\nseconds=3300\n' > "$TMP_ROOT/badend/timing"
 MODE_REFUSALS=(
   "a validation mode outside the two is refused, naming it|--worktree $proj_refuse --validate-mode fast|dev-validate-run: invalid-mode option=--validate-mode value=fast"
   "a range run with no base is refused|--worktree $proj_refuse --validate-mode range|dev-validate-run: required option=--base validate-mode=range"
@@ -655,6 +755,10 @@ MODE_REFUSALS=(
   "a record of a directory no run started is refused|--record --run-dir $TMP_ROOT/unstarted|dev-validate-run: no-run path=$TMP_ROOT/unstarted/start"
   "a record whose start names no mode is refused|--record --run-dir $stale|dev-validate-run: record-unreadable path=$stale/start validate-mode="
   "a call budget handed to the record is refused|--record --run-dir $stale --budget 5|dev-validate-run: option-unused option=--budget mode=record"
+  "a record of a verdict with no wall time is refused|--record --run-dir $TMP_ROOT/untimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/untimed/timing"
+  "a record of a wall time whose seconds are no number is refused|--record --run-dir $TMP_ROOT/badtimed|dev-validate-run: timing-unreadable path=$TMP_ROOT/badtimed/timing"
+  "a record of a wall time whose start is no UTC time is refused|--record --run-dir $TMP_ROOT/badstart|dev-validate-run: timing-unreadable path=$TMP_ROOT/badstart/timing"
+  "a record of a wall time whose end is no UTC time is refused|--record --run-dir $TMP_ROOT/badend|dev-validate-run: timing-unreadable path=$TMP_ROOT/badend/timing"
 )
 for row in "${MODE_REFUSALS[@]}"; do
   IFS='|' read -r label args want <<<"$row"
@@ -681,14 +785,14 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 # says the validation passed when nothing had finished inside the limit.
 # The poll interval keeps the cap clear of both outcomes, so the only thing the
 # two runs differ in is whether the command was killed at its bound.
-mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd"' 'bash -c "$child_cmd"'
+mutant mutant-unbounded '"$child_timeout_bin" --foreground -k "$KILL_GRACE" "$child_timeout_secs" \' '\'
 proj_unbounded="$(make_proj proj-unbounded "sleep 2; exit 0" 1)"
 run_script "$MUTANT" --worktree "$proj_unbounded" --poll 3
 assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
   "control: with no bound applied the over-long command runs to completion and passes" "$ERR"
 run_script "$RUN" --worktree "$proj_unbounded" --poll 3
-assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=FAILING" \
-  "under the bound that same command is killed at it and the round fails" "$ERR"
+assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=124 validate=no-verdict" \
+  "under the bound that same command is killed at it and gives no pass" "$ERR"
 
 # --- No process the run starts outlives it ------------------------------------
 # Each command leaves a grandchild behind and records its pid in the worktree.
@@ -721,7 +825,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # label|name|cmd|timeout-secs|expected verdict
   UNIT_ROWS=(
     "a completed run leaves no grandchild that started its own session|proj-unit-done|setsid sleep 300 & echo \$! > grand.pid; exit 0|20|state=done guard-exit=0 validate=pass"
-    "a run killed at its bound leaves no such grandchild either|proj-unit-bound|setsid sleep 300 & echo \$! > grand.pid; sleep 30|2|state=done guard-exit=124 validate=FAILING"
+    "a run killed at its bound leaves no such grandchild either|proj-unit-bound|setsid sleep 300 & echo \$! > grand.pid; sleep 30|2|state=done guard-exit=124 validate=no-verdict"
   )
   for row in "${UNIT_ROWS[@]}"; do
     IFS='|' read -r label name cmd secs want_verdict <<<"$row"
@@ -737,6 +841,16 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   # runner before units. The grandchild that left the group outlives it.
   MUTANT_FILE=lib/job-unit.sh mutant mutant-no-unit 'elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then' 'elif false; then'
   proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
+  # A capped run keeps its unit where the manager does not linger: linger is
+  # asked only of a session-long job.
+  mkdir -p "$TMP_ROOT/no-linger-bin"
+  printf '#!/bin/sh\necho no\n' > "$TMP_ROOT/no-linger-bin/loginctl"
+  chmod +x "$TMP_ROOT/no-linger-bin/loginctl"
+  RUN_PATH="$TMP_ROOT/no-linger-bin:$PATH"
+  run_script "$RUN" --worktree "$proj_nounit" --poll 1
+  RUN_PATH=""
+  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=systemd unit=orch-validate-proj-no-unit-PID gone" \
+    "a validation run where the manager does not linger is still a unit, and no grandchild outlives it" "$ERR"
   run_script "$MUTANT" --worktree "$proj_nounit" --poll 1
   assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=setsid reason=probe-failed detail= alive" \
     "control: outside a unit the grandchild that started its own session outlives the run" "$ERR"
@@ -815,7 +929,7 @@ proj_term_group="$(make_proj proj-term-group 'bash grand.sh & echo $! > grand.pi
 printf '%s\n' "trap 'echo got-term > term.flag; exit 0' TERM" 'while :; do sleep 1; done' > "$proj_term_group/grand.sh"
 run_script "$RUN" --worktree "$proj_term_group" --poll 1
 assert_eq "$(verdict_of "$OUT") $(cat "$proj_term_group/term.flag" 2>/dev/null || echo no-term)" \
-  "state=done guard-exit=124 validate=FAILING got-term" \
+  "state=done guard-exit=124 validate=no-verdict got-term" \
   "a setsid run's grandchild gets SIGTERM, and runs its trap, when the run ends at its bound" "$ERR"
 grandchild_state "$proj_term_group" >/dev/null
 # Control: SIGKILL alone, which no trap sees.

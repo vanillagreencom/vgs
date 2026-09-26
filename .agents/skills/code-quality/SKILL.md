@@ -22,23 +22,13 @@ tags: [review]
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
 
-Quickshell rules for this shell, learned from measured sessions of the previous one. They add to the rules above.
+Quickshell rules for this shell. They add to the rules above.
 
-- One shell per session. Validation runs in the nested compositor sandbox; never start a second shell against the live session and never kill Quickshell processes by name.
-- Every Wayland object the shell creates is dispatched or destroyed. An undispatched event queue grew at 120 MiB per hour in the previous shell. A plugin draws inside a core-owned surface and creates none of its own.
-- One owner per watcher, poller and subprocess. A lookup that costs a process runs once per set, never per item, and a map replaces itself whole so bindings re-evaluate once.
-- No disk walk per keystroke and no unconditional sleep on an apply path. Read first, write and wait only on change.
-- Bound every cache whose keys other applications supply.
-- Judge a hyprctl reply by its text through the one shared reply judge, never by exit status alone, and never discard a dispatch reply.
-- FolderListModel substitutes the working directory for a missing folder: compare its folder property with the folder asked for before reading. Process.exited precedes running becoming false; a command that fails to start emits no exited.
-- Every figure in a docstring, comment or document was measured in the same PR and the text names how. A budget without its measurement is a blocker.
-- A new surface, service or plugin lands with its validation row in the same PR: nested smoke plus the latency and memory budgets docs/architecture/runtime.md names.
+- The runtime facts the code rests on are in `docs/architecture/runtime.md`: § QML for FolderListModel, Process, createObject and property-handler order; § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
 - Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
-- The core names no plugin and a plugin names no other plugin. A plugin declares surfaces (kinds) and capabilities in its manifest, never dependencies; the manager refuses a `requires` key. A kind whose host is absent is not shown and the plugin's other kinds keep working.
-- One judge per decision: `shell/Core/PluginLogic.js` decides manifests, configuration merging and enablement, and every script that needs one of those answers runs it under node.
-- A host assigns a plugin's properties after `createObject`; initial properties lose functions and arrays across the QVariant conversion.
-- A plugin lands with its row in `scripts/qml-smoke.sh`, which reads the shell's per-instance `log.log` and asserts the bar widgets it built; redirected `qs` stdout is buffered and proves nothing.
-- Before writing a plugin, load the vgs-plugin skill; its templates and checklist are the contract in `docs/architecture/plugins.md`.
+- A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
+- A smoke row goes in `scripts/qml-smoke.sh` beside the others and follows its header's shape: the ceiling, the machine and date it was measured on, and the poll interval of each latency reading. A new check's row goes in `scripts/validate` with its control (D008).
+- One judge per decision: `shell/Core/PluginLogic.js` for manifests, configuration merging and enablement; `shell/Core/Dispatch.js` for every Hyprland request. A script that needs one of those answers runs the file under node.
 
 <!-- kendex:project-instructions:end -->
 

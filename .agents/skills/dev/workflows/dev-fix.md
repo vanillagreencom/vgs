@@ -10,7 +10,7 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check at the top of [dev-implement.md](./dev-implement.md).
 
-**Skip if** the delegation is ad-hoc. Read prior work, decisions, and handoff notes before evaluating any item.
+**Skip if** the delegation is ad-hoc: it carries no `Issue:` line, or its `Artifact Key:` is a `pr-N` or `local-` key, which names no issue whatever `Issue:` repeats. In such a round, `[ISSUE_ID]` in the commit header and the proposed-rule path below takes the `Artifact Key:` value. Otherwise read prior work, decisions, and handoff notes before evaluating any item.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
@@ -93,10 +93,10 @@ If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` wi
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...] --near-ceiling-base origin/[BASE_BRANCH]
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...] --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed. `[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed; omit the flag only when validation failed before any run started.
+One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed. `[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed, a `no-verdict` that run to have been cut off; omit the flag only when validation failed before any run started.
 
 **Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
 
@@ -108,6 +108,6 @@ One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, a
 | N | Applied/Skipped/Blocked | [EXPLANATION — cite DXXX or rule if Skipped] |
 
 Commits: [SHAS or "none"]
-Validate: [pass or "FAILING: check1, check2"]
+Validate: [pass, "no-verdict: suite1, suite2", or "FAILING: check1, check2"]
 Proposed rule: [proposal or "none"]
 </output_format>

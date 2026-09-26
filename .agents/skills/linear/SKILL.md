@@ -71,7 +71,7 @@ NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step 
 
 The list query carries `url` so the triage table is actionable; `body` is fetched per issue rather than for all 50, and every field the description needs comes from these commands alone — no extra lookup.
 
-Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret); no decision record covers it.
 
 Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope: `area(VGS-12): imperative summary`.
 
