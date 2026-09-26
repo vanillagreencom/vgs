@@ -1,7 +1,7 @@
 name: CI
 
 # Run the scripts/validate manifest as named steps in one job.
-# Keep CI / ci-ok stable because branch protection requires that context.
+# Keep the CI job name stable: the ruleset requires the CI context.
 # Runner-cost rationale: docs/decisions/D007-ci-single-job-economics.md.
 
 on:
@@ -31,9 +31,10 @@ concurrency:
 jobs:
   # Harness engines are tested upstream. This job runs the committed engines.
   # review-gate-writer.yml owns review-gate status writes.
-  validate:
-    # Branch protection requires CI / ci-ok.
-    name: ci-ok
+  ci:
+    # The ruleset requires this context, CI, beside Review gate (the kendex
+    # one-merge-path decision).
+    name: CI
     # CI_RUNNER_2V is an org variable; the ubuntu-latest fallback must keep working.
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 15
@@ -47,7 +48,7 @@ jobs:
           persist-credentials: false
 
       # Keep classification inside the required job: a skipped workflow leaves
-      # the merge queue waiting for CI / ci-ok. The upstream classifier selects
+      # the merge queue waiting for CI. The upstream classifier selects
       # full validation when it cannot establish a harness-only diff.
       - name: Classify the diff
         id: classify
