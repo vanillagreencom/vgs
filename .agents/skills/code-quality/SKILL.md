@@ -21,15 +21,6 @@ tags: [review]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
-
-Quickshell rules for this shell. They add to the rules above.
-
-- The runtime facts the code rests on are in `docs/architecture/runtime.md`: § QML for FolderListModel, Process, createObject and property-handler order; § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
-- Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
-- A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
-- A smoke row goes in `scripts/qml-smoke.sh` beside the others and follows its header's shape: the ceiling, the machine and date it was measured on, and the poll interval of each latency reading. A new check's row goes in `scripts/validate` with its control (D008).
-- One judge per decision: `shell/Core/PluginLogic.js` for manifests, configuration merging and enablement; `shell/Core/Dispatch.js` for every Hyprland request. A script that needs one of those answers runs the file under node.
-
 <!-- kendex:project-instructions:end -->
 
 # Code Quality

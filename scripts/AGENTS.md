@@ -1,7 +1,7 @@
-# scripts/
+# Validation scripts
 
-Validation and measurement scripts. A script here reads the repository and the nested sandbox.
+Read [../AGENTS.md](../AGENTS.md) for validation commands and live-session safety.
 
-- A check is a row in `scripts/validate` with its must-fail control beside it, named `test-<subject>` for the script it exercises. `qml-smoke.sh` is a runner and has none; the checks `validate` makes itself have theirs in `test-validate.sh`.
-- What the sandbox needs, how it exits and where the shell's log is: `docs/architecture/runtime.md` § Validation and § Process.
-- What a memory figure may claim and how the sampler finds the shell: `docs/architecture/memory.md`.
+- `scripts/validate` owns the command manifest. Add or rename a check there with its implementation.
+- `check-validation-inventory.py` owns CI coverage exceptions and checks manifest-to-workflow coverage. Five suites exercise its refusal paths, one per surface: `test-validation-inventory.sh` (manifest and grammar arms), `test-validation-areas.sh` (documented area lists), `test-validation-dump.sh` (the grammar dump decoder), `test-validation-readers.sh` (runner against library) and `test-validation-ci-coverage.sh` (what CI runs). They share `lib/validation-testkit.sh`.
+- `lib/validation_manifest.py` owns the area-marker parser. Keep marker syntax changes with its tests.

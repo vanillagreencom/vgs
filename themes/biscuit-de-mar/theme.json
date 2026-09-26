@@ -1,0 +1,12 @@
+{
+  "name": "biscuit-de-mar",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-6-biscuit-emblem.jpg",
+  "contrastShortfalls": [
+    {"slot": "color5", "ratio": 2.4, "floor": 3},
+    {"slot": "color8", "ratio": 1.58, "floor": 3},
+    {"slot": "color13", "ratio": 2.4, "floor": 3}
+  ]
+}

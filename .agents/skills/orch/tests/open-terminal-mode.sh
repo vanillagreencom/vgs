@@ -67,8 +67,6 @@ gui_stub "$GHOSTTY_BIN/ghostty"
 cat > "$BIN/tmux" <<'STUB'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
-# The named session exists, so a launch reaches the window calls, which fail.
-[[ "${1:-}" != has-session ]] || exit 0
 exit 1
 STUB
 cat > "$BIN/gh" <<'STUB'
@@ -143,7 +141,7 @@ run() {
   local -a launch_env=(env)
   [[ -n "$RUN_TERMINAL" ]] || launch_env+=(-u TERMINAL)
   case "$where" in
-    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7 ORCH_TMUX_SESSION=stub) ;;
+    in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7) ;;
     out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
     *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
   esac
@@ -290,8 +288,7 @@ RUN_TERMINAL="term"
 
 echo "=== the GUI launch happens on a host with no setsid ==="
 
-# run_detached detaches the window so it outlives this script, through
-# lib/lane-launch.sh's lane_run_detached. setsid is util-linux
+# run_detached detaches the window so it outlives this script. setsid is util-linux
 # and stock macOS has none, and the launch line sends its own stderr to
 # /dev/null — so a `setsid: command not found` was swallowed there, nothing
 # opened, and open-terminal still printed "Opened terminal". nohup is the arm
@@ -321,17 +318,8 @@ assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "no setsid: a GUI terminal r
 
 # The control: with the nohup arm deleted the same run opens nothing, so the
 # assertion above is about the arm and not about a launch that would happen
-# either way. The arm is lib/lane-launch.sh's lane_run_detached, which
-# run_detached hands every launch to.
-NOSETSID_REPO="$TMP_ROOT/mutant-nosetsid/repo"
-stage "$NOSETSID_REPO" "$SRC_OT"
-sed 's#^    nohup "\$@" #    setsid "$@" #' "$SRC_LIB_DIR/lane-launch.sh" > "$NOSETSID_REPO/scripts/lib/lane-launch.sh"
-if cmp -s "$SRC_LIB_DIR/lane-launch.sh" "$NOSETSID_REPO/scripts/lib/lane-launch.sh"; then
-  bad "control: the nosetsid mutant really changes lane-launch.sh" "the copy is byte-identical to lane-launch.sh"
-else
-  ok "control: the nosetsid mutant really changes lane-launch.sh"
-fi
-MUTANT_OT="$NOSETSID_REPO/scripts/open-terminal"
+# either way.
+mutate "nosetsid" 's#^    nohup env #    setsid env #'
 RUN_PATH="$BIN:$NO_SETSID_PATH"
 run "mut-nosetsid" "$MUTANT_OT" out CC-1
 assert_eq "$TERM_LOG_TEXT" "" "control: without the nohup arm no GUI terminal opens on a setsid-less host"

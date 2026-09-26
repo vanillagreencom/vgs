@@ -1,0 +1,18 @@
+{
+  "app": "vscode",
+  "template": "vgs-theme.json",
+  "destination": "~/.config/vshell/generated/vscode/vgs-theme.json",
+  "curatedFile": "vscode.json",
+  "curatedDestination": "~/.config/vshell/generated/vscode/curated.json",
+  "curatedMode": "additional",
+  "curatedThemeFile": "vscode-theme.json",
+  "detect": {
+    "paths": [
+      "~/.vscode/extensions",
+      "~/.vscode-oss/extensions",
+      "~/.config/Code - OSS",
+      "~/.config/Code"
+    ]
+  },
+  "hook": "vscode-theme"
+}

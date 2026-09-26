@@ -1,0 +1,15 @@
+{
+  "app": "opencode",
+  "template": "vgs.json",
+  "destination": "~/.config/opencode/themes/vgs.json",
+  "modeVariants": true,
+  "detect": {
+    "commands": [
+      "opencode"
+    ],
+    "paths": [
+      "~/.config/opencode"
+    ]
+  },
+  "hook": "opencode-theme-select"
+}

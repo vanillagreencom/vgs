@@ -11,9 +11,7 @@
 #          `state-err:silent4` (the state lookup exits 4 with no message),
 #          `mergeable:<CONFLICTING|UNKNOWN>` GitHub's mergeable answer,
 #          `required:<context>` a base-branch ruleset requiring that one
-#          context, `env:N=V` the caller's environment, `settings:retired`
-#          run from a checkout whose kendex.settings.toml [env] sets
-#          ORCH_ADMIN_MERGE_CLASSES; `-` for none
+#          context, `env:N=V` the caller's environment; `-` for none
 #   argv   the arguments as written; `-` for none
 #   rc     the exit status
 #   out    every stdout line by kind, in order, joined by `;`: `cause=<w>`,
@@ -38,11 +36,6 @@ CLASSIFY="$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
 REPO="$TMPDIR/repo"
-RETIRED_REPO="$TMPDIR/retired-repo"
-git init -q "$RETIRED_REPO"
-git -C "$RETIRED_REPO" config gc.auto 0
-git -C "$RETIRED_REPO" config maintenance.auto false
-printf '[env]\nORCH_ADMIN_MERGE_CLASSES = "render"\n' >"$RETIRED_REPO/kendex.settings.toml"
 
 # --- the checks fixtures -------------------------------------------------------
 R=https://github.com/owner/repo/actions/runs
@@ -84,7 +77,6 @@ threads_of() {
 
 # --- the world ------------------------------------------------------------------
 W_ENV=()
-RUN_DIR=""
 CALL_LOG="$TMPDIR/calls.log"
 word() {
   local v="${1#*:}"
@@ -100,7 +92,6 @@ word() {
     mergeable:*) W_ENV+=("STUB_MERGEABLE=$v") ;;
     required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$v" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
     env:*) W_ENV+=("$v") ;;
-    settings:retired) RUN_DIR="$RETIRED_REPO" ;;
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
   esac
@@ -109,7 +100,6 @@ word() {
 build() {
   local w
   W_ENV=()
-  RUN_DIR="$REPO"
   : >"$CALL_LOG"
   for w in "$@"; do word "$w"; done
 }
@@ -136,10 +126,9 @@ run() {
   local -a argv=()
   # shellcheck disable=SC2206
   [[ "$1" == - ]] || argv=($1)
-  # Every token name, GH_REPO and the retired merge settings come off, so a
-  # lane's own environment cannot decide a row.
-  (cd "$RUN_DIR" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u KENDEX_ENV_FILE \
-    -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u ORCH_MERGE_BYPASS STUB_CALL_LOG="$CALL_LOG" \
+  # Every token name and GH_REPO come off, so a lane's own environment cannot
+  # decide a row.
+  (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO STUB_CALL_LOG="$CALL_LOG" \
     ${W_ENV[@]+"${W_ENV[@]}"} "$CLASSIFY" ${argv[@]+"${argv[@]}"} >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s checks=%s' "$rc" "$(out_text)" "$(grep -c '^pr checks' "$CALL_LOG" || true)"
 }
@@ -194,14 +183,6 @@ no PR number exits 2 before any call|checks:ci-required|-|2|-|0
 a non-numeric PR exits 2|checks:ci-required|abc|2|-|0
 two PR numbers exit 2|checks:ci-required|123 456|2|-|0
 "
-
-# pr-merge --check refuses a retired key with no JSON, and the classifier
-# surfaces only pr-merge's last stderr line: that line must name the key. The
-# planted key is one pr-merge's fixed refusal text never names.
-echo "=== a pr-merge refusal before any JSON ==="
-build checks:ci-required settings:retired
-assert_eq "$(run 123)" "rc=1 out=- checks=0" "a retired key in kendex.settings.toml [env] refuses before any checks call"
-assert_contains "$(<"$TMPDIR/stderr")" "ORCH_ADMIN_MERGE_CLASSES" "the surfaced line names the retired key"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -1,0 +1,14 @@
+{
+  "app": "vesktop",
+  "template": "vgs-discord.css",
+  "destination": "~/.config/vesktop/themes/vgs-discord.css",
+  "curatedFile": "discord.css",
+  "detect": {
+    "commands": [
+      "vesktop"
+    ],
+    "paths": [
+      "~/.config/vesktop"
+    ]
+  }
+}

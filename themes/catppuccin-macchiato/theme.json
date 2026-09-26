@@ -1,0 +1,10 @@
+{
+  "name": "catppuccin-macchiato",
+  "mode": "dark",
+  "pair": "catppuccin-latte",
+  "source": "curated",
+  "wallpaper": "3-blue-eye.png",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.38, "floor": 3}
+  ]
+}

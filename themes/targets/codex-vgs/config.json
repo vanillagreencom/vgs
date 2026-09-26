@@ -1,0 +1,11 @@
+{
+  "app": "codex",
+  "template": "vgs.tmTheme",
+  "destination": "~/.codex/themes/vgs.tmTheme",
+  "detect": {
+    "paths": [
+      "~/.codex"
+    ]
+  },
+  "hook": "codex-theme"
+}

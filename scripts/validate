@@ -1,199 +1,752 @@
 #!/usr/bin/env bash
-# The validation manifest. Every check the repository runs is listed here
-# once, and CI runs this file, not a second list.
-#
-# Usage: scripts/validate [AREA]
-#   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
-#   qml, all (default: all). One area per call; a second argument is
-#   refused. repo holds the checks this file makes itself, the whitespace
-#   row and the self-check that every scripts/test-* file has a row;
-#   scripts/test-validate.sh, under tools, is their control. offline runs
-#   every row but the nested smoke; CI runs it.
-#
-# VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
-#   CI sets it to the change's base. Unset, whitespace_base below says where
-#   the base comes from, and a base it cannot resolve exits 77.
-#
-# Exit 0: every selected check passed. Exit 77: every check that ran passed
-# but at least one could not run and is named; that is not a pass. Exit 1: a
-# check failed. Exit 2: unknown area.
+# Run the selected validation area and collect every command failure.
+# scripts/validate [AREA] runs checks; --list [AREA] lists commands without execution;
+# --dump-grammar emits normalized grammar. Accept one area argument per invocation.
+# --no-live omits rows tagged live: they address the running shell, which runs the
+# checkout that owns it, so from any other checkout they judge nothing of that tree.
+# Exit 0 means all selected checks ran and passed. Exit 77 means allowed checks skipped
+# while executed checks passed. Exit 1 means a check failed. Exit 2 means invalid usage
+# or manifest, before checks execute.
+# The inventory guard owns manifest and CI coverage checks and their documented exceptions.
+# Explicit interpreter calls cover syntax checks and non-executable libraries.
+# Nested QML smoke requires its compositor sandbox; surface smoke requires the checkout
+# that owns the live shell. A missing precondition does not establish a pass.
+
+# Capture each eval status without aborting the suite. Its exact value distinguishes
+# a permitted skip from failure; a negated truth test would lose that distinction.
 set -euo pipefail
 
-self="$(readlink -f -- "${BASH_SOURCE[0]}")"
-repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
-cd -- "$repo"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
+cd "$repo_root" || exit 1
 
-if [[ $# -gt 1 ]]; then
-  printf 'validate: refused: extra-argument=%s\none area per call\n' "$2" >&2
+# Manifest rows use tags | command. Tags select areas or modify permitted exit status.
+# The vocabulary and class constraints live in scripts/lib/validation-grammar.conf.
+# Validate command syntax before execution. This does not prove commands exist or behave correctly.
+# The inventory guard checks script command coverage; other commands need actual execution.
+# Only cheap, network-free checks valid in ordinary checkouts belong in universal rows.
+# shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
+manifest() {
+  cat <<'MANIFEST_EOF'
+qml       | scripts/check-naming.sh
+qml       | scripts/test-naming.sh
+qml       | scripts/check-qml-imports.py
+qml       | scripts/check-settings-type.py
+qml       | scripts/test-qml-imports.sh
+qml       | scripts/test-qml-import-collisions.sh
+always    | scripts/check-format-lint.sh
+-         | python3 scripts/lib/shell_scan_selftest.py
+-         | python3 scripts/lib/qml_scrub_selftest.py
+-         | python3 scripts/lib/qml_source_selftest.py
+-         | node scripts/lib/qml-region-selftest.js
+-         | node scripts/lib/qml-region-testkit-selftest.js
+always    | scripts/check-validation-inventory.py
+docs      | .agents/skills/bot-instructions/scripts/bot-instructions check
+docs      | scripts/check-owned-skills.py
+docs      | scripts/test-owned-skills-e2e.py
+packaging | scripts/gen-package-metadata.py
+packaging | scripts/check-package-assets.sh
+packaging | scripts/check-aur-sync.py
+packaging | scripts/test-aur-version.py
+packaging | scripts/test-publish-aur.py
+packaging | scripts/check-prune-ppa.py
+helper,packaging | scripts/test-vshell-setup.sh
+-         | scripts/check-command-declarations.py
+-         | node --check scripts/check-settings-migration.js
+-         | scripts/check-settings-migration.js
+-         | scripts/test-restyle-queue.js
+-         | scripts/test-theme-requests.js
+-         | scripts/test-sudo-toggle-confirm.js
+-         | scripts/test-latest-transaction-queue.js
+-         | scripts/test-bundled-override.js
+-         | scripts/test-plugin-requirement-report.js
+-         | scripts/test-plugin-manifest-freshness.js
+-         | scripts/test-toast-actions.js
+-         | scripts/test-ai-usage-logic.js
+-         | scripts/test-ai-usage-entrypoint.js
+-         | scripts/test-ai-usage-wiring.js
+-         | scripts/test-ai-usage-lifecycle.js
+-         | scripts/test-ai-usage-sources.js
+-         | scripts/test-ai-usage-format.js
+-         | scripts/test-ai-usage-setup.js
+qml       | scripts/test-mercury-logic.js
+qml       | scripts/test-mercury-format.js
+qml       | scripts/test-mercury-options.js
+qml       | scripts/test-fleet-logic.js
+qml       | scripts/test-plugin-daemon-views.js
+-         | scripts/test-paste-target.js
+-         | scripts/test-paste-lifecycle.js
+-         | scripts/test-compositor-focus.js
+-         | scripts/test-compositor-events.js
+-         | scripts/test-event-probe.js
+-         | scripts/test-dock-scratchpad-identity.js
+-         | scripts/test-overview-refetch.js
+qml       | scripts/test-bar-workspace-filter.js
+qml       | scripts/test-icon-picker.js
+-         | scripts/check-paste-injection.py
+-         | scripts/test-label-taxonomy.py
+-         | scripts/test-settings-type.py
+-         | scripts/test-launcher-search-gate.js
+-         | scripts/check-notification-takeover.js
+-         | scripts/test-remote-desktop-state.js
+-         | scripts/test-idle-reload-snapshot.js
+-         | scripts/test-idle-lock-request.js
+-         | scripts/test-shell-runner-guard.js
+-         | scripts/test-proc-timeout.js
+-         | scripts/test-control-center-widget-library.js
+-         | scripts/test-i18n-locale-selection.js
+helper    | scripts/check-vshell-helper.py
+helper    | scripts/check-keybinds-display.py
+helper    | scripts/check-dev-tools.py
+helper    | scripts/test-bounded-run.py
+helper    | scripts/check-brightness.py
+helper    | scripts/test-claude-theme.py
+go        | scripts/check-backend-inventory.py
+go        | scripts/check-backend-inventory-tests.py
+go        | scripts/check-execbound-adoption.py
+go        | scripts/check-execbound-adoption-tests.py
+-         | scripts/check-lock-reload-order.py
+-         | scripts/check-display-config-fixtures.js
+-         | scripts/check-vgs-menu-capabilities.js
+-         | scripts/check-vshell-ipc.sh
+-         | scripts/test-smoke-surfaces.sh
+-         | scripts/test-validate.sh
+-         | scripts/test-sample-shell-memory.sh
+-         | scripts/test-attribute-heap-profile.py
+-         | scripts/test-bench-shell-events.py
+-         | scripts/test-screenrecording-status.sh
+-         | scripts/check-hyprctl-dispatch.sh
+-         | scripts/test-hyprctl-dispatch.sh
+-         | scripts/test-check-hyprctl-dispatch.sh
+-         | scripts/test-screensaver-launch.sh
+-         | scripts/test-validation-inventory.sh
+-         | scripts/test-validation-areas.sh
+-         | scripts/test-validation-dump.sh
+-         | scripts/test-validation-readers.sh
+-         | scripts/test-validation-ci-coverage.sh
+-         | scripts/test-qml-smoke.sh
+-         | scripts/test-format-lint.sh
+-         | scripts/test-pill-hover-safety.js
+qml       | scripts/test-launcher-hover-latch.js
+qml       | scripts/test-capture-status-watch.js
+qml       | scripts/test-popout-dismiss-envelope.js
+qml       | scripts/test-switcher-selection.js
+qml       | scripts/test-switcher-scope.js
+qml       | scripts/test-switcher-source.js
+qml       | scripts/test-thumb-sweep.js
+qml       | scripts/test-wallpaper-refs.js
+qml       | scripts/test-notification-history-trim.js
+qml       | scripts/test-theme-startup.js
+qml       | scripts/test-theme-apply-queue.js
+qml       | scripts/test-flatline-controls.js
+qml       | scripts/test-brightness-scan-ordering.js
+qml       | scripts/test-backend-capabilities.js
+qml       | scripts/test-settings-navigation.js
+qml       | scripts/test-store-write-coalescing.js
+qml       | scripts/test-settings-change-signals.js
+qml       | scripts/test-open-connect-lifetime.js
+helper    | scripts/test-wallpaper-thumbs.py
+helper    | scripts/test-wallpaper-refs.py
+helper    | python3 -m py_compile bin/vshell-helper bin/vshell_helper.py
+helper    | python3 -m py_compile scripts/publish-theme-assets.py
+helper    | bash -n bin/vshell
+always    | git diff --check
+-         | scripts/check-workflows.sh
+-         | .agents/skills/doc-limits/scripts/doc-limits
+always    | .agents/skills/commit-guards/scripts/commit-guards all --base origin/main
+qml,may-skip | scripts/qml-smoke.sh --nested --require-static --require-nested
+qml,may-skip | scripts/qml-smoke.sh --require-nested --shell-env VSHELL_EVENT_PROBE=1 --driver scripts/bench-shell-events.py
+qml       | scripts/check-validation-safety.sh --require-static
+-         | scripts/check-label-taxonomy.py
+qml,may-skip,live | scripts/smoke-surfaces.sh
+go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
+MANIFEST_EOF
+}
+# Parse and validate the grammar here; other consumers decode --dump-grammar.
+# Use an explicit ASCII whitespace set. Locale-resolved space classes can admit Unicode,
+# while exporting a C locale globally would change every validation command's environment.
+ASCII_SPACE=$' \t\n\r\f\v'
+# Derive the line-oriented whitespace set by removing newline.
+ASCII_SPACE_LINE="${ASCII_SPACE//$'\n'/}"
+
+GRAMMAR_FILE="$repo_root/scripts/lib/validation-grammar.conf"
+if [[ ! -r "$GRAMMAR_FILE" ]]; then
+  printf 'scripts/validate: cannot read the grammar at %s\n' "$GRAMMAR_FILE" >&2
   exit 2
 fi
-area="${1:-all}"
-failed=()
-skipped=()
 
-run() { # LABEL CMD...
-  local label="$1"; shift
-  echo "== $label"
-  local status=0
-  "$@" || status=$?
-  case "$status" in
-    0) ;;
-    77) skipped+=("$label") ;;
-    *) failed+=("$label (exit $status)") ;;
+# Collect producer output with its status before parsing it. Process substitution hides
+# producer failure and can silently accept a partial grammar.
+# Set collected in this shell; wrapping collect itself in substitution would hide its fatal exit.
+# Collection diagnostics cannot come from grammar messages before that grammar is available.
+collected=""
+collect() { # $1 what, then the producer and its arguments
+  local what="$1" status=0
+  shift
+  collected="$("$@")" || status=$?
+  if [[ $status -ne 0 ]]; then
+    printf 'scripts/validate: READING %s failed (collection exited %d)\n' "$what" "$status" >&2
+    printf '  This is a read/transport failure, not a malformed %s: the bytes that\n' "$what" >&2
+    printf '  arrived may be a partial file, so NOTHING was validated and nothing ran.\n' >&2
+    exit 2
+  fi
+}
+
+declare -A CLASS_SELECTS=() CLASS_STANDALONE=() CLASS_ROWTAG=() CLASS_EXCLUSIVE=()
+declare -A CLASS_MIN=() CLASS_MAX=() CLASS_COUNT=()
+declare -A CLASS_CLI=() CLASS_UNIVERSAL=() CLASS_SKIPS=()
+declare -A TOKEN_CLASS=() MSG=()
+grammar_tokens=()
+
+# Reject ambiguous grammar before deriving rules or running commands.
+grammar_fatal() {
+  printf 'scripts/validate: %s: %s\n' "$1" "$2" >&2
+  exit 2
+}
+
+# Read metadata before dependent records so arity and diagnostic definitions are available.
+# Retain an unterminated final line. Check duplicate names in each pass before records can merge.
+
+# Validate every numeric field as canonical decimal. Leading-zero values can become octal
+# in Bash arithmetic and make comparisons fail without enforcing the intended bound.
+require_count() { # Validate a count using context, field name, and value.
+  if [[ ! "$3" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
+      "$1: $2"
+  fi
+}
+
+# Use one named-field uniqueness check for kind and class records.
+# Collect grammar bytes once so metadata and record passes cannot read different file contents.
+collect "the grammar" sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE"
+grammar_text="$collected"
+
+declare -A SEEN_FIELD=()
+begin_record() { SEEN_FIELD=(); }
+seen_field() { # Validate uniqueness using record context and field name.
+  if [[ -n "${SEEN_FIELD[$2]:-}" ]]; then
+    grammar_fatal "${MSG[grammar-repeated-field]:-grammar record repeats a field}" "$1: $2"
+  fi
+  SEEN_FIELD[$2]=1
+}
+
+declare -A KIND_MIN=() KIND_MAX=() SEEN_RECORD=()
+seen_record() {
+  if [[ -n "${SEEN_RECORD[$1/$2]:-}" ]]; then
+    grammar_fatal "${MSG[grammar-duplicate]:-grammar declares the same record twice}" "$1 $2"
+  fi
+  SEEN_RECORD[$1/$2]=1
+}
+while read -r kind name rest || [[ -n "$kind" ]]; do
+  case "$kind" in
+    kind | message) [[ -n "$name" ]] && seen_record "$kind" "$name" ;;
   esac
-}
-
-# rows: area  label  command
-rows=(
-  "logic|plugin logic table|node scripts/test-plugin-logic.js"
-  "logic|dispatch table|node scripts/test-dispatch.js"
-  "logic|library loader controls|node scripts/test-qml-library.js"
-  "manifests|bundled manifests|node scripts/check-manifests.js"
-  "manifests|manifest check controls|node scripts/test-check-manifests.js"
-  "cli|runner CLI controls|scripts/test-vgsh.sh"
-  "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py"
-  "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py"
-  "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py"
-  "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
-  "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
-  "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
-  "repo|whitespace errors against the base|whitespace_check"
-  "repo|every test file has a row|rows_cover_tests"
-  "tools|validate self-check controls|scripts/test-validate.sh"
-  "qml|nested smoke|scripts/qml-smoke.sh"
-)
-
-# The commit the whitespace row compares against, printed on stdout. On
-# failure it prints what is missing as key=value and returns 1.
-# VGS_VALIDATE_BASE wins when set. Otherwise the base is the merge base of
-# HEAD with the remote-tracking copy of the project's base branch,
-# WORKTREE_DEFAULT_BRANCH from the environment or from kendex.settings.toml
-# (read by the kendex settings loader, so the file has one reader). Exactly
-# one remote may carry that branch; none or several is missing, never a
-# guess, so no ref that merely contains HEAD is taken for its base.
-whitespace_base() {
-  if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
-    if ! git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"; then
-      echo "missing=commit VGS_VALIDATE_BASE=$VGS_VALIDATE_BASE"
-      return 1
-    fi
-    return 0
-  fi
-  local branch="${WORKTREE_DEFAULT_BRANCH:-}" loader="$repo/.agents/skills/orch/scripts/lib/kendex-env.sh" ref refs=()
-  if [[ -z $branch && -f $repo/kendex.settings.toml ]]; then
-    # shellcheck source=/dev/null
-    branch="$(source "$loader" && kendex_load_settings_file "$repo/kendex.settings.toml" && printf '%s' "${WORKTREE_DEFAULT_BRANCH:-}")" || branch=""
-  fi
-  if [[ -z $branch ]]; then
-    echo "missing=base-branch source=WORKTREE_DEFAULT_BRANCH"
-    return 1
-  fi
-  while IFS= read -r ref; do
-    [[ $ref =~ ^refs/remotes/[^/]+/(.*)$ && ${BASH_REMATCH[1]} == "$branch" ]] && refs+=("$ref")
-  done < <(git for-each-ref --format='%(refname)' refs/remotes/)
-  if [[ ${#refs[@]} -ne 1 ]]; then
-    echo "missing=base-ref branch=$branch remote-refs=${#refs[@]}"
-    return 1
-  fi
-  if ! git merge-base HEAD "${refs[0]}"; then
-    echo "missing=merge-base ref=${refs[0]}"
-    return 1
-  fi
-}
-
-# Whitespace errors the tree adds over the base: tracked files against the
-# base commit, and every untracked file whole, since a new file has no base.
-# Names are read NUL-delimited, so a name git would quote reaches git as the
-# file's own name. git diff --check exits 2 for findings; with --no-index it
-# exits 1 for a clean difference and 3 for findings. Any other status, or a
-# clean status with output, is a read error and fails the row with git's
-# message. First lines:
-#   whitespace: base=<commit>
-#   whitespace: findings scope=tracked | scope=untracked path=<file>
-#   whitespace: unreadable scope=tracked status=<n> | scope=untracked path=<file> status=<n>
-#   whitespace: failed base=<commit>
-#   whitespace: status=not-measured reason=no-base <missing key=value>
-whitespace_check() {
-  local base file out file_status status=0
-  if ! base="$(whitespace_base)"; then
-    echo "whitespace: status=not-measured reason=no-base ${base##*$'\n'}"
-    echo "set VGS_VALIDATE_BASE to the commit to compare against"
-    return 77
-  fi
-  echo "whitespace: base=$base"
-  file_status=0
-  out="$(git diff --check "$base" -- 2>&1)" || file_status=$?
-  case "$file_status" in
-    0) ;;
-    2) echo "whitespace: findings scope=tracked"; printf '%s\n' "$out"; status=1 ;;
-    *) echo "whitespace: unreadable scope=tracked status=$file_status"; printf '%s\n' "$out"; status=1 ;;
+  case "$kind" in
+    kind)
+      # Bootstrap kind validation inline before its own arity table exists.
+      if [[ -z "$name" || -z "$rest" ]]; then
+        grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+          "kind ${name:-}"
+      fi
+      begin_record
+      for field in $rest; do
+        case "$field" in
+          min=* | max=*) ;;
+          *) grammar_fatal "${MSG[grammar-unknown-field]:-grammar record has an unknown field}" \
+            "kind $name: $field" ;;
+        esac
+        seen_field "kind $name" "${field%%=*}"
+        # Validate integer counts before arithmetic; unknown words can otherwise evaluate as zero.
+        require_count "kind $name" "$field" "${field#*=}"
+        case "$field" in
+          # Require a name field because every record branch reads it.
+          min=0) grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+            "kind $name: min must be at least 1" ;;
+          min=*) KIND_MIN[$name]="${field#min=}" ;;
+          max=*) KIND_MAX[$name]="${field#max=}" ;;
+        esac
+      done
+      ;;
+    message)
+      # Check the metadata key before array indexing; defer malformed-message reporting to the arity check.
+      [[ -n "$name" ]] && MSG[$name]="$rest"
+      ;;
   esac
-  while IFS= read -r -d '' file; do
-    file_status=0
-    out="$(git diff --no-index --check -- /dev/null "$file" 2>&1)" || file_status=$?
-    case "$file_status" in
-      0|1) [[ -z $out ]] && continue
-           echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
-      3) echo "whitespace: findings scope=untracked path=$file" ;;
-      *) echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
-    esac
-    printf '%s\n' "$out"
-    status=1
-  done < <(git ls-files -z --others --exclude-standard)
-  [[ $status -eq 0 ]] || echo "whitespace: failed base=$base"
-  return "$status"
-}
+done <<<"$grammar_text"
 
-# Every scripts/test-* file is named by a row, so a check cannot exist
-# without running here.
-rows_cover_tests() {
-  local row file command word words=" " missing=() split=()
-  # Every whole word of every row's command, space-delimited, so a test
-  # file's path matches only a word equal to it, never a longer name that
-  # starts with it.
-  for row in "${rows[@]}"; do
-    command="${row#*|}"
-    command="${command#*|}"
-    read -r -a split <<<"$command"
-    for word in "${split[@]}"; do words+="$word "; done
-  done
-  for file in scripts/test-*; do
-    [[ -e $file ]] || continue
-    [[ $words == *" $file "* ]] || missing+=("$file")
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    printf 'validate: refused: test-without-row=%s\n' "$(IFS=,; echo "${missing[*]}")"
-    return 1
+if [[ -z "${KIND_MIN[class]:-}" || -z "${KIND_MIN[token]:-}" || -z "${KIND_MIN[message]:-}" ]]; then
+  grammar_fatal "grammar declares no arity for a required line kind" "class/token/message"
+fi
+
+# Validate arity before indexing record fields.
+check_arity() {
+  local kind="$1" count="$2" line="$3"
+  local low="${KIND_MIN[$kind]:-}" high="${KIND_MAX[$kind]:-}"
+  if [[ -z "$low" ]]; then
+    grammar_fatal "${MSG[grammar-bad-kind]:-grammar has an unknown line kind}" "$kind"
   fi
-  echo "validate: every test file has a row"
+  if [[ "$count" -lt "$low" ]] || [[ -n "$high" && "$count" -gt "$high" ]]; then
+    grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
+      "$line ($count field(s), min ${low}${high:+, max $high})"
+  fi
 }
 
-matched=false
-for row in "${rows[@]}"; do
-  IFS='|' read -r row_area label command <<<"$row"
-  selected=false
-  case "$area" in
-    all) selected=true ;;
-    offline) [[ $row_area == qml ]] || selected=true ;;
-    *) [[ $area == "$row_area" ]] && selected=true ;;
+while read -r line || [[ -n "$line" ]]; do
+  read -r kind rest_all <<<"$line"
+  [[ -n "$kind" ]] || continue
+  # shellcheck disable=SC2206  # deliberate word splitting to count fields
+  fields=($rest_all)
+  check_arity "$kind" "${#fields[@]}" "$line"
+  name="${fields[0]}"
+  rest="${rest_all#"${fields[0]}"}"
+  rest="${rest# }"
+  # Kind and message duplicate checks run in the metadata pass; this pass checks the other record kinds.
+  case "$kind" in
+    class | token) seen_record "$kind" "$name" ;;
   esac
-  if [[ $selected == true ]]; then
-    matched=true
-    # shellcheck disable=SC2086
-    run "$label" $command
+  case "$kind" in
+    class)
+      # Read class fields by key so equivalent reordering preserves meaning.
+      begin_record
+      for field in $rest; do
+        if [[ "$field" != *=* ]]; then
+          grammar_fatal "${MSG[grammar-class-malformed]:-class property must be key=value}" \
+            "$name: $field"
+        fi
+        prop="${field%%=*}"
+        value="${field#*=}"
+        case "$prop" in
+          selects | standalone | rowtag | exclusive | cli | universal | skips | min | max) ;;
+          *) grammar_fatal "${MSG[grammar-unknown-field]:-grammar record has an unknown field}" \
+            "$name: $prop" ;;
+        esac
+
+        seen_field "$name" "$prop"
+        case "$prop" in
+          min | max)
+            # Count fields use numeric diagnostics, not boolean diagnostics.
+            require_count "$name" "$prop=$value" "$value"
+            ;;
+          *)
+            case "$value" in
+              yes | no) ;;
+              *) grammar_fatal "${MSG[grammar-class-value]:-class property must be yes or no}" \
+                "$name: $prop=$value" ;;
+            esac
+            ;;
+        esac
+        case "$prop" in
+          selects) CLASS_SELECTS[$name]="$value" ;;
+          standalone) CLASS_STANDALONE[$name]="$value" ;;
+          rowtag) CLASS_ROWTAG[$name]="$value" ;;
+          exclusive) CLASS_EXCLUSIVE[$name]="$value" ;;
+          cli) CLASS_CLI[$name]="$value" ;;
+          universal) CLASS_UNIVERSAL[$name]="$value" ;;
+          skips) CLASS_SKIPS[$name]="$value" ;;
+          min) CLASS_MIN[$name]="$value" ;;
+          max) CLASS_MAX[$name]="$value" ;;
+        esac
+      done
+      for prop in selects standalone rowtag exclusive cli universal skips; do
+        if [[ -z "${SEEN_FIELD[$prop]:-}" ]]; then
+          grammar_fatal "${MSG[grammar-class-missing]:-class is missing a property}" "$name: $prop"
+        fi
+      done
+      ;;
+    token)
+      read -r cls extra <<<"$rest"
+      if [[ -n "$extra" ]]; then
+        grammar_fatal "${MSG[grammar-token-fields]:-token line must be token <name> <class>}" \
+          "$name ($rest)"
+      fi
+
+      if [[ -z "${CLASS_ROWTAG[$cls]:-}" ]]; then
+        grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
+          "$name ($cls)"
+      fi
+      if [[ ! "$name" =~ ^([a-z][a-z0-9-]*|-)$ ]]; then
+        grammar_fatal "${MSG[grammar-token-name]:-token name must be lowercase}" "$name"
+      fi
+      TOKEN_CLASS[$name]="$cls"
+      CLASS_COUNT[$cls]=$(( ${CLASS_COUNT[$cls]:-0} + 1 ))
+      grammar_tokens+=("$name")
+      ;;
+    kind | message) ;;
+  esac
+done <<<"$grammar_text"
+
+# Enforce declared cardinality before commands can run under an invalid grammar.
+for cls in "${!CLASS_ROWTAG[@]}"; do
+  count="${CLASS_COUNT[$cls]:-0}"
+  low="${CLASS_MIN[$cls]:-0}"
+  high="${CLASS_MAX[$cls]:-}"
+  if [[ "$count" -lt "$low" ]] || [[ -n "$high" && "$count" -gt "$high" ]]; then
+    grammar_fatal "${MSG[grammar-class-count]:-wrong number of tokens in a class}" \
+      "$cls: $count (min ${low}${high:+, max $high})"
   fi
 done
-if [[ $matched != true ]]; then
-  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, repo, offline, qml, all\n' "$area" >&2
+
+for required in row-no-separator row-empty-tags row-malformed-tags \
+  row-not-standalone row-no-selector row-empty-command row-bad-syntax; do
+  if [[ -z "${MSG[$required]:-}" ]]; then
+    grammar_fatal "grammar is missing a shared message" "$required"
+  fi
+done
+
+# Derive selection sets from class properties.
+AREAS=()
+default_area=""
+default_candidates=()
+row_tag_vocabulary=()
+combinable_tags=()
+selector_tags=()
+exclusive_tags=()
+universal_tags=()
+skip_tags=()
+for token in "${grammar_tokens[@]}"; do
+  class="${TOKEN_CLASS[$token]}"
+  # CLI eligibility and default selection come from properties rather than class names.
+  [[ "${CLASS_CLI[$class]}" == yes ]] && AREAS+=("$token")
+  if [[ "${CLASS_CLI[$class]}" == yes && "${CLASS_ROWTAG[$class]}" != yes ]]; then
+    default_area="$token"
+    default_candidates+=("$token")
+  fi
+  [[ "${CLASS_UNIVERSAL[$class]}" == yes && "${CLASS_ROWTAG[$class]}" == yes ]] &&
+    universal_tags+=("$token")
+  [[ "${CLASS_SKIPS[$class]}" == yes && "${CLASS_ROWTAG[$class]}" == yes ]] &&
+    skip_tags+=("$token")
+  if [[ "${CLASS_ROWTAG[$class]}" == yes ]]; then
+    row_tag_vocabulary+=("$token")
+    if [[ "${CLASS_EXCLUSIVE[$class]}" == yes ]]; then
+      exclusive_tags+=("$token")
+    else
+      combinable_tags+=("$token")
+    fi
+    [[ "${CLASS_SELECTS[$class]}" == yes ]] && selector_tags+=("$token")
+  fi
+done
+
+# Emit normalized grammar only after validation, with explicit defaults and deterministic ordering.
+# Wrap sorting pipelines so collect can inspect their status.
+# shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
+sort_names() { printf '%s\n' "$@" | LC_ALL=C sort; }
+
+dump_grammar() {
+  local cls key token i code hex=""
+  printf 'source %s\n' "$GRAMMAR_FILE"
+  # Emit the resolved default so consumers do not recompute its selection rule.
+  printf 'default %s\n' "$default_area"
+  # Emit the whitespace set as hex codepoints because it contains newline.
+  # The decoder must validate ASCII and preserve the supplied set.
+  for ((i = 0; i < ${#ASCII_SPACE}; i++)); do
+    printf -v code '%d' "'${ASCII_SPACE:i:1}"
+    printf -v hex '%s%02x ' "$hex" "$code"
+  done
+  printf 'whitespace %s\n' "${hex% }"
+  collect "the dumped class list" sort_names "${!CLASS_ROWTAG[@]}"
+  while IFS= read -r cls; do
+    [[ -n "$cls" ]] || continue
+    printf 'class %s selects=%s standalone=%s rowtag=%s exclusive=%s cli=%s universal=%s skips=%s min=%s max=%s\n' \
+      "$cls" "${CLASS_SELECTS[$cls]}" "${CLASS_STANDALONE[$cls]}" "${CLASS_ROWTAG[$cls]}" \
+      "${CLASS_EXCLUSIVE[$cls]}" "${CLASS_CLI[$cls]}" "${CLASS_UNIVERSAL[$cls]}" \
+      "${CLASS_SKIPS[$cls]}" "${CLASS_MIN[$cls]:-0}" "${CLASS_MAX[$cls]:--}"
+  done <<<"$collected"
+  for token in "${grammar_tokens[@]}"; do
+    printf 'token %s %s\n' "$token" "${TOKEN_CLASS[$token]}"
+  done
+  collect "the dumped message list" sort_names "${!MSG[@]}"
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    printf 'message %s %s\n' "$key" "${MSG[$key]}"
+  done <<<"$collected"
+}
+
+# Require one default-eligible token across all classes. Per-class cardinality cannot prove global uniqueness.
+if [[ ${#default_candidates[@]} -ne 1 ]]; then
+  grammar_fatal "${MSG[grammar-default-count]:-grammar must declare exactly one CLI default token}" \
+    "cli=yes with rowtag=no: ${#default_candidates[@]} token(s)${default_candidates[*]:+ (${default_candidates[*]})}"
+fi
+
+# Reject selecting row tags that are neither areas, universal, nor exclusive.
+# They would disappear from scoped runs, potentially removing this manifest's own guard.
+# Use derived sets so this check shares the same eligibility definitions as selection.
+in_list() { # $1 needle, then the haystack
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+inert_selectors=()
+for token in "${selector_tags[@]}"; do
+  if ! in_list "$token" "${AREAS[@]}" &&
+    ! in_list "$token" "${universal_tags[@]}" &&
+    ! in_list "$token" "${exclusive_tags[@]}"; then
+    inert_selectors+=("$token")
+  fi
+done
+if [[ ${#inert_selectors[@]} -gt 0 ]]; then
+  grammar_fatal "${MSG[grammar-inert-selector]:-grammar row tag selects nothing in any named area}" \
+    "${inert_selectors[*]}: a selector that is neither an area (cli=yes) nor universal selects only the default area, which is what the exclusive tag already means"
+fi
+
+# Only permitted skip rows can use status 77 for absent prerequisites.
+SKIP_STATUS=77
+
+usage() {
+  printf 'usage: scripts/validate [--no-live] [--list] [%s]\n' "$(
+    IFS='|'
+    printf '%s' "${AREAS[*]}"
+  )" >&2
+  printf '       scripts/validate --dump-grammar\n' >&2
+}
+
+list_only=0
+no_live=0
+LIVE_TAG=live
+omitted=()
+# Use the resolved grammar default for a bare invocation.
+area="$default_area"
+area_given=0
+for arg in "$@"; do
+  case "$arg" in
+    --list) list_only=1 ;;
+    --no-live)
+      # The tag must exist in the grammar, or the flag would silently omit nothing.
+      if [[ -z "${TOKEN_CLASS[$LIVE_TAG]:-}" ]]; then
+        printf 'scripts/validate: --no-live needs a %s token in the grammar\n' "$LIVE_TAG" >&2
+        exit 2
+      fi
+      no_live=1
+      ;;
+    # Grammar dumping must work independently of manifest validity so consumers can inspect vocabulary errors separately.
+    --dump-grammar)
+      dump_grammar
+      exit 0
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      printf 'scripts/validate: unknown option %s\n' "$arg" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      # Reject multiple area arguments instead of silently keeping the last.
+      if [[ $area_given -eq 1 ]]; then
+        printf 'scripts/validate: one area per run; got %s and %s\n' "$area" "$arg" >&2
+        usage
+        exit 2
+      fi
+      area="$arg"
+      area_given=1
+      ;;
+  esac
+done
+
+# Unknown areas must fail rather than select all or no commands.
+matched_area=0
+for known in "${AREAS[@]}"; do
+  if [[ "$area" == "$known" ]]; then
+    matched_area=1
+  fi
+done
+if [[ $matched_area -eq 0 ]]; then
+  printf 'scripts/validate: unknown area %s\n' "$area" >&2
+  usage
   exit 2
 fi
 
-if [[ ${#failed[@]} -gt 0 ]]; then
-  printf 'validate: failed=%s\n' "$(IFS=';'; echo "${failed[*]}")"
-  exit 1
+# Build accepted tag syntax from exclusive and combinable token sets.
+exclusive_alternation="$(
+  IFS='|'
+  printf '%s' "${exclusive_tags[*]}"
+)"
+tag_alternation="$(
+  IFS='|'
+  printf '%s' "${combinable_tags[*]}"
+)"
+tags_grammar="^(($exclusive_alternation)|($tag_alternation)(,($tag_alternation))*)$"
+
+
+# Format a row error using the shared message key, line, optional tags, and detail.
+row_fatal() {
+  local key="$1" line="$2" tags="${3:-}" detail="${4:-}"
+  # shellcheck disable=SC2016  # the backticks quote the tags in the message
+  if [[ -n "$tags" ]]; then
+    printf 'scripts/validate: %s `%s`: %s\n' "${MSG[$key]}" "$tags" "$line" >&2
+  else
+    printf 'scripts/validate: %s: %s\n' "${MSG[$key]}" "$line" >&2
+  fi
+  [[ -n "$detail" ]] && printf '  %s\n' "$detail" >&2
+  exit 2
+}
+
+# Retain tags with commands so execution can classify skips.
+# Refuse malformed rows instead of silently omitting checks from the selected area.
+collect "the manifest" manifest
+manifest_text="$collected"
+selected=()
+selected_tags=()
+while IFS= read -r line; do
+  if [[ -z "${line//[$ASCII_SPACE]/}" ]]; then
+    continue
+  fi
+  if [[ "$line" != *"|"* ]]; then
+    row_fatal row-no-separator "$line"
+  fi
+  tags="${line%%|*}"
+  cmd="${line#*|}"
+  tags="${tags//[$ASCII_SPACE]/}"
+  while [[ "$cmd" == ["$ASCII_SPACE"]* ]]; do cmd="${cmd:1}"; done
+  while [[ "$cmd" == *["$ASCII_SPACE"] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
+  # Validate the whole tag string before splitting. Empty arrays and discarded trailing separators
+  # can otherwise make malformed fields appear valid.
+  if [[ -z "$tags" ]]; then
+    # shellcheck disable=SC2016  # the backticks quote tag names in the hint
+    row_fatal row-empty-tags "$line" "" \
+      'every row needs at least one tag; use `-` for a row only `all` runs'
+  fi
+  if [[ ! "$tags" =~ $tags_grammar ]]; then
+    # Tag syntax already decides refusal. These branches only refine its diagnostic.
+    why=""
+    case ",$tags," in
+      ,,*) why="it starts with a separator" ;;
+      *,,) why="it ends with a separator" ;;
+      *,,*) why="it has a repeated separator" ;;
+    esac
+    if [[ ",$tags," == *,-,* && "$tags" == *,* ]]; then
+      # shellcheck disable=SC2016  # the backticks quote a tag name in the hint
+      why='`-` cannot be combined with another tag'
+    fi
+    [[ -n "$why" ]] && why="$why"$'\n  '
+    # shellcheck disable=SC2016  # the backticks quote tag names in the hint
+    row_fatal row-malformed-tags "$line" "$tags" "${why}known row tags: ${row_tag_vocabulary[*]}"
+  fi
+  # Use class standalone and selection properties to diagnose rows without a selector.
+  IFS=, read -r -a row_tag_list <<<"$tags"
+  if [[ ${#row_tag_list[@]} -eq 1 ]]; then
+    only="${row_tag_list[0]}"
+    if [[ "${CLASS_STANDALONE[${TOKEN_CLASS[$only]}]}" != yes ]]; then
+      row_fatal row-not-standalone "$line" "$tags"
+    fi
+  fi
+  has_selector=0
+  for selector in "${selector_tags[@]}"; do
+    if [[ ",$tags," == *",$selector,"* ]]; then
+      has_selector=1
+    fi
+  done
+  if [[ $has_selector -eq 0 ]]; then
+    row_fatal row-no-selector "$line" "$tags"
+  fi
+  if [[ -z "$cmd" ]]; then
+    row_fatal row-empty-command "$line"
+  fi
+  # Validate shell syntax for every row, including unselected rows, before any command runs.
+  if ! syntax_error="$(bash -n -c "$cmd" 2>&1)"; then
+    row_fatal row-bad-syntax "$line" "" "${syntax_error//$'\n'/$'\n  '}"
+  fi
+  if [[ "$area" != "$default_area" ]]; then
+
+    selected_here=0
+    [[ ",$tags," == *",$area,"* ]] && selected_here=1
+    for universal in "${universal_tags[@]}"; do
+      [[ ",$tags," == *",$universal,"* ]] && selected_here=1
+    done
+    if [[ $selected_here -eq 0 ]]; then
+      continue
+    fi
+  fi
+  if [[ $no_live -eq 1 && ",$tags," == *",$LIVE_TAG,"* ]]; then
+    omitted+=("$cmd")
+    continue
+  fi
+  selected+=("$cmd")
+  selected_tags+=("$tags")
+done <<<"$manifest_text"
+
+if [[ ${#selected[@]} -eq 0 ]]; then
+  # Reject an empty selection so a missing area's checks cannot report success.
+  if [[ ${#omitted[@]} -gt 0 ]]; then
+    printf 'scripts/validate: area %s selects only live commands and --no-live omitted every one\n' \
+      "$area" >&2
+  else
+    printf 'scripts/validate: area %s selects no commands — the manifest lost its rows\n' \
+      "$area" >&2
+  fi
+  exit 2
 fi
+
+if [[ $list_only -eq 1 ]]; then
+  printf '%s\n' "${selected[@]}"
+  exit 0
+fi
+
+failed=()
+skipped=()
+for i in "${!selected[@]}"; do
+  cmd="${selected[$i]}"
+  tags="${selected_tags[$i]}"
+  printf '\n== %s\n' "$cmd"
+  status=0
+  eval "$cmd" || status=$?
+  if [[ $status -eq 0 ]]; then
+    continue
+  fi
+  # Treat exit 77 as skip only when the row declares permission.
+  may_skip=0
+  for skipper in "${skip_tags[@]}"; do
+    [[ ",$tags," == *",$skipper,"* ]] && may_skip=1
+  done
+  if [[ $status -eq $SKIP_STATUS && $may_skip -eq 1 ]]; then
+    skipped+=("$cmd")
+    continue
+  fi
+  failed+=("$cmd")
+done
+
+printf '\n'
+plural=s
+if [[ ${#selected[@]} -eq 1 ]]; then
+  plural=
+fi
+skip_note=
 if [[ ${#skipped[@]} -gt 0 ]]; then
-  printf 'validate: status=not-measured skipped=%s\n' "$(IFS=';'; echo "${skipped[*]}")"
-  exit 77
+  skip_note=", ${#skipped[@]} skipped: $(
+    IFS=,
+    printf '%s' "${skipped[*]}"
+  )"
 fi
-echo "validate: ok"
+ran=$((${#selected[@]} - ${#skipped[@]}))
+# Name every omitted row so a --no-live run never reads as the full manifest.
+if [[ ${#omitted[@]} -gt 0 ]]; then
+  printf 'validate: %d live command%s omitted (--no-live): %s\n' \
+    "${#omitted[@]}" "$([[ ${#omitted[@]} -eq 1 ]] || printf s)" "$(
+      IFS=,
+      printf '%s' "${omitted[*]}"
+    )"
+fi
+
+if [[ ${#failed[@]} -eq 0 ]]; then
+  if [[ ${#skipped[@]} -eq 0 ]]; then
+    printf 'validate: ok (%s, %d command%s)\n' "$area" "${#selected[@]}" "$plural"
+    exit 0
+  fi
+  # Report executed and skipped counts separately and return 77 when any allowed check skipped.
+  printf 'validate: ok (%s, %d of %d command%s%s)\n' \
+    "$area" "$ran" "${#selected[@]}" "$plural" "$skip_note"
+  printf 'validate: exit 77 — passed, but %d command%s did not run\n' \
+    "${#skipped[@]}" "$([[ ${#skipped[@]} -eq 1 ]] || printf s)"
+  exit "$SKIP_STATUS"
+fi
+
+printf 'validate: FAIL (%s, %d of %d command%s failed%s)\n' \
+  "$area" "${#failed[@]}" "${#selected[@]}" "$plural" "$skip_note" >&2
+for cmd in "${failed[@]}"; do
+  printf '  - %s\n' "$cmd" >&2
+done
+exit 1

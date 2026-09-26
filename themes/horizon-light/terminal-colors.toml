@@ -1,0 +1,5 @@
+# Terminal body text and the bands under it differ from the editor background
+# and the syntax black; each takes a Horizon Bright text or surface tone.
+color0 = "#06060c"
+color7 = "#f9cbbe"
+color15 = "#fadad1"

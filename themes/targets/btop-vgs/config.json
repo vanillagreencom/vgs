@@ -1,0 +1,13 @@
+{
+  "app": "btop",
+  "template": "vgs.theme",
+  "destination": "~/.config/btop/themes/vgs.theme",
+  "curatedFile": "btop.theme",
+  "detect": {
+    "commands": [
+      "btop"
+    ]
+  },
+  "hook": "btop-config",
+  "reloadHook": "btop-reload"
+}

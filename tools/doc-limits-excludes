@@ -1,0 +1,14 @@
+# Exclusions use pattern<TAB>reason. Globs match full repository paths.
+backend/vendor/*	vendored Go modules for offline builds; documents follow upstream
+!backend/vendor/AGENTS.md	VGS-owned instructions for the vendored tree
+config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins; documents follow upstream
+!config/vshell/nvim/colorschemes/AGENTS.md	VGS-owned instructions for the vendored tree
+!config/vshell/nvim/colorschemes/ATTRIBUTION.md	VGS-owned upstream and licence references
+quickshell/vshell/assets/sounds/plasma/*	vendored upstream sound theme and documentation
+.agents/*	kendex render output, owned upstream
+!.agents/skills/vgs-distro-publish/*	VGS-owned in-place skill declared in kendex.toml
+!.agents/skills/vgs-release/*	VGS-owned in-place skill declared in kendex.toml
+!.agents/skills/vshell-dev/*	VGS-owned in-place skill declared in kendex.toml
+.claude/*	kendex render output, owned upstream
+.codex/*	kendex render output, owned upstream
+.pi/*	kendex render output, owned upstream

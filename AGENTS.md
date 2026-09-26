@@ -1,27 +1,42 @@
-# v2
+# VGS
 
-A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Everything outside the core is a plugin: one directory with a `manifest.json`, shown on the surfaces the core hosts, landed with the validation row that proves it is built and handed what it asked for. `docs/architecture/overview.md` holds the idea, the vocabulary and the invariants.
+VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell. The supported baseline is Quickshell 0.3.1, required as a minimum by every recipe this repository generates whose format has a version slot. Hyprland is the reference implementation; Niri support is additive. This checkout drives the live desktop session.
 
-## Commands
+The runtime and CLI are named `vshell`; `vgs` conflicts with the LVM command.
 
-- `scripts/validate [AREA]`: the validation manifest, one area per call. Exit 77 means a check could not run and is not a pass.
-- `scripts/qml-smoke.sh`: the nested sandbox row alone. It needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment.
-- `bin/vgsh`: the runner and plugin manager. Run it with no arguments for the command list.
+## Never launch a second shell into the live session
+
+Never run `qs -c vshell` or `qs -p quickshell/vshell`: a second instance can leave the desktop black by competing for session resources. `vshell run` locks `$XDG_RUNTIME_DIR/vshell.lock` before it starts Quickshell, through the runner or, without a backend, through `flock`, so a second `vshell run` exits with an error. `shell.qml` refuses to draw unless its parent process is the lock holder named in `VGS_RUNNER_PID`; only the sandbox in `scripts/qml-smoke.sh` sets `VSHELL_DISABLE_INSTANCE_GUARD=1`. Never run `pkill quickshell`: other Quickshell applications share the seat. Use `scripts/validate qml` for isolated runtime validation. Recovery from stranded lock surfaces is `vshell ipc call lock forceReset`.
+
+## Validation
+
+`scripts/validate [AREA]` owns the validation manifest: <!-- validate-areas -->areas `go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->. Run the area you change; QML work requires the local runtime checks.
+
+Exit `0` means all selected checks passed; `77` means some checks did not run and must be named; `1` means a check failed; `2` means an invalid invocation. Exit `77` is not a pass.
+
+`--no-live` omits the rows that address the running shell. Use it from any checkout that does not own the live session; the omitted rows run from the checkout that does.
 
 ## Conventions
 
-- Hyprland is the only compositor. No compositor abstraction and no second compositor: `docs/decisions/D001-hyprland-only.md`.
-- Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
-- A change that adds a surface, a service or a plugin adds its validation row to `scripts/qml-smoke.sh` in the same PR.
-- Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
+- Before writing or changing code, load the code-quality skill.
+- Releases use `.agents/skills/vgs-release/SKILL.md`.
+- The session handoff is `docs/handoff/HANDOFF.md`, untracked and overwritten in place. Read or write it only on request.
+- Portable defaults belong in VGS; `~/dotfiles` holds personal wiring and overlays.
+- Rollback means reinstalling another shell. VGS keeps no disabled rollback service.
+
+## Do not
+
+- Do not restart `vshell.service` unless asked.
+- Do not suspend the machine or destructively test network joins or device pairing and removal.
+- Do not depend on legacy upstream runtime services or external theme engines. Keep upstream names only for attribution and licence lineage.
 
 ## Read next
 
-- `docs/architecture/overview.md`: before structural work.
-- `docs/architecture/plugins.md`: before writing a plugin, a host or the manager.
-- `docs/architecture/configuration.md`: before touching the configuration files, their judge or the theme.
-- `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell and Hyprland fact the code rests on.
-- `shell/AGENTS.md`, `shell/plugins/AGENTS.md`, `scripts/AGENTS.md`: when working under that directory. Claude Code loads each through the `CLAUDE.md` shim beside it. Pi and Codex load only the root-to-cwd chain at launch, so an agent on those harnesses reads the nested file before working under the directory.
+- [docs/architecture/overview.md](docs/architecture/overview.md): subsystem boundaries and the topic index.
+- [docs/decisions/INDEX.md](docs/decisions/INDEX.md): before changing a recorded architecture choice.
+- The nested `AGENTS.md` beside the files you change: local conventions and subsystem pointers.
+- [Code Review Rules](#code-review-rules): generated policy for pull-request reviewers.
+- `kendex.settings.toml`: configured tool policy and its rationale. `AGENTS.local.md`, when present, holds machine-local wiring.
 
 ## Code Review Rules
 

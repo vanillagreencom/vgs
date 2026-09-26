@@ -1,0 +1,10 @@
+{
+  "name": "arc-blueberry",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-4.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.68, "floor": 3}
+  ]
+}

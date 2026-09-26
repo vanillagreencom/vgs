@@ -1,8 +1,6 @@
 # Runtime memory
 
-Covers: scripts/sample-shell-memory.sh, scripts/test-sample-shell-memory.sh, scripts/attribute-heap-profile.py, scripts/test-attribute-heap-profile.py
-
-Two tools address v2: `scripts/sample-shell-memory.sh` samples the shell that `bin/vgsh run` started, and `scripts/attribute-heap-profile.py` reads jemalloc heap dumps from any profiled Quickshell process. Every figure in this file was measured on the previous shell, on the same Quickshell 0.3.1 runtime, and none has been measured on v2. § Measured state came from the sampler's `/proc` rows and from per-thread fault and CPU counts read from `/proc`; § Heap profile came from jemalloc dumps of one profiled session, attributed by the heap-profile tool. The file paths under § Candidates are the previous shell's and this tree does not hold them.
+Covers: quickshell/vshell, scripts/sample-shell-memory.sh, scripts/attribute-heap-profile.py
 
 The shell's resident size grows for the life of a session. This file records where that memory sits, how to measure it, and what a measurement can and cannot attribute. `scripts/sample-shell-memory.sh` is the sampler; it reads `/proc` and never signals, restarts or drives the shell.
 
@@ -109,15 +107,15 @@ scripts/sample-shell-memory.sh --hours 26        # log a session
 scripts/sample-shell-memory.sh --report FILE     # print the baseline
 ```
 
-`--samples N` stops after N samples. `scripts/qml-smoke.sh` runs the sampler for two samples against the shell `vgsh run` started in the sandbox and checks both rows name that shell. The sampler asks `bin/vgsh pid` for the shell's pid, the one reader of the lock file `bin/vgsh run` writes while it holds the lock, and confirms that `qs list -p <checkout>/shell -j` lists that pid. A missing or empty lock file, a pid with no process, or a pid the instance list does not name under this checkout's shell is a keyed refusal, so a stale lock or a shell started from another checkout never produces a log. The default log is `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/memory-samples.tsv`.
+The sampler asks the instance registry `bin/vshell instances list` owns which process is the running shell, and refuses on any answer but exactly one. That listing is scoped to one shell entrypoint, so `--shell-path` addresses a shell launched from a different checkout than the one the sampler runs from.
 
 Every sample row carries the sampled process and its start time, so one session is told from the next that reuses its process id. Sampling refuses to append to a log whose last row names a different session, rather than extending someone else's series. `--report` reads only the newest session in a log and says how many rows and sessions it left out, and it refuses every mark and rate for a session whose uptime does not run forward.
 
 `--report` prints the process high-water mark beside the peak among logged samples, which is lower whenever sampling started after the peak. It prints one `mark=` line for each of 1 h, 8 h and 24 h of uptime and for the last sample. A mark the session never reached is `status=not-reached`. A mark it passed with no sample close enough to answer it is `status=no-sample-within`, so a mark is never filled from a sample hours away. It prints a `rate=window` line over the whole span the log covers, then one `rate=` line between each consecutive pair of marks that both exist. Every rate names the two uptimes it spans, and where a span is under 600 s the line carries `status=span-under-floor` instead of a rate. The window rate is what a log of a session the sampler joined late still reports, since such a log fills only the last mark and one mark forms no pair. Filling all three marks needs a session that starts while the sampler runs.
 
-## Attribution limits
+## What sampling cannot attribute
 
-`/proc` says which memory class grows. It does not say which C++ type allocated it. That needs jemalloc's heap profiler, which only runs in a shell started with profiling in its environment. On the live desktop that start is a restart, so no read-only method reaches it. `scripts/qml-smoke.sh` has no option to pass the shell an environment, so no sandbox run is profiled.
+`/proc` says which memory class grows. It does not say which C++ type allocated it. That needs jemalloc's heap profiler, which only runs in a shell started with profiling in its environment. On the live desktop that start is a restart, so no read-only method reaches it. An isolated shell starts with profiling through `scripts/qml-smoke.sh --shell-env MALLOC_CONF=<options> --driver PATH`: the sandbox shell runs until the driver exits or the `--timeout` limit ends, whichever comes first, so a long driver raises `--timeout`. The smoke deletes the sandbox directory before it returns.
 
 `scripts/attribute-heap-profile.py BASE HEAD` reads two dumps from one profiled session. It prints each thread's net growth and share, then breaks one thread's growth down by call stack and by the library that made the allocation. `--thread` selects the thread by name, `WaylandEventThr` by default. It symbolizes through `eu-addr2line` against the dump's own mappings, so the packages on disk must be the ones that ran. The installed libraries are stripped: set `DEBUGINFOD_URLS` so local functions resolve, or they take the name of the nearest exported symbol and the frame row carries `resolution=symbol-table-only`.
 
@@ -125,7 +123,7 @@ The profiler's own bookkeeping is anonymous memory, so resident size in a profil
 
 ## Candidates
 
-Each entry below is a place where the previous shell's code retained memory without a bound; the paths are relative to that shell's QML tree, which this tree does not hold. They stay here as the two shapes v2 plugins must not repeat: an unbounded cache keyed by other applications' data, and a holder object never destroyed. Every one ran on the main QML thread, which the fault counts above name as a page-fault site. The heap profile measured no net retained growth on that thread, and no entry is tied by measurement to a share of any rate.
+Each entry below is a place where VGS code retains memory without a bound. Every one runs on the main QML thread, which the fault counts above name as a page-fault site. The heap profile measured no net retained growth on that thread, and no entry is tied by measurement to a share of any rate. The paths are relative to `quickshell/vshell/`.
 
 The Wayland event threads' growth is allocated outside VGS code: the heap profile puts it in libwayland-client event closures that Qt's Wayland event thread reads and nothing dispatches. VGS ships no native code in the shell process, so the code that creates that queue is Quickshell, Qt or a library they load. The profile does not say which surface's events fill it. It grew before the lock as well as under it, so the lock screen is not required, but another VGS surface is not ruled out as the trigger.
 
@@ -134,4 +132,4 @@ The Wayland event threads' growth is allocated outside VGS code: the heap profil
 
 ## Decisions
 
-- The allocator choice belongs to the Quickshell package. The shell sets no allocator tuning.
+None. The allocator choice belongs to the Quickshell package, not to VGS.

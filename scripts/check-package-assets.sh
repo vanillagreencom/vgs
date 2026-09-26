@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+core="$tmp/core"
+
+python3 - "$root" <<'PY'
+import json
+import runpy
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+generator = runpy.run_path(str(root / "scripts/gen-package-metadata.py"))
+mapping = json.loads((root / "packaging/optional-packages.json").read_text())
+manifest = json.loads((root / "config/vshell/dependencies.json").read_text())
+required, _ = generator["required_packages"](mapping)
+collected = generator["collect"](manifest, mapping, required)
+library = mapping["libraries"]["pillow"]
+for distro in generator["DISTROS"]:
+    assert library[distro] in collected[distro], f"{distro}: ICC library omitted from optional packages"
+    assert library[distro] not in required[distro], f"{distro}: optional ICC library became required"
+PY
+
+DESTDIR="$core" VGS_BACKEND_BINARY=/bin/true "$root/packaging/install-system.sh"
+test -d "$core/usr/lib/vshell/themes/targets"
+# Every theme package installs its definitions and its preview, and no
+# wallpapers except the default theme's. scripts/gen-theme-catalog.py owns that
+# split, so the installed packages are compared with its listing both ways.
+"$root/scripts/gen-theme-catalog.py" --package-files | LC_ALL=C sort > "$tmp/package-files.want"
+# The listing is the reference, so a listing that lost the other themes or
+# kept their wallpapers would pass the comparison below with it.
+grep -qxF 'tokyo-night/theme.json' "$tmp/package-files.want"
+grep -q '^bauhaus/backgrounds/' "$tmp/package-files.want"
+if grep -q '^roseofdune/backgrounds/' "$tmp/package-files.want"; then
+  echo "scripts/gen-theme-catalog.py --package-files lists roseofdune's wallpapers, which only the default theme ships" >&2
+  exit 1
+fi
+find "$core/usr/lib/vshell/themes" -mindepth 2 -type f -printf '%P\n' \
+  | grep -v -e '^targets/' -e '^thumbnails/' | LC_ALL=C sort > "$tmp/package-files.have"
+if ! package_diff="$(diff "$tmp/package-files.want" "$tmp/package-files.have")"; then
+  echo "packaging/install-system.sh: the installed theme packages differ from scripts/gen-theme-catalog.py --package-files:" >&2
+  printf '%s\n' "$package_diff" >&2
+  exit 1
+fi
+# The retired vgs-shell-assets package was the only carrier of the vendored
+# icon themes, so the one remaining install has to ship them. Every distribution
+# channel installs through this script, so this covers each of them. The Icons
+# settings picker lists a set only when its index.theme installed beside it, so
+# the installed tree is compared with the repository's set by set.
+test -d "$core/usr/lib/vshell/config/vshell/icons"
+( cd "$root/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%P\n' ) \
+  | LC_ALL=C sort > "$tmp/icon-sets.want"
+( cd "$core/usr/lib/vshell/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%P\n' ) \
+  | LC_ALL=C sort > "$tmp/icon-sets.have"
+# The reference is the repository tree, so an empty listing would compare equal
+# to an install that shipped nothing.
+if ! grep -qxF 'Yaru-purple/index.theme' "$tmp/icon-sets.want"; then
+  echo "config/vshell/icons lists no Yaru-purple/index.theme, so the icon set comparison below has no reference" >&2
+  exit 1
+fi
+if ! icon_diff="$(diff "$tmp/icon-sets.want" "$tmp/icon-sets.have")"; then
+  echo "packaging/install-system.sh: the installed icon sets differ from config/vshell/icons:" >&2
+  printf '%s\n' "$icon_diff" >&2
+  exit 1
+fi
+test -x "$core/usr/lib/vshell/bin/vshell-backend"
+# bin/vshell-helper is a stub that imports the helper body from the module beside it.
+test -x "$core/usr/lib/vshell/bin/vshell-helper"
+test -f "$core/usr/lib/vshell/bin/vshell_helper.py"
+# A user cannot write the bytecode cache under the install tree, so the install
+# compiles it. It must be checked-hash, which survives a packager's reset file
+# times, and record the installed path, not DESTDIR.
+python3 - "$core" <<'PY'
+import importlib.util
+import marshal
+import sys
+from pathlib import Path
+
+installed = "/usr/lib/vshell/bin/vshell_helper.py"
+cache = Path(importlib.util.cache_from_source(sys.argv[1] + installed))
+if not cache.is_file():
+    raise SystemExit(f"helper-bytecode-missing {cache}\npackaging/install-system.sh did not compile the installed helper module")
+data = cache.read_bytes()
+flags = int.from_bytes(data[4:8], "little")
+if flags != 0b11:
+    raise SystemExit(f"helper-bytecode-not-checked-hash flags={flags}\na timestamp cache goes stale when a packager resets file times")
+recorded = marshal.loads(data[16:]).co_filename
+if recorded != installed:
+    raise SystemExit(f"helper-bytecode-path {recorded}\nthe cache records a build path instead of the installed module")
+# Fedora's shebang mangling and Nix's patchShebangs rewrite executable files after
+# the install, which would change a module's bytes under its checked-hash cache.
+for module in sorted((Path(sys.argv[1]) / "usr/lib/vshell/bin").glob("*.py")):
+    if module.stat().st_mode & 0o111:
+        raise SystemExit(f"bin-module-executable {module}\nan installed module must not be executable")
+    if module.read_bytes().startswith(b"#!"):
+        raise SystemExit(f"bin-module-shebang {module}\nan installed module must carry no shebang")
+PY
+# The screensaver needs packaged art because it cannot regenerate data into /usr.
+test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
+# Installs need a thumbnail for every catalogued theme, for the surfaces that
+# paint a small tile.
+test -s "$core/usr/lib/vshell/themes/catalog.json"
+test -s "$core/usr/lib/vshell/themes/thumbnails/tokyo-night.jpg"
+test -s "$core/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
+
+# The installer's refusal to run under the retired variable is what keeps a
+# stale recipe from silently installing a different tree. It enumerates nothing
+# and every channel passes through it, so it is the whole retirement gate.
+bundle_status=0
+DESTDIR="$tmp/retired" VGS_THEME_BUNDLE=extras VGS_BACKEND_BINARY=/bin/true \
+  "$root/packaging/install-system.sh" >/dev/null 2>"$tmp/retired.err" || bundle_status=$?
+if [[ "$bundle_status" -eq 0 ]]; then
+  echo "packaging/install-system.sh accepted VGS_THEME_BUNDLE, so a recipe still passing it installs a tree nobody checks" >&2
+  exit 1
+fi
+grep -q 'VGS_THEME_BUNDLE is retired' "$tmp/retired.err"
+
+# Fedora's %files must enumerate what the install writes. rpmbuild fails on an
+# unpackaged file, so a file the install adds and the list does not name breaks
+# the Fedora build outright.
+spec="$root/packaging/fedora/vgs-shell.spec"
+unclaimed=0
+while IFS= read -r -d '' installed; do
+  name="$(basename -- "$installed")"
+  if ! grep -qxF "/usr/lib/vshell/themes/$name" "$spec"; then
+    echo "packaging/fedora/vgs-shell.spec: the install writes themes/$name but %files does not name it" >&2
+    unclaimed=1
+  fi
+done < <(find "$core/usr/lib/vshell/themes" -mindepth 1 -maxdepth 1 -type f -print0)
+test "$unclaimed" -eq 0
+
+# The single install writes /usr/lib/vshell/config/vshell/icons, the tree the
+# retired vgs-shell-assets owned. A channel that ships those paths without
+# declaring the obsolescence aborts an upgrade on conflicting files for anyone
+# still holding the old package. Each row is one recipe, the field its channel
+# spells the relation in, the package it names, and the pattern that finds it.
+# The package has its own column so a row and its message cannot disagree, and
+# a second retired package costs one row per channel rather than a new regex.
+# Arch needs both fields, because pacman honours replaces only for repository
+# packages and an AUR install goes through conflicts. vgs-shell-assets-git
+# needs no row: it declared provides=('vgs-shell-assets'), which is what pacman
+# matches conflicts through.
+unowned=0
+while IFS='|' read -r recipe field package pattern; do
+  if ! declared="$(grep -E "$pattern" "$root/$recipe")"; then
+    echo "$recipe: nothing declares the retirement of $package in $field, so an upgrade over it aborts on /usr/lib/vshell/config/vshell/icons" >&2
+    unowned=1
+    continue
+  fi
+  # A renamed or mistyped package must not satisfy the row, so each pattern
+  # needs a right-hand boundary. The near miss is the recipe's own line.
+  if grep -qE "$pattern" <<<"${declared//"$package"/"$package-old"}"; then
+    echo "$recipe: the $field pattern also matches $package-old, so a mistyped package would pass" >&2
+    unowned=1
+  fi
+done <<'RECIPES'
+packaging/arch/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
+packaging/debian/control|Replaces|vgs-shell-assets|^Replaces:(.*[[:space:],])?vgs-shell-assets([[:space:],(]|$)
+packaging/debian/control|Breaks|vgs-shell-assets|^Breaks:(.*[[:space:],])?vgs-shell-assets([[:space:],(]|$)
+packaging/fedora/vgs-shell.spec|Obsoletes|vgs-shell-assets|^Obsoletes:[[:space:]]+vgs-shell-assets([[:space:]<>=]|$)
+packaging/void/template|replaces|vgs-shell-assets|^replaces="(.*[[:space:]])?vgs-shell-assets([<>=[:space:]]|")
+RECIPES
+test "$unowned" -eq 0
+
+# Every theme ships its full-size preview within the repository's size budget.
+"$root/scripts/capture-theme-previews.py" --check
+
+# The catalog must describe the tree and pin one imagery archive per theme.
+"$root/scripts/gen-theme-catalog.py" --check
+
+echo "package asset checks passed"

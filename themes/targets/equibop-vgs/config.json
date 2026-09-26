@@ -1,0 +1,14 @@
+{
+  "app": "equibop",
+  "template": "vgs-discord.css",
+  "destination": "~/.config/equibop/themes/vgs-discord.css",
+  "curatedFile": "discord.css",
+  "detect": {
+    "commands": [
+      "equibop"
+    ],
+    "paths": [
+      "~/.config/equibop"
+    ]
+  }
+}
