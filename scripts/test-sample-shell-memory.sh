@@ -293,7 +293,7 @@ extract_functions() {
 }
 
 drive_sample_row() {
-  local script="$1"
+  local script="$1" session_mode="${2:-same}"
   local victim rc=0
   sleep 120 &
   victim=$!
@@ -317,6 +317,7 @@ drive_sample_row() {
     CLK_TCK="$(getconf CLK_TCK)"
     mapfile -t f < <(stat_fields "$PID")
     SESSION="${f[19]}"
+    [[ "$session_mode" == same ]] || SESSION=$((SESSION + 1))
     export PID SESSION CLK_TCK
     sample_row
   )" || rc=$?
@@ -339,6 +340,12 @@ else
   [[ "$row_fields" == "$head_count" ]] ||
     fail "$label" "row carries $row_fields fields, the header names $head_count"
 fi
+ok "$label"
+
+label="a reused pid cannot publish a sample under the original session"
+rc=0
+drive_sample_row "$sampler" changed || rc=$?
+[[ "$rc" == 1 && -z "$row" ]] || fail "$label" "expected no row and exit 1, got exit $rc and $row"
 ok "$label"
 
 echo "=== argument refusals ==="

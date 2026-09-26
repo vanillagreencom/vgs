@@ -49,6 +49,7 @@ while [ "$#" -gt 0 ]; do
     -*) shift ;;
     *) a=$(printf '0x%016x' "$1")
        if [ "$1" = "$STUB_DROP" ]; then :
+       elif [ "$1" = "$STUB_MALFORMED" ]; then printf '%s\\n' "$a"
        elif [ "$1" = "$STUB_PLAIN" ]; then printf '%s\\nplain_%s\\nplain.cpp:3\\n' "$a" "$1"
        elif [ "$1" = "$STUB_UNRESOLVED" ]; then printf '%s\\nexported_%s\\n??:0\\n' "$a" "$1"
        else printf '%s\\ninner_%s inlined at a.cpp:1 in outer\\ninner.h:2\\nouter_%s\\na.cpp:1\\n' "$a" "$1" "$1"
@@ -81,8 +82,8 @@ def dump(path: Path, blocks: list[tuple[str, dict[int, tuple[int, int]]]], heade
     return path
 
 
-def run(tmp: Path, *args: str, drop: str = "", plain: str = "", unresolved: str = "") -> tuple[int, list[str], str]:
-    env = {"PATH": f"{tmp / 'bin'}:/usr/bin:/bin", "STUB_DROP": drop, "STUB_PLAIN": plain, "STUB_UNRESOLVED": unresolved, "LC_ALL": "C.UTF-8"}
+def run(tmp: Path, *args: str, drop: str = "", plain: str = "", unresolved: str = "", malformed: str = "") -> tuple[int, list[str], str]:
+    env = {"PATH": f"{tmp / 'bin'}:/usr/bin:/bin", "STUB_DROP": drop, "STUB_MALFORMED": malformed, "STUB_PLAIN": plain, "STUB_UNRESOLVED": unresolved, "LC_ALL": "C.UTF-8"}
     result = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=env, check=False)
     return result.returncode, result.stdout.splitlines(), result.stderr
 
@@ -161,6 +162,20 @@ def main() -> int:
         code, _, err = run(tmp, str(base), str(head), "--top", "1", drop=f"{0x7F0000200020 - 1:#x}")
         if code != 1 or not err.startswith("attribute-heap-profile: symbolizer-failed=answered=1/2\n"):
             fail("symbolizer-incomplete", f"exit {code}: {err!r}")
+
+        code, lines, err = run(tmp, str(base), str(head), "--top", "1", malformed=f"{0x7F0000200020 - 1:#x}")
+        if code != 1 or not err.startswith("attribute-heap-profile: symbolizer-failed=malformed-frame=") or lines:
+            fail("symbolizer-malformed", f"exit {code}: {err!r}")
+
+        for label, content in (("zero-period", "heap_v2/0"), ("bad-period", "heap_v2/nope"), ("bad-stack", "@ nope"), ("zero-bytes", "  t1: 1: 0 [0: 0]")):
+            bad = tmp / "p.100.7.i7.heap"
+            text = head.read_text()
+            old = text.splitlines()[0] if "period" in label else (WAYLAND if label == "bad-stack" else "  t1: 6: 24576 [0: 0]")
+            assert text.count(old) == 1
+            bad.write_text(text.replace(old, content))
+            code, lines, err = run(tmp, str(base), str(bad), "--no-symbols")
+            if code != 1 or not err.startswith(f"attribute-heap-profile: malformed-dump={bad}:") or lines:
+                fail(label, f"exit {code}: {err!r}")
 
         refusals = [
             ("pid-mismatch", [str(base), str(dump(tmp / "p.200.1.i1.heap", []))], "pid-mismatch=100,200"),

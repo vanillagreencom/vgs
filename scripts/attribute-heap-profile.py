@@ -92,9 +92,10 @@ def parse_dump(path: Path) -> Dump:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as error:
         raise Refusal("unreadable-dump", path, str(error)) from error
-    if not lines or not lines[0].startswith("heap_v2/"):
+    header = re.fullmatch(r"heap_v2/([1-9][0-9]*)", lines[0]) if lines else None
+    if header is None:
         raise Refusal("malformed-dump", f"{path}:1", "The first line must be heap_v2/<sample period>.")
-    dump = Dump(path, int(match.group(1)), int(lines[0].split("/", 1)[1]))
+    dump = Dump(path, int(match.group(1)), int(header.group(1)))
     stack: tuple[int, ...] | None = None
     in_maps = False
     for number, line in enumerate(lines[1:], start=2):
@@ -107,10 +108,14 @@ def parse_dump(path: Path) -> Dump:
         if line == "MAPPED_LIBRARIES:":
             in_maps = True
         elif line.startswith("@ "):
+            if re.fullmatch(r"@ 0x[0-9a-fA-F]+(?: 0x[0-9a-fA-F]+)*", line) is None:
+                raise Refusal("malformed-dump", f"{path}:{number}", "A stack must hold hexadecimal addresses.")
             stack = tuple(int(token, 16) for token in line[2:].split())
             dump.stacks[stack] = {}
         elif counts := COUNTS.match(line):
             uid, objects, size, name = counts.groups()
+            if int(objects) > 0 and int(size) == 0:
+                raise Refusal("malformed-dump", f"{path}:{number}", "Sampled objects must have a positive byte count.")
             if stack is None:
                 if uid != "*":
                     dump.names[uid] = name or ""
@@ -164,6 +169,9 @@ def symbolize(dump: Dump, addresses: list[int]) -> dict[int, list[tuple[str, str
         # eu-addr2line also exits non-zero when an address is merely unresolved, so
         # completeness of the answer, not the status, is the failure test.
         raise Refusal("symbolizer-failed", f"answered={len(frames)}/{len(addresses)}", result.stderr.strip())
+    for address, lines in frames.items():
+        if len(lines) < 2 or len(lines) % 2 != 0 or any(not line for line in lines):
+            raise Refusal("symbolizer-failed", f"malformed-frame=0x{address:x}", "Expected function and location pairs for every address.")
     return {address: list(zip(lines[0::2], lines[1::2])) for address, lines in frames.items()}
 
 

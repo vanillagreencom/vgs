@@ -378,6 +378,7 @@ sample_row() {
   local -a f=()
   mapfile -t f < <(stat_fields "$PID")
   [[ ${#f[@]} -ge 20 ]] || return 1
+  [[ "${f[19]}" == "$SESSION" ]] || return 1
   cpu_ticks=$((f[11] + f[12]))
   # Uptime from the same start time the identity column carries, so the two
   # cannot disagree. /proc/uptime is the system clock this is measured against.
@@ -422,6 +423,8 @@ sample_row() {
   floor="$maps_before"
   [[ "$maps_after" -lt "$floor" ]] && floor="$maps_after"
   [[ "$counted" -ge "$floor" ]] || return 1
+  mapfile -t f < <(stat_fields "$PID")
+  [[ ${#f[@]} -ge 20 && "${f[19]}" == "$SESSION" ]] || return 1
   printf '%s\n' "${row#*$'\t'}"
 }
 
@@ -464,7 +467,7 @@ if [[ "$stopped" == 1 ]]; then
     printf 'sample-shell-memory: pid-exited=%s\n' "$PID" >&2
   else
     printf 'sample-shell-memory: row-rejected=%s\n' "$PID" >&2
-    printf '  A sample could not be read whole while the process is still running; the log ends before it.\n' >&2
+    printf '  A sample could not be read whole for the original process; the log ends before it.\n' >&2
   fi
 fi
 report_baseline "$LOG"
