@@ -6,7 +6,10 @@ name: CI
 # has none of and runs locally. A step that runs a script the tree does not
 # hold is a defect. Every check that compares against a base takes the
 # change's own base: the pull request's base branch, the merge group's base
-# commit, or the ref a push moved from; never a fixed branch name.
+# commit, or the ref a push moved from; never a fixed branch name. The
+# commit guards' py-names lane needs ruff, which the runner lacks, so a step
+# installs a pinned ruff and checks its version: a ruff release cannot
+# change a verdict unreviewed.
 
 on:
   pull_request:
@@ -62,6 +65,12 @@ jobs:
             exit 1
           fi
           echo "VGS_VALIDATE_BASE=$base" >>"$GITHUB_ENV"
+
+      - name: ruff for the commit guards' py-names lane
+        run: |
+          set -euo pipefail
+          pipx install --force ruff==0.16.2
+          test "$(ruff --version)" = "ruff 0.16.2"
 
       - name: Commit guards
         run: .agents/skills/commit-guards/scripts/commit-guards all --base "$VGS_VALIDATE_BASE"
