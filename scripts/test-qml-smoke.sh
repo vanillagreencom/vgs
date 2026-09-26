@@ -1,0 +1,821 @@
+#!/usr/bin/env bash
+# Exercise the extracted smoke helpers without starting a nested compositor. CASES at the
+# end is the list of what the suite covers.
+# The notice helper writes advice and nothing else, so its wording is the only channel
+# a caller can read; the other cases assert what their helper returns or sends.
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+smoke="$repo_root/scripts/qml-smoke.sh"
+# The PATH this suite started with; some cases narrow PATH inside their subshells.
+host_path="$PATH"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT INT TERM
+
+failures=0
+case_failed=0
+fail() {
+  printf 'FAIL [%s]: %s\n' "$1" "$2" >&2
+  failures=$((failures + 1))
+  case_failed=1
+}
+ok() {
+  if [[ $case_failed -eq 0 ]]; then
+    printf '  ok    %s\n' "$1"
+  fi
+  case_failed=0
+}
+
+# Cut one shipped helper out of the smoke script into $tmp/<name>.sh. A helper that no
+# longer has this shape is a broken fixture, not a failed case: stop rather than test nothing.
+slice() {
+  local name="$1" dst="$tmp/$1.sh"
+  awk -v open="$name() {" '$0 == open {f = 1} f {print} f && $0 == "}" {exit}' "$smoke" >"$dst"
+  if ! grep -qF "$name() {" "$dst" || ! grep -q '^}$' "$dst"; then
+    printf 'test-qml-smoke: could not slice %s out of %s\n' "$name" "$smoke" >&2
+    exit 1
+  fi
+}
+slice nested_unavailable
+slice sandbox_layer_state
+slice assert_popout_geometry
+slice window_border_is_inset
+slice sandbox_ipc
+slice keep_host_rendering
+slice wait_surface_focused
+slice send_escape
+slice cleanup
+slice shell_env_collisions
+slice driver_check
+
+# Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
+# that no longer has this shape is a broken fixture, not a failed case.
+slice_line() {
+  local name="$1" dst="$tmp/$1.sh"
+  grep -m1 -E "^$name\(\) \{.*\}\$" "$smoke" >"$dst" && [[ -s "$dst" ]] && return 0
+  printf 'test-qml-smoke: could not slice %s out of %s\n' "$name" "$smoke" >&2
+  exit 1
+}
+slice_line fail
+slice_line unmeasured
+
+# Run the extracted notice helper with its script variables. A dash requests an unset display.
+drive() {
+  local wayland="$1"
+  shift
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/nested_unavailable.sh"
+    # These variables are consumed by the sourced helper.
+    # shellcheck disable=SC2034  # read by the sliced nested_unavailable
+    require_nested=false
+    # shellcheck disable=SC2034  # written by the sliced function's fail()
+    status=0
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    note() { printf 'qml-smoke: %s\n' "$*"; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; }
+    if [[ "$wayland" == - ]]; then
+      unset WAYLAND_DISPLAY
+    else
+      export WAYLAND_DISPLAY="$wayland"
+    fi
+    nested_unavailable "$@"
+  ) 2>&1
+}
+
+REMEDY="point the sandbox at the session's own socket"
+SOCKET_REASON="no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)"
+
+# Remedy text must follow the failed prerequisite: an unset display does not explain a
+# missing binary, and a display that is already set needs no socket advice.
+REMEDIES="-;Hyprland not installed;;absent
+-;$SOCKET_REASON;no-host-socket;present
+wayland-1;$SOCKET_REASON;no-host-socket;absent"
+
+case_remedies() {
+  local wayland reason cause verdict rows=0
+  while IFS=';' read -r wayland reason cause verdict; do
+    [[ -n "$wayland" ]] || continue
+    rows=$((rows + 1))
+    if [[ -n "$cause" ]]; then
+      out="$(drive "$wayland" "$reason" "$cause")"
+    else
+      out="$(drive "$wayland" "$reason")"
+    fi
+    case "$verdict" in
+      present)
+        [[ "$out" == *"$REMEDY"* ]] || fail "remedies" "no socket remedy for $reason (display $wayland):
+$out"
+        # Wiring evidence for the row that names a cause: a remedy no shipped call site
+        # ever requests reaches nobody.
+        grep -qE "nested_unavailable \"[^\"]*\" +$cause" "$smoke" ||
+          fail "remedies" "no call site passes $cause to nested_unavailable, so the gate is dead"
+        ;;
+      absent)
+        [[ "$out" != *"$REMEDY"* ]] || fail "remedies" "socket remedy printed for $reason (display $wayland):
+$out"
+        ;;
+      *) fail "remedies" "unknown verdict column: $verdict" ;;
+    esac
+  done <<<"$REMEDIES"
+  [[ $rows -eq 3 ]] || fail "remedies" "expected 3 table rows, drove $rows"
+  ok "the socket remedy follows the host-socket cause and no other"
+}
+
+case_unconditional_options() {
+  # Retain the unconditional advice, so suppressing all output cannot satisfy the remedy table.
+  local needed reason rows=0
+  while IFS= read -r needed; do
+    [[ -n "$needed" ]] || continue
+    rows=$((rows + 1))
+    for reason in "Hyprland not installed" "nested compositor did not come up"; do
+      [[ "$(drive - "$reason")" == *"$needed"* ]] ||
+        fail "unconditional options" "missing '$needed' for reason: $reason"
+    done
+  done <<'FRAGMENTS'
+install a nested compositor
+spare TTY/VM session
+vshell logs -n 200
+never run 'qs -c vshell'
+FRAGMENTS
+  [[ $rows -eq 4 ]] || fail "unconditional options" "expected 4 table rows, drove $rows"
+  ok "the three unconditional options and the prohibition print for every reason"
+}
+
+# Print status before helper stdout so a row can distinguish absence from failed measurement.
+layer_state() {
+  local layers="$1" mons="$2" ns="$3"
+  (
+    set +e
+    export LAYERS_FIXTURE="$layers" MONITORS_FIXTURE="$mons"
+    # shellcheck source=/dev/null
+    . "$tmp/sandbox_layer_state.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_layers() { printf '%s' "$LAYERS_FIXTURE"; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_monitors() { printf '%s' "$MONITORS_FIXTURE"; }
+    out="$(sandbox_layer_state "$ns" 2>/dev/null)"
+    printf '%s\n%s\n' "$?" "$out"
+  )
+}
+
+NS="vshell:plugins:aiUsage"
+mon() { printf '{"levels":{"2":[%s]}}' "$1"; }
+
+BAR='{"namespace":"vshell:bar","w":1756,"h":40}'
+POPOUT='{"namespace":"'"$NS"'","w":444,"h":933}'
+SHORT='{"namespace":"'"$NS"'","w":444,"h":40}'
+FULL='{"namespace":"'"$NS"'","w":1756,"h":933}'
+TALL='{"namespace":"'"$NS"'","w":444,"h":2560}'
+BIG='{"namespace":"'"$NS"'","w":444,"h":1692}'
+
+declare -A LAYERS=(
+  [popout]="{\"MON1\":$(mon "$POPOUT")}"
+  [bar]="{\"MON1\":$(mon "$BAR")}"
+  [bar+popout]="{\"MON1\":$(mon "$BAR,$POPOUT")}"
+  [bar+short]="{\"MON1\":$(mon "$BAR,$SHORT")}"
+  [bar+full]="{\"MON1\":$(mon "$BAR,$FULL")}"
+  [tall]="{\"MON1\":$(mon "$TALL")}"
+  [big]="{\"MON1\":$(mon "$BIG")}"
+  [two-outputs]="{\"MON1\":$(mon "$BAR,$POPOUT"),\"MON2\":$(mon "$BAR,$POPOUT")}"
+)
+
+# A NaN scale can pass float parsing and later fail integer conversion; unusable metadata
+# must stay "cannot measure" (status 3) rather than "not there" (status 1).
+declare -A MONS=(
+  [one]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0}]'
+  [two]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0},{"name":"MON2","width":1756,"height":933,"scale":1,"transform":0}]'
+  [none]='[]'
+  [rotated]='[{"name":"MON1","width":5120,"height":2880,"scale":2,"transform":1}]'
+  [scaled]='[{"name":"MON1","width":6016,"height":3384,"scale":2,"transform":0}]'
+  [zero-scale]='[{"name":"MON1","width":1756,"height":933,"scale":0,"transform":0}]'
+  [nan-scale]='[{"name":"MON1","width":1756,"height":933,"scale":"NaN","transform":0}]'
+  [inf-scale]='[{"name":"MON1","width":1756,"height":933,"scale":"Infinity","transform":0}]'
+  [bad-transform]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]'
+  [word-transform]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]'
+  [not-dicts]='["not-a-dict"]'
+  [not-a-list]='{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}'
+  [name-list]='[{"name":["MON1"],"width":1756,"height":933,"scale":1,"transform":0}]'
+  [name-dict]='[{"name":{"a":1},"width":1756,"height":933,"scale":1,"transform":0}]'
+  [name-number]='[{"name":7,"width":1756,"height":933,"scale":1,"transform":0}]'
+)
+
+# label; layers fixture; monitors fixture; expected status; expected geometry or -.
+# Output size must come from the monitor mode and scale, never from another layer that can
+# be smaller than the output; a status the caller reads as absence must mean absence.
+LAYER_STATES='a surface alone on its output;popout;one;0;444x933 1756x933
+a bar-only neighbour does not shrink the output;bar+popout;one;0;444x933 1756x933
+a bar-height popout is measured against the output;bar+short;one;0;444x40 1756x933
+a quarter turn swaps the logical axes;tall;rotated;0;444x2560 1440x2560
+a scaled output is divided by its scale;big;scaled;0;444x1692 3008x1692
+a popout as large as its output is degenerate;bar+full;one;2;1756x933 1756x933
+an unmapped namespace is absent;bar;one;1;-
+an unreported output cannot be measured;bar+popout;none;3;-
+a zero scale does not convert;bar+popout;zero-scale;3;-
+a popout mapped on two outputs breaks the one-record contract;two-outputs;two;3;-
+a NaN scale does not convert;bar+popout;nan-scale;3;-
+an infinite scale does not convert;bar+popout;inf-scale;3;-
+an unknown transform does not convert;bar+popout;bad-transform;3;-
+a word where a transform belongs;bar+popout;word-transform;3;-
+a list of non-objects;bar+popout;not-dicts;3;-
+an object where a list belongs;bar+popout;not-a-list;3;-
+a list-valued output name;bar+popout;name-list;3;-
+an object-valued output name;bar+popout;name-dict;3;-
+a number-valued output name;bar+popout;name-number;3;-'
+
+case_layer_states() {
+  local label layers_key mons_key want_status want_geometry state status body rows=0
+  while IFS=';' read -r label layers_key mons_key want_status want_geometry; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    if [[ -z "${LAYERS[$layers_key]+set}" || -z "${MONS[$mons_key]+set}" ]]; then
+      fail "layer states" "$label: no fixture named $layers_key or $mons_key"
+      continue
+    fi
+    state="$(layer_state "${LAYERS[$layers_key]}" "${MONS[$mons_key]}" "$NS")"
+    status="$(head -n1 <<<"$state")"
+    body="$(tail -n +2 <<<"$state")"
+    if [[ "$status" != "$want_status" ]]; then
+      fail "layer states" "$label: expected status $want_status, got $status:
+$state"
+    elif [[ "$body" != "${want_geometry/#-/}" ]]; then
+      # Exact: the emitter promises one geometry line on success and nothing on a
+      # refusal or an absence, so a fallback such as 0x0 has nowhere to hide.
+      fail "layer states" "$label: expected body '${want_geometry/#-/}', got:
+$state"
+    fi
+  done <<<"$LAYER_STATES"
+  [[ $rows -eq 19 ]] || fail "layer states" "expected 19 table rows, drove $rows"
+  ok "each layer and monitor payload measures, refuses or reports absence as declared"
+}
+
+geom() {
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/assert_popout_geometry.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    fail() { printf 'FAILMSG: %s\n' "$*"; }
+    assert_popout_geometry "$1" aiUsage
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; reply, with \n for the line break; expected status.
+GEOMETRY='a valid single line;444x933 1756x933;0
+a popout shorter than its output;444x206 1756x933;1
+an empty reply;;1
+a whitespace-only reply;   ;1
+a single field cannot compare equal to itself;444x933;1
+a multi-line reply breaks the emitter contract;444x933 1756x933\n444x933 1756x933;1'
+
+case_geometry_replies() {
+  local label reply want_rc rows=0
+  while IFS=';' read -r label reply want_rc; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(geom "$(printf '%b' "$reply")")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "geometry replies" "$label: expected rc=$want_rc, got: $out"
+  done <<<"$GEOMETRY"
+  [[ $rows -eq 6 ]] || fail "geometry replies" "expected 6 table rows, drove $rows"
+  ok "only a well-formed reply that measures full height passes"
+}
+
+edge_samples() {
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/window_border_is_inset.sh"
+    window_border_is_inset "$1" "$2" "$3" "$4" "$5"
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; edge; border; interior; near; far; expected status. Samples run from the window edge
+# inward; near is the pixel just past the edge, where a compositor border lands, and far is
+# that pixel again once the compositor has recoloured the border. Status 0 is a compositor
+# border, 1 a client border on the outermost pixel, 2 no border at all and 3 an inset client
+# border.
+EDGES='an inset client border is the client arm, not the compositor one;1c1c28;fab387;1c1c28;0000ff;0000ff;3
+a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;0000ff;1
+a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0000ff;3
+no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;1c1c28;2
+a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;00ff00;2
+a pixel past the edge that keeps its colour is not a border;1c1c28;1c1c28;1c1c28;00ff00;00ff00;2
+a pixel past the edge that follows the border colour passes;1c1c28;1c1c28;1c1c28;fab387;00ff00;0
+a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;fab387;00ff00;2
+no outside samples keep the client-border contract;1c1c28;1c1c28;1c1c28;;;2
+a near sample with no recoloured reading cannot stand in for a border;1c1c28;1c1c28;1c1c28;fab387;;2'
+
+case_window_border_samples() {
+  local label edge border interior near far want_rc out rows=0
+  while IFS=';' read -r label edge border interior near far want_rc; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(edge_samples "$edge" "$border" "$interior" "$near" "$far")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "window border samples" "$label: expected rc=$want_rc, got: $out"
+  done <<<"$EDGES"
+  [[ $rows -eq 10 ]] || fail "window border samples" "expected 10 table rows, drove $rows"
+  ok "only a pixel past the edge that differs from the edge and follows the border colour passes"
+}
+
+# Drive keep_host_rendering against a stub live-session hyprctl that logs every call: its
+# window list is listed, absent or failing, and an empty signature is not Hyprland.
+host_render() {
+  local signature="$1" clients="$2" reply="$3" stub="$tmp/hostbin"
+  mkdir -p "$stub"
+  cat >"$stub/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$HOST_LOG"
+case "$1:$HOST_CLIENTS" in
+  clients:listed) printf '[{"pid": 4242, "class": "aquamarine"}]\n' ;;
+  clients:absent) printf '[]\n' ;;
+  clients:failing) printf "Couldn't connect to /run/user/1000/hypr/stale/.socket.sock. (4)\n"; exit 4 ;;
+  dispatch:*) printf '%s' "$HOST_REPLY" ;;
+  *) exit 2 ;;
+esac
+EOF
+  chmod +x "$stub/hyprctl"
+  : >"$tmp/host.log"
+  (
+    set +e
+    # shellcheck source=scripts/lib/session-snapshot.sh
+    . "$repo_root/scripts/lib/session-snapshot.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/keep_host_rendering.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    note() { printf 'NOTE: %s\n' "$*"; }
+    # Bash exports a function call's prefix assignments to what the function runs.
+    PATH="$stub:$PATH" HYPRLAND_INSTANCE_SIGNATURE="$signature" HOST_LOG="$tmp/host.log" \
+      HOST_CLIENTS="$clients" HOST_REPLY="$reply" keep_host_rendering 4242
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+HOST_PROP='hl.dsp.window.set_prop({ prop = "render_unfocused", value = "1", window = "pid:4242" })'
+HOST_TAG='hl.dsp.window.tag({ tag = "vshell-smoke", window = "pid:4242" })'
+
+# label; signature; window list; dispatch reply; expected status; calls in order joined by |,
+# or "polled" for repeated window queries only; a value the notice must carry, or - for none.
+HOST_RENDERS="an accepted prop is followed by the tag that enrols it;stub;listed;ok;0;clients -j|dispatch $HOST_PROP|dispatch $HOST_TAG;-
+a refused prop stops the requests and is reported;stub;listed;error: no such prop;1;clients -j|dispatch $HOST_PROP;'error: no such prop'
+a failed window query stops at once with hyprctl's reply;stub;failing;ok;1;clients -j;(exit 4): Couldn't connect to /run/user/1000/hypr/stale/.socket.sock. (4)
+a live session that is not Hyprland is never queried;;listed;ok;1;;HYPRLAND_INSTANCE_SIGNATURE
+a window that never lists is reported absent;stub;absent;ok;1;polled;pid 4242"
+
+case_host_render_requests() {
+  local label signature clients reply want_rc want_calls want_note out calls rows=0
+  while IFS=';' read -r label signature clients reply want_rc want_calls want_note; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(host_render "$signature" "$clients" "$reply")"
+    calls="$(paste -sd '|' "$tmp/host.log")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "host render requests" "$label: expected rc=$want_rc, got: $out"
+    if [[ "$want_calls" == polled ]]; then
+      [[ "$calls" == "clients -j|clients -j"* && "$calls" != *dispatch* ]] ||
+        fail "host render requests" "$label: expected repeated window queries and no dispatch, got '$calls'"
+    else
+      [[ "$calls" == "$want_calls" ]] ||
+        fail "host render requests" "$label: expected calls '$want_calls', got '$calls'"
+    fi
+    if [[ "$want_note" == - ]]; then
+      [[ "$out" != *"NOTE: "* ]] || fail "host render requests" "$label: expected no notice, got: $out"
+    else
+      [[ "$out" == *"NOTE: "*"$want_note"* ]] ||
+        fail "host render requests" "$label: the notice must carry '$want_note', got: $out"
+    fi
+  done <<<"$HOST_RENDERS"
+  [[ $rows -eq 5 ]] || fail "host render requests" "expected 5 table rows, drove $rows"
+  ok "the sandbox's own window gets render_unfocused, then the tag that enrols it; a refusal names its cause"
+}
+
+# The run's verdict lives in a global 'status'. A check with its own local 'status' must not
+# be able to swallow a FAIL: the shipped fail() has to reach the global from inside one.
+case_fail_pierces_local_status() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    status=0
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    shadowing_check() { local status=0; fail "boom"; }
+    shadowing_check
+    printf 'status=%s\n' "$status"
+  )"
+  [[ "$out" == *'status=1'* ]] ||
+    fail "fail pierces a local status" "expected the global status to reach 1, got: $out"
+  ok "a check's own local status cannot swallow the run's FAIL verdict"
+}
+
+# A check that could not obtain its evidence belongs in its own channel: it must not set the
+# run's FAIL verdict, and a check declaring a local of the record's name must not swallow it.
+# Those two together are what keeps `exit 77 — did not run` distinct from both a green run
+# and a red one, so an unobtainable frame never reads as a verdict about the border.
+case_unmeasured_is_its_own_channel() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    # Plain assignment, not `declare`: a command substitution runs inside the calling
+    # function's scope, so `declare` here would make a second variable the helper's
+    # `declare -g` never reaches, and the case would fail on its own fixture.
+    status=0
+    not_measured=()
+    # shellcheck source=/dev/null
+    . "$tmp/unmeasured.sh"
+    # Unquoted, so the record has to be the whole cause the helper printed rather than its
+    # first word: the exit-77 summary that prints the array is where a skip is named.
+    shadowing_check() { local -a not_measured=(); unmeasured the window border; }
+    shadowing_check
+    printf 'status=%s count=%s first=%s\n' "$status" "${#not_measured[@]}" "${not_measured[0]:-none}"
+  )"
+  [[ "$out" == *'status=0'* ]] ||
+    fail "unmeasured is its own channel" "an unmeasured check must not set the run's FAIL verdict, got: $out"
+  [[ "$out" == *'count=1'* && "$out" == *'first=the window border'* ]] ||
+    fail "unmeasured is its own channel" "the record must reach the run's own array, got: $out"
+  ok "a check that could not run is recorded without becoming a pass or a failure"
+}
+
+# `qs ipc` waits forever on a shell that has already been reaped, and a poll loop's own
+# liveness check cannot run while its command substitution is blocked — that is what left
+# every later check unrun while the run still reported success. So every invocation carries
+# a deadline, and --kill-after is part of it: plain `timeout` sends SIGTERM and then waits
+# for as long as the child ignores it, which is the same hang under a different name.
+#
+# The rule is sited on the invocation, not on the names its callers give their variables:
+# an assignment from sandbox_ipc is safe under `set -e` because sandbox_ipc folds failure
+# into the reply and returns 0 — which case_ipc_call_cannot_hang drives — so no list of
+# exempt variable names is needed, and no raw call can escape by choosing one.
+case_ipc_bounded_calls() {
+  local joined sites unbounded status=0
+  # Backslash continuations first, so an invocation whose bound sits on the previous
+  # physical line is judged whole. Comment lines are dropped: a `qs ipc` in prose satisfies
+  # a text match without being a call.
+  joined="$(awk '{ line = $0
+                   while (line ~ /\\$/) { sub(/\\$/, "", line); if ((getline more) <= 0) break; line = line more }
+                   if (line !~ /^[[:space:]]*#/) print line }' "$smoke")"
+  sites="$(grep -F 'qs ipc' <<<"$joined")" || status=$?
+  # grep exits 1 for no matches and above 1 for a real failure, such as an unreadable
+  # file. Swallowing that would pass this case without ever reading the script.
+  [[ $status -le 1 ]] ||
+    fail "unbounded qs ipc calls" "could not scan $smoke (grep exit $status)"
+  # No invocation at all means the extractor is broken, not that the script is clean.
+  [[ -n "${sites//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "found no qs ipc invocation in $smoke"
+  # awk filters without a second exit status to interpret.
+  unbounded="$(awk '!/timeout --kill-after=/' <<<"$sites")"
+  [[ -z "${unbounded//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "these can block a check sequence indefinitely: $unbounded"
+  ok "every qs ipc invocation carries a kill-after deadline"
+}
+
+# A hanging shell must not hang the run: one call against a reaped sandbox shell used to
+# block until the outer timeout killed everything, and every later check went unrun.
+case_ipc_call_cannot_hang() {
+  local stub="$tmp/ipcbin" out start elapsed
+  mkdir -p "$stub"
+  # Long enough to outlast the 2s bound below, short enough that a regression reads as a
+  # failed assertion within seconds rather than as a stalled suite.
+  printf '#!/usr/bin/env bash\nsleep 20\n' >"$stub/qs"
+  chmod +x "$stub/qs"
+  out="$(
+    set +e
+    # Read by the sliced sandbox_ipc, not by this function.
+    # shellcheck disable=SC2034
+    sandbox_env=(env "PATH=$stub:$PATH")
+    # shellcheck disable=SC2034
+    repo_root="$tmp"
+    # shellcheck disable=SC2034
+    sandbox_ipc_timeout=2
+    # shellcheck source=/dev/null
+    . "$tmp/sandbox_ipc.sh"
+    start=$SECONDS
+    reply="$(sandbox_ipc settings status)"
+    printf 'rc=%s elapsed=%s reply=%s\n' "$?" "$((SECONDS - start))" "$reply"
+  )"
+  [[ "$out" == *"rc=0"* ]] ||
+    fail "ipc call cannot hang" "a bounded failure must not abort its caller: $out"
+  [[ "$out" == *"IPC_CALL_FAILED"* ]] ||
+    fail "ipc call cannot hang" "the reply must carry the failure: $out"
+  elapsed="$(sed -n 's/.*elapsed=\([0-9]*\).*/\1/p' <<<"$out")"
+  [[ -n "$elapsed" && "$elapsed" -lt 10 ]] ||
+    fail "ipc call cannot hang" "the call must return on its own bound, took ${elapsed:-?}s"
+  ok "an unanswered IPC call fails within its bound instead of hanging the run"
+}
+
+declare -A FOCUS_REPLIES=(
+  [focused]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-flag]='{"visible":true,"focusWanted":false,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-grab]='{"visible":true,"focusWanted":true,"focusGrabActive":false,"contentActiveFocus":true}'
+  [no-content]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":false}'
+  [missing-field]='{"visible":true,"focusWanted":true,"focusGrabActive":true}'
+  [ipc-failed]='IPC_CALL_FAILED(124) x focusStatus: no reply'
+)
+
+# Drive wait_surface_focused against a stub IPC that answers the listed replies in order and
+# repeats the last one. The shell is alive or gone; sleep is stubbed so a row costs no time.
+focus_wait() {
+  local replies="$1" alive="$2" key
+  : >"$tmp/focus.replies"
+  : >"$tmp/focus.calls"
+  for key in ${replies//|/ }; do
+    printf '%s\n' "${FOCUS_REPLIES[$key]}" >>"$tmp/focus.replies"
+  done
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/wait_surface_focused.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 focus_wait_polls=4 qs_group=1
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_ipc() {
+      local n
+      printf '%s\n' "$*" >>"$tmp/focus.calls"
+      n="$(wc -l <"$tmp/focus.calls")"
+      sed -n "${n}p" "$tmp/focus.replies" | grep . || tail -n 1 "$tmp/focus.replies"
+    }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    kill() { [[ "$alive" == alive ]]; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sleep() { :; }
+    wait_surface_focused "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; replies in order joined by |; shell alive or gone; expected status; the cause the
+# FAIL line must carry, or - for no FAIL at all. One withheld step per row.
+FOCUS_WAITS="focus on the first poll sends at once;focused;alive;0;-
+focus that arrives after unfocused polls is waited for;no-content|no-grab|focused;alive;0;-
+a withheld focus flag names the focus cause;no-flag;alive;1;switcher mapped but never took keyboard focus
+a withheld compositor grab names the focus cause;no-grab;alive;1;switcher mapped but never took keyboard focus
+withheld content focus names the focus cause;no-content;alive;1;switcher mapped but never took keyboard focus
+an unfocused status stays the verdict when a later call fails;no-content|ipc-failed;alive;1;switcher mapped but never took keyboard focus
+an unanswered call is not a focus verdict;ipc-failed;alive;3;could not read the keyboard focus status
+a status missing a field is not a focus verdict;missing-field;alive;3;could not read the keyboard focus status
+a shell that exits ends the wait;no-content;gone;4;exited while waiting"
+
+case_focus_wait() {
+  local label replies alive want_rc want_cause out rows=0
+  while IFS=';' read -r label replies alive want_rc want_cause; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(focus_wait "$replies" "$alive")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "focus wait" "$label: expected rc=$want_rc, got: $out"
+    [[ "$(head -n 1 "$tmp/focus.calls")" == "x focusStatus" ]] ||
+      fail "focus wait" "$label: expected the focusStatus call it was given, got '$(head -n 1 "$tmp/focus.calls")'"
+    if [[ "$want_cause" == - ]]; then
+      [[ "$out" != *"FAIL:"* ]] || fail "focus wait" "$label: expected no FAIL, got: $out"
+    else
+      [[ "$out" == *"FAIL: "*"$want_cause"* ]] ||
+        fail "focus wait" "$label: the FAIL line must carry '$want_cause', got: $out"
+    fi
+  done <<<"$FOCUS_WAITS"
+  [[ $rows -eq 9 ]] || fail "focus wait" "expected 9 table rows, drove $rows"
+  ok "Escape waits for the focus flag, the grab and the content focus, and a withheld step names its cause"
+}
+
+# Drive send_escape with its focus wait stubbed to the given status and wtype present or
+# absent. Both stubs log their arguments in call order.
+send_escape_with() {
+  local wait_rc="$1" wtype="$2" bin="$tmp/escbin-$2"
+  mkdir -p -- "$bin"
+  if [[ "$wtype" == present ]]; then
+    # shellcheck disable=SC2016  # $* and $ESC_LOG must expand in the stub, not here
+    printf '#!/bin/sh\nprintf "wtype %%s\\n" "$*" >>"$ESC_LOG"\n' >"$bin/wtype"
+    chmod +x "$bin/wtype"
+  fi
+  : >"$tmp/esc.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/send_escape.sh"
+    export ESC_LOG="$tmp/esc.log"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 nested_socket=wayland-9 sandbox_env=(/usr/bin/env "PATH=$bin")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    wait_surface_focused() { printf 'wait %s\n' "$*" >>"$ESC_LOG"; return "$wait_rc"; }
+    PATH="$bin"
+    send_escape "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; focus wait status; wtype present or absent; expected status; the logged calls in
+# order joined by |, or - for none.
+ESCAPES="focus that arrived sends one Escape after the wait;0;present;0;wait the 'x' switcher x focusStatus|wtype -k Escape
+focus that never arrived sends no Escape;1;present;1;wait the 'x' switcher x focusStatus
+an unreadable focus status sends no Escape;3;present;1;wait the 'x' switcher x focusStatus
+a shell that exited sends no Escape;4;present;1;wait the 'x' switcher x focusStatus
+no wtype reports its absence before any wait;0;absent;2;-"
+
+case_escape_waits_for_focus() {
+  local label wait_rc wtype want_rc want_calls out calls rows=0
+  while IFS=';' read -r label wait_rc wtype want_rc want_calls; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(send_escape_with "$wait_rc" "$wtype")"
+    calls="$(paste -sd '|' "$tmp/esc.log")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "escape waits for focus" "$label: expected rc=$want_rc, got: $out"
+    [[ "$calls" == "${want_calls/#-/}" ]] ||
+      fail "escape waits for focus" "$label: expected calls '${want_calls/#-/}', got '$calls'"
+  done <<<"$ESCAPES"
+  [[ $rows -eq 5 ]] || fail "escape waits for focus" "expected 5 table rows, drove $rows"
+  ok "Escape is sent once and only after the focus wait succeeds"
+}
+
+# Run the shipped cleanup on a sandbox holding a 70-line shell log, entering with the given
+# status and a live-session check stubbed to the given status. No process groups are tracked.
+cleanup_with() {
+  local code="$1" live="$2" dir="$tmp/sandbox"
+  rm -rf -- "$dir"
+  mkdir -p -- "$dir"
+  seq -f 'qs-line-%g' 1 70 >"$dir/qs.log"
+  printf 'hypr-line\n' >"$dir/hyprland.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/cleanup.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    tracked_pgids=() scratch_dirs=("$dir") evidence_logs=("$dir/qs.log" "$dir/hyprland.log")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    assert_live_session_untouched() { return "$live"; }
+    (exit "$code")
+    cleanup
+    printf 'unreachable: cleanup returned\n'
+  ) 2>&1
+  printf 'rc=%s\n' "$?"
+}
+
+# label; entry status; live-session check status; expected exit status; tails printed or not.
+CLEANUPS="a failed check prints the log tails;1;0;1;printed
+a failed live-session check prints the log tails;0;1;1;printed
+a passing run prints no log tails;0;0;0;none"
+
+case_cleanup_keeps_evidence() {
+  local label code live want_rc tails out rows=0
+  while IFS=';' read -r label code live want_rc tails; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(cleanup_with "$code" "$live")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "cleanup keeps evidence" "$label: expected rc=$want_rc, got: $out"
+    [[ ! -d "$tmp/sandbox" ]] ||
+      fail "cleanup keeps evidence" "$label: the sandbox directory must still be removed"
+    case "$tails" in
+      printed)
+        [[ "$out" == *"qs-line-11"* && "$out" == *"qs-line-70"* && "$out" != *"qs-line-10"$'\n'* && "$out" == *"hypr-line"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected the last 60 shell log lines and the compositor log, got: $out"
+        ;;
+      none)
+        [[ "$out" != *"last 60 lines"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected no log tails, got: $out"
+        ;;
+      *) fail "cleanup keeps evidence" "$label: unknown tails column: $tails" ;;
+    esac
+  done <<<"$CLEANUPS"
+  [[ $rows -eq 3 ]] || fail "cleanup keeps evidence" "expected 3 table rows, drove $rows"
+  ok "every non-zero exit, a failed live-session check included, prints the sandbox log tails before cleanup deletes them"
+}
+
+# label; --shell-env entries joined by |, or - for none; expected status; expected names joined by |.
+COLLISIONS="an unset name passes;MALLOC_CONF=prof:true;1;
+no entries pass;-;1;
+a name the sandbox sets collides;HOME=/tmp/elsewhere;0;HOME
+a name a launch assignment sets collides;VSHELL_DISABLE_INSTANCE_GUARD=0;0;VSHELL_DISABLE_INSTANCE_GUARD
+a prefix of a set name does not collide;HOM=x;1;
+each colliding entry is named;MALLOC_CONF=x|XDG_RUNTIME_DIR=/run/user/1000|WAYLAND_DISPLAY=wayland-1;0;XDG_RUNTIME_DIR|WAYLAND_DISPLAY"
+
+case_shell_env_collisions() {
+  local label entries want_rc want_names out rc rows=0
+  local -a list=() assignments=(HOME=/sandbox XDG_RUNTIME_DIR=/run/user/1000/v1 WAYLAND_DISPLAY=wayland-2 VSHELL_DISABLE_INSTANCE_GUARD=1)
+  while IFS=';' read -r label entries want_rc want_names; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    list=()
+    [[ "$entries" == - ]] || IFS='|' read -r -a list <<<"$entries"
+    rc=0
+    out="$(
+      # shellcheck source=/dev/null
+      . "$tmp/shell_env_collisions.sh"
+      shell_env_collisions "${#list[@]}" "${list[@]}" "${assignments[@]}"
+    )" || rc=$?
+    [[ "$rc" == "$want_rc" ]] ||
+      fail "shell-env collisions" "$label: expected status $want_rc, got $rc"
+    [[ "${out//$'\n'/|}" == "$want_names" ]] ||
+      fail "shell-env collisions" "$label: expected names '$want_names', got '$out'"
+  done <<<"$COLLISIONS"
+  [[ $rows -eq 6 ]] || fail "shell-env collisions" "expected 6 table rows, drove $rows"
+  ok "a --shell-env name the sandbox launch also sets is named, and no other name is"
+}
+
+# Run driver_check with a stub driver that records its environment and exits with the given status.
+driver_with() {
+  local exit_code="$1" drv="$tmp/driver.sh"
+  # shellcheck disable=SC2016  # the variables expand in the stub, not here
+  printf '#!/bin/sh\nprintf "%%s|%%s|%%s\\n" "$VSHELL_SANDBOX_DRIVER" "$HYPRLAND_INSTANCE_SIGNATURE" "$WAYLAND_DISPLAY" >"%s"\nexit %s\n' \
+    "$tmp/driver.env" "$exit_code" >"$drv"
+  chmod +x "$drv"
+  rm -f -- "${tmp:?}/driver.env"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/unmeasured.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/driver_check.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    note() { :; }
+    # shellcheck disable=SC2034  # read by the sliced functions
+    status=0 skip_status=77 nested_timeout=30 driver="$drv" sandbox_env=(env -i "PATH=$host_path")
+    not_measured=()
+    driver_check sig-1 wayland-9 2>/dev/null
+    printf 'status=%s unmeasured=%s\n' "$status" "${#not_measured[@]}"
+  )
+}
+
+# label; driver exit status; expected smoke status; expected unmeasured count.
+DRIVERS="a driver that passes leaves the run passing;0;0;0
+a driver that could not measure is recorded as not measured;77;0;1
+a driver that fails fails the run;1;1;0
+a driver that exits 2 fails the run;2;1;0"
+
+case_driver_verdicts() {
+  local label exit_code want_status want_unmeasured out rows=0
+  while IFS=';' read -r label exit_code want_status want_unmeasured; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(driver_with "$exit_code")"
+    [[ "$out" == "status=$want_status unmeasured=$want_unmeasured" ]] ||
+      fail "driver verdicts" "$label: expected status=$want_status unmeasured=$want_unmeasured, got '$out'"
+    [[ "$(cat "$tmp/driver.env" 2>/dev/null)" == "1|sig-1|wayland-9" ]] ||
+      fail "driver verdicts" "$label: the driver must run with the sandbox marker and the nested compositor's endpoints"
+  done <<<"$DRIVERS"
+  [[ $rows -eq 4 ]] || fail "driver verdicts" "expected 4 table rows, drove $rows"
+  ok "a driver's exit 0 passes, 77 is not measured, and anything else fails"
+}
+
+# label; arguments joined by |; expected stderr fragment.
+OPTION_REFUSALS="a --shell-env with no name;--shell-env|=x;--shell-env needs NAME=VALUE
+a --shell-env with no value separator;--shell-env|MALLOC_CONF;--shell-env needs NAME=VALUE
+a --shell-env name starting with a digit;--shell-env|1X=y;--shell-env needs NAME=VALUE
+a --driver that is not executable;--driver|${smoke%/*}/AGENTS.md;--driver needs an executable file
+a --driver that does not exist;--driver|$tmp/absent;--driver needs an executable file
+--driver with --settings;--settings|--driver|${smoke%/*}/bench-shell-events.py;cannot take --settings"
+
+case_option_refusals() {
+  local label args want out rc rows=0
+  local -a argv=()
+  while IFS=';' read -r label args want; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    IFS='|' read -r -a argv <<<"$args"
+    rc=0
+    out="$("$smoke" "${argv[@]}" 2>&1)" || rc=$?
+    [[ "$rc" -eq 2 && "$out" == *"$want"* ]] ||
+      fail "option refusals" "$label: expected exit 2 and '$want', got exit $rc: $out"
+  done <<<"$OPTION_REFUSALS"
+  [[ $rows -eq 6 ]] || fail "option refusals" "expected 6 table rows, drove $rows"
+  ok "a malformed --shell-env or --driver, or --driver with --settings, refuses before any check runs"
+}
+
+CASES=(
+  case_shell_env_collisions
+  case_driver_verdicts
+  case_option_refusals
+  case_focus_wait
+  case_escape_waits_for_focus
+  case_cleanup_keeps_evidence
+  case_remedies
+  case_ipc_bounded_calls
+  case_ipc_call_cannot_hang
+  case_unconditional_options
+  case_layer_states
+  case_geometry_replies
+  case_window_border_samples
+  case_host_render_requests
+  case_fail_pierces_local_status
+  case_unmeasured_is_its_own_channel
+)
+for smoke_case in "${CASES[@]}"; do
+  "$smoke_case"
+done
+
+if [[ $failures -ne 0 ]]; then
+  printf '\ntest-qml-smoke: %d failure(s)\n' "$failures" >&2
+  exit 1
+fi
+echo "test-qml-smoke: all checks passed"

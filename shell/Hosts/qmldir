@@ -1,7 +1,0 @@
-module qs.Hosts
-BarHost 1.0 BarHost.qml
-PluginSlot 1.0 PluginSlot.qml
-ServiceHost 1.0 ServiceHost.qml
-LockHost 1.0 LockHost.qml
-BackgroundHost 1.0 BackgroundHost.qml
-SummonHost 1.0 SummonHost.qml

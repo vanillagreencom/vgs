@@ -1,0 +1,14 @@
+{
+  "app": "zen",
+  "template": "userChrome.css",
+  "destination": "~/.config/vshell/generated/zen/userChrome.css",
+  "curatedFile": "zen.css",
+  "detect": {
+    "commands": [
+      "zen",
+      "zen-browser",
+      "zen-beta",
+      "zen-twilight"
+    ]
+  }
+}

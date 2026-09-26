@@ -1,0 +1,37 @@
+*nagai-twilight.txt* Nagai Twilight                                   *nagai-twilight*
+
+INTRODUCTION                                                    *nagai-twilight-intro*
+    Nagai Twilight is a warm dusk palette that mixes deep violet bases
+    with magenta and sky-blue neon. This help file documents configuration
+    options and integrations exposed by the plugin.
+
+SETUP                                                          *nagai-twilight-setup*
+    Lua (Lazy.nvim) sample:
+>
+    require('nagai_twilight').setup({ transparent = false })
+    vim.cmd.colorscheme('nagai-twilight')
+<
+
+OPTIONS                                                        *nagai-twilight-options*
+    transparent    (boolean)  When true, leaves main window backgrounds as
+                              `NONE` so terminal/parent UI shows through.
+    user_overrides (function) Optional callback invoked after highlights
+                              are applied. Use to tweak highlight groups
+                              without forking the colorscheme.
+
+EXTRAS                                                         *nagai-twilight-extras*
+    Lualine integration:
+>
+    require('lualine').setup({
+      options = { theme = 'nagai-twilight' },
+    })
+<
+
+    Mini.statusline receives custom mode colors automatically when the
+    colorscheme is loaded.
+
+AUTHOR                                                         *nagai-twilight-author*
+    Omarchy (github.com/omarchy)
+
+LICENSE                                                        *nagai-twilight-license*
+    Distributed under the MIT License. See LICENSE for details.

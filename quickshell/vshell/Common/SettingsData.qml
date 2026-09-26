@@ -1,0 +1,3395 @@
+pragma Singleton
+pragma ComponentBehavior: Bound
+
+import QtCore
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Common
+import qs.Common.settings
+import qs.Services
+import "settings/SettingsSpec.js" as Spec
+import "settings/SettingsStore.js" as Store
+import "settings/WriteCoalescer.js" as Coalescer
+import "settings/SurfaceGeometry.js" as SurfaceGeometry
+import "settings/BarWidgets.js" as BarWidgets
+
+Singleton {
+    id: root
+    readonly property var log: Log.scoped("SettingsData")
+
+    readonly property int settingsConfigVersion: 25
+
+    readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
+
+    enum Position {
+        Top,
+        Bottom,
+        Left,
+        Right,
+        TopCenter,
+        BottomCenter,
+        LeftCenter,
+        RightCenter
+    }
+
+    enum AnimationSpeed {
+        None,
+        Short,
+        Medium,
+        Long,
+        Custom
+    }
+
+    enum AnimationVariant {
+        Material,
+        Fluent,
+        Dynamic
+    }
+
+    enum AnimationEffect {
+        Standard,     // 0 — M3: scale-in, rises from below
+        Directional,  // 1 — pure large slide, no scale
+        Depth         // 2 — medium slide with deep depth scale pop
+    }
+
+    enum SuspendBehavior {
+        Suspend,
+        Hibernate,
+        SuspendThenHibernate
+    }
+
+    enum WidgetColorMode {
+        Default,
+        Colorful
+    }
+
+    enum TextRenderType {
+        Qt,
+        Native,
+        Curve
+    }
+
+    enum TextRenderQuality {
+        Default,
+        Low,
+        Normal,
+        High,
+        VeryHigh
+    }
+
+    readonly property string _configUrl: StandardPaths.writableLocation(StandardPaths.ConfigLocation)
+    readonly property string _configDir: Paths.strip(_configUrl)
+    readonly property string pluginSettingsPath: _configDir + "/vshell/plugin_settings.json"
+    readonly property string defaultPluginSettingsPath: Paths.repoRoot + "/config/vshell/plugin_settings.default.json"
+
+    property bool _loading: false
+    property bool _pluginSettingsLoading: false
+    property bool _parseError: false
+    property bool _pluginParseError: false
+    property bool _defaultPluginSettingsLoaded: false
+    property bool _hasLoaded: false
+    property bool _isReadOnly: false
+    property bool _hasUnsavedChanges: false
+    property var _loadedSettingsSnapshot: null
+    property var pluginSettings: ({})
+    property var defaultPluginSettings: ({})
+    property var builtInPluginSettings: ({})
+
+    function getBuiltInPluginSetting(pluginId, key, defaultValue) {
+        if (!builtInPluginSettings[pluginId])
+            return defaultValue;
+        return builtInPluginSettings[pluginId][key] !== undefined ? builtInPluginSettings[pluginId][key] : defaultValue;
+    }
+
+    function setBuiltInPluginSetting(pluginId, key, value) {
+        const updated = JSON.parse(JSON.stringify(builtInPluginSettings));
+        if (!updated[pluginId])
+            updated[pluginId] = {};
+        updated[pluginId][key] = value;
+        builtInPluginSettings = updated;
+        saveSettings();
+    }
+
+    // "Don't ask me again" for the sudoToggle grant modal. Only a confirmed
+    // grant may set this — see SudoGrantConfirmModal — so cancelling never
+    // silently disarms the next confirmation.
+    property bool sudoToggleSkipGrantConfirm: false
+
+    property bool clipboardClickToPaste: false
+    property bool clipboardEnterToPaste: false
+    property bool clipboardRememberTypeFilter: false
+    property string clipboardTypeFilter: "all"
+    property var clipboardVisibleEntryActions: ["pin", "edit", "delete"]
+
+    property var launcherPluginVisibility: ({})
+
+    function getPluginAllowWithoutTrigger(pluginId) {
+        if (!launcherPluginVisibility[pluginId])
+            return true;
+        return launcherPluginVisibility[pluginId].allowWithoutTrigger !== false;
+    }
+
+    function setPluginAllowWithoutTrigger(pluginId, allow) {
+        const updated = JSON.parse(JSON.stringify(launcherPluginVisibility));
+        if (!updated[pluginId])
+            updated[pluginId] = {};
+        updated[pluginId].allowWithoutTrigger = allow;
+        launcherPluginVisibility = updated;
+        saveSettings();
+    }
+
+    property var launcherPluginOrder: []
+    onLauncherPluginOrderChanged: saveSettings()
+
+    function setLauncherPluginOrder(order) {
+        launcherPluginOrder = order;
+    }
+
+    function getOrderedLauncherPlugins(allPlugins) {
+        if (!launcherPluginOrder || launcherPluginOrder.length === 0)
+            return allPlugins;
+        const orderMap = {};
+        for (let i = 0; i < launcherPluginOrder.length; i++)
+            orderMap[launcherPluginOrder[i]] = i;
+        return allPlugins.slice().sort((a, b) => {
+            const aOrder = orderMap[a.id] ?? 9999;
+            const bOrder = orderMap[b.id] ?? 9999;
+            if (aOrder !== bOrder)
+                return aOrder - bOrder;
+            return a.name.localeCompare(b.name);
+        });
+    }
+
+    property alias barLeftWidgetsModel: leftWidgetsModel
+    property alias barCenterWidgetsModel: centerWidgetsModel
+    property alias barRightWidgetsModel: rightWidgetsModel
+
+    property string currentThemeName: "bauhaus"
+    property string currentThemeCategory: "vgs"
+    property string matugenScheme: "scheme-tonal-spot"
+    property real matugenContrast: 0
+    property string matugenMode: "auto"
+    property string matugenTargetMonitor: ""
+    property real popupTransparency: 1.0
+    property real popupBlurStrength: 0.65
+    property bool popupGlassEffect: false
+    property real dockTransparency: 1
+    property string widgetBackgroundColor: "sch"
+    property string widgetBackgroundCustomColor: "#6750A4"
+    property real widgetBackgroundCustomStrength: 0.50
+    property string widgetColorMode: "default"
+    property string controlCenterTileColorMode: "primary"
+    property string buttonColorMode: "primary"
+    property int surfaceBorderWidth: 1
+    property real cornerRadius: 15
+    property real controlRadius: 10
+    property int niriLayoutGapsOverride: -1
+    property int hyprlandLayoutGapsOverride: -1
+    property int hyprlandLayoutGapsOutOverride: -1
+    property bool hyprlandResizeOnBorder: true
+    property int mangoLayoutGapsOverride: -1
+    property int mangoLayoutGapsOutOverride: -1
+    property int mangoLayoutRadiusOverride: -1
+    property int mangoLayoutBorderSize: -1
+    property bool mangoTrackpadNaturalScrolling: true
+
+    readonly property int effectiveContainerRadius: SurfaceGeometry.boundedInt(cornerRadius, 15, 0, 20)
+    readonly property int effectiveControlRadius: SurfaceGeometry.boundedInt(controlRadius, 10, 0, 20)
+
+    property int firstDayOfWeek: -1
+    property bool showWeekNumber: false
+    property string calendarBackend: "auto"
+    property bool use24HourClock: true
+    property bool showSeconds: false
+    property bool padHours12Hour: false
+    property bool useFahrenheit: false
+    property string windSpeedUnit: "kmh"
+    property bool nightModeEnabled: false
+    property int animationSpeed: SettingsData.AnimationSpeed.Short
+    property int customAnimationDuration: 500
+    property bool syncComponentAnimationSpeeds: true
+    onSyncComponentAnimationSpeedsChanged: saveSettings()
+    property int popoutAnimationSpeed: SettingsData.AnimationSpeed.Short
+    property int popoutCustomAnimationDuration: 150
+    property int modalAnimationSpeed: SettingsData.AnimationSpeed.Short
+    property int modalCustomAnimationDuration: 150
+    property bool enableRippleEffects: true
+    onEnableRippleEffectsChanged: saveSettings()
+    property int animationVariant: SettingsData.AnimationVariant.Material
+    onAnimationVariantChanged: saveSettings()
+    property int motionEffect: SettingsData.AnimationEffect.Standard
+    onMotionEffectChanged: saveSettings()
+    property bool m3ElevationEnabled: true
+    onM3ElevationEnabledChanged: saveSettings()
+    property int m3ElevationIntensity: 12
+    onM3ElevationIntensityChanged: saveSettings()
+    property int m3ElevationOpacity: 30
+    onM3ElevationOpacityChanged: saveSettings()
+    property string m3ElevationColorMode: "default"
+    onM3ElevationColorModeChanged: saveSettings()
+    property string m3ElevationLightDirection: "top"
+    onM3ElevationLightDirectionChanged: saveSettings()
+    property string m3ElevationCustomColor: "#000000"
+    onM3ElevationCustomColorChanged: saveSettings()
+    property bool modalElevationEnabled: true
+    onModalElevationEnabledChanged: saveSettings()
+    property bool popoutElevationEnabled: true
+    onPopoutElevationEnabledChanged: saveSettings()
+    property bool barElevationEnabled: true
+    onBarElevationEnabledChanged: saveSettings()
+
+    property bool blurEnabled: false
+    onBlurEnabledChanged: saveSettings()
+    property bool blurForegroundLayers: true
+    onBlurForegroundLayersChanged: saveSettings()
+    property real blurLayerOutlineOpacity: 0.12
+    onBlurLayerOutlineOpacityChanged: saveSettings()
+    property string blurBorderColor: "outline"
+    onBlurBorderColorChanged: saveSettings()
+    property string blurBorderCustomColor: "#ffffff"
+    onBlurBorderCustomColorChanged: saveSettings()
+    property real blurBorderOpacity: 0.35
+    onBlurBorderOpacityChanged: saveSettings()
+    property string wallpaperFillMode: "Fill"
+    property string wallpaperSource: "theme"
+    property string wallpaperFolder: ""
+    property bool blurredWallpaperLayer: false
+    property bool blurWallpaperOnOverview: false
+    property string wallpaperBackgroundColorMode: "black"
+    property string wallpaperBackgroundCustomColor: "#000000"
+    readonly property color effectiveWallpaperBackgroundColor: {
+        switch (wallpaperBackgroundColorMode) {
+        case "black":
+            return "#000000";
+        case "white":
+            return "#ffffff";
+        case "primary":
+            return Theme.primary;
+        case "surface":
+            return Theme.surfaceContainer;
+        case "custom":
+            return wallpaperBackgroundCustomColor;
+        default:
+            return "#000000";
+        }
+    }
+
+    property int barInsetPaddingShared: -1
+    onBarInsetPaddingSharedChanged: saveSettings()
+    property bool barInsetPaddingSyncAll: false
+    onBarInsetPaddingSyncAllChanged: saveSettings()
+
+    property bool showWorkspaceSwitcher: true
+    property bool showFocusedWindow: true
+    property bool showWeather: true
+    property bool showMusic: true
+    property bool showClipboard: true
+    property bool showCpuUsage: true
+    property bool showMemUsage: true
+    property bool showCpuTemp: true
+    property bool showGpuTemp: true
+    property int selectedGpuIndex: 0
+    property var enabledGpuPciIds: []
+    property bool showSystemTray: true
+    property string systemTrayIconTintMode: "none"
+    property int systemTrayIconTintSaturation: 50
+    property int systemTrayIconTintStrength: 135
+    property bool showClock: true
+    property bool showNotificationButton: true
+    property bool showBattery: true
+    property bool showControlCenterButton: true
+    property bool showCapsLockIndicator: true
+
+    property bool controlCenterShowNetworkIcon: true
+    property bool controlCenterShowBluetoothIcon: true
+    property bool controlCenterShowAudioIcon: true
+    property bool controlCenterShowAudioPercent: false
+    property bool controlCenterShowVpnIcon: true
+    property bool controlCenterShowBrightnessIcon: false
+    property bool controlCenterShowBrightnessPercent: false
+    property bool controlCenterShowMicIcon: false
+    property bool controlCenterShowMicPercent: true
+    property bool controlCenterShowBatteryIcon: false
+    property bool controlCenterShowPrinterIcon: false
+    property bool controlCenterShowScreenSharingIcon: true
+    property bool controlCenterShowIdleInhibitorIcon: false
+    property bool controlCenterShowDoNotDisturbIcon: false
+    property bool showPrivacyButton: true
+    property bool privacyShowMicIcon: false
+    property bool privacyShowCameraIcon: false
+    property bool privacyShowScreenShareIcon: false
+
+    property var controlCenterWidgets: [
+        {
+            "id": "volumeSlider",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "brightnessSlider",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "wifi",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "bluetooth",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "audioOutput",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "audioInput",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "nightMode",
+            "enabled": true,
+            "width": 50
+        },
+        {
+            "id": "darkMode",
+            "enabled": true,
+            "width": 50
+        }
+    ]
+
+    property bool showWorkspaceIndex: false
+    property bool showWorkspaceName: false
+    property bool showWorkspacePadding: false
+    property bool workspaceScrolling: false
+    property bool showWorkspaceApps: false
+    property bool workspaceDragReorder: true
+    property bool groupWorkspaceApps: true
+    property bool groupActiveWorkspaceApps: false
+    property int maxWorkspaceIcons: 3
+    property int workspaceAppIconSizeOffset: 0
+    property bool workspaceFollowFocus: false
+    property bool showOccupiedWorkspacesOnly: false
+    property bool reverseScrolling: false
+    property bool dwlShowAllTags: false
+    property bool workspaceActiveAppHighlightEnabled: false
+    property string workspaceColorMode: "default"
+    property string workspaceFocusedCustomColor: "#6750A4"
+    property string workspaceOccupiedColorMode: "none"
+    property string workspaceOccupiedCustomColor: "#625B71"
+    property string workspaceUnfocusedColorMode: "default"
+    property string workspaceUnfocusedCustomColor: "#49454E"
+    property string workspaceUrgentColorMode: "default"
+    property string workspaceUrgentCustomColor: "#B3261E"
+    property bool workspaceFocusedBorderEnabled: false
+    property string workspaceFocusedBorderColor: "primary"
+    property string workspaceFocusedBorderCustomColor: "#6750A4"
+    property int workspaceFocusedBorderThickness: 2
+    property bool workspaceUnfocusedMonitorSeparateAppearance: false
+    property string workspaceUnfocusedMonitorColorMode: "default"
+    property string workspaceUnfocusedMonitorFocusedCustomColor: "#6750A4"
+    property string workspaceUnfocusedMonitorOccupiedColorMode: "none"
+    property string workspaceUnfocusedMonitorOccupiedCustomColor: "#625B71"
+    property string workspaceUnfocusedMonitorUnfocusedColorMode: "default"
+    property string workspaceUnfocusedMonitorUnfocusedCustomColor: "#49454E"
+    property string workspaceUnfocusedMonitorUrgentColorMode: "default"
+    property string workspaceUnfocusedMonitorUrgentCustomColor: "#B3261E"
+    property bool workspaceUnfocusedMonitorBorderEnabled: false
+    property string workspaceUnfocusedMonitorBorderColor: "primary"
+    property string workspaceUnfocusedMonitorBorderCustomColor: "#6750A4"
+    property int workspaceUnfocusedMonitorBorderThickness: 2
+    property var workspaceNameIcons: ({})
+    property bool waveProgressEnabled: true
+    property bool scrollTitleEnabled: true
+    property bool mediaAdaptiveWidthEnabled: true
+    property bool audioVisualizerEnabled: true
+    property string audioScrollMode: "volume"
+    property int audioWheelScrollAmount: 5
+    property bool audioDeviceScrollVolumeEnabled: false
+    property var mediaExcludePlayers: []
+    property bool clockCompactMode: false
+    property int focusedWindowSize: 1
+    property bool focusedWindowCompactMode: false
+    property bool runningAppsCompactMode: true
+    property int barMaxVisibleApps: 0
+    property int barMaxVisibleRunningApps: 0
+    property bool barShowOverflowBadge: true
+    property bool trayAutoOverflow: true
+    property bool trayPopupSingleLine: true
+    property int trayMaxVisibleItems: 0
+    property bool appsDockHideIndicators: false
+    property bool appsDockColorizeActive: false
+    property string appsDockActiveColorMode: "primary"
+    property bool appsDockEnlargeOnHover: false
+    property int appsDockEnlargePercentage: 125
+    property int appsDockIconSizePercentage: 100
+    property bool keyboardLayoutNameCompactMode: false
+    property bool keyboardLayoutNameShowIcon: false
+    property bool runningAppsCurrentWorkspace: true
+    property bool runningAppsGroupByApp: false
+    property bool runningAppsCurrentMonitor: false
+    property var appIdSubstitutions: []
+    property string centeringMode: "index"
+    property string clockDateFormat: ""
+    property string lockDateFormat: ""
+    property bool greeterRememberLastSession: true
+    property bool greeterRememberLastUser: true
+    property bool greeterAutoLogin: false
+    property string greeterAutoLoginKeyringMode: "keep"
+    property string greeterPrimaryMonitor: ""
+    property bool greeterEnableFprint: false
+    property bool greeterEnableU2f: false
+    property string greeterWallpaperPath: ""
+    property bool greeterUse24HourClock: true
+    property bool greeterShowSeconds: false
+    property bool greeterPadHours12Hour: false
+    property string greeterLockDateFormat: ""
+    property string greeterFontFamily: ""
+    property string greeterWallpaperFillMode: ""
+    property bool greeterSyncPending: false
+    property var greeterSyncBaseline: ({})
+    property int mediaSize: 1
+
+    property string browserPickerViewMode: "grid"
+    property var browserUsageHistory: ({})
+    property string appPickerViewMode: "grid"
+    property var filePickerUsageHistory: ({})
+    property bool sortAppsAlphabetically: false
+    property int appLauncherGridColumns: 4
+    property bool overviewSearchCloseNiriOverview: true
+    property var overviewSearchSectionViewModes: ({})
+    onOverviewSearchSectionViewModesChanged: saveSettings()
+    property bool niriOverviewOverlayEnabled: true
+    property string launcherSize: "compact"
+    property bool launcherShowSourceBadges: true
+    property bool launcherShowFooter: true
+    property bool launcherIncludeFilesInAll: false
+    property bool launcherIncludeFoldersInAll: false
+    property bool launcherSidebarShowByDefault: true
+    property var launcherSearchRoots: ["~"]
+    property var launcherSearchIgnored: [".git", "node_modules", ".cache", ".local/share/Trash"]
+    property bool launcherSearchIgnoreMounts: true
+    property string launcherFolderOpenCommand: ""
+    property var launcherMenuUsageHistory: ({})
+    property string launcherMenuViewMode: "list"
+    property bool keybindsFloatingWindow: false
+    onKeybindsFloatingWindowChanged: saveSettings()
+
+    property string _legacyWeatherLocation: "New York, NY"
+    property string _legacyWeatherCoordinates: "40.7128,-74.0060"
+    property string _legacyVpnLastConnected: ""
+    readonly property string weatherLocation: SessionData.weatherLocation
+    readonly property string weatherCoordinates: SessionData.weatherCoordinates
+    property bool useAutoLocation: false
+    property bool weatherEnabled: true
+
+    readonly property var _dashTabIds: ["overview", "media", "themes", "wallpaper", "weather", "settings"]
+    readonly property var _dashTabsDefault: [
+        {
+            "id": "overview",
+            "enabled": true
+        },
+        {
+            "id": "media",
+            "enabled": true
+        },
+        {
+            "id": "themes",
+            "enabled": true
+        },
+        {
+            "id": "wallpaper",
+            "enabled": true
+        },
+        {
+            "id": "weather",
+            "enabled": true
+        },
+        {
+            "id": "settings",
+            "enabled": true
+        }
+    ]
+    property var dashTabs: _dashTabsDefault
+    onDashTabsChanged: saveSettings()
+
+    function getDashTabs() {
+        const stored = Array.isArray(dashTabs) ? dashTabs : [];
+        const result = [];
+        const seen = {};
+        for (var i = 0; i < stored.length; i++) {
+            const id = stored[i] && stored[i].id;
+            if (_dashTabIds.indexOf(id) < 0 || seen[id])
+                continue;
+            seen[id] = true;
+            result.push({
+                "id": id,
+                "enabled": stored[i].enabled !== false
+            });
+        }
+        for (var j = 0; j < _dashTabIds.length; j++) {
+            if (seen[_dashTabIds[j]])
+                continue;
+            // Insert new tab ids at their canonical position instead of appending,
+            // so stored orders pick up e.g. "themes" next to "wallpaper".
+            var insertAt = result.length;
+            for (var k = 0; k < result.length; k++) {
+                if (_dashTabIds.indexOf(result[k].id) > j) {
+                    insertAt = k;
+                    break;
+                }
+            }
+            result.splice(insertAt, 0, {
+                "id": _dashTabIds[j],
+                "enabled": true
+            });
+        }
+        return result;
+    }
+
+    function visibleDashTabIds() {
+        return getDashTabs().filter(t => t.enabled && (t.id !== "weather" || weatherEnabled)).map(t => t.id);
+    }
+
+    function dashTabIndexForId(id) {
+        const idx = visibleDashTabIds().indexOf(id);
+        return idx < 0 ? 0 : idx;
+    }
+
+    function setDashTabOrder(ids) {
+        const current = getDashTabs();
+        const ordered = [];
+        for (var i = 0; i < ids.length; i++) {
+            const existing = current.find(t => t.id === ids[i]);
+            if (existing)
+                ordered.push(existing);
+        }
+        for (var j = 0; j < current.length; j++) {
+            if (ids.indexOf(current[j].id) < 0)
+                ordered.push(current[j]);
+        }
+        dashTabs = ordered;
+    }
+
+    function setDashTabEnabled(id, on) {
+        const current = getDashTabs();
+        if (!on && id !== "settings" && current.filter(t => t.enabled && t.id !== "settings").length <= 1)
+            return;
+        dashTabs = current.map(t => t.id === id ? {
+                "id": t.id,
+                "enabled": on
+            } : t);
+    }
+
+    function resetDashTabs() {
+        dashTabs = _dashTabsDefault.map(t => ({
+                    "id": t.id,
+                    "enabled": t.enabled
+                }));
+    }
+
+    property string networkPreference: "auto"
+
+    property string iconThemeDark: "System Default"
+    property string iconThemeLight: "System Default"
+    property bool iconThemePerMode: false
+    property string lastAppliedIconTheme: ""
+    readonly property string iconTheme: resolveIconTheme()
+    property bool qt5ctAvailable: false
+    property bool qt6ctAvailable: false
+    property bool gtkAvailable: false
+
+    property var cursorSettings: ({
+            "theme": "System Default",
+            "size": 24,
+            "niri": {
+                "hideWhenTyping": false,
+                "hideAfterInactiveMs": 0
+            },
+            "hyprland": {
+                "hideOnKeyPress": false,
+                "hideOnTouch": false,
+                "inactiveTimeout": 0
+            },
+            "mango": {
+                "cursorHideTimeout": 0
+            }
+        })
+    property var availableCursorThemes: ["System Default"]
+    property string systemDefaultCursorTheme: ""
+
+    property string launcherLogoMode: "apps"
+    property string launcherLogoCustomPath: ""
+    property string launcherLogoColorOverride: ""
+    property bool launcherLogoColorInvertOnMode: false
+    property real launcherLogoBrightness: 0.5
+    property real launcherLogoContrast: 1
+    property int launcherLogoSizeOffset: 0
+
+    property string fontFamily: "Inter Variable"
+    property string monoFontFamily: "Fira Code"
+    property int fontWeight: Font.Normal
+    property real fontScale: 1.0
+    property real barFontScale: 1.0
+    property int textRenderType: SettingsData.TextRenderType.Native
+    property int textRenderQuality: SettingsData.TextRenderQuality.Default
+    property int textHintingPreference: Font.PreferDefaultHinting
+    property bool textAntialiasing: true
+    property bool textKerning: true
+    property real textLetterSpacing: 0
+    property real textWordSpacing: 0
+    property real textLineHeight: 1.0
+    property string textLineHeightMode: "proportional"
+    property bool textUseVariableWeight: false
+    property int textVariableWeight: 400
+    property bool textUseOpticalSize: false
+    property int textOpticalSize: 14
+    property bool textFeatureLigatures: true
+    property bool textFeatureTabularNumbers: false
+    property int textFeatureStylisticSet: 0
+    property bool systemFontsManaged: true
+    property string systemFontInterfaceFamily: ""
+    property string systemFontMonoFamily: ""
+    property int systemFontSize: 11
+    property string hyprlandFontFamily: ""
+    property bool systemFontInterfaceAntialias: true
+    property string systemFontInterfaceHinting: "slight"
+    property string systemFontInterfaceSubpixel: "none"
+    property string systemFontInterfaceLcdFilter: "default"
+    property bool systemFontInterfaceAutohint: false
+    property bool systemFontMonoAntialias: true
+    property string systemFontMonoHinting: "slight"
+    property string systemFontMonoSubpixel: "none"
+    property string systemFontMonoLcdFilter: "default"
+    property bool systemFontMonoAutohint: false
+
+    property bool notepadUseMonospace: true
+    property string notepadFontFamily: ""
+    property real notepadFontSize: 14
+    property real notificationSummaryFontSize: Spec.SPEC.notificationSummaryFontSize.def
+    property real notificationBodyFontSize: Spec.SPEC.notificationBodyFontSize.def
+    property bool notepadShowLineNumbers: false
+    property bool notepadAutoSave: false
+    property string notepadSlideoutSide: "right"
+    property string notepadDefaultMode: "slideout"
+    property real notepadTransparencyOverride: -1
+    property real notepadLastCustomTransparency: 0.7
+    property bool notepadUseCompositorGap: false
+    property int notepadEdgeGap: 0
+
+    // Compositor layout gap when enabled and available, else the manual value.
+    readonly property int notepadEffectiveEdgeGap: {
+        if (notepadUseCompositorGap) {
+            var g = -1;
+            if (CompositorService.isNiri)
+                g = niriLayoutGapsOverride;
+            else if (CompositorService.isHyprland)
+                g = hyprlandLayoutGapsOverride;
+            else if (CompositorService.isMango)
+                g = mangoLayoutGapsOverride;
+            if (g >= 0)
+                return g;
+        }
+        return Math.max(0, notepadEdgeGap);
+    }
+
+    onNotepadUseMonospaceChanged: saveSettings()
+    onNotepadFontFamilyChanged: saveSettings()
+    onNotepadFontSizeChanged: saveSettings()
+    onNotepadShowLineNumbersChanged: saveSettings()
+    onNotepadAutoSaveChanged: saveSettings()
+    onNotepadSlideoutSideChanged: saveSettings()
+    onNotepadDefaultModeChanged: saveSettings()
+    onNotepadUseCompositorGapChanged: saveSettings()
+    onNotepadEdgeGapChanged: saveSettings()
+    onNotepadTransparencyOverrideChanged: {
+        if (notepadTransparencyOverride > 0) {
+            notepadLastCustomTransparency = notepadTransparencyOverride;
+        }
+        saveSettings();
+    }
+    onNotepadLastCustomTransparencyChanged: saveSettings()
+
+    property bool soundsEnabled: true
+    property bool useSystemSoundTheme: false
+    property bool soundNewNotification: true
+    property bool soundVolumeChanged: true
+    property bool soundPluggedIn: true
+    property bool soundLogin: false
+    property bool muteSoundsWhenMediaPlaying: true
+
+    property int acMonitorTimeout: 0
+    property int acLockTimeout: 0
+    property int acSuspendTimeout: 0
+    property int acSuspendBehavior: SettingsData.SuspendBehavior.Suspend
+    property string acProfileName: ""
+    property int acPostLockMonitorTimeout: 0
+    property int batteryMonitorTimeout: 0
+    property int batteryLockTimeout: 0
+    property int batterySuspendTimeout: 0
+    property int batterySuspendBehavior: SettingsData.SuspendBehavior.Suspend
+    property string batteryProfileName: ""
+    property int batteryPostLockMonitorTimeout: 0
+    property int batteryChargeLimit: 100
+    property bool batteryNotifyChargeLimit: false
+    property int batteryCriticalThreshold: 10
+    property bool batteryNotifyCritical: true
+    property int batteryLowThreshold: 20
+    property bool batteryNotifyLow: false
+    property int batteryNotificationType: 0
+    property bool batteryAutoPowerSaver: false
+    property bool showBatteryPercent: true
+    property bool showBatteryPercentOnlyOnBattery: false
+    property bool showBatteryTime: false
+    property bool showBatteryTimeOnlyOnBattery: false
+    property bool lockBeforeSuspend: false
+    property bool loginctlLockIntegration: true
+    property bool mediaInhibitsIdle: true
+    property bool screensaverEnabled: false
+    property int screensaverTimeout: 240
+    property string screensaverType: "ascii"
+    property string screensaverVideoPath: ""
+    // Empty means "use the bundled VGS logo" (see SettingsSpec.js).
+    property string screensaverAsciiImagePath: ""
+    property bool fadeToLockEnabled: true
+    property int fadeToLockGracePeriod: 5
+    property bool fadeToDpmsEnabled: true
+    property int fadeToDpmsGracePeriod: 5
+    property string launchPrefix: ""
+    property var brightnessDevicePins: ({})
+    property var wifiNetworkPins: ({})
+    property var bluetoothDevicePins: ({})
+    property var audioInputDevicePins: ({})
+    property var audioOutputDevicePins: ({})
+
+    property bool gtkThemingEnabled: false
+    property bool qtThemingEnabled: false
+    property bool syncModeWithPortal: true
+    property bool terminalsAlwaysDark: false
+
+    property string muxType: "tmux"
+    property bool muxUseCustomCommand: false
+    property string muxCustomCommand: ""
+    property string muxSessionFilter: ""
+
+    // Per-app theme generation toggles keyed by target app id (themes/targets/*).
+    // Absent key = default from app detection (helper decides).
+    property var themeApps: ({})
+
+    // Release stream per dev-tools catalog entry, keyed by entry id. Written by
+    // `vshell mise channel`; absent key = the entry's own default.
+    property var devToolChannels: ({})
+
+    property bool showDock: false
+    property bool dockAutoHide: false
+    property bool dockSmartAutoHide: false
+    property bool dockUseOverlayLayer: false
+    property bool dockGroupByApp: false
+    property bool dockRestoreSpecialWorkspaceOnClick: false
+    property bool dockScratchpadBadge: true
+    property bool dockOpenOnOverview: false
+    property int dockPosition: SettingsData.Position.Bottom
+    property real dockSpacing: 4
+    property real dockBottomGap: 0
+    property real dockMargin: 0
+    property real dockIconSize: 40
+    property string dockIndicatorStyle: "circle"
+    property bool dockBorderEnabled: false
+    property string dockBorderColor: "surfaceText"
+    property real dockBorderOpacity: 1.0
+    property int dockBorderThickness: 1
+    property bool dockIsolateDisplays: false
+    property bool dockLauncherEnabled: false
+    property string dockLauncherLogoMode: "apps"
+    property string dockLauncherLogoCustomPath: ""
+    property string dockLauncherLogoColorOverride: ""
+    property int dockLauncherLogoSizeOffset: 0
+    property real dockLauncherLogoBrightness: 0.5
+    property real dockLauncherLogoContrast: 1
+    property int dockMaxVisibleApps: 0
+    property int dockMaxVisibleRunningApps: 0
+    property bool dockShowOverflowBadge: true
+    property bool dockShowTrash: false
+    property string dockTrashFileManager: "default"
+    property string dockTrashCustomCommand: ""
+
+    property bool notificationOverlayEnabled: false
+    property bool notificationPopupShadowEnabled: true
+    property bool notificationPopupPrivacyMode: false
+    property int overviewRows: 2
+    property int overviewColumns: 5
+    property real overviewScale: 0.16
+
+    property bool modalDarkenBackground: true
+
+    property bool lockScreenShowPowerActions: true
+    property bool lockScreenShowSystemIcons: true
+    property bool lockScreenShowTime: true
+    property bool lockScreenShowDate: true
+    property bool lockScreenShowProfileImage: true
+    property bool lockScreenShowPasswordField: true
+    property bool lockScreenShowMediaPlayer: true
+    property bool lockScreenPowerOffMonitorsOnLock: false
+    property bool lockAtStartup: false
+
+    property bool enableFprint: false
+    property int maxFprintTries: 15
+    readonly property bool fprintdAvailable: Processes.fprintdAvailable
+    readonly property bool lockFingerprintCanEnable: Processes.lockFingerprintCanEnable
+    readonly property bool lockFingerprintReady: Processes.lockFingerprintReady
+    readonly property string lockFingerprintReason: Processes.lockFingerprintReason
+    readonly property bool greeterFingerprintCanEnable: Processes.greeterFingerprintCanEnable
+    readonly property bool greeterFingerprintReady: Processes.greeterFingerprintReady
+    readonly property string greeterFingerprintReason: Processes.greeterFingerprintReason
+    readonly property string greeterFingerprintSource: Processes.greeterFingerprintSource
+    property bool enableU2f: false
+    property string u2fMode: "or"
+    readonly property bool u2fAvailable: Processes.u2fAvailable
+    readonly property bool lockU2fCanEnable: Processes.lockU2fCanEnable
+    readonly property bool lockU2fReady: Processes.lockU2fReady
+    readonly property string lockU2fReason: Processes.lockU2fReason
+    readonly property bool greeterU2fCanEnable: Processes.greeterU2fCanEnable
+    readonly property bool greeterU2fReady: Processes.greeterU2fReady
+    readonly property string greeterU2fReason: Processes.greeterU2fReason
+    readonly property string greeterU2fSource: Processes.greeterU2fSource
+    property string lockScreenActiveMonitor: "all"
+    property string lockScreenInactiveColor: "#000000"
+    property int lockScreenNotificationMode: 0
+    property bool lockScreenVideoEnabled: false
+    property string lockScreenVideoPath: ""
+    // Blank the lock screen to full black (monitors stay on — NOT DPMS) after this
+    // many seconds idle while locked. This is the default idle endpoint: idle ->
+    // lock -> (screensaver) -> black, no monitor power-off, no suspend.
+    property bool lockScreenBlankEnabled: true
+    property bool hideCursorWhenBlanked: true
+    property int lockScreenBlankTimeout: 300
+    property bool lockScreenVideoCycling: false
+    property string lockScreenWallpaperPath: ""
+    property string lockScreenWallpaperFillMode: ""
+    property string lockScreenFontFamily: ""
+    property bool hideBrightnessSlider: false
+
+    property int notificationTimeoutLow: 5000
+    property int notificationTimeoutNormal: 5000
+    property int notificationTimeoutCritical: 0
+    property bool notificationCompactMode: false
+    property bool notificationShowTimeoutBar: false
+    property bool notificationDedupeEnabled: true
+    // Whether VGS registers org.freedesktop.Notifications at all. Off hands the
+    // session's notifications back to another daemon, and silences the
+    // warning VGS shows when it loses the name.
+    property bool notificationServerEnabled: true
+    // Persist whether first-run notification takeover was attempted. Migration marks existing configurations as attempted.
+    property bool notificationFirstRunTakeoverDone: false
+    property int notificationPopupPosition: SettingsData.Position.Top
+    property int notificationAnimationSpeed: SettingsData.AnimationSpeed.Short
+    property int notificationCustomAnimationDuration: 400
+    property bool notificationHistoryEnabled: true
+    property int notificationHistoryMaxCount: 50
+    property int notificationHistoryMaxAgeDays: 7
+    property bool notificationHistorySaveLow: true
+    property bool notificationHistorySaveNormal: true
+    property bool notificationHistorySaveCritical: true
+    property var notificationRules: []
+    property bool notificationFocusedMonitor: false
+
+    property bool osdAlwaysShowValue: false
+    property int osdPosition: SettingsData.Position.BottomCenter
+    property bool osdVolumeEnabled: true
+    property bool osdMediaVolumeEnabled: true
+    property bool osdMediaPlaybackEnabled: false
+    property bool osdBrightnessEnabled: true
+    property bool osdIdleInhibitorEnabled: true
+    property bool osdMicMuteEnabled: true
+    property bool osdMicVolumeEnabled: true
+    property bool osdCapsLockEnabled: true
+    property bool osdPowerProfileEnabled: true
+    property bool osdAudioOutputEnabled: true
+
+    property bool powerActionConfirm: true
+    property real powerActionHoldDuration: 0.5
+    property var powerMenuActions: ["reboot", "logout", "poweroff", "lock", "suspend", "restart"]
+    property string powerMenuDefaultAction: "logout"
+    property bool powerMenuGridLayout: false
+    property string customPowerActionLock: ""
+    property string customPowerActionLogout: ""
+    property string customPowerActionSuspend: ""
+    property string customPowerActionHibernate: ""
+    property string customPowerActionReboot: ""
+    property string customPowerActionPowerOff: ""
+
+    property bool updaterCheckOnStart: false
+    property int updaterIntervalSeconds: 1800
+
+    property string displayNameMode: "system"
+    property var screenPreferences: ({})
+    property var showOnLastDisplay: ({})
+    property var niriOutputSettings: ({})
+    property var hyprlandOutputSettings: ({})
+    property var displayProfiles: ({})
+    property var activeDisplayProfile: ({})
+    property bool displayProfileAutoSelect: false
+    property bool displayShowDisconnected: false
+    property bool displaySnapToEdge: true
+    property var barIpcRevealStates: ({})
+
+    property var barConfigs: [
+        {
+            "id": "default",
+            "name": "Main Bar",
+            "enabled": true,
+            "position": 0,
+            "screenPreferences": ["all"],
+            "showOnLastDisplay": true,
+            "leftWidgets": ["launcherButton", "workspaceSwitcher", "focusedWindow"],
+            "centerWidgets": ["music", "clock", "weather"],
+            "rightWidgets": ["systemTray", "clipboard", "cpuUsage", "memUsage", "printer", "notificationButton", "battery", "controlCenterButton"],
+            "spacing": 4,
+            "innerPadding": 4,
+            "barInsetPadding": -1,
+            "bottomGap": 0,
+            "transparency": 1.0,
+            "widgetTransparency": 1.0,
+            "squareCorners": false,
+            "noBackground": false,
+            "maximizeWidgetIcons": false,
+            "maximizeWidgetText": false,
+            "removeWidgetPadding": false,
+            "widgetPadding": 8,
+            "gothCornersEnabled": false,
+            "gothCornerRadiusOverride": false,
+            "gothCornerRadiusValue": 12,
+            "borderEnabled": false,
+            "borderColor": "surfaceText",
+            "borderOpacity": 1.0,
+            "borderThickness": 1,
+            "widgetOutlineEnabled": false,
+            "widgetOutlineColor": "primary",
+            "widgetOutlineOpacity": 1.0,
+            "widgetOutlineThickness": 1,
+            "fontScale": 1.0,
+            "iconScale": 1.0,
+            "autoHide": false,
+            "autoHideStrict": false,
+            "autoHideDelay": 250,
+            "showOnWindowsOpen": false,
+            "openOnOverview": false,
+            "visible": true,
+            "popupGapsAuto": true,
+            "popupGapsManual": 4,
+            "maximizeDetection": true,
+            "useOverlayLayer": false,
+            "scrollEnabled": true,
+            "scrollXBehavior": "column",
+            "scrollYBehavior": "workspace",
+            "shadowIntensity": 0,
+            "shadowOpacity": 60,
+            "shadowColorMode": "default",
+            "shadowCustomColor": "#000000",
+            "clickThrough": false,
+            "hoverPopouts": false,
+            "hoverPopoutDelay": 150
+        }
+    ]
+
+    // Bar widget ids the user explicitly removed, so reconciliation can tell
+    // that apart from a widget this config simply never mentioned. See
+    // settings/BarWidgets.js.
+    property var removedBarWidgets: []
+
+    // Scratchpad sizes are percentages of the destination monitor; the helper resolves them when applying configuration.
+    property var scratchpads: []
+
+    // Standalone bar xray is unsafe when windows can render beneath its surface
+    function _standaloneBarXrayAvailable(configs) {
+        const list = configs || [];
+        const activeBars = list.filter(c => c && c.enabled && (c.visible ?? true));
+        const gapsOverride = (typeof CompositorService !== "undefined" && CompositorService.isHyprland) ? hyprlandLayoutGapsOverride : niriLayoutGapsOverride;
+        const layoutGaps = gapsOverride >= 0 ? gapsOverride : Math.max(4, (list[0]?.spacing ?? 4));
+        return activeBars.every(c => !c.autoHide && !(c.useOverlayLayer ?? false) && (c.spacing ?? 4) + (c.bottomGap ?? 0) + layoutGaps >= 0);
+    }
+
+    readonly property bool standaloneBarXrayAvailable: _standaloneBarXrayAvailable(barConfigs)
+
+    property bool desktopClockEnabled: false
+    property string desktopClockStyle: "analog"
+    property real desktopClockTransparency: 0.8
+    property string desktopClockColorMode: "primary"
+    property color desktopClockCustomColor: "#ffffff"
+    property bool desktopClockShowDate: true
+    property bool desktopClockShowAnalogNumbers: false
+    property bool desktopClockShowAnalogSeconds: true
+    property real desktopClockX: -1
+    property real desktopClockY: -1
+    property real desktopClockWidth: 280
+    property real desktopClockHeight: 180
+    property var desktopClockDisplayPreferences: ["all"]
+
+    property bool systemMonitorEnabled: false
+    property bool systemMonitorShowHeader: true
+    property real systemMonitorTransparency: 0.8
+    property string systemMonitorColorMode: "primary"
+    property color systemMonitorCustomColor: "#ffffff"
+    property bool systemMonitorShowCpu: true
+    property bool systemMonitorShowCpuGraph: true
+    property bool systemMonitorShowCpuTemp: true
+    property bool systemMonitorShowGpuTemp: false
+    property string systemMonitorGpuPciId: ""
+    property bool systemMonitorShowMemory: true
+    property bool systemMonitorShowMemoryGraph: true
+    property bool systemMonitorShowNetwork: true
+    property bool systemMonitorShowNetworkGraph: true
+    property bool systemMonitorShowDisk: true
+    property bool systemMonitorShowTopProcesses: false
+    property int systemMonitorTopProcessCount: 3
+    property string systemMonitorTopProcessSortBy: "cpu"
+    property string systemMonitorLayoutMode: "auto"
+    property int systemMonitorGraphInterval: 60
+    property real systemMonitorX: -1
+    property real systemMonitorY: -1
+    property real systemMonitorWidth: 320
+    property real systemMonitorHeight: 480
+    property var systemMonitorDisplayPreferences: ["all"]
+    property var systemMonitorVariants: []
+    property var desktopWidgetPositions: ({})
+    property var desktopWidgetGridSettings: ({})
+    property var desktopWidgetInstances: []
+    property var desktopWidgetGroups: []
+
+    function getDesktopWidgetGridSetting(screenKey, property, defaultValue) {
+        const val = desktopWidgetGridSettings?.[screenKey]?.[property];
+        return val !== undefined ? val : defaultValue;
+    }
+
+    function setDesktopWidgetGridSetting(screenKey, property, value) {
+        const allSettings = JSON.parse(JSON.stringify(desktopWidgetGridSettings || {}));
+        if (!allSettings[screenKey])
+            allSettings[screenKey] = {};
+        allSettings[screenKey][property] = value;
+        desktopWidgetGridSettings = allSettings;
+        saveSettings();
+    }
+
+    function getDesktopWidgetPosition(pluginId, screenKey, property, defaultValue) {
+        const pos = desktopWidgetPositions?.[pluginId]?.[screenKey]?.[property];
+        return pos !== undefined ? pos : defaultValue;
+    }
+
+    function updateDesktopWidgetPosition(pluginId, screenKey, updates) {
+        const allPositions = JSON.parse(JSON.stringify(desktopWidgetPositions || {}));
+        if (!allPositions[pluginId])
+            allPositions[pluginId] = {};
+        allPositions[pluginId][screenKey] = Object.assign({}, allPositions[pluginId][screenKey] || {}, updates);
+        desktopWidgetPositions = allPositions;
+        saveSettings();
+    }
+
+    function getSystemMonitorVariants() {
+        return systemMonitorVariants || [];
+    }
+
+    function createSystemMonitorVariant(name, config) {
+        const id = "sysmon_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        const variant = {
+            id: id,
+            name: name,
+            config: config || getDefaultSystemMonitorConfig()
+        };
+        const variants = JSON.parse(JSON.stringify(systemMonitorVariants || []));
+        variants.push(variant);
+        systemMonitorVariants = variants;
+        saveSettings();
+        return variant;
+    }
+
+    function updateSystemMonitorVariant(variantId, updates) {
+        const variants = JSON.parse(JSON.stringify(systemMonitorVariants || []));
+        const idx = variants.findIndex(v => v.id === variantId);
+        if (idx === -1)
+            return;
+        Object.assign(variants[idx], updates);
+        systemMonitorVariants = variants;
+        saveSettings();
+    }
+
+    function removeSystemMonitorVariant(variantId) {
+        const variants = (systemMonitorVariants || []).filter(v => v.id !== variantId);
+        systemMonitorVariants = variants;
+        saveSettings();
+    }
+
+    function getSystemMonitorVariant(variantId) {
+        return (systemMonitorVariants || []).find(v => v.id === variantId) || null;
+    }
+
+    function getDefaultSystemMonitorConfig() {
+        return {
+            showHeader: true,
+            transparency: 0.8,
+            colorMode: "primary",
+            customColor: "#ffffff",
+            showCpu: true,
+            showCpuGraph: true,
+            showCpuTemp: true,
+            showGpuTemp: false,
+            gpuPciId: "",
+            showMemory: true,
+            showMemoryGraph: true,
+            showNetwork: true,
+            showNetworkGraph: true,
+            showDisk: true,
+            showTopProcesses: false,
+            topProcessCount: 3,
+            topProcessSortBy: "cpu",
+            layoutMode: "auto",
+            graphInterval: 60,
+            x: -1,
+            y: -1,
+            width: 320,
+            height: 480,
+            displayPreferences: ["all"]
+        };
+    }
+
+    function createDesktopWidgetInstance(widgetType, name, config) {
+        const id = "dw_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        const instance = {
+            id: id,
+            widgetType: widgetType,
+            name: name || widgetType,
+            enabled: true,
+            config: config || {},
+            positions: {}
+        };
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        instances.push(instance);
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return instance;
+    }
+
+    function updateDesktopWidgetInstance(instanceId, updates) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return;
+        Object.assign(instances[idx], updates);
+        desktopWidgetInstances = instances;
+        saveSettings();
+    }
+
+    function updateDesktopWidgetInstanceConfig(instanceId, configUpdates) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return;
+        instances[idx].config = Object.assign({}, instances[idx].config || {}, configUpdates);
+        desktopWidgetInstances = instances;
+        saveSettings();
+    }
+
+    function updateDesktopWidgetInstancePosition(instanceId, screenKey, positionUpdates) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return;
+        if (!instances[idx].positions)
+            instances[idx].positions = {};
+        instances[idx].positions[screenKey] = Object.assign({}, instances[idx].positions[screenKey] || {}, positionUpdates);
+        desktopWidgetInstances = instances;
+        saveSettings();
+    }
+
+    function removeDesktopWidgetInstance(instanceId) {
+        const instances = (desktopWidgetInstances || []).filter(inst => inst.id !== instanceId);
+        desktopWidgetInstances = instances;
+        saveSettings();
+    }
+
+    function syncDesktopWidgetPositionToAllScreens(instanceId) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return;
+        const positions = instances[idx].positions || {};
+        const screenKeys = Object.keys(positions).filter(k => k !== "_synced");
+        if (screenKeys.length === 0)
+            return;
+        const sourceKey = screenKeys[0];
+        const sourcePos = positions[sourceKey];
+        if (!sourcePos)
+            return;
+        const screen = Array.from(Quickshell.screens.values()).find(s => getScreenDisplayName(s) === sourceKey);
+        if (!screen)
+            return;
+        const screenW = screen.width;
+        const screenH = screen.height;
+        const synced = {};
+        if (sourcePos.x !== undefined)
+            synced.x = sourcePos.x / screenW;
+        if (sourcePos.y !== undefined)
+            synced.y = sourcePos.y / screenH;
+        if (sourcePos.width !== undefined)
+            synced.width = sourcePos.width;
+        if (sourcePos.height !== undefined)
+            synced.height = sourcePos.height;
+        instances[idx].positions["_synced"] = synced;
+        desktopWidgetInstances = instances;
+        saveSettings();
+    }
+
+    function duplicateDesktopWidgetInstance(instanceId) {
+        const source = getDesktopWidgetInstance(instanceId);
+        if (!source)
+            return null;
+        const newId = "dw_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        const instance = {
+            id: newId,
+            widgetType: source.widgetType,
+            name: source.name + " (Copy)",
+            enabled: source.enabled,
+            config: JSON.parse(JSON.stringify(source.config || {})),
+            positions: {}
+        };
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        instances.push(instance);
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return instance;
+    }
+
+    function getDesktopWidgetInstance(instanceId) {
+        return (desktopWidgetInstances || []).find(inst => inst.id === instanceId) || null;
+    }
+
+    function getDesktopWidgetInstancesOfType(widgetType) {
+        return (desktopWidgetInstances || []).filter(inst => inst.widgetType === widgetType);
+    }
+
+    function getEnabledDesktopWidgetInstances() {
+        return (desktopWidgetInstances || []).filter(inst => inst.enabled);
+    }
+
+    function moveDesktopWidgetInstance(instanceId, direction) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return false;
+        const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= instances.length)
+            return false;
+        const temp = instances[idx];
+        instances[idx] = instances[targetIdx];
+        instances[targetIdx] = temp;
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return true;
+    }
+
+    function reorderDesktopWidgetInstance(instanceId, newIndex) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1 || newIndex < 0 || newIndex >= instances.length)
+            return false;
+        const [item] = instances.splice(idx, 1);
+        instances.splice(newIndex, 0, item);
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return true;
+    }
+
+    function reorderDesktopWidgetInstanceInGroup(instanceId, groupId, newIndexInGroup) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const groups = desktopWidgetGroups || [];
+        const groupMatches = inst => {
+            if (groupId === null)
+                return !inst.group || !groups.some(g => g.id === inst.group);
+            return inst.group === groupId;
+        };
+        const groupInstances = instances.filter(groupMatches);
+        const currentGroupIdx = groupInstances.findIndex(inst => inst.id === instanceId);
+        if (currentGroupIdx === -1 || currentGroupIdx === newIndexInGroup)
+            return false;
+        if (newIndexInGroup < 0 || newIndexInGroup >= groupInstances.length)
+            return false;
+        const globalIdx = instances.findIndex(inst => inst.id === instanceId);
+        if (globalIdx === -1)
+            return false;
+        const [item] = instances.splice(globalIdx, 1);
+        const targetInstance = groupInstances[newIndexInGroup];
+        let targetGlobalIdx = instances.findIndex(inst => inst.id === targetInstance.id);
+        if (newIndexInGroup > currentGroupIdx)
+            targetGlobalIdx++;
+        instances.splice(targetGlobalIdx, 0, item);
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return true;
+    }
+
+    function moveDesktopWidgetInstanceToGroup(instanceId, groupId, newIndexInGroup) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        const groups = desktopWidgetGroups || [];
+        const idx = instances.findIndex(inst => inst.id === instanceId);
+        if (idx === -1)
+            return false;
+        const [item] = instances.splice(idx, 1);
+        item.group = groupId || null;
+        const groupMatches = inst => {
+            if (!groupId)
+                return !inst.group || !groups.some(g => g.id === inst.group);
+            return inst.group === groupId;
+        };
+        const groupInstances = instances.filter(groupMatches);
+        const clamped = Math.max(0, Math.min(newIndexInGroup, groupInstances.length));
+        let targetGlobalIdx;
+        if (clamped >= groupInstances.length) {
+            const last = groupInstances[groupInstances.length - 1];
+            targetGlobalIdx = last ? instances.findIndex(inst => inst.id === last.id) + 1 : instances.length;
+        } else {
+            const targetInstance = groupInstances[clamped];
+            targetGlobalIdx = instances.findIndex(inst => inst.id === targetInstance.id);
+        }
+        instances.splice(targetGlobalIdx, 0, item);
+        desktopWidgetInstances = instances;
+        saveSettings();
+        return true;
+    }
+
+    function createDesktopWidgetGroup(name) {
+        const id = "dwg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        const group = {
+            id: id,
+            name: name,
+            collapsed: false
+        };
+        const groups = JSON.parse(JSON.stringify(desktopWidgetGroups || []));
+        groups.push(group);
+        desktopWidgetGroups = groups;
+        saveSettings();
+        return group;
+    }
+
+    function updateDesktopWidgetGroup(groupId, updates) {
+        const groups = JSON.parse(JSON.stringify(desktopWidgetGroups || []));
+        const idx = groups.findIndex(g => g.id === groupId);
+        if (idx === -1)
+            return;
+        Object.assign(groups[idx], updates);
+        desktopWidgetGroups = groups;
+        saveSettings();
+    }
+
+    function removeDesktopWidgetGroup(groupId) {
+        const instances = JSON.parse(JSON.stringify(desktopWidgetInstances || []));
+        for (let i = 0; i < instances.length; i++) {
+            if (instances[i].group === groupId)
+                instances[i].group = null;
+        }
+        desktopWidgetInstances = instances;
+        const groups = (desktopWidgetGroups || []).filter(g => g.id !== groupId);
+        desktopWidgetGroups = groups;
+        saveSettings();
+    }
+
+    function getDesktopWidgetGroup(groupId) {
+        return (desktopWidgetGroups || []).find(g => g.id === groupId) || null;
+    }
+
+    function getDesktopWidgetInstancesByGroup(groupId) {
+        return (desktopWidgetInstances || []).filter(inst => inst.group === groupId);
+    }
+
+    function getUngroupedDesktopWidgetInstances() {
+        return (desktopWidgetInstances || []).filter(inst => !inst.group);
+    }
+
+    signal forceBarLayoutRefresh
+    signal forceDockLayoutRefresh
+    signal widgetDataChanged
+    signal workspaceIconsUpdated
+
+    function refreshAuthAvailability() {
+        if (isGreeterMode)
+            return;
+        Processes.detectAuthCapabilities();
+    }
+
+    Component.onCompleted: {
+        if (!isGreeterMode) {
+            Processes.settingsRoot = root;
+            loadSettings();
+            initializeListModels();
+            refreshAuthAvailability();
+            Processes.detectQtTools();
+            Processes.checkPluginSettings();
+        }
+    }
+
+    function applyStoredTheme() {
+        // theme.json owns theme selection. Apply blueprints explicitly through VGSThemeService and the helper.
+        if (typeof Theme !== "undefined") {
+            Theme.currentThemeCategory = "vgs";
+            if (Theme.methodThemeJson && Theme.methodThemeJson.name)
+                Theme.currentTheme = Theme.methodThemeJson.name;
+        } else {
+            Qt.callLater(function () {
+                if (typeof Theme !== "undefined") {
+                    Theme.currentThemeCategory = "vgs";
+                    if (Theme.methodThemeJson && Theme.methodThemeJson.name)
+                        Theme.currentTheme = Theme.methodThemeJson.name;
+                }
+            });
+        }
+    }
+
+    function applySystemFonts(who, key, oldValue) {
+        if (isGreeterMode)
+            return;
+        updateCompositorLayout();
+        const command = [Paths.vshellCli, "fonts", "apply", "--json"];
+        if (key === "systemFontSize")
+            command.push("--size-only");
+        Proc.runCommand("system-fonts-apply", command, (output, exitCode, stderr) => {
+            if (exitCode === 0)
+                return;
+            const msg = (stderr && stderr.trim().length > 0) ? stderr : (output || I18n.tr("Font settings apply failed"));
+            if (typeof ToastService !== "undefined")
+                ToastService.showWarning(I18n.tr("System font settings partially applied"), msg);
+        }, 250, 30000);
+    }
+
+    function updateCompositorLayout() {
+        if (typeof CompositorService === "undefined")
+            return;
+        if (CompositorService.isNiri && typeof NiriService !== "undefined")
+            NiriService.generateNiriLayoutConfig();
+        if (CompositorService.isHyprland && typeof HyprlandService !== "undefined")
+            HyprlandService.generateLayoutConfig();
+        if (CompositorService.isMango && typeof MangoService !== "undefined")
+            MangoService.generateLayoutConfig();
+    }
+
+    // Scratchpad presentation is compositor config, so writing the list has to
+    // regenerate it. Debounced in ScratchpadService for the same reason the
+    // layout apply is: a settings page edits several fields in a row.
+    function updateScratchpads() {
+        if (typeof ScratchpadService === "undefined")
+            return;
+        ScratchpadService.generateConfig();
+    }
+
+    function resolveIconTheme() {
+        if (iconThemePerMode && typeof SessionData !== "undefined" && SessionData.isLightMode)
+            return iconThemeLight;
+        return iconThemeDark;
+    }
+
+    function setIconThemeUnmanaged() {
+        iconThemePerMode = false;
+        iconThemeDark = "System Default";
+        iconThemeLight = "System Default";
+        lastAppliedIconTheme = "";
+        saveSettings();
+    }
+
+    function cosmicIntegrationAvailable() {
+        const desktop = (Quickshell.env("XDG_CURRENT_DESKTOP") || "").toUpperCase();
+        return desktop.includes("COSMIC");
+    }
+
+    function updateCosmicThemeMode(isLightMode) {
+        if (!cosmicIntegrationAvailable())
+            return;
+        const isDark = isLightMode ? "false" : "true";
+        const script = `mkdir -p ${_configDir}/cosmic/com.system76.CosmicTheme.Mode/v1
+        printf '%s\\n' ${isDark} > ${_configDir}/cosmic/com.system76.CosmicTheme.Mode/v1/is_dark 2>/dev/null || true`;
+        Quickshell.execDetached(["sh", "-lc", script]);
+    }
+
+    function scheduleAuthApply() {
+        if (isGreeterMode)
+            return;
+        greeterSyncPending = true;
+        Qt.callLater(() => {
+            Processes.settingsRoot = root;
+            Processes.scheduleAuthApply();
+        });
+    }
+
+    function scheduleGreeterAutoLoginSync() {
+        if (isGreeterMode)
+            return;
+        Qt.callLater(() => {
+            Processes.settingsRoot = root;
+            Processes.scheduleGreeterAutoLoginSync();
+        });
+    }
+
+    function markGreeterSyncPending(who, key, oldValue) {
+        if (isGreeterMode)
+            return;
+        if (!(key in greeterSyncBaseline)) {
+            var baseline = greeterSyncBaseline;
+            baseline[key] = oldValue;
+            greeterSyncBaseline = baseline;
+        }
+        greeterSyncPending = true;
+    }
+
+    function clearGreeterSyncPending() {
+        greeterSyncBaseline = {};
+        greeterSyncPending = false;
+        saveSettings();
+    }
+
+    function revertGreeterSyncPending() {
+        for (var key in greeterSyncBaseline) {
+            root[key] = greeterSyncBaseline[key];
+        }
+        greeterSyncBaseline = {};
+        greeterSyncPending = false;
+        saveSettings();
+    }
+
+    readonly property var _writes: Coalescer.create()
+
+    // Settings whose effects an owning service performs. SettingsData only emits the change:
+    // after the coalesced write for a setter, and from a reload for each key an external edit
+    // changed. The first load emits none, so loading runs none of these effects.
+    signal appThemeInputChanged(string key)
+    signal iconThemeSettingChanged(string key)
+    signal cursorSettingChanged(string key)
+
+    readonly property var _changeSignals: ({
+            "appThemeInputChanged": (r, key) => root.appThemeInputChanged(key),
+            "iconThemeSettingChanged": (r, key) => root.iconThemeSettingChanged(key),
+            "cursorSettingChanged": (r, key) => root.cursorSettingChanged(key)
+        })
+
+    // The first map runs at assignment: in-memory state other bindings read at once.
+    // The second map runs from the coalesced commit: these start helpers or write compositor
+    // and toolkit config, each too costly to run once per drag position, and the helpers read
+    // the persisted settings.
+    readonly property var _hooks: Coalescer.deferHooks(_writes, {
+            "applyStoredTheme": applyStoredTheme,
+            "updateBarConfigs": updateBarConfigs,
+            "markGreeterSyncPending": markGreeterSyncPending
+        }, Object.assign({
+            "applySystemFonts": applySystemFonts,
+            "updateCompositorLayout": updateCompositorLayout,
+            "updateScratchpads": updateScratchpads,
+            "scheduleAuthApply": scheduleAuthApply,
+            "scheduleGreeterAutoLoginSync": scheduleGreeterAutoLoginSync,
+            "runNotificationSoundHook": runNotificationSoundHook
+        }, _changeSignals))
+
+    // An external edit reloads the file; each key it changed emits its change signal.
+    function _emitReloadedChanges(before) {
+        for (const change of Store.changedHooks(root, before))
+            _changeSignals[change.hook](root, change.key);
+    }
+
+    // Optional user hook fired when the notification-sound toggle flips, so
+    // external tools (e.g. dictation feedback) can follow it. Runs
+    // ~/.config/vshell/hooks/notification-sound <on|off> if present and
+    // executable; a no-op otherwise. VGS ships no such hook itself — this is a
+    // dotfiles wiring point, so no personal-tool knowledge lives in the shell.
+    function runNotificationSoundHook() {
+        const state = root.soundNewNotification ? "on" : "off";
+        const hook = _configDir + "/vshell/hooks/notification-sound";
+        Quickshell.execDetached(["sh", "-lc", 'h="$1"; [ -x "$h" ] && exec "$h" "$2" || true', "vshell-notification-sound-hook", hook, state]);
+    }
+
+    function set(key, value) {
+        Spec.set(root, key, value, saveSettings, _hooks);
+    }
+
+    function loadSettings() {
+        _loading = true;
+        _parseError = false;
+        _hasUnsavedChanges = false;
+        _pendingMigrationWrite = false;
+
+        try {
+            const txt = settingsFile.text();
+            let obj = (txt && txt.trim()) ? JSON.parse(txt) : null;
+
+            const oldVersion = obj?.configVersion ?? 0;
+            if (oldVersion < settingsConfigVersion) {
+                const migrated = Store.migrateToVersion(obj, settingsConfigVersion);
+                if (migrated) {
+                    _pendingMigrationWrite = true;
+                    obj = migrated;
+                }
+            }
+
+            Store.parse(root, obj);
+
+            if (obj?.iconTheme !== undefined && obj?.iconThemeDark === undefined)
+                iconThemeDark = obj.iconTheme;
+
+            if (obj?.weatherLocation !== undefined)
+                _legacyWeatherLocation = obj.weatherLocation;
+            if (obj?.weatherCoordinates !== undefined)
+                _legacyWeatherCoordinates = obj.weatherCoordinates;
+            if (obj?.vpnLastConnected !== undefined && obj.vpnLastConnected !== "") {
+                _legacyVpnLastConnected = obj.vpnLastConnected;
+                SessionData.vpnLastConnected = _legacyVpnLastConnected;
+                SessionData.saveSettings();
+            }
+
+            _loadedSettingsSnapshot = JSON.stringify(Store.toJson(root));
+            _hasLoaded = true;
+            // Covers hardware already known by the time settings land; the
+            // shell re-runs this when detection completes later.
+            Qt.callLater(reconcileHardwareBarWidgets);
+
+            _checkSettingsWritable();
+        } catch (e) {
+            _parseError = true;
+            const msg = e.message;
+            log.error("Failed to parse settings.json - file will not be overwritten. Error:", msg);
+            Qt.callLater(() => ToastService.showError(I18n.tr("Failed to parse settings.json"), msg));
+        } finally {
+            _loading = false;
+        }
+        loadPluginSettings();
+    }
+
+    // Keep only a pending-write flag while writability is checked.
+    // Saving current state avoids overwriting settings changed during that asynchronous check.
+    property bool _pendingMigrationWrite: false
+
+    function _checkSettingsWritable() {
+        settingsWritableCheckProcess.running = true;
+    }
+
+    function _onWritableCheckComplete(writable) {
+        const wasReadOnly = _isReadOnly;
+        _isReadOnly = !writable;
+        if (_isReadOnly) {
+            _hasUnsavedChanges = _checkForUnsavedChanges();
+            if (!wasReadOnly)
+                log.info("settings.json is now read-only");
+        } else {
+            _loadedSettingsSnapshot = JSON.stringify(Store.toJson(root));
+            _hasUnsavedChanges = false;
+            if (wasReadOnly)
+                log.info("settings.json is now writable");
+            // Save current state so changes made during the writability check survive the migration write.
+            if (_pendingMigrationWrite)
+                saveSettings();
+        }
+        _pendingMigrationWrite = false;
+    }
+
+    function _checkForUnsavedChanges() {
+        if (!_hasLoaded || !_loadedSettingsSnapshot)
+            return false;
+        const current = JSON.stringify(Store.toJson(root));
+        return current !== _loadedSettingsSnapshot;
+    }
+
+    function getCurrentSettingsJson() {
+        return JSON.stringify(Store.toJson(root), null, 2);
+    }
+
+    function _resetPluginSettings() {
+        _pluginParseError = false;
+        pluginSettings = {};
+    }
+
+    function _resetDefaultPluginSettings() {
+        defaultPluginSettings = {};
+        _defaultPluginSettingsLoaded = true;
+    }
+
+    function _pluginSettingsErrorCode(error) {
+        if (typeof error === "number")
+            return error;
+        if (error && typeof error === "object") {
+            if (typeof error.code === "number")
+                return error.code;
+            if (typeof error.errno === "number")
+                return error.errno;
+        }
+
+        const msg = String(error || "").trim();
+        if (/^\d+$/.test(msg))
+            return Number(msg);
+
+        return -1;
+    }
+
+    function _isMissingPluginSettingsError(error) {
+        if (_pluginSettingsErrorCode(error) === 2)
+            return true;
+
+        const msg = String(error || "").toLowerCase();
+        return msg.indexOf("file does not exist") !== -1 || msg.indexOf("no such file") !== -1 || msg.indexOf("enoent") !== -1;
+    }
+
+    function loadPluginSettings() {
+        loadDefaultPluginSettings();
+        try {
+            parsePluginSettings(pluginSettingsFile.text());
+        } catch (e) {
+            const msg = e.message || String(e);
+            if (!_isMissingPluginSettingsError(e))
+                log.warn("Failed to load plugin_settings.json. Error:", msg);
+            _resetPluginSettings();
+        }
+    }
+
+    function loadDefaultPluginSettings() {
+        try {
+            parseDefaultPluginSettings(defaultPluginSettingsFile.text());
+        } catch (e) {
+            const msg = e.message || String(e);
+            if (!_isMissingPluginSettingsError(e))
+                log.warn("Failed to load plugin_settings.default.json. Error:", msg);
+            _resetDefaultPluginSettings();
+        }
+    }
+
+    function parseDefaultPluginSettings(content) {
+        try {
+            if (content && content.trim()) {
+                defaultPluginSettings = JSON.parse(content);
+            } else {
+                _resetDefaultPluginSettings();
+            }
+        } catch (e) {
+            const msg = e.message;
+            log.warn("Failed to parse plugin_settings.default.json. Error:", msg);
+            _resetDefaultPluginSettings();
+        } finally {
+            _defaultPluginSettingsLoaded = true;
+        }
+    }
+
+    function parsePluginSettings(content) {
+        _pluginSettingsLoading = true;
+        _pluginParseError = false;
+        try {
+            if (content && content.trim()) {
+                pluginSettings = JSON.parse(content);
+            } else {
+                pluginSettings = {};
+            }
+        } catch (e) {
+            _pluginParseError = true;
+            const msg = e.message;
+            log.error("Failed to parse plugin_settings.json - file will not be overwritten. Error:", msg);
+            Qt.callLater(() => ToastService.showError(I18n.tr("Failed to parse plugin_settings.json"), msg));
+            pluginSettings = {};
+        } finally {
+            _pluginSettingsLoading = false;
+        }
+    }
+
+    function _canWrite() {
+        return !_loading && !_parseError && _hasLoaded;
+    }
+
+    // Marks the store dirty; settingsWriteTimer writes a burst of setters once, plus a second
+    // write only when a deferred hook changes the serialised text.
+    function saveSettings() {
+        if (!_canWrite())
+            return;
+        Coalescer.markDirty(_writes);
+        settingsWriteTimer.restart();
+    }
+
+    function flushSettings() {
+        settingsWriteTimer.stop();
+        Coalescer.commit(_writes, _canWrite(), getCurrentSettingsJson, text => {
+            settingsFile.setText(text);
+            if (_isReadOnly)
+                _checkSettingsWritable();
+        });
+    }
+
+    function savePluginSettings() {
+        if (_pluginSettingsLoading || _pluginParseError)
+            return;
+        pluginSettingsFile.setText(JSON.stringify(pluginSettings, null, 2));
+    }
+
+    function detectAvailableCursorThemes() {
+        const xdgDataDirs = Quickshell.env("XDG_DATA_DIRS") || "";
+        const localData = Paths.strip(StandardPaths.writableLocation(StandardPaths.GenericDataLocation));
+        const homeDir = Paths.strip(StandardPaths.writableLocation(StandardPaths.HomeLocation));
+
+        const dataDirs = xdgDataDirs.trim() !== "" ? xdgDataDirs.split(":").concat([localData]) : ["/usr/share", "/usr/local/share", localData];
+
+        const cursorPaths = dataDirs.map(d => d + "/icons").concat([homeDir + "/.icons", homeDir + "/.local/share/icons"]);
+        const pathsArg = cursorPaths.join(" ");
+
+        const script = `
+            echo "SYSDEFAULT:$(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null | sed "s/'//g" || echo '')"
+            for dir in ${pathsArg}; do
+                [ -d "$dir" ] || continue
+                for theme in "$dir"/*/; do
+                    [ -d "$theme" ] || continue
+                    [ -d "$theme/cursors" ] || continue
+                    basename "$theme"
+                done
+            done | grep -v '^icons$' | grep -v '^default$' | sort -u
+        `;
+
+        Proc.runCommand("detectCursorThemes", ["sh", "-c", script], (output, exitCode) => {
+            const themes = ["System Default"];
+            if (output && output.trim()) {
+                const lines = output.trim().split('\n');
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (line.startsWith("SYSDEFAULT:")) {
+                        systemDefaultCursorTheme = line.substring(11).trim();
+                        continue;
+                    }
+                    if (line)
+                        themes.push(line);
+                }
+            }
+            availableCursorThemes = themes;
+        });
+    }
+
+    function getEffectiveTimeFormat() {
+        if (use24HourClock)
+            return showSeconds ? "hh:mm:ss" : "hh:mm";
+        if (padHours12Hour)
+            return showSeconds ? "hh:mm:ss AP" : "hh:mm AP";
+        return showSeconds ? "h:mm:ss AP" : "h:mm AP";
+    }
+
+    function getEffectiveClockDateFormat() {
+        return clockDateFormat && clockDateFormat.length > 0 ? clockDateFormat : "ddd d";
+    }
+
+    function getEffectiveLockDateFormat() {
+        return lockDateFormat && lockDateFormat.length > 0 ? lockDateFormat : Locale.LongFormat;
+    }
+
+    function initializeListModels() {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            Lists.init(leftWidgetsModel, centerWidgetsModel, rightWidgetsModel, defaultBar.leftWidgets, defaultBar.centerWidgets, defaultBar.rightWidgets);
+        }
+    }
+
+    function updateListModel(listModel, order) {
+        Lists.update(listModel, order);
+        widgetDataChanged();
+    }
+
+    function hasNamedWorkspaces() {
+        if (typeof NiriService === "undefined" || !CompositorService.isNiri)
+            return false;
+
+        for (var i = 0; i < NiriService.allWorkspaces.length; i++) {
+            var ws = NiriService.allWorkspaces[i];
+            if (ws.name && ws.name.trim() !== "")
+                return true;
+        }
+        return false;
+    }
+
+    function getNamedWorkspaces() {
+        var namedWorkspaces = [];
+        if (typeof NiriService === "undefined" || !CompositorService.isNiri)
+            return namedWorkspaces;
+
+        for (const ws of NiriService.allWorkspaces) {
+            if (ws.name && ws.name.trim() !== "") {
+                namedWorkspaces.push(ws.name);
+            }
+        }
+        return namedWorkspaces;
+    }
+
+    function getPopupYPosition(barHeight) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const gothOffset = defaultBar?.gothCornersEnabled ? Theme.cornerRadius : 0;
+        const spacing = defaultBar?.spacing ?? 4;
+        const bottomGap = defaultBar?.bottomGap ?? 0;
+        return barHeight + spacing + bottomGap - gothOffset + Theme.popupDistance;
+    }
+
+    function getPopupTriggerPosition(pos, screen, barThickness, widgetWidth, barSpacing, barPosition, barConfig) {
+        const relativeX = pos.x;
+        const relativeY = pos.y;
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const spacing = barSpacing !== undefined ? barSpacing : (defaultBar?.spacing ?? 4);
+        const position = barPosition !== undefined ? barPosition : (defaultBar?.position ?? SettingsData.Position.Top);
+        const rawBottomGap = barConfig ? (barConfig.bottomGap !== undefined ? barConfig.bottomGap : (defaultBar?.bottomGap ?? 0)) : (defaultBar?.bottomGap ?? 0);
+        const bottomGap = Math.max(0, rawBottomGap);
+
+        const useAutoGaps = (barConfig && barConfig.popupGapsAuto !== undefined) ? barConfig.popupGapsAuto : (defaultBar?.popupGapsAuto ?? true);
+        const manualGapValue = (barConfig && barConfig.popupGapsManual !== undefined) ? barConfig.popupGapsManual : (defaultBar?.popupGapsManual ?? 4);
+        const popupGap = useAutoGaps ? Math.max(4, spacing) : manualGapValue;
+        const edgeSpacing = spacing;
+
+        switch (position) {
+        case SettingsData.Position.Left:
+            return {
+                "x": barThickness + edgeSpacing + popupGap,
+                "y": relativeY,
+                "width": widgetWidth
+            };
+        case SettingsData.Position.Right:
+            return {
+                "x": (screen?.width || 0) - (barThickness + edgeSpacing + popupGap),
+                "y": relativeY,
+                "width": widgetWidth
+            };
+        case SettingsData.Position.Bottom:
+            return {
+                "x": relativeX,
+                "y": (screen?.height || 0) - (barThickness + edgeSpacing + bottomGap + popupGap),
+                "width": widgetWidth
+            };
+        default:
+            return {
+                "x": relativeX,
+                "y": barThickness + edgeSpacing + bottomGap + popupGap,
+                "width": widgetWidth
+            };
+        }
+    }
+
+    function getAdjacentBarInfo(screen, barPosition, barConfig) {
+        if (!screen || !barConfig) {
+            return {
+                "topBar": 0,
+                "bottomBar": 0,
+                "leftBar": 0,
+                "rightBar": 0
+            };
+        }
+
+        if (barConfig.autoHide) {
+            return {
+                "topBar": 0,
+                "bottomBar": 0,
+                "leftBar": 0,
+                "rightBar": 0
+            };
+        }
+
+        const enabledBars = getEnabledBarConfigs();
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const position = barPosition !== undefined ? barPosition : (defaultBar?.position ?? SettingsData.Position.Top);
+        let topBar = 0;
+        let bottomBar = 0;
+        let leftBar = 0;
+        let rightBar = 0;
+
+        for (var i = 0; i < enabledBars.length; i++) {
+            const other = enabledBars[i];
+            if (other.id === barConfig.id)
+                continue;
+            if (other.autoHide)
+                continue;
+            const otherScreens = other.screenPreferences || ["all"];
+            const barScreens = barConfig.screenPreferences || ["all"];
+            const onSameScreen = otherScreens.includes("all") || barScreens.includes("all") || otherScreens.some(s => isScreenInPreferences(screen, [s]));
+
+            if (!onSameScreen)
+                continue;
+            const otherSpacing = other.spacing !== undefined ? other.spacing : (defaultBar?.spacing ?? 4);
+            const otherPadding = other.innerPadding !== undefined ? other.innerPadding : (defaultBar?.innerPadding ?? 4);
+            const otherThickness = Math.max(26 + otherPadding * 0.6, Theme.barHeight - 4 - (8 - otherPadding)) + otherSpacing;
+
+            const useAutoGaps = other.popupGapsAuto !== undefined ? other.popupGapsAuto : (defaultBar?.popupGapsAuto ?? true);
+            const manualGap = other.popupGapsManual !== undefined ? other.popupGapsManual : (defaultBar?.popupGapsManual ?? 4);
+            const popupGap = useAutoGaps ? Math.max(4, otherSpacing) : manualGap;
+
+            switch (other.position) {
+            case SettingsData.Position.Top:
+                topBar = Math.max(topBar, otherThickness + popupGap);
+                break;
+            case SettingsData.Position.Bottom:
+                bottomBar = Math.max(bottomBar, otherThickness + popupGap);
+                break;
+            case SettingsData.Position.Left:
+                leftBar = Math.max(leftBar, otherThickness + popupGap);
+                break;
+            case SettingsData.Position.Right:
+                rightBar = Math.max(rightBar, otherThickness + popupGap);
+                break;
+            }
+        }
+
+        return {
+            "topBar": topBar,
+            "bottomBar": bottomBar,
+            "leftBar": leftBar,
+            "rightBar": rightBar
+        };
+    }
+
+    function getBarBounds(screen, barThickness, barPosition, barConfig) {
+        if (!screen) {
+            return {
+                "x": 0,
+                "y": 0,
+                "width": 0,
+                "height": 0,
+                "wingSize": 0
+            };
+        }
+
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const wingRadius = (defaultBar?.gothCornerRadiusOverride ?? false) ? (defaultBar?.gothCornerRadiusValue ?? 12) : Theme.cornerRadius;
+        const wingSize = (defaultBar?.gothCornersEnabled ?? false) ? Math.max(0, wingRadius) : 0;
+        const screenWidth = screen.width;
+        const screenHeight = screen.height;
+        const position = barPosition !== undefined ? barPosition : (defaultBar?.position ?? SettingsData.Position.Top);
+        const rawBottomGap = barConfig ? (barConfig.bottomGap !== undefined ? barConfig.bottomGap : (defaultBar?.bottomGap ?? 0)) : (defaultBar?.bottomGap ?? 0);
+        const bottomGap = rawBottomGap;
+
+        let topOffset = 0;
+        let bottomOffset = 0;
+        let leftOffset = 0;
+        let rightOffset = 0;
+
+        if (barConfig) {
+            const enabledBars = getEnabledBarConfigs();
+            for (var i = 0; i < enabledBars.length; i++) {
+                const other = enabledBars[i];
+                if (other.id === barConfig.id)
+                    continue;
+                const otherScreens = other.screenPreferences || ["all"];
+                const barScreens = barConfig.screenPreferences || ["all"];
+                const onSameScreen = otherScreens.includes("all") || barScreens.includes("all") || otherScreens.some(s => isScreenInPreferences(screen, [s]));
+
+                if (!onSameScreen)
+                    continue;
+                const otherSpacing = other.spacing !== undefined ? other.spacing : (defaultBar?.spacing ?? 4);
+                const otherPadding = other.innerPadding !== undefined ? other.innerPadding : (defaultBar?.innerPadding ?? 4);
+                const otherThickness = Math.max(26 + otherPadding * 0.6, Theme.barHeight - 4 - (8 - otherPadding)) + otherSpacing + wingSize;
+                const otherBottomGap = other.bottomGap !== undefined ? other.bottomGap : (defaultBar?.bottomGap ?? 0);
+
+                switch (other.position) {
+                case SettingsData.Position.Top:
+                    if (position === SettingsData.Position.Top && other.id < barConfig.id) {
+                        topOffset += otherThickness;
+                    } else if (position === SettingsData.Position.Left || position === SettingsData.Position.Right) {
+                        topOffset = Math.max(topOffset, otherThickness);
+                    }
+                    break;
+                case SettingsData.Position.Bottom:
+                    if (position === SettingsData.Position.Bottom && other.id < barConfig.id) {
+                        bottomOffset += (otherThickness + otherBottomGap);
+                    } else if (position === SettingsData.Position.Left || position === SettingsData.Position.Right) {
+                        bottomOffset = Math.max(bottomOffset, otherThickness + otherBottomGap);
+                    }
+                    break;
+                case SettingsData.Position.Left:
+                    if (position === SettingsData.Position.Top || position === SettingsData.Position.Bottom) {
+                        leftOffset = Math.max(leftOffset, otherThickness);
+                    } else if (position === SettingsData.Position.Left && other.id < barConfig.id) {
+                        leftOffset += otherThickness;
+                    }
+                    break;
+                case SettingsData.Position.Right:
+                    if (position === SettingsData.Position.Top || position === SettingsData.Position.Bottom) {
+                        rightOffset = Math.max(rightOffset, otherThickness);
+                    } else if (position === SettingsData.Position.Right && other.id < barConfig.id) {
+                        rightOffset += otherThickness;
+                    }
+                    break;
+                }
+            }
+        }
+
+        switch (position) {
+        case SettingsData.Position.Top:
+            return {
+                "x": leftOffset,
+                "y": topOffset + bottomGap,
+                "width": screenWidth - leftOffset - rightOffset,
+                "height": barThickness + wingSize,
+                "wingSize": wingSize
+            };
+        case SettingsData.Position.Bottom:
+            return {
+                "x": leftOffset,
+                "y": screenHeight - barThickness - wingSize - bottomGap - bottomOffset,
+                "width": screenWidth - leftOffset - rightOffset,
+                "height": barThickness + wingSize,
+                "wingSize": wingSize
+            };
+        case SettingsData.Position.Left:
+            return {
+                "x": 0,
+                "y": topOffset,
+                "width": barThickness + wingSize,
+                "height": screenHeight - topOffset - bottomOffset,
+                "wingSize": wingSize
+            };
+        case SettingsData.Position.Right:
+            return {
+                "x": screenWidth - barThickness - wingSize,
+                "y": topOffset,
+                "width": barThickness + wingSize,
+                "height": screenHeight - topOffset - bottomOffset,
+                "wingSize": wingSize
+            };
+        }
+
+        return {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0,
+            "wingSize": 0
+        };
+    }
+
+    function updateBarConfigs() {
+        barConfigsChanged();
+        saveSettings();
+    }
+
+    function getBarConfig(barId) {
+        return barConfigs.find(cfg => cfg.id === barId) || null;
+    }
+
+    // Whether the hardware a widget depends on exists on this machine. UPower
+    // is the battery probe because VGS already consumes it everywhere else;
+    // /sys/class/power_supply is the same answer with a filesystem poll bolted
+    // on, and chassis type is unreliable on non-x86 firmware.
+    function hardwareBarWidgetPresent(widgetId) {
+        switch (widgetId) {
+        case "battery":
+            return BatteryService.batteryAvailable;
+        }
+        return false;
+    }
+
+    function isBarWidgetRemoved(widgetId) {
+        return (removedBarWidgets || []).indexOf(widgetId) >= 0;
+    }
+
+    // Called when the user deletes a widget from a bar. Recording every removal
+    // rather than only the hardware-gated ones keeps the record meaningful for
+    // widgets that become hardware-gated later.
+    function recordBarWidgetRemoval(widgetId) {
+        if (!widgetId || isBarWidgetRemoved(widgetId))
+            return;
+        removedBarWidgets = (removedBarWidgets || []).concat([widgetId]);
+        saveSettings();
+    }
+
+    // The user put it back, so the removal no longer describes their intent.
+    function clearBarWidgetRemoval(widgetId) {
+        if (!widgetId || !isBarWidgetRemoved(widgetId))
+            return;
+        removedBarWidgets = (removedBarWidgets || []).filter(id => id !== widgetId);
+        saveSettings();
+    }
+
+    // Add hardware-gated widgets that this config has never mentioned, now that
+    // we know what hardware is actually here. Safe to call repeatedly: a widget
+    // the user removed is recorded in removedBarWidgets and stays gone.
+    function reconcileHardwareBarWidgets() {
+        if (!_hasLoaded || _parseError || _loading)
+            return;
+
+        const presence = {};
+        for (var i = 0; i < BarWidgets.HARDWARE_WIDGETS.length; i++) {
+            const id = BarWidgets.HARDWARE_WIDGETS[i].id;
+            presence[id] = hardwareBarWidgetPresent(id);
+        }
+
+        const result = BarWidgets.reconcile(barConfigs, removedBarWidgets, presence);
+        if (!result)
+            return;
+
+        log.info("Added bar widgets for hardware present on this machine:", result.added.join(", "));
+        barConfigs = result.barConfigs;
+        updateBarConfigs();
+    }
+
+    function isBarIpcRevealed(barId) {
+        if (!barId)
+            return false;
+        return !!barIpcRevealStates[barId];
+    }
+
+    function setBarIpcReveal(barId, revealed) {
+        if (!barId)
+            return;
+        const nextRevealed = !!revealed;
+        if (!!barIpcRevealStates[barId] === nextRevealed)
+            return;
+        const states = Object.assign({}, barIpcRevealStates);
+        if (nextRevealed) {
+            states[barId] = true;
+        } else {
+            delete states[barId];
+        }
+        barIpcRevealStates = states;
+    }
+
+    function toggleBarIpcReveal(barId) {
+        const revealed = !isBarIpcRevealed(barId);
+        setBarIpcReveal(barId, revealed);
+        return revealed;
+    }
+
+    // Reconcile when a bar first becomes enabled; hardware widgets have no target while all bars are disabled.
+    // Defer until the caller finishes updating the bar configuration.
+    function _reconcileIfBarsBecameVisible(hadEnabledBar) {
+        if (hadEnabledBar || getEnabledBarConfigs().length === 0)
+            return;
+        Qt.callLater(reconcileHardwareBarWidgets);
+    }
+
+    function addBarConfig(config) {
+        const hadEnabledBar = getEnabledBarConfigs().length > 0;
+        const configs = JSON.parse(JSON.stringify(barConfigs));
+        configs.push(config);
+        barConfigs = configs;
+        updateBarConfigs();
+        _reconcileIfBarsBecameVisible(hadEnabledBar);
+    }
+
+    // Persist one setting on a bar widget, found by id across every bar and
+    // every section. This is what lets a widget's own flyout offer its options
+    // instead of sending the user to the settings application: the settings
+    // tab reaches the same fields through the section and row it is already
+    // rendering, which a popout has no way to know.
+    //
+    // EVERY instance is updated, not the first. The same widget can sit on two
+    // bars, and a control inside the flyout reads as "this widget", not "this
+    // copy of it" -- leaving the others behind would look like the toggle had
+    // failed on the second monitor. A bare string entry is promoted to the
+    // object form the settings tab writes, so the two agree on the shape.
+    function setBarWidgetSetting(widgetId, settingName, value) {
+        if (!widgetId || !settingName)
+            return;
+        const configs = JSON.parse(JSON.stringify(barConfigs));
+        let touched = false;
+        for (const config of configs) {
+            for (const key of ["leftWidgets", "centerWidgets", "rightWidgets"]) {
+                const widgets = config[key];
+                if (!Array.isArray(widgets))
+                    continue;
+                for (let i = 0; i < widgets.length; i++) {
+                    const entry = widgets[i];
+                    const id = typeof entry === "string" ? entry : entry?.id;
+                    if (id !== widgetId)
+                        continue;
+                    const next = typeof entry === "string" ? {
+                        id: entry,
+                        enabled: true
+                    } : entry;
+                    next[settingName] = value;
+                    widgets[i] = next;
+                    touched = true;
+                }
+            }
+        }
+        if (!touched)
+            return;
+        barConfigs = configs;
+        updateBarConfigs();
+    }
+
+    function updateBarConfig(barId, updates) {
+        const hadEnabledBar = getEnabledBarConfigs().length > 0;
+        const configs = JSON.parse(JSON.stringify(barConfigs));
+        const index = configs.findIndex(cfg => cfg.id === barId);
+        if (index === -1)
+            return;
+        const positionChanged = updates.position !== undefined && configs[index].position !== updates.position;
+        const barXrayTargetWasAvailable = _standaloneBarXrayAvailable(configs);
+        if (updates.autoHide === false || updates.visible === false)
+            setBarIpcReveal(barId, false);
+
+        Object.assign(configs[index], updates);
+        barConfigs = configs;
+        updateBarConfigs();
+
+        if (_standaloneBarXrayAvailable(configs) !== barXrayTargetWasAvailable)
+            updateCompositorLayout();
+        if (positionChanged) {
+            NotificationService.dismissAllPopups();
+        }
+        _reconcileIfBarsBecameVisible(hadEnabledBar);
+    }
+
+    function checkBarCollisions(barId) {
+        const bar = getBarConfig(barId);
+        if (!bar || !bar.enabled)
+            return [];
+
+        const conflicts = [];
+        const enabledBars = getEnabledBarConfigs();
+
+        for (var i = 0; i < enabledBars.length; i++) {
+            const other = enabledBars[i];
+            if (other.id === barId)
+                continue;
+            const samePosition = bar.position === other.position;
+            if (!samePosition)
+                continue;
+            const barScreens = bar.screenPreferences || ["all"];
+            const otherScreens = other.screenPreferences || ["all"];
+
+            const hasAll = barScreens.includes("all") || otherScreens.includes("all");
+            if (hasAll) {
+                conflicts.push({
+                    "barId": other.id,
+                    "barName": other.name,
+                    "reason": "Same position on all screens"
+                });
+                continue;
+            }
+
+            const overlapping = barScreens.some(screen => otherScreens.includes(screen));
+            if (overlapping) {
+                conflicts.push({
+                    "barId": other.id,
+                    "barName": other.name,
+                    "reason": "Same position on overlapping screens"
+                });
+            }
+        }
+
+        return conflicts;
+    }
+
+    function deleteBarConfig(barId) {
+        if (barId === "default")
+            return;
+        const configs = barConfigs.filter(cfg => cfg.id !== barId);
+        barConfigs = configs;
+        setBarIpcReveal(barId, false);
+        updateBarConfigs();
+    }
+
+    function getEnabledBarConfigs() {
+        return barConfigs.filter(cfg => cfg.enabled);
+    }
+
+    function _sideToPosition(side) {
+        switch (side) {
+        case "top":
+            return SettingsData.Position.Top;
+        case "bottom":
+            return SettingsData.Position.Bottom;
+        case "left":
+            return SettingsData.Position.Left;
+        case "right":
+            return SettingsData.Position.Right;
+        }
+        return -1;
+    }
+
+    // Check if a bar occupies the specified screen edge
+    function barOccupiesSide(screen, side) {
+        if (!screen)
+            return false;
+        const sidePos = _sideToPosition(side);
+        if (sidePos < 0)
+            return false;
+        const bars = getEnabledBarConfigs();
+        for (var i = 0; i < bars.length; i++) {
+            const bc = bars[i];
+            if (bc.position !== sidePos)
+                continue;
+            const prefs = bc.screenPreferences || ["all"];
+            if (prefs.includes("all") || isScreenInPreferences(screen, prefs))
+                return true;
+        }
+        return false;
+    }
+
+    // Check if the dock occupies the specified screen edge.
+    function dockOccupiesSide(side) {
+        if (!showDock)
+            return false;
+        return dockPosition === _sideToPosition(side);
+    }
+
+    function getScreensSortedByPosition() {
+        const screens = [];
+        for (var i = 0; i < Quickshell.screens.length; i++) {
+            screens.push(Quickshell.screens[i]);
+        }
+        screens.sort((a, b) => {
+            if (a.x !== b.x)
+                return a.x - b.x;
+            return a.y - b.y;
+        });
+        return screens;
+    }
+
+    function getScreenModelIndex(screen) {
+        if (!screen || !screen.model)
+            return -1;
+        const sorted = getScreensSortedByPosition();
+        let modelCount = 0;
+        let screenIndex = -1;
+        for (var i = 0; i < sorted.length; i++) {
+            if (sorted[i].model === screen.model) {
+                if (sorted[i].name === screen.name) {
+                    screenIndex = modelCount;
+                }
+                modelCount++;
+            }
+        }
+        if (modelCount <= 1)
+            return -1;
+        return screenIndex;
+    }
+
+    function getScreenDisplayName(screen) {
+        if (!screen)
+            return "";
+        if (displayNameMode === "model" && screen.model) {
+            const modelIndex = getScreenModelIndex(screen);
+            if (modelIndex >= 0) {
+                return screen.model + "-" + modelIndex;
+            }
+            return screen.model;
+        }
+        return screen.name;
+    }
+
+    function isScreenInPreferences(screen, prefs) {
+        if (!screen)
+            return false;
+
+        const screenDisplayName = getScreenDisplayName(screen);
+
+        return prefs.some(pref => {
+            if (typeof pref === "string") {
+                if (pref === "all" || pref === screen.name)
+                    return true;
+                if (displayNameMode === "model") {
+                    return pref === screenDisplayName;
+                }
+                return pref === screen.model;
+            }
+
+            if (displayNameMode === "model") {
+                if (pref.model && screen.model) {
+                    if (pref.modelIndex !== undefined) {
+                        const screenModelIndex = getScreenModelIndex(screen);
+                        return pref.model === screen.model && pref.modelIndex === screenModelIndex;
+                    }
+                    return pref.model === screen.model;
+                }
+                return false;
+            }
+            return pref.name === screen.name;
+        });
+    }
+
+    // Exclude the transient VGSPREVIEW output from surface creation.
+    // Removing that output kills Quickshell's Wayland connection if a surface was created on it.
+    function usableScreens() {
+        return Quickshell.screens.filter(screen => screen && screen.name !== "VGSPREVIEW");
+    }
+
+    function getFilteredScreens(componentId) {
+        var prefs = screenPreferences && screenPreferences[componentId] || ["all"];
+        if (componentId === "wallpaper" && Array.isArray(prefs) && prefs.length === 0) {
+            return [];
+        }
+        var screens = usableScreens();
+        if (!prefs || prefs.length === 0 || prefs.includes("all") || (typeof prefs[0] === "string" && prefs[0] === "all")) {
+            return screens;
+        }
+        var filtered = screens.filter(screen => isScreenInPreferences(screen, prefs));
+        if (filtered.length === 0 && showOnLastDisplay && showOnLastDisplay[componentId] && screens.length === 1) {
+            return screens;
+        }
+        return filtered;
+    }
+
+    function getActiveBarEdgeForScreen(screen) {
+        if (!screen)
+            return "";
+        for (var i = 0; i < barConfigs.length; i++) {
+            var bc = barConfigs[i];
+            if (!bc.enabled)
+                continue;
+            var prefs = bc.screenPreferences || ["all"];
+            if (!prefs.includes("all") && !isScreenInPreferences(screen, prefs))
+                continue;
+            switch (bc.position ?? 0) {
+            case SettingsData.Position.Top:
+                return "top";
+            case SettingsData.Position.Bottom:
+                return "bottom";
+            case SettingsData.Position.Left:
+                return "left";
+            case SettingsData.Position.Right:
+                return "right";
+            }
+        }
+        return "";
+    }
+
+    function getActiveBarEdgesForScreen(screen) {
+        if (!screen)
+            return [];
+        var edges = [];
+        for (var i = 0; i < barConfigs.length; i++) {
+            var bc = barConfigs[i];
+            if (!bc.enabled)
+                continue;
+            var prefs = bc.screenPreferences || ["all"];
+            if (!prefs.includes("all") && !isScreenInPreferences(screen, prefs))
+                continue;
+            switch (bc.position ?? 0) {
+            case SettingsData.Position.Top:
+                edges.push("top");
+                break;
+            case SettingsData.Position.Bottom:
+                edges.push("bottom");
+                break;
+            case SettingsData.Position.Left:
+                edges.push("left");
+                break;
+            case SettingsData.Position.Right:
+                edges.push("right");
+                break;
+            }
+        }
+        return edges;
+    }
+
+    function getActiveBarThicknessForScreen(screen) {
+        if (!screen)
+            return 0;
+        for (var i = 0; i < barConfigs.length; i++) {
+            var bc = barConfigs[i];
+            if (!bc.enabled)
+                continue;
+            var prefs = bc.screenPreferences || ["all"];
+            if (!prefs.includes("all") && !isScreenInPreferences(screen, prefs))
+                continue;
+            const innerPadding = bc.innerPadding ?? 4;
+            const barT = Math.max(26 + innerPadding * 0.6, Theme.barHeight - 4 - (8 - innerPadding));
+            const spacing = bc.spacing ?? 4;
+            const bottomGap = bc.bottomGap ?? 0;
+            return barT + spacing + bottomGap;
+        }
+        return 0;
+    }
+
+    function sendTestNotifications() {
+        NotificationService.dismissAllPopups();
+        sendTestNotification(0);
+        testNotifTimer1.start();
+        testNotifTimer2.start();
+    }
+
+    function sendTestNotification(index) {
+        const notifications = [["Notification Position Test", "VGS test notification 1 of 3 ~ Hi there!", "preferences-system"], ["Second Test", "VGS Notification 2 of 3 ~ Check it out!", "applications-graphics"], ["Third Test", "VGS notification 3 of 3 ~ Enjoy!", "face-smile"]];
+
+        if (index < 0 || index >= notifications.length) {
+            return;
+        }
+
+        const notif = notifications[index];
+        testNotificationProcess.command = ["notify-send", "-h", "int:transient:1", "-a", "VGS", "-i", notif[2], notif[0], notif[1]];
+        testNotificationProcess.running = true;
+    }
+
+    function setMatugenScheme(scheme) {
+        var normalized = scheme || "scheme-tonal-spot";
+        if (matugenScheme === normalized)
+            return;
+        set("matugenScheme", normalized);
+    }
+
+    function setMatugenContrast(value) {
+        if (matugenContrast === value)
+            return;
+        set("matugenContrast", value);
+    }
+
+    function setMatugenMode(mode) {
+        var normalized = (mode === "light" || mode === "dark") ? mode : "auto";
+        if (matugenMode === normalized)
+            return;
+        set("matugenMode", normalized);
+    }
+
+    function setThemeAppEnabled(app, enabled) {
+        if (!app || themeApps[app] === enabled)
+            return;
+        const next = JSON.parse(JSON.stringify(themeApps || {}));
+        next[app] = enabled;
+        set("themeApps", next);
+    }
+
+    // Merges one entry's pick onto the stored map, so a pick for another entry
+    // made while this one runs is kept.
+    function setDevToolChannel(id, channel) {
+        if (!id || (devToolChannels || {})[id] === channel)
+            return;
+        const next = JSON.parse(JSON.stringify(devToolChannels || {}));
+        next[id] = channel;
+        set("devToolChannels", next);
+    }
+
+    function setMatugenTargetMonitor(monitorName) {
+        if (matugenTargetMonitor === monitorName)
+            return;
+        set("matugenTargetMonitor", monitorName);
+    }
+
+    function setCornerRadius(radius) {
+        set("cornerRadius", radius);
+        updateCompositorLayout();
+    }
+
+    function setWeatherLocation(displayName, coordinates) {
+        SessionData.setWeatherLocation(displayName, coordinates);
+    }
+
+    function getCursorEnvironment() {
+        const isSystemDefault = cursorSettings.theme === "System Default";
+        const isDefaultSize = !cursorSettings.size || cursorSettings.size === 24;
+        if (isSystemDefault && isDefaultSize)
+            return {};
+
+        const themeName = isSystemDefault ? "" : cursorSettings.theme;
+        const size = String(cursorSettings.size || 24);
+        const env = {};
+
+        // XWayland cursor theme handling follows xwayland-satellite issue 104.
+        if (!isDefaultSize) {
+            env["XCURSOR_SIZE"] = size;
+            env["HYPRCURSOR_SIZE"] = size;
+        }
+        if (themeName) {
+            env["XCURSOR_THEME"] = themeName;
+            env["HYPRCURSOR_THEME"] = themeName;
+        }
+        return env;
+    }
+
+    function setShowDock(enabled) {
+        showDock = enabled;
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const barPos = defaultBar?.position ?? SettingsData.Position.Top;
+        if (enabled && dockPosition === barPos) {
+            if (barPos === SettingsData.Position.Top) {
+                setDockPosition(SettingsData.Position.Bottom);
+                return;
+            }
+            if (barPos === SettingsData.Position.Bottom) {
+                setDockPosition(SettingsData.Position.Top);
+                return;
+            }
+            if (barPos === SettingsData.Position.Left) {
+                setDockPosition(SettingsData.Position.Right);
+                return;
+            }
+            if (barPos === SettingsData.Position.Right) {
+                setDockPosition(SettingsData.Position.Left);
+                return;
+            }
+        }
+        saveSettings();
+    }
+
+    function setDockPosition(position) {
+        dockPosition = position;
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        const barPos = defaultBar?.position ?? SettingsData.Position.Top;
+        if (position === SettingsData.Position.Bottom && barPos === SettingsData.Position.Bottom && showDock) {
+            setBarPosition(SettingsData.Position.Top);
+        }
+        if (position === SettingsData.Position.Top && barPos === SettingsData.Position.Top && showDock) {
+            setBarPosition(SettingsData.Position.Bottom);
+        }
+        if (position === SettingsData.Position.Left && barPos === SettingsData.Position.Left && showDock) {
+            setBarPosition(SettingsData.Position.Right);
+        }
+        if (position === SettingsData.Position.Right && barPos === SettingsData.Position.Right && showDock) {
+            setBarPosition(SettingsData.Position.Left);
+        }
+        saveSettings();
+        Qt.callLater(() => forceDockLayoutRefresh());
+    }
+
+    function setBarSpacing(spacing) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "spacing": spacing
+            });
+        }
+        updateCompositorLayout();
+    }
+
+    function setBarPosition(position) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (!defaultBar)
+            return;
+        if (position === SettingsData.Position.Bottom && dockPosition === SettingsData.Position.Bottom && showDock) {
+            setDockPosition(SettingsData.Position.Top);
+            return;
+        }
+        if (position === SettingsData.Position.Top && dockPosition === SettingsData.Position.Top && showDock) {
+            setDockPosition(SettingsData.Position.Bottom);
+            return;
+        }
+        if (position === SettingsData.Position.Left && dockPosition === SettingsData.Position.Left && showDock) {
+            setDockPosition(SettingsData.Position.Right);
+            return;
+        }
+        if (position === SettingsData.Position.Right && dockPosition === SettingsData.Position.Right && showDock) {
+            setDockPosition(SettingsData.Position.Left);
+            return;
+        }
+        updateBarConfig(defaultBar.id, {
+            "position": position
+        });
+    }
+
+    function setBarLeftWidgets(order) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "leftWidgets": order
+            });
+            updateListModel(leftWidgetsModel, order);
+        }
+    }
+
+    function setBarCenterWidgets(order) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "centerWidgets": order
+            });
+            updateListModel(centerWidgetsModel, order);
+        }
+    }
+
+    function setBarRightWidgets(order) {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "rightWidgets": order
+            });
+            updateListModel(rightWidgetsModel, order);
+        }
+    }
+
+    function resetBarWidgetsToDefault() {
+        var defaultLeft = ["launcherButton", "workspaceSwitcher", "focusedWindow"];
+        var defaultCenter = ["music", "clock", "weather"];
+        var defaultRight = ["systemTray", "clipboard", "notificationButton", "battery", "controlCenterButton"];
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "leftWidgets": defaultLeft,
+                "centerWidgets": defaultCenter,
+                "rightWidgets": defaultRight
+            });
+        }
+        updateListModel(leftWidgetsModel, defaultLeft);
+        updateListModel(centerWidgetsModel, defaultCenter);
+        updateListModel(rightWidgetsModel, defaultRight);
+        showWorkspaceSwitcher = true;
+        showFocusedWindow = true;
+        showWeather = true;
+        showMusic = true;
+        showClipboard = true;
+        showCpuUsage = true;
+        showMemUsage = true;
+        showCpuTemp = true;
+        showGpuTemp = true;
+        showSystemTray = true;
+        showClock = true;
+        showNotificationButton = true;
+        showBattery = true;
+        showControlCenterButton = true;
+        showCapsLockIndicator = true;
+    }
+
+    function setWorkspaceNameIcon(workspaceName, iconData) {
+        var iconMap = JSON.parse(JSON.stringify(workspaceNameIcons));
+        iconMap[workspaceName] = iconData;
+        workspaceNameIcons = iconMap;
+        saveSettings();
+        workspaceIconsUpdated();
+    }
+
+    function removeWorkspaceNameIcon(workspaceName) {
+        var iconMap = JSON.parse(JSON.stringify(workspaceNameIcons));
+        delete iconMap[workspaceName];
+        workspaceNameIcons = iconMap;
+        saveSettings();
+        workspaceIconsUpdated();
+    }
+
+    function getWorkspaceNameIcon(workspaceName) {
+        return workspaceNameIcons[workspaceName] || null;
+    }
+
+    function addAppIdSubstitution(pattern, replacement, type) {
+        var subs = JSON.parse(JSON.stringify(appIdSubstitutions));
+        subs.push({
+            pattern: pattern,
+            replacement: replacement,
+            type: type
+        });
+        appIdSubstitutions = subs;
+        saveSettings();
+    }
+
+    function updateAppIdSubstitution(index, pattern, replacement, type) {
+        var subs = JSON.parse(JSON.stringify(appIdSubstitutions));
+        if (index < 0 || index >= subs.length)
+            return;
+        subs[index] = {
+            pattern: pattern,
+            replacement: replacement,
+            type: type
+        };
+        appIdSubstitutions = subs;
+        saveSettings();
+    }
+
+    function removeAppIdSubstitution(index) {
+        var subs = JSON.parse(JSON.stringify(appIdSubstitutions));
+        if (index < 0 || index >= subs.length)
+            return;
+        subs.splice(index, 1);
+        appIdSubstitutions = subs;
+        saveSettings();
+    }
+
+    function addMediaExcludePlayer(identity) {
+        if (identity === undefined || identity === null)
+            return;
+        var normalizedIdentity = identity.toString().trim().toLowerCase();
+        if (!normalizedIdentity)
+            return;
+        var list = mediaExcludePlayers ? mediaExcludePlayers.slice() : [];
+        var normalizedList = list.map(function (id) {
+            return id ? id.toString().trim().toLowerCase() : "";
+        });
+        if (normalizedList.indexOf(normalizedIdentity) >= 0)
+            return;
+        list.push(normalizedIdentity);
+        mediaExcludePlayers = list;
+        saveSettings();
+    }
+
+
+    function removeMediaExcludePlayer(index) {
+        var list = mediaExcludePlayers ? mediaExcludePlayers.slice() : [];
+        if (index < 0 || index >= list.length)
+            return;
+        list.splice(index, 1);
+        mediaExcludePlayers = list;
+        saveSettings();
+    }
+
+    property bool _pendingExpandNotificationRules: false
+    property int _pendingNotificationRuleIndex: -1
+
+    function addNotificationRule() {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        rules.push({
+            enabled: true,
+            field: "appName",
+            pattern: "",
+            matchType: "contains",
+            action: "default",
+            urgency: "default"
+        });
+        notificationRules = rules;
+        saveSettings();
+    }
+
+    function addNotificationRuleForNotification(appName, desktopEntry) {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        var pattern = (desktopEntry && desktopEntry !== "") ? desktopEntry : (appName || "");
+        var field = (desktopEntry && desktopEntry !== "") ? "desktopEntry" : "appName";
+        var rule = {
+            enabled: true,
+            field: pattern ? field : "appName",
+            pattern: pattern || "",
+            matchType: pattern ? "exact" : "contains",
+            action: "default",
+            urgency: "default"
+        };
+        rules.push(rule);
+        notificationRules = rules;
+        saveSettings();
+        var index = rules.length - 1;
+        _pendingExpandNotificationRules = true;
+        _pendingNotificationRuleIndex = index;
+        return index;
+    }
+
+    function addMuteRuleForApp(appName, desktopEntry) {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        var pattern = (desktopEntry && desktopEntry !== "") ? desktopEntry : (appName || "");
+        var field = (desktopEntry && desktopEntry !== "") ? "desktopEntry" : "appName";
+        if (pattern === "")
+            return;
+        rules.push({
+            enabled: true,
+            field: field,
+            pattern: pattern,
+            matchType: "exact",
+            action: "mute",
+            urgency: "default"
+        });
+        notificationRules = rules;
+        saveSettings();
+    }
+
+    function isAppMuted(appName, desktopEntry) {
+        const rules = notificationRules || [];
+        const pat = (desktopEntry && desktopEntry !== "" ? desktopEntry : appName || "").toString().toLowerCase();
+        if (!pat)
+            return false;
+        for (let i = 0; i < rules.length; i++) {
+            const r = rules[i];
+            if ((r.action || "").toString().toLowerCase() !== "mute" || r.enabled === false)
+                continue;
+            const field = (r.field || "appName").toString().toLowerCase();
+            const rulePat = (r.pattern || "").toString().toLowerCase();
+            if (!rulePat)
+                continue;
+            const useDesktop = field === "desktopentry";
+            const matches = (useDesktop && desktopEntry) ? (desktopEntry.toString().toLowerCase() === rulePat) : (appName && appName.toString().toLowerCase() === rulePat);
+            if (matches)
+                return true;
+            if (rulePat === pat)
+                return true;
+        }
+        return false;
+    }
+
+    function removeMuteRuleForApp(appName, desktopEntry) {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        const app = (appName || "").toString().toLowerCase();
+        const desktop = (desktopEntry || "").toString().toLowerCase();
+        if (!app && !desktop)
+            return;
+        for (let i = rules.length - 1; i >= 0; i--) {
+            const r = rules[i];
+            if ((r.action || "").toString().toLowerCase() !== "mute")
+                continue;
+            const rulePat = (r.pattern || "").toString().toLowerCase();
+            if (!rulePat)
+                continue;
+            if (rulePat === app || rulePat === desktop) {
+                rules.splice(i, 1);
+                notificationRules = rules;
+                saveSettings();
+                return;
+            }
+        }
+    }
+
+    function updateNotificationRule(index, ruleData) {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        if (index < 0 || index >= rules.length)
+            return;
+        var existing = rules[index] || {};
+        rules[index] = Object.assign({}, existing, ruleData || {});
+        notificationRules = rules;
+        saveSettings();
+    }
+
+    function updateNotificationRuleField(index, key, value) {
+        if (key === undefined || key === null || key === "")
+            return;
+        var patch = {};
+        patch[key] = value;
+        updateNotificationRule(index, patch);
+    }
+
+    function removeNotificationRule(index) {
+        var rules = JSON.parse(JSON.stringify(notificationRules || []));
+        if (index < 0 || index >= rules.length)
+            return;
+        rules.splice(index, 1);
+        notificationRules = rules;
+        saveSettings();
+    }
+
+    function getDefaultNotificationRules() {
+        return Spec.SPEC.notificationRules.def;
+    }
+
+    function resetNotificationRules() {
+        notificationRules = JSON.parse(JSON.stringify(Spec.SPEC.notificationRules.def));
+        saveSettings();
+    }
+
+    function getDefaultAppIdSubstitutions() {
+        return Spec.SPEC.appIdSubstitutions.def;
+    }
+
+    function resetAppIdSubstitutions() {
+        appIdSubstitutions = JSON.parse(JSON.stringify(Spec.SPEC.appIdSubstitutions.def));
+        saveSettings();
+    }
+
+    function toggleBarVisible() {
+        const defaultBar = barConfigs[0] || getBarConfig("default");
+        if (defaultBar) {
+            updateBarConfig(defaultBar.id, {
+                "visible": !defaultBar.visible
+            });
+        }
+    }
+
+    function toggleShowDock() {
+        setShowDock(!showDock);
+    }
+
+    function getPluginSetting(pluginId, key, defaultValue) {
+        if (!_defaultPluginSettingsLoaded)
+            loadDefaultPluginSettings();
+        if (pluginSettings[pluginId] && pluginSettings[pluginId][key] !== undefined)
+            return pluginSettings[pluginId][key];
+        if (defaultPluginSettings[pluginId] && defaultPluginSettings[pluginId][key] !== undefined)
+            return defaultPluginSettings[pluginId][key];
+        return defaultValue;
+    }
+
+    function setPluginSetting(pluginId, key, value) {
+        const updated = JSON.parse(JSON.stringify(pluginSettings));
+        if (!updated[pluginId]) {
+            updated[pluginId] = {};
+        }
+        updated[pluginId][key] = value;
+        pluginSettings = updated;
+        savePluginSettings();
+    }
+
+    function removePluginSettings(pluginId) {
+        if (pluginSettings[pluginId]) {
+            delete pluginSettings[pluginId];
+            savePluginSettings();
+        }
+    }
+
+    function getPluginSettingsForPlugin(pluginId) {
+        if (!_defaultPluginSettingsLoaded)
+            loadDefaultPluginSettings();
+        const defaults = defaultPluginSettings[pluginId] || {};
+        const settings = pluginSettings[pluginId] || {};
+        return JSON.parse(JSON.stringify(Object.assign({}, defaults, settings)));
+    }
+
+    function getNiriOutputSetting(outputId, key, defaultValue) {
+        if (!niriOutputSettings[outputId])
+            return defaultValue;
+        return niriOutputSettings[outputId][key] !== undefined ? niriOutputSettings[outputId][key] : defaultValue;
+    }
+
+    function setNiriOutputSetting(outputId, key, value) {
+        const updated = JSON.parse(JSON.stringify(niriOutputSettings));
+        if (!updated[outputId])
+            updated[outputId] = {};
+        updated[outputId][key] = value;
+        niriOutputSettings = updated;
+        saveSettings();
+    }
+
+    function getNiriOutputSettings(outputId) {
+        const settings = niriOutputSettings[outputId];
+        return settings ? JSON.parse(JSON.stringify(settings)) : {};
+    }
+
+    function setNiriOutputSettings(outputId, settings) {
+        const updated = JSON.parse(JSON.stringify(niriOutputSettings));
+        updated[outputId] = settings;
+        niriOutputSettings = updated;
+        saveSettings();
+    }
+
+    function removeNiriOutputSettings(outputId) {
+        if (!niriOutputSettings[outputId])
+            return;
+        const updated = JSON.parse(JSON.stringify(niriOutputSettings));
+        delete updated[outputId];
+        niriOutputSettings = updated;
+        saveSettings();
+    }
+
+    function getHyprlandOutputSetting(outputId, key, defaultValue) {
+        if (!hyprlandOutputSettings[outputId])
+            return defaultValue;
+        return hyprlandOutputSettings[outputId][key] !== undefined ? hyprlandOutputSettings[outputId][key] : defaultValue;
+    }
+
+    function setHyprlandOutputSetting(outputId, key, value) {
+        const updated = JSON.parse(JSON.stringify(hyprlandOutputSettings));
+        if (!updated[outputId])
+            updated[outputId] = {};
+        updated[outputId][key] = value;
+        hyprlandOutputSettings = updated;
+        saveSettings();
+    }
+
+    function removeHyprlandOutputSetting(outputId, key) {
+        if (!hyprlandOutputSettings[outputId] || !(key in hyprlandOutputSettings[outputId]))
+            return;
+        const updated = JSON.parse(JSON.stringify(hyprlandOutputSettings));
+        delete updated[outputId][key];
+        hyprlandOutputSettings = updated;
+        saveSettings();
+    }
+
+    function getHyprlandOutputSettings(outputId) {
+        const settings = hyprlandOutputSettings[outputId];
+        return settings ? JSON.parse(JSON.stringify(settings)) : {};
+    }
+
+    function setHyprlandOutputSettings(outputId, settings) {
+        const updated = JSON.parse(JSON.stringify(hyprlandOutputSettings));
+        updated[outputId] = settings;
+        hyprlandOutputSettings = updated;
+        saveSettings();
+    }
+
+    function removeHyprlandOutputSettings(outputId) {
+        if (!hyprlandOutputSettings[outputId])
+            return;
+        const updated = JSON.parse(JSON.stringify(hyprlandOutputSettings));
+        delete updated[outputId];
+        hyprlandOutputSettings = updated;
+        saveSettings();
+    }
+
+    function getDisplayProfiles(compositor) {
+        return displayProfiles[compositor] || {};
+    }
+
+    function setDisplayProfile(compositor, profileId, data) {
+        const updated = JSON.parse(JSON.stringify(displayProfiles));
+        if (!updated[compositor])
+            updated[compositor] = {};
+        updated[compositor][profileId] = data;
+        displayProfiles = updated;
+        saveSettings();
+    }
+
+    function removeDisplayProfile(compositor, profileId) {
+        if (!displayProfiles[compositor] || !displayProfiles[compositor][profileId])
+            return;
+        const updated = JSON.parse(JSON.stringify(displayProfiles));
+        delete updated[compositor][profileId];
+        displayProfiles = updated;
+        saveSettings();
+    }
+
+    function getActiveDisplayProfile(compositor) {
+        return activeDisplayProfile[compositor] || "";
+    }
+
+    function setActiveDisplayProfile(compositor, profileId) {
+        const updated = JSON.parse(JSON.stringify(activeDisplayProfile));
+        updated[compositor] = profileId;
+        activeDisplayProfile = updated;
+        saveSettings();
+    }
+
+    ListModel {
+        id: leftWidgetsModel
+    }
+
+    ListModel {
+        id: centerWidgetsModel
+    }
+
+    ListModel {
+        id: rightWidgetsModel
+    }
+
+    property Process testNotificationProcess
+
+    testNotificationProcess: Process {
+        command: []
+        running: false
+    }
+
+    property Timer testNotifTimer1
+
+    testNotifTimer1: Timer {
+        interval: 400
+        repeat: false
+        onTriggered: sendTestNotification(1)
+    }
+
+    property Timer testNotifTimer2
+
+    testNotifTimer2: Timer {
+        interval: 800
+        repeat: false
+        onTriggered: sendTestNotification(2)
+    }
+
+    property alias settingsFile: settingsFile
+
+    Timer {
+        id: settingsWriteTimer
+        interval: 200
+        repeat: false
+        onTriggered: root.flushSettings()
+    }
+
+    Connections {
+        target: SessionService
+        function onSessionLocked() {
+            root.flushSettings();
+        }
+    }
+
+    Component.onDestruction: flushSettings()
+
+    Timer {
+        id: settingsFileReloadDebounce
+        interval: 50
+        onTriggered: settingsFile.reload()
+        repeat: false
+    }
+
+    FileView {
+        id: settingsFile
+
+        path: isGreeterMode ? "" : StandardPaths.writableLocation(StandardPaths.ConfigLocation) + "/vshell/settings.json"
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        watchChanges: true
+        onFileChanged: settingsFileReloadDebounce.restart()
+        onLoaded: {
+            if (isGreeterMode)
+                return;
+            const txt = settingsFile.text();
+            // The watcher reports this store's own writes; only different text is an external edit.
+            // A store in a parse error re-parses any text, so restoring the last write recovers it.
+            if (_hasLoaded && !_parseError && Coalescer.isSelfEcho(_writes, txt))
+                return;
+            const wasLoaded = _hasLoaded;
+            _loading = true;
+            _hasUnsavedChanges = false;
+            try {
+                if (!txt || !txt.trim()) {
+                    _parseError = true;
+                    return;
+                }
+                const obj = JSON.parse(txt);
+                _parseError = false;
+                const before = Store.hookedValues(root, Object.keys(_changeSignals));
+                Store.parse(root, obj);
+
+                if (obj.weatherLocation !== undefined)
+                    _legacyWeatherLocation = obj.weatherLocation;
+                if (obj.weatherCoordinates !== undefined)
+                    _legacyWeatherCoordinates = obj.weatherCoordinates;
+                if (obj.vpnLastConnected !== undefined && obj.vpnLastConnected !== "") {
+                    _legacyVpnLastConnected = obj.vpnLastConnected;
+                    SessionData.vpnLastConnected = _legacyVpnLastConnected;
+                    SessionData.saveSettings();
+                }
+
+                _loadedSettingsSnapshot = JSON.stringify(Store.toJson(root));
+                _hasLoaded = true;
+                if (wasLoaded)
+                    _emitReloadedChanges(before);
+            } catch (e) {
+                _parseError = true;
+                const msg = e.message;
+                log.error("Failed to reload settings.json - file will not be overwritten. Error:", msg);
+                Qt.callLater(() => ToastService.showError(I18n.tr("Failed to parse settings.json"), msg));
+            } finally {
+                _loading = false;
+            }
+        }
+        onSaveFailed: error => {
+            root._isReadOnly = true;
+            root._hasUnsavedChanges = root._checkForUnsavedChanges();
+        }
+    }
+
+    FileView {
+        id: defaultPluginSettingsFile
+
+        path: isGreeterMode ? "" : defaultPluginSettingsPath
+        blockLoading: true
+        printErrors: false
+        watchChanges: !isGreeterMode
+        onLoaded: {
+            if (!isGreeterMode)
+                parseDefaultPluginSettings(defaultPluginSettingsFile.text());
+        }
+        onLoadFailed: error => {
+            if (!isGreeterMode)
+                _resetDefaultPluginSettings();
+        }
+    }
+
+    FileView {
+        id: pluginSettingsFile
+
+        path: isGreeterMode ? "" : pluginSettingsPath
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        printErrors: false
+        watchChanges: !isGreeterMode
+        onLoaded: {
+            if (!isGreeterMode) {
+                parsePluginSettings(pluginSettingsFile.text());
+            }
+        }
+        onLoadFailed: error => {
+            if (!isGreeterMode) {
+                const msg = String(error || "");
+                if (!_isMissingPluginSettingsError(error))
+                    log.warn("Failed to load plugin_settings.json. Error:", msg);
+                _resetPluginSettings();
+            }
+        }
+    }
+
+    property bool pluginSettingsFileExists: false
+
+    Process {
+        id: settingsWritableCheckProcess
+
+        property string settingsPath: Paths.strip(settingsFile.path)
+
+        command: ["sh", "-c", "[ ! -f \"" + settingsPath + "\" ] || [ -w \"" + settingsPath + "\" ] && echo 'writable' || echo 'readonly'"]
+        running: false
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const result = text.trim();
+                root._onWritableCheckComplete(result === "writable");
+            }
+        }
+    }
+}

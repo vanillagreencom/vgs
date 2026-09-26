@@ -1,0 +1,66 @@
+#Btop monokai pro ristretto theme
+#Reconfigured from monokai theme
+
+# Main background, empty for terminal default, need to be empty if you want transparent background
+theme[main_bg]="#2c2421"
+
+theme[main_fg]="#e6d9db"
+
+theme[title]="#e6d9db"
+
+# Highlight color for keyboard shortcuts
+theme[hi_fg]="#fd6883"
+
+# Background color of selected item in processes box
+theme[selected_bg]="#3d2f2a"
+
+# Foreground color of selected item in processes box
+theme[selected_fg]="#e6d9db"
+
+theme[inactive_fg]="#72696a"
+
+# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
+theme[proc_misc]="#adda78"
+
+theme[cpu_box]="#5b4a45"
+
+theme[mem_box]="#5b4a45"
+
+theme[net_box]="#5b4a45"
+
+theme[proc_box]="#5b4a45"
+
+theme[div_line]="#72696a"
+
+theme[temp_start]="#a8a9eb"
+theme[temp_mid]="#f38d70"
+theme[temp_end]="#fd6a85"
+
+theme[cpu_start]="#adda78"
+theme[cpu_mid]="#f9cc6c"
+theme[cpu_end]="#fd6883"
+
+theme[free_start]="#5b4a45"
+theme[free_mid]="#adda78"
+theme[free_end]="#c5e2a3"
+
+theme[cached_start]="#5b4a45"
+theme[cached_mid]="#85dacc"
+theme[cached_end]="#b3e8dd"
+
+theme[available_start]="#5b4a45"
+theme[available_mid]="#f9cc6c"
+theme[available_end]="#fce2a3"
+
+theme[used_start]="#5b4a45"
+theme[used_mid]="#fd6a85"
+theme[used_end]="#feb5c7"
+
+theme[download_start]="#3d2f2a"
+theme[download_mid]="#a8a9eb"
+theme[download_end]="#c5c6f0"
+
+theme[upload_start]="#3d2f2a"
+theme[upload_mid]="#fd6a85"
+theme[upload_end]="#feb5c7"
+

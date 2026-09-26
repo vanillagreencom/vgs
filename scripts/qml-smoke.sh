@@ -1,1275 +1,1963 @@
 #!/usr/bin/env bash
-# Run the shell inside a nested Hyprland sandbox and check it end to end.
+# Parse QML source and optionally exercise an isolated shell sandbox.
 #
-# Usage: scripts/qml-smoke.sh [--timeout SECONDS] [--keep]
+# Usage: scripts/qml-smoke.sh [options]
 #
-# The sandbox is built from the repository alone: its own HOME, XDG dirs and
-# runtime dir, a minimal compositor config, no user state. It never touches
-# the live session: the nested compositor gets its own runtime dir, the
-# shell is addressed through that runtime dir, and teardown kills only the
-# process groups this run created.
+# Without options, run static QML parsing.
+# --nested: also run the shell inside a nested compositor.
+# --require-nested: enable nesting and fail if its prerequisites are absent.
+# --require-static: fail if the QML parser is unavailable.
+# --timeout SECONDS: set the sandbox shell lifetime.
+# --settings: open every available Settings page and verify it loads.
+# --shell-env NAME=VALUE: add a variable to the sandbox shell's environment; repeatable.
+# --driver PATH: once the shell and its plugins load, run PATH inside the sandbox in place of
+#   the static parse and the smoke checks; its exit 0 passes, 77 is not measured, anything else fails.
+# -h, --help: print this help.
 #
-# Checks, in order: the runner starts the shell and it answers IPC; the
-# instance guard reports true; every bundled plugin loads with no manifest
-# error; one bar surface maps per monitor, registers its built-in
-# workspaces and clock and mounts a placed plugin widget; a widget
-# can be disabled and re-enabled with its placement and settings kept;
-# disabling the bar names the widgets it hides, unloads it and unmaps its
-# surface; an unrelated write and a rescan that changes nothing build
-# nothing, and a rescan that adds a disabled plugin rebuilds each screen's
-# bar and its placed widget and builds nothing for the new plugin; a user
-# plugin installed with `vgsh plugin add` from a local repository is
-# discovered, built as a service and a widget, receives exactly the
-# capabilities it named, and takes a settings change without a rebuild;
-# the shared clock ticks seconds once a format shows them; every capability
-# delivers its object to the plugin that named it, none to one that named
-# none, and releases it on disable, read back from the fixture, the core's
-# lending record, the compositor and a private D-Bus; a panel, an overlay
-# and a menu open on summon, take their placement and close on hide, and a
-# background is drawn on the bottom layer of every screen; the bar's
-# manager button opens a panel that lists, toggles and configures plugins,
-# and the bar's settings hide it on every screen; a built-in listed twice
-# in one section is drawn once; a plugin refused an
-# exclusive capability builds once the holder lets go; a plugin that cannot
-# take what the core assigns keeps nothing; a removed monitor takes its bar
-# and its build records with it; an unreadable user file keeps the bar and
-# refuses writes; a theme file recolours the bar and one that does not parse,
-# is not an object or holds a role that is not a colour is logged and keeps
-# the last good palette;
-# a bare `qs` started beside the runner refuses to draw and to write, and
-# the runner's CLI still reaches the guarded instance; the log holds no QML
-# error; resident memory stays under the ceiling.
-#
-# Exit 0 when every check passed. Exit 77 when a prerequisite is missing,
-# naming it, or when the nested compositor failed to allocate its output
-# buffers during a run whose only failures are geometry rows; that is not
-# a pass. Exit 1 when a
-# check failed.
-#
-# VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
-# the end of the run. It catches a startup allocation blow-up and nothing
-# else: a run this short cannot see the slow growth docs/architecture/memory.md
-# describes, and the reading carries the machine's graphics stack. The
-# default is twice the rss_kib this script printed on the owner's machine
-# (host cachy, AMD Ryzen 9 9950X) on 2026-09-25 with the one bundled plugin,
-# the bar, plus the fixtures this run installs, on one nested monitor. The
-# high-water mark is printed beside it as the reproducible reading.
-#
-# VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
-# to the first bar surface with a client in the compositor's layer list.
-# VGSH_SMOKE_RECONCILE_BUDGET_MS: ceiling on the time from a
-# setPluginEnabled reply to the build records no longer listing the
-# disabled widget, polled with qs ipc. Both defaults are twice the highest
-# reading of twelve runs of this script on the owner's machine (host cachy,
-# AMD Ryzen 9 9950X) on 2026-09-23, which read 100 to 127 ms and 12 to
-# 15 ms, each carrying its poll interval.
+# Exit 0 means every check that ran passed. Exit 77 means they passed but at least one
+# could not obtain its evidence and is named; it is not a pass. Exit 1 is a failed check.
+# Nested mode needs Hyprland, qs, Python, grim, and a host Wayland socket.
+# Sandbox settings come from repository defaults.
+# Theme loading is outside this smoke's coverage.
+# The runtime check waits for bundled plugins and exercises user overrides.
+# Popouts and switchers are checked for mapping and dismissal.
+# The instance guard is checked with a stand-in runner parent: its child draws, a grandchild is refused.
+# wtype enables Escape-key dismissal checks.
+# VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot.
+# Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
+# The live session is asked to keep rendering this run's own host window while it is hidden.
+# Never launches into the live session and never runs pkill quickshell; other Quickshell apps on the seat are legitimate.
 set -euo pipefail
 
-timeout_s=60
-keep=false
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+qml_roots=("$repo_root/quickshell/vshell" "$repo_root/config/vshell/plugins")
+
+nested=false
+check_settings=false
+require_nested=false
+require_static=false
+static_ran=false
+driver=""
+declare -a shell_env=()
+# Ceiling on the sandboxed shell's lifetime, not a schedule: teardown kills the process
+# group as soon as the phase finishes, so a healthy run never spends it. It has to cover
+# every nested check end to end; 40s reaped the shell mid-run on a loaded workstation and
+# turned each later IPC call into 'No running instances'. 120 then proved too short for the
+# full sequence on a workstation running other work, which reaped the shell before the
+# Displays and window-border checks and left them unrun.
+nested_timeout=240
+# Spelled out rather than a range, which some locales widen past ASCII.
+env_name_start="_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+compositor_timeout=15
+# Plugin discovery is asynchronous. Core IPC readiness alone does not establish plugin loading.
+plugin_timeout=30
+
+usage() {
+  sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --timeout) timeout_s="$2"; shift 2 ;;
-    --keep) keep=true; shift ;;
-    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    *) printf 'qml-smoke: refused: argument=%s\n' "$1" >&2; exit 2 ;;
+    --nested) nested=true ;;
+    --settings) check_settings=true; nested=true ;;
+    --require-nested) nested=true; require_nested=true ;;
+    --require-static) require_static=true ;;
+    --timeout) shift; nested_timeout="${1:?--timeout needs a value}" ;;
+    --shell-env)
+      shift
+      if [[ ! "${1:-}" =~ ^[$env_name_start][${env_name_start}0123456789]*= ]]; then
+        echo "qml-smoke: --shell-env needs NAME=VALUE, got '${1:-}'" >&2
+        exit 2
+      fi
+      shell_env+=("$1")
+      ;;
+    --driver)
+      shift
+      if [[ ! -f "${1:-}" || ! -x "${1:-}" ]]; then
+        echo "qml-smoke: --driver needs an executable file, got '${1:-}'" >&2
+        exit 2
+      fi
+      driver="$(realpath -- "$1")" || exit 2
+      nested=true
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "qml-smoke: unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
-
-self="$(readlink -f -- "${BASH_SOURCE[0]}")"
-repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
-rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
-first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-254}"
-reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
-
-missing=()
-for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus; do
-  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
-done
-[[ -n ${WAYLAND_DISPLAY:-} ]] || missing+=("WAYLAND_DISPLAY")
-[[ -n ${XDG_RUNTIME_DIR:-} ]] || missing+=("XDG_RUNTIME_DIR")
-if [[ ${#missing[@]} -gt 0 ]]; then
-  printf 'qml-smoke: status=not-measured missing=%s\n' "$(IFS=,; echo "${missing[*]}")"
-  exit 77
-fi
-host_socket="$WAYLAND_DISPLAY"
-[[ $host_socket == /* ]] || host_socket="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
-if [[ ! -S $host_socket ]]; then
-  printf 'qml-smoke: status=not-measured missing=host-wayland-socket path=%s\n' "$host_socket"
-  exit 77
+if [[ -n "$driver" && "$check_settings" == true ]]; then
+  echo "qml-smoke: --driver runs in place of the smoke checks, so it cannot take --settings" >&2
+  exit 2
 fi
 
-sandbox=""
-rt_dir=""
-pgids=()
-failures=0
-# A row that reads positions, sizes or reserved space from the compositor
-# runs under `geometry`; every other failure counts as behaviour. Only a run
-# whose failures are all geometry can be excused by a compositor fault.
-behaviour_failures=0
-row_class=behaviour
-fail() {
-  failures=$((failures + 1))
-  [[ $row_class == geometry ]] || behaviour_failures=$((behaviour_failures + 1))
-  printf '  FAIL  %s\n' "$*"
-}
-geometry() { local previous="$row_class"; row_class=geometry; "$@"; row_class="$previous"; }
-# Error lines a row provokes on purpose, as extended regexes; the log check
-# leaves out a line matching one of them.
-expected_errors=()
-ok() { printf '  ok    %s\n' "$*"; }
+status=0
+# Checks that could not obtain their evidence. A check here is neither a pass nor a
+# failure: it did not run, and the run exits 77 rather than claiming a verdict it never
+# measured. Whole phases use nested_unavailable; this is the same idea for one check.
+declare -a not_measured=()
+skip_status=77
+note() { printf 'qml-smoke: %s\n' "$*"; }
+# declare -g so a function with its own local 'status' cannot swallow the run's verdict:
+# a plain assignment would land on the shadowing local and the run would exit 0 after a FAIL.
+fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; declare -g status=1; }
+# Same reason for -g as fail(): a check with a local of this name must not swallow the record.
+unmeasured() { printf 'qml-smoke: NOT MEASURED: %s\n' "$*" >&2; declare -g -a not_measured+=("$*"); }
 
-# Runs on every exit, so it is armed before either directory exists and
-# removes only what was made.
-cleanup() {
-  local pg
-  for pg in "${pgids[@]}"; do kill -TERM -- "-$pg" 2>/dev/null || true; done
-  sleep 0.5
-  for pg in "${pgids[@]}"; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  if [[ $keep == true ]]; then
-    echo "qml-smoke: sandbox kept at $sandbox (runtime dir $rt_dir)"
-  else
-    [[ -z $sandbox ]] || rm -rf -- "$sandbox"
-    [[ -z $rt_dir ]] || rm -rf -- "$rt_dir"
-  fi
-}
-trap cleanup EXIT
+# shellcheck source=scripts/lib/session-snapshot.sh
+source "$repo_root/scripts/lib/session-snapshot.sh"
+vgs_snapshot_prefix="qml-smoke: "
 
-sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
-# The runtime dir holds Unix sockets, whose paths are limited to 107 bytes,
-# and Hyprland's socket path adds a 63-character signature under hypr/. A
-# sandbox under a long TMPDIR made Hyprland refuse IPC, so the runtime dir
-# is a short name beside the host's own runtime files.
-rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
-home="$sandbox/home"; mkdir -p "$home/.config/hypr"
+instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
+layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
 
-cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
-hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
-hl.config({
-    misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_autoreload = true },
-    animations = { enabled = false },
-})
-LUA
+declare -a tracked_pgids=()
+declare -a scratch_dirs=()
+# Sandbox logs whose tails a failed run prints before cleanup deletes their directory.
+declare -a evidence_logs=()
+spawn_launcher_pid=""
+spawn_pgid=""
 
-# node on PATH may be a version-manager shim that reads the developer's own
-# configuration and fails under the sandbox HOME; the sandbox PATH leads with
-# the directory of the binary it resolves to.
-if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
-  printf 'qml-smoke: status=not-measured missing=node-binary\n'
-  exit 77
-fi
-sandbox_env=(env -i
-  HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
-  XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
-  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache")
+track_pgid() { tracked_pgids+=("$1"); }
+track_dir() { scratch_dirs+=("$1"); }
 
-# Start a command in its own session and process group; the pid doubles as
-# the pgid for teardown and is left in spawn_pid. Not a command substitution,
-# because a subshell could not append to pgids.
-spawn_pid=""
-spawn() { # LOG CMD...
-  local log="$1"; shift
-  setsid "$@" >"$log" 2>&1 &
-  spawn_pid=$!
-  pgids+=("$spawn_pid")
-}
-
-# Two private D-Bus daemons stand in for the session and system buses, with
-# no service directories, so nothing is activated on them and the shell's
-# notification server and polkit agent never reach the user's buses.
-bus_config() { # SOCKET
-  cat <<XML
-<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-<busconfig>
-  <type>session</type>
-  <listen>unix:path=$1</listen>
-  <auth>EXTERNAL</auth>
-  <policy context="default"><allow send_destination="*" eavesdrop="true"/><allow eavesdrop="true"/><allow own="*"/></policy>
-</busconfig>
-XML
-}
-bus_config "$rt_dir/bus" >"$sandbox/session-bus.xml"
-bus_config "$rt_dir/system-bus" >"$sandbox/system-bus.xml"
-
-echo "qml-smoke: sandbox $sandbox"
-spawn "$sandbox/session-bus.log" "${sandbox_env[@]}" dbus-daemon --nofork --config-file="$sandbox/session-bus.xml"
-spawn "$sandbox/system-bus.log" "${sandbox_env[@]}" dbus-daemon --nofork --config-file="$sandbox/system-bus.xml"
-for _ in $(seq 1 50); do [[ -S $rt_dir/bus && -S $rt_dir/system-bus ]] && break; sleep 0.1; done
-if [[ ! -S $rt_dir/bus || ! -S $rt_dir/system-bus ]]; then
-  printf 'qml-smoke: status=not-measured missing=sandbox-bus\n'; exit 77
-fi
-spawn "$sandbox/hyprland.log" "${sandbox_env[@]}" WAYLAND_DISPLAY="$host_socket" Hyprland --config "$home/.config/hypr/hyprland.lua"
-compositor_pid="$spawn_pid"
-
-nested_socket=""
-for _ in $(seq 1 200); do
-  for candidate in "$rt_dir"/wayland-*; do
-    [[ -S $candidate ]] && { nested_socket="${candidate##*/}"; break; }
-  done
-  [[ -n $nested_socket ]] && break
-  kill -0 "$compositor_pid" 2>/dev/null || break
-  sleep 0.1
-done
-if [[ -z $nested_socket ]]; then
-  printf 'qml-smoke: status=not-measured missing=nested-compositor\n'
-  tail -n 20 "$sandbox/hyprland.log"
-  exit 77
-fi
-signature=""
-for d in "$rt_dir"/hypr/*/; do [[ -d $d ]] && signature="$(basename "$d")"; done
-if [[ -z $signature ]]; then
-  printf 'qml-smoke: status=not-measured missing=nested-instance-signature\n'; exit 77
-fi
-ok "nested compositor up: socket=$nested_socket"
-
-shell_env=("${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" HYPRLAND_INSTANCE_SIGNATURE="$signature"
-  DBUS_SESSION_BUS_ADDRESS="unix:path=$rt_dir/bus" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$rt_dir/system-bus")
-hypr() { "${shell_env[@]}" hyprctl -i "$signature" "$@"; }
-
-# The nested output can take a moment to appear. The shell starts after it
-# does, so no bar is built for the placeholder screen Qt invents when a
-# compositor has no output yet.
-monitors=-1
-for _ in $(seq 1 50); do
-  if monitors="$(hypr -j monitors 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)" && [[ $monitors -gt 0 ]]; then break; fi
-  sleep 0.2
-done
-if [[ $monitors -gt 0 ]]; then ok "nested compositor lists $monitors monitor(s)"; else
-  printf 'qml-smoke: status=not-measured missing=nested-monitor\n'; exit 77
-fi
-# The shipped bar carries its clock and workspaces as built-ins, so the
-# widget rows use a third-party widget placed in the user file before the
-# shell starts.
-tick="$home/.config/vgs/plugins/acme.tick"
-mkdir -p "$tick"
-cat >"$tick/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.tick", "name": "Tick", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget",
-  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Widget.qml" }, "defaultSection": "center", "settings": { "format": "HH:mm" } }
-JSON
-cat >"$tick/Widget.qml" <<'QML'
-import QtQuick
-import qs.Ui
-BarWidget {
-    readonly property string format: String(setting("format", ""))
-    implicitWidth: 20
-    implicitHeight: barSize
-}
-QML
-cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } } }
-JSON
-
-now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
-start_ms="$(now_ms)"
-spawn "$sandbox/qs.log" "${shell_env[@]}" "$repo/bin/vgsh" run
-shell_pid="$spawn_pid"
-
-# Latency from the runner's exec to the first bar surface with a client,
-# polled every 10 ms from the compositor's layer list, which answers in a
-# few milliseconds; the reading carries at most one poll interval.
-first_bar_ms=""
-for _ in $(seq 1 $((timeout_s * 100))); do
-  if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
-    first_bar_ms=$(( $(now_ms) - start_ms ))
-    break
-  fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.01
-done
-
-# qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
-ipc() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
-
-up=false
-for _ in $(seq 1 $((timeout_s * 5))); do
-  if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ $up != true ]]; then
-  fail "shell did not answer ping within ${timeout_s}s"
-  tail -n 40 "$sandbox/qs.log"
-  exit 1
-fi
-ok "shell answers ping"
-
-# qs buffers stdout when redirected, so the shell's own per-instance log
-# file is the record: it is line-flushed and holds every QML warning. The
-# runner execs qs, so the shell's pid is the runner's unless setsid forked.
-shell_qs_pid="$shell_pid"
-if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
-instance_log=""
-for _ in $(seq 1 50); do
-  if instance_id="$("${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
-    instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
-    break
-  fi
-  sleep 0.2
-done
-if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; exit 1; fi
-# Lines of the instance log matching an extended regex, counted. grep exits
-# 1 for a count of zero, which is an answer; anything above is a read or
-# pattern failure: grep's message goes to stderr and the function returns 1.
-# It runs inside a command substitution, so it never calls fail: the caller
-# does, in the shell that holds the counters.
-log_lines() {
-  local count status=0
-  count="$(grep -c -E -e "$1" -- "$instance_log")" || status=$?
-  if [[ $status -gt 1 ]]; then return 1; fi
-  printf '%s\n' "$count"
-}
-# expect_log LABEL COUNT PATTERN: the log holds at least COUNT matching
-# lines within 5 s. A row that asserts something did not happen waits for
-# the line the shell writes when it decides not to, then looks.
-expect_log() {
-  local label="$1" want="$2" pattern="$3" got=0
-  for _ in $(seq 1 25); do
-    if ! got="$(log_lines "$pattern")"; then
-      fail "$label: instance log unreadable or pattern refused: $instance_log ($pattern)"
-      return 0
-    fi
-    if [[ $got -ge $want ]]; then ok "$label"; return; fi
-    sleep 0.2
-  done
-  fail "$label: log lines matching $pattern: $got want at least $want"
-}
-
-# expect LABEL WANT CMD...: the command's last stdout line must equal WANT.
-# A command that fails is a failure, never an empty string that happens to
-# compare unequal.
-expect() {
-  local label="$1" want="$2" got
-  shift 2
-  if ! got="$("$@")"; then fail "$label: command failed: $*"; return; fi
-  if [[ $got == "$want" ]]; then ok "$label"; else fail "$label: got $got"; fi
-}
-# expect_poll LABEL WANT CMD...: as expect, retried for up to 5 s, for a
-# state that follows a write through the watcher, the merge and a rebuild.
-expect_poll() { # LABEL WANT CMD...
-  local label="$1" want="$2" got=""
-  shift 2
-  for _ in $(seq 1 25); do
-    if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
-    sleep 0.2
-  done
-  fail "$label: got $got want $want"
-}
-
-expect "instance guard accepts the runner's shell" true ipc shell guarded
-
-# Plugins scan asynchronously; wait for the bundled bar and the placed widget.
-plugins_json=""
-for _ in $(seq 1 100); do
-  if plugins_json="$(ipc shell listPlugins)" && python3 -c 'import json,sys; d=json.load(sys.stdin); ids={p["id"] for p in d["plugins"]}; sys.exit(0 if {"vgs.bar","acme.tick"} <= ids else 1)' <<<"$plugins_json"; then break; fi
-  sleep 0.2
-done
-if python3 - "$plugins_json" <<'PY'
-import json, sys
-d = json.loads(sys.argv[1])
-by = {p["id"]: p for p in d["plugins"]}
-missing = [i for i in ("vgs.bar", "acme.tick") if i not in by]
-disabled = [i for i in by if i.startswith("vgs.") and not by[i]["enabled"]]
-if missing or disabled or d["errors"] or d["collisions"]:
-    print("missing=%s disabled=%s errors=%s collisions=%s" % (missing, disabled, d["errors"], d["collisions"]))
-    sys.exit(1)
-PY
-then ok "bundled plugins discovered, enabled and error-free"; else fail "bundled plugin state"; fi
-
-# Live bar surfaces the nested compositor lists. A layer whose client is
-# gone stays in the list with pid -1 until the compositor drops it, so only
-# a layer with a client counts. Space every monitor reserves for layers is
-# read beside it: a bar that is gone reserves nothing.
-bar_count() { hypr -j layers | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d.values() for lv in m["levels"].values() for l in lv if l["namespace"]=="vgs:bar" and l["pid"]!=-1))'; }
-reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum(m["reserved"]) for m in json.load(sys.stdin)))'; }
-# Live layers with a namespace as [[x, y, w, h], ...], sorted.
-layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
-layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-bars=-1
-for _ in $(seq 1 50); do
-  if bars="$(bar_count)" && [[ $bars == "$monitors" ]]; then break; fi
-  sleep 0.2
-done
-if [[ $bars == "$monitors" && $monitors != 0 && $monitors != -1 ]]; then ok "one bar surface per monitor ($bars of $monitors)"; else fail "bar surfaces: $bars for $monitors monitors"; fi
-
-# Widget ids every bar host built, left to right, from the core's own
-# build records. Polls up to 5 s: a config write travels through the
-# watcher, the merge and a rebuild before the record changes.
-# A screen whose bar is unloaded has no record; it reads as an empty list.
-bar_widget_ids() {
-  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:[r["id"] for r in v if r["kind"]=="bar-widget"] for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
-}
-expect_widgets() { # LABEL EXPECTED_JSON_LIST
-  local want got=""
-  if ! want="$(python3 -c 'import json,sys; print(json.dumps([json.loads(sys.argv[1])]*int(sys.argv[2])))' "$2" "$monitors")"; then fail "$1: expected list unreadable"; return; fi
-  for _ in $(seq 1 25); do
-    if got="$(bar_widget_ids)" && [[ $got == "$want" ]]; then ok "$1"; return; fi
-    sleep 0.2
-  done
-  fail "$1: got $got want $want"
-}
-expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
-# Built-in widget ids every bar registered, sorted: the records of origin
-# `plugin` under each bar host key.
-bar_builtins() {
-  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:sorted(r["id"] for r in v if r["origin"]=="plugin") for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
-}
-expect_builtins() { # LABEL EXPECTED_JSON_LIST
-  local want got=""
-  if ! want="$(python3 -c 'import json,sys; print(json.dumps([json.loads(sys.argv[1])]*int(sys.argv[2])))' "$2" "$monitors")"; then fail "$1: expected list unreadable"; return; fi
-  for _ in $(seq 1 25); do
-    if got="$(bar_builtins)" && [[ $got == "$want" ]]; then ok "$1"; return; fi
-    sleep 0.2
-  done
-  fail "$1: got $got want $want"
-}
-expect_builtins "every bar registered its built-in workspaces, clock and plugin manager" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-
-# A rebuild counter: the core counts every instance it builds. Rows below
-# assert that an unrelated write and a rescan that changes nothing build
-# nothing, and what a rescan that adds a disabled plugin builds.
-builds() { ipc shell buildCount; }
-expect "the core built the bar and its placed widget per screen, and no built-in" "$((2 * monitors))" builds
-
-# Disable only lists the id: the layout entry and its settings stay, so
-# re-enabling restores the exact screen. The effective configuration is
-# read back for the entry, the user file for what the manager wrote.
-# Latency from a setPluginEnabled reply to `built` reflecting it, polled
-# with qs ipc against the shell's pid; the reading carries one IPC round trip.
-reconcile_ms=""
-if disable_reply="$(ipc shell setPluginEnabled acme.tick false)"; then
-  replied_ms="$(now_ms)"
-  for _ in $(seq 1 500); do
-    if built_now="$("${shell_env[@]}" qs ipc --pid "$shell_pid" call shell built 2>>"$sandbox/ipc.log" | tail -n 1)" && [[ -n $built_now && $built_now != *'"id":"acme.tick"'* ]]; then
-      reconcile_ms=$(( $(now_ms) - replied_ms ))
+# Start a command in its own process group and record the inner shell PID before exec.
+spawn_group() {
+  local pidfile="$1" launcher
+  shift
+  rm -f -- "$pidfile"
+  # shellcheck disable=SC2016  # $$ and "$@" must expand in the inner sh, not here
+  setsid --wait sh -c 'echo $$ >"$1"; shift; exec "$@"' _ "$pidfile" "$@" &
+  launcher=$!
+  spawn_launcher_pid="$launcher"
+  spawn_pgid=""
+  for _ in $(seq 1 100); do
+    if [[ -s "$pidfile" ]]; then
+      spawn_pgid="$(tr -d '[:space:]' <"$pidfile")"
       break
     fi
-    sleep 0.005
+    kill -0 "$launcher" 2>/dev/null || break
+    sleep 0.05
   done
-fi
-if [[ $disable_reply == ok ]]; then ok "disabling a widget is allowed"; else fail "disabling a widget is allowed: got $disable_reply"; fi
-tick_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.tick"][0])'; }
-tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
-user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
-expect_widgets "the bar dropped the disabled widget" '[]'
-expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-expect "widget reads disabled after the user file changed" False tick_state
-expect "the disabled widget keeps its layout entry and settings" '[{"id": "acme.tick", "format": "ddd d MMM  HH:mm"}]' tick_entry
-expect "disable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
-expect "re-enabling the widget is allowed" ok ipc shell setPluginEnabled acme.tick true
-expect_widgets "the bar rebuilt the re-enabled widget" '["acme.tick"]'
-expect "re-enable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
-
-expect "disabling the bar names the widgets it hides" "ok hidden=acme.tick" ipc shell setPluginEnabled vgs.bar false
-expect_widgets "the bar host unloaded the disabled bar" '[]'
-expect_builtins "the disabled bar's built-ins left the build records" '[]'
-bars_now=-1
-for _ in $(seq 1 50); do
-  if bars_now="$(bar_count)" && [[ $bars_now == 0 ]]; then break; fi
-  sleep 0.2
-done
-if [[ $bars_now == 0 ]]; then ok "the bar host destroyed its surface with no bar"; else fail "bar surfaces with the bar disabled: $bars_now"; fi
-expect "no bar reserves no screen space" 0 reserved_total
-expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
-expect_widgets "the bar host rebuilt the re-enabled bar" '["acme.tick"]'
-monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
-expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-for _ in $(seq 1 50); do
-  if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
-  sleep 0.2
-done
-if [[ $bars_now == "$monitors" ]]; then ok "the bar host mapped its surface again"; else fail "bar surfaces after re-enable: $bars_now"; fi
-reserved=0
-for _ in $(seq 1 50); do
-  if reserved="$(reserved_total)" && [[ $reserved -gt 0 ]]; then break; fi
-  sleep 0.2
-done
-if [[ $reserved -gt 0 ]]; then ok "the re-enabled bar reserves screen space again"; else geometry fail "reserved space after re-enable: $reserved"; fi
-if [[ -f "$home/.config/vgs/shell.json" ]]; then ok "manager wrote the user file"; else fail "user file missing"; fi
-
-# An unrelated key in the user file builds nothing: the shell is seen to
-# have read the write (the key is in the effective configuration) before
-# the build count is compared. Every write the smoke makes to the user file
-# is a rename, so the watching shell never reads half a file.
-unrelated_key() { ipc shell listShellConfig | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unrelated"))'; }
-if before="$(builds)"; then
-  python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["unrelated"] = 1
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-  expect_poll "the shell read the unrelated key" 1 unrelated_key
-  expect "an unrelated configuration write rebuilds nothing" "$before" builds
-  # Every completed scan logs whether the plugin set changed. A rescan
-  # that changes nothing leaves the generation alone, so it builds
-  # nothing; the logged line is the scan's completion.
-  if unchanged_scans="$(log_lines 'plugins: scan complete changed=false ')"; then
-    expect "a rescan that changes nothing answers ok" ok ipc shell rescanPlugins
-    expect_log "the rescan that changes nothing completed" "$((unchanged_scans + 1))" 'plugins: scan complete changed=false '
-    expect "a rescan that changes nothing rebuilds nothing" "$before" builds
-  else
-    fail "instance log unreadable: $instance_log"
+  if [[ -z "$spawn_pgid" ]]; then
+    # A missing PID file does not prove launch failure. Adopt children of this setsid process for cleanup.
+    local child
+    for child in $(pgrep -P "$launcher" 2>/dev/null || true); do
+      track_pgid "$child"
+    done
+    kill "$launcher" 2>/dev/null || true
+    return 1
   fi
-  # A rescan that adds a plugin nothing enables changes the set: it bumps
-  # the generation every slot keys on, so each screen's bar and its placed
-  # widget are built again, and nothing is built for the new plugin. The
-  # new plugin's appearance in the listing is the scan's completion.
-  idle="$home/.config/vgs/plugins/acme.idle"
-  mkdir -p "$idle"
-  cat >"$idle/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.idle", "name": "Idle", "version": "0.1.0", "author": "acme", "description": "smoke fixture nothing enables",
-  "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }
-JSON
-  printf 'import QtQuick\nItem { property var shell: null }\n' >"$idle/Service.qml"
-  expect "a rescan after adding a plugin answers ok" ok ipc shell rescanPlugins
-  idle_state() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.idle"][0])' 2>/dev/null || echo absent; }
-  expect_poll "the rescan discovered the plugin, disabled" False idle_state
-  idle_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.idle" for rows in json.load(sys.stdin).values() for r in rows))'; }
-  expect_poll "a rescan that adds a plugin rebuilds each screen's bar and widget" "$((before + 2 * monitors))" builds
-  expect "a rescan that adds a disabled plugin does not build it" False idle_built
-  expect "a rescan that adds a disabled plugin builds nothing else" "$((before + 2 * monitors))" builds
-else
-  fail "buildCount unreadable"
-fi
-
-# A fixture plugin in the sandbox user directory: kind service plus a bar
-# widget, naming every capability. Proves user-directory discovery, the
-# service host, that each instance receives exactly the capabilities its
-# manifest names, that a settings change reaches a running instance without
-# a rebuild, and that every capability delivers its object and releases it
-# on disable. The service registers through its capabilities once and
-# answers IPC calls that drive the rest. The rows read the fixture's own
-# properties back through readInstance, never the build records.
-fixture="$sandbox/src/acme.probe"
-mkdir -p "$fixture"
-cat >"$fixture/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.probe", "name": "Probe", "version": "0.1.0", "author": "acme", "description": "smoke fixture",
-  "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml" },
-  "defaultSection": "right", "settings": { "label": "probe", "tags": ["a", "b"] },
-  "schema": { "label": { "type": "string", "label": "Label" } },
-  "capabilities": ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut"] }
-JSON
-cat >"$fixture/Service.qml" <<'QML'
-import QtQuick
-Item {
-    id: root
-    property var shell: null
-    readonly property string label: shell === null ? "" : String(shell.settings.label)
-    readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
-    property bool registered: false
-    property int presses: 0
-    property string duplicateShortcut: ""
-    property string duplicateIpc: ""
-    property int notified: 0
-    property string lastSummary: ""
-    readonly property bool lockSecure: shell !== null && shell.lock.secure
-    readonly property bool hasAgent: shell !== null && shell.polkit.agent !== null
-    readonly property bool agentRegistered: shell !== null && shell.polkit.registered
-    readonly property int screenCount: shell === null ? -1 : shell.screens.all.length
-    readonly property bool noCurrentScreen: shell !== null && shell.screens.current === null
-
-    Component { id: lockContent; Item { property var screen: null } }
-
-    onShellChanged: {
-        if (shell === null || registered) return;
-        registered = true;
-        shell.shortcut.register("ping", "smoke probe", () => root.presses += 1);
-        try { shell.shortcut.register("ping", "again", () => {}); } catch (e) { root.duplicateShortcut = e.message; }
-        shell.ipc.handle("echo", arg => arg);
-        try { shell.ipc.handle("echo", arg => arg); } catch (e) { root.duplicateIpc = e.message; }
-        shell.ipc.handle("set", arg => { const at = arg.indexOf("="); return root.shell.configure.set(arg.slice(0, at), JSON.parse(arg.slice(at + 1))); });
-        shell.ipc.handle("touch", path => root.shell.run.detached(["touch", path]));
-        shell.ipc.handle("lock", () => root.shell.lock.lock(lockContent));
-        shell.ipc.handle("unlock", () => root.shell.lock.unlock());
-        shell.ipc.handle("dispatch", arg => { const a = arg.split(" "); return root.shell.compositor[a[0]].apply(null, a.slice(1)); });
-        shell.notifications.subscribe(n => { root.notified += 1; root.lastSummary = n.summary; });
-        // A lock holder rebuilt into a locked session hands its screen over again.
-        if (shell.lock.locked) shell.lock.lock(lockContent);
-    }
+  track_pgid "$spawn_pgid"
 }
-QML
-cat >"$fixture/Widget.qml" <<'QML'
-import QtQuick
-import qs.Ui
-BarWidget {
-    moduleName: "acme.probe"
-    implicitWidth: 10
-    implicitHeight: barSize
-    readonly property bool hasCompositor: shell !== null && shell.compositor !== undefined && typeof shell.compositor.focusWorkspace === "function"
-    readonly property bool tagsAreArray: Array.isArray(settings.tags)
-    readonly property string label: String(setting("label", ""))
-    readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
-    readonly property string currentScreen: shell === null || shell.screens.current === null ? "" : shell.screens.current.name
-    function setLabel(value) { return shell.configure.set("label", value); }
-}
-QML
-# A second user plugin naming no capability, beside the fixture.
-bare="$home/.config/vgs/plugins/acme.bare"
-mkdir -p "$bare"
-cat >"$bare/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.bare", "name": "Bare", "version": "0.1.0", "author": "acme", "description": "smoke fixture without capabilities",
-  "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }
-JSON
-cat >"$bare/Service.qml" <<'QML'
-import QtQuick
-Item {
-    property var shell: null
-    readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
-}
-QML
-# The fixture reaches the user directory the way a user's plugin does:
-# committed to a repository and installed with `vgsh plugin add`.
-fixture_git() { "${sandbox_env[@]}" git -C "$fixture" -c user.name=smoke -c user.email=smoke@invalid "$@" >>"$sandbox/git.log" 2>&1; }
-if fixture_git init -q && fixture_git add -A && fixture_git commit -q -m fixture; then ok "fixture committed to a local repository"; else fail "fixture repository: $(tail -n 3 "$sandbox/git.log")"; fi
-add_out=""
-if add_out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin add "file://$fixture" 2>>"$sandbox/ipc.log")" \
-  && [[ $add_out == $'ok added=acme.probe path='"$home/.config/vgs/plugins/acme.probe"$' config=unchanged\nshell=rescan-started' ]]; then
-  ok "vgsh plugin add installs the fixture and rescans the shell"
-else
-  fail "vgsh plugin add: $add_out"
-fi
-probe_state() { ipc shell listPlugins | python3 -c 'import json,sys; d=json.load(sys.stdin); print([p["enabled"] for p in d["plugins"] if p["id"]=="acme.probe"][0])' 2>/dev/null || echo absent; }
-found=""
-for _ in $(seq 1 25); do if found="$(probe_state)" && [[ $found == False ]]; then break; fi; sleep 0.2; done
-if [[ $found == False ]]; then ok "user-directory plugin discovered and disabled until enabled"; else fail "fixture after rescan: $found"; fi
-expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
-expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare true
-service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
-# The first bar host's key, for reading a widget instance back.
-bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
-read_widget() { ipc shell readInstance "$(bar_key)" acme.probe "$1"; }
-read_service() { ipc shell readInstance service acme.probe "$1"; }
-read_clock() { ipc shell readInstance "$(bar_key)" vgs.bar/center-clock "$1"; }
-read_tick() { ipc shell readInstance "$(bar_key)" acme.tick "$1"; }
-got=""
-for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == True ]]; then break; fi; sleep 0.2; done
-if [[ $got == True ]]; then ok "the service host built the fixture service"; else fail "service host: built=$got"; fi
-expect_widgets "the fixture widget joined the right section" '["acme.tick","acme.probe"]'
-expect "the fixture widget can call its compositor capability" true read_widget hasCompositor
-expect "the fixture widget's settings array stayed an array" true read_widget tagsAreArray
-all_caps='"compositor,configure,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut"'
-expect "the fixture widget's shell holds exactly what it named" "$all_caps" read_widget shellKeys
-expect "the fixture service's shell holds exactly what it named" "$all_caps" read_service shellKeys
-expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc shell readInstance service acme.bare shellKeys
-expect "the fixture service reads the manifest default" '"probe"' read_service label
-expect "a placed widget reads its layout entry" '"ddd d MMM  HH:mm"' read_tick format
-expect "the built-in clock reads the bar's clock format" '"ddd d MMM  HH:mm"' read_clock format
 
-# The built-in workspaces focus through the bar's own compositor capability.
-active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
-expect "the built-in workspaces focus a workspace" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/left-workspaces focusWorkspace 2
-expect_poll "the compositor moved to the clicked workspace" 2 active_ws
-expect_poll "the built-in workspaces focus the first workspace again" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/left-workspaces focusWorkspace 1
-expect_poll "the compositor moved back to the first workspace" 1 active_ws
-
-# A settings change reaches the running instance and builds nothing: the
-# service's plugins[] row, then the clock's layout entry.
-if before="$(builds)"; then
-  python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["plugins"] = [e for e in d.get("plugins", []) if e["id"] != "acme.probe"] + [{"id": "acme.probe", "label": "changed-service-setting"}]
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-  expect_poll "the running service received its changed setting" '"changed-service-setting"' read_service label
-  expect "the fixture widget keeps the manifest default its entry does not override" '"probe"' read_widget label
-  expect "a service settings change rebuilds nothing" "$before" builds
-  python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-center = d["bar"]["layout"]["center"]
-[e for e in center if e["id"] == "acme.tick"][0]["format"] = "HH:mm:ss"
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-  expect_poll "the running widget received its changed layout entry" '"HH:mm:ss"' read_tick format
-  expect "a widget settings change rebuilds nothing" "$before" builds
-  python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["plugins"] = [e for e in d.get("plugins", []) if e["id"] != "vgs.bar"] + [{"id": "vgs.bar", "clockFormat": "HH:mm:ss"}]
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-  expect_poll "the built-in clock received the bar's changed setting" '"HH:mm:ss"' read_clock format
-  # The shared clock ticks seconds only while a format shows them: three
-  # readings across 2.2 s change at least twice at second precision.
-  clock_changes=0; clock_last=""
-  for _ in 1 2 3; do
-    if clock_now="$(read_clock displayed)"; then
-      [[ -n $clock_last && $clock_now != "$clock_last" ]] && clock_changes=$((clock_changes + 1))
-      clock_last="$clock_now"
-    fi
-    sleep 1.1
+# Signal only process groups recorded by this script's launches.
+kill_pgid() {
+  local pgid="$1"
+  kill -0 -- "-$pgid" 2>/dev/null || return 0
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    kill -0 -- "-$pgid" 2>/dev/null || return 0
+    sleep 0.1
   done
-  if [[ $clock_changes -ge 2 ]]; then ok "the shared clock ticks seconds for a seconds format"; else fail "clock text changed $clock_changes times in 2.2 s"; fi
-  expect "a bar settings change rebuilds nothing" "$before" builds
-  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-else
-  fail "buildCount unreadable before the settings rows"
-fi
-# Capabilities, each driven through the fixture's own IPC target and read
-# back from the fixture, the core's lending record and the compositor or bus
-# the capability reaches.
-lent() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d
-for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
-print(json.dumps(v))' "$1"; }
-# qs ipc reads a bracketed argument as a list, so no argument here is JSON
-# with brackets: `set` takes key=value with a JSON value, `dispatch` a
-# dispatcher and its arguments separated by spaces.
-probe() { ipc acme.probe invoke "$1" "${2:-}"; }
-# The fixture holds every capability and the bare fixture none; another
-# plugin may hold a shared capability beside the fixture.
-lent_holds() { ipc shell lent | python3 -c 'import json,sys; h=json.load(sys.stdin)["holders"].get(sys.argv[1],[]); print("acme.probe" in h and "acme.bare" not in h)' "$1"; }
-for cap in compositor configure ipc lock notifications polkit run screens shortcut; do
-  expect "the $cap capability is lent to the fixture and not the bare plugin" True lent_holds "$cap"
-done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
 
-expect "the fixture's shortcut is registered under its id" '["acme.probe:ping"]' lent shortcuts
-count_lines() { python3 -c 'import sys; print(sum(1 for line in sys.stdin if sys.argv[1] in line))' "$1"; }
-hypr_shortcuts() { hypr globalshortcuts | count_lines 'acme.probe:ping'; }
-expect_poll "the compositor lists the fixture's shortcut" 1 hypr_shortcuts
-expect "the compositor triggers the fixture's shortcut" ok hypr dispatch 'hl.dsp.global("acme.probe:ping")'
-expect_poll "the fixture's shortcut handler ran" 1 read_service presses
-expect "a second shortcut with the same name is refused" '"refused: shortcut=acme.probe:ping held"' read_service duplicateShortcut
+# An interrupt can inherit a successful status. Set failure explicitly.
+# shellcheck disable=SC2329  # invoked via the trap registrations below
+cleanup() {
+  local code=$? signal="${1:-}" pgid dir index file
+  trap - EXIT INT TERM HUP
+  case "$signal" in
+    INT) code=130 ;;
+    TERM) code=143 ;;
+    HUP) code=129 ;;
+  esac
+  for ((index = ${#tracked_pgids[@]} - 1; index >= 0; index--)); do
+    pgid="${tracked_pgids[index]}"
+    kill_pgid "$pgid"
+    if kill -0 -- "-$pgid" 2>/dev/null; then
+      printf 'qml-smoke: FAIL: process group %s survived cleanup\n' "$pgid" >&2
+      code=1
+    fi
+  done
+  # Before the log tails: its verdict decides whether they print. It reads only the live session.
+  assert_live_session_untouched || code=1
+  # After the process groups stop writing, before the directories holding the logs go.
+  if [[ "$code" -ne 0 ]]; then
+    for file in "${evidence_logs[@]:-}"; do
+      [[ -n "$file" && -f "$file" ]] || continue
+      printf 'qml-smoke: last 60 lines of %s:\n' "$file" >&2
+      tail -n 60 -- "$file" >&2 || printf 'qml-smoke: could not read %s\n' "$file" >&2
+    done
+  fi
+  for dir in "${scratch_dirs[@]:-}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    # Services the sandbox's own D-Bus activated (dconf, gvfs) outlive the tracked process
+    # groups and keep writing into its home, so one removal pass can lose that race.
+    for _ in $(seq 1 14); do
+      rm -rf -- "$dir" 2>/dev/null || true
+      [[ -d "$dir" ]] || break
+      sleep 0.2
+    done
+    # The last pass keeps its diagnostic: a directory that still survives is a real leak.
+    [[ ! -d "$dir" ]] || rm -rf -- "$dir" || code=1
+  done
+  exit "$code"
+}
 
-ipc_targets() { "${shell_env[@]}" qs ipc --pid "$shell_pid" show 2>>"$sandbox/ipc.log" | count_lines 'target acme.probe'; }
-expect "qs lists the fixture's IPC target" 1 ipc_targets
-expect "the fixture answers on its IPC target" hello probe echo hello
-expect "a second IPC handler with the same name is refused" '"refused: ipc=acme.probe:echo held"' read_service duplicateIpc
+# shellcheck disable=SC2329  # called from cleanup(), which only the traps reach
+assert_live_session_untouched() {
+  local ok=0 instances_after layers_after instances_after_status layers_after_status
+  instances_after="$(vgs_snapshot_instances)" && instances_after_status=0 || instances_after_status=$?
+  layers_after="$(vgs_snapshot_layers)" && layers_after_status=0 || layers_after_status=$?
 
-expect "configure writes a declared setting" ok probe set 'label="via-configure"'
-expect_poll "the running service received the setting it wrote" '"via-configure"' read_service label
-expect "configure refuses a value of the wrong type" "refused: setting=label want=string" probe set 'label=3'
-expect "configure refuses an undeclared setting" "refused: setting=tags undeclared" probe set 'tags="x"'
+  if ! vgs_compare_snapshots "live VGS instances" \
+    "$instances_before" "$instances_before_status" \
+    "$instances_after" "$instances_after_status" exact; then
+    ok=1
+  fi
+  if ! vgs_compare_snapshots "live VGS layer surfaces" \
+    "$layers_before" "$layers_before_status" \
+    "$layers_after" "$layers_after_status" growth \
+  "$(printf '%s' "$instances_after" | grep -c . || true)"; then
+    ok=1
+  fi
+  return "$ok"
+}
 
-# A widget placed twice writes only the layout entry it reads.
-right_entries() {
-  python3 - "$home/.config/vgs/shell.json" "$1" <<'PY'
-import json, os, sys
-p, action = sys.argv[1], sys.argv[2]
-d = json.load(open(p))
-right = d["bar"]["layout"]["right"]
-if action == "add":
-    right.append({"id": "acme.probe", "label": "second"})
-elif action == "drop":
-    d["bar"]["layout"]["right"] = [e for e in right if not (e["id"] == "acme.probe" and e.get("label") == "second")]
-else:
-    print(json.dumps([e.get("label") for e in right if e["id"] == "acme.probe"]))
-    sys.exit(0)
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
+trap 'cleanup' EXIT
+trap 'cleanup INT' INT
+trap 'cleanup TERM' TERM
+trap 'cleanup HUP' HUP
+
+find_qmllint() {
+  local candidate bindir
+  for candidate in qmllint qmllint-qt6 /usr/lib/qt6/bin/qmllint /usr/lib/qt/bin/qmllint; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  if command -v qtpaths6 >/dev/null 2>&1; then
+    bindir="$(qtpaths6 --query QT_INSTALL_BINS 2>/dev/null || true)"
+    if [[ -n "$bindir" && -x "$bindir/qmllint" ]]; then
+      printf '%s\n' "$bindir/qmllint"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+static_check() {
+  local linter files=() findings output rc
+  mapfile -t files < <(find "${qml_roots[@]}" -name '*.qml' -type f 2>/dev/null | sort)
+  if [[ ${#files[@]} -eq 0 ]]; then
+    fail "no QML files found under ${qml_roots[*]}"
+    return
+  fi
+  if ! linter="$(find_qmllint)"; then
+    if [[ "$require_static" == true ]]; then
+      fail "qmllint not installed (pacman -S qt6-declarative)"
+    else
+      note "static parse check skipped: qmllint not installed (pacman -S qt6-declarative)"
+    fi
+    return
+  fi
+  # Inspect linter status separately so a failed executable cannot appear as an empty clean scan.
+  rc=0
+  output="$("$linter" "${files[@]}" 2>&1)" || rc=$?
+  # qmllint uses 255 for findings, including ignored semantic warnings. Other nonzero statuses fail the tool check.
+  if [[ "$rc" != 0 && "$rc" != 255 ]]; then
+    printf '%s\n' "$output" | tail -n 20 >&2
+    fail "qmllint could not run (exit $rc)"
+    return
+  fi
+
+  # Outside Quickshell, semantic import and property warnings are expected. Check parse findings only.
+  # Inline component delegates can reuse IDs, so the document-wide duplicate-ID warning is excluded.
+  findings="$(printf '%s\n' "$output" |
+    grep -E '\[syntax(\.[a-z-]+)?\]' |
+    grep -v '\[syntax\.duplicate-ids\]' || true)"
+  if [[ -n "$findings" ]]; then
+    printf '%s\n' "$findings" >&2
+    fail "QML parse errors in ${#files[@]} scanned files"
+    return
+  fi
+  static_ran=true
+  note "static parse check passed (${#files[@]} QML files)"
+}
+
+# Report unavailable nesting. Pass no-host-socket only for that specific failed prerequisite,
+# so missing binaries cannot produce irrelevant socket advice.
+nested_unavailable() {
+  local reason="$1" cause="${2:-}"
+  if [[ "$require_nested" == true ]]; then
+    fail "isolated runtime check unavailable: $reason"
+  else
+    note "isolated runtime check skipped: $reason"
+  fi
+  # Socket advice also requires WAYLAND_DISPLAY to be unset.
+  local nest_remedy=""
+  if [[ "$cause" == no-host-socket && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    nest_remedy="qml-smoke:   4. point the sandbox at the session's own socket (it keeps its own runtime
+qml-smoke:      dir, HOME and bus, so the live session is untouched). Use the value
+qml-smoke:      a session shell reports for WAYLAND_DISPLAY — the basename is
+qml-smoke:      session-dependent, so this cannot name it for you (VGS-70 will make
+qml-smoke:      --nested discover it). Export WAYLAND_DISPLAY to that value and
+qml-smoke:      XDG_RUNTIME_DIR to /run/user/\$(id -u), then re-run scripts/validate qml"
+  fi
+  cat >&2 <<EOF
+qml-smoke: a runtime check must run inside its own compositor. Safe options:
+qml-smoke:   1. install a nested compositor (Hyprland is enough) and re-run with --nested
+qml-smoke:   2. validate on a spare TTY/VM session that has no live VGS shell
+qml-smoke:   3. read the live shell's own QML errors: vshell logs -n 200
+${nest_remedy:+$nest_remedy
+}qml-smoke: never run 'qs -c vshell' or 'qs -p quickshell/vshell' in a live session.
+EOF
+}
+
+host_wayland_socket() {
+  local display="${WAYLAND_DISPLAY:-}"
+  [[ -n "$display" ]] || return 1
+  [[ "$display" == /* ]] && { printf '%s\n' "$display"; return 0; }
+  printf '%s/%s\n' "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}" "$display"
+}
+
+# Plugin phases use dynamically scoped sandbox variables from nested_check.
+
+# `qs ipc` waits forever when the sandbox shell has already exited, so one call against a
+# reaped shell hung the whole run until the outer timeout killed it, leaving every later
+# check unrun while the run still reported success. Bound the wait and put the failure in
+# the reply: callers compare reply text, and returning non-zero would instead abort the
+# ones that assign this under `set -e`.
+# --kill-after is what makes the bound unconditional: plain `timeout` sends SIGTERM and
+# then waits for as long as the child cares to ignore it, which is the same hang under a
+# different name. Every raw `qs ipc` in this script carries the same pair.
+sandbox_ipc_timeout=15
+sandbox_ipc() {
+  local reply status=0
+  reply="$(timeout --kill-after=5 "$sandbox_ipc_timeout" "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    printf 'IPC_CALL_FAILED(%s) %s: %s' "$status" "$*" "${reply:-no reply}"
+    return 0
+  fi
+  printf '%s' "$reply"
+}
+
+# Print each NAME from the --shell-env entries that a later launch assignment also sets.
+# Arguments: the entry count, the entries, then the launch assignments. Status 0 means at
+# least one collision was printed, 1 means none.
+shell_env_collisions() {
+  local count="$1" entry assignment found=1
+  shift
+  local -a entries=("${@:1:count}") assignments=("${@:count+1}")
+  for entry in "${entries[@]}"; do
+    for assignment in "${assignments[@]}"; do
+      if [[ "${entry%%=*}" == "${assignment%%=*}" ]]; then
+        printf '%s\n' "${entry%%=*}"
+        found=0
+      fi
+    done
+  done
+  return "$found"
+}
+
+# Run --driver inside the sandbox, where hyprctl and qs ipc reach only the nested compositor
+# and shell. VSHELL_SANDBOX_DRIVER tells a driver it was started here and not in a live session.
+driver_check() {
+  local signature="$1" socket="$2" rc=0
+  note "running driver $driver inside the sandbox"
+  "${sandbox_env[@]}" \
+    HYPRLAND_INSTANCE_SIGNATURE="$signature" \
+    WAYLAND_DISPLAY="$socket" \
+    VSHELL_ROOT="$repo_root" \
+    VSHELL_SANDBOX_DRIVER=1 \
+    timeout --signal=TERM --kill-after=5 "$nested_timeout" "$driver" || rc=$?
+  case "$rc" in
+    0) note "driver passed: $driver" ;;
+    "$skip_status") unmeasured "driver could not measure: $driver" ;;
+    *) fail "driver exited $rc: $driver" ;;
+  esac
+}
+
+# env -i and the sandbox runtime directory keep hyprctl on the nested compositor.
+# Propagate query errors so they cannot be interpreted as an absent surface.
+sandbox_layers() {
+  "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null
+}
+
+# Read monitor geometry from the nested compositor and propagate query failure.
+sandbox_monitors() {
+  "${sandbox_env[@]}" hyprctl -i 0 monitors -j 2>/dev/null
+}
+
+# Read layer geometry against its own output. Convert physical mode pixels to logical pixels
+# using scale and quarter-turn transforms; another layer's size is not an output measurement.
+# Return one geometry line: <w>x<h> <screen_w>x<screen_h>.
+# Status 0 means nondegenerate, 1 absent, 2 degenerate or output-sized, and 3 unreadable.
+# The layer payload traversal can still raise an unhandled error that exits 1 and appears absent.
+sandbox_layer_state() {
+  local namespace="$1" layers monitors rc=0
+  layers="$(sandbox_layers)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    return 3
+  fi
+  monitors="$(sandbox_monitors)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    return 3
+  fi
+  MONITORS_JSON="$monitors" LAYERS_JSON="$layers" python3 - "$namespace" <<'PY'
+import json
+import os
+import sys
+
+namespace = sys.argv[1]
+
+
+def parsed(name):
+    raw = os.environ[name]
+    if not raw.strip():
+        raise SystemExit(3)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise SystemExit(3)
+
+
+data = parsed("LAYERS_JSON")
+if not isinstance(data, dict):
+    raise SystemExit(3)
+monitors = parsed("MONITORS_JSON")
+if not isinstance(monitors, list):
+    raise SystemExit(3)
+
+# Guard the entire physical-to-logical conversion. Even numeric NaN can fail when converted
+# to an integer; an uncaught exception exits with the status reserved for surface absence.
+# Omit invalid outputs rather than inventing zero dimensions.
+outputs = {}
+for monitor in monitors:
+    try:
+        if monitor.get("disabled"):
+            continue
+        name = monitor.get("name")
+        mode_w = int(monitor.get("width") or 0)
+        mode_h = int(monitor.get("height") or 0)
+        scale = float(monitor.get("scale") or 0)
+        transform = int(monitor.get("transform") or 0)
+        # Require a string name before using it as a map key. A truthy list or dict is not hashable.
+        if not isinstance(name, str) or not name:
+            continue
+        if mode_w <= 0 or mode_h <= 0 or not scale > 0:
+            continue
+        # Only known transform values establish whether axes swap.
+        if transform not in range(8):
+            continue
+        logical_w = int(round(mode_w / scale))
+        logical_h = int(round(mode_h / scale))
+    except (AttributeError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+        continue
+    if transform in (1, 3, 5, 7):
+        logical_w, logical_h = logical_h, logical_w
+    if logical_w > 0 and logical_h > 0:
+        outputs[name] = (logical_w, logical_h)
+
+matches = []
+for monitor_name, monitor in data.items():
+    layers = []
+    for level in (monitor.get("levels") or {}).values():
+        layers.extend(level)
+    for layer in layers:
+        if layer.get("namespace") != namespace:
+            continue
+        matches.append((monitor_name, int(layer.get("w") or 0), int(layer.get("h") or 0)))
+
+if not matches:
+    raise SystemExit(1)
+
+# A popout or modal binds one screen. Multiple mappings are an invalid measurement,
+# not readings to select or average.
+if len(matches) > 1:
+    sys.stderr.write(
+        "sandbox_layer_state: %s is mapped %d times (%s), but a popout or modal surface "
+        "binds to exactly one screen - that is a duplicate-mapping defect, not a geometry "
+        "reading\n"
+        % (namespace, len(matches), ", ".join(entry[0] for entry in matches))
+    )
+    raise SystemExit(3)
+
+monitor_name, w, h = matches[0]
+if monitor_name not in outputs:
+    sys.stderr.write(
+        "sandbox_layer_state: %s is mapped on monitor %s, but `hyprctl monitors` reports "
+        "no usable size for it, so there is nothing to measure it against - that is not "
+        "evidence about its geometry\n" % (namespace, monitor_name)
+    )
+    raise SystemExit(3)
+
+screen_w, screen_h = outputs[monitor_name]
+print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
+if w <= 0 or h <= 0:
+    raise SystemExit(2)
+# Status 2 includes both collapsed and output-sized surfaces. Switcher callers must inspect
+# positive dimensions against the output; they cannot treat the status alone as success.
+if w >= screen_w and h >= screen_h:
+    raise SystemExit(2)
+raise SystemExit(0)
 PY
 }
-probe_widgets() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d[sys.argv[1]] if r["id"]=="acme.probe"))' "$(bar_key)"; }
-right_entries add
-expect_poll "the fixture widget is placed twice" 2 probe_widgets
-expect "a widget's configure writes only its own layout entry" ok ipc shell invokeInstance "$(bar_key)" acme.probe setLabel only-first
-labels_now() { right_entries show; }
-expect_poll "the other entry keeps its setting" '["only-first", "second"]' labels_now
-right_entries drop
-expect_poll "the second placement is gone" 1 probe_widgets
 
-expect "run starts a detached process" ok probe touch "$sandbox/touched-by-run"
-touched() { [[ -f $sandbox/touched-by-run ]] && echo yes || echo no; }
-expect_poll "the detached process ran" yes touched
-
-bus_owner() { "${shell_env[@]}" gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner "$1" 2>>"$sandbox/ipc.log"; }
-expect_poll "the core's notification server owns the bus name" "(true,)" bus_owner org.freedesktop.Notifications
-notify() { "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify smoke 0 '' probe-summary probe-body '[]' '{}' 5000 >/dev/null 2>>"$sandbox/ipc.log" && echo sent; }
-expect "a client sends a notification" sent notify
-expect_poll "the fixture's subscriber received it" '"probe-summary"' read_service lastSummary
-
-expect "the polkit agent exists while the fixture holds it" true lent polkitAgent
-expect "the fixture reads the lent polkit agent" true read_service hasAgent
-expect "the agent reports no registration on a bus without polkitd" false read_service agentRegistered
-expect "the lending record reports the registration" false lent polkitRegistered
-
-expect "the fixture locks the session" ok probe lock
-expect_poll "the compositor confirms the lock" true read_service lockSecure
-# A rebuild while locked keeps the session locked, and the rebuilt holder
-# hands its screen over again. A changed manifest makes every slot rebuild.
-python3 - "$bare/manifest.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["version"] = "0.1.1"
-json.dump(d, open(p + ".tmp", "w"))
-os.replace(p + ".tmp", p)
-PY
-lock_content() { lent lock.content; }
-if before="$(builds)"; then
-  expect "a rescan while locked answers ok" ok ipc shell rescanPlugins
-  rebuilt() { local now; now="$(builds)" && [[ $now -gt $before ]] && echo rebuilt || echo same; }
-  expect_poll "the changed manifest rebuilt the plugins" rebuilt rebuilt
-  expect_poll "the rebuilt holder handed its screen over again" true lock_content
-  expect "the session stayed locked through the rebuild" true read_service lockSecure
-  expect "the rebuilt fixture answers on its IPC target" hello probe echo hello
-  presses_before="$(read_service presses)"
-  expect "the compositor triggers the rebuilt fixture's shortcut" ok hypr dispatch 'hl.dsp.global("acme.probe:ping")'
-  expect_poll "the rebuilt fixture's shortcut handler ran" "$((presses_before + 1))" read_service presses
-else
-  fail "buildCount unreadable before the lock rebuild rows"
-fi
-expect "the fixture unlocks the session" ok probe unlock
-expect_poll "the compositor released the lock" false read_service lockSecure
-
-expect "the fixture service sees every screen" "$monitors" read_service screenCount
-expect "a service draws on no screen" true read_service noCurrentScreen
-expect "the fixture widget draws on its bar's screen" "\"$(bar_key | sed 's/^bar://')\"" read_widget currentScreen
-
-special_ws() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["specialWorkspace"]["name"])'; }
-expect "the fixture toggles a special workspace" ok probe dispatch 'toggleSpecialWorkspace probe'
-expect_poll "the compositor shows the special workspace" "special:probe" special_ws
-expect_poll "the fixture closes the special workspace again" ok probe dispatch 'toggleSpecialWorkspace probe'
-expect_poll "the compositor hides the special workspace" "" special_ws
-expect "the fixture focuses a workspace" ok probe dispatch 'focusWorkspace 2'
-expect_poll "the compositor moved to that workspace" 2 active_ws
-expect_poll "the fixture focuses the first workspace again" ok probe dispatch 'focusWorkspace 1'
-expect_poll "the compositor moved back" 1 active_ws
-
-# The plugin manager: the bar's manager button opens the bar's own panel
-# under it, which lists every plugin, toggles one through the core's
-# setPluginEnabled path and writes a setting through its form.
-read -r mon_w mon_h bar_reserved < <(monitor_size)
-expect "the manager button opens the manager panel" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
-panel_top() { layers_of vgs:panel | python3 -c 'import json,sys; print([l[1] for l in json.load(sys.stdin)])'; }
-geometry expect_poll "the manager panel sits under the bar" "[$((bar_reserved + 8))]" panel_top
-manager_rows() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(json.dumps({r["id"]: r["enabled"] for r in rows if r["id"] in ("acme.probe", "acme.bare", "vgs.bar")}, sort_keys=True))'; }
-expect "the manager panel lists every plugin with its state" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
-# The panel draws one field per key of each row's schema; the rows it holds
-# carry the schema keys the fields come from, and drawnFields counts the
-# fields each form's Repeater drew.
-manager_fields() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; by={r["id"]: sorted(r["schema"]) for r in json.load(sys.stdin)}; print(json.dumps([by["acme.probe"], by["vgs.bar"], by["acme.bare"]]))'; }
-expect "the manager panel holds the schema keys its form draws" '[["label"], ["clockFormat"], []]' manager_fields
-manager_drawn() { ipc shell readInstance panel vgs.bar drawnFields | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.probe"), d.get("vgs.bar"), d.get("acme.bare")]))'; }
-expect_poll "the manager panel draws one field per schema key" '[1, 1, 0]' manager_drawn
-probe_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.probe"][0])'; }
-expect "the manager toggles the fixture off" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
-expect_poll "listPlugins reads the fixture disabled" False probe_enabled
-expect_poll "the manager panel shows the fixture disabled" '{"acme.bare": true, "acme.probe": false, "vgs.bar": true}' manager_rows
-# The panel logs each refusal it shows on a row.
-expected_errors+=('manager panel: acme\.probe refused: disabled=acme\.probe' 'manager panel: acme\.probe refused: setting=tags undeclared')
-expect "the manager refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"x"}'
-expect "the manager panel shows the refusal on the plugin's row" '{"acme.probe":"refused: disabled=acme.probe"}' ipc shell readInstance panel vgs.bar replies
-expect "the manager toggles the fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
-expect_poll "listPlugins reads the fixture enabled" True probe_enabled
-expect "the manager form writes the fixture's setting" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'
-expect "a successful write clears the row's refusal" '{}' ipc shell readInstance panel vgs.bar replies
-expect_poll "the running service received the manager's setting" '"via-manager"' read_service label
-expect_poll "the running widget received the manager's setting" '"via-manager"' read_widget label
-# A drawn field's apply, as an edit in the form emits it, writes through
-# writeSetting; the manager's rows read the setting back.
-manager_label() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; print(json.dumps([r["settings"]["label"] for r in json.load(sys.stdin) if r["id"]=="acme.probe"][0]))'; }
-expect "the fixture's drawn label field applies an edit" applied ipc shell invokeInstance panel vgs.bar applyField '{"id":"acme.probe","key":"label","value":"via-field"}'
-expect_poll "the manager reads back the setting the field wrote" '"via-field"' manager_label
-expect "the manager refuses a setting outside the schema" "refused: setting=tags undeclared" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"tags","value":"x"}'
-expect "the manager button closes the manager panel" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
-expect_poll "the manager panel is gone" 0 layer_count vgs:panel
-bar_row() { # [SECTION] JSON list of built-ins for that section, right by default
-  local section=right
-  [[ $# -eq 2 ]] && { section="$1"; shift; }
-  python3 - "$home/.config/vgs/shell.json" "$1" "$section" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-rows = d.setdefault("plugins", [])
-row = [e for e in rows if e["id"] == "vgs.bar"]
-if not row:
-    rows.append({"id": "vgs.bar"})
-    row = rows[-1:]
-row[0][sys.argv[3]] = json.loads(sys.argv[2])
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
+# Wait for the requested layer state. Report a failed query separately from timeout.
+wait_layer_state() {
+  local namespace="$1" want="$2" state=1
+  for _ in $(seq 1 30); do
+    state=0
+    sandbox_layer_state "$namespace" >/dev/null || state=$?
+    if [[ "$state" -eq 3 ]]; then
+      fail "could not read the sandbox compositor's layer list (hyprctl query failed, or its output could not be measured) - that is not evidence '$namespace' is absent"
+      return 2
+    fi
+    [[ "$state" == "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.2
+  done
+  return 1
 }
-bar_row '[]'
-expect_builtins "hiding the manager in the bar's settings removes it from every screen" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
-bar_row '["manager"]'
-expect_builtins "listing the manager again brings it back on every screen" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-bar_row left '["clock","workspaces"]'
-expect_builtins "the same built-in in two sections registers in both" '["vgs.bar/center-clock","vgs.bar/left-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-bar_row center '[]'
-expect_builtins "moving and reordering built-ins keeps every one registered" '["vgs.bar/left-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-read_moved_clock() { ipc shell readInstance "$(bar_key)" vgs.bar/left-clock format; }
-expect "the moved clock is the registered one" '"HH:mm:ss"' read_moved_clock
-bar_row left '["workspaces"]'
-bar_row center '["clock"]'
-expect_builtins "the built-ins return to their sections" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-# A name listed twice in one section is drawn once and the repeat logged by
-# every bar; the logged line proves the bar read the setting.
-expected_errors+=('vgs\.bar: setting left lists a built-in twice, drawn once: ')
-bar_row left '["workspaces","workspaces"]'
-expect_log "a built-in listed twice in one section is logged by every bar" "$monitors" 'vgs\.bar: setting left lists a built-in twice, drawn once: '
-expect_builtins "a built-in listed twice in one section registers once" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
-bar_row left '["workspaces"]'
 
-locker="$home/.config/vgs/plugins/acme.locker"
-mkdir -p "$locker"
-cat >"$locker/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.locker", "name": "Locker", "version": "0.1.0", "author": "acme", "description": "smoke fixture holding the lock",
-  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["lock"] }
-JSON
-cat >"$locker/Service.qml" <<'QML'
-import QtQuick
-Item { property var shell: null }
-QML
-expect "rescan after adding the lock fixture answers ok" ok ipc shell rescanPlugins
-locker_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.locker" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the lock fixture is discovered" True locker_known
-expect "enabling a second lock plugin is allowed" ok ipc shell setPluginEnabled acme.locker true
-locker_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.locker" for r in json.load(sys.stdin).get("service",[])))'; }
-expect_poll "the lock stays with its first holder" '["acme.probe"]' lent holders.lock
-expect "the second lock plugin is not built while the lock is held" False locker_built
+# A mapped surface verifies creation and dismissal, not correct content layout.
+# Opening the popout exposes content ReferenceErrors to the log scan. The surface size
+# does not measure content, and this harness cannot click through the pager.
+popout_namespace="vshell:plugins:plugin"
+# Opening aiUsage instantiates its meter delegates and pager.
+popout_plugin="aiUsage"
+# Use a separate override plugin that the shipped bar hosts; unhosted components never emit the marker.
+override_plugin="tailscale"
 
-expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
-expect_poll "the second lock plugin builds once the holder is disabled" True locker_built
-expect_poll "the lock moved to the second plugin" '["acme.locker"]' lent holders.lock
-expect "disabling the second lock plugin is allowed" ok ipc shell setPluginEnabled acme.locker false
-expect_widgets "the fixture widget left the bar" '["acme.tick"]'
-got=""
-for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then break; fi; sleep 0.2; done
-if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
-fixture_holds() { ipc shell lent | python3 -c 'import json,sys; print(sorted(k for k,v in json.load(sys.stdin)["holders"].items() if "acme.probe" in v))'; }
-expect_poll "disable released every capability hold" '[]' fixture_holds
-expect "disable released the shortcut" '[]' lent shortcuts
-expect "disable released the IPC target" '[]' lent ipcTargets
-expect "disable released the notification subscriber" '[]' lent subscribers
-expect "disable destroyed the notification server" false lent notificationServer
-expect "disable destroyed the polkit agent" false lent polkitAgent
-expect_poll "the compositor dropped the fixture's shortcut" 0 hypr_shortcuts
-expect "qs lists no IPC target for the disabled fixture" 0 ipc_targets
-expect "disabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare false
+# Read sentinels from the running shell. They must differ from both repository values and fallbacks.
+# The selected carriers remain inert during smoke: custom animation duration requires Custom speed,
+# and the update command requires a user update request.
+settings_sentinel_key="customAnimationDuration"
+settings_sentinel_value=4242
+plugin_sentinel_plugin="sysUpdate"
+plugin_sentinel_key="aurUpdateCommand"
+plugin_sentinel_value="{vshell} update run aur --vgs92-seed-sentinel"
 
-# Hosts: a fixture of every summonable kind plus a background and a bar
-# widget. Each summonable kind opens on demand in its own layer surface and
-# is destroyed on hide; the background is drawn on every screen while
-# enabled. Geometry is read from the compositor's layer list.
-surf="$home/.config/vgs/plugins/acme.surfaces"
-mkdir -p "$surf"
-cat >"$surf/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.surfaces", "name": "Surfaces", "version": "0.1.0", "author": "acme", "description": "smoke fixture for the hosts",
-  "kinds": ["panel", "overlay", "menu", "background", "bar-widget"],
-  "entryPoints": { "panel": "Summoned.qml", "overlay": "Summoned.qml", "menu": "Summoned.qml", "background": "Background.qml", "bar-widget": "Widget.qml" },
-  "defaultSection": "right", "settings": { "placement": "top-right" }, "capabilities": ["surfaces", "run"] }
-JSON
-cat >"$surf/Summoned.qml" <<'QML'
-import QtQuick
-Item {
-    property var shell: null
-    property int opened: 0
-    property string lastPayload: ""
-    implicitWidth: 200
-    implicitHeight: 120
-    // A payload may name a file close() creates, and may ask open() to throw.
-    function open(payloadJson) {
-        opened += 1;
-        lastPayload = payloadJson;
-        if (JSON.parse(payloadJson).fail === true) throw new Error("probe open refused");
-    }
-    function close() {
-        const marker = JSON.parse(lastPayload).closeMarker;
-        if (marker !== undefined) shell.run.detached(["touch", marker]);
-    }
+# Match the exact value in its expected section; substring matches can accept unrelated values.
+# shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
+sentinel_is_exactly() { [[ "$1" == "$2" ]]; }
+
+# Match a plugin key and value. An unparsable reply remains a miss during polling.
+# shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
+sentinel_at_path() {
+  python3 -c 'import json, sys
+try: data = json.loads(sys.argv[1])
+except ValueError: sys.exit(1)
+section = data.get(sys.argv[2])
+sys.exit(0 if isinstance(section, dict) and section.get(sys.argv[3]) == sys.argv[4] else 1)' "$@"
 }
-QML
-cat >"$surf/Background.qml" <<'QML'
-import QtQuick
-Item {
-    property var shell: null
-    property var screen: null
-    readonly property string screenName: screen === null ? "" : screen.name
+
+# Poll an asynchronous settings value with a bounded wait and retain the last reply.
+# Status 1 means a rejected value, 2 means no answer or dead shell, and 3 means an absent key.
+# A missing SettingsData key can return undefined with a successful IPC status.
+await_sentinel() {
+  local key="$1" matcher="$2"
+  shift 2
+  local reply="" last_good="" answered=false gone=false
+  for _ in $(seq 1 40); do
+    # Keep transport errors separate from replies; sandbox_ipc merges them and swallows status.
+    # The bound is sandbox_ipc's: the liveness check below cannot run while this command
+    # substitution is blocked, so an unbounded call hangs the poll loop it protects.
+    if reply="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+        --any-display call settings get "$key" 2>/dev/null)"; then
+      answered=true
+      last_good="$reply"
+      "$matcher" "$reply" "$@" && { printf '%s' "$reply"; return 0; }
+    fi
+    # A missed final poll cannot erase earlier answers and turn a wrong seed into a dead-shell diagnosis.
+    if ! kill -0 -- "-$qs_group" 2>/dev/null; then
+      gone=true
+      break
+    fi
+    sleep 0.25
+  done
+  printf '%s' "$last_good"
+  { [[ "$gone" == true ]] || [[ "$answered" != true ]]; } && return 2
+  { [[ -z "$last_good" ]] || [[ "$last_good" == "undefined" ]]; } && return 3
+  return 1
 }
-QML
-cat >"$surf/Widget.qml" <<'QML'
+
+# Probe one IPC key with an exact matcher and a failure description of the same expected value.
+seed_probe() {
+  local key="$1" want="$2" reply state=0
+  shift 2
+  reply="$(await_sentinel "$key" "$@")" || state=$?
+  case "$state" in
+    0) return 0 ;;
+    2)
+      # Retain the last reply as evidence if the shell exits.
+      # shellcheck disable=SC2016  # the quotes inside ${reply:+...} are literal text; $reply does expand
+      fail "the sandboxed shell stopped answering \`settings get $key\` - the shell or its IPC is gone, so nothing was learned about the seed${reply:+ (last reply: '$reply')}" ;;
+    3)
+      if [[ "$reply" == "undefined" ]]; then
+        fail "'$key' is not a SettingsData property any more - the SENTINEL needs repointing, and this says nothing about the seed"
+      else
+        fail "\`settings get $key\` answered nothing - VGSIPC returns JSON for any live property, so this is a change in the IPC itself, not a seed failure"
+      fi ;;
+    *)
+      fail "the sandboxed shell is NOT running on the state it seeded: \`settings get $key\` answered '$reply', and the sandbox stamped $want (VGS-92, D008)" ;;
+  esac
+  return 1
+}
+
+seeded_settings_check() {
+  seed_probe "$settings_sentinel_key" "$settings_sentinel_value" \
+    sentinel_is_exactly "$settings_sentinel_value" || return 1
+  seed_probe pluginSettings "$plugin_sentinel_plugin.$plugin_sentinel_key=$plugin_sentinel_value" \
+    sentinel_at_path "$plugin_sentinel_plugin" "$plugin_sentinel_key" "$plugin_sentinel_value" || return 1
+
+  note "seeded settings check passed (the running shell reports both sandbox sentinels: $settings_sentinel_key and $plugin_sentinel_plugin.$plugin_sentinel_key)"
+  return 0
+}
+
+# Bar registration follows plugin loading asynchronously, so widget readiness needs its own wait.
+wait_widget_registered() {
+  local widget="$1" reply=""
+  for _ in $(seq 1 60); do
+    reply="$(sandbox_ipc widget list)"
+    printf '%s\n' "$reply" | grep -q "^${widget}\b" && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.25
+  done
+  # shellcheck disable=SC2016  # the backticks are literal quoting in the message
+  printf 'qml-smoke: `widget list` reported:\n%s\n' "$reply" >&2
+  return 1
+}
+
+# Require one geometry record for a surface already reported present.
+# Missing or multiple records cannot establish output-height coverage.
+assert_popout_geometry() {
+  local geometry="$1" label="$2" surface_size screen_size
+  if [[ -z "${geometry//[[:space:]]/}" ]]; then
+    fail "no layer geometry to check for '$label', though its surface was reported present - refusing to pass on no evidence"
+    return 1
+  fi
+  # Validate both fields before splitting. Without a space, shell prefix and suffix expansion
+  # return the same field and can produce a false equality.
+  if [[ ! "$geometry" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
+    fail "could not parse the '$label' layer geometry: '$geometry'"
+    return 1
+  fi
+  surface_size="${geometry%% *}"
+  screen_size="${geometry##* }"
+  if [[ "${surface_size#*x}" != "${screen_size#*x}" ]]; then
+    fail "'$label' popout surface is '$surface_size' on a '$screen_size' output - it must span the output height (VGS-133)"
+    return 1
+  fi
+  return 0
+}
+
+# Keyboard focus reaches a mapped surface through deferred steps: the focus flag, the
+# compositor grab, then the content item. Every argument after the label is the IPC call
+# answering the surface's focusStatus JSON. A status that parsed once stays the verdict when
+# a later call fails, so a withheld focus is never relabelled an unreadable one.
+# Return 0 once focused, 1 when focus never arrived, 3 when no status parsed, 4 if the shell exits.
+focus_wait_polls=50
+wait_surface_focused() {
+  local what="$1" reply="" parsed="" state
+  shift
+  for _ in $(seq 1 "$focus_wait_polls"); do
+    reply="$(sandbox_ipc "$@")"
+    state=0
+    python3 -c 'import json, sys
+try: data = json.loads(sys.argv[1])
+except ValueError: sys.exit(3)
+keys = ("focusWanted", "focusGrabActive", "contentActiveFocus")
+if not isinstance(data, dict) or any(not isinstance(data.get(key), bool) for key in keys): sys.exit(3)
+sys.exit(0 if all(data[key] for key in keys) else 1)' "$reply" || state=$?
+    [[ "$state" -eq 0 ]] && return 0
+    [[ "$state" -eq 1 ]] && parsed="$reply"
+    if ! kill -0 -- "-$qs_group" 2>/dev/null; then
+      fail "the sandbox shell exited while waiting for $what to take keyboard focus"
+      return 4
+    fi
+    sleep 0.2
+  done
+  if [[ -n "$parsed" ]]; then
+    fail "$what mapped but never took keyboard focus (last focusStatus reply: $parsed)"
+    return 1
+  fi
+  fail "could not read the keyboard focus status of $what (last reply: ${reply:-none}) - that is not evidence about its focus"
+  return 3
+}
+
+# Send Escape through virtual-keyboard input because window-targeted shortcuts cannot reach layers.
+# Arguments after the label are the surface's focusStatus IPC call. One Escape per check: a
+# retried key would hide a real focus defect, so the key waits for focus instead.
+# Status 0 means sent, 2 means wtype absent, and 1 means a failure already reported (the
+# focus wait failed, or wtype failed).
+send_escape() {
+  local what="$1" rc=0
+  shift
+  command -v wtype >/dev/null 2>&1 || return 2
+  wait_surface_focused "$what" "$@" || return 1
+  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "could not send Escape to $what - wtype exited $rc, so nothing was proven about its key handling"
+    return 1
+  fi
+  return 0
+}
+
+popout_check() {
+  local reply state=0 geometry geo_rc esc_rc
+
+  wait_widget_registered "$popout_plugin" || {
+    fail "the sandbox bar never registered '$popout_plugin', so its popout could not be opened - the seeded settings.default.json is supposed to host it"
+    return 1
+  }
+
+  # Require initial absence so an unrelated open popout cannot satisfy the mapping assertion.
+  if ! wait_layer_state "$popout_namespace" 1; then
+    fail "a plugin popout surface was already open before '$popout_plugin' was toggled"
+    return 1
+  fi
+
+  reply="$(sandbox_ipc widget toggle "$popout_plugin")"
+  if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
+    fail "widget toggle $popout_plugin answered '$reply'"
+    return 1
+  fi
+
+  # Wait for compositor evidence; a successful IPC reply alone does not prove mapping.
+  wait_layer_state "$popout_namespace" 0 || state=$?
+  if [[ "$state" -ne 0 ]]; then
+    sandbox_layer_state "$popout_namespace" >&2 || true
+    if [[ "$state" -eq 2 ]]; then
+      fail "'$popout_plugin' opened a degenerate popout surface (zero-sized or full-screen)"
+    else
+      fail "'$popout_plugin' popout never produced a '$popout_namespace' surface"
+    fi
+    return 1
+  fi
+
+  # Output-height surfaces avoid committing resized window geometry during content animation.
+  # Classify query and presence failures before comparing height.
+  geometry="$(sandbox_layer_state "$popout_namespace")" && geo_rc=0 || geo_rc=$?
+  case "$geo_rc" in
+    3) fail "could not take a geometry reading for '$popout_plugin' - hyprctl failed, or its output has no reported size, or it is mapped more than once. That is not evidence about the popout's height"; return 1 ;;
+    1) fail "the '$popout_plugin' popout surface disappeared before its height could be read"; return 1 ;;
+    2) fail "'$popout_plugin' opened a degenerate popout surface ($geometry) - that is not a height mismatch"; return 1 ;;
+  esac
+  assert_popout_geometry "$geometry" "$popout_plugin" || return 1
+
+  esc_rc=0
+  send_escape "the '$popout_plugin' popout" widget focusStatus "$popout_plugin" || esc_rc=$?
+  case "$esc_rc" in
+    0)
+      if ! wait_layer_state "$popout_namespace" 1; then
+        sandbox_layer_state "$popout_namespace" >&2 || true
+        fail "Escape did not close the '$popout_plugin' popout"
+        return 1
+      fi
+      note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and Escape closed it)"
+      ;;
+    2)
+
+      note "NOT CHECKED: Escape-to-close - wtype is not installed"
+      reply="$(sandbox_ipc widget toggle "$popout_plugin")"
+      if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
+        fail "closing the $popout_plugin popout answered '$reply'"
+        return 1
+      fi
+      if ! wait_layer_state "$popout_namespace" 1; then
+        fail "the '$popout_plugin' popout surface outlived its close"
+        return 1
+      fi
+      note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and closed cleanly)"
+      ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# Opening switchers instantiates content that startup and static parsing do not reach.
+# Measure positive dimensions against the output: status 2 alone can also mean a collapsed surface.
+# Exercise toggle and Escape in both backdrop states. With background disabled, a mapped window
+# that never renders can stall the animation timer responsible for closing it.
+# Restore the sandbox setting on every exit. Discover target/namespace pairs from QML source.
+switcher_records=()
+
+# Discover FullScreenSwitcher root elements, independent of filenames.
+# Reject an unexpected directory or unreadable target/namespace instead of omitting it.
+# Capture grep status directly; process substitution can hide a partial listing after read failure.
+switcher_roots() {
+  local root_dir="$1" out status
+  out="$(grep -rlE '^[[:space:]]*FullScreenSwitcher[[:space:]]*(\{|$)' "$root_dir/quickshell/vshell" --include='*.qml')"
+  status=$?
+  if (( status > 1 )); then
+    fail "could not scan quickshell/vshell for switcher root elements (grep exit $status) - a partial list would silently under-cover"
+    return 1
+  fi
+  [[ -n $out ]] && printf '%s\n' "$out" | sort
+  return 0
+}
+
+discover_switchers() {
+  switcher_records=()
+  local file name namespace target found_any=0
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    found_any=1
+    name="$(basename "$file")"
+    if [[ "$(dirname "$file")" != "$repo_root/quickshell/vshell/Modals/Switcher" ]]; then
+      fail "$name declares FullScreenSwitcher as its root element but lives outside quickshell/vshell/Modals/Switcher - switcher_check only looks there, so it would be covered by nothing"
+      return 1
+    fi
+    namespace="$(sed -n 's/^[[:space:]]*layerNamespace:[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
+    if [[ -z "$namespace" ]]; then
+      fail "$name overrides no layerNamespace, so it maps onto the shared 'vshell:modal' surface and switcher_check cannot tell it apart from any other modal"
+      return 1
+    fi
+    if [[ "$namespace" != vshell:* ]]; then
+      fail "$name declares layerNamespace '$namespace', which does not carry the 'vshell:' prefix its IPC target is derived from"
+      return 1
+    fi
+    target="${namespace#vshell:}"
+    # Require the discovered target to have an IPC handler before driving it.
+    if ! grep -q "target: \"$target\"" "$repo_root/quickshell/vshell/VGSIPC.qml"; then
+      fail "$name's namespace '$namespace' implies IPC target '$target', which VGSIPC.qml does not register - switcher_check cannot drive it"
+      return 1
+    fi
+    switcher_records+=("$target|$namespace")
+  # Allow indentation and a brace on the following line. This broad match can include a nested use;
+  # directory and namespace checks then fail instead of silently dropping a real switcher.
+  done < <(switcher_roots "$repo_root")
+  if [[ $found_any -eq 0 || ${#switcher_records[@]} -eq 0 ]]; then
+    fail "no file in quickshell/vshell declares FullScreenSwitcher as its root element - switcher_check would measure nothing and still pass"
+    return 1
+  fi
+  return 0
+}
+
+switcher_reply() {
+  local target="${1//-/_}" verb="$2"
+  printf '%s_%s_SUCCESS\n' "${target^^}" "${verb^^}"
+}
+
+# Keep the last geometry reading for failure diagnostics.
+switcher_last_geometry=""
+
+# Wait for positive full-output geometry and store the last reading in switcher_last_geometry.
+# Return 0 on success, 1 on timeout, 3 on query failure, or 4 if the shell exits.
+wait_switcher_mapped() {
+  local namespace="$1" geometry rc surface screen
+  switcher_last_geometry=""
+  for _ in $(seq 1 30); do
+    rc=0
+    geometry="$(sandbox_layer_state "$namespace")" || rc=$?
+    [[ "$rc" -eq 3 ]] && return 3
+    # Validate field structure before splitting. Retain negative readings so diagnostics show collapse.
+    if [[ "$geometry" =~ ^-?[0-9]+x-?[0-9]+\ -?[0-9]+x-?[0-9]+$ ]]; then
+      switcher_last_geometry="$geometry"
+      surface="${geometry%% *}"
+      screen="${geometry##* }"
+      if ((${surface%x*} > 0 && ${surface#*x} > 0 && ${surface%x*} >= ${screen%x*} && ${surface#*x} >= ${screen#*x})); then
+        return 0
+      fi
+    fi
+    kill -0 -- "-$qs_group" 2>/dev/null || return 4
+    sleep 0.2
+  done
+  return 1
+}
+
+# Describe the cause represented by the wait status.
+fail_switcher_mapped() {
+  local rc="$1" what="$2" surface
+  case "$rc" in
+    3) fail "could not take a geometry reading for $what - hyprctl failed, or its output has no reported size, or the surface is mapped more than once. That is not evidence about the switcher" ;;
+    4) fail "the sandbox shell exited while waiting for $what to map, so nothing was proven about the switcher" ;;
+    *)
+      if [[ -z "$switcher_last_geometry" ]]; then
+        fail "$what never produced a surface at all"
+      else
+        # Distinguish collapsed dimensions from a mapped surface smaller than the output.
+        surface="${switcher_last_geometry%% *}"
+        if ((${surface%x*} <= 0 || ${surface#*x} <= 0)); then
+          fail "$what mapped at '$switcher_last_geometry' (surface then output) - a zero or negative dimension is the layout collapse this checks for"
+        else
+          fail "$what mapped at '$switcher_last_geometry' (surface then output) - a switcher must cover the whole output, and this surface came up smaller than the output it is on"
+        fi
+      fi
+      ;;
+  esac
+}
+
+# Print the nested active toplevel and the mapped layers when a dismissal failed.
+print_sandbox_focus_state() {
+  local query
+  for query in activewindow layers; do
+    printf 'qml-smoke: nested hyprctl -i 0 %s -j:\n' "$query" >&2
+    "${sandbox_env[@]}" hyprctl -i 0 "$query" -j 1>&2 || printf 'qml-smoke: hyprctl %s exited %s\n' "$query" "$?" >&2
+  done
+}
+
+# Wait for absence without relabeling a query failure as failed dismissal.
+wait_switcher_unmapped() {
+  local namespace="$1" what="$2" state=0
+  wait_layer_state "$namespace" 1 || state=$?
+  [[ "$state" -eq 0 ]] && return 0
+  if [[ "$state" -ne 2 ]]; then
+    sandbox_layer_state "$namespace" >&2 || true
+    print_sandbox_focus_state
+    fail "$what"
+  fi
+  return 1
+}
+
+# Wait for a settings write to become observable so each backdrop pass tests the requested state.
+# Return 1 on nonconvergence or 2 if the shell exits.
+await_darken_setting() {
+  local want="$1" reply
+  for _ in $(seq 1 20); do
+    reply="$(sandbox_ipc settings get modalDarkenBackground)"
+    [[ "$reply" == "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || return 2
+    sleep 0.2
+  done
+  return 1
+}
+
+set_darken_setting() {
+  local want="$1" reply rc=0
+  reply="$(sandbox_ipc settings set modalDarkenBackground "$want")"
+  if [[ "$reply" != "SETTINGS_SET_SUCCESS" ]]; then
+    fail "could not set modalDarkenBackground=$want (answered '$reply')"
+    return 1
+  fi
+  await_darken_setting "$want" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    fail "the sandbox shell exited while waiting for modalDarkenBackground=$want"
+    return 1
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    fail "modalDarkenBackground never read back as $want, though the settings set call reported success"
+    return 1
+  fi
+  return 0
+}
+
+# Open a switcher through the requested verb and require compositor geometry evidence.
+switcher_open_and_map() {
+  local target="$1" verb="$2" namespace="$3" darken="$4" open_want="$5" what="$6" reply rc=0
+
+  reply="$(sandbox_ipc "$target" "$verb")"
+  if [[ "$reply" != "$open_want" ]]; then
+    fail "$target $verb answered '$reply', wanted '$open_want' - $what (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  wait_switcher_mapped "$namespace" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail_switcher_mapped "$rc" "$what (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  return 0
+}
+
+# Run an open/close cycle for one target and backdrop value.
+switcher_cycle() {
+  local target="$1" namespace="$2" darken="$3"
+  local open_want close_want toggle_want reply state=0
+
+  open_want="$(switcher_reply "$target" open)"
+  close_want="$(switcher_reply "$target" close)"
+  toggle_want="$(switcher_reply "$target" toggle)"
+
+  # Initial absence prevents a previously mapped surface from satisfying this cycle.
+  wait_layer_state "$namespace" 1 || state=$?
+  if [[ "$state" -ne 0 ]]; then
+
+    [[ "$state" -ne 2 ]] && fail "'$namespace' was already mapped before '$target open' was called (modalDarkenBackground=$darken)"
+    return 1
+  fi
+
+  switcher_open_and_map "$target" open "$namespace" "$darken" "$open_want" "'$target open'" || return 1
+
+  # Check the close reply as well as absence; sandbox_ipc does not propagate transport status.
+  reply="$(sandbox_ipc "$target" close)"
+  if [[ "$reply" != "$close_want" ]]; then
+    fail "$target close answered '$reply', wanted '$close_want' (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  wait_switcher_unmapped "$namespace" "'$target close' reported success but the '$namespace' surface outlived it (modalDarkenBackground=$darken)" || return 1
+
+  # Toggle in both directions because a stale shouldBeVisible can still return success.
+  switcher_open_and_map "$target" toggle "$namespace" "$darken" "$open_want" "'$target toggle' (to open)" || return 1
+
+  reply="$(sandbox_ipc "$target" toggle)"
+  if [[ "$reply" != "$toggle_want" ]]; then
+    fail "$target toggle (to close) answered '$reply', wanted '$toggle_want' - it took the open branch, so shouldBeVisible does not track the mapped surface (modalDarkenBackground=$darken)"
+    return 1
+  fi
+  wait_switcher_unmapped "$namespace" "'$target toggle' did not unmap the '$namespace' surface (modalDarkenBackground=$darken)" || return 1
+
+  switcher_escape_cycle "$target" "$namespace" "$darken" "$open_want" || return 1
+  return 0
+}
+
+# Track skipped Escape tests so the phase cannot claim keyboard coverage without wtype.
+switcher_escape_checked=true
+
+# Escape dismissal tests focus handling that IPC close cannot exercise.
+# The full-output switcher disables background-click dismissal.
+switcher_escape_cycle() {
+  local target="$1" namespace="$2" darken="$3" open_want="$4" esc_rc=0
+
+  if ! command -v wtype >/dev/null 2>&1; then
+
+    note "NOT CHECKED: $target Escape-to-dismiss - wtype is not installed"
+    switcher_escape_checked=false
+    return 0
+  fi
+
+  switcher_open_and_map "$target" open "$namespace" "$darken" "$open_want" "'$target open' before the Escape check" || return 1
+
+  send_escape "the '$target' switcher" "$target" focusStatus || esc_rc=$?
+  if [[ "$esc_rc" -ne 0 ]]; then
+    # The availability check excludes status 2; remaining errors are a focus wait or a wtype invocation, both reported.
+    switcher_escape_checked=false
+    return 1
+  fi
+  wait_switcher_unmapped "$namespace" "Escape did not dismiss the '$target' switcher, which is the only way out of it (modalDarkenBackground=$darken)" || return 1
+  return 0
+}
+
+switcher_check() {
+  local original rc=0
+  # Read the prior setting before mutation and restore it after the phase so sandbox state does not leak.
+  original="$(sandbox_ipc settings get modalDarkenBackground)"
+  if [[ "$original" != "true" && "$original" != "false" ]]; then
+    fail "could not read modalDarkenBackground before the switcher check (answered '$original'), so it could not be restored afterwards"
+    return 1
+  fi
+
+  switcher_check_body || rc=$?
+
+  if ! set_darken_setting "$original"; then
+    fail "modalDarkenBackground was left at the switcher check's value instead of the sandbox's own '$original'"
+    rc=1
+  fi
+  return "$rc"
+}
+
+switcher_check_body() {
+  local darken record escape_note
+
+  discover_switchers || return 1
+
+  for darken in true false; do
+    set_darken_setting "$darken" || return 1
+
+    for record in "${switcher_records[@]}"; do
+      switcher_cycle "${record%%|*}" "${record##*|}" "$darken" || return 1
+    done
+  done
+
+  if [[ "$switcher_escape_checked" == "true" ]]; then
+    escape_note="unmapped on close, on toggle and on Escape"
+  else
+    escape_note="unmapped on close and on toggle; Escape NOT CHECKED (wtype missing)"
+  fi
+  note "switcher check passed (${#switcher_records[@]} full-screen switchers measured full-output on open and on toggle, $escape_note, with the modal backdrop on and off)"
+  return 0
+}
+
+# shell.qml draws only as the direct child of the process named in VGS_RUNNER_PID. The main run
+# sets VSHELL_DISABLE_INSTANCE_GUARD, so these rows start the shell with the guard on under an sh
+# that stands in for the runner and records its own pid. The trailing exit keeps sh from exec'ing
+# qs, which would make qs's parent the process above sh. The rows carry no timeout wrapper:
+# timeout moves itself and qs into a process group of their own, out of kill_pgid's reach.
+# shellcheck disable=SC2016  # $$, $1 and $2 must expand in the stand-in sh
+guard_admit_script='echo $$ >"$2"; VGS_RUNNER_PID=$$; export VGS_RUNNER_PID; qs --no-color -p "$1"; exit $?'
+# $PPID is the process above the stand-in: an ancestor that is not qs's parent, as for any
+# process the shell itself starts.
+# shellcheck disable=SC2016  # $$, $PPID, $1 and $2 must expand in the stand-in sh
+guard_refuse_script='echo $$ >"$2"; VGS_RUNNER_PID=$PPID; export VGS_RUNNER_PID; qs --no-color -p "$1"; exit $?'
+guard_refusal_key="refusing to start a duplicate shell"
+
+guard_spawn() {
+  local label="$1" script="$2" guard_log="$3"
+  evidence_logs+=("$guard_log")
+  rm -f -- "${sandbox:?}/guard-$label.standin"
+  spawn_group "$sandbox/guard-$label.pgid" \
+    "${sandbox_env[@]}" \
+    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" \
+    WAYLAND_DISPLAY="$nested_socket" \
+    VSHELL_ROOT="$repo_root" \
+    VSHELL_DISABLE_HOT_RELOAD=1 \
+    "${dbus_wrapper[@]}" \
+    sh -c "$script" _ "$repo_root/quickshell/vshell" "$sandbox/guard-$label.standin" >"$guard_log" 2>&1
+}
+
+# Print the pid of the qs the row's stand-in started. Status 1 while it has not started.
+guard_qs_pid() {
+  local standin pid
+  standin="$(tr -d '[:space:]' <"$sandbox/guard-$1.standin" 2>/dev/null)" || return 1
+  [[ -n "$standin" ]] || return 1
+  pid="$(pgrep -P "$standin" -x qs)" || return 1
+  printf '%s\n' "$pid"
+}
+
+instance_guard_check() {
+  local guard_log launcher group qs_pid="" targets="" admitted=false exited=false
+
+  guard_log="$sandbox/guard-admit.log"
+  if ! guard_spawn admit "$guard_admit_script" "$guard_log"; then
+    fail "instance guard admit row: the shell under a stand-in runner failed to launch"
+    return 1
+  fi
+  launcher="$spawn_launcher_pid"
+  group="$spawn_pgid"
+  for _ in $(seq 1 $((nested_timeout * 2))); do
+    kill -0 -- "-$group" 2>/dev/null || break
+    # Ask this row's own qs by pid: another shell answering for the same config path is no evidence.
+    if [[ -n "$qs_pid" ]] || qs_pid="$(guard_qs_pid admit)"; then
+      targets="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc --pid "$qs_pid" show 2>/dev/null || true)"
+      if grep -q '^target ' <<<"$targets"; then
+        admitted=true
+        break
+      fi
+    fi
+    sleep 0.5
+  done
+  kill_pgid "$group"
+  wait "$launcher" 2>/dev/null || true
+  if grep -q "$guard_refusal_key" "$guard_log"; then
+    fail "instance guard admit row: the direct child of VGS_RUNNER_PID refused itself: $(grep -m 1 "$guard_refusal_key" "$guard_log")"
+    return 1
+  fi
+  if [[ "$admitted" != true ]]; then
+    fail "instance guard admit row: the direct child of VGS_RUNNER_PID never exposed its IPC targets (qs pid ${qs_pid:-never seen})"
+    return 1
+  fi
+
+  guard_log="$sandbox/guard-refuse.log"
+  if ! guard_spawn refuse "$guard_refuse_script" "$guard_log"; then
+    fail "instance guard refuse row: the shell under a non-parent VGS_RUNNER_PID failed to launch"
+    return 1
+  fi
+  launcher="$spawn_launcher_pid"
+  group="$spawn_pgid"
+  for _ in $(seq 1 $((nested_timeout * 2))); do
+    if ! kill -0 -- "-$group" 2>/dev/null; then
+      exited=true
+      break
+    fi
+    sleep 0.5
+  done
+  kill_pgid "$group"
+  wait "$launcher" 2>/dev/null || true
+  if ! grep -q "$guard_refusal_key" "$guard_log"; then
+    fail "instance guard refuse row: a shell whose parent is not VGS_RUNNER_PID logged no refusal"
+    return 1
+  fi
+  if [[ "$exited" != true ]]; then
+    fail "instance guard refuse row: the refused shell did not exit"
+    return 1
+  fi
+  note "instance guard check passed (the stand-in runner's child drew; a shell under a non-parent VGS_RUNNER_PID refused and exited)"
+  return 0
+}
+
+# Count markers emitted only by the override component. A load-success reply cannot identify its source.
+override_marker_count() {
+  grep -c "VGS81-OVERRIDE-LOADED-$override_nonce" "$log" 2>/dev/null || true
+}
+
+override_unloaded_count() {
+  grep -c "VGS81-OVERRIDE-UNLOADED-$override_nonce" "$log" 2>/dev/null || true
+}
+
+wait_marker() {
+  local counter="$1" want="$2" seen=0
+  for _ in $(seq 1 60); do
+    seen="$($counter)"
+    [[ "$seen" -ge "$want" ]] && return 0
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.25
+  done
+  return 1
+}
+
+plugin_is_loaded() {
+  sandbox_ipc plugins list | grep -q "^$1 \[loaded\]\$"
+}
+
+override_check() {
+  local dir reply live loads teardowns loads_before teardowns_before
+  local strays strays_dir strays_rc=0
+
+  # Check for packages after the sandbox has run, when it can have created them.
+  # A second package with this ID makes ownership ambiguous. Distinguish an absent directory
+  # from an unreadable directory, and avoid GNU-only find options.
+  strays_dir="$sandbox/home/.config/vshell/plugins"
+  if [[ -d "$strays_dir" ]]; then
+    strays="$(find "$strays_dir" -mindepth 1 -maxdepth 1 -type d)" || strays_rc=$?
+    if [[ "${strays_rc:-0}" -ne 0 ]]; then
+      fail "could not enumerate '$strays_dir' (find exit $strays_rc) — 'I could not look' is not 'nothing is there'"
+      return 1
+    fi
+    if [[ -n "$strays" ]]; then
+      fail "user plugin package(s) already in the sandbox before the override fixture was planted:"$'\n'"$strays"
+      return 1
+    fi
+  fi
+
+  dir="$sandbox/home/.config/vshell/plugins/$override_plugin"
+  mkdir -p "$dir"
+  # Only the fixture override can emit its marker. Its manifest opts into overriding the bundled ID
+  # and satisfies the shell-version gate, which is outside this test's purpose.
+  cat >"$dir/plugin.json" <<EOF
+{
+    "id": "$override_plugin",
+    "name": "VGS-81 override fixture",
+    "description": "Throwaway override planted by scripts/qml-smoke.sh inside its sandbox.",
+    "version": "9.9.9",
+    "license": "MIT",
+    "author": "qml-smoke",
+    "icon": "science",
+    "component": "./Component.qml",
+    "overrides": "$override_plugin",
+    "requires_shell": ">=0.0.1"
+}
+EOF
+  cat >"$dir/Component.qml" <<EOF
 import QtQuick
-import qs.Ui
-BarWidget {
+import qs.Modules.Plugins
+
+PluginComponent {
     id: root
-    moduleName: "acme.surfaces"
-    implicitWidth: 30
-    implicitHeight: barSize
-    function summonHere() { return shell.surfaces.summon("panel", "{\"from\":\"widget\"}", root); }
-    function geometry() { const p = mapToItem(null, 0, 0); return JSON.stringify([p.x, p.y, width, height]); }
+
+    // Deliberately minimal, but with a pill of its own so a bar genuinely
+    // hosts and instantiates it rather than merely compiling it.
+    horizontalBarPill: Component {
+        Rectangle {
+            implicitWidth: 8
+            implicitHeight: 8
+            color: "transparent"
+        }
+    }
+    Component.onCompleted: console.info("VGS81-OVERRIDE-LOADED-$override_nonce")
+    Component.onDestruction: console.info("VGS81-OVERRIDE-UNLOADED-$override_nonce")
 }
-QML
-expect "rescan after adding the hosts fixture answers ok" ok ipc shell rescanPlugins
-surfaces_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.surfaces" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the hosts fixture is discovered" True surfaces_known
-expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces true
+EOF
 
-screen_name="$(bar_key | sed 's/^bar://')"
+  reply="$(sandbox_ipc plugin-scan scan)"
+  if [[ "$reply" != SCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan scan answered '$reply'"
+    return 1
+  fi
+  if ! wait_marker override_marker_count 1; then
+    fail "the planted override of '$override_plugin' never loaded its own component — a scan that reports success while the bundled copy stays installed is exactly the VGS-75 defect"
+    return 1
+  fi
+  if ! override_state_settles 1; then
+    return 1
+  fi
 
-expect_poll "the background host draws one surface per screen" "$monitors" layer_count vgs:background
-expect "the background sits on the bottom layer" True python3 -c 'import json,subprocess,sys; print(any(l["namespace"]=="vgs:background" and l["pid"]!=-1 for m in json.loads(sys.stdin.read()).values() for l in m["levels"]["0"]))' < <(hypr -j layers)
-expect "the background receives its screen" "\"$screen_name\"" ipc shell readInstance "background:$screen_name" acme.surfaces screenName
+  # Rescan can relink an existing record without reloading. Load counts depend on discovery order;
+  # assert one live override instance and retained ID ownership instead.
+  reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
+  if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan rescan answered '$reply'"
+    return 1
+  fi
+  sleep 2
+  if ! override_state_settles 1; then
+    return 1
+  fi
 
-expect "a panel summons over IPC" ok ipc shell summon panel acme.surfaces '{"n":1}'
-expect "the panel received its payload" '"{\"n\":1}"' ipc shell readInstance panel acme.surfaces lastPayload
-expect_poll "the panel host maps one surface" 1 layer_count vgs:panel
-geometry expect_poll "the panel takes its top-right placement below the bar" "[[$((mon_w - 8 - 200)), $((bar_reserved + 8)), 200, 120]]" layers_of vgs:panel
-if before="$(builds)"; then
-  expect "summoning an open panel is allowed" ok ipc shell summon panel acme.surfaces '{"n":2}'
-  expect "the open panel received the new payload" 2 ipc shell readInstance panel acme.surfaces opened
-  expect "summoning an open panel builds nothing" "$before" builds
-else
-  fail "buildCount unreadable before the summon rows"
-fi
-expect "summoning with a close marker is allowed" ok ipc shell summon panel acme.surfaces "{\"closeMarker\":\"$sandbox/closed-by-hide\"}"
-expect "hiding the panel is allowed" ok ipc shell hide panel acme.surfaces
-marker() { [[ -f $1 ]] && echo yes || echo no; }
-expect_poll "hide called the panel's close()" yes marker "$sandbox/closed-by-hide"
-expect "the hidden panel leaves the build records" absent ipc shell readInstance panel acme.surfaces opened
-expect_poll "the panel host destroyed its surface" 0 layer_count vgs:panel
-expect "toggle opens a closed panel" ok ipc shell toggle panel acme.surfaces '{}'
-expect_poll "the toggled panel is mapped" 1 layer_count vgs:panel
-expect "toggle closes an open panel" ok ipc shell toggle panel acme.surfaces '{}'
-expect_poll "the toggled panel is gone" 0 layer_count vgs:panel
+  # Reload must unload and instantiate again, including after records were relinked by rescan.
+  loads_before="$(override_marker_count)"
+  teardowns_before="$(override_unloaded_count)"
+  reply="$(sandbox_ipc plugins reload "$override_plugin")"
+  if [[ "$reply" != "PLUGIN_RELOAD_SUCCESS: $override_plugin" ]]; then
+    fail "plugins reload answered '$reply'"
+    return 1
+  fi
+  # Require component teardown and creation markers; a success reply alone cannot prove either.
+  if ! wait_marker override_marker_count $((loads_before + 1)); then
+    loads="$(override_marker_count)"
+    fail "plugins reload reported success but the override's own component was never re-instantiated (own-component loads $loads, expected $((loads_before + 1)))"
+    return 1
+  fi
+  sleep 1
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  if [[ "$loads" -ne $((loads_before + 1)) || "$teardowns" -ne $((teardowns_before + 1)) ]]; then
+    fail "the reload was not exactly one unload followed by one load (loads $loads_before -> $loads, teardowns $teardowns_before -> $teardowns)"
+    return 1
+  fi
+  if ! override_state_settles 1; then
+    return 1
+  fi
 
-expect "an overlay summons over IPC" ok ipc shell summon overlay acme.surfaces '{}'
-geometry expect_poll "the overlay covers its screen" "[[0, 0, $mon_w, $mon_h]]" layers_of vgs:overlay
-expect "hiding the overlay is allowed" ok ipc shell hide overlay acme.surfaces
-expect_poll "the overlay host destroyed its surface" 0 layer_count vgs:overlay
-expected_errors+=('summon host: acme\.surfaces open\(\) failed: probe open refused')
-expect "an open() that throws refuses the summon" "refused: open-failed=acme.surfaces" ipc shell summon menu acme.surfaces '{"fail":true}'
-expect_poll "the refused summon leaves no surface" 0 layer_count vgs:menu
-expect "a menu summons over IPC" ok ipc shell summon menu acme.surfaces '{}'
-expect_poll "the menu host maps one surface" 1 layer_count vgs:menu
-expect "hiding the menu is allowed" ok ipc shell hide menu acme.surfaces
-expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
-
-# A panel the plugin summons from its own bar widget sits under the widget,
-# centred on it.
-expect "the widget summons its panel under itself" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
-widget_geometry="$(ipc shell invokeInstance "bar:$screen_name" acme.surfaces geometry '')"
-widget_rows() { python3 -c 'import json,sys; g=json.loads(sys.argv[1]); print(g[1], g[3])' "$widget_geometry"; }
-geometry expect "a mounted widget spans the bar's height" "0 $bar_reserved" widget_rows
-anchored_want="$(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); mw=int(sys.argv[2]); left=max(0, min(round(x + w/2 - 100), mw - 200)); print(json.dumps([[left, int(y + h + 8), 200, 120]]))' "$widget_geometry" "$mon_w")"
-geometry expect_poll "the anchored panel sits under its widget" "$anchored_want" layers_of vgs:panel
-expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc shell readInstance panel acme.surfaces lastPayload
-
-expect "a background is not summonable" "refused: not-summonable=background" ipc shell summon background acme.surfaces '{}'
-expect "a plugin without the kind is refused" "refused: kind=panel id=acme.tick" ipc shell summon panel acme.tick '{}'
-expect "an unknown plugin is refused" "unknown: acme.nope" ipc shell summon panel acme.nope '{}'
-expect "re-summoning with a close marker is allowed" ok ipc shell summon panel acme.surfaces "{\"closeMarker\":\"$sandbox/closed-by-disable\"}"
-expect "disabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces false
-expect_poll "disabling closes its open panel" 0 layer_count vgs:panel
-expect_poll "disabling called the panel's close()" yes marker "$sandbox/closed-by-disable"
-expect_poll "disabling removes the background surface" 0 layer_count vgs:background
-expect "a disabled plugin is not summoned" "refused: disabled=acme.surfaces" ipc shell summon panel acme.surfaces '{}'
-
-# A plugin whose entry points cannot take what the core assigns is not
-# built and keeps nothing it was lent: no hold, no background surface.
-broken="$home/.config/vgs/plugins/acme.broken"
-mkdir -p "$broken"
-cat >"$broken/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.broken", "name": "Broken", "version": "0.1.0", "author": "acme", "description": "smoke fixture declaring no shell property",
-  "kinds": ["service", "background"], "entryPoints": { "service": "Item.qml", "background": "Item.qml" }, "capabilities": ["lock"] }
-JSON
-printf 'import QtQuick\nItem {}\n' >"$broken/Item.qml"
-expected_errors+=('plugins: acme\.broken (service|background) not built: ')
-expect "rescan after adding the broken fixture answers ok" ok ipc shell rescanPlugins
-broken_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.broken" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the broken fixture is discovered" True broken_known
-expect "enabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken true
-broken_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.broken" for rows in json.load(sys.stdin).values() for r in rows))'; }
-expect_log "the core logged both refused builds of the broken fixture" 2 'plugins: acme\.broken (service|background) not built: '
-expect "the broken fixture has no build record" False broken_built
-expect "the broken fixture keeps no capability hold" null lent holders.lock
-expect_poll "the background host shows no surface for a failed build" 0 layer_count vgs:background
-expect "disabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken false
-
-# A bar widget that cannot take what the core assigns is not built, and the
-# section's entries stay aligned with the layout: an edit to the entry after
-# it reaches that entry's own widget, never a neighbour's settings.
-nowidget="$home/.config/vgs/plugins/acme.nowidget"
-mkdir -p "$nowidget"
-cat >"$nowidget/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.nowidget", "name": "No Widget", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget declaring no BarWidget properties",
-  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Item.qml" } }
-JSON
-printf 'import QtQuick\nItem { property var shell: null }\n' >"$nowidget/Item.qml"
-expected_errors+=('plugins: acme\.nowidget bar-widget not built: ')
-expect "rescan after adding the widget that cannot be built answers ok" ok ipc shell rescanPlugins
-nowidget_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.nowidget" for p in json.load(sys.stdin)["plugins"]))'; }
-expect_poll "the widget that cannot be built is discovered" True nowidget_known
-python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["bar"]["layout"]["center"].insert(0, {"id": "acme.nowidget"})
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-expect_log "the core logged the refused widget build on every bar" "$monitors" 'plugins: acme\.nowidget bar-widget not built: '
-expect_widgets "the section shows the widget after the one that failed" '["acme.tick"]'
-python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-[e for e in d["bar"]["layout"]["center"] if e["id"] == "acme.tick"][0]["format"] = "aligned"
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-expect_poll "an edit after a failed entry reaches its own widget" '"aligned"' read_tick format
-python3 - "$home/.config/vgs/shell.json" <<'PY'
-import json, os, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["bar"]["layout"]["center"] = [e for e in d["bar"]["layout"]["center"] if e["id"] != "acme.nowidget"]
-json.dump(d, open(p + ".tmp", "w"), indent=2)
-os.replace(p + ".tmp", p)
-PY
-expect_widgets "removing the failed entry leaves the widget in place" '["acme.tick"]'
-
-# A monitor that goes away takes its bar with it, under the key the bar
-# was built under, and leaves no build record behind.
-extra_output=SMOKE-2
-bar_hosts() { ipc shell built | python3 -c 'import json,sys; print(json.dumps(sorted(k for k in json.load(sys.stdin) if k.startswith("bar:"))))'; }
-before_hosts="$(bar_hosts)"
-expect "the nested compositor adds a monitor" ok hypr output create headless "$extra_output"
-expect_poll "the new monitor gets a bar" "$((monitors + 1))" bar_count
-extra_listed() { bar_hosts | python3 -c 'import json,sys; print(("bar:" + sys.argv[1]) in json.load(sys.stdin))' "$extra_output"; }
-expect_poll "the new bar is in the build records" True extra_listed
-expect "the nested compositor removes the monitor" ok hypr output remove "$extra_output"
-expect_poll "the removed monitor's bar surface is gone" "$monitors" bar_count
-expect_poll "the removed monitor's bar left the build records" "$before_hosts" bar_hosts
-
-# An unreadable user file settles, keeps the bar, and refuses every write
-# until it reads again.
-config_user_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["user"])'; }
-expected_errors+=('config: user file unreadable at ')
-chmod 000 "$home/.config/vgs/shell.json"
-expect "reloading an unreadable user file answers ok" ok ipc shell reloadConfig
-expect_poll "the user file reads as unreadable" unreadable config_user_state
-expect "a write to an unreadable user file is refused" "refused: user-config=unreadable path=$home/.config/vgs/shell.json" ipc shell setPluginEnabled acme.tick false
-expect "the bar stays with an unreadable user file" "$monitors" bar_count
-chmod 644 "$home/.config/vgs/shell.json"
-expect "reloading the readable user file answers ok" ok ipc shell reloadConfig
-expect_poll "the user file reads as loaded again" loaded config_user_state
-
-# A user file that parses but fails PluginLogic.configError is malformed: the
-# defect is logged, the last good value keeps the bar, and writes are refused
-# until the file passes again.
-user_good="$(cat "$home/.config/vgs/shell.json")"
-expected_errors+=('config: .*/shell\.json malformed: plugins\.0 must be an object with a string id')
-printf '{ "version": 1, "plugins": ["acme.tick"] }\n' >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
-expect_poll "a user file with a malformed plugins row reads as malformed" malformed config_user_state
-expect_log "the malformed row is logged with its path in the file" 1 'config: .*/shell\.json malformed: plugins\.0 must be an object with a string id'
-expect "a write to a malformed user file is refused" "refused: user-config=malformed path=$home/.config/vgs/shell.json" ipc shell setPluginEnabled acme.tick false
-expect "the bar stays with a malformed user file" "$monitors" bar_count
-expect_widgets "the placed widget stays with a malformed user file" '["acme.tick"]'
-printf '%s\n' "$user_good" >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
-expect_poll "the user file reads as loaded once the row is fixed" loaded config_user_state
-
-# theme.json recolours every surface through Color; the bar's foreground is
-# read back from a built bar instance. A file that does not parse, is not
-# an object, or holds a role that is not a colour is logged and the last
-# good palette stays.
-theme="$home/.config/vgs/theme.json"
-# A QML color reads back as its channel object; the row compares its hex.
-bar_foreground() { ipc shell readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
-expect "the bar draws the default foreground with no theme file" '#cacccc' bar_foreground
-printf '{ "foreground": "#123456" }\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
-expect_poll "a theme file recolours the bar's foreground" '#123456' bar_foreground
-expected_errors+=('theme: .*/theme\.json does not parse: ')
-printf '{ nope\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
-expect_log "a theme file that does not parse is logged" 1 'theme: .*/theme\.json does not parse: '
-expect "an unparseable theme file keeps the last good palette" '#123456' bar_foreground
-expected_errors+=('theme: .*/theme\.json malformed: theme must be an object' 'theme: .*/theme\.json malformed: foreground is not a colour: "#12345"')
-printf '[ "#654321" ]\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
-expect_log "a theme file that is not an object is logged" 1 'theme: .*/theme\.json malformed: theme must be an object'
-expect "a theme file that is not an object keeps the last good palette" '#123456' bar_foreground
-printf '{ "foreground": "#12345" }\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
-expect_log "a theme role that is not a colour is logged" 1 'theme: .*/theme\.json malformed: foreground is not a colour: "#12345"'
-expect "a theme role that is not a colour keeps the last good palette" '#123456' bar_foreground
-
-# Control: a bare qs beside the runner must refuse to draw and to write,
-# and the runner's CLI must keep addressing the guarded instance.
-spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
-bare_pid="$spawn_pid"
-instance_count() { "${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-bare_ipc() { "${shell_env[@]}" qs ipc --pid "$bare_pid" call "$@" 2>/dev/null | tail -n 1; }
-bare_guarded=""
-for _ in $(seq 1 100); do
-  # Wait until the bare instance is registered, then address it by pid.
-  if instances="$(instance_count)" && [[ $instances == 2 ]] && bare_guarded="$(bare_ipc shell guarded)" && [[ $bare_guarded == true || $bare_guarded == false ]]; then break; fi
-  sleep 0.2
-done
-if [[ $bare_guarded == false ]]; then ok "a bare qs beside the runner refuses to draw"; else fail "bare qs guarded=$bare_guarded"; fi
-sleep 0.5
-if bars_after="$(bar_count)" && [[ $bars_after == "$bars" ]]; then ok "the bare qs mapped no bar surface"; else fail "bar surfaces after bare qs: ${bars_after:-unreadable}"; fi
-user_before="$(cat "$home/.config/vgs/shell.json")"
-expect "the bare qs refuses to write configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell setPluginEnabled acme.tick false
-expect "the bare qs refuses to reload configuration" "refused: guard=unowned pid=$bare_pid" bare_ipc shell reloadConfig
-expect "the bare qs refuses to rescan" "refused: guard=unowned pid=$bare_pid" bare_ipc shell rescanPlugins
-expect "the bare qs refuses to summon" "refused: guard=unowned pid=$bare_pid" bare_ipc shell summon panel acme.probe '{}'
-if [[ "$(cat "$home/.config/vgs/shell.json")" == "$user_before" ]]; then ok "the refused write left the user file alone"; else fail "the bare qs changed the user file"; fi
-expect "the runner's CLI still reaches the guarded instance beside a bare one" true ipc shell guarded
-kill -TERM "$bare_pid" 2>/dev/null || true
-
-# Every QML warning and error the shell logged, minus the lines rows
-# provoked on purpose, plus the engine's own error classes.
-error_pattern=' ERROR |WARN qml: |WARN scene:|WARN quickshell\.hyprland|TypeError|ReferenceError|is not defined|Cannot read|Cannot assign'
-unexpected_errors() {
-  python3 - "$instance_log" "$error_pattern" "${expected_errors[@]}" <<'PY'
-import re, sys
-path, pattern, expected = sys.argv[1], re.compile(sys.argv[2]), [re.compile(e) for e in sys.argv[3:]]
-for line in open(path, errors="replace"):
-    if pattern.search(line) and not any(e.search(line) for e in expected):
-        print(line.rstrip())
-PY
+  # Removing the override must return its ID to the bundled package.
+  rm -rf -- "$dir"
+  reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
+  if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
+    fail "plugin-scan rescan after removing the override answered '$reply'"
+    return 1
+  fi
+  if ! wait_marker override_unloaded_count $((teardowns + 1)); then
+    fail "the override's component was never torn down after its manifest was removed — it is still the package installed under '$override_plugin' while its files no longer exist"
+    return 1
+  fi
+  sleep 1
+  # Require the ID to remain loaded with no override instance alive. A loaded label alone cannot identify ownership.
+  if ! override_state_settles 0; then
+    return 1
+  fi
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  note "plugin override check passed ($override_plugin: the override loaded its own component, kept exactly one live instance across a rescan and a reload, and left none behind when its manifest was removed — own-component loads $loads, teardowns $teardowns)"
+  return 0
 }
-if ! log_errors="$(unexpected_errors)"; then
-  fail "shell log unreadable: $instance_log"
-elif [[ -n $log_errors ]]; then
-  fail "shell log holds errors:"
-  head -n 20 <<<"$log_errors"
+
+# Check ownership and the expected live override count from loads minus teardowns.
+override_state_settles() {
+  local want="$1" loads teardowns live
+  loads="$(override_marker_count)"
+  teardowns="$(override_unloaded_count)"
+  live=$((loads - teardowns))
+  if [[ "$live" -ne "$want" ]]; then
+    fail "'$override_plugin' has $live live override instance(s), expected $want (own-component loads $loads, teardowns $teardowns)"
+    return 1
+  fi
+  if ! plugin_is_loaded "$override_plugin"; then
+    fail "'$override_plugin' is owned by nobody — no package is installed under the id"
+    return 1
+  fi
+  return 0
+}
+
+# Decide whether a window keeps its themed border off its own outermost pixel. A compositor
+# expanding a stale buffer over the area an interactive resize has already exposed repeats
+# that pixel across it, so an accent border sitting there floods the window mid-drag.
+# Samples run from the window edge inward — edge, border, interior — plus the pixel just
+# outside it, where a compositor border lands, read as drawn (near) and again once the
+# compositor has recoloured that border (far).
+# A client border must sit inside the edge (3); on the edge it floods a resize (1). With the
+# compositor drawing the border a row clear of content is one flat surface to its edge, so
+# the near outside pixel has to differ from the far one as well as from the edge (0) —
+# against the edge alone any wallpaper, gap or neighbouring window passes. Anything else is
+# no border at all (2).
+window_border_is_inset() {
+  local edge="$1" border="$2" interior="$3" near="${4:-}" far="${5:-}"
+  if [[ "$border" != "$interior" ]]; then
+    [[ "$edge" != "$border" ]] || return 1
+    return 3
+  fi
+  [[ -n "$near" && -n "$far" && "$near" != "$edge" && "$near" != "$far" && "$edge" == "$interior" ]] && return 0
+  return 2
+}
+
+# Where sandbox_pixel parks grim's stderr, so a capture failure names grim's own cause
+# rather than only the coordinates that could not be read.
+pixel_error_log=""
+
+# Ask the live session to keep rendering this run's host window while no monitor shows it:
+# the nested output renders only on that window's frame callbacks. Both requests live on that
+# one window and end with it. The tag comes second: only a rule re-evaluation, which set_prop
+# skips, enrols the window with Hyprland's render-unfocused timer.
+keep_host_rendering() {
+  local pid="$1" clients rc request reply listed=false
+  local gap="the sandbox renders only while the live session shows its window"
+  if ! vgs_hyprland_session; then
+    note "$gap: the live session is not a Hyprland session hyprctl can reach (no HYPRLAND_INSTANCE_SIGNATURE, or no hyprctl)"
+    return 1
+  fi
+  # The window maps after the compositor's socket appears: an answered list without it is a wait.
+  for _ in $(seq 1 50); do
+    rc=0
+    clients="$(hyprctl clients -j 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      note "$gap: hyprctl could not list the live session's windows (exit $rc): ${clients//$'\n'/ }"
+      return 1
+    fi
+    if jq -e --argjson pid "$pid" 'any(.[]; .pid == $pid)' <<<"$clients" >/dev/null 2>&1; then
+      listed=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$listed" != true ]]; then
+    note "$gap: no live-session window has pid $pid"
+    return 1
+  fi
+  for request in \
+    "hl.dsp.window.set_prop({ prop = \"render_unfocused\", value = \"1\", window = \"pid:$pid\" })" \
+    "hl.dsp.window.tag({ tag = \"vshell-smoke\", window = \"pid:$pid\" })"; do
+    reply="$(hyprctl dispatch "$request" 2>&1)" || reply="hyprctl exit $?: $reply"
+    if [[ "$reply" != ok ]]; then
+      note "$gap: the live session answered '$reply' to $request"
+      return 1
+    fi
+  done
+}
+
+# Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
+# header is four whitespace-separated ASCII fields ahead of the RGB bytes.
+# The deadline is not optional: a nested compositor that stops answering would otherwise
+# block the border check with no verdict — the outer run timeout bounds only qs, and the
+# compositor's process group survives until cleanup.
+sandbox_pixel() {
+  local sink="${pixel_error_log:-/dev/null}"
+  # Name the sample the log belongs to: the caller takes several and reports the window's
+  # own coordinates, which are not the ones that failed.
+  [[ "$sink" == /dev/null ]] || printf 'sampling %s,%s: ' "$1" "$2" >"$sink"
+  # -v so a killed capture says so; a silent kill is indistinguishable from a frame grim
+  # never produced, and both reach the caller as the same empty reply.
+  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout -v 5 grim -t ppm -g "$1,$2 1x1" - \
+    2>>"$sink" | python3 -c '
+import sys
+
+data = sys.stdin.buffer.read()
+fields, i = [], 0
+while len(fields) < 4:
+    while i < len(data) and data[i:i + 1].isspace():
+        i += 1
+    j = i
+    while j < len(data) and not data[j:j + 1].isspace():
+        j += 1
+    if j == i:
+        raise SystemExit(f"grim wrote {len(data)} byte(s), not a PPM header")
+    fields.append(data[i:j])
+    i = j
+if fields[0] != b"P6":
+    raise SystemExit(f"grim wrote {fields[0]!r}, not a binary PPM frame")
+if len(data) < i + 4:
+    raise SystemExit(f"grim wrote a {fields[1]!r}x{fields[2]!r} header with no pixel behind it")
+print(data[i + 1:i + 4].hex())
+' 2>>"$sink"
+}
+
+# Recolour one sandbox window's compositor border to a colour nothing else past its edge has.
+# A refusal goes where sandbox_pixel logs grim's errors, so the NOT MEASURED record names it.
+sandbox_recolour_border() {
+  local address="$1" prop request reply
+  for prop in active_border_color inactive_border_color; do
+    request="hl.dsp.window.set_prop({ prop = \"$prop\", value = \"rgb(ff00ff)\", window = \"address:$address\" })"
+    reply="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 dispatch "$request" 2>&1)" || reply="hyprctl exit $?: $reply"
+    if [[ "$reply" != ok ]]; then
+      [[ -z "$pixel_error_log" ]] || printf 'recolouring the border of %s: %s' "$address" "$reply" >"$pixel_error_log"
+      return 1
+    fi
+  done
+}
+
+# Sample the Settings window's right edge in the sandbox. Samples that cannot be obtained
+# are not evidence about where the border sits, so they leave the border NOT MEASURED
+# rather than failed: the nested output only renders while its host window is presented,
+# which keep_host_rendering asks for and a live session can refuse. A frame that IS
+# obtained is judged in full.
+# The row must cross no content background. The sidebar paints from the pixel inside the
+# left edge; on the right the content pane leaves the window surface showing, as the seeded
+# defaults leave off the glass its tint needs and the sandbox lays out left to right.
+# Only a drawn border follows the border colour, not a wallpaper or the drop shadow past the
+# edge, so the near pixel is read again with the border recoloured.
+# The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
+# window border here. A client-drawn border is a real finding — the window rule did not
+# reach this window — and is failed rather than accepted as the other valid arm.
+settings_border_check() {
+  local clients geometry="" x y address edge border interior near far verdict=0
+  # The Settings window maps asynchronously. Poll for it so a slow map reads as a wait,
+  # not as a verdict about the border.
+  for _ in $(seq 1 20); do
+    clients="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 clients -j 2>/dev/null)" || clients=""
+    geometry="$(jq -er '.[] | select(.title == "Settings" and .mapped) |
+      "\(.at[0] + .size[0] - 1) \(.at[1] + (.size[1] / 2 | floor)) \(.address)"' <<<"${clients:-[]}" 2>/dev/null)" && break
+    geometry=""
+    sleep 0.5
+  done
+  if [[ -z "$geometry" ]]; then
+    fail "the Settings window did not map in the sandbox within 10s"
+    return 1
+  fi
+  read -r x y address <<<"$geometry"
+  if ! edge="$(sandbox_pixel "$x" "$y")" ||
+    ! border="$(sandbox_pixel "$((x - 1))" "$y")" ||
+    ! interior="$(sandbox_pixel "$((x - 4))" "$y")" ||
+    ! near="$(sandbox_pixel "$((x + 1))" "$y")" ||
+    ! sandbox_recolour_border "$address" ||
+    ! far="$(sandbox_pixel "$((x + 1))" "$y")"; then
+    # One line per record: the summary lists them, and grim's own report spans two.
+    unmeasured "the window border: could not read the sandbox output at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
+    return "$skip_status"
+  fi
+  window_border_is_inset "$edge" "$border" "$interior" "$near" "$far" || verdict=$?
+  case "$verdict" in
+    0) note "window border check passed (far $far, near $near, edge $edge, border $border, interior $interior)" ;;
+    1) fail "the Settings window paints its border on its outermost pixel ($edge): a compositor expanding a stale buffer floods the window with it during a resize" ;;
+    2) fail "no window border found at the Settings window edge (far $far, near $near, edge $edge, border $border, interior $interior)" ;;
+    3) fail "the Settings window draws its own border ($border) instead of the compositor: the sandbox runs the Lua config manager, so the window rule should be drawing it" ;;
+  esac
+  return "$verdict"
+}
+
+settings_check() {
+  local report pages page ready expected
+  report="$(sandbox_ipc settings status)" || { fail "could not read Settings status"; return 1; }
+  pages="$(jq -er '.pages | select(type == "array" and length > 0) | .[]' <<<"$report")" || { fail "Settings returned no page inventory"; return 1; }
+  while IFS= read -r page; do
+    sandbox_ipc settings openWith "$page" >/dev/null || { fail "could not open Settings page: $page"; return 1; }
+    ready=false
+    for _ in {1..20}; do
+      report="$(sandbox_ipc settings status)" || { fail "could not read Settings page status: $page"; return 1; }
+      if jq -e --arg page "$page" '.visible and .ready and .tab == $page' <<<"$report" >/dev/null; then
+        ready=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$ready" != true ]]; then
+      fail "Settings page did not load: $page ($report)"
+      return 1
+    fi
+  done <<<"$pages"
+  expected="$(wc -l <<<"$pages")" || return 1
+  note "Settings page check passed ($expected available pages loaded)"
+}
+
+nested_check() {
+  local host_socket sandbox rt_dir conf log nested_socket candidate exit_code findings
+  local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
+  local seeded
+  local -a expected_plugins=() missing_plugins=()
+  local -a sandbox_env=() dbus_wrapper=()
+  # Each run needs its own log so old markers cannot satisfy fixture assertions.
+  override_nonce="$$-${RANDOM}"
+
+  command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
+  command -v qs >/dev/null 2>&1 || { nested_unavailable "quickshell (qs) not installed"; return; }
+  # Require the JSON parser before geometry queries so a missing interpreter cannot look like absence.
+  command -v python3 >/dev/null 2>&1 || { nested_unavailable "python3 not installed (needed to read the compositor's layer list)"; return; }
+  # The window border check samples the output on every nested run, so grim is a
+  # prerequisite rather than the optional artifact tool it once was. Without this its
+  # absence surfaces inside the pixel pipeline as a sampling failure at coordinates that
+  # were never the problem.
+  command -v grim >/dev/null 2>&1 || { nested_unavailable "grim not installed (needed to sample the window border)"; return; }
+  if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
+    # A host Wayland socket prevents the nested compositor from falling back to the live GPU and VT.
+    nested_unavailable "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket
+    return
+  fi
+
+  sandbox="$(mktemp -d -t vshell-smoke.XXXXXX)"
+  track_dir "$sandbox"
+  pixel_error_log="$sandbox/grim.err"
+  # Keep the runtime directory short enough for Hyprland's IPC socket paths. In nested runs of
+  # this script the shell logged 'Unable to connect to hyprland event socket:
+  # ServerNotFoundError' in both logged runs whose .socket2.sock path was 107 bytes, and
+  # connected in runs at 106 bytes or fewer; the instance signature's trailing number is not
+  # a fixed width.
+  rt_dir="${XDG_RUNTIME_DIR:?}/v$$"
+  rm -rf -- "$rt_dir"
+  mkdir -p -- "$rt_dir"
+  chmod 700 -- "$rt_dir"
+  track_dir "$rt_dir"
+
+  mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
+  # Seed sandbox state from repository files and leave plugins/ absent for the override fixture.
+  # Theme state is not seeded: the smoke uses the fallback palette and cannot verify theme loading.
+  # See D008 § Scope: theme state is out.
+  # Report each preparation failure before using the resulting sandbox.
+  prep_fail() {
+    fail "sandbox preparation failed at: $1"
+    return 1
+  }
+
+  mkdir -p "$sandbox/home/.config/vshell" || { prep_fail "creating the sandbox config directory"; return; }
+  cp -- "$repo_root/config/vshell/settings.default.json" \
+        "$sandbox/home/.config/vshell/settings.json" || { prep_fail "seeding settings.json from the shipped default"; return; }
+  cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
+        "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
+
+  # Sentinel keys must exist in shipped defaults. Inventing a renamed key would test a setting the shell ignores.
+  python3 - "$sandbox/home/.config/vshell" \
+            "$settings_sentinel_key" "$settings_sentinel_value" \
+            "$plugin_sentinel_plugin" "$plugin_sentinel_key" "$plugin_sentinel_value" \
+            <<'PY' || { prep_fail "stamping the seed sentinels into the seeded settings"; return; }
+import json
+import sys
+
+root, skey, svalue, pplugin, pkey, pvalue = sys.argv[1:7]
+
+
+def stamp(name, path, value):
+    full = f"{root}/{name}"
+    with open(full) as fh:
+        data = json.load(fh)
+    node = data
+    for key in path[:-1]:
+        if key not in node:
+            sys.exit(f"{name}: no {key!r} section in the shipped default")
+        node = node[key]
+    if path[-1] not in node:
+        sys.exit(f"{name}: {path[-1]!r} is not in the shipped default")
+    # A sentinel matching the repository fallback cannot distinguish applied seed from fallback state.
+    if node[path[-1]] == value:
+        sys.exit(f"{name}: the sentinel for {'.'.join(path)} equals the shipped value {value!r}")
+    node[path[-1]] = value
+    with open(full, "w") as fh:
+        json.dump(data, fh, indent=2)
+
+
+stamp("settings.json", (skey,), int(svalue))
+stamp("plugin_settings.json", (pplugin, pkey), pvalue)
+PY
+
+  mkdir -p "$sandbox/home/.config/hypr" || { prep_fail "creating the compositor config directory"; return; }
+  conf="$sandbox/home/.config/hypr/hyprland.lua"
+  cat >"$conf" <<'EOF'
+-- Minimal isolated native config. No autostart or user includes.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+hl.config({
+    misc = {
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+        disable_autoreload = true,
+    },
+    animations = { enabled = false },
+})
+EOF
+
+  log="$sandbox/qs.log"
+  evidence_logs+=("$log" "$sandbox/hyprland.log")
+
+  # Clear inherited environment, then provide isolated backend, compositor, and session-bus endpoints.
+  sandbox_env=(
+    env -i
+    HOME="$sandbox/home"
+    PATH="$PATH"
+    USER="${USER:-$(id -un)}"
+    LOGNAME="${LOGNAME:-${USER:-$(id -un)}}"
+    TERM="${TERM:-dumb}"
+    XDG_RUNTIME_DIR="$rt_dir"
+    XDG_CONFIG_HOME="$sandbox/home/.config"
+    XDG_DATA_HOME="$sandbox/home/.local/share"
+    XDG_STATE_HOME="$sandbox/home/.local/state"
+    XDG_CACHE_HOME="$sandbox/home/.cache"
+  )
+  if command -v dbus-run-session >/dev/null 2>&1; then
+    dbus_wrapper=(dbus-run-session --)
+  else
+    dbus_wrapper=()
+    sandbox_env+=(DBUS_SESSION_BUS_ADDRESS="unix:path=$rt_dir/absent-bus")
+  fi
+
+  note "starting nested compositor sandbox (runtime dir $rt_dir)"
+  if ! spawn_group "$sandbox/hyprland.pgid" \
+    "${sandbox_env[@]}" WAYLAND_DISPLAY="$host_socket" \
+    Hyprland --config "$conf" >"$sandbox/hyprland.log" 2>&1; then
+    nested_unavailable "nested compositor failed to launch"
+    return
+  fi
+  compositor_pgid="$spawn_pgid"
+
+  nested_socket=""
+  for _ in $(seq 1 $((compositor_timeout * 10))); do
+    for candidate in "$rt_dir"/wayland-*; do
+      [[ -S "$candidate" ]] || continue
+      nested_socket="${candidate##*/}"
+      break
+    done
+    [[ -n "$nested_socket" ]] && break
+    kill -0 -- "-$compositor_pgid" 2>/dev/null || break
+    sleep 0.1
+  done
+
+  if [[ -z "$nested_socket" ]]; then
+    tail -n 20 "$sandbox/hyprland.log" >&2 || true
+    nested_unavailable "nested compositor did not come up"
+    return
+  fi
+  keep_host_rendering "$compositor_pgid" || true
+
+  note "running the shell inside the sandbox (timeout ${nested_timeout}s)"
+  local nested_signature="" nested_control
+  for _ in $(seq 1 40); do
+    for nested_control in "$rt_dir"/hypr/*/.socket.sock; do
+      [[ -S "$nested_control" ]] || continue
+      nested_signature="${nested_control%/.socket.sock}"
+      nested_signature="${nested_signature##*/}"
+      break
+    done
+    [[ -n "$nested_signature" ]] && break
+    sleep 0.1
+  done
+  if [[ -z "$nested_signature" ]]; then
+    fail "could not identify the isolated compositor for display control"
+    return
+  fi
+  # sandbox_env opens with 'env -i'; the launch below supplies its own.
+  local -a shell_assignments=(
+    "${sandbox_env[@]:2}"
+    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature"
+    WAYLAND_DISPLAY="$nested_socket"
+    VSHELL_ROOT="$repo_root"
+    VSHELL_DISABLE_HOT_RELOAD=1
+    VSHELL_DISABLE_INSTANCE_GUARD=1
+  )
+  local collisions
+  if collisions="$(shell_env_collisions "${#shell_env[@]}" "${shell_env[@]}" "${shell_assignments[@]}")"; then
+    fail "--shell-env names a variable the sandbox sets itself: ${collisions//$'\n'/ }"
+    return
+  fi
+  # shell_env comes first: env applies assignments in order, and the check above keeps any of
+  # them from being overridden silently.
+  if ! spawn_group "$sandbox/qs.pgid" \
+    env -i "${shell_env[@]}" "${shell_assignments[@]}" \
+    "${dbus_wrapper[@]}" \
+    timeout --signal=TERM --kill-after=5 "$nested_timeout" \
+    qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
+    # Launch output already reaches the log, so include it when reporting early failure.
+    tail -n 40 "$log" >&2 || true
+    fail "sandboxed shell failed to launch"
+    return
+  fi
+  qs_launcher="$spawn_launcher_pid"
+  qs_group="$spawn_pgid"
+
+  # Wait for VGS IPC targets; surviving until a timeout alone does not prove the shell loaded.
+  loaded=false
+  targets=""
+  for _ in $(seq 1 $((nested_timeout * 2))); do
+    targets="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+      "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
+    if printf '%s\n' "$targets" | grep -q '^target '; then
+      loaded=true
+      break
+    fi
+    kill -0 -- "-$qs_group" 2>/dev/null || break
+    sleep 0.5
+  done
+
+  # Wait for every bundled plugin discovered from the repository. Their independent asynchronous
+  # loads can remain pending after core readiness or another plugin's readiness.
+  mapfile -t expected_plugins < <(
+    find "$repo_root/config/vshell/plugins" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
+  )
+  if [[ ${#expected_plugins[@]} -eq 0 ]]; then
+    fail "no bundled plugins found under config/vshell/plugins"
+    return
+  fi
+
+  # Verify sentinels before state-dependent phases. Bundled plugins can load on fallback settings,
+  # so plugin readiness alone cannot prove the seed was applied.
+  seeded=false
+  if [[ "$loaded" == true ]] && seeded_settings_check; then
+    seeded=true
+  fi
+
+  plugins_loaded=false
+  plugin_report=""
+  # Plugin readiness is independent of seeded settings.
+  if [[ "$loaded" == true ]]; then
+    for _ in $(seq 1 $((plugin_timeout * 2))); do
+      # Match plugins list output, which uses [loaded|disabled]. plugin-scan list uses tab-separated fields.
+      # This view distinguishes an undiscovered ID from a discovered ID that failed to load.
+      plugin_report="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+        --any-display call plugins list 2>/dev/null || true)"
+      missing_plugins=()
+      for candidate in "${expected_plugins[@]}"; do
+        printf '%s\n' "$plugin_report" | grep -q "^${candidate} \[loaded\]\$" || missing_plugins+=("$candidate")
+      done
+      if [[ ${#missing_plugins[@]} -eq 0 ]]; then
+        plugins_loaded=true
+        break
+      fi
+      kill -0 -- "-$qs_group" 2>/dev/null || break
+      sleep 0.5
+    done
+  fi
+
+  if [[ -n "$driver" ]]; then
+    if [[ "$plugins_loaded" == true ]]; then
+      driver_check "$nested_signature" "$nested_socket" || true
+    fi
+  elif [[ "$seeded" == true && "$plugins_loaded" == true ]]; then
+    # Run state-dependent phases only after seed verification and before teardown.
+    if popout_check; then
+      override_check || true
+    fi
+  fi
+
+  # Switchers can run once the shell loads. Run them after seed-dependent phases because they write settings.
+  # Their failure has already set exit status; keep teardown reachable.
+  if [[ "$loaded" == true && -z "$driver" ]]; then
+    switcher_check || true
+    local display_reply
+    sandbox_ipc changelog close >/dev/null || fail "could not dismiss release notes before checking Displays"
+    # What left the window border check and everything after it unrun was the unbounded IPC
+    # wait, which sandbox_ipc_timeout now bounds. sandbox_ipc folds its failure into the
+    # reply and returns 0, so this fallback cannot fire today; it keeps the assignment
+    # correct should sandbox_ipc ever propagate status instead.
+    display_reply="$(sandbox_ipc settings openWith display_config)" ||
+      display_reply="the Settings IPC call failed (the sandbox shell may already be gone)"
+    if [[ "$display_reply" != "SETTINGS_OPEN_SUCCESS: display_config" ]]; then
+      fail "could not open the Displays settings page: $display_reply"
+    else
+      # Settings loads its selected tab asynchronously. The log scan below checks its components.
+      sleep 2
+      if [[ -n "${VSHELL_SMOKE_ARTIFACT_DIR:-}" ]]; then
+        local capture_focus
+        capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
+        hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
+        sleep 5
+        if ! mkdir -p -- "$VSHELL_SMOKE_ARTIFACT_DIR" || ! "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout 5 grim "$VSHELL_SMOKE_ARTIFACT_DIR/displays.png"; then
+          fail "could not capture the Displays settings page"
+        fi
+        hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
+      fi
+      # After the capture, which would otherwise show the recoloured border.
+      settings_border_check || true
+      display_reply="$(sandbox_ipc outputs current)" ||
+        display_reply="the outputs IPC call failed"
+      if ! jq -e 'type == "array" and length > 0' <<<"$display_reply" >/dev/null; then
+        fail "Displays settings did not receive native monitor state: $display_reply"
+        sandbox_ipc outputs status >&2 || fail "could not read display diagnostics"
+      fi
+      sandbox_ipc settings close >/dev/null || fail "could not close Displays settings"
+      local display_snapshot display_payload display_preview display_token
+      if display_snapshot="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-current)" &&
+         display_payload="$(jq -ce '{outputs: (.outputs | with_entries(.value.logical.scale = 0.5))}' <<<"$display_snapshot")" &&
+         "${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-setup >/dev/null &&
+         display_preview="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-preview "$display_payload")" &&
+         display_token="$(jq -er '.token' <<<"$display_preview")" &&
+         "${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-revert "$display_token" >/dev/null; then
+        note "display control check passed (native scale apply, readback and revert in the sandbox)"
+      else
+        fail "native display preview or recovery failed: ${display_preview:-no preview response}"
+      fi
+    fi
+  fi
+
+  if [[ "$loaded" == true && "$check_settings" == true ]]; then
+    settings_check || true
+  fi
+
+  kill_pgid "$qs_group"
+  exit_code=0
+  wait "$qs_launcher" || exit_code=$?
+
+  # After the main shell is gone, so the admit row's IPC lookup can reach only its own shell.
+  [[ -n "$driver" ]] || instance_guard_check || true
+
+  # Emit available diagnostics before verdicts so one failure does not hide another's evidence.
+  # Missing live PipeWire and bus peers are expected sandbox environment gaps.
+  local sandbox_noise='quickshell\.service\.pipewire|Failed to connect pipewire'
+  # Match ReferenceError, TypeError, and SyntaxError even when prefixed by QML paths.
+  # Binding-loop warnings are benign in existing surfaces; bare Error lines match third-party output. Both are excluded.
+  local error_classes='ReferenceError|TypeError|SyntaxError'
+  # grep status 1 means no match; status 2 means the log was not read. Preserve that distinction.
+  local grep_rc=0 scan_error=""
+  findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log")" || grep_rc=$?
+  if [[ "$grep_rc" -gt 1 ]]; then
+    scan_error="could not scan the sandbox log for runtime errors (grep exit $grep_rc, log '$log')"
+    findings=""
+  else
+    findings="$(printf '%s\n' "$findings" | grep -vE "$sandbox_noise")" || grep_rc=$?
+    if [[ "$grep_rc" -gt 1 ]]; then
+      scan_error="could not filter sandbox noise out of the runtime findings (grep exit $grep_rc)"
+      findings=""
+    fi
+  fi
+  [[ -n "$findings" ]] && printf '%s\n' "$findings" >&2
+  # A shell can exit without a recognized error class; include the raw tail for that case.
+  [[ "$loaded" != true ]] && { tail -n 40 "$log" >&2 || true; }
+
+  local -a not_loaded=() never_seen=()
+  if [[ "$loaded" == true && "$plugins_loaded" != true ]]; then
+    # Distinguish plugins never discovered from plugins discovered but not loaded.
+    for candidate in "${missing_plugins[@]}"; do
+      if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
+        not_loaded+=("$candidate")
+      else
+        never_seen+=("$candidate")
+      fi
+    done
+    # shellcheck disable=SC2016  # the backticks are literal quoting in the message
+    printf 'qml-smoke: `plugins list` reported after %ss:\n%s\n' "$plugin_timeout" \
+      "${plugin_report:-<no response from the plugins IPC target>}" >&2
+  fi
+
+
+  if grep -q "refusing to start a duplicate shell" "$log"; then
+    fail "the sandboxed shell refused itself as a duplicate: VSHELL_DISABLE_INSTANCE_GUARD did not reach it"
+    return
+  fi
+  if [[ -n "$scan_error" ]]; then
+    fail "$scan_error"
+    return
+  fi
+  if [[ "$loaded" != true ]]; then
+    fail "sandboxed shell never exposed its IPC targets (exit code $exit_code)"
+    return
+  fi
+  if [[ -n "$findings" ]]; then
+    # Report QML errors before plugin failure when both conditions hold.
+    fail "QML/runtime errors in the sandboxed shell"
+    return
+  fi
+  if [[ "$seeded" != true ]]; then
+
+    return
+  fi
+  if [[ "$plugins_loaded" != true ]]; then
+    if [[ ${#not_loaded[@]} -gt 0 ]]; then
+      # Bundled plugins are force-enabled and declare no startupCheck. If that contract changes,
+      # expected readiness must account for intentionally disabled plugins.
+      fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
+      return
+    fi
+    fail "bundled plugin(s) never appeared in the sandbox within ${plugin_timeout}s: ${never_seen[*]} (of ${#expected_plugins[@]} under config/vshell/plugins) — the scan never reached them"
+    return
+  fi
+
+  # fail sets status without stopping the run. Print success only while status remains successful.
+  [[ "$status" -eq 0 ]] || return
+  # An unmeasured check is not covered by this phase's success line, so name it here too:
+  # "passed" must not be read as covering a check that never obtained its evidence.
+  if [[ ${#not_measured[@]} -gt 0 ]]; then
+    note "isolated runtime check passed except for ${#not_measured[@]} check(s) that could not run (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
+    return
+  fi
+  note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
+}
+
+# A driver measures the shell, not its source, so the parse check is the smoke's own row.
+[[ -n "$driver" ]] || static_check
+if [[ "$nested" == true ]]; then
+  nested_check
 else
-  ok "shell log holds no unexpected error ($instance_log)"
+  note "runtime check not requested (pass --nested for the sandboxed shell run)"
 fi
 
-echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$first_bar_budget_ms"
-if [[ -n $first_bar_ms && $first_bar_ms -le $first_bar_budget_ms ]]; then ok "the first bar maps within its budget"; else fail "first bar latency ${first_bar_ms:-unmeasured} ms over budget $first_bar_budget_ms ms"; fi
-echo "  latency_reconcile_ms=${reconcile_ms:-unmeasured} budget_ms=$reconcile_budget_ms"
-if [[ -n $reconcile_ms && $reconcile_ms -le $reconcile_budget_ms ]]; then ok "a disable reaches the build records within its budget"; else fail "reconcile latency ${reconcile_ms:-unmeasured} ms over budget $reconcile_budget_ms ms"; fi
-
-# The memory sampler finds the shell `vgsh run` started through the runner's
-# lock file and the instance list, and samples it by pid.
-sampler_rows() { awk -F'\t' -v pid="$shell_qs_pid" 'NR > 1 && $2 == pid { n++ } END { print n + 0 }' "$sandbox/memory.tsv"; }
-if "${shell_env[@]}" "$repo/scripts/sample-shell-memory.sh" --interval 1 --samples 2 --log "$sandbox/memory.tsv" >"$sandbox/sampler.out" 2>"$sandbox/sampler.err"; then
-  expect "the memory sampler logged two samples of the runner's shell" 2 sampler_rows
-else
-  fail "memory sampler exited non-zero: $(head -n 2 "$sandbox/sampler.err")"
+if [[ "$status" -eq 0 ]]; then
+  if [[ "$static_ran" == false && "$nested" == false ]]; then
+    note "nothing was checked (no qmllint, and --nested was not requested)"
+  elif [[ ${#not_measured[@]} -gt 0 ]]; then
+    # A failure outranks an unmeasured check: status 1 keeps its own exit below.
+    printf 'qml-smoke: exit %s — everything that ran passed, but %d check(s) did not run:\n' \
+      "$skip_status" "${#not_measured[@]}" >&2
+    printf 'qml-smoke:   %s\n' "${not_measured[@]}" >&2
+    exit "$skip_status"
+  else
+    note "ok"
+  fi
 fi
-
-rss_kib=0; hwm_kib=0
-if ! rss_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "resident size unreadable for pid $shell_qs_pid"; fi
-if ! hwm_kib="$(awk '/^VmHWM:/ { print $2 }' "/proc/$shell_qs_pid/status")"; then fail "high-water mark unreadable for pid $shell_qs_pid"; fi
-echo "  rss_kib=$rss_kib hwm_kib=$hwm_kib ceiling_kib=$rss_ceiling_kib"
-if [[ $rss_kib -gt 0 && $rss_kib -le $rss_ceiling_kib ]]; then ok "resident size under the ceiling"; else fail "resident size $rss_kib KiB over ceiling $rss_ceiling_kib KiB"; fi
-
-if [[ $failures -gt 0 ]]; then
-  echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true
-  echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null || true
-fi
-# A nested compositor that cannot allocate its output buffers stops laying
-# out surfaces, so every geometry row after that reads zeros. A run whose
-# failures are all geometry rows and whose compositor logged that fault
-# measured the sandbox, not the shell: it reports not-measured, which is
-# never a pass, and names the cause. Any behaviour failure is a failure.
-if [[ $failures -gt 0 && $behaviour_failures -eq 0 ]] && grep -q -s 'Failed to allocate a GBM buffer' "$rt_dir"/hypr/*/hyprland.log; then
-  printf 'qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=%s\n' "$failures"
-  exit 77
-fi
-if [[ $failures -gt 0 ]]; then
-  echo "qml-smoke: failed=$failures"
-  exit 1
-fi
-echo "qml-smoke: ok"
+exit "$status"

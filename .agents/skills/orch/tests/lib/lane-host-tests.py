@@ -74,18 +74,16 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(self.run_host("--help").returncode, 0)
     def test_dispatch_protocol_and_guards(self):
         original = self.script.read_text()
-        rule = "  create|wait|cat|put|append|touch|stop|close|list|accounts)"
+        rule = "  create|cat|put|append|touch|stop|close|list|accounts)"
         self.assertEqual(original.count(rule), 1)
-        protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True), rule.replace("stop", "exec")),
-                    (("wait", "--item", "TEST-1"), (0, True), rule.replace("wait|", "")),
-                    (("exec", "--item", "TEST-1", "--", "true"), (2, False), rule.replace("stop", "exec"))]
+        protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)), (("exec", "--item", "TEST-1", "--", "true"), (2, False))]
         def observed(args):
             before = (self.root / "calls").read_text() if (self.root / "calls").exists() else ""
             result = self.run_host(*args, ORCH_LANE_HOST=str(self.stub))
             return result.returncode, args[0] in (self.root / "calls").read_text()[len(before):]
-        for args, expected, mutant in protocol:
+        for args, expected in protocol:
             self.assertEqual(observed(args), expected)
-            self.script.write_text(original.replace(rule, mutant))
+            self.script.write_text(original.replace(rule, rule.replace("stop", "exec")))
             self.assertNotEqual(observed(args), expected)
             self.script.write_text(original)
         shutil.copy2(self.stub, self.root / "local")

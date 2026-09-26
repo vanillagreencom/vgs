@@ -24,7 +24,6 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-VRUN="$(validate_run_dir "$TMP_ROOT/validate-run" full)"
 mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
 # The size owner reads the issue through its sibling Linear CLI. This stand-in
 # supplies the same raw cache row on Bash 3.2 test runners.
@@ -331,54 +330,6 @@ for row in 'over|**Expected delta**: 4 lines' 'missing|No size field.'; do
   run_write --worktree "$GW" --issue KEN-GROWTH --round-id "control-$label" --item 1 size "$OK_REACH"
   assert_eq "$(observe 'rc=3 written=no')" 'rc=3 written=no' "control: $label refuses the report-and-continue case" "$ERR"
 done
-WRITE_BIN="$LIVE_WRITE"
-
-echo "=== a pr-N key stamps its round and the checker reads it back ==="
-# A pull request with no issue id keys its state pr-N (review-pr-comments.md
-# § 1). No tracker holds that key, so the branch measures under
-# allowance_missing and the round still stamps.
-PRW="$(new_repo pr-wt)"
-init_growth_state "$STATE" "$PRW" pr-51 51-1 >/dev/null
-run_write --worktree "$PRW" --issue pr-51 --round-id 51-1 --item 1 "pr key round" "$OK_REACH"
-E="rc=0 written=yes .issue=pr-51 .size_check.verdict=allowance_missing .size_check.production_allowance=null"
-assert_eq "$(observe "$E")" "$E" "a round under a pr-N key stamps with the measured allowance_missing verdict" "$ERR"
-"$RETURN_WRITE" --worktree "$PRW" --kind fix --issue pr-51 --round-id 51-1 --branch main \
-  --commit "$(git -C "$PRW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
-set +e
-"$CHECK" --worktree "$PRW" --issue pr-51 --round-id 51-1 --expect-items-from-round >/dev/null 2>&1
-pr_check_rc=$?
-set -e
-assert_eq "$pr_check_rc" "0" "dev-artifact-check reads the pr-N round back" "$ERR"
-
-echo "=== a no-issue local review stamps its fix round under a minted local key ==="
-# ../workflows/review.md § 4 on a branch with no issue id mints a key with
-# `workflow-state new-local-key` and inits state under it, then
-# ../workflows/dev-fix.md § 2 step 4 stamps the round. No tracker holds that
-# key either.
-LW="$(new_repo local-wt)"
-LOCAL_KEY="$("$STATE" new-local-key)"
-init_growth_state "$STATE" "$LW" "$LOCAL_KEY" seed >/dev/null
-LOCAL_RID="$("$STATE" --state-dir "$LW/tmp" new-round-id "$LOCAL_KEY" dev_round_id)"
-run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --item 1 "local review round" "$OK_REACH"
-E="rc=0 written=yes .issue=$LOCAL_KEY .round_id=$LOCAL_RID .size_check.verdict=allowance_missing"
-assert_eq "$(observe "$E")" "$E" "a round under a minted local key stamps with the measured allowance_missing verdict" "$ERR"
-"$RETURN_WRITE" --worktree "$LW" --kind fix --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --branch main \
-  --commit "$(git -C "$LW" rev-parse HEAD)" --validate pass --validate-run-dir "$VRUN" --item 1 Applied done >/dev/null
-set +e
-"$CHECK" --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID" --expect-items-from-round >/dev/null 2>&1
-local_check_rc=$?
-set -e
-assert_eq "$local_check_rc" "0" "dev-artifact-check reads the local-key round back" "$ERR"
-
-# Control: a size owner that reads only pr-N as naming no issue sends the local
-# key to the tracker, and the round is refused before it is stamped.
-LOCAL_MUTANT_SCRIPTS="$(copy_scripts local-key-mutant)"
-mutate_file "$LOCAL_MUTANT_SCRIPTS/branch-size-check" '|local-[0-9]+-[0-9]+-[0-9]+)$' ')$'
-LIVE_WRITE="$WRITE_BIN"
-WRITE_BIN="$LOCAL_MUTANT_SCRIPTS/dev-round-write"
-run_write --worktree "$LW" --issue "$LOCAL_KEY" --round-id "$LOCAL_RID-control" --item 1 "local review round" "$OK_REACH"
-E="rc=2 written=no stderr~branch-size-check:+linear-read+issue=$LOCAL_KEY=true"
-assert_eq "$(observe "$E")" "$E" "control: without the local key form the round is a tracker-read refusal" "$ERR"
 WRITE_BIN="$LIVE_WRITE"
 
 echo "=== a record the reader cannot use fails acceptance closed ==="

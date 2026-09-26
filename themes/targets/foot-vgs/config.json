@@ -1,0 +1,12 @@
+{
+  "app": "foot",
+  "template": "vgs-theme.ini",
+  "destination": "~/.config/foot/vgs-theme.ini",
+  "curatedFile": "foot.ini",
+  "detect": {
+    "commands": [
+      "foot"
+    ]
+  },
+  "hook": "foot-config"
+}

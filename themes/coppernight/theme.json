@@ -1,0 +1,10 @@
+{
+  "name": "coppernight",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "4-cats-anime.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.81, "floor": 3}
+  ]
+}

@@ -1,0 +1,31 @@
+name: publish-gentoo
+
+# Publish with scripts/publish-gentoo.sh. This workflow checks remote drift
+# without publication credentials.
+
+on:
+  schedule:
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-gentoo
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    permissions:
+      contents: read
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: The published overlay still matches this repo
+        env:
+          VGS_GENTOO_OVERLAY_URL: https://github.com/vanillagreencom/gentoo-overlay.git
+        run: scripts/publish-gentoo.sh --check

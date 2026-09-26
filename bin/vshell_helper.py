@@ -1,0 +1,20168 @@
+"""Runtime helper for VanillaGreen Shell commands, integration and theme generation."""
+from __future__ import annotations
+
+import argparse
+import ast
+import base64
+import colorsys
+import contextlib
+import enum
+import errno
+import fcntl
+import glob
+import grp
+import hashlib
+import json
+import math
+import os
+import pwd
+import re
+import signal
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import threading
+import time
+import tempfile
+import urllib.parse
+import tomllib
+import zlib
+import mimetypes
+import xml.etree.ElementTree as ET
+from collections import Counter
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
+
+_HELPER_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _HELPER_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _HELPER_MODULE_DIR)
+
+_NIRI_SUPPORT: Any = None
+import vshell_theme_color as _theme_color
+import vshell_wallpaper_thumbs as _wp_thumbs
+
+HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+# The one token durable theme state roots a path on, written by `portable_ref` and
+# read by `resolve_path`, and the tail that identifies a theme package's background
+# wherever it was recorded, which `recovered_package_ref` alone matches on.
+VSHELL_ROOT_TOKEN = "${VSHELL_ROOT}"
+PACKAGE_BACKGROUND_RE = re.compile(r"/themes/([^/]+)/backgrounds/([^/]+)$")
+TEMPLATE_RE = re.compile(r"\{([A-Za-z0-9_]+)(?:\.(strip|rgb|ref))?\}")
+ANSI_NAMES = [
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    "bright_black", "bright_red", "bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan", "bright_white",
+]
+MATUGEN_SCHEMES = {
+    "scheme-tonal-spot", "scheme-content", "scheme-expressive", "scheme-fidelity",
+    "scheme-fruit-salad", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-vibrant",
+}
+THEME_MODES = {"auto", "dark", "light"}
+# The keys of a colours map whose value is a name rather than a colour.
+COLOR_MODE_KEYS = {"theme_type", "mode", "variant", "scheme"}
+COLOR_KEYS = {
+    "background", "bg", "foreground", "fg", "accent", "primary", "cursor",
+    "selection_background", "selectionbackground", "selection_foreground", "selectionforeground",
+    *COLOR_MODE_KEYS,
+    *{f"color{i}" for i in range(16)}, *ANSI_NAMES,
+}
+CAMEL = {
+    "bright_black": "brightBlack",
+    "bright_red": "brightRed",
+    "bright_green": "brightGreen",
+    "bright_yellow": "brightYellow",
+    "bright_blue": "brightBlue",
+    "bright_magenta": "brightMagenta",
+    "bright_cyan": "brightCyan",
+    "bright_white": "brightWhite",
+}
+# VS Code's workbench keys for the sixteen ANSI slots, in slot order. Derived
+# from the slot names so the two spellings cannot drift apart.
+VSCODE_ANSI_KEYS = ["terminal.ansi" + name.title().replace("_", "") for name in ANSI_NAMES]
+# Syntax roles and the palette role each derives from. Rendered into
+# themes/targets/codex-vgs/vgs.tmTheme, which paints code and diffs in Codex.
+SYNTAX_ROLE_BASES = {
+    "syntaxComment": "dim",
+    "syntaxKeyword": "magenta",
+    "syntaxFunction": "blue",
+    "syntaxVariable": "foreground",
+    "syntaxString": "green",
+    "syntaxNumber": "yellow",
+    "syntaxType": "cyan",
+    "syntaxOperator": "bright_white",
+    "syntaxPunctuation": "muted",
+    "syntaxInserted": "success",
+    "syntaxDeleted": "error",
+    "syntaxHeading": "accent",
+    "syntaxLink": "info",
+}
+# Body text on the background the highlighter paints over, at WCAG AA.
+SYNTAX_MIN_CONTRAST = 4.5
+# The theme a fresh install starts on. It is one of the two themes every
+# package bundles, so the first paint never depends on a downloaded theme.
+DEFAULT_THEME_NAME = "bauhaus"
+DEFAULT_COLORS = [
+    "#32344a", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#ad8ee6", "#449dab", "#787c99",
+    "#444b6a", "#ff7a93", "#b9f27c", "#ff9e64", "#7da6ff", "#bb9af7", "#0db9d7", "#acb0d0",
+]
+# The session.json keys holding a wallpaper path, for the greeter copy alone.
+# quickshell/vshell/Common/settings/SessionSpec.js owns the set through its `ref`
+# and `refMap` flags; scripts/test-wallpaper-refs.py pins the two against each other.
+SESSION_WALLPAPER_KEYS = (
+    "wallpaperPath", "wallpaperPathLight", "wallpaperPathDark",
+    "monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark",
+)
+GREETER_RUNTIME_BIN_FILES = {
+    "vshell": 0o750,
+    "vshell-helper": 0o750,
+    "vshell_helper.py": 0o640,
+    "vshell_theme_color.py": 0o640,
+    "vshell_wallpaper_thumbs.py": 0o640,
+    "vshell_niri.py": 0o640,
+    "vshell_niri_kdl.py": 0o640,
+}
+
+
+def eprint(*args: Any) -> None:
+    print(*args, file=sys.stderr)
+
+
+def run(cmd: List[str], check: bool = False, kill_group: bool = False, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Run cmd, capturing stdout and stderr as text.
+
+    kill_group bounds cmd's descendants as well as cmd itself. Pass it for a tool
+    that fans out to children of its own: subprocess.run kills only the direct
+    child when a timeout fires, so `mise outdated` left one `npm view` per
+    npm-backed tool running on every cancelled check, reparented to the user's
+    init. It is opt-in because most callers run a tool with no fan-out, whose
+    group is the caller's own.
+
+    Never pass it for a command that prompts the user. The new session it needs
+    also detaches the controlling terminal, so pkexec, sudo and any other tool
+    that reads a passphrase from the tty would find none and fail.
+    """
+    if kill_group:
+        return _run_own_group(cmd, check=check, **kwargs)
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check, **kwargs)
+
+
+def _run_own_group(cmd: List[str], check: bool = False, timeout: Optional[float] = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """`run` for a command whose descendants must not outlive it.
+
+    start_new_session makes cmd the leader of a session and process group of its
+    own, so its group id is its pid and the group holds nothing but this run's
+    processes. A timeout, or any other interruption of the read, kills that whole
+    group before the exception reaches the caller. Output read so far stays on
+    the exception, the way subprocess.run leaves it.
+
+    The new session costs cmd its controlling terminal, which is why `run` warns
+    that a prompting command must not ask for this.
+    """
+    with subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, **kwargs) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except BaseException:
+            _kill_own_group(proc)
+            # Reap the direct child only. It has been killed, so this cannot wait
+            # on a live process, and the descendants are not this process's to reap.
+            proc.wait()
+            raise
+        code = proc.returncode
+    if check and code:
+        raise subprocess.CalledProcessError(code, cmd, output=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, code, out, err)
+
+
+def _kill_own_group(proc: subprocess.Popen[str]) -> None:
+    """SIGKILL the process group proc leads.
+
+    _run_own_group starts proc with start_new_session, so the group id is proc's
+    pid. That identity is checked again here rather than assumed: signalling a
+    group VGS does not lead would reach the helper's own process group and kill
+    the command the user is running.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        return
+    if pgid != proc.pid:
+        eprint(f"bounded run: pid {proc.pid} leads no group of its own (pgid {pgid}); killing the child alone")
+        proc.kill()
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        proc.kill()
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def helper_entrypoint() -> Path:
+    """The `vshell-helper` stub beside this module, for running the helper as a new process.
+
+    Running this module as a script also reaches main, but CPython compiles a
+    script on every run; the stub's import loads the cached bytecode.
+    """
+    return Path(__file__).resolve().with_name("vshell-helper")
+
+
+def _sudo_user() -> str:
+    """The non-root user a sudo invocation acts for, empty when there is none."""
+    user = os.environ.get("SUDO_USER", "").strip()
+    return "" if user == "root" else user
+
+
+def login_home() -> Path:
+    """The passwd home of the user this process acts for, ignoring $HOME.
+
+    Under sudo the acting user is SUDO_USER, which is what makes `sudo vshell` write into
+    the invoking user's home rather than root's; otherwise it is the process's own uid.
+    Raises when the user cannot be resolved, so a guard built on it fails closed instead
+    of falling back to a home it did not establish.
+    """
+    sudo_user = _sudo_user()
+    if os.geteuid() == 0 and sudo_user:
+        return Path(pwd.getpwnam(sudo_user).pw_dir)
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def home() -> Path:
+    """The home VGS reads and writes: $HOME, which a sandbox deliberately overrides.
+
+    Only a sudo run leaves $HOME behind, so a privileged apply does not scatter the
+    invoking user's config through /root.
+    """
+    if os.geteuid() == 0 and _sudo_user():
+        try:
+            return login_home()
+        except Exception:
+            pass
+    return Path.home()
+
+
+def cfg_dir() -> Path:
+    return home() / ".config" / "vshell"
+
+
+def state_dir() -> Path:
+    return home() / ".local" / "state" / "vshell"
+
+
+def cache_dir() -> Path:
+    return home() / ".cache" / "vshell"
+
+
+_wp_thumbs.configure(_wp_thumbs.ThumbRuntime(cache_dir=cache_dir, run=run))
+
+
+def generated_dir() -> Path:
+    return cfg_dir() / "generated"
+
+
+def local_cfg_dir() -> Path:
+    return home() / ".config" / "vshell-local"
+
+
+def user_blueprints_dir() -> Path:
+    return cfg_dir() / "blueprints"
+
+
+def builtin_blueprints_dir() -> Path:
+    return repo_root() / "themes" / "blueprints"
+
+
+def user_themes_dir() -> Path:
+    return cfg_dir() / "themes"
+
+
+def builtin_themes_dir() -> Path:
+    return repo_root() / "themes"
+
+
+def targets_dir() -> Path:
+    return repo_root() / "themes" / "targets"
+
+
+_THEME_MUTATION_THREAD_LOCK = threading.RLock()
+_THEME_MUTATION_LOCK_DEPTH = 0
+_THEME_MUTATION_LOCK_FD: int | None = None
+
+
+@contextlib.contextmanager
+def theme_mutation_lock() -> Iterable[None]:
+    """Serialize theme mutations across helper processes.
+
+    Theme commands commonly compose user overlays, change one field, and write
+    the complete file back. Atomic replacement protects readers from partial
+    files, but without a transaction lock two QML/CLI helpers can still both
+    read the same old value and silently discard one another's edits. Keep one
+    process-wide flock for the outermost mutation and make nested apply calls
+    reentrant so command-level transactions can safely call apply_theme_obj().
+    """
+    global _THEME_MUTATION_LOCK_DEPTH, _THEME_MUTATION_LOCK_FD
+
+    with _THEME_MUTATION_THREAD_LOCK:
+        if _THEME_MUTATION_LOCK_DEPTH == 0:
+            lock_dir = cfg_dir()
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(lock_dir / ".theme-mutation.lock", flags, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except BaseException:
+                os.close(fd)
+                raise
+            _THEME_MUTATION_LOCK_FD = fd
+
+        _THEME_MUTATION_LOCK_DEPTH += 1
+        try:
+            yield
+        finally:
+            _THEME_MUTATION_LOCK_DEPTH -= 1
+            if _THEME_MUTATION_LOCK_DEPTH == 0:
+                fd = _THEME_MUTATION_LOCK_FD
+                _THEME_MUTATION_LOCK_FD = None
+                if fd is not None:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
+
+
+def deps_file() -> Path:
+    return repo_root() / "config" / "vshell" / "dependencies.json"
+
+
+APPLE_VENDOR = "05ac"
+
+# Apple displays expose brightness through a USB HID feature report.
+# The appledisplay kernel module can also expose a backlight, which VGS prefers.
+# HID logical ranges use centi-nits from each display's report descriptor.
+# Probe the HID interfaces for an in-range brightness response; interface numbers vary.
+APPLE_DISPLAYS: Dict[str, Dict[str, Any]] = {
+    "9243": {"alias": "apple-xdr", "label": "Apple Pro Display XDR", "min": 400, "max": 50000},
+    "1114": {"alias": "apple-studio", "label": "Apple Studio Display", "min": 400, "max": 60000},
+}
+
+# The probe ceiling permits stored brightness values above a panel's maximum.
+# Use the largest Apple ceiling to reject unrelated HID responses.
+APPLE_RAW_PROBE_CEILING = 60000
+
+# Human Thunderbolt device_name -> USB product id, so `doctor` can report that an
+# Apple display is present over Thunderbolt/DisplayPort while its USB control
+# interface never enumerated (video tunnel up, USB tunnel absent -> no backend
+# can reach brightness).
+APPLE_TB_NAMES: Dict[str, str] = {
+    "pro display xdr": "9243",
+    "studio display": "1114",
+}
+
+
+def resolve_path(value: str | None) -> str:
+    if not value:
+        return ""
+    value = value.replace(VSHELL_ROOT_TOKEN, str(repo_root()))
+    value = os.path.expandvars(value)
+    if value.startswith("~"):
+        value = str(home()) + value[1:]
+    return value
+
+
+def portable_ref(value: str | None) -> str:
+    """`value` as durable theme state records it: rooted on `${VSHELL_ROOT}` rather
+    than on the directory the shell happened to run from when the theme was applied.
+
+    `resolve_path` is the inverse. A shell started from a checkout or a worktree
+    reads its built-in theme packages out of that directory, so an absolute path to
+    a package background pins it: remove the checkout and every durable file still
+    names it, which is a wallpaper that no longer loads on any monitor.
+
+    Recording is one containment test. A path inside this installation's root is the
+    one this installation can name portably, and becomes a rooted reference.
+    Everything else passes through unchanged: a user theme package under
+    `~/.config/vshell/themes`, which does not move with the shell, a wallpaper
+    outside VGS entirely, and the colour literal `SessionData.setWallpaperColor`
+    records in the same field. Repairing a path this installation does not own is
+    `recovered_package_ref`, on the read side, where a value that turns out to name
+    nothing costs a wallpaper rather than replacing one that loads.
+
+    `Common/Paths.qml` mirrors this for `session.json`, which the shell alone
+    writes. `scripts/lib/wallpaper-ref-cases.json` is the one statement of the rule;
+    its `ref` and `resolve` sections are what the JavaScript suite runs.
+    """
+    if not value or not value.startswith("/"):
+        return value or ""
+    root = str(repo_root())
+    if value.startswith(root + "/"):
+        return VSHELL_ROOT_TOKEN + value[len(root):]
+    return value
+
+
+def recovered_package_ref(value: str | None) -> str:
+    """A theme package background another installation recorded, re-rooted on this one.
+
+    Emits a path only when the file it names is present here, which is why this is
+    the rule's one owner: `Common/Paths.qml` cannot ask the filesystem synchronously
+    and so carries no repair. A path already inside the user's packages answers as it
+    stands, since the copy it names is the one the user chose. Every other absolute
+    path with a package background's tail is looked for under the running root and
+    then under the user's packages, and answers with the first that holds it; a path
+    under the running root whose own file is gone can therefore answer with the
+    user's copy. `docs/architecture/wallpaper.md` states the rule.
+    """
+    if not value or not value.startswith("/"):
+        return value or ""
+    if value.startswith(str(user_themes_dir()) + "/"):
+        return value
+    tail = PACKAGE_BACKGROUND_RE.search(value)
+    if not tail:
+        return value
+    relative = f"themes/{tail.group(1)}/backgrounds/{tail.group(2)}"
+    if (repo_root() / relative).is_file():
+        return VSHELL_ROOT_TOKEN + "/" + relative
+    user_copy = user_themes_dir() / tail.group(1) / "backgrounds" / tail.group(2)
+    return str(user_copy) if user_copy.is_file() else value
+
+
+def resolved_wallpaper(value: str | None) -> str:
+    """A wallpaper as a reader gets it, out of whatever durable state recorded it.
+
+    Recovering before resolving is what makes state written before references
+    existed load the same image rather than nothing. A reference already in rooted
+    form passes `recovered_package_ref` unchanged, since it is not an absolute path.
+    """
+    return resolve_path(recovered_package_ref(value))
+
+
+def expand_dest(value: str) -> Path:
+    return Path(resolve_path(value)).expanduser()
+
+
+def ensure_dirs() -> None:
+    for p in [cfg_dir(), local_cfg_dir(), state_dir(), cache_dir(), generated_dir(), user_blueprints_dir(), user_themes_dir()]:
+        p.mkdir(parents=True, exist_ok=True)
+
+
+def clean_hex(value: str | None, fallback: str = "#000000") -> str:
+    if not value:
+        return fallback.lower()
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return fallback.lower()
+    if not value.startswith("#"):
+        value = "#" + value
+    if not HEX_RE.match(value):
+        return fallback.lower()
+    return value.lower()
+
+
+def parse_hex_strict(value: str, label: str = "color") -> str:
+    raw = (value or "").strip().strip('"').strip("'")
+    if not raw.startswith("#"):
+        raw = "#" + raw
+    if not HEX_RE.match(raw):
+        raise ValueError(f"invalid {label}: {value}")
+    return raw.lower()
+
+
+def strip_hash(value: str) -> str:
+    return clean_hex(value).lstrip("#")
+
+
+def rgb(value: str) -> Tuple[int, int, int]:
+    h = clean_hex(value).lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def hexc(r: float, g: float, b: float) -> str:
+    return "#%02x%02x%02x" % (max(0, min(255, round(r))), max(0, min(255, round(g))), max(0, min(255, round(b))))
+
+
+def blend(a: str, b: str, ratio: float) -> str:
+    ar, ag, ab = rgb(a)
+    br, bg, bb = rgb(b)
+    return hexc(ar * (1 - ratio) + br * ratio, ag * (1 - ratio) + bg * ratio, ab * (1 - ratio) + bb * ratio)
+
+
+def luminance(value: str) -> float:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def relative_luminance(value: str) -> float:
+    def channel(v: int) -> float:
+        x = v / 255.0
+        return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+    r, g, b = [channel(v) for v in rgb(value)]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(a: str, b: str) -> float:
+    la = relative_luminance(a)
+    lb = relative_luminance(b)
+    high = max(la, lb)
+    low = min(la, lb)
+    return (high + 0.05) / (low + 0.05)
+
+
+def ensure_contrast(fg: str, bg: str, min_ratio: float = 4.5, prefer: str | None = None) -> str:
+    fg = clean_hex(fg)
+    bg = clean_hex(bg)
+    if contrast_ratio(fg, bg) >= min_ratio:
+        return fg
+    targets = []
+    if prefer:
+        targets.append(clean_hex(prefer))
+    targets.extend(sorted(["#000000", "#ffffff"], key=lambda c: contrast_ratio(c, bg), reverse=True))
+    best = fg
+    best_ratio = contrast_ratio(fg, bg)
+    for target in targets:
+        for step in range(1, 21):
+            candidate = blend(fg, target, step / 20.0)
+            ratio = contrast_ratio(candidate, bg)
+            if ratio > best_ratio:
+                best = candidate
+                best_ratio = ratio
+            if ratio >= min_ratio:
+                return candidate
+    return best
+
+
+def saturation(value: str) -> float:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    return colorsys.rgb_to_hsv(r, g, b)[1]
+
+
+def hue(value: str) -> float:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
+
+
+def lighten(value: str, amount: float) -> str:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    l = min(1.0, l + (1.0 - l) * amount)
+    rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
+    return hexc(rr * 255, gg * 255, bb * 255)
+
+
+def darken(value: str, amount: float) -> str:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    l = max(0.0, l * (1.0 - amount))
+    rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
+    return hexc(rr * 255, gg * 255, bb * 255)
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def normalize_scheme(value: str | None) -> str:
+    scheme = (value or "scheme-tonal-spot").strip().lower().replace("_", "-")
+    if not scheme.startswith("scheme-"):
+        scheme = "scheme-" + scheme
+    return scheme if scheme in MATUGEN_SCHEMES else "scheme-tonal-spot"
+
+
+def normalize_contrast(value: float | int | str | None) -> float:
+    try:
+        raw = float(value if value is not None else 0)
+    except Exception:
+        raw = 0.0
+    # theme extraction may expose -1..1; tolerate percent sliders too.
+    if abs(raw) > 1:
+        raw = raw / 100.0
+    return clamp(raw, -1.0, 1.0)
+
+
+def normalize_mode(value: str | None, default: str = "auto") -> str:
+    mode = (value or default or "auto").strip().lower()
+    return mode if mode in THEME_MODES else default
+
+
+def readable_on(value: str) -> str:
+    return "#000000" if contrast_ratio("#000000", value) >= contrast_ratio("#ffffff", value) else "#ffffff"
+
+
+def color_chroma(value: str) -> float:
+    r, g, b = rgb(value)
+    return (max(r, g, b) - min(r, g, b)) / 255.0
+
+
+def color_hue(value: str) -> float | None:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if d < 1e-6:
+        return None
+    if mx == r:
+        h = ((g - b) / d) % 6
+    elif mx == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return h * 60.0
+
+
+def _hue_distance(a: float, b: float) -> float:
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+_theme_color.configure(_theme_color.ThemeColorRuntime(
+    clean_hex=clean_hex,
+    rgb=rgb,
+    hexc=hexc,
+    clamp=clamp,
+    contrast_ratio=contrast_ratio,
+    ensure_contrast=ensure_contrast,
+))
+color_to_oklab = _theme_color.color_to_oklab
+_oklch_max_chroma = _theme_color._oklch_max_chroma
+_bounded_lightness = _theme_color._bounded_lightness
+_relative_oklch = _theme_color._relative_oklch
+_map_oklch_lightness = _theme_color._map_oklch_lightness
+oklch_to_hex = _theme_color.oklch_to_hex
+_oklab_contrast_adjust = _theme_color._oklab_contrast_adjust
+
+
+def ensure_usable_accent(accent: str, bg: str, palette: Dict[str, str], prefer: str,
+                         min_contrast: float = 3.0, continuous: bool = False) -> str:
+    """Derive a readable shell accent while leaving curated terminal colors intact.
+    Accent is a foreground role for indicators, selections and icons. Prefer
+    the source hue when a replacement is needed for contrast or chroma."""
+    if continuous:
+        # Restyle sliders must not make the derived accent jump between unrelated
+        # ANSI swatches as a contrast/chroma threshold is crossed.
+        return _oklab_contrast_adjust(accent, bg, min_contrast, prefer)
+    if contrast_ratio(accent, bg) >= 2.5 and color_chroma(accent) >= 0.10:
+        return accent
+    candidates: List[Tuple[str, float]] = []
+    for key in ("blue", "cyan", "magenta", "green", "yellow", "red",
+                "brightBlue", "brightCyan", "brightMagenta", "brightGreen",
+                "brightYellow", "brightRed"):
+        candidate = palette.get(key)
+        if not candidate:
+            continue
+        cr = contrast_ratio(candidate, bg)
+        if cr >= min_contrast:
+            candidates.append((candidate, cr))
+    if not candidates:
+        return ensure_contrast(accent, bg, min_contrast, prefer)
+
+    def vividness(pair: Tuple[str, float]) -> float:
+        c, cr = pair
+        return color_chroma(c) * min(cr, 7.0)
+
+    # If the original accent has a clear hue, keep the theme on-brand by preferring
+    # a readable color in that hue family before falling back to the most vivid.
+    orig_hue = color_hue(accent) if color_chroma(accent) >= 0.15 else None
+    if orig_hue is not None:
+        near = [p for p in candidates
+                if color_hue(p[0]) is not None and _hue_distance(color_hue(p[0]), orig_hue) <= 45.0]
+        if near:
+            return max(near, key=vividness)[0]
+    return max(candidates, key=vividness)[0]
+
+
+def ensure_background_supports_text(bg: str, mode: str, min_ratio: float = 7.0) -> str:
+    bg = clean_hex(bg)
+    if max(contrast_ratio("#000000", bg), contrast_ratio("#ffffff", bg)) >= min_ratio:
+        return bg
+    target = "#ffffff" if mode == "light" else "#000000"
+    best = bg
+    best_ratio = max(contrast_ratio("#000000", bg), contrast_ratio("#ffffff", bg))
+    for step in range(1, 21):
+        candidate = blend(bg, target, step / 20.0)
+        ratio = max(contrast_ratio("#000000", candidate), contrast_ratio("#ffffff", candidate))
+        if ratio > best_ratio:
+            best = candidate
+            best_ratio = ratio
+        if ratio >= min_ratio:
+            return candidate
+    return best
+
+
+def ensure_contrast_set(value: str, checks: List[Tuple[str, float]], targets: List[str], steps: int = 100) -> str:
+    """Search blends toward targets for a color that meets the contrast checks.
+    Return the best tested contrast score if no candidate meets every check.
+    ANSI colors need checks as backgrounds as well as foregrounds in terminal apps."""
+    value = clean_hex(value)
+    normalized = [(clean_hex(other), ratio) for other, ratio in checks if ratio > 0]
+    if not normalized:
+        return value
+
+    def meets(candidate: str) -> bool:
+        return all(contrast_ratio(candidate, other) >= ratio for other, ratio in normalized)
+
+    def score(candidate: str) -> float:
+        return min(contrast_ratio(candidate, other) / ratio for other, ratio in normalized)
+
+    if meets(value):
+        return value
+
+    best = value
+    best_score = score(value)
+    for target in targets:
+        target = clean_hex(target)
+        for step in range(1, steps + 1):
+            candidate = blend(value, target, step / steps)
+            candidate_score = score(candidate)
+            if candidate_score > best_score:
+                best = candidate
+                best_score = candidate_score
+            if meets(candidate):
+                return candidate
+    return best
+
+
+def move_toward_while_contrast(value: str, target: str, checks: List[Tuple[str, float]], steps: int = 100) -> str:
+    """Move a color toward a target until any required contrast would break."""
+    value = clean_hex(value)
+    target = clean_hex(target)
+    normalized = [(clean_hex(other), ratio) for other, ratio in checks if ratio > 0]
+    best = value
+    for step in range(1, steps + 1):
+        candidate = blend(value, target, step / steps)
+        if not all(contrast_ratio(candidate, other) >= ratio for other, ratio in normalized):
+            return best
+        best = candidate
+    return best
+
+
+def cap_saturation(value: str, max_sat: float) -> str:
+    value = clean_hex(value)
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    s = min(s, max_sat)
+    rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
+    return hexc(rr * 255, gg * 255, bb * 255)
+
+
+def set_ansi_role(roles: Dict[str, str], index: int, name: str, value: str) -> None:
+    value = clean_hex(value)
+    roles[f"color{index}"] = value
+    roles[name] = value
+
+
+def stabilize_ansi_role_pairs(roles: Dict[str, str], bg: str, mode: str) -> None:
+    """Anchor the 16-color ANSI palette for foreground and background use.
+
+    Modern TUIs use both normal backgrounds (40-47) and bright backgrounds
+    (100-107). Do not force every ANSI slot to be a readable foreground on the
+    terminal default background; instead keep normal colors background-capable,
+    bright colors high-intensity, and neutral endpoints sane for both polarities.
+    """
+    normal_colors = [(1, "red"), (2, "green"), (3, "yellow"), (4, "blue"), (5, "magenta"), (6, "cyan")]
+    bright_colors = [(9, "bright_red"), (10, "bright_green"), (11, "bright_yellow"), (12, "bright_blue"), (13, "bright_magenta"), (14, "bright_cyan")]
+
+    if mode == "light":
+        black = ensure_contrast_set(cap_saturation(roles["black"], 0.12), [(bg, 7.0)], ["#000000"])
+        set_ansi_role(roles, 0, "black", black)
+
+        bright_black = ensure_contrast_set(cap_saturation(roles["bright_black"], 0.10), [(bg, 4.5)], ["#000000"])
+        set_ansi_role(roles, 8, "bright_black", bright_black)
+
+        white = ensure_contrast_set(
+            cap_saturation(roles["white"], 0.10),
+            [(black, 4.5), (bright_black, 3.0), (bg, 1.5)],
+            ["#ffffff"],
+        )
+        white = move_toward_while_contrast(
+            white,
+            "#ffffff",
+            [(bg, 1.5), (black, 4.5), (bright_black, 3.0)],
+        )
+        set_ansi_role(roles, 7, "white", white)
+
+        bright_white = ensure_contrast_set(
+            cap_saturation(roles["bright_white"], 0.08),
+            [(black, 4.5), (bg, 1.05)],
+            ["#ffffff"],
+        )
+        bright_white = move_toward_while_contrast(bright_white, "#ffffff", [(black, 4.5), (bg, 1.05)])
+        set_ansi_role(roles, 15, "bright_white", bright_white)
+
+        for index, name in normal_colors:
+            set_ansi_role(roles, index, name, ensure_contrast_set(roles[name], [(bg, 4.5), (white, 4.5)], ["#000000"]))
+
+        for index, name in bright_colors:
+            set_ansi_role(roles, index, name, ensure_contrast_set(roles[name], [(bg, 3.0), (black, 4.5)], ["#ffffff"]))
+        return
+
+    bright_white = ensure_contrast_set(cap_saturation(roles["bright_white"], 0.08), [(bg, 7.0)], ["#ffffff"])
+    bright_white = move_toward_while_contrast(bright_white, "#ffffff", [(bg, 7.0)])
+    set_ansi_role(roles, 15, "bright_white", bright_white)
+
+    black = ensure_contrast_set(cap_saturation(roles["black"], 0.12), [(bright_white, 4.5), (bg, 1.25)], [bg, "#000000"])
+    black = move_toward_while_contrast(black, bg, [(bright_white, 4.5), (bg, 1.25)])
+    set_ansi_role(roles, 0, "black", black)
+
+    white = ensure_contrast_set(
+        cap_saturation(roles["white"], 0.10),
+        [(bg, 4.5), (black, 3.0)],
+        ["#ffffff"],
+    )
+    white = move_toward_while_contrast(white, "#ffffff", [(bg, 4.5), (black, 3.0)])
+    set_ansi_role(roles, 7, "white", white)
+
+    bright_black = ensure_contrast_set(
+        cap_saturation(roles["bright_black"], 0.10),
+        [(bright_white, 4.5), (white, 3.0), (bg, 1.25)],
+        [bg, "#000000"],
+    )
+    bright_black = move_toward_while_contrast(bright_black, bg, [(bright_white, 4.5), (white, 3.0), (bg, 1.5)])
+    set_ansi_role(roles, 8, "bright_black", bright_black)
+
+    for index, name in normal_colors:
+        set_ansi_role(roles, index, name, ensure_contrast_set(roles[name], [(bg, 3.0), (white, 4.5)], ["#000000"]))
+
+    for index, name in bright_colors:
+        set_ansi_role(roles, index, name, ensure_contrast_set(roles[name], [(bg, 4.5), (black, 4.5)], ["#ffffff"]))
+
+
+def rotate_color(value: str, degrees: float, sat_mul: float = 1.0, val_mul: float = 1.0) -> str:
+    r, g, b = [x / 255.0 for x in rgb(value)]
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    h = ((h * 360.0 + degrees) % 360.0) / 360.0
+    s = clamp(s * sat_mul, 0.0, 1.0)
+    v = clamp(v * val_mul, 0.0, 1.0)
+    rr, gg, bb = colorsys.hsv_to_rgb(h, s, v)
+    return hexc(rr * 255, gg * 255, bb * 255)
+
+
+def tune_color(value: str, sat_mul: float = 1.0, val_mul: float = 1.0) -> str:
+    return rotate_color(value, 0, sat_mul=sat_mul, val_mul=val_mul)
+
+
+# --- Whole-palette restyle adjustments -----------------------------------------
+# The color-space and whole-palette implementation lives in the focused module;
+# these aliases preserve the helper's stable Python/CLI surface for callers.
+ADJUST_KEYS = _theme_color.ADJUST_KEYS
+ADJUST_RANGE = _theme_color.ADJUST_RANGE
+BASE_COLOR_KEYS = _theme_color.BASE_COLOR_KEYS
+normalize_adjustments = _theme_color.normalize_adjustments
+adjustments_all_zero = _theme_color.adjustments_all_zero
+apply_adjustments = _theme_color.apply_adjustments
+
+
+# The second spellings of a key VGS has its own name for, and the one owner of
+# that question: `color_map_tiers` carries the canonical name beside the spelling
+# so a fold of several maps compares one key rather than two names for one slot,
+# and `parse_color_edits` resolves an edit's key through it. The two read the
+# table differently, one adding the canonical name and one replacing the key, so
+# it is a shared table and not a shared function. A tier holds only `COLOR_KEYS`
+# members, so the spellings outside that set are reached by an edit alone.
+COLOR_KEY_ALIASES = {"selectionbackground": "selection_background",
+                     "selection_bg": "selection_background",
+                     "selectionforeground": "selection_foreground",
+                     "selection_fg": "selection_foreground",
+                     "variant": "mode"}
+ColorTiers = Tuple[Dict[str, str], Dict[str, str]]
+
+
+def color_map_tiers(data: Dict[str, str]) -> ColorTiers:
+    """The palette slots `data`'s keys name, in the two tiers a fold of several
+    such maps arbitrates on separately.
+
+    `stated` holds the slots a key names outright: the key itself, its
+    underscore-free spelling, or either under a `colors_`, `palette_` or `ansi_`
+    prefix, which is how a matugen-shaped file writes them. `inferred` holds the
+    slots a compound key's last tokens name, such as `background` for
+    `active_tab_background` or `selection_background`. A stated slot beats an
+    inferred one.
+
+    Two tiers because a package's layers are folded after they are read, and a
+    single pass over the union of their raw keys arbitrates by spelling rather
+    than by layer: the exact pass claimed `background` from the built-in file's
+    key and refused the user overlay's `colors_background` for the same slot.
+    """
+    stated: Dict[str, str] = {}
+    inferred: Dict[str, str] = {}
+
+    def assign(tier: Dict[str, str], candidate: str, value: str) -> bool:
+        for name in (candidate, candidate.replace("_", "")):
+            if name in COLOR_KEYS:
+                tier.setdefault(name, value)
+                return True
+        return False
+
+    items = [(key.replace("-", "_").lower(), value) for key, value in data.items()]
+    # Exact role keys must claim their slots before compound keys such as
+    # active_tab_background can use the fuzzy last-token fallback.
+    for norm, value in items:
+        if norm in COLOR_MODE_KEYS:
+            # A mode key names itself, so the last spelling of it answers.
+            stated[norm] = value
+        assign(stated, norm, value)
+
+    # Fuzzy fallbacks handle flattened nested keys, such as colors_primary_background,
+    # without replacing exact matches.
+    for norm, value in items:
+        claimed = False
+        for prefix in ("colors_", "palette_", "ansi_"):
+            if norm.startswith(prefix) and assign(stated, norm[len(prefix):], value):
+                claimed = True
+                break
+        if claimed:
+            continue
+        parts = norm.split("_")
+        candidates: List[str] = []
+        if len(parts) >= 3:
+            candidates.append("_".join(parts[-2:]))
+        if len(parts) >= 2:
+            candidates.append(parts[-1])
+        for candidate in candidates:
+            if assign(inferred, candidate, value):
+                break
+
+    for tier in (stated, inferred):
+        for spelling, canonical in COLOR_KEY_ALIASES.items():
+            if spelling in tier:
+                tier.setdefault(canonical, tier[spelling])
+    return stated, inferred
+
+
+def merged_color_map(layers: List[ColorTiers]) -> Dict[str, str]:
+    """`layers`, lowest first, folded into the palette slots they name together.
+
+    Each tier folds on its own, so the highest layer that states a slot answers
+    for it however the layer below spelled it, and a slot no layer states takes
+    what the compound keys infer.
+    """
+    stated: Dict[str, str] = {}
+    inferred: Dict[str, str] = {}
+    for layer_stated, layer_inferred in layers:
+        stated.update(layer_stated)
+        inferred.update(layer_inferred)
+    out = dict(stated)
+    for key, value in inferred.items():
+        out.setdefault(key, value)
+    return out
+
+
+def normalize_color_map(data: Dict[str, str]) -> Dict[str, str]:
+    """The palette slots one colours map's keys name. One layer, folded alone."""
+    return merged_color_map([color_map_tiers(data)])
+
+
+def recognized_color_count(data: Dict[str, str]) -> int:
+    normalized = normalize_color_map(data)
+    return len([k for k in normalized if k in COLOR_KEYS and k not in COLOR_MODE_KEYS])
+
+
+class ColorsRead(enum.Enum):
+    """What a colours parse is reading, which decides the key names it returns,
+    whether the loose matugen-style fallback runs, and what it counts as a colour
+    before refusing the file.
+
+    `PALETTE` is a whole palette in one file, returned under the palette slots
+    `normalize_color_map` emits. `PALETTE_LAYER` is one layer of a package's
+    palette, returned under the keys the file itself wrote, for a caller that
+    folds every layer through `color_map_tiers` and `merged_color_map`. Resolving
+    a layer's keys on its own let an overlay that omitted a key contribute a
+    value inferred from its neighbours over the layer below that stated the key
+    outright. `ROLES` is a `ui-roles.toml`, keyed by role names
+    `normalize_color_map` drops, and hand-written rather than matugen output, so
+    it takes the strict TOML pass alone.
+    """
+
+    PALETTE = enum.auto()
+    PALETTE_LAYER = enum.auto()
+    ROLES = enum.auto()
+
+
+def parse_colors_toml(path: Path, allow_empty: bool = False,
+                      kind: ColorsRead = ColorsRead.PALETTE,
+                      discarded: List[str] | None = None) -> Dict[str, str]:
+    """Read a colours file. `allow_empty` accepts a file holding no colours, which
+    a terminal-colors.toml overlay uses to mean no terminal slots."""
+    if not path.exists():
+        raise ValueError(f"colors file not found: {path}")
+    return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty,
+                                  kind, discarded)
+
+
+def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
+                           allow_empty: bool = False,
+                           kind: ColorsRead = ColorsRead.PALETTE,
+                           discarded: List[str] | None = None) -> Dict[str, str]:
+    """The colours a `colors.toml` body holds, for a caller holding the text.
+
+    `parse_colors_toml` reads a file and lands here, so a writer that needs the
+    map of what it is about to write reads it with the same parser the loader
+    will use rather than a second one that could drift from it.
+
+    `kind` names what is being read; `ColorsRead` holds what each one returns.
+    One parser for all three, so `ui-roles.toml` and a package's colour layer
+    read through this TOML pass rather than a second spelling of it.
+
+    `discarded`, when given, collects the keys an assignment named and this
+    produced no value for. A caller that means to honour every key its file
+    states cannot otherwise tell one from a key the file never held: a
+    three-digit `#fff`, an eight-digit `#rrggbbaa` or a CSS colour name leaves
+    without a trace, so `ui-roles.toml` reported nothing and the derivation
+    painted the grey the file exists to remove. It is filled by the strict pass,
+    which is the only pass a `ROLES` read runs, so a key is named there or
+    honoured there and never both.
+    """
+
+    def discard(key: str) -> None:
+        if discarded is not None and key:
+            discarded.append(key)
+
+    def flatten(prefix: str, value: Any, out: Dict[str, str]) -> None:
+        if isinstance(value, dict):
+            for k, v in value.items():
+                flatten(f"{prefix}_{k}" if prefix else str(k), v, out)
+            return
+        key = prefix
+        if isinstance(value, str):
+            val = value.strip()
+            if HEX_RE.match(val):
+                out[key] = clean_hex(val)
+                return
+            if key.replace("-", "_").lower() in COLOR_MODE_KEYS:
+                out[key] = val.lower()
+                return
+        discard(key)
+
+    out: Dict[str, str] = {}
+    toml_error: Exception | None = None
+    try:
+        parsed = tomllib.loads(raw_text)
+        flatten("", parsed, out)
+    except Exception as exc:
+        toml_error = exc
+
+    # Also support loose matugen-style variants that are close to TOML. Only for
+    # a palette file: its hex group is unanchored where `HEX_RE` is not, so an
+    # eight-digit `#rrggbbaa` came back through it truncated while the strict
+    # pass above had already named the key as unreadable, and one declaration was
+    # honoured or refused depending on whether an unrelated key happened to
+    # parse. `ui-roles.toml` is hand-written and never matugen output, so it
+    # takes the strict pass alone.
+    if not out and kind is not ColorsRead.ROLES:
+        for raw in raw_text.splitlines():
+            m = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=\s*['\"]?((?:#)?[0-9A-Fa-f]{6})['\"]?", raw)
+            if m:
+                out[m.group(1)] = clean_hex(m.group(2))
+                continue
+            sm = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=\s*['\"]([^'\"]+)['\"]", raw)
+            if sm and sm.group(1).replace("-", "_").lower() in COLOR_MODE_KEYS:
+                out[sm.group(1)] = sm.group(2).lower()
+                continue
+
+    # A layer counts the colours its keys resolve to, not the keys it wrote, so a
+    # layer holding nothing a palette can use is refused with the same diagnostic
+    # whether or not its caller normalizes here.
+    if kind is ColorsRead.PALETTE:
+        normalized, recognized = normalize_color_map(out), recognized_color_count(out)
+    elif kind is ColorsRead.PALETTE_LAYER:
+        normalized, recognized = dict(out), recognized_color_count(out)
+    elif kind is ColorsRead.ROLES:
+        normalized, recognized = dict(out), len(out)
+    else:
+        raise ValueError(f"colors-read {kind!r}: no parse defined for this read")
+    if recognized == 0 and not (allow_empty and toml_error is None):
+        detail = f": {toml_error}" if toml_error else ""
+        raise ValueError(f"no recognized colors in {label}{detail}")
+    return normalized
+
+
+def palette_from_colors_map(data: Dict[str, str], name: str = "imported", wallpaper: str = "", source: str = "generated") -> Dict[str, Any]:
+    data = normalize_color_map(data)
+    curated = source == "curated"
+    colors: List[str] = []
+    for i in range(16):
+        candidates = [f"color{i}"]
+        if i < len(ANSI_NAMES):
+            candidates.append(ANSI_NAMES[i])
+        val = ""
+        for key in candidates:
+            if key in data:
+                val = data[key]
+                break
+        colors.append(clean_hex(val, DEFAULT_COLORS[i]))
+
+    bg = clean_hex(data.get("background") or data.get("bg") or colors[0], colors[0])
+    mode = (data.get("theme_type") or data.get("mode") or ("light" if luminance(bg) > 0.5 else "dark")).lower()
+    if mode not in {"dark", "light"}:
+        mode = "light" if luminance(bg) > 0.5 else "dark"
+    fg_prefer = "#000000" if mode == "light" else "#ffffff"
+    fg = clean_hex(data.get("foreground") or data.get("fg") or colors[7], colors[7])
+    accent = clean_hex(data.get("accent") or data.get("primary") or colors[4], colors[4])
+
+    if not curated:
+        # Generated/imported palettes get normalize + contrast; curated data is
+        # kept byte-exact and only missing values fall back to role mapping.
+        bg = ensure_background_supports_text(bg, mode, 7.0)
+        fg = ensure_contrast(fg, bg, 7.0, fg_prefer)
+        accent = ensure_contrast(accent, bg, 3.0, fg_prefer)
+        adjusted_colors: List[str] = []
+        for i, color in enumerate(colors):
+            minimum = 4.5 if i in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} else 3.0
+            adjusted_colors.append(ensure_contrast(color, bg, minimum, fg_prefer))
+        colors = adjusted_colors
+        colors[7] = ensure_contrast(colors[7], bg, 4.5, fg_prefer)
+        colors[8] = ensure_contrast(colors[8], bg, 4.5, fg_prefer)
+        colors[15] = fg
+
+    selection_bg = clean_hex(data.get("selection_background") or data.get("selectionBackground") or blend(accent, bg, 0.25), accent)
+    selection_fg = clean_hex(data.get("selection_foreground") or data.get("selectionForeground") or readable_on(selection_bg), readable_on(selection_bg))
+    cursor = clean_hex(data.get("cursor") or accent, accent)
+    if not curated:
+        selection_bg = ensure_contrast(selection_bg, bg, 1.6, fg_prefer)
+        selection_fg = ensure_contrast(selection_fg, selection_bg, 4.5)
+        cursor = ensure_contrast(cursor, bg, 3.0, fg_prefer)
+    extended = {
+        "background": bg,
+        "foreground": fg,
+        "accent": accent,
+        "cursor": cursor,
+        "selection_background": selection_bg,
+        "selection_foreground": selection_fg,
+    }
+    return {
+        "name": name,
+        "source": source if source in {"curated", "generated"} else "generated",
+        "palette": {
+            "colors": colors,
+            "wallpaper": wallpaper,
+            "mode": mode,
+            "lightMode": mode == "light",
+            "extendedColors": extended,
+            "wallpaperSource": "vshell",
+        },
+        "timestamp": int(time.time() * 1000),
+    }
+
+
+def quantize_wallpaper(path: Path, limit: int = 16) -> List[str]:
+    Image = _wp_thumbs.pil_image()
+    if Image is None:
+        raise RuntimeError("Pillow is required for wallpaper palette extraction")
+    img = Image.open(path).convert("RGB")
+    img.thumbnail((220, 220))
+    quantized = img.quantize(colors=max(16, limit * 3), method=Image.Quantize.MEDIANCUT)
+    palette = quantized.getpalette() or []
+    pixels = quantized.get_flattened_data() if hasattr(quantized, "get_flattened_data") else quantized.getdata()
+    counts = Counter(pixels)
+    ranked: List[Tuple[int, str]] = []
+    for idx, count in counts.most_common(64):
+        off = idx * 3
+        if off + 2 >= len(palette):
+            continue
+        c = hexc(palette[off], palette[off + 1], palette[off + 2])
+        ranked.append((count, c))
+    seen = set()
+    colors: List[str] = []
+    for _count, color in ranked:
+        r, g, b = rgb(color)
+        bucket = (r // 24, g // 24, b // 24)
+        if bucket in seen:
+            continue
+        seen.add(bucket)
+        colors.append(color)
+    return colors or DEFAULT_COLORS
+
+
+def wallpaper_average_luminance(path: Path) -> float:
+    Image = _wp_thumbs.pil_image()
+    if Image is None:
+        return 0.0
+    img = Image.open(path).convert("RGB")
+    img.thumbnail((96, 96))
+    raw_pixels = img.get_flattened_data() if hasattr(img, "get_flattened_data") else img.getdata()
+    pixels = list(raw_pixels)
+    if not pixels:
+        return 0.0
+    total = 0.0
+    for r, g, b in pixels:
+        total += 0.2126 * (r / 255.0) + 0.7152 * (g / 255.0) + 0.0722 * (b / 255.0)
+    return total / len(pixels)
+
+
+def pick_hue(candidates: List[str], lo: float, hi: float, fallback: str, prefer_light: bool = False) -> str:
+    def in_range(h: float) -> bool:
+        if lo <= hi:
+            return lo <= h < hi
+        return h >= lo or h < hi
+    pool = [c for c in candidates if saturation(c) > 0.18 and in_range(hue(c))]
+    if not pool:
+        return fallback
+    return sorted(pool, key=lambda c: (abs(luminance(c) - (0.62 if prefer_light else 0.48)), -saturation(c)))[0]
+
+
+def blueprint_from_wallpaper(path: Path, name: str = "wallpaper", scheme: str = "scheme-tonal-spot", contrast: float = 0.0, mode: str = "auto") -> Dict[str, Any]:
+    if not path.exists():
+        raise ValueError(f"wallpaper not found: {path}")
+    scheme = normalize_scheme(scheme)
+    contrast = normalize_contrast(contrast)
+    mode = normalize_mode(mode)
+    cols = quantize_wallpaper(path, 16)
+    darks = [c for c in cols if luminance(c) < 0.35]
+    lights = [c for c in cols if luminance(c) > 0.62]
+    saturated = sorted(cols, key=lambda c: (saturation(c), abs(luminance(c) - 0.52)), reverse=True)
+    raw_dark = min(darks or cols, key=lambda c: luminance(c))
+    raw_light = max(lights or cols, key=lambda c: luminance(c))
+    base_accent = saturated[0] if saturated else DEFAULT_COLORS[4]
+    average_luma = wallpaper_average_luminance(path)
+    if mode == "auto":
+        # White/bright wallpapers should propose light mode instead of forcing a dark shell
+        # from a single tiny dark pixel. Dark wallpapers still produce dark palettes.
+        mode = "light" if average_luma > 0.58 and luminance(raw_light) > 0.62 else "dark"
+
+    bg_source = raw_dark
+    fg_source = raw_light
+    if mode == "dark" and luminance(bg_source) > 0.45:
+        bg_source = tune_color(base_accent, sat_mul=0.65, val_mul=0.42)
+    if mode == "light" and luminance(fg_source) < 0.55:
+        fg_source = tune_color(base_accent, sat_mul=0.24, val_mul=1.15)
+
+    contrast_pos = max(0.0, contrast)
+    contrast_neg = max(0.0, -contrast)
+    if mode == "dark":
+        bg = darken(bg_source, 0.18 + contrast_pos * 0.18)
+        fg = lighten(fg_source, 0.12 + contrast_pos * 0.10)
+        if luminance(bg) > 0.30:
+            bg = darken(bg, 0.45)
+        if luminance(fg) < 0.68:
+            fg = lighten(fg, 0.45)
+        if contrast_neg:
+            bg = blend(bg, fg, contrast_neg * 0.18)
+            fg = blend(fg, bg, contrast_neg * 0.12)
+    else:
+        bg = lighten(fg_source, 0.20 + contrast_pos * 0.10)
+        fg = darken(bg_source, 0.24 + contrast_pos * 0.14)
+        if luminance(bg) < 0.82:
+            bg = lighten(bg, 0.35)
+        if luminance(fg) > 0.36:
+            fg = darken(fg, 0.45)
+        if contrast_neg:
+            bg = blend(bg, fg, contrast_neg * 0.15)
+            fg = blend(fg, bg, contrast_neg * 0.14)
+
+    sat_boost = clamp(1.0 + contrast * 0.18, 0.72, 1.24)
+    val_boost = clamp(1.0 + contrast * 0.08, 0.84, 1.12)
+    accent = tune_color(base_accent, sat_mul=sat_boost, val_mul=val_boost)
+
+    if scheme == "scheme-content" or scheme == "scheme-fidelity":
+        red = pick_hue(cols, 345, 25, rotate_color(accent, 145))
+        green = pick_hue(cols, 80, 165, rotate_color(accent, -120))
+        yellow = pick_hue(cols, 35, 75, rotate_color(accent, 70), True)
+        blue = pick_hue(cols, 185, 255, accent)
+        magenta = pick_hue(cols, 255, 345, rotate_color(accent, -45))
+        cyan = pick_hue(cols, 165, 205, rotate_color(accent, 35))
+    elif scheme == "scheme-monochrome":
+        red = green = yellow = blue = magenta = cyan = tune_color(accent, sat_mul=0.05, val_mul=0.92)
+    elif scheme == "scheme-neutral":
+        red = rotate_color(accent, 150, sat_mul=0.25)
+        green = rotate_color(accent, -120, sat_mul=0.25)
+        yellow = rotate_color(accent, 75, sat_mul=0.25)
+        blue = tune_color(accent, sat_mul=0.35)
+        magenta = rotate_color(accent, -45, sat_mul=0.30)
+        cyan = rotate_color(accent, 35, sat_mul=0.30)
+    elif scheme == "scheme-vibrant":
+        red = rotate_color(accent, 150, sat_mul=1.45, val_mul=1.08)
+        green = rotate_color(accent, -120, sat_mul=1.45, val_mul=1.08)
+        yellow = rotate_color(accent, 70, sat_mul=1.35, val_mul=1.12)
+        blue = tune_color(accent, sat_mul=1.5, val_mul=1.10)
+        magenta = rotate_color(accent, -45, sat_mul=1.45, val_mul=1.08)
+        cyan = rotate_color(accent, 35, sat_mul=1.45, val_mul=1.08)
+    elif scheme == "scheme-expressive":
+        accent = rotate_color(accent, 240, sat_mul=1.12, val_mul=1.04)
+        red = rotate_color(accent, 115)
+        green = rotate_color(accent, 210)
+        yellow = rotate_color(accent, 55)
+        blue = accent
+        magenta = rotate_color(accent, -70)
+        cyan = rotate_color(accent, 80)
+    elif scheme == "scheme-fruit-salad":
+        accent = rotate_color(accent, -50, sat_mul=1.15)
+        red = rotate_color(accent, 95)
+        green = rotate_color(accent, -80)
+        yellow = rotate_color(accent, 45)
+        blue = rotate_color(accent, 160)
+        magenta = rotate_color(accent, -140)
+        cyan = rotate_color(accent, -35)
+    elif scheme == "scheme-rainbow":
+        red = rotate_color(accent, 0)
+        yellow = rotate_color(accent, 60)
+        green = rotate_color(accent, 120)
+        cyan = rotate_color(accent, 180)
+        blue = rotate_color(accent, 240)
+        magenta = rotate_color(accent, 300)
+    else:  # scheme-tonal-spot
+        red = rotate_color(accent, 145, sat_mul=0.75)
+        green = rotate_color(accent, -120, sat_mul=0.68)
+        yellow = rotate_color(accent, 70, sat_mul=0.70, val_mul=1.08)
+        blue = tune_color(accent, sat_mul=0.78)
+        magenta = rotate_color(accent, -45, sat_mul=0.72)
+        cyan = rotate_color(accent, 35, sat_mul=0.70)
+
+    if mode == "light":
+        black = ensure_contrast(darken(fg, 0.08), bg, 4.5, "#000000")
+        bright_black = ensure_contrast(blend(fg, bg, 0.32), bg, 4.5, "#000000")
+        white = ensure_contrast(blend(fg, bg, 0.20), bg, 4.5, "#000000")
+    else:
+        black = ensure_contrast(darken(bg, 0.05), bg, 3.0, "#ffffff")
+        bright_black = ensure_contrast(lighten(bg, clamp(0.28 + contrast * 0.10, 0.16, 0.40)), bg, 4.5, "#ffffff")
+        white = ensure_contrast(blend(fg, bg, 0.25), bg, 4.5, "#ffffff")
+    bright_white = ensure_contrast(fg, bg, 7.0, "#000000" if mode == "light" else "#ffffff")
+    ansi = [
+        black, red, green, yellow, blue, magenta, cyan, white,
+        bright_black, lighten(red, 0.25), lighten(green, 0.25), lighten(yellow, 0.18), lighten(blue, 0.25), lighten(magenta, 0.25), lighten(cyan, 0.25), bright_white,
+    ]
+    data = {f"color{i}": c for i, c in enumerate(ansi)}
+    data.update({
+        "background": bg,
+        "foreground": fg,
+        "accent": accent,
+        "cursor": accent,
+        "selection_background": blend(accent, bg, 0.20),
+        "selection_foreground": readable_on(accent),
+        "mode": mode,
+    })
+    bp = palette_from_colors_map(data, name=name, wallpaper=str(path))
+    bp["palette"]["wallpaperSource"] = "extracted"
+    bp["palette"]["scheme"] = scheme
+    bp["palette"]["contrast"] = contrast
+    bp["palette"]["modePreference"] = mode
+    bp["palette"]["averageLuminance"] = round(average_luma, 4)
+    return bp
+
+
+def blueprint_paths() -> List[Path]:
+    ensure_dirs()
+    paths: List[Path] = []
+    for directory in [builtin_blueprints_dir(), user_blueprints_dir()]:
+        if not directory.exists():
+            continue
+        paths.extend(sorted(directory.glob("*.json")))
+    return paths
+
+
+def load_blueprint(path: Path) -> Dict[str, Any]:
+    bp = json.loads(path.read_text())
+    bp.setdefault("name", path.stem)
+    bp.setdefault("timestamp", int(path.stat().st_mtime * 1000))
+    pal = bp.setdefault("palette", {})
+    if pal.get("wallpaper"):
+        pal["wallpaper"] = resolve_path(str(pal["wallpaper"]))
+    bp["path"] = str(path)
+    bp["builtin"] = str(path).startswith(str(builtin_blueprints_dir()))
+    return bp
+
+
+def list_themes() -> List[Dict[str, Any]]:
+    """All themes: v2 packages plus legacy v1 blueprints (packages shadow by name)."""
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for path in blueprint_paths():
+        try:
+            bp = load_blueprint(path)
+            prior = by_name.get(bp["name"])
+            if prior and prior.get("pair") and not bp.get("pair"):
+                # User overrides shadow builtins by name; keep builtin pairing metadata.
+                bp["pair"] = prior["pair"]
+            if prior and prior.get("source") and not bp.get("source"):
+                bp["source"] = prior["source"]
+            by_name[bp["name"]] = bp
+        except Exception as exc:
+            eprint(f"skip blueprint {path}: {exc}")
+    for name in theme_package_names():
+        pkg = load_theme_package(name)
+        if not pkg:
+            continue
+        prior = by_name.get(pkg["name"])
+        if prior and prior.get("pair") and not pkg.get("pair"):
+            pkg["pair"] = prior["pair"]
+        by_name[pkg["name"]] = pkg
+    return sorted(by_name.values(), key=lambda b: (b.get("timestamp", 0), b.get("name", "")), reverse=True)
+
+
+def find_theme(name: str, themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
+    """Resolve a theme by name. `themes` reuses a list_themes() result: that call
+    reads every blueprint and package from disk, so a caller trying several
+    candidate names loads once instead of once per candidate."""
+    lname = name.strip().lower()
+    if not lname:
+        return None
+    themes = list_themes() if themes is None else themes
+    exact = find_theme_exact(lname, themes)
+    if exact:
+        return exact
+    for bp in themes:
+        if lname in bp.get("name", "").lower():
+            return bp
+    return None
+
+
+def find_theme_exact(name: str, themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
+    """The theme whose name or package directory is `name`, ignoring case, or
+    None. Unlike `find_theme`, a miss never falls back to a substring match."""
+    lname = name.strip().lower()
+    if not lname:
+        return None
+    themes = list_themes() if themes is None else themes
+    for bp in themes:
+        if bp.get("name", "").lower() == lname or Path(bp.get("path", "")).stem.lower() == lname:
+            return bp
+    return None
+
+
+# Name conventions tried when a blueprint has no explicit `pair` metadata:
+# swap or strip a mode suffix, or append the target mode as a suffix.
+MODE_SUFFIX_SWAPS = {
+    "dark": [("-light", "-dark"), ("-light", ""), ("-day", "")],
+    "light": [("-dark", "-light"), ("-dark", ""), ("", "-day")],
+}
+
+
+def blueprint_mode(bp: Dict[str, Any]) -> str:
+    pal = bp.get("palette", {})
+    mode = (pal.get("mode") or ("light" if pal.get("lightMode") else "dark") or "dark").lower()
+    return mode if mode in {"dark", "light"} else "dark"
+
+
+def paired_blueprint(base: Dict[str, Any], target_mode: str,
+                     themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
+    """Resolve the counterpart blueprint of `base` in `target_mode`.
+
+    Explicit `pair` metadata wins; otherwise try common name-suffix conventions.
+    Returns None when no existing blueprint of the target mode matches.
+    """
+    name = str(base.get("name") or "")
+    candidates: List[str] = []
+    explicit = str(base.get("pair") or "").strip()
+    if explicit:
+        candidates.append(explicit)
+    lname = name.lower()
+    for old, new in MODE_SUFFIX_SWAPS.get(target_mode, []):
+        if not old:
+            candidates.append(lname + new)
+        elif lname.endswith(old):
+            candidates.append(lname[: -len(old)] + new)
+    candidates.append(f"{lname}-{target_mode}")
+    seen = set()
+    themes: List[Dict[str, Any]] | None = None
+    for candidate in candidates:
+        key = candidate.lower()
+        if not key or key == lname or key in seen:
+            continue
+        seen.add(key)
+        if themes is None:
+            themes = list_themes()
+        bp = find_theme(candidate, themes)
+        if bp and blueprint_mode(bp) == target_mode:
+            return bp
+    return None
+
+
+
+# --- Theme packages (v2 directory format) --------------------------------------
+#
+# A theme is a directory: theme.json (metadata), colors.toml (base palette),
+# backgrounds/ (wallpapers, first alphabetical = default), preview.jpg,
+# and apps/ (curated per-app configs that win over template generation).
+# Built-ins live in themes/<name>/, user themes in ~/.config/vshell/themes/<name>/;
+# a user directory overlays the built-in one file-by-file (user file wins), except
+# the files `package_layer_paths` names, which merge key by key.
+
+# `thumbnails/` holds the 480 px thumbnails derived from each theme's preview;
+# it is not a theme package.
+RESERVED_THEME_SUBDIRS = {"blueprints", "targets", "wallpapers", "thumbnails"}
+# The full-size screenshot every shipped theme package carries.
+THEME_PREVIEW_FILE = "preview.jpg"
+
+# Terminal-only ANSI slots. A slot carries two meanings at once: `colors.toml`
+# feeds the shell's derived roles and pi's interface as well as the terminal, so
+# a slot whose conventional terminal meaning needs a different colour than the
+# rest of VGS reads cannot be fixed there without moving a role. This file holds
+# that terminal value alone: only the targets that paint an actual terminal read
+# it, and `target_roles` and every app template outside a terminal ignore it.
+TERMINAL_COLORS_FILE = "terminal-colors.toml"
+# A curated theme package's optional declared UI roles. A vendor that publishes
+# its own UI palette states those tones here and `target_roles` writes them
+# instead of blending its background and foreground into a grey the vendor never
+# published. A sibling file rather than a `[roles]` table inside `colors.toml`,
+# whose parser flattens a nested table and would deliver `roles_statusBg`.
+UI_ROLES_FILE = "ui-roles.toml"
+# The roles a package may declare, and the authority on that set: a role outside
+# it is refused by name whatever its provenance. It holds the surfaces and
+# containers, the outline and muted tones, the status background, the secondary
+# and tertiary accents, and the `on*` companions of those. The semantic roles
+# `target_roles` also emits, the `error`, `warning`, `success` and `info` family
+# with their containers, and the `inverse*` roles are outside it: they are not
+# vendor chrome, and a vendor that wants its own error tone states the palette
+# colour the derivation builds them from.
+DECLARABLE_UI_ROLES = frozenset({
+    "surface", "surfaceVariant", "surfaceContainerLowest", "surfaceContainerLow",
+    "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest",
+    "outline", "outlineVariant", "muted", "dim", "statusBg", "secondary", "tertiary",
+    "primaryContainer", "secondaryContainer", "tertiaryContainer",
+    "onPrimary", "onSecondary", "onTertiary",
+    "onPrimaryContainer", "onSecondaryContainer", "onTertiaryContainer",
+})
+# What the derivation guarantees for a declarable role, as the role it is
+# measured against and the minimum ratio. A declaration replaces the derivation,
+# so these become reporters: `ui_role_shortfalls` names what a declared tone
+# misses and the tone is still written as declared. `statusBg` is not here
+# because its guard asks a different question, whether any text reaches 7:1 on
+# it, and that check lives beside this one in the same reporter.
+#
+# A fill and the text on it are judged as the pair the render paints, each side
+# naming the other, rather than both against the palette's foreground. A
+# declared `onPrimaryContainer` replaces the foreground the container was judged
+# against, so judging the container against the foreground alone measures a
+# colour nothing puts there: a container at 4.5:1 on the foreground carried its
+# own declared text at 1.33:1 and the apply reported nothing.
+#
+# Each value is the rules that role carries. Only the three accent containers
+# carry two: they take a declared `on*Container` companion and the palette's own
+# foreground, which the `vgs-shell` target still draws on them through its
+# MuxModal and widget drag rows, so dropping that second rule left shell text at
+# 1:1 with the apply reporting nothing. `surfaceContainerHigh` and
+# `surfaceContainerHighest` carry one, against the foreground, and so does every
+# other role here. A rule whose target lands on a colour an earlier rule for the
+# same declared role already measured is skipped, so a container declared
+# without its companion, which is the ordinary vendor shape, reports its one
+# defect once instead of twice against the same foreground.
+UI_ROLE_CONTRAST_RULES = {
+    "surfaceContainerHigh": (("foreground", 4.0),),
+    "surfaceContainerHighest": (("foreground", 4.0),),
+    "primaryContainer": (("foreground", 4.5), ("onPrimaryContainer", 4.5)),
+    "secondaryContainer": (("foreground", 4.5), ("onSecondaryContainer", 4.5)),
+    "tertiaryContainer": (("foreground", 4.5), ("onTertiaryContainer", 4.5)),
+    "onPrimaryContainer": (("primaryContainer", 4.5),),
+    "onSecondaryContainer": (("secondaryContainer", 4.5),),
+    "onTertiaryContainer": (("tertiaryContainer", 4.5),),
+    "onPrimary": (("primary", 4.5),),
+    "onSecondary": (("secondary", 4.5),),
+    "onTertiary": (("tertiary", 4.5),),
+    "secondary": (("background", 4.5),),
+    "tertiary": (("background", 4.5),),
+    "outline": (("background", 3.0),),
+    "outlineVariant": (("background", 2.2),),
+    "muted": (("background", 4.5),),
+    "dim": (("background", 4.5),),
+}
+STATUS_BG_MIN_TEXT_CONTRAST = 7.0
+
+
+def theme_package_names() -> List[str]:
+    names = set()
+    for root in (builtin_themes_dir(), user_themes_dir()):
+        if not root.is_dir():
+            continue
+        for meta in root.glob("*/theme.json"):
+            if meta.parent.name not in RESERVED_THEME_SUBDIRS:
+                names.add(meta.parent.name)
+    return sorted(names)
+
+
+def compose_theme_files(name: str) -> Dict[str, Path]:
+    """File-level compose of a theme package: built-in files first, user files win."""
+    files: Dict[str, Path] = {}
+    for root in (builtin_themes_dir() / name, user_themes_dir() / name):
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = path
+    return files
+
+
+def package_layer_paths(name: str, filename: str) -> List[Path]:
+    """`filename` in each layer of package `name` that holds it, built-in first.
+
+    `theme.json`, `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and
+    `app-colors.toml` are read through this. A user `theme.json`, `colors.toml`
+    or `app-colors.toml` always merges key by key, except the `theme.json`
+    `curatedPalette` record, which each layer keeps for the files it supplied; a
+    user `terminal-colors.toml` or `ui-roles.toml` merges
+    only when `overlay_layer` reads its merge key, and otherwise replaces the
+    built-in values whole. `write_user_layer` keeps a merging overlay to the keys
+    whose value differs, so a package update still reaches every value the user
+    did not set.
+    """
+    return [root / filename for root in (builtin_themes_dir() / name, user_themes_dir() / name)
+            if (root / filename).is_file()]
+
+
+def theme_json_layer(path: Path) -> Dict[str, Any]:
+    """One layer's `theme.json` at `path`. Raises when it does not read as an object."""
+    layer = json.loads(path.read_text())
+    if not isinstance(layer, dict):
+        raise ValueError(f"theme-json {path}: not an object")
+    return layer
+
+
+def package_meta(name: str) -> Dict[str, Any] | None:
+    """The `theme.json` of package `name`, its layers merged key by key, or None
+    when no layer holds one. Raises on a layer that does not read as an object.
+
+    `curatedPalette` is left out: each layer's record vouches only for the files
+    that layer supplied, so `layer_curated_palette` reads it per layer and a
+    merged value would certify one layer's files with another's digest.
+    """
+    meta: Dict[str, Any] = {}
+    layers = package_layer_paths(name, "theme.json")
+    for path in layers:
+        meta.update(theme_json_layer(path))
+    meta.pop("curatedPalette", None)
+    return meta if layers else None
+
+
+def flat_toml_text(values: Dict[str, str]) -> str:
+    """A `key = "value"` TOML body holding `values` in their order."""
+    return "".join(f'{key} = "{value}"\n' for key, value in values.items())
+
+
+# A user-layer `terminal-colors.toml` or `ui-roles.toml` holding a top-level
+# `merge = true` merges key by key over the built-in file; `write_user_layer`
+# writes that key as the first line. A file without it replaces the built-in
+# file's keys whole, so a file a user or a catalog download wrote whole, and the
+# comment-only file that masks the built-in keys, keep that meaning.
+OVERLAY_MERGE_KEY = "merge"
+OVERLAY_MERGE_LINE = f"{OVERLAY_MERGE_KEY} = true\n"
+# The files that merge or replace, each with the body a user layer writes to
+# replace the built-in file's keys with none.
+OVERLAY_MASK_TEXT = {
+    TERMINAL_COLORS_FILE: "# No terminal slots: this overlay masks the built-in theme's.\n",
+    UI_ROLES_FILE: "# No declared UI roles: this overlay masks the built-in theme's.\n",
+}
+
+
+class OverlayLayer(NamedTuple):
+    """One layer of a file `OVERLAY_MASK_TEXT` names."""
+    values: Dict[str, str]
+    # Whether `values` merge over the layers below rather than replacing them.
+    merges: bool
+    # Keys the layer states that produced no value.
+    unreadable: List[str]
+    # Keys the layer states that name no role it may declare.
+    unknown: List[str]
+
+
+def overlay_layer(path: Path, filename: str) -> OverlayLayer:
+    """Read one layer of `filename`, a file `OVERLAY_MASK_TEXT` names.
+
+    A terminal layer holds its `colorN` slots. A `ui-roles.toml` layer is read as
+    `ColorsRead.ROLES`, because `normalize_color_map` emits only `COLOR_KEYS`
+    and drops every role name, and every key it states is returned as a value or
+    named: a key whose value is not a six-digit hex in `unreadable`, since such a
+    value never enters the parsed map, and a key outside `DECLARABLE_UI_ROLES`
+    in `unknown`.
+    """
+    text = path.read_text(errors="ignore")
+    try:
+        merges = tomllib.loads(text).get(OVERLAY_MERGE_KEY) is True
+    except tomllib.TOMLDecodeError:
+        merges = False
+    if filename == TERMINAL_COLORS_FILE:
+        slots = terminal_slot_overrides(parse_colors_toml_text(text, str(path), allow_empty=True))
+        return OverlayLayer(slots, merges, [], [])
+    if filename == UI_ROLES_FILE:
+        discarded: List[str] = []
+        declared = parse_colors_toml_text(text, str(path), allow_empty=True,
+                                          kind=ColorsRead.ROLES, discarded=discarded)
+        return OverlayLayer({role: declared[role] for role in sorted(DECLARABLE_UI_ROLES) if role in declared},
+                            merges, sorted(set(discarded) - {OVERLAY_MERGE_KEY}),
+                            sorted(set(declared) - DECLARABLE_UI_ROLES))
+    raise ValueError(f"overlay-file {filename}: not a file that merges or replaces")
+
+
+def write_user_layer(name: str, filename: str, values: Dict[str, Any]) -> None:
+    """Write `values`, what package `name` is to hold for `filename`, into its
+    user layer. The one writer of a user-layer file that merges key by key.
+
+    Over a built-in file the user file keeps only the entries whose value differs
+    from the built-in file's, and is removed when none do, so a package update
+    reaches every value the user did not set. With no built-in file under it the
+    user file is `values` whole.
+
+    A merge can add or change a key but never remove one, so a file
+    `OVERLAY_MASK_TEXT` names whose `values` lack a key the built-in file sets is
+    written whole, in sorted key order, without `OVERLAY_MERGE_LINE`, and
+    replaces the built-in keys: a different theme saved or copied under a
+    built-in theme's name loads its own slots and roles, not a mix. `values`
+    holding nothing there writes the file's mask text. An `app-colors.toml` has
+    no replacing form, since a role the built-in file alone sets reads the same
+    as no override on a render.
+
+    A `theme.json` has no replacing form either: a key the built-in file sets and
+    `values` lack reads from the built-in file. Its `curatedPalette` is the user
+    layer's own record, so `values` holding one writes it and `values` without one
+    keep the record the user file already holds. A record equal to the built-in
+    file's is dropped unless a user `apps/` file needs it, so an overlay that
+    copied the built-in record whole is removed once its last edit is undone.
+    With no built-in file under it the user file is written even when empty,
+    since it is then the only `theme.json` the package has.
+
+    A file already holding the text is not rewritten, so a repeat call keeps its
+    modification time and the preview cache keyed on it.
+    """
+    path, base = user_themes_dir() / name / filename, builtin_themes_dir() / name / filename
+    if filename == "theme.json":
+        below = theme_json_layer(base) if base.is_file() else None
+        record = values.get("curatedPalette") or layer_curated_palette(path.parent)
+        if (below is not None and record == below.get("curatedPalette")
+                and not any((path.parent / "apps").glob("*"))):
+            record = ""
+        kept = {key: value for key, value in values.items()
+                if key != "curatedPalette" and (below is None or below.get(key) != value)}
+        if record:
+            kept["curatedPalette"] = record
+        text = json.dumps(kept, indent=2) + "\n" if kept or below is None else ""
+    elif filename == "app-colors.toml":
+        below_apps = theme_app_overrides_layer(base.parent)
+        text = app_overrides_toml_text({
+            app: {role: value for role, value in roles.items()
+                  if not (isinstance(value, str) and HEX_RE.match(value.strip())
+                          and below_apps.get(app, {}).get(role) == clean_hex(value))}
+            for app, roles in values.items()})
+    elif filename == "colors.toml":
+        below = parse_colors_toml(base) if base.is_file() else {}
+        text = flat_toml_text({key: value for key, value in values.items() if below.get(key) != value})
+    elif filename in OVERLAY_MASK_TEXT:
+        below = overlay_layer(base, filename).values if base.is_file() else None
+        ordered = dict(sorted(values.items()))
+        if below is None:
+            text = flat_toml_text(ordered)
+        elif below.keys() <= values.keys():
+            delta = {key: value for key, value in ordered.items() if below.get(key) != value}
+            text = OVERLAY_MERGE_LINE + flat_toml_text(delta) if delta else ""
+        else:
+            text = flat_toml_text(ordered) or OVERLAY_MASK_TEXT[filename]
+    else:
+        raise ValueError(f"user-layer-file {filename}: not a file merged key by key")
+    if not text:
+        path.unlink(missing_ok=True)
+    elif not (path.is_file() and path.read_text(errors="ignore") == text):
+        write_file(path, text)
+
+
+def package_overlay_values(name: str, filename: str) -> Dict[str, str]:
+    """The terminal slots or declared UI roles of package `name` across its
+    layers: a user layer opened by `OVERLAY_MERGE_LINE` merges key by key, any
+    other replaces.
+
+    The one reader of both files, for the loader, the save's exemption and
+    `theme duplicate`. Every key a `ui-roles.toml` layer states is honoured or
+    named, never dropped in silence: the file exists so a vendor's own tone
+    reaches the chrome, and a key that vanishes is indistinguishable from a
+    package that declared nothing. A layer that does not read contributes
+    nothing and the other layer still does.
+    """
+    values: Dict[str, str] = {}
+    for path in package_layer_paths(name, filename):
+        try:
+            layer = overlay_layer(path, filename)
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
+            continue
+        if layer.unreadable:
+            eprint(f"theme package {name}: {filename} states no readable colour for: "
+                   + ", ".join(layer.unreadable))
+        if layer.unknown:
+            eprint(f"theme package {name}: {filename} names roles VGS does not accept a "
+                   "declaration for: " + ", ".join(layer.unknown))
+        values = {**values, **layer.values} if layer.merges else layer.values
+    return dict(sorted(values.items())) if filename == UI_ROLES_FILE else values
+
+
+def shrink_theme_overlays() -> None:
+    """Rewrite each user overlay of a built-in theme written before the overlays
+    merged key by key, through `write_user_layer`.
+
+    Such an overlay holds every key, so it keeps every value at the version the
+    user edited. The rewrite is handed the package as it loads, so the loaded
+    package and every digest over it are unchanged, and `write_user_layer` does
+    not touch a file already in its form, so `theme init` runs this on every
+    start instead of recording that it ran. A user theme with no built-in
+    counterpart is a whole theme, and an untouched catalog download holds no user
+    edit, so neither is rewritten. An overlay that does not read is left as it
+    is, since the package as it loads has none of its values, and so is a
+    `ui-roles.toml` layer naming a key it yields no role for, which a rewrite
+    would drop. A file `OVERLAY_MASK_TEXT` names holding no values is left as it
+    is: it already loads as none.
+    """
+
+    def overlay_readers(filename: str) -> Tuple[str, Callable[[str], Dict[str, Any]], Callable[[Path], Any]]:
+        def rewritable(path: Path) -> bool:
+            layer = overlay_layer(path, filename)
+            return bool(layer.values) and not (layer.unreadable or layer.unknown)
+        return filename, lambda name: package_overlay_values(name, filename), rewritable
+
+    readers: Tuple[Tuple[str, Callable[[str], Dict[str, Any]], Callable[[Path], Any]], ...] = (
+        ("theme.json", package_meta, lambda path: json.loads(path.read_text())),
+        ("colors.toml", package_colors_map, parse_colors_toml),
+        *(overlay_readers(filename) for filename in OVERLAY_MASK_TEXT),
+        ("app-colors.toml", theme_app_overrides, lambda path: tomllib.loads(path.read_text())),
+    )
+    for name in theme_package_names():
+        builtin, user = builtin_themes_dir() / name, user_themes_dir() / name
+        if not (builtin / "theme.json").is_file() or not user.is_dir() or catalog_pristine(name):
+            continue
+        for filename, composed, read_layer in readers:
+            overlay = user / filename
+            if not overlay.is_file():
+                continue
+            try:
+                if not read_layer(overlay):
+                    continue
+                write_user_layer(name, filename, composed(name))
+            except Exception as exc:
+                eprint(f"theme package {name}: {exc}")
+
+
+def load_theme_package(name: str) -> Dict[str, Any] | None:
+    files = compose_theme_files(name)
+    try:
+        meta = package_meta(name)
+    except Exception as exc:
+        eprint(f"skip theme package {name}: {exc}")
+        return None
+    if meta is None:
+        return None
+    source = package_source(meta)
+    hidden = hidden_background_names(meta)
+    backgrounds = sorted((rel, p) for rel, p in files.items() if rel.startswith("backgrounds/") and Path(rel).name not in hidden)
+    wallpaper = ""
+    default_bg = str(meta.get("wallpaper") or "").strip()
+    if default_bg:
+        wallpaper = next((str(p) for rel, p in backgrounds if Path(rel).name == default_bg), "")
+    if not wallpaper:
+        wallpaper = str(backgrounds[0][1]) if backgrounds else ""
+    # Restyle adjustments transform the base palette before role derivation and
+    # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
+    adjustments = normalize_adjustments(meta.get("adjustments"))
+    # The adjusted map is the palette the curated-file rule is asked about, so it
+    # comes from the one owner the save's exemption also calls. The unadjusted
+    # map is this loader's alone. Both derive from one parse, so a package whose
+    # `colors.toml` does not read reports it once.
+    raw_colors = package_colors_map(name)
+    unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
+    colors = package_palette(raw_colors, meta, package_declared_ui_roles(meta, name))
+    bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
+    builtin_dir = builtin_themes_dir() / name
+    user_dir = user_themes_dir() / name
+    bp["pair"] = str(meta.get("pair") or "")
+    bp["contrastShortfalls"] = meta.get("contrastShortfalls") or []
+    bp["package"] = True
+    bp["builtin"] = builtin_dir.is_dir()
+    bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
+    bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
+    app_overrides = theme_app_overrides(name)
+    bp["apps"] = curated_apps_for_palette(
+        {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
+        colors, app_overrides, package_layer_palettes(name))
+    bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
+    # The files `wallpaper-remove` hid from the set, still on disk: `wallpapers --all` lists them.
+    bp["removedBackgrounds"] = sorted(str(p) for rel, p in files.items()
+                                      if rel.startswith("backgrounds/") and Path(rel).name in hidden)
+    bp["packagedPreview"] = str(files[THEME_PREVIEW_FILE]) if THEME_PREVIEW_FILE in files else ""
+    bp["adjustments"] = adjustments
+    # "Did the user change this package": what the modified badge and the revert
+    # control read. Downloaded wallpapers land in the same user directory, so
+    # they answer true here too, and catalogPristine says which kind it is.
+    bp["modified"] = builtin_dir.is_dir() and bool(user_layer_files(name))
+    bp["starred"] = meta.get("starred") is True
+    bp["catalogOwned"] = catalog_owns(name)
+    bp["catalogPristine"] = catalog_pristine(name)
+    bp["appOverrides"] = {app: len(roles) for app, roles in app_overrides.items()}
+    # Read back out of the identity map rather than moved a second time: a
+    # restyle slider moves declared roles with the palette there, in the map the
+    # curated-file digest is taken over, so the roles the render uses and the
+    # roles that digest covers cannot part.
+    bp["uiRoles"] = {key[len(UI_ROLE_IDENTITY_PREFIX):]: value for key, value in colors.items()
+                     if key.startswith(UI_ROLE_IDENTITY_PREFIX)}
+    bp["terminalColors"] = package_overlay_values(name, TERMINAL_COLORS_FILE)
+    if bp["terminalColors"] and not adjustments_all_zero(adjustments):
+        # Restyle moves explicit terminal slots with the palette. They go in beside
+        # the unadjusted palette under names outside its keys, so every transform
+        # is measured against the palette's own mean lightness, not moved by them.
+        moved = apply_adjustments({**unadjusted_colors, **{f"terminal_{key}": value
+                                   for key, value in bp["terminalColors"].items()}}, adjustments)
+        bp["terminalColors"] = {key: moved[f"terminal_{key}"] for key in bp["terminalColors"]}
+    stamps = [path.stat().st_mtime for path in package_layer_paths(name, "theme.json")]
+    if "colors.toml" in files:
+        stamps.append(files["colors.toml"].stat().st_mtime)
+    if TERMINAL_COLORS_FILE in files:
+        stamps.append(files[TERMINAL_COLORS_FILE].stat().st_mtime)
+    if UI_ROLES_FILE in files:
+        stamps.append(files[UI_ROLES_FILE].stat().st_mtime)
+    bp["timestamp"] = int(max(stamps) * 1000)
+    return bp
+
+
+def resolve_theme_package(name: str) -> Dict[str, Any] | None:
+    """Resolve a theme-package blueprint by name, defaulting to the current theme."""
+    target = (name or "").strip() or str(current_theme().get("name") or "")
+    bp = find_theme(target)
+    if not bp or not bp.get("package"):
+        return None
+    return bp
+
+
+# Theme catalog entries pin one release archive per theme holding its wallpapers;
+# every theme's definitions ship in the package. Downloads go to the user theme
+# directory beside any overlay. Accept only archive members under backgrounds/.
+# Verify the archive's size and sha256 before unpacking. HTTPS is required except
+# for the test base-URL override. Downloaded files are theme data.
+
+CATALOG_ALLOWED_DIRS = ("backgrounds/",)
+CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
+CATALOG_ARCHIVE_RE = re.compile(r"^vgs-theme-[A-Za-z0-9][A-Za-z0-9._-]*-r[0-9]+\.tar\.gz$")
+CATALOG_MAX_FILE_BYTES = 128 * 1024 * 1024
+# A theme archive streams through this buffer, so the peak cost of an install is
+# one chunk rather than the whole archive.
+CATALOG_CHUNK_BYTES = 1024 * 1024
+CATALOG_TIMEOUT = 60
+CATALOG_MARKER = ".vgs-catalog.json"
+
+
+def theme_catalog_path() -> Path:
+    return builtin_themes_dir() / "catalog.json"
+
+
+def theme_thumbnails_dir() -> Path:
+    return builtin_themes_dir() / "thumbnails"
+
+
+def theme_thumbnail_path(name: str) -> str:
+    """The shipped 480 px thumbnail of a theme's preview, or "" when none ships."""
+    shipped = theme_thumbnails_dir() / f"{name}.jpg"
+    return str(shipped) if shipped.is_file() else ""
+
+
+def theme_asset_cache_dir() -> Path:
+    """Where a theme archive is verified before it is unpacked.
+
+    Holds in-flight downloads only: every archive is removed once the install
+    finishes, so nothing accumulates and no eviction policy is needed.
+    """
+    return cache_dir() / "theme-assets"
+
+
+def load_theme_catalog() -> Dict[str, Any]:
+    path = theme_catalog_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        eprint(f"theme catalog unreadable: {exc}")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def theme_catalog_base_urls(catalog: Dict[str, Any]) -> Tuple[List[str], bool]:
+    """Return candidate release-download bases and whether non-HTTPS schemes are allowed.
+    A theme's archive resolves as <base>/<release tag>/<archive name>. The
+    archive must still match the catalogued size and sha256, so an extra base
+    cannot serve different content. The base-URL override is for tests."""
+    override = os.environ.get("VGS_THEME_CATALOG_BASE_URL", "").strip()
+    if override:
+        return [override.rstrip("/")], True
+    source = catalog.get("source") or {}
+    primary = str(source.get("baseUrl") or "").rstrip("/")
+    return ([primary] if primary else []), False
+
+
+def catalog_theme_entry(catalog: Dict[str, Any], name: str) -> Dict[str, Any] | None:
+    for entry in catalog.get("themes") or []:
+        if isinstance(entry, dict) and entry.get("name") == name:
+            return entry
+    return None
+
+
+def _catalog_check_name(name: str) -> str:
+    clean = (name or "").strip()
+    if not CATALOG_NAME_RE.match(clean) or clean in RESERVED_THEME_SUBDIRS:
+        raise ValueError(f"invalid theme name: {name!r}")
+    return clean
+
+
+def _catalog_check_relpath(rel: str) -> str:
+    """Reject manifest paths outside the permitted theme-package layout."""
+    if not isinstance(rel, str) or not rel or rel != rel.strip():
+        raise ValueError(f"invalid catalog path: {rel!r}")
+    if rel.startswith("/") or "\\" in rel or "\x00" in rel:
+        raise ValueError(f"unsafe catalog path: {rel!r}")
+    parts = rel.split("/")
+    if len(parts) > 2:
+        raise ValueError(f"catalog path nests too deep: {rel!r}")
+    for part in parts:
+        # Rejects "", ".", ".." and every dotfile at ANY position — a leading-dot
+        # test on the whole string would let `apps/.hidden` through.
+        if not part or part.startswith("."):
+            raise ValueError(f"unsafe catalog path component {part!r} in {rel!r}")
+    if not rel.startswith(CATALOG_ALLOWED_DIRS):
+        raise ValueError(f"catalog path outside the theme imagery shape: {rel!r}")
+    return rel
+
+
+def _catalog_check_scheme(url: str, allow_local: bool) -> None:
+    """HTTPS is the only scheme a download accepts; `file:` is for the test override."""
+    scheme = urllib.parse.urlsplit(url).scheme
+    if scheme != "https" and not (scheme == "file" and allow_local):
+        raise ValueError(f"refusing to download from {scheme or 'relative'} URL")
+
+
+def _catalog_fetch_to_file(url: str, dest: Path, allow_local: bool, size: int, digest: str) -> None:
+    """Stream one catalogued file into `dest`, hashing the bytes as they are written.
+
+    The digest covers what lands on disk, so the file the unpack step reads back
+    is the file that was verified, and the archive is never held whole in memory.
+    The catalogued size is the read cap: a location that keeps sending past it is
+    cut off there instead of at the far larger per-file ceiling.
+    """
+    import urllib.request
+
+    _catalog_check_scheme(url, allow_local)
+    request = urllib.request.Request(url, headers={"User-Agent": "vshell-theme-catalog"})
+    running = hashlib.sha256()
+    written = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(request, timeout=CATALOG_TIMEOUT) as response:  # noqa: S310 - scheme checked above
+            with dest.open("wb") as handle:
+                while True:
+                    chunk = response.read(min(CATALOG_CHUNK_BYTES, size - written + 1))
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > size:
+                        raise ValueError(f"download exceeds the catalogued {size} bytes")
+                    running.update(chunk)
+                    handle.write(chunk)
+        if written != size:
+            raise ValueError(f"expected {size} bytes, got {written}")
+        if running.hexdigest() != digest:
+            raise ValueError("checksum mismatch")
+    except Exception:
+        with contextlib.suppress(OSError):
+            dest.unlink()
+        raise
+
+
+def _catalog_fetch_verified(label: str, rel: str, size: int, digest: str,
+                            base_urls: List[str], allow_local: bool, dest: Path) -> None:
+    """Fetch `rel` into `dest` from the first base URL whose bytes match the catalogued size and sha256."""
+    quoted = "/".join(urllib.parse.quote(part) for part in rel.split("/"))
+    problems: List[str] = []
+    for base in base_urls:
+        url = f"{base}/{quoted}"
+        try:
+            _catalog_fetch_to_file(url, dest, allow_local, size, digest)
+            return
+        except Exception as exc:
+            problems.append(f"{base}: {exc}")
+    raise ValueError(f"{label}: no source served the catalogued file (" + "; ".join(problems) + ")")
+
+
+def catalog_marker_payload(name: str, dest: Path, assets: Dict[str, Any],
+                           files: Dict[str, str], written: int, ref: str = "") -> Dict[str, Any]:
+    """Everything a downloaded theme's marker records.
+
+    The one owner of the marker's shape, so a test fixture standing in for a
+    download writes the marker production writes rather than the subset today's
+    readers happen to consult. A fixture carrying its own copy of this schema
+    stays green against a marker the downloader no longer emits.
+    """
+    return {
+        "name": name,
+        "path": str(dest),
+        "ref": ref,
+        "release": assets.get("release", ""),
+        "rev": assets.get("rev", 0),
+        "sha256": assets.get("sha256", ""),
+        "bytes": written,
+        # The wallpapers the download placed and the sha256 each held when
+        # placed, so a later read can tell this directory apart from the same
+        # directory after the user has edited it, and an update can tell which
+        # wallpapers it may replace.
+        "files": files,
+        "installedAt": int(time.time()),
+    }
+
+
+def catalog_marker(name: str) -> Dict[str, Any]:
+    path = user_themes_dir() / name / CATALOG_MARKER
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def catalog_owns(name: str) -> bool:
+    """Whether this exact directory is one the catalog downloaded.
+
+    The marker lives inside the theme package. A copy made by `theme duplicate`
+    carries no marker, but a package copied by hand or by an older duplicate can.
+    Ownership therefore has to be identity, not presence: the marker must name
+    this directory, which a copied marker never does. A marker with no file record
+    names no download either, since nothing then says which files it placed.
+    """
+    dest = user_themes_dir() / name
+    marker = catalog_marker(name)
+    if not marker:
+        return False
+    return (str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
+            and isinstance(marker.get("files"), (dict, list)))
+
+
+def catalog_placed_wallpapers(name: str) -> Dict[str, str | None] | None:
+    """The wallpapers a catalog download placed in the user directory, each with the sha256 it was placed with.
+
+    None when the directory holds no download. The one reader of the marker's
+    file record. A marker the released helper wrote records the paths as a list
+    with no digests; those paths still read as placed, each with the digest
+    None, which an update refuses to judge. Only entries the imagery path rule
+    accepts count, so a directory an earlier release downloaded whole, whose
+    record also names its definitions, keeps those as a user overlay like any
+    other.
+    """
+    if not catalog_owns(name):
+        return None
+    files = catalog_marker(name)["files"]
+    record = files if isinstance(files, dict) else dict.fromkeys(files)
+    placed: Dict[str, str | None] = {}
+    for rel, digest in record.items():
+        with contextlib.suppress(ValueError):
+            placed[_catalog_check_relpath(str(rel))] = None if digest is None else str(digest)
+    return dict(sorted(placed.items()))
+
+
+def catalog_imagery_installed(name: str) -> bool:
+    """Whether a catalog theme's wallpapers are on disk: its package ships them, or a catalog download placed them.
+
+    The catalog listing, the download's skip and `theme list --json`'s `installed`
+    ask this one question. A wallpaper `wallpaper-add` copied into the user
+    directory is neither, so it never hides the download it did not replace."""
+    return theme_dir_has_wallpapers(builtin_themes_dir() / name) or catalog_placed_wallpapers(name) is not None
+
+
+# The card a theme with no shipped screenshot shows: its background, a foreground
+# and an accent bar, and its 16 colours as two rows of swatches. Encoded here with
+# zlib alone, so every install under either compositor draws it with no tool.
+PALETTE_CARD_SIZE = (640, 360)
+PALETTE_CARD_VERSION = 1
+
+
+def palette_card_colors(bp: Dict[str, Any]) -> List[str]:
+    """Background, foreground, accent and the 16 colours the card paints, or [] with no palette."""
+    pal = bp.get("palette") or {}
+    colors = pal.get("colors") or []
+    if len(colors) < 16:
+        return []
+    ext = pal.get("extendedColors") or {}
+    return [clean_hex(ext.get("background"), colors[0]), clean_hex(ext.get("foreground"), colors[7]),
+            clean_hex(ext.get("accent"), colors[4]), *(clean_hex(c, "#000000") for c in colors[:16])]
+
+
+def encode_palette_card(colors: List[str]) -> bytes:
+    """An RGB PNG of the card for `palette_card_colors` output."""
+    width, height = PALETTE_CARD_SIZE
+    background, foreground, accent, *swatches = (bytes.fromhex(c[1:7]) for c in colors)
+    swatch_w, gap, left = 64, 8, 36
+
+    def scanline(spans: List[Tuple[int, int, bytes]]) -> bytes:
+        line = bytearray(background * width)
+        for x0, x1, pixel in spans:
+            line[x0 * 3:x1 * 3] = pixel * (x1 - x0)
+        return b"\x00" + bytes(line)
+
+    def swatch_row(row: List[bytes]) -> bytes:
+        return scanline([(left + i * (swatch_w + gap), left + i * (swatch_w + gap) + swatch_w, px)
+                         for i, px in enumerate(row)])
+
+    # (first row, row past the band, scanline)
+    bands = [(48, 60, scanline([(left, left + 240, foreground)])),
+             (72, 84, scanline([(left, left + 160, accent)])),
+             (120, 208, swatch_row(swatches[:8])),
+             (224, 312, swatch_row(swatches[8:]))]
+    blank = scanline([])
+    raw = b"".join(next((line for y0, y1, line in bands if y0 <= y < y1), blank) for y in range(height))
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return len(data).to_bytes(4, "big") + tag + data + zlib.crc32(tag + data).to_bytes(4, "big")
+
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def theme_preview(bp: Dict[str, Any]) -> str:
+    """The full-size image every theme surface paints for `bp`.
+
+    The package's shipped preview.jpg wins, edited or not, so a restyled or
+    overlaid theme keeps its base screenshot. A theme with none gets its palette
+    card, drawn once per palette into the preview cache. "" only when the theme
+    carries no palette. The shipped 480 px thumbnail never stands in for the
+    preview: the full-screen switcher lays its selected frame out far wider.
+    """
+    shipped = bp.get("packagedPreview", "")
+    if shipped:
+        return shipped
+    colors = palette_card_colors(bp)
+    if not colors:
+        return ""
+    key = hashlib.sha256(json.dumps([colors, PALETTE_CARD_VERSION]).encode()).hexdigest()[:12]
+    card = theme_previews_dir() / f"{blueprint_safe_name(bp)}-{key}.png"
+    if not card.is_file():
+        card.parent.mkdir(parents=True, exist_ok=True)
+        partial = card.with_name(f".{card.name}.{os.getpid()}")
+        partial.write_bytes(encode_palette_card(colors))
+        os.replace(partial, card)
+    return str(card)
+
+
+def theme_dir_has_wallpapers(package: Path) -> bool:
+    """Whether a theme directory on disk holds wallpapers.
+
+    A theme whose wallpapers ship in its release archive (D015) has its
+    definitions in the package and no `backgrounds/` until they are
+    downloaded, so a `theme.json` on disk does not say the wallpapers are there.
+    """
+    return any(entry.is_file() for entry in (package / "backgrounds").glob("*"))
+
+
+def catalog_pristine(name: str) -> bool:
+    """Whether the user directory holds a catalog download and nothing else.
+
+    Downloaded wallpapers land in the user directory, where a user overlay also
+    lives, so `modified` alone cannot say which it is. That matters twice over:
+    a stale answer either hides the modified badge and the revert control, or
+    blanks a shipped screenshot that is still accurate.
+
+    The marker's file record is the reference point, because the marker itself
+    survives any edit. Every overlay write adds a file beside the downloaded
+    set: a colour edit's `colors.toml`, `app-colors.toml`, a recoloured app
+    file, and the restyle adjustments and hidden backgrounds in `theme.json`.
+    A wallpaper replaced in place under its downloaded name is not detected:
+    the recorded digests are not re-hashed here, since this runs for every
+    theme a list reads.
+    """
+    placed = catalog_placed_wallpapers(name)
+    if not placed:
+        return False
+    return [rel for rel in user_layer_files(name) if rel != CATALOG_MARKER] == sorted(placed)
+
+
+# `theme.json` keys that record how the user files a theme rather than an edit
+# of it. A star must not raise the modified badge or drop the shipped screenshot.
+THEME_META_BOOKKEEPING_KEYS = frozenset({"starred"})
+
+
+def user_layer_files(name: str) -> List[str]:
+    """The files under package `name`'s user directory, relative and sorted,
+    leaving out a `theme.json` that holds only `THEME_META_BOOKKEEPING_KEYS`.
+
+    The one reader `modified` and `catalog_pristine` share, so a starred theme
+    reads as untouched to both. A `theme.json` that does not read as an object
+    is kept, since nothing can say it holds no edit.
+    """
+    root = user_themes_dir() / name
+    files: List[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel == "theme.json":
+            with contextlib.suppress(Exception):
+                if set(theme_json_layer(path)) <= THEME_META_BOOKKEEPING_KEYS:
+                    continue
+        files.append(rel)
+    return files
+
+
+def catalog_imagery_update_available(marker: Dict[str, Any], raw: Dict[str, Any]) -> bool:
+    """Whether a catalog entry pins another archive than the owned download `marker` records.
+
+    The one judge of an available update. The caller passes the marker only for
+    a directory catalog_owns, so a fork, whose marker names another directory,
+    and a theme with no download pass an empty one and never report an update.
+    """
+    pinned = raw.get("assets") if isinstance(raw.get("assets"), dict) else {}
+    return bool(marker) and str(marker.get("sha256") or "") != str(pinned.get("sha256") or "")
+
+
+def catalog_entries() -> List[Dict[str, Any]]:
+    catalog = load_theme_catalog()
+    entries: List[Dict[str, Any]] = []
+    for raw in catalog.get("themes") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "")
+        if not name:
+            continue
+        marker = catalog_marker(name) if catalog_owns(name) else {}
+        packaged = compose_theme_files(name).get(THEME_PREVIEW_FILE)
+        # The catalog file carries no colours; the theme's package does.
+        palette = (load_theme_package(name) or {}).get("palette") or {}
+        entries.append({
+            "name": name,
+            "mode": raw.get("mode", "dark"),
+            "pair": raw.get("pair", ""),
+            "source": raw.get("source", "curated"),
+            "colors": palette.get("colors", []),
+            "background": (palette.get("extendedColors") or {}).get("background", ""),
+            "foreground": (palette.get("extendedColors") or {}).get("foreground", ""),
+            "imagerySize": int(raw.get("size") or 0),
+            "imageryInstalled": catalog_imagery_installed(name),
+            # The download pins another archive than the catalog this package ships.
+            "imageryUpdateAvailable": catalog_imagery_update_available(marker, raw),
+            "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
+            "downloaded": bool(marker),
+            "downloadedRef": str(marker.get("ref") or ""),
+            "preview": str(packaged) if packaged and packaged.is_file() else "",
+        })
+    entries.sort(key=lambda e: e["name"])
+    return entries
+
+
+def _catalog_check_assets(name: str, raw: Any) -> Dict[str, Any]:
+    """Validate a catalog entry's release-archive pin before any of it becomes a URL or a path."""
+    assets = raw if isinstance(raw, dict) else {}
+    release = str(assets.get("release") or "")
+    archive = str(assets.get("archive") or "")
+    digest = str(assets.get("sha256") or "")
+    size = int(assets.get("size") or 0)
+    if not CATALOG_RELEASE_RE.match(release):
+        raise ValueError(f"{name}: catalog entry names no theme-asset release")
+    if not CATALOG_ARCHIVE_RE.match(archive):
+        raise ValueError(f"{name}: catalog entry has no usable archive name: {archive!r}")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError(f"{name}: catalog entry has no usable checksum")
+    if not 0 < size <= CATALOG_MAX_FILE_BYTES:
+        raise ValueError(f"{name}: catalog entry declares an unusable archive size: {size}")
+    return {"release": release, "archive": archive, "sha256": digest, "size": size,
+            "rev": int(assets.get("rev") or 0)}
+
+
+def _catalog_file_digest(path: Path) -> str:
+    """The sha256 of one file on disk, read in chunks: the per-wallpaper digest a marker records."""
+    running = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(CATALOG_CHUNK_BYTES), b""):
+            running.update(chunk)
+    return running.hexdigest()
+
+
+def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, Dict[str, str]]:
+    """Unpack a verified theme archive into the staging directory.
+
+    Returns the bytes written and the sha256 of each relative path written,
+    sorted by path. The digests are taken from the bytes that land on disk and
+    are the reference point for telling an untouched wallpaper from an edited
+    one later; nothing else records what the archive carried.
+
+    Every member name goes through the imagery path rule, and only regular files
+    are written: a link or a device node in the archive is refused rather than
+    followed.
+    """
+    written = 0
+    unpacked: Dict[str, str] = {}
+    with tarfile.open(archive, mode="r:gz") as tar:
+        for member in tar.getmembers():
+            rel = _catalog_check_relpath(member.name)
+            if not member.isfile():
+                raise ValueError(f"{name}: {rel} is not a regular file in {archive.name}")
+            source = tar.extractfile(member)
+            if source is None:
+                raise ValueError(f"{name}: {rel} is not readable in {archive.name}")
+            target = staging / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("wb") as handle:
+                shutil.copyfileobj(source, handle)
+            written += target.stat().st_size
+            unpacked[rel] = _catalog_file_digest(target)
+    return written, dict(sorted(unpacked.items()))
+
+
+@contextlib.contextmanager
+def _catalog_staged_archive(name: str, assets: Dict[str, Any], base_urls: List[str],
+                            allow_local: bool) -> Iterable[Tuple[Path, int, Dict[str, str]]]:
+    """A theme archive fetched at its catalogued pin and unpacked into a staging directory.
+
+    Yields the staging directory, the bytes unpacked and each file's sha256.
+    The one owner of what install and update share: the verified transfer, the
+    unpack and the cleanup, all outside the theme mutation lock. The staging
+    directory and the cached archive are removed on exit, so the cache holds
+    in-flight downloads only and the finished disk cost is exactly the
+    wallpapers.
+    """
+    if not base_urls:
+        raise ValueError("theme catalog has no download source")
+    ensure_dirs()
+    _catalog_clear_stale()
+    archive = theme_asset_cache_dir() / f"{assets['sha256']}.tar.gz"
+    staging = Path(tempfile.mkdtemp(prefix=f".catalog-{name}-", dir=str(user_themes_dir())))
+    try:
+        rel = f"{assets['release']}/{assets['archive']}"
+        _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
+                                base_urls, allow_local, archive)
+        written, digests = _catalog_unpack(name, archive, staging)
+        yield staging, written, digests
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            archive.unlink()
+
+
+def _catalog_place(name: str, staging: Path, assets: Dict[str, Any], written: int,
+                   placed: Dict[str, str | None], incoming: Dict[str, str],
+                   keep_edited: bool) -> Dict[str, List[str]]:
+    """Move an unpacked archive's wallpapers into the user directory and write the marker last.
+
+    The caller holds theme_mutation_lock and passes `placed` as read under it,
+    so an edit that lands during the transfer is judged by the bytes it left.
+    A file the marker did not place stays the user's. A placed file is
+    replaced; with `keep_edited`, which an update passes, only while its bytes
+    still match the digest it was placed with, a placed file the user deleted
+    stays deleted, and a placed file the new archive no longer carries is
+    removed under the same match. A file already holding the archive's bytes
+    does not move, which is also what an interrupted update run again finds for
+    the files it had moved. Files move one at a time and the directory is never
+    renamed aside. A placed file the update keeps stays recorded at the digest
+    it was placed with, so the next update still reads it as edited.
+    """
+    dest = user_themes_dir() / name
+    plan: Dict[str, List[str]] = {"replaced": [], "added": [], "kept": [], "removed": []}
+    for rel, digest in incoming.items():
+        target = dest / rel
+        if not target.exists():
+            plan["kept" if keep_edited and rel in placed else "added"].append(rel)
+            continue
+        current = _catalog_file_digest(target) if target.is_file() else ""
+        if current == digest:
+            continue
+        if rel in placed and not (keep_edited and current != placed[rel]):
+            plan["replaced"].append(rel)
+        else:
+            plan["kept"].append(rel)
+    if keep_edited:
+        for rel, digest in placed.items():
+            target = dest / rel
+            if rel in incoming or not target.exists():
+                continue
+            pristine = target.is_file() and _catalog_file_digest(target) == digest
+            plan["removed" if pristine else "kept"].append(rel)
+    for rel in plan["replaced"] + plan["added"]:
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        (staging / rel).replace(dest / rel)
+    for rel in plan["removed"]:
+        (dest / rel).unlink()
+    recorded = {rel: digest for rel, digest in incoming.items() if rel not in plan["kept"]}
+    recorded.update({rel: placed[rel] for rel in plan["kept"] if rel in placed})
+    ref = str((load_theme_catalog().get("source") or {}).get("ref") or "")
+    write_file(dest / CATALOG_MARKER, json.dumps(catalog_marker_payload(
+        name, dest, assets, dict(sorted(recorded.items())), written, ref), indent=2) + "\n")
+    return {key: sorted(paths) for key, paths in plan.items()}
+
+
+def _catalog_require_digests(name: str, placed: Dict[str, str | None]) -> None:
+    """Refuse to update a download whose marker records no digests, as the released helper wrote it.
+
+    Nothing then tells a wallpaper the download placed from one the user
+    replaced under its name.
+    """
+    if any(digest is None for digest in placed.values()):
+        raise ValueError(f"{name}: its download marker records no file digests, so an update cannot tell the "
+                         f"user's wallpapers from the download's; `vshell theme catalog install --force {name}` "
+                         "downloads them again")
+
+
+def catalog_updates() -> List[Dict[str, Any]]:
+    """Every download the shipped catalog pins another archive for, read offline.
+
+    `digests` is False for a marker the released helper wrote, which
+    catalog_update_theme refuses.
+    """
+    pending: List[Dict[str, Any]] = []
+    for raw in load_theme_catalog().get("themes") or []:
+        if not isinstance(raw, dict) or not raw.get("name"):
+            continue
+        name = str(raw["name"])
+        placed = catalog_placed_wallpapers(name)
+        marker = catalog_marker(name) if placed is not None else {}
+        if placed is None or not catalog_imagery_update_available(marker, raw):
+            continue
+        pending.append({"name": name, "installedRev": int(marker.get("rev") or 0),
+                        "latestRev": int((raw.get("assets") or {}).get("rev") or 0),
+                        "digests": all(digest is not None for digest in placed.values())})
+    return sorted(pending, key=lambda item: item["name"])
+
+
+def catalog_update_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool) -> Dict[str, Any]:
+    """Bring a download's wallpapers to the archive the shipped catalog pins, keeping every one the user changed.
+
+    The shipped `themes/catalog.json` is the source of truth. The transfer runs
+    outside the theme mutation lock, as a download's does, and _catalog_place
+    judges and moves the files under it. A marker with no digests is refused
+    before any transfer and again under the lock, leaving every file and the
+    marker as they were.
+    """
+    name = _catalog_check_name(str(entry.get("name") or ""))
+    placed = catalog_placed_wallpapers(name)
+    if placed is None:
+        raise ValueError(f"{name} holds no wallpapers downloaded from the theme catalog")
+    marker = catalog_marker(name)
+    revs = {"fromRev": int(marker.get("rev") or 0), "toRev": int((entry.get("assets") or {}).get("rev") or 0)}
+    if not catalog_imagery_update_available(marker, entry):
+        return {"name": name, "status": "current", **revs}
+    _catalog_require_digests(name, placed)
+    assets = _catalog_check_assets(name, entry.get("assets"))
+    with _catalog_staged_archive(name, assets, base_urls, allow_local) as (staging, written, incoming):
+        with theme_mutation_lock():
+            placed = catalog_placed_wallpapers(name)
+            if placed is None:
+                raise ValueError(f"{name} holds no wallpapers downloaded from the theme catalog")
+            _catalog_require_digests(name, placed)
+            plan = _catalog_place(name, staging, assets, written, placed, incoming, keep_edited=True)
+    return {"name": name, "status": "updated", **revs, "files": plan}
+
+
+def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
+                           force: bool = False) -> Dict[str, Any]:
+    """Download a theme's wallpapers into its user directory, verified before they are placed.
+
+    The archive carries `backgrounds/*` only; the theme's definitions ship in the
+    package. Its files land beside whatever the user directory already holds, a
+    user overlay included, and a file already there under a name no earlier
+    download placed stays the user's. Network transfer stays outside the theme
+    mutation lock so theme changes can proceed during downloads; placing the
+    files and writing the marker hold it."""
+    name = _catalog_check_name(str(entry.get("name") or ""))
+    dest = user_themes_dir() / name
+    # A package that carries its own wallpapers, the default theme's among them,
+    # has nothing to download.
+    if theme_dir_has_wallpapers(builtin_themes_dir() / name):
+        return {"name": name, "status": "skipped", "reason": "already installed as a built-in theme"}
+    if not force and catalog_imagery_installed(name):
+        return {"name": name, "status": "skipped", "reason": "already installed"}
+    assets = _catalog_check_assets(name, entry.get("assets"))
+    with _catalog_staged_archive(name, assets, base_urls, allow_local) as (staging, written, incoming):
+        with theme_mutation_lock():
+            _catalog_place(name, staging, assets, written, catalog_placed_wallpapers(name) or {}, incoming,
+                           keep_edited=False)
+    return {"name": name, "status": "installed", "path": str(dest), "bytes": written}
+
+
+def _catalog_discard(path: Path) -> None:
+    """Best-effort delete of a staging/replaced entry, symlinks included."""
+    if path.is_symlink():
+        with contextlib.suppress(OSError):
+            path.unlink()
+        return
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _catalog_clear_stale() -> None:
+    """Remove .catalog-* staging entries from the user theme directory.
+    Runs without the lock: a download reads its own staging directory only, and
+    moves files out of it under the theme mutation lock."""
+    root = user_themes_dir()
+    if not root.is_dir():
+        return
+    for leftover in list(root.glob(".catalog-*")):
+        _catalog_discard(leftover)
+
+
+def current_theme_name() -> str:
+    """The applied theme's name, or "" when no theme is applied yet."""
+    theme_file = cfg_dir() / "theme.json"
+    if not theme_file.is_file():
+        return ""
+    try:
+        return str(json.loads(theme_file.read_text()).get("name") or "")
+    except Exception:
+        return ""
+
+
+def catalog_remove_theme(name: str) -> Dict[str, Any]:
+    """Remove a theme's downloaded wallpapers. Never touches built-ins, user files or an overlay."""
+    clean = _catalog_check_name(name)
+    dest = user_themes_dir() / clean
+    # A package copied by hand or by an older duplicate can carry a download
+    # marker. Check the directory identity before removal so a user copy does
+    # not count as a catalog download.
+    placed = catalog_placed_wallpapers(clean)
+    if placed is None:
+        if catalog_marker(clean):
+            raise ValueError(f"{clean} holds a download marker that names no download in this directory")
+        raise ValueError(f"{clean} was not downloaded from the theme catalog")
+    if current_theme_name() == clean:
+        raise ValueError(f"{clean} is the current theme; apply another theme first")
+    with theme_mutation_lock():
+        try:
+            for rel in placed:
+                with contextlib.suppress(FileNotFoundError):
+                    (dest / rel).unlink()
+            (dest / CATALOG_MARKER).unlink()
+        except OSError as exc:
+            raise ValueError(f"could not remove {clean}: {exc}") from exc
+        # A download that was all the user directory held leaves no empty directory.
+        for directory in (dest / "backgrounds", dest):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+    # Prune thumbnails during CLI removal because a missing theme does not
+    # trigger a later thumbnail build.
+    return {"name": clean, "status": "removed", "path": str(dest),
+            "thumbsPruned": prune_wallpaper_thumbs_now()}
+
+
+def drop_theme_overlay(package: str) -> None:
+    """Delete a built-in theme's user overlay, keeping the wallpapers a download placed and its marker.
+
+    A revert cannot fetch those wallpapers back; removing them is `theme catalog remove`.
+    The overlay `theme.json`'s `THEME_META_BOOKKEEPING_KEYS` are kept too, since
+    they file the theme rather than edit it. An overlay `theme.json` that does
+    not read as an object keeps nothing, as nothing in it can be told from an edit.
+    """
+    user_dir = user_themes_dir() / package
+    placed = catalog_placed_wallpapers(package)
+    if not user_dir.is_dir():
+        return
+    bookkeeping: Dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        bookkeeping = {key: value for key, value in theme_json_layer(user_dir / "theme.json").items()
+                       if key in THEME_META_BOOKKEEPING_KEYS}
+    if not placed:
+        shutil.rmtree(user_dir, ignore_errors=True)
+    else:
+        kept = {CATALOG_MARKER, *placed}
+        for path in sorted(user_dir.rglob("*"), reverse=True):
+            if path.is_dir() and not path.is_symlink():
+                with contextlib.suppress(OSError):
+                    path.rmdir()
+            elif path.relative_to(user_dir).as_posix() not in kept:
+                path.unlink()
+    if bookkeeping:
+        write_user_layer(package, "theme.json", {**read_theme_overlay_meta(package), **bookkeeping})
+
+
+def theme_wallpaper_entries(bp: Dict[str, Any], removed: bool = False) -> List[Dict[str, Any]]:
+    """Composed, hidden-filtered wallpaper set with per-entry origin and default flag.
+    With `removed`, the files `wallpaper-remove` hid from that set instead."""
+    pkg_dir_name = Path(str(bp.get("path"))).name
+    builtin_root = builtin_themes_dir() / pkg_dir_name
+    default_path = str((bp.get("palette") or {}).get("wallpaper", ""))
+    entries: List[Dict[str, Any]] = []
+    for path in bp.get("removedBackgrounds" if removed else "backgrounds") or []:
+        p = Path(path)
+        # Thumbnail lookup must not decode wallpaper images while listing them.
+        # An empty lookup lets the rail read the original image.
+        thumb = _wp_thumbs.thumb_for(p)
+        entries.append({
+            "file": p.name,
+            "path": str(p),
+            "thumb": str(thumb) if thumb else "",
+            # The cache identity, so a consumer can tell a replaced file from
+            # the same one — see vshell_wallpaper_thumbs.thumb_key.
+            "thumbKey": _wp_thumbs.thumb_key(p),
+            "origin": "builtin" if builtin_root in p.parents else "user",
+            "default": str(p) == default_path,
+        })
+    return entries
+
+
+WALLPAPER_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".jxl", ".avif", ".heif"}
+
+
+def all_wallpaper_entries(folder: str) -> List[Dict[str, Any]]:
+    """The images directly inside `folder`, then every installed theme's wallpaper set followed by
+    the files removed from that set, each of those carrying `removed`.
+    Each entry's `source` is "folder" or the name of the theme it belongs to. A folder
+    that does not exist lists no images; an unreadable one raises."""
+    entries: List[Dict[str, Any]] = []
+    root = Path(folder).expanduser() if folder else None
+    if root is not None and root.is_dir():
+        for p in sorted(root.iterdir()):
+            if p.suffix.lower() in WALLPAPER_IMAGE_SUFFIXES and p.is_file():
+                thumb = _wp_thumbs.thumb_for(p)
+                entries.append({"file": p.name, "path": str(p), "thumb": str(thumb) if thumb else "",
+                                "thumbKey": _wp_thumbs.thumb_key(p), "source": "folder"})
+    for bp in sorted((t for t in list_themes() if t.get("package")), key=lambda t: str(t.get("name") or "")):
+        source = str(bp.get("name") or "")
+        entries.extend(dict(entry, source=source) for entry in theme_wallpaper_entries(bp))
+        entries.extend(dict(entry, source=source, removed=True) for entry in theme_wallpaper_entries(bp, removed=True))
+    return entries
+
+
+def installed_wallpaper_paths() -> List[Path]:
+    """Every installed theme's wallpapers once each, the files removed from a set included since
+    `wallpapers --all` still lists them: the complete set thumbnails are built for and pruned against."""
+    live: List[Path] = []
+    seen: set = set()
+    for pkg in list_themes():
+        for path in (pkg.get("backgrounds") or []) + (pkg.get("removedBackgrounds") or []):
+            if path not in seen:
+                seen.add(path)
+                live.append(Path(path))
+    return live
+
+
+def prune_wallpaper_thumbs_now() -> int:
+    """Remove thumbnails no installed wallpaper claims.
+    Deletion paths must call this because no missing wallpaper remains to
+    trigger a later thumbnail build."""
+    return _wp_thumbs.prune_orphans(installed_wallpaper_paths())
+
+
+def delete_wallpaper(path: str, folder: str, applied: List[str]) -> Dict[str, Any]:
+    """Delete one wallpaper file from disk and report what it removed.
+
+    Only an image directly inside the wallpaper `folder` or directly inside a user
+    theme directory's `backgrounds/` is deleted, so a packaged wallpaper is refused
+    too, and the unlink itself refuses a file that is already gone. `applied` is
+    every image the shell's session and lock screen still name (D019), and a file
+    it names is refused. A theme's set lists the files in its own `backgrounds/`,
+    so a deleted file leaves that set with it; the set's hidden and default names
+    for it go too unless the package ships a file of that name, which they still name.
+    Raises ValueError for a refusal and OSError for a file the unlink cannot remove.
+    """
+    given = Path(path).expanduser()
+    target = given.parent.resolve() / given.name
+    if target.suffix.lower() not in WALLPAPER_IMAGE_SUFFIXES:
+        raise ValueError(f"Not a wallpaper image: {path}")
+    if target in {Path(p).expanduser().parent.resolve() / Path(p).name for p in applied if p}:
+        raise ValueError(f"{target.name} is still set as a wallpaper or lock screen image; choose another before deleting it")
+    in_folder = bool(folder) and target.parent == Path(folder).expanduser().resolve()
+    in_theme = target.parent.name == "backgrounds" and target.parent.parent.parent == user_themes_dir().resolve()
+    if not (in_folder or in_theme):
+        raise ValueError(f"{target} is outside the wallpaper folder and the user theme directories")
+    target.unlink()
+    themes: List[str] = []
+    if in_theme:
+        owner = target.parent.parent.name
+        themes.append(owner)
+        meta = read_theme_overlay_meta(owner)
+        named = target.name in hidden_background_names(meta) or str(meta.get("wallpaper") or "") == target.name
+        if named and not (builtin_themes_dir() / owner / "backgrounds" / target.name).is_file():
+            set_background_hidden(meta, target.name, False)
+            if str(meta.get("wallpaper") or "") == target.name:
+                meta.pop("wallpaper", None)
+            write_user_layer(owner, "theme.json", meta)
+    return {"success": True, "deleted": str(target), "themes": themes, "thumbsPruned": prune_wallpaper_thumbs_now()}
+
+
+def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
+    try:
+        return package_meta(pkg_dir_name) or {}
+    except Exception:
+        return {}
+
+
+def hidden_background_names(meta: Dict[str, Any]) -> Set[str]:
+    """The file names a package's `hiddenBackgrounds` holds: the wallpapers `wallpaper-remove` took out of its set."""
+    return {h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)}
+
+
+def set_background_hidden(meta: Dict[str, Any], name: str, hidden: bool) -> None:
+    """Add `name` to `meta`'s `hiddenBackgrounds`, or drop it; the caller writes `meta`.
+    The one writer of the key's shape: a sorted list, and no key once no name remains."""
+    names = (hidden_background_names(meta) | {name}) if hidden else (hidden_background_names(meta) - {name})
+    if names:
+        meta["hiddenBackgrounds"] = sorted(names)
+    else:
+        meta.pop("hiddenBackgrounds", None)
+
+
+def set_theme_starred(pkg_dir_name: str, starred: bool) -> None:
+    """Star or unstar package `pkg_dir_name`: the one writer that sets or clears `starred`.
+
+    The star lives in the theme's overlay `theme.json`, so it travels with the
+    theme. Over a built-in theme an unstar leaves no overlay file behind, and a
+    user directory the star alone created is removed with it.
+    """
+    meta = read_theme_overlay_meta(pkg_dir_name)
+    if starred:
+        meta["starred"] = True
+    else:
+        meta.pop("starred", None)
+    write_user_layer(pkg_dir_name, "theme.json", meta)
+    with contextlib.suppress(OSError):
+        (user_themes_dir() / pkg_dir_name).rmdir()
+
+
+def prune_theme_previews(live: Set[str]) -> int:
+    """Remove cached palette cards whose file name `live` does not hold.
+
+    `live` holds the card name of every listed theme that paints one. A card is
+    keyed on its theme's colours, so every palette edit leaves the previous card
+    behind, and nothing else removes it.
+    """
+    removed = 0
+    for path in theme_previews_dir().glob("*.png"):
+        if path.name not in live:
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
+def colors_toml_from_blueprint(bp: Dict[str, Any]) -> str:
+    pal = bp.get("palette", {})
+    ext = pal.get("extendedColors") or {}
+    colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
+    while len(colors) < 16:
+        colors.append(DEFAULT_COLORS[len(colors)])
+    lines: List[str] = []
+    for key in ("accent", "cursor", "foreground", "background", "selection_foreground", "selection_background"):
+        value = ext.get(key)
+        if value:
+            lines.append(f'{key} = "{clean_hex(value)}"')
+    lines.append("")
+    for i, c in enumerate(colors):
+        lines.append(f'color{i} = "{c}"')
+    return "\n".join(lines) + "\n"
+
+
+# --- Per-app color overrides (overlay app-colors.toml) --------------------------
+#
+# `[<app>]` tables of role = "#hex" stored in a theme's user overlay. Merged over
+# the derived role map for that app's target only, at render time.
+def _parse_app_overrides_text(text: str) -> Dict[str, Dict[str, str]]:
+    out: Dict[str, Dict[str, str]] = {}
+    try:
+        parsed = tomllib.loads(text)
+    except Exception:
+        return out
+    for app, table in parsed.items():
+        if not isinstance(table, dict):
+            continue
+        roles: Dict[str, str] = {}
+        for role, value in table.items():
+            if isinstance(value, str) and HEX_RE.match(value.strip()):
+                roles[str(role)] = clean_hex(value)
+        if roles:
+            out[str(app)] = roles
+    return out
+
+
+def theme_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
+    """Per-app overrides for a theme, merged role by role: built-in, then user."""
+    merged: Dict[str, Dict[str, str]] = {}
+    for path in package_layer_paths(pkg_dir_name, "app-colors.toml"):
+        for app, roles in _parse_app_overrides_text(path.read_text(errors="ignore")).items():
+            merged.setdefault(app, {}).update(roles)
+    return merged
+
+
+def app_overrides_toml_text(data: Dict[str, Dict[str, str]]) -> str:
+    """An `app-colors.toml` body for `data`, or "" when no app keeps a valid role."""
+    lines: List[str] = []
+    for app in sorted(data):
+        roles = {r: v for r, v in data[app].items() if isinstance(v, str) and HEX_RE.match(v.strip())}
+        if not roles:
+            continue
+        lines.append(f"[{app}]")
+        for role in sorted(roles):
+            lines.append(f'{role} = "{clean_hex(roles[role])}"')
+        lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n" if lines else ""
+
+
+def theme_app_overrides_layer(root: Path) -> Dict[str, Dict[str, str]]:
+    """The app-colors.toml of one package layer directory alone."""
+    path = root / "app-colors.toml"
+    if not path.exists():
+        return {}
+    return _parse_app_overrides_text(path.read_text(errors="ignore"))
+
+
+def read_user_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
+    """Only the user overlay app-colors.toml, for read-modify-write editing."""
+    return theme_app_overrides_layer(user_themes_dir() / pkg_dir_name)
+
+
+# The applied package's per-app overrides, carried on a blueprint rebuilt from
+# the current theme. Distinct from `appOverrides`, the per-app count the theme
+# list reports.
+CURRENT_APP_OVERRIDES_KEY = "appColorOverrides"
+
+# The merge-style curated files `carry_curated_apps` left out of a rebuild, for
+# the apply to name. The carry is the only producer and the apply the only reader,
+# so a blueprint from any other source carries none and the apply says nothing.
+WITHHELD_CURATED_KEY = "withheldCurated"
+
+
+def bp_app_overrides(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Per-app overrides for a resolved blueprint (packages only)."""
+    path = bp.get("path")
+    if not bp.get("package") or not path:
+        return {}
+    return theme_app_overrides(Path(str(path)).name)
+
+
+def theme_package_dir_name(bp: Dict[str, Any]) -> str:
+    """The directory name `materialize_theme_package` writes `bp` into."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
+
+
+def package_colors_map(name: str) -> Dict[str, str]:
+    """The raw colours theme package `name`'s `colors.toml` layers hold, merged key
+    by key with the user layer last.
+
+    One owner for the read, and only the read: a caller wanting a palette
+    identity passes the result to `palette_identity`. Owning both together gave
+    the loader two reads, one per identity map it needs, so a hand-edited overlay
+    with a typo in it reported its diagnostic twice per load and once more per
+    save, and a listing repeated the pair per package.
+
+    A package with no readable colours is a package with no colours, not a load
+    failure: `palette_from_colors_map` fills every role from the defaults and the
+    recorded digest still says which palette the curated files were picked for.
+    `name` is the package directory, which every caller has, rather than the
+    `name` key of a `theme.json` that need not carry one and printed an empty
+    name when it did not. A layer that does not read contributes no colours and
+    the other layer still does.
+
+    The layers are read under the keys their files wrote and folded through
+    `merged_color_map`, so the question of what the package's colours are has one
+    owner reading every layer at once. Normalizing per layer answered it per
+    layer, where the fuzzy last-token fallback fills an absent `background` from
+    `selection_background` and an absent `foreground` from `selection_foreground`:
+    `write_user_layer` drops the keys equal to the built-in file's, so a user
+    overlay of a built-in theme routinely omits both, and the overlay's inferred
+    values then overwrote the built-in layer's stated ones on every apply, save,
+    lint and listing.
+    """
+    layers: List[ColorTiers] = []
+    for path in package_layer_paths(name, "colors.toml"):
+        try:
+            layers.append(color_map_tiers(parse_colors_toml(path, kind=ColorsRead.PALETTE_LAYER)))
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
+    return merged_color_map(layers)
+
+
+def declared_ui_roles(bp: Dict[str, Any]) -> Dict[str, str]:
+    """The UI roles `bp` declares, which only a curated package has.
+
+    One owner for that question, because a blueprint's declarations reach the
+    render, the carry from the applied theme and the digest that certifies it,
+    and three spellings of the curated test disagreed. The save's write is not
+    one of them: it spells the source test itself, because an empty result here
+    cannot tell a curated package declaring nothing, which must write, mask or
+    remove the file, from a generated one, which must not touch it.
+    `apply-colors --set <role>=<hex> --save` rebuilds through
+    `palette_from_colors_map`, whose default source is generated: the carry
+    handed the declarations on unconditionally, the save wrote a `ui-roles.toml`
+    the render then ignored, and the recorded digest counted it. Editing or
+    deleting that inert file afterwards moved `curatedPalette` and dropped the
+    package's merge-style claude files. `save-current` kept `source: curated` on
+    the same package, so the two save paths painted different chrome.
+    """
+    return dict(bp.get("uiRoles") or {}) if blueprint_source(bp) == "curated" else {}
+
+
+def package_declared_ui_roles(meta: Dict[str, Any], name: str) -> Dict[str, str]:
+    """A package's declared UI roles as its own `theme.json` source admits them.
+
+    `package_overlay_values` is the read; this is the read plus the one curated test,
+    for the three callers that build a palette identity out of a package on disk.
+    A generated package's file is inert at render time, so folding it into the
+    identity would let a file nothing reads move the digest that certifies the
+    package's curated app files: editing or deleting it would drop them.
+    """
+    return declared_ui_roles({"source": package_source(meta),
+                              "uiRoles": package_overlay_values(name, UI_ROLES_FILE)})
+
+
+def package_palette(colors: Dict[str, str], meta: Dict[str, Any],
+                    ui_roles: Dict[str, str] | None = None) -> Dict[str, str]:
+    """The palette identity a theme package renders from, over its parsed colours.
+
+    One owner for the assembly, because the loader decides which curated files a
+    package's palette still fits and the save's exemption has to ask the same
+    question of the same palette. Two spellings of these steps agreed until the
+    loader gained one the copy lacked, and the copy's answer is a refused
+    exemption, which prunes a curated file the package still fits.
+
+    It takes the parsed colours rather than the package's files, so the loader
+    can pass one `package_colors_map` result here and to its own unadjusted map
+    instead of reading `colors.toml` twice.
+    """
+    return palette_identity(colors, str(meta.get("mode") or ""), meta.get("adjustments"), ui_roles)
+
+
+def package_source(meta: Dict[str, Any]) -> str:
+    """Whether a theme package's palette is hand-curated or machine-generated.
+
+    A package's colours are hand-picked unless its `theme.json` says otherwise,
+    which is the opposite of the default `blueprint_source` applies to a bare
+    blueprint, so that function cannot answer for a package.
+    """
+    source = str(meta.get("source") or "curated").strip().lower()
+    return source if source in {"curated", "generated"} else "curated"
+
+
+def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
+    """A blueprint's palette in derived form, over the key set `theme.json` names.
+
+    The form two blueprints of different provenance are comparable in. A package
+    holds raw palette keys while `set-wallpaper --save` hands the save a
+    blueprint rebuilt out of `theme.json`, which holds derived roles; on akane
+    `accent`, `selection_background` and `selection_foreground` differ between the
+    two while naming the same palette. This also drops the terminal slots one
+    side carries and the other does not.
+
+    It is not a normal form. On the generated branch `target_roles` re-runs
+    contrast adjustment, so the derivation is not idempotent there: one more trip
+    through it moves the palette. On the akane package `theme mode --transform`
+    plus a save leaves behind, the roles that move are the six bright ANSI slots.
+    Two blueprints are therefore comparable only at equal rebuild depth, which is
+    what `applied_palette_parted`, the one caller that compares an applied
+    blueprint against a package, arranges.
+    """
+    theme = theme_json_from_blueprint(bp)
+    return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
+            "mode": str(theme.get("mode") or "")}
+
+
+def applied_palette_parted(bp: Dict[str, Any], package: Dict[str, Any]) -> bool:
+    """Whether the palette `bp` holds has parted from `package`'s own palette.
+
+    The one owner of that question. Two steps ask it of the same pair:
+    `carry_curated_apps` decides which merge-style curated files the apply paints,
+    and `save_curated_terms` decides what the save writes, vouches for and
+    leaves alone. Answered two ways, one step paints a file the other refuses to
+    vouch for.
+
+    The comparison needs both sides at equal rebuild depth, so `package` is given the
+    one trip out of a `theme.json` that a rebuild from the applied theme has already
+    taken: a package holds raw palette keys where a rebuild holds derived ones. That
+    equalises depth without normalising either side, and derivation is not idempotent
+    on the generated branch, so a package left declaring `source: generated` by `theme
+    mode --transform` plus a save reads as parted from itself when the trip is
+    missing. `save_curated_terms` may hand a blueprint of another provenance, as
+    `import-colors` and `extract-wallpaper --save` build one from colours of their own
+    at no rebuild depth; those read as parted from the destination, which is the
+    answer wanted, since the palette they write is not the destination's.
+
+    They part on three reaches. `apply-colors --set` with no `--save` moves the
+    applied palette while the package keeps the `colors.toml` its recorded digest
+    names. A VGS update that changes a built-in theme's definition under an applied
+    theme moves the package with no re-apply. `theme mode --transform` leaves the
+    applied palette in the other mode from the package on disk.
+    """
+    return rebuilt_palette_identity(bp) != rebuilt_palette_identity(
+        blueprint_from_theme_json(theme_json_from_blueprint(package)))
+
+
+class CuratedSaveTerms(NamedTuple):
+    """What a save may hand `materialize_theme_package` about merge-style curated files.
+
+    `parted` says the palette the save is about to write is no longer the
+    destination package's own, so the save hands in none of those files: each was
+    picked against colours this save is not writing.
+
+    `vouched` names the files that do fit the palette being written and that the
+    save is nonetheless not handing in, so the record must go on certifying them. It
+    is empty whenever `parted`.
+
+    Neither field says whether a file is unlinked, which
+    `materialize_theme_package` settles from the destination alone, and neither
+    carries the route. Both decide the record it writes: a name in `vouched` keeps
+    that file certified, and `parted` is what holds the record back.
+    """
+    parted: bool
+    vouched: List[str]
+
+
+def writes_applied_theme_package(bp: Dict[str, Any]) -> bool:
+    """Whether writing `bp` out lands in the applied theme's own package directory.
+
+    The one owner of that question: `materialize_theme_package` asks it about
+    unlinking a merge-style curated file and `save_curated_terms` about the palette,
+    and answered two ways one route deleted a file the other would have kept.
+
+    Directory names, so it holds for a route carrying nothing about where `bp` came
+    from: `apply-colors --save` and `save-current` build out of the applied theme
+    with no `path` or `package` key. A name-less applied theme would read as a
+    package directory called `theme`, which the emptiness test refuses; no shipped
+    writer of the shell's `theme.json` leaves the name out.
+    """
+    applied = str(current_theme().get("name") or "")
+    return bool(applied) and theme_package_dir_name(bp) == theme_package_dir_name({"name": applied})
+
+
+def save_curated_terms(bp: Dict[str, Any]) -> CuratedSaveTerms:
+    """The terms a save over `bp`'s own package writes its merge-style files on.
+
+    Asked against the package directory about to be written over, and under no
+    exemption the carry grants the apply.
+
+    `parted` is the palette question. The save writes `colors.toml` from `bp`, so
+    once `bp`'s palette is no longer the package's own, every merge-style file in
+    the destination was picked against a palette this save is not writing.
+    `applied_palette_parted` owns that comparison and names the reaches.
+
+    `vouched` is `curated_apps_for_palette`'s own answer for the destination: the
+    merge-style files its palette vouches for. A file a per-app override alone keeps
+    out of the render is among them, the override being a reversible layer beside the
+    palette that no save writes into `colors.toml`, and left out `theme app-colors
+    claude --reset` could not bring it back.
+
+    It is asked over the package's own palette rather than the one this save is about
+    to write, which are held in different forms: the save writes a blueprint rebuilt
+    from the applied theme, holding derived roles where the package holds raw ones, so
+    asking over the written palette answers that every file was dropped. It is empty
+    whenever `parted`, because the package's palette is then not the one being written
+    and says nothing about what fits it.
+
+    Both answers need the destination to be the package `bp`'s palette belongs to,
+    because comparing it against an unrelated package's answers nothing. `bp`'s own
+    `path` says so where a route puts one there, and `writes_applied_theme_package`
+    says so for a route that does not: a colour edit and `save-current` build their
+    blueprint out of the applied theme and carry neither key, and read as another
+    package the record went on certifying a file picked for the palette the edit had
+    just replaced. A save under any other name answers neither, so it hands in the
+    curated files a copy wants.
+
+    A package whose metadata does not read is parted with nothing vouched: nothing
+    on disk then says what its files were picked against, so the save hands in none
+    of them and vouches for none.
+    """
+    source = Path(str(bp.get("path") or "")).name
+    package = theme_package_dir_name(bp)
+    if not ((bp.get("package") and source and source == package)
+            or writes_applied_theme_package(bp)):
+        return CuratedSaveTerms(False, [])
+    meta = None
+    with contextlib.suppress(Exception):
+        meta = package_meta(package)
+    if meta is None:
+        return CuratedSaveTerms(True, [])
+    palette = package_palette(package_colors_map(package), meta,
+                              package_declared_ui_roles(meta, package))
+    pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
+    if applied_palette_parted(bp, pkg):
+        return CuratedSaveTerms(True, [])
+    files = compose_theme_files(package)
+    curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
+    layers = package_layer_palettes(package)
+    return CuratedSaveTerms(False, sorted(set(curated_apps_for_palette(curated, palette, {}, layers))
+                                          & CLAUDE_CURATED_FILES))
+
+
+def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None:
+    """Copy a theme package's composed files into the user package `dest_name`.
+
+    The copy is one directory, so the source's per-layer records cannot come
+    with it. Flattened as they stood, a legacy overlay `theme.json` that recorded
+    no digest became the only record beside the built-in curated file, and the
+    copy dropped that file on every load. The copy records the digest of the
+    palette its own `colors.toml` holds, as every writer does, and carries a
+    merge-style file only where the source layer that supplied it vouched for
+    that palette: the one record the copy writes would otherwise certify a file
+    nobody judged against it.
+
+    Restyle adjustments and per-app overrides are copied rather than folded in,
+    so the loader folds them in on the copy exactly as it does on the source.
+    The files merged key by key across the source's layers are handed to
+    `write_user_layer` as they load on the source, so the copy loads them the
+    same way whether or not a built-in theme shares its name.
+    """
+    dest = user_themes_dir() / dest_name
+    files = compose_theme_files(package)
+    meta = package_meta(package) or {}
+    colors = package_colors_map(package)
+    palette = palette_identity(colors, str(meta.get("mode") or ""),
+                               ui_roles=package_declared_ui_roles(meta, package))
+    vouched = curated_apps_for_palette(
+        {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
+        palette, {}, package_layer_palettes(package))
+    for rel, src in files.items():
+        # A copy is the user's own theme, never something the catalog may remove
+        # later, so the download marker stays behind with the unvouched files.
+        if rel in ("theme.json", CATALOG_MARKER, "colors.toml", *OVERLAY_MASK_TEXT, "app-colors.toml") or (
+                rel.startswith("apps/") and Path(rel).name not in vouched):
+            continue
+        target_path = dest / rel
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target_path)
+    for filename, values in (("colors.toml", colors),
+                             *((overlay, package_overlay_values(package, overlay)) for overlay in OVERLAY_MASK_TEXT),
+                             ("app-colors.toml", theme_app_overrides(package))):
+        write_user_layer(dest_name, filename, values)
+    # A copy is a new theme the user has not filed yet, so it starts unstarred.
+    for key in THEME_META_BOOKKEEPING_KEYS:
+        meta.pop(key, None)
+    meta["name"] = new_name
+    meta["curatedPalette"] = palette_digest(palette)
+    write_user_layer(dest_name, "theme.json", meta)
+
+
+def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
+    """Persist a theme as a user package: curated apps/ files carry over
+    verbatim; every other toggled-on app gets an editable rendered file.
+
+    The blueprint's curated files are the ones the package's own palette fits,
+    because the loader dropped any that palette outgrew. This copies them verbatim
+    rather than judging their values again, and asks one question of its own
+    through `save_curated_terms`: whether the palette it is about to write is still
+    that package's, since the loader answered for the package and not for this save.
+
+    What becomes of a merge-style curated file this save does not write is the rule
+    `materialize_theme_package` owns. This hands that writer the two facts
+    `save_curated_terms` reads off the destination: it drops from `apps` every
+    merge-style file whose palette has parted, including one the carry handed in
+    under its mode exemption, and it names in `vouched` the files that still fit.
+
+    The package keeps, and renders its app files with, the per-app overrides of
+    the first source that answers: those `with_current_terminal_slots` carried
+    onto a blueprint rebuilt from the current theme; the blueprint's own package;
+    the package already saved under the destination name. The last answers for a
+    blueprint with neither, as `import-colors` builds, so a save over a package
+    does not erase what the user set on it.
+    """
+    bp = dict(bp)
+    if name:
+        bp["name"] = name
+    if CURRENT_APP_OVERRIDES_KEY in bp:
+        overrides = bp[CURRENT_APP_OVERRIDES_KEY]
+    elif bp.get("package"):
+        overrides = bp_app_overrides(bp)
+    else:
+        overrides = theme_app_overrides(theme_package_dir_name(bp))
+    apps: Dict[str, str] = rendered_apps_for(bp, overrides)
+    unreadable: List[str] = []
+    for filename, path in (bp.get("apps") or {}).items():
+        try:
+            apps[filename] = Path(path).read_text()
+        except OSError as exc:
+            # Declared but unreadable, so it is vouched for rather than dropped:
+            # the loader had already judged it against this palette, and a file
+            # this save could not read is not a file it decided against. Left out
+            # of `vouched` the record would stop certifying a user's only curated
+            # customisation over one briefly unreadable file. Refusing the whole
+            # save instead would be worse: it would block a colour edit.
+            unreadable.append(filename)
+            eprint(f"save {bp.get('name')}: keeping {filename}, which could not be read: {exc}")
+    terms = save_curated_terms(bp)
+    if terms.parted:
+        refused = sorted(set(apps) & CLAUDE_CURATED_FILES)
+        for filename in refused:
+            apps.pop(filename)
+        if refused:
+            eprint(f"save {bp.get('name')}: writing a palette {', '.join(refused)} "
+                   "was not picked against, so this save vouches for none of them")
+    return materialize_theme_package(bp, apps=apps, prune_curated=True,
+                                     vouched=[*unreadable, *terms.vouched],
+                                     app_overrides=overrides)
+
+
+def rendered_apps_for(bp: Dict[str, Any], app_overrides: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    """Render an editable apps/<file> for every toggled-on app target, each with
+    that app's saved overrides from `app_overrides`.
+
+    Only targets whose curated file directly replaces the generated output
+    (no curatedDestination) materialize — pointer-style curated formats
+    (vscode.json, icons.theme, hyprland.conf) are hand-written only.
+    """
+    base = target_roles(bp)
+    theme_apps = theme_apps_settings()
+    out: Dict[str, str] = {}
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        name = cfg.get("curatedFile")
+        if not name or cfg.get("curatedDestination") or not cfg.get("template"):
+            continue
+        if not target_enabled(cfg, theme_apps):
+            continue
+        roles = render_roles(bp, base, app_overrides.get(str(cfg.get("app") or ""), {}))
+        out[str(name)] = render_template((cfg_path.parent / cfg["template"]).read_text(), roles,
+                                         f"{cfg_path.parent.name}/{cfg['template']}")
+    return out
+
+
+def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None,
+                              user: bool = True, prune_curated: bool = False,
+                              vouched: List[str] | None = None,
+                              app_overrides: Dict[str, Dict[str, str]] | None = None) -> Path:
+    """Write a blueprint out as a v2 theme package directory.
+
+    `apps` maps curated file names to file contents (rendered or hand-written).
+    Existing curated files are preserved unless new content is supplied.
+
+    `app_overrides`, when given, replaces the user package's app-colors.toml; an
+    empty map removes it. Left out, the file is untouched.
+
+    Two separate decisions govern a merge-style curated file already in the layer
+    being written that `apps` does not carry, and they rest on different facts.
+
+    Whether it is unlinked is settled here through `writes_applied_theme_package`: in
+    the applied theme's own package it is not. Read off keys on the blueprint instead,
+    `apply-colors --save`, `save-current` and a save over the package an interrupted
+    save left carried none of them, and the prune deleted the only copy a
+    user-created or downloaded package holds.
+
+    Whether the recorded digest still certifies it is `held` being non-empty, a fact
+    about the layer rather than about the write in front of it: this write neither
+    wrote nor vouched for a merge-style file sitting there, so refreshing the record
+    would certify a file nobody judged. Deleting is unsound for the only copy, so the
+    record is the half that gives way and stays the one the layer already carries.
+    Keyed on the write instead, the state lasted one write: a colour edit with no
+    `--save` then two `set-wallpaper --save` runs held the record on the first and
+    refreshed it on the second, because that second write had itself moved nothing,
+    and the file came back certified against the edited palette.
+
+    Held, the record names a palette the package no longer holds, so the loader keeps
+    the file out of the render and a later write finds it unvouched and holds the
+    record again. It comes back when a write vouches for it, which needs the loader to
+    keep it, which needs the package's palette to match the record. No shipped command
+    restores the `colors.toml` that record was taken from: the claude target declares
+    no curated file of its own, so `theme reset-app claude` and `theme edit-app claude`
+    refuse by name, `theme app-colors claude --reset` clears the override layer and
+    leaves the record where it is, and a colour edit saved back writes `colors.toml` in
+    derived form. Putting those values back in the file, or reinstalling or re-creating
+    the package, is what returns the file to the render.
+
+    `vouched` is how a caller names a merge-style file it did not hand in that the
+    destination's own palette still vouches for: the ones `curated_apps_for_palette`
+    keeps, which `save_curated_terms` reads for a save and `theme regenerate` takes
+    off the loader blueprint it was handed, plus one the caller could not read. Such
+    a file is neither unlinked nor left uncertified. That is what lets `theme
+    app-colors claude --reset` bring a file back, and what keeps a curated file
+    working across a write that moved no colour: `theme regenerate` rewrites
+    `colors.toml` from a blueprint stating derived roles the package left implicit,
+    so a record held back there dropped the file from the renders after it.
+
+    `theme migrate` and a `theme duplicate` of a legacy blueprint reach this writer
+    with a destination holding no merge-style file, each refusing an existing package
+    a step earlier, so `held` is empty and they record what they wrote.
+
+    The apply is deliberately not a gate here: it paints the counterpart mode's
+    curated file after `theme mode --transform` and reports nothing, because that
+    file is what the counterpart render wants.
+
+    `prune_curated` additionally deletes a merge-style curated file in the
+    destination that `apps` does not carry, `vouched` does not name and the unlink
+    rule above does not hold, and only `save_theme_package` may ask for it, because
+    only its map is the complete intended contents. Another caller arrives with a map
+    from `rendered_apps_for`, which holds no claude file since that target has no
+    template, so pruning unconditionally deleted a file those callers were never
+    asked about: `theme regenerate <name> --app btop` removed the user's own
+    `apps/claude-dark.json`.
+
+    `test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge` in
+    `scripts/check-vshell-helper.py` pins both decisions at `set-wallpaper --save`,
+    `apply-colors --save`, `save-current` and `theme regenerate`.
+    """
+    ensure_dirs()
+    name = theme_package_dir_name(bp)
+    root = (user_themes_dir() if user else builtin_themes_dir()) / name
+    root.mkdir(parents=True, exist_ok=True)
+    mode = blueprint_mode(bp)
+    colors_toml = colors_toml_from_blueprint(bp)
+    ui_roles = declared_ui_roles(bp)
+    # What palette this package's content was built for. Without it a saved copy
+    # records nothing about its own colours, so the loader cannot tell a copy
+    # whose curated files still fit from one whose palette has since moved. The
+    # digest is taken from the file this writes, read back the way the loader
+    # reads it, so a reload of an untouched copy matches rather than nearly
+    # matching.
+    own_package = writes_applied_theme_package(bp)
+    held = sorted(curated for curated in CLAUDE_CURATED_FILES
+                  if own_package and curated not in (apps or {})
+                  and curated not in (vouched or ())
+                  and (root / "apps" / curated).is_file())
+    meta = {
+        "name": bp.get("name") or name,
+        "mode": mode,
+        "pair": bp.get("pair") or "",
+        "source": blueprint_source(bp),
+        "curatedPalette": layer_curated_palette(root) if held else palette_digest(
+            palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
+    }
+    # The save states the list even when empty, so a save under a built-in
+    # theme's name never inherits the built-in list through the merge. A copy
+    # whose palette has moved keeps the list and lint reports each entry
+    # unmatched.
+    meta["contrastShortfalls"] = bp.get("contrastShortfalls") or []
+    overlays = {TERMINAL_COLORS_FILE: bp.get("terminalColors") or {}}
+    # `ui_roles` came from `declared_ui_roles`, so a generated blueprint writes no
+    # file here and records no declaration in the digest above. Those two answers
+    # have to agree: the digest certifies the roles a merge-style curated file
+    # merges over, and a file the render ignores would certify tones nothing paints.
+    # Only a curated save owns `ui-roles.toml`. A generated blueprint reads no
+    # declaration, so it has nothing to say about the file and never writes,
+    # masks or removes it. The test is the blueprint's own source rather than the
+    # route it took here, because every route builds a generated blueprint and
+    # each one deleted a downloaded vendor theme's only copy of its chrome, or
+    # masked a built-in package's file: `apply-colors --save`, `set-wallpaper
+    # --extract --save`, `extract-wallpaper --save` and `import-colors`. A marker
+    # carried by one of them closed that one and left the rest.
+    if blueprint_source(bp) == "curated":
+        overlays[UI_ROLES_FILE] = ui_roles
+    if user:
+        # colors.toml is rewritten on every save, so the files beside it are too: a
+        # stale one would carry the previous theme's slots or tones over this one.
+        write_user_layer(name, "colors.toml", parse_colors_toml_text(colors_toml))
+        for filename, values in overlays.items():
+            write_user_layer(name, filename, values)
+    else:
+        write_file(root / "colors.toml", colors_toml)
+        for filename, values in overlays.items():
+            if values:
+                write_file(root / filename, flat_toml_text(dict(sorted(values.items()))))
+            else:
+                (root / filename).unlink(missing_ok=True)
+    wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
+    # Stated even when empty, so a save under a built-in theme's name never
+    # inherits the built-in default wallpaper through the merge.
+    meta["wallpaper"] = ""
+    if wallpaper and Path(wallpaper).is_file():
+        bg_dir = root / "backgrounds"
+        bg_dir.mkdir(parents=True, exist_ok=True)
+        dest = bg_dir / Path(wallpaper).name
+        if not dest.exists() or not Path(wallpaper).samefile(dest):
+            shutil.copy2(wallpaper, dest)
+        meta["wallpaper"] = dest.name
+    # Outside the applied theme's own package a merge-style file here is the earlier
+    # write's, picked for colours this write never saw, so the new digest would
+    # certify it unjudged and it goes. `held` above is the applied theme's own file,
+    # which stays.
+    #
+    # This and the per-layer digest test in `curated_apps_for_palette` answer
+    # different questions and neither replaces the other: that one asks which layer
+    # vouches for a file, and reaches a built-in file this writer cannot touch; this
+    # one asks whether the writer ever saw the file, and reaches a user-layer file
+    # whose layer record the save itself has just rewritten.
+    if prune_curated:
+        for stale in (CLAUDE_CURATED_FILES - set(apps or {}) - set(vouched or ())
+                      - set(held)):
+            (root / "apps" / stale).unlink(missing_ok=True)
+    for filename, content in (apps or {}).items():
+        write_file(root / "apps" / filename, content)
+    if app_overrides is not None:
+        if not user:
+            raise ValueError(f"app-overrides-builtin {name}: per-app overrides live only in a user package")
+        write_user_layer(name, "app-colors.toml", app_overrides)
+    # theme.json last, because it carries the digest that certifies everything
+    # above it. Written first, an interruption before the prune left a stale
+    # merge-style file on disk already vouched for by the new palette, which is
+    # the unreadable-diff state the digest exists to prevent. Written last, an
+    # interrupted save leaves a package with no theme.json: the loader skips it
+    # and a user overlay falls back to the built-in record, so the worst case is
+    # a save that did not happen rather than one certifying the wrong files.
+    if user:
+        write_user_layer(name, "theme.json", meta)
+    else:
+        write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
+    return root
+
+
+def load_settings() -> Dict[str, Any]:
+    primary = cfg_dir() / "settings.json"
+    if primary.exists():
+        return load_required_json_file(primary)
+    fallback = repo_root() / "config" / "vshell" / "settings.default.json"
+    if fallback.exists():
+        return load_required_json_file(fallback)
+    return {}
+
+
+def blueprint_source(bp: Dict[str, Any]) -> str:
+    """Whether a theme's palette is hand-curated or machine-generated.
+
+    Curated palettes pass through untouched (no contrast rewriting); generated
+    palettes get role normalization + contrast enforcement.
+    """
+    src = str(bp.get("source") or "").strip().lower()
+    return src if src in {"curated", "generated"} else "generated"
+
+
+def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Contrast warnings for a theme palette. Reports, never rewrites —
+    the curated-theme counterpart of generated-theme contrast enforcement.
+
+    Every warning carries `known`: true when the package's `contrastShortfalls`
+    lists the same slot, measured ratio and floor, which is how a vendor port
+    that keeps its upstream colours names a shortfall it accepts."""
+    pal = bp.get("palette", {})
+    colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
+    while len(colors) < 16:
+        colors.append(DEFAULT_COLORS[len(colors)])
+    ext = pal.get("extendedColors") or {}
+    mode = blueprint_mode(bp)
+    bg = clean_hex(ext.get("background") or colors[0], colors[0])
+    warnings: List[Dict[str, Any]] = []
+
+    def check(role: str, value: str, against: str, minimum: float, against_role: str = "background") -> None:
+        ratio = contrast_ratio(value, against)
+        if ratio < minimum:
+            warnings.append({
+                "role": role, "color": value, "against": against_role,
+                "contrast": round(ratio, 2), "minimum": minimum,
+                "message": f"{role} {value} has {ratio:.2f}:1 contrast against {against_role} {against} (want >= {minimum:g}:1)",
+            })
+
+    fg = clean_hex(ext.get("foreground") or colors[7], colors[7])
+    accent = clean_hex(ext.get("accent") or colors[4], colors[4])
+    selection_bg = clean_hex(ext.get("selection_background") or ext.get("selectionBackground") or colors[4], colors[4])
+    selection_fg = clean_hex(ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15], colors[15])
+    if mode == "light" and luminance(bg) < 0.5:
+        warnings.append({"role": "background", "color": bg, "message": f"background {bg} looks dark but theme mode is light"})
+    if mode == "dark" and luminance(bg) > 0.5:
+        warnings.append({"role": "background", "color": bg, "message": f"background {bg} looks light but theme mode is dark"})
+    check("foreground", fg, bg, 7.0)
+    check("accent", accent, bg, 3.0)
+    check("cursor", clean_hex(ext.get("cursor") or accent, accent), bg, 3.0)
+    check("selection_foreground", selection_fg, selection_bg, 4.5, "selection_background")
+    # color0 is ANSI black. A dark theme conventionally sets it to its own
+    # background, and nothing draws text in it there; a light terminal draws
+    # body text in it, so a light theme needs it dark. Same threshold as the
+    # generated-palette rule for this slot. The terminal paints its own slot
+    # from terminal-colors.toml when the theme ships one.
+    if mode == "light":
+        terminal_black = clean_hex((bp.get("terminalColors") or {}).get("color0") or colors[0], colors[0])
+        check(f"color0 ({ANSI_NAMES[0]})", terminal_black, bg, 7.0)
+    for i in range(1, 16):
+        check(f"color{i} ({ANSI_NAMES[i]})", colors[i], bg, 3.0)
+    for w in warnings:
+        w["known"] = False
+    # The raw slots are still judged; a listed entry only marks its warning. An
+    # entry that matches no measured warning is itself a warning, so a palette
+    # that moves cannot keep an excuse written for its old value.
+    shortfalls = bp.get("contrastShortfalls") or []
+    for entry in shortfalls if isinstance(shortfalls, list) else [shortfalls]:
+        match = next((w for w in warnings
+                      if isinstance(entry, dict) and "contrast" in w and not w["known"]
+                      and w["role"].split(" ", 1)[0] == entry.get("slot")
+                      and w["contrast"] == entry.get("ratio") and w["minimum"] == entry.get("floor")), None)
+        if match:
+            match["known"] = True
+        else:
+            warnings.append({"role": "contrastShortfalls", "known": False,
+                             "message": f"contrastShortfalls entry {json.dumps(entry)} matches no measured shortfall"})
+    return warnings
+
+
+def ui_role_shortfalls(roles: Dict[str, str], declared: Dict[str, str]) -> List[str]:
+    """Contrast rules a package's declared UI roles miss, one line each.
+
+    The derivation enforces these rules; a declaration replaces the derivation,
+    so the guard reports instead of rewriting. Pulling a vendor's own tone toward
+    black or white is the invented grey `ui-roles.toml` exists to stop, and the
+    rule is the one VGS-285 set for a curated Claude Code file: written as
+    declared, every missed rule named on the apply result.
+
+    One line per fill-and-text pair: a role's rules are measured against the
+    colours they resolve to, and a second rule landing on a colour already
+    measured for that role is skipped. A container declared without its
+    companion has the companion derive to the foreground verbatim, so both its
+    rules read the same colour and one defect was named twice.
+
+    Judged over the base role map alone, which is the map the apply builds once
+    and hands here. Each app then renders from `app_target_roles`, which can
+    replace background and foreground for that one app, so a per-app override
+    could move a companion this never re-measures. One judging pass is the
+    choice: the declaration is one statement by the package, and a second pass
+    per app would name the same tone once per target.
+    """
+    lines: List[str] = []
+    for role, value in sorted(declared.items()):
+        if role == "statusBg":
+            ratio = max(contrast_ratio("#000000", value), contrast_ratio("#ffffff", value))
+            if ratio < STATUS_BG_MIN_TEXT_CONTRAST:
+                lines.append(f"statusBg {value}: no text reaches "
+                             f"{STATUS_BG_MIN_TEXT_CONTRAST:g}:1 on it ({ratio:.2f}:1)")
+            continue
+        measured: List[str] = []
+        for against, minimum in UI_ROLE_CONTRAST_RULES.get(role, ()):
+            target = roles[against]
+            if target in measured:
+                continue
+            measured.append(target)
+            ratio = contrast_ratio(value, target)
+            if ratio < minimum:
+                lines.append(f"{role} {value}: {ratio:.2f}:1 against {against} "
+                             f"{target} (want >= {minimum:g}:1)")
+    return lines
+
+
+def inert_declarations_path(bp: Dict[str, Any]) -> str:
+    """The `ui-roles.toml` an apply of `bp` will not read, or "".
+
+    A generated palette derives every role, so a declaring package's file sits
+    unread with nothing on screen saying so: the chrome is the derived tone and
+    the file is still on disk. `apply-colors --save` and the other generated
+    saves leave a package in exactly that state, and the save now keeps the file
+    rather than deleting it, so the apply is where the state gets named.
+
+    Whether the composed package declares anything, not whether a file exists.
+    A user overlay that masks a built-in file is the comment-only file this same
+    save path writes, and a file whose every value is unreadable states no
+    declaration either. Both sit on disk, and naming them told the user a palette
+    had dropped chrome it never had, with a partial apply behind it, on every
+    colour edit and every wallpaper change. `package_overlay_values` is the one reader
+    that answers it, so the apply and the loader cannot disagree.
+
+    The path named is the one `compose_theme_files` resolves, which is the file
+    the loader reads: a user overlay shadows the built-in copy, and naming the
+    shadowed one would send a user to a file that changes nothing.
+    """
+    if blueprint_source(bp) == "curated":
+        return ""
+    name = theme_package_dir_name(bp)
+    files = compose_theme_files(name)
+    if UI_ROLES_FILE not in files or not package_overlay_values(name, UI_ROLES_FILE):
+        return ""
+    return str(files[UI_ROLES_FILE])
+
+
+def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
+    pal = bp.get("palette", {})
+    curated = blueprint_source(bp) == "curated"
+    # A package's own UI tones. `declared_ui_roles` is the one owner of the
+    # curated test: a generated palette has no vendor behind it and its roles are
+    # the derivation's to own.
+    declared = declared_ui_roles(bp)
+    colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
+    while len(colors) < 16:
+        colors.append(DEFAULT_COLORS[len(colors)])
+    ext = pal.get("extendedColors") or {}
+    mode = (pal.get("mode") or ("light" if pal.get("lightMode") else "dark") or "dark").lower()
+    background = clean_hex(ext.get("background") or colors[0], colors[0])
+    if not curated:
+        background = ensure_background_supports_text(background, mode, 7.0)
+    roles: Dict[str, str] = {
+        "name": str(bp.get("name") or "vgs-theme"),
+        "source": "curated" if curated else "generated",
+        "theme_type": mode,
+        "wallpaper": resolve_path(str(pal.get("wallpaper") or "")),
+        "background": background,
+        "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+        "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+        "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+        "selection_background": clean_hex(ext.get("selection_background") or ext.get("selectionBackground") or colors[4], colors[4]),
+        "selection_foreground": clean_hex(ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15], colors[15]),
+    }
+    bg = roles["background"]
+    prefer_text = "#000000" if mode == "light" else "#ffffff"
+    if not curated:
+        # Generated palettes only: normalize + enforce contrast. Curated palettes
+        # pass through untouched so hand-picked colors reach targets verbatim.
+        roles["foreground"] = _oklab_contrast_adjust(roles["foreground"], bg, 7.0, prefer_text)
+        roles["accent"] = _oklab_contrast_adjust(roles["accent"], bg, 3.0, prefer_text)
+        roles["cursor"] = _oklab_contrast_adjust(roles["cursor"], bg, 3.0, prefer_text)
+        roles["selection_background"] = _oklab_contrast_adjust(
+            roles["selection_background"], bg, 4.5, prefer_text
+        )
+        roles["selection_foreground"] = bg
+    for i, c in enumerate(colors[:16]):
+        adjusted = c
+        if not curated:
+            minimum = 4.5 if i in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} else 3.0
+            adjusted = _oklab_contrast_adjust(c, bg, minimum, prefer_text)
+            if i == 15:
+                adjusted = roles["foreground"]
+        roles[f"color{i}"] = adjusted
+        roles[ANSI_NAMES[i]] = adjusted
+    # These are shell-facing roles even on curated themes. A continuous
+    # hue-preserving correction keeps restyle sweeps readable without rewriting
+    # the curated ANSI palette or introducing a special branch at zero.
+    roles["foreground"] = _oklab_contrast_adjust(roles["foreground"], bg, 7.0, prefer_text)
+    roles["cursor"] = _oklab_contrast_adjust(roles["cursor"], bg, 3.0, prefer_text)
+    roles["selection_background"] = _oklab_contrast_adjust(
+        roles["selection_background"], bg, 4.5, prefer_text
+    )
+    roles["selection_foreground"] = bg
+    fg = roles["foreground"]
+    accent = ensure_usable_accent(
+        roles["accent"],
+        bg,
+        roles,
+        prefer_text,
+        min_contrast=4.5,
+        continuous=True,
+    )
+    roles["accent"] = accent
+    dark_mode = mode != "light"
+
+    def surface(amount: float) -> str:
+        lightness, _relative, _chroma, _hue = _relative_oklch(bg)
+        target_l = (
+            lightness + (1.0 - lightness) * amount
+            if dark_mode else lightness * (1.0 - amount)
+        )
+        return _map_oklch_lightness(bg, target_l)
+
+    def readable_surface(candidate: str, minimum: float = 4.0) -> str:
+        """Pull a surface toward bg without ever crossing its tone polarity."""
+        if contrast_ratio(fg, candidate) >= minimum:
+            return candidate
+        bg_l = color_to_oklab(bg)[0]
+        candidate_l = color_to_oklab(candidate)[0]
+        if contrast_ratio(fg, bg) < minimum:
+            return bg
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            tone = bg_l + (candidate_l - bg_l) * fraction
+            probe = _map_oklch_lightness(bg, tone)
+            if contrast_ratio(fg, probe) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return _map_oklch_lightness(bg, bg_l + (candidate_l - bg_l) * low)
+
+    def readable_container(candidate: str, minimum: float = 4.5) -> str:
+        """Retain as much tint as possible while keeping fg readable."""
+        if contrast_ratio(fg, candidate) >= minimum:
+            return candidate
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            probe = blend(bg, candidate, fraction)
+            if contrast_ratio(fg, probe) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return blend(bg, candidate, low)
+
+    def tinted(color: str, strength: float = 0.24) -> str:
+        return blend(color, bg, 1.0 - strength)
+
+    semantic_bases = ({
+        "error": "#b91c1c",
+        "warning": "#8a5a00",
+        "success": "#166534",
+        "info": "#1d4ed8",
+    } if mode == "light" else {
+        "error": "#ff6b6b",
+        "warning": "#fbbf24",
+        "success": "#5bd77a",
+        "info": "#60a5fa",
+    })
+
+    unread = dict(declared)
+
+    def declared_or(role: str, computed: str) -> str:
+        """The package's own tone for `role`, else the one just derived.
+
+        The single input `ui-roles.toml` has. The derivation runs either way and
+        the declaration replaces its result, so an undeclared role is derived
+        exactly as before and no second derivation path exists. The roles
+        computed from these read `roles` and so follow a declared tone: a
+        declared `statusBg` gets status text measured against itself.
+
+        Each call takes its role out of `unread`, which is seeded from what the
+        package declared: a declared role no assignment reads is left behind and
+        named below, so a package cannot have a role accepted from its file,
+        folded into the digest and reported on for contrast while nothing paints
+        it. That line says nothing about a set member no package happens to
+        declare; the guarantee that every member of `DECLARABLE_UI_ROLES` has an
+        assignment site belongs to the `everyroles` fixture in
+        `scripts/check-vshell-helper.py`, which declares the whole set and reads
+        each value back.
+        """
+        unread.pop(role, None)
+        return declared.get(role) or computed
+
+    roles["primary"] = accent
+    # Primary/semantic colors are foreground-readable against the base surface,
+    # so using that same surface as their companion avoids a black/white
+    # readable_on() polarity flip as a slider crosses the midpoint.
+    roles["onPrimary"] = declared_or("onPrimary", bg)
+    roles["error"] = _oklab_contrast_adjust(semantic_bases["error"], bg, 4.5, prefer_text)
+    roles["warning"] = _oklab_contrast_adjust(semantic_bases["warning"], bg, 4.5, prefer_text)
+    roles["success"] = _oklab_contrast_adjust(semantic_bases["success"], bg, 4.5, prefer_text)
+    roles["info"] = _oklab_contrast_adjust(semantic_bases["info"], bg, 4.5, prefer_text)
+    roles["surface"] = declared_or("surface", bg)
+    roles["surfaceVariant"] = declared_or("surfaceVariant", surface(0.06))
+    roles["surfaceContainerLowest"] = declared_or("surfaceContainerLowest", bg)
+    roles["surfaceContainerLow"] = declared_or("surfaceContainerLow", surface(0.035))
+    roles["surfaceContainer"] = declared_or("surfaceContainer", surface(0.06))
+    # Medium-dark backgrounds can lighten far enough that foreground text on the
+    # top containers drops below readable contrast (e.g. moon-orbit). Pull the
+    # container back toward the background until foreground reads again. The pull
+    # is part of the derivation, so a declared tone replaces it rather than
+    # passing through it.
+    roles["surfaceContainerHigh"] = declared_or("surfaceContainerHigh", readable_surface(surface(0.10)))
+    roles["surfaceContainerHighest"] = declared_or("surfaceContainerHighest", readable_surface(surface(0.15)))
+    roles["primaryContainer"] = declared_or("primaryContainer", readable_container(tinted(accent, 0.30)))
+    roles["secondaryContainer"] = declared_or("secondaryContainer", readable_container(tinted(roles["cyan"], 0.24)))
+    roles["tertiaryContainer"] = declared_or("tertiaryContainer", readable_container(tinted(roles["magenta"], 0.24)))
+    roles["secondary"] = declared_or("secondary", _oklab_contrast_adjust(roles["cyan"], bg, 4.5, prefer_text))
+    roles["tertiary"] = declared_or("tertiary", _oklab_contrast_adjust(roles["magenta"], bg, 4.5, prefer_text))
+    roles["onSecondary"] = declared_or("onSecondary", bg)
+    roles["onTertiary"] = declared_or("onTertiary", bg)
+    roles["onError"] = bg
+    roles["onPrimaryContainer"] = declared_or("onPrimaryContainer", fg)
+    roles["onSecondaryContainer"] = declared_or("onSecondaryContainer", fg)
+    roles["onTertiaryContainer"] = declared_or("onTertiaryContainer", fg)
+    roles["inverseSurface"] = fg
+    roles["inverseOnSurface"] = bg
+    roles["inversePrimary"] = roles["primaryContainer"]
+    roles["shadow"] = "#000000"
+    roles["scrim"] = "#000000"
+    roles["successContainer"] = tinted(roles["success"], 0.20)
+    roles["warningContainer"] = tinted(roles["warning"], 0.20)
+    roles["errorContainer"] = readable_container(tinted(roles["error"], 0.20))
+    roles["infoContainer"] = tinted(roles["info"], 0.20)
+    roles["onErrorContainer"] = fg
+    roles["outline"] = declared_or("outline", ensure_contrast(blend(fg, bg, 0.52), bg, 3.0, prefer_text))
+    roles["outlineVariant"] = declared_or("outlineVariant", ensure_contrast(blend(fg, bg, 0.68), bg, 2.2, prefer_text))
+    roles["muted"] = declared_or("muted", ensure_contrast(blend(fg, bg, 0.35), bg, 4.5, prefer_text))
+    roles["dim"] = declared_or("dim", ensure_contrast(blend(fg, bg, 0.50), bg, 4.5, prefer_text))
+    status_surface = roles["surfaceContainerHighest"] if dark_mode else ensure_contrast(roles["surfaceContainerHighest"], bg, 1.25, "#000000")
+    roles["statusBg"] = declared_or(
+        "statusBg", ensure_background_supports_text(status_surface, mode, STATUS_BG_MIN_TEXT_CONTRAST))
+    roles["statusFg"] = ensure_contrast(fg, roles["statusBg"], 7.0, prefer_text)
+    roles["statusMuted"] = ensure_contrast(roles["muted"], roles["statusBg"], 4.5, prefer_text)
+    roles["statusAccent"] = ensure_contrast(accent, roles["statusBg"], 4.5, prefer_text)
+    roles["statusError"] = ensure_contrast(roles["error"], roles["statusBg"], 4.5, prefer_text)
+    roles["statusWarning"] = ensure_contrast(roles["warning"], roles["statusBg"], 4.5, prefer_text)
+    roles["statusSuccess"] = ensure_contrast(roles["success"], roles["statusBg"], 4.5, prefer_text)
+    roles["statusInfo"] = ensure_contrast(roles["info"], roles["statusBg"], 4.5, prefer_text)
+    roles["groupbarActiveBg"] = accent
+    roles["groupbarActiveFg"] = ensure_contrast(roles["onPrimary"], roles["groupbarActiveBg"], 4.5)
+    roles["groupbarInactiveBg"] = ensure_background_supports_text(roles["surfaceContainerHighest"], mode, 7.0)
+    roles["groupbarInactiveFg"] = ensure_contrast(fg, roles["groupbarInactiveBg"], 7.0, prefer_text)
+    # Locked groups reuse the active-tab color: the lock state is surfaced via a
+    # notification on toggle, so the tab itself needs no distinct color.
+    roles["groupbarLockedBg"] = roles["groupbarActiveBg"]
+    roles["groupbarLockedFg"] = roles["groupbarActiveFg"]
+    if not curated:
+        stabilize_ansi_role_pairs(roles, bg, mode)
+    # Syntax roles for code highlighters that paint on the terminal's own
+    # background and drop a theme's backgrounds (Codex). A curated palette hands
+    # its ANSI colors to app targets verbatim, and several curated themes put a
+    # keyword or string color under 4.5:1 there, so each syntax role carries the
+    # hue-preserving lift instead. The ANSI roles themselves stay untouched.
+    for role, base in SYNTAX_ROLE_BASES.items():
+        roles[role] = _oklab_contrast_adjust(roles[base], bg, SYNTAX_MIN_CONTRAST, prefer_text)
+    for snake, camel in CAMEL.items():
+        roles[camel] = roles[snake]
+    if unread:
+        eprint(f"theme {roles['name']}: declared UI role(s) no derivation reads: "
+               + ", ".join(sorted(unread)))
+    return roles
+
+
+def terminal_slot_overrides(data: Dict[str, str]) -> Dict[str, str]:
+    """The `colorN` entries of a parsed terminal-colors.toml, and nothing else.
+
+    Every other key is dropped rather than carried: a background, a foreground or
+    a role name here would silently claim a reach this file does not have, since
+    only the sixteen ANSI slots differ between the terminal and the rest of VGS.
+    """
+    return {f"color{index}": clean_hex(data[f"color{index}"])
+            for index in range(16) if f"color{index}" in data}
+
+
+def terminal_slot_override_keys(index: int) -> Tuple[str, ...]:
+    """The saved app-override keys that set terminal slot `index`, highest first.
+
+    The slot's own `terminal_` names are what the App Theming editor writes; the
+    palette's `colorN` and ANSI name are what an override saved against the
+    palette roles carries. The render and the editor both read this, so the
+    colour an editor row shows is the colour the terminal paints.
+    """
+    name = ANSI_NAMES[index]
+    return (f"terminal_color{index}", f"terminal_{name}", f"color{index}", name)
+
+
+# Each `terminal_` role name and the ANSI slot it paints.
+TERMINAL_SLOT_INDEX = {f"terminal_{key}": index for index, name in enumerate(ANSI_NAMES)
+                       for key in (f"color{index}", name)}
+
+
+def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str],
+                           app_overrides: Dict[str, str]) -> Dict[str, str]:
+    """The sixteen ANSI slots as a terminal paints them, under `terminal_` names.
+
+    A template that writes an actual terminal palette reads these; every other
+    placeholder in the same template keeps the theme's own slot. A slot takes, in
+    order: the app's saved override under a key `terminal_slot_override_keys`
+    lists, which is the user's choice for that one app; the theme's
+    terminal-colors.toml; the palette's own value. A theme that ships no
+    terminal-colors.toml therefore renders exactly what it rendered before.
+    """
+    terminal = bp.get("terminalColors") or {}
+    out: Dict[str, str] = {}
+    for index, name in enumerate(ANSI_NAMES):
+        key = f"color{index}"
+        saved = next((app_overrides[k] for k in terminal_slot_override_keys(index) if app_overrides.get(k)), "")
+        value = clean_hex(saved or terminal.get(key) or roles.get(key) or DEFAULT_COLORS[index])
+        out[f"terminal_{key}"] = value
+        out[f"terminal_{name}"] = value
+    return out
+
+
+def render_roles(bp: Dict[str, Any], base: Dict[str, str],
+                 app_overrides: Dict[str, str] | None = None) -> Dict[str, str]:
+    """The role map a target template renders with: `base`, the app's saved
+    overrides, then the terminal slots, which alone decide their own keys.
+
+    Every template render takes its map from here, so the terminal slots cannot
+    reach one render path and miss another; `render_template` refuses a role
+    placeholder the map lacks.
+    """
+    overrides = app_overrides or {}
+    return {**base, **overrides, **terminal_palette_roles(bp, base, overrides)}
+
+
+def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
+    """Keep curated base/ANSI colors byte-faithful for external app targets.
+
+    Shell readability roles may adjust foreground/selection/accent continuously,
+    but terminal and app templates must receive the curated package values.
+    Derived semantic/surface roles still come from the shell map.
+    """
+    roles = dict(shell_roles or target_roles(bp))
+    if blueprint_source(bp) == "curated":
+        pal = bp.get("palette", {})
+        colors = [
+            clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
+            for index, color in enumerate(pal.get("colors", []))
+        ]
+        while len(colors) < 16:
+            colors.append(DEFAULT_COLORS[len(colors)])
+        ext = pal.get("extendedColors") or {}
+        raw = {
+            "background": clean_hex(ext.get("background") or colors[0], colors[0]),
+            "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+            "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+            "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+            "selection_background": clean_hex(
+                ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
+                colors[4],
+            ),
+            "selection_foreground": clean_hex(
+                ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
+                colors[15],
+            ),
+        }
+        for index, color in enumerate(colors[:16]):
+            raw[f"color{index}"] = color
+            raw[ANSI_NAMES[index]] = color
+        roles.update(raw)
+        for snake, camel in CAMEL.items():
+            if snake in raw:
+                roles[camel] = raw[snake]
+    return roles
+
+
+THEME_MODES = ("dark", "light")
+
+
+def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
+                           themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+    """The blueprint a target should read for `mode`.
+
+    The applied theme answers for its own mode. For the other mode its declared
+    or name-conventional pair answers when one exists, so a curated light/dark
+    couple keeps hand-picked colours; otherwise the palette is transformed into
+    that mode. Targets that write both modes at once (agent CLIs that pick the
+    variant from the terminal) resolve their second file through this. `themes`
+    reuses a list_themes() result for the pair lookup.
+    """
+    if blueprint_mode(bp) == mode:
+        return bp
+    pair = paired_blueprint(bp, mode, themes)
+    if pair:
+        return pair
+    return transformed_mode_blueprint(
+        bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
+
+
+def transformed_mode_blueprint(bp: Dict[str, Any], mode: str, wallpaper: str) -> Dict[str, Any]:
+    """`bp` transformed into `mode`, keeping the package it came from.
+
+    The transform rebuilds the palette alone, so the package identity that
+    locates a target's curated files has to be carried across or the variant
+    silently loses them and every target falls back to its generated output.
+    Those files are already the ones the palette fits: the package loader dropped
+    any it outgrew before this point.
+
+    Both callers that skip the pair lookup resolve here: the counterpart mode of
+    an unpaired theme, and `theme mode --transform`, which asks for the lossy
+    variant even where a pair exists. A second copy of the carry would let the
+    two drift, which is how the flag came to answer with no curated files at all.
+    """
+    variant = blueprint_mode_variant(bp, mode, wallpaper)
+    for key in ("apps", "package", "path"):
+        if bp.get(key):
+            variant[key] = bp[key]
+    return variant
+
+
+def mode_variant_role_maps(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """App-target roles for both modes, keyed by mode."""
+    return {mode: app_target_roles(mode_variant_blueprint(bp, mode)) for mode in THEME_MODES}
+
+
+def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
+                         mode_maps: Callable[[], Dict[str, Dict[str, str]]],
+                         overrides: Dict[str, str]) -> List[Tuple[Dict[str, str], Path]]:
+    """One (roles, destination) pair per file the target's template writes.
+
+    `modes` renders the template once per listed mode, each pass carrying that
+    mode's roles and a destination that may name the mode through
+    `{theme_type}`. `modeVariants` adds `dark_<role>` and `light_<role>` so a
+    single file can carry both modes' colours. A target that declares neither
+    writes one file from the applied theme, as every target did before.
+    """
+    if cfg.get("modeVariants"):
+        roles = dict(roles)
+        for mode, mode_roles in mode_maps().items():
+            for role, value in {**mode_roles, **overrides}.items():
+                roles[f"{mode}_{role}"] = value
+    modes = cfg.get("modes")
+    if not modes:
+        return [(roles, dest)]
+    passes: List[Tuple[Dict[str, str], Path]] = []
+    for mode in modes:
+        mode_roles = {**roles, **mode_maps()[str(mode)], **overrides}
+        passes.append((mode_roles, expand_dest(render_template(
+            str(cfg["destination"]), mode_roles, f"{cfg.get('app') or 'target'} destination"))))
+    # A `modes` destination that does not vary by mode would write one file with
+    # the last mode's colours and report every mode rendered. Refuse it here so a
+    # target configuration that forgets `{theme_type}` fails where it is written.
+    if len({str(dest) for _roles, dest in passes}) != len(passes):
+        raise ValueError(f"modes target destination does not name the mode: {cfg['destination']}")
+    return passes
+# The OKLCH hues of pure sRGB green and red. A theme whose ANSI green and red
+# share a hue gets its two diff bands anchored here, so a screenful of /diff
+# still separates an added file from a deleted one without the +/- glyphs.
+CLAUDE_DIFF_GREEN_HUE = 142.5
+CLAUDE_DIFF_RED_HUE = 29.23
+# The distance at which the added and removed bands read as two colours. Either
+# one satisfies the rule; below both, the palette gives diffs no colour of their
+# own and the anchors above replace its hues.
+CLAUDE_DIFF_HUE_SEPARATION = 20.0
+CLAUDE_DIFF_LIGHTNESS_SEPARATION = 0.08
+# A diff fill carries the palette slot's own chroma, in OKLCH units, held inside
+# the range Claude Code's own presets sit in: its dark preset draws its strong
+# fills at 0.099 and 0.113, its light preset at 0.103 and 0.168. Below the floor
+# a band built over a coloured background reads as that background's own hue;
+# above the ceiling a light theme's band reads as neon rather than as a changed
+# row. Absolute rather than relative, because a relative chroma carried to
+# another lightness is another colour: the same 0.9 of the gamut is a pastel
+# dark and neon light.
+CLAUDE_DIFF_CHROMA_FLOOR = 0.05
+CLAUDE_DIFF_CHROMA_CEILING = 0.15
+# The dimmed context band is the same hue at a fraction of the fill's chroma,
+# which is how Claude Code's own presets tell a changed row from the rows around
+# it: 0.031 against 0.099 added, 0.046 against 0.113 removed.
+CLAUDE_DIFF_DIMMED_CHROMA = 0.35
+# How far a finished band or word may sit from its family's anchor hue and still
+# read as added or removed. The two arcs this opens stay apart, since the anchors
+# are 113 degrees apart: past it an added band is a cyan and a removed band an
+# olive, and the reader is back to counting the +/- glyphs.
+CLAUDE_DIFF_HUE_TOLERANCE = 40.0
+# A message block's fill is the panel body text is read on, not an accent band.
+# Claude Code's own dark preset fills its bash block at chroma 0.011 and its
+# memory block at 0.016, so only a trace of the hint role's chroma survives here.
+CLAUDE_SURFACE_CHROMA = 0.02
+# The floor every diff band clears against the background, the strong fill of a
+# changed row and the dimmed band of the context rows around it alike. Below it a
+# band merges into the panel and the changed file loses its boundary.
+CLAUDE_DIFF_BAND_FLOOR = 1.3
+# What generation aims for rather than the floor it must clear. Claude Code's own
+# presets hold their diff bands between 1.36:1 and 2.29:1 off the background they
+# are read on. Travelling further costs the band its own lightness and the text
+# on it its contrast, and buys nothing a reader sees.
+CLAUDE_DIFF_BAND_SEPARATION = 1.8
+# A changed word sits on its own changed line, so it is held off the band under
+# it rather than off the background.
+CLAUDE_DIFF_WORD_SEPARATION = 1.5
+# WCAG AA for normal text, which every text token and every ordinary fill meets
+# against what it is read on. The diff bands take the enhanced ratio below.
+CLAUDE_BODY_CONTRAST = 4.5
+# The /diff panel fills whole rows for a whole file, so body text on a diff band
+# is read by the screenful and takes the enhanced ratio, not the body floor.
+CLAUDE_DIFF_TEXT_CONTRAST = 7.0
+# A fill on the gamut's end has no chroma left there and nowhere further to move,
+# so every band and word is held this far short of pure black and pure white.
+CLAUDE_LIGHTNESS_MARGIN = 0.04
+# Body text carries the product of the two diff-band rules with room over it: a
+# diff band lies between the background and the text, so text on it reads at
+# roughly the text's own ratio divided by the band's separation, and below the
+# product no band is both readable and visible. Eight-bit output quantises that
+# separation upward off its floor, which the margin absorbs.
+CLAUDE_TEXT_CONTRAST = 9.5
+
+
+def claude_band_reads(text: str, band: str) -> bool:
+    """Whether body text on a diff band is readable by the screenful."""
+    return contrast_ratio(text, band) >= CLAUDE_DIFF_TEXT_CONTRAST
+
+
+def claude_band_shows(band: str, bg: str) -> bool:
+    """Whether a diff band is visible against the panel behind it."""
+    return contrast_ratio(band, bg) >= CLAUDE_DIFF_BAND_FLOOR
+
+
+def claude_word_stands_out(word: str, band: str, text: str) -> bool:
+    """Whether a changed word reads inside the changed line it is drawn in."""
+    return (contrast_ratio(word, band) >= CLAUDE_DIFF_WORD_SEPARATION
+            and contrast_ratio(text, word) >= CLAUDE_BODY_CONTRAST)
+
+
+def claude_reads_as_family(fill: str, anchor_hue: float) -> Tuple[bool, float]:
+    """Whether a diff fill reads as the family it belongs to, and by how far it misses.
+
+    A removed row has to read as removed and an added row as added on its own:
+    the +/- glyphs are one column of a row whose whole width is the band. The
+    anchor is the hue of pure sRGB red or green, not the palette's own slot, so
+    the rule holds a band a transformed palette dragged onto another hue to
+    account rather than following it there. A fill with no chroma left reads as
+    the grey it is whatever hue it nominally carries, so it is held the full
+    half-circle away rather than measured.
+    """
+    _lightness, _relative, chroma, fill_hue = _relative_oklch(fill)
+    gap = 180.0 if chroma <= 1e-8 else _hue_distance(fill_hue, anchor_hue)
+    return gap <= CLAUDE_DIFF_HUE_TOLERANCE, gap
+
+
+def claude_diff_hues(roles: Dict[str, str]) -> Tuple[float, float]:
+    """The hues proposed for one theme's added and removed diff families.
+
+    The palette's own green and red where each reads as its family and the two
+    read apart, and the anchors otherwise. This is a proposal:
+    `claude_diff_bands` owns the final choice and replaces it with the anchors
+    where a finished fill misses its family. Claude Code fills the whole width of a
+    row with the band, so a palette that calls a purple green would paint an added
+    row purple: that reads as neither added nor removed however far it sits from
+    the removed row, and the theme's own hue is not worth that.
+    """
+    _added_lightness, _added_relative, _added_chroma, added_hue = _relative_oklch(roles["green"])
+    _removed_lightness, _removed_relative, _removed_chroma, removed_hue = _relative_oklch(roles["red"])
+    added_reads, _added_gap = claude_reads_as_family(roles["green"], CLAUDE_DIFF_GREEN_HUE)
+    removed_reads, _removed_gap = claude_reads_as_family(roles["red"], CLAUDE_DIFF_RED_HUE)
+    if (added_reads and removed_reads
+            and _hue_distance(added_hue, removed_hue) >= CLAUDE_DIFF_HUE_SEPARATION):
+        return added_hue, removed_hue
+    return CLAUDE_DIFF_GREEN_HUE, CLAUDE_DIFF_RED_HUE
+
+
+def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
+    """Whether the two bands read as two colours, with the gaps that decided it.
+
+    Either axis satisfies the rule on its own: a hue apart at one lightness and
+    a lightness apart at one hue are both legible as two kinds of changed row.
+    """
+    added_lightness, _ar, _ac, added_hue = _relative_oklch(added)
+    removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed)
+    hue_gap = _hue_distance(added_hue, removed_hue)
+    lightness_gap = abs(added_lightness - removed_lightness)
+    return (hue_gap >= CLAUDE_DIFF_HUE_SEPARATION
+            or lightness_gap >= CLAUDE_DIFF_LIGHTNESS_SEPARATION), hue_gap, lightness_gap
+
+
+# One diff family: the word the report names it by, the anchor hue every one of
+# its fills is judged on, the palette slots the strong and the word chroma come
+# from, and its three tokens in the order `claude_diff_band_set` returns them.
+# The builder and the judge read the same row, so a family cannot be built on one
+# hue and measured against another.
+CLAUDE_DIFF_FAMILIES = (
+    ("added", CLAUDE_DIFF_GREEN_HUE, ("green", "bright_green"),
+     ("diffAdded", "diffAddedDimmed", "diffAddedWord")),
+    ("removed", CLAUDE_DIFF_RED_HUE, ("red", "bright_red"),
+     ("diffRemoved", "diffRemovedDimmed", "diffRemovedWord")),
+)
+
+
+def claude_diff_band_set(bg: str, text: str, fill_color: str, word_color: str,
+                         hue_degrees: float) -> Tuple[str, str, str]:
+    """One diff family's strong row fill, dimmed context band and changed-word fill.
+
+    All three are built on `hue_degrees` in OKLCH rather than tinted out of `bg`:
+    blending the background toward a palette slot lands a weak band on the
+    background's own hue at almost no chroma, which is how catppuccin's removed
+    rows came out grey and its changed words brown. The strong fill carries
+    `fill_color`'s own chroma bounded into the range Claude Code's own presets
+    use, and the dimmed context band CLAUDE_DIFF_DIMMED_CHROMA of that, which is
+    the relation those presets hold between a changed row and the rows around it.
+
+    What the finished three still miss is `claude_diff_shortfalls`, which judges
+    every producer of these tokens and not this one alone.
+    """
+    background_lightness = color_to_oklab(bg)[0]
+    text_lightness = color_to_oklab(text)[0]
+    toward_text = text_lightness > background_lightness
+    # The gamut ends stop short of pure black and pure white: a fill pushed onto
+    # an end has no chroma left there and reads as neither family.
+    margin = CLAUDE_LIGHTNESS_MARGIN
+    away_lightness = margin if toward_text else 1.0 - margin
+
+    def bounded_chroma(color: str) -> float:
+        """The chroma one family's fills carry: the palette slot's own, bounded."""
+        _lightness, _relative, chroma, _hue = _relative_oklch(color)
+        return min(max(chroma, CLAUDE_DIFF_CHROMA_FLOOR), CLAUDE_DIFF_CHROMA_CEILING)
+
+    def travel(chroma: float, start: float, end: float,
+               predicate: Callable[[str], bool], nearest: bool) -> str:
+        """The fill on the run of lightness from `start` to `end` where `predicate` turns.
+
+        `nearest` takes the first point on the run where it holds, for a rule that
+        only strengthens with distance; otherwise the last point where it still
+        holds, for a rule that weakens with distance.
+        """
+        def at(fraction: float) -> str:
+            return oklch_to_hex(start + (end - start) * fraction, chroma, hue_degrees)
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            if predicate(at(fraction)) == nearest:
+                high = fraction
+            else:
+                low = fraction
+        return at(high if nearest else low)
+
+    def toward_the_text(chroma: float) -> str:
+        """A band on the text's side of the background.
+
+        Far enough from the background that the band shows and no further: every
+        further step costs the fill its own lightness and the body text on it its
+        contrast. The two rules turn in opposite directions along the run, so the
+        band stops at whichever turns first, the one nearer the background.
+        """
+        shows = travel(chroma, background_lightness, text_lightness,
+                       lambda fill: contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION,
+                       nearest=True)
+        readable = travel(chroma, background_lightness, text_lightness,
+                          lambda fill: claude_band_reads(text, fill), nearest=False)
+        return min((shows, readable),
+                   key=lambda fill: abs(color_to_oklab(fill)[0] - background_lightness))
+
+    def away_from_the_text(chroma: float) -> str:
+        """A band on the side of the background away from the text, where both
+        rules only strengthen, so the nearest point meeting them keeps the most of
+        the family's chroma; the ends have none left."""
+        return travel(chroma, background_lightness, away_lightness,
+                      lambda fill: (contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION
+                                    and claude_band_reads(text, fill)), nearest=True)
+
+    def holds(band: str) -> bool:
+        """Whether a band meets the two rules `claude_diff_shortfalls` measures on it."""
+        return claude_band_shows(band, bg) and claude_band_reads(text, band)
+
+    strong_chroma = bounded_chroma(fill_color)
+    # The text's side of the background is the conventional look and is taken
+    # wherever both bands hold there. Where the background sits too close to the
+    # text for that, both go to the other side rather than one each, so the dimmed
+    # band stays the strong fill's own context.
+    strong = toward_the_text(strong_chroma)
+    dimmed = toward_the_text(strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA)
+    if not (holds(strong) and holds(dimmed)):
+        strong = away_from_the_text(strong_chroma)
+        dimmed = away_from_the_text(strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA)
+
+    # A word sits inside a changed line, so it is measured against that line and
+    # not the background: the nearest fill past the band, away from the
+    # background, that clears it. A word that still misses is named by
+    # `claude_diff_shortfalls`.
+    word = travel(bounded_chroma(word_color), color_to_oklab(strong)[0],
+                  1.0 - margin if toward_text else margin,
+                  lambda fill: contrast_ratio(fill, strong) >= CLAUDE_DIFF_WORD_SEPARATION,
+                  nearest=True)
+    return strong, dimmed, word
+
+
+def claude_diff_bands(roles: Dict[str, str], bg: str, text: str) -> Dict[str, str]:
+    """Every diff token for one theme, and the one owner of the hues they are built on.
+
+    `claude_diff_hues` proposes the palette's own green and red, and the fills
+    built on them are measured again with `claude_reads_as_family`, the judge
+    `claude_diff_shortfalls` applies to the finished map. A proposal any fill
+    misses on is dropped for the anchors and the family rebuilt, so the hue a
+    slot is accepted at is the hue the finished band is held to. A slot inside
+    the tolerance can still build a band outside it: eight-bit output moves a
+    low-chroma fill off the hue it was built on, and the dimmed band carries a
+    fraction of an already floor-clamped chroma, so it drifts most. Rebuilding
+    here keeps a band the generator chose out of the apply warning.
+    """
+    def built(added_hue: float, removed_hue: float) -> Dict[str, str]:
+        fills: Dict[str, str] = {}
+        for (_family, _anchor, (fill_slot, word_slot), tokens), hue_degrees in zip(
+                CLAUDE_DIFF_FAMILIES, (added_hue, removed_hue)):
+            fills.update(zip(tokens, claude_diff_band_set(
+                bg, text, roles[fill_slot], roles[word_slot], hue_degrees)))
+        return fills
+
+    fills = built(*claude_diff_hues(roles))
+    if all(claude_reads_as_family(fills[token], anchor)[0]
+           for _family, anchor, _slots, tokens in CLAUDE_DIFF_FAMILIES for token in tokens):
+        return fills
+    return built(CLAUDE_DIFF_GREEN_HUE, CLAUDE_DIFF_RED_HUE)
+
+
+# The curated files that merge over a generated render rather than replacing it.
+# A replacing curated file is the whole output and carries no generated value to
+# disagree with, so only these are governed by the restyle rule below.
+CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
+
+# The app that owns those files, and so the one whose per-app override section
+# moves the palette their values were picked against: the same section
+# `claude_theme_file` merges into the roles the curated values sit on top of.
+CLAUDE_CURATED_APP = "claude"
+
+
+# Namespace for the declared UI roles folded into a palette's identity below.
+# Role names and colors.toml keys are separate namespaces that spell some names
+# the same, so a declared `secondary` folded in bare could be read as a palette
+# key of that spelling and leave the digest unmoved.
+UI_ROLE_IDENTITY_PREFIX = "uiRole."
+
+
+def palette_identity(colors: Dict[str, str], mode: str,
+                     adjustments: Dict[str, int] | None = None,
+                     ui_roles: Dict[str, str] | None = None) -> Dict[str, str]:
+    """The colour map a palette's identity is taken over.
+
+    The one owner of that assembly. The digest is derived rather than stored, so
+    a reader and a writer that each build the map their own way produce values
+    that cannot be compared: a package whose `theme.json` carried no valid mode
+    would be written with one spelling and read with another, and its curated
+    files would be dropped on reload having changed nothing.
+
+    A package's declared UI roles belong in it for the same reason its per-app
+    overrides do: a merge-style curated file's bands are picked against the roles
+    it merges over, and a declaration replaces one of those roles. Folding them
+    in here also gives them the restyle move, in the one place adjustments are
+    applied. Their names sit outside `BASE_COLOR_KEYS`, so the transform is still
+    measured against the palette's own mean lightness rather than moved by them.
+    """
+    identity = dict(colors)
+    for role, value in (ui_roles or {}).items():
+        identity[f"{UI_ROLE_IDENTITY_PREFIX}{role}"] = value
+    if mode in THEME_MODES:
+        identity["mode"] = mode
+    adjustments = normalize_adjustments(adjustments)
+    if not adjustments_all_zero(adjustments):
+        identity = apply_adjustments(identity, adjustments)
+    return identity
+
+
+def palette_digest(colors: Dict[str, str]) -> str:
+    """A palette's identity: one digest over the colours themselves.
+
+    Every control that replaces a palette changes this value, so one comparison
+    answers all of them. Digesting where `colors.toml` sits, or which control
+    last ran, is what needed a new parameter per control and still missed the
+    ones reached by a second route.
+
+    The map, not the file's bytes, is what is hashed, because a restyle slider
+    never rewrites `colors.toml`: it transforms the map after the file is read.
+    """
+    items = sorted((str(key), str(value)) for key, value in colors.items())
+    return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
+
+
+# Namespace for the per-app override roles folded into a palette's identity
+# below. Role names and colors.toml keys are separate namespaces that spell some
+# names the same, so folding a role in bare could leave the digest unmoved where
+# an override replaced a role a palette key already happened to name.
+APP_OVERRIDE_IDENTITY_PREFIX = "appOverride."
+
+
+def effective_palette_digest(colors: Dict[str, str], overrides: Dict[str, str]) -> str:
+    """The palette identity a merge-style curated file is judged against.
+
+    That file merges over a render built from the roles *after* the per-app
+    override layer has been merged into them, so an override sits between the
+    palette and the values the curated bands were picked for. Digesting the
+    palette map alone reached one layer short of it: `vshell theme app-colors
+    claude --set background=#0b0b0b` on akane left the recorded and the effective
+    digest equal, so the file was kept and bands picked for the old background
+    were merged over the new one. The apply then named six shortfalls, body text
+    at 1.04:1 on one diff fill, 1.09:1 on the other and 1.07:1 on each diff band.
+
+    `overrides` is the owning app's section alone, so a `btop` override never
+    drops a `claude` file. With no section the map is the palette map itself and
+    the digest is the one every writer records, so a package carrying no override
+    keeps its curated file exactly as before. A package carrying one never
+    matches, because `curatedPalette` is recorded from a `colors.toml` and no
+    writer records an override; dropping is the answer wanted there, since the
+    curated values were picked for a colour the override has since replaced.
+    """
+    return palette_digest({**colors, **{f"{APP_OVERRIDE_IDENTITY_PREFIX}{role}": value
+                                        for role, value in overrides.items()}})
+
+
+def layer_curated_palette(root: Path) -> str:
+    """The `curatedPalette` digest recorded by the theme.json in `root`.
+
+    Read per layer rather than from the composed metadata, because a package is
+    two directories and each one vouches only for the files it supplied.
+    """
+    try:
+        meta = theme_json_layer(root / "theme.json")
+    except Exception:
+        return ""
+    return str(meta.get("curatedPalette") or "")
+
+
+def package_layer_palettes(name: str) -> Dict[str, str]:
+    """Each layer directory of package `name`, mapped to the digest it records."""
+    return {str(root): layer_curated_palette(root)
+            for root in (builtin_themes_dir() / name, user_themes_dir() / name)}
+
+
+def curated_apps_for_palette(apps: Dict[str, str], colors: Dict[str, str],
+                             app_overrides: Dict[str, Dict[str, str]],
+                             recorded_by_layer: Dict[str, str]) -> Dict[str, str]:
+    """A package's curated app files, minus those its palette no longer fits.
+
+    The rule: a curated app file is valid only for the palette it was picked
+    against. The digest of the palette about to be rendered comes from
+    `effective_palette_digest`, which folds in the override section of the app
+    that owns the file, and each file is matched against the digest recorded by
+    the layer that supplied it, which `recorded_by_layer` holds per package
+    directory. They differ whenever any control has replaced the palette or that
+    app's overrides: a restyle slider, a user overlay `colors.toml`, a colour
+    edit persisted in place, a saved copy, a catalogued download, or `theme
+    app-colors <app>`. Testing the controls one at a time instead needed a
+    parameter per control, went inert on a packaged install where the six curated
+    themes are catalog-only, and dropped the files of pristine downloads that had
+    changed nothing.
+
+    Per layer rather than per package, because `compose_theme_files` is a union
+    and the two directories can disagree. A save under a built-in theme's own
+    name writes the user layer while the built-in layer keeps supplying the
+    curated file that save never saw, and one digest for the package let the
+    freshly written user record certify it. The same read in reverse dropped a
+    built-in file whenever a user overlay `theme.json` carried no digest at all,
+    which every overlay written before this key does.
+
+    A layer recording no digest is treated as a palette that does not match.
+    Nothing on disk says what its curated values were picked against, and the
+    cost of guessing wrong in that direction is a diff panel a user cannot read,
+    against a plainer render in this one.
+
+    Adapting the values instead would mean re-deriving the hand-picked ones,
+    which is the one thing curated means not doing, and it would hand the
+    generator colours a person chose. Dropping costs the plainer generated
+    render: that render is written best-effort with every rule it misses named in
+    the apply warning rather than refused, so the shortfall is reported and
+    Claude Code never keeps the colours of the theme the user just left.
+
+    Evaluating the curated file's own rules and falling back only on failure was
+    considered and declined: it would make one theme's curated file sometimes
+    used and sometimes not depending on a measurement, which is harder to reason
+    about than this palette-identity test.
+
+    Only merge-style files are dropped. A replacing curated file is the whole
+    output, with no generated value to disagree with and, for a pointer-style
+    target such as icons, no template behind it: dropping one would delete the
+    installed artifact on the next apply and leave nothing in its place.
+    """
+    # Scoped to the owning app, so an override set for any other app leaves these
+    # files alone: `theme app-colors btop --set background=...` never reaches the
+    # roles a claude file merges over.
+    effective = effective_palette_digest(colors, app_overrides.get(CLAUDE_CURATED_APP, {}))
+    kept: Dict[str, str] = {}
+    for name, path in apps.items():
+        if name not in CLAUDE_CURATED_FILES:
+            kept[name] = path
+            continue
+        # <layer>/apps/<name>: the directory two levels up is the layer that
+        # supplied this file, and so the one whose record can vouch for it.
+        recorded = recorded_by_layer.get(str(Path(path).parent.parent), "")
+        if recorded and recorded == effective:
+            kept[name] = path
+    return kept
+
+
+def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
+    """Every diff rule the finished token map misses, one line each.
+
+    The rules are measured on the colours Claude Code will paint rather than on
+    the candidates generation chose between, so this is also what a theme
+    package's curated file is judged by: a hand-picked band that closes a rule
+    closes its warning, and one that breaks a rule is named the same way a
+    palette out of reach is.
+    """
+    shortfalls: List[str] = []
+    bg = values["background"]
+    text = values["text"]
+    for family, anchor, _slots, tokens in CLAUDE_DIFF_FAMILIES:
+        for token in tokens:
+            reads, gap = claude_reads_as_family(values[token], anchor)
+            if not reads:
+                shortfalls.append(
+                    f"diff {token} {values[token]}: {gap:.1f} degrees off the "
+                    f"{family} hue {anchor:.1f}")
+    # Both bands of a family carry both rules. `claude_diff_band_set` builds the
+    # strong fill and its dimmed band at different chromas, and a curated file can
+    # set either one alone, so neither band's visibility follows from the other's.
+    for _family, _anchor, _slots, (fill, dimmed, word) in CLAUDE_DIFF_FAMILIES:
+        for token in (fill, dimmed):
+            if not (claude_band_shows(values[token], bg)
+                    and claude_band_reads(text, values[token])):
+                shortfalls.append(
+                    f"diff band {values[token]}: "
+                    f"{contrast_ratio(values[token], bg):.2f}:1 off the background, "
+                    f"body text {contrast_ratio(text, values[token]):.2f}:1 on it")
+        if not claude_word_stands_out(values[word], values[fill], text):
+            shortfalls.append(
+                f"diff word {values[word]} on band {values[fill]}: "
+                f"{contrast_ratio(values[word], values[fill]):.2f}:1 off the band, "
+                f"body text {contrast_ratio(text, values[word]):.2f}:1 on it")
+    apart, hue_gap, lightness_gap = claude_bands_apart(values["diffAdded"], values["diffRemoved"])
+    if not apart:
+        # `claude_diff_bands` builds the two families on hues at least
+        # CLAUDE_DIFF_HUE_SEPARATION apart, and a curated file or per-app override
+        # can set either band after that, so the finished pair is measured again.
+        # Naming it beats refusing.
+        shortfalls.append(
+            f"diff bands {values['diffAdded']} and {values['diffRemoved']}: "
+            f"{hue_gap:.1f} degrees and {lightness_gap:.3f} lightness apart")
+    return shortfalls
+
+
+def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
+    """Claude Code's colour tokens for one VGS theme.
+
+    Claude Code's ANSI presets read the terminal's sixteen slots with fixed
+    meanings that most VGS palettes do not keep, so a custom theme sets every
+    token directly and readability stops depending on those meanings. Text
+    tokens reach CLAUDE_BODY_CONTRAST on the background and bands carry body
+    text at the same ratio; the diff bands take the rules above.
+
+    A tint of a background that carries a hue lands on that hue at almost no
+    chroma, which is what turned catppuccin's removed rows grey and its selection
+    a brown smear, so the fills that carry a colour of their own are built from a
+    hue and a chroma instead: the diff family on its family's hue, a message
+    block on its hint role's, and `selectionBg` by moving its own role's
+    lightness. The three user-message surfaces are their theme's own surface
+    roles, and `band` is the one place a fill is still mixed toward the
+    background, where body text on such a role would otherwise fall short of
+    CLAUDE_BODY_CONTRAST. What the finished map still misses is
+    `claude_diff_shortfalls`, measured there once over the values every source
+    has contributed to, since a curated file and a per-app override reach the map
+    after this.
+    """
+    bg = roles["background"]
+    mode = (roles.get("theme_type") or "dark").lower()
+    prefer_text = "#000000" if mode == "light" else "#ffffff"
+    text = _oklab_contrast_adjust(roles["foreground"], bg, CLAUDE_TEXT_CONTRAST, prefer_text)
+    background_lightness = color_to_oklab(bg)[0]
+
+    def on_background(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
+        return _oklab_contrast_adjust(color, bg, minimum, prefer_text)
+
+    def band(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
+        """Keep as much of a fill's own colour as body text on it allows."""
+        if contrast_ratio(text, color) >= minimum:
+            return color
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            if contrast_ratio(text, blend(bg, color, fraction)) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return blend(bg, color, low)
+
+    def own_hue_fill(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
+        """`color` at the nearest lightness on its own hue that body text reads on.
+
+        `band` mixes the background into a fill, which carries the fill onto the
+        background's hue wherever a lot of mixing is needed: catppuccin's rose
+        selection comes out a brown smear that reads as neither. Moving the lightness
+        alone keeps the role's own colour, and the background's own lightness is
+        the far end because body text reads there by construction.
+        """
+        lightness, _relative, chroma, hue_degrees = _relative_oklch(color)
+        if contrast_ratio(text, color) >= minimum:
+            return color
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            reached = lightness + (background_lightness - lightness) * fraction
+            if contrast_ratio(text, oklch_to_hex(reached, chroma, hue_degrees)) >= minimum:
+                high = fraction
+            else:
+                low = fraction
+        return oklch_to_hex(lightness + (background_lightness - lightness) * high,
+                            chroma, hue_degrees)
+
+    def message_surface(hint: str, surface: str) -> str:
+        """A message block's fill: the theme's own surface with a trace of `hint`.
+
+        Claude Code fills a whole bash or memory block with one of these and draws
+        body text on it, so it has to read as the panel behind the text. Taking the
+        hint role whole painted a saturated accent band across the block: the
+        magenta `bashMessageBackgroundColor` a catppuccin apply drew. The lightness comes
+        from the theme's own surface role, which the user-message bands already use.
+        """
+        lightness, _relative, _chroma, _hue = _relative_oklch(roles[surface])
+        _hint_lightness, _hint_relative, hint_chroma, hint_hue = _relative_oklch(roles[hint])
+        return band(oklch_to_hex(lightness, min(hint_chroma, CLAUDE_SURFACE_CHROMA), hint_hue))
+
+    diff = claude_diff_bands(roles, bg, text)
+
+    accent = roles["accent"]
+    bright_black = roles["bright_black"]
+    inactive = (bright_black if contrast_ratio(bright_black, bg) >= CLAUDE_BODY_CONTRAST
+                else roles["muted"])
+    magenta = on_background(roles["magenta"])
+    bright_magenta = on_background(roles["bright_magenta"])
+    blue = on_background(roles["blue"])
+    bright_blue = on_background(roles["bright_blue"])
+    orange = on_background(blend(roles["red"], roles["yellow"], 0.5))
+    values = {
+        "text": text,
+        "inverseText": bg,
+        "subtle": on_background(roles["outline"]),
+        "inactive": on_background(inactive),
+        "inactiveShimmer": blend(inactive, text, 0.5),
+        "claude": accent,
+        "claudeShimmer": blend(accent, text, 1.0 / 3.0),
+        "clawd_body": accent,
+        "clawd_background": bg,
+        "briefLabelClaude": accent,
+        "rate_limit_fill": accent,
+        "rate_limit_empty": roles["surfaceContainerHighest"],
+        "permission": blue,
+        "briefLabelYou": blue,
+        "professionalBlue": blue,
+        "permissionShimmer": bright_blue,
+        "ide": bright_blue,
+        "claudeBlue_FOR_SYSTEM_SPINNER": blue,
+        "claudeBlueShimmer_FOR_SYSTEM_SPINNER": bright_blue,
+        "suggestion": on_background(roles["bright_cyan"]),
+        "planMode": on_background(roles["cyan"]),
+        "autoAccept": magenta,
+        "autoAcceptShimmer": bright_magenta,
+        "skill": magenta,
+        "merged": magenta,
+        "remember": magenta,
+        "bashBorder": bright_magenta,
+        "effortUltra": bright_magenta,
+        "promptBorder": on_background(roles["outline"]),
+        "promptBorderShimmer": on_background(roles["outlineVariant"]),
+        "success": on_background(roles["green"]),
+        "error": on_background(roles["red"]),
+        "warning": on_background(roles["yellow"]),
+        "warningShimmer": on_background(roles["bright_yellow"]),
+        "fastMode": on_background(roles["bright_red"]),
+        "fastModeShimmer": on_background(roles["bright_yellow"]),
+        "chromeYellow": on_background(roles["yellow"]),
+        **diff,
+        "userMessageBackground": band(roles["surfaceContainer"]),
+        "userMessageBackgroundHover": band(roles["surfaceContainerHigh"]),
+        "composerSidebarBackground": band(roles["surfaceContainerLow"]),
+        "bashMessageBackgroundColor": message_surface("bright_magenta", "surfaceContainer"),
+        "memoryBackgroundColor": message_surface("secondaryContainer", "surfaceContainerHigh"),
+        "selectionBg": own_hue_fill(roles["selection_background"]),
+        "background": bg,
+        "red_FOR_SUBAGENTS_ONLY": on_background(roles["red"], 3.0),
+        "blue_FOR_SUBAGENTS_ONLY": on_background(roles["blue"], 3.0),
+        "green_FOR_SUBAGENTS_ONLY": on_background(roles["green"], 3.0),
+        "yellow_FOR_SUBAGENTS_ONLY": on_background(roles["yellow"], 3.0),
+        "purple_FOR_SUBAGENTS_ONLY": on_background(roles["magenta"], 3.0),
+        "orange_FOR_SUBAGENTS_ONLY": on_background(blend(roles["red"], roles["yellow"], 0.5), 3.0),
+        "pink_FOR_SUBAGENTS_ONLY": on_background(roles["bright_magenta"], 3.0),
+        "cyan_FOR_SUBAGENTS_ONLY": on_background(roles["cyan"], 3.0),
+        "rainbow_red": on_background(roles["red"]),
+        "rainbow_orange": orange,
+        "rainbow_yellow": on_background(roles["yellow"]),
+        "rainbow_green": on_background(roles["green"]),
+        "rainbow_blue": on_background(roles["cyan"]),
+        "rainbow_indigo": blue,
+        "rainbow_violet": magenta,
+        "rainbow_red_shimmer": on_background(roles["bright_red"]),
+        "rainbow_orange_shimmer": on_background(blend(roles["bright_red"], roles["bright_yellow"], 0.5)),
+        "rainbow_yellow_shimmer": on_background(roles["bright_yellow"]),
+        "rainbow_green_shimmer": on_background(roles["bright_green"]),
+        "rainbow_blue_shimmer": on_background(roles["bright_cyan"]),
+        "rainbow_indigo_shimmer": bright_blue,
+        "rainbow_violet_shimmer": bright_magenta,
+    }
+    return values
+
+
+def template_role_names() -> set[str]:
+    """Every role name a render map can carry, read from the builders of the map:
+    the palette and terminal roles, and each under the mode prefix that
+    `target_render_passes` gives a `modeVariants` target."""
+    names = set(target_roles({})) | set(terminal_palette_roles({}, {}, {}))
+    return names | {f"{mode}_{name}" for mode in THEME_MODES for name in names}
+
+
+def render_template(text: str, roles: Dict[str, str], source: str) -> str:
+    """Substitute role placeholders in the target template `source`.
+
+    A brace token that names no role is foreign template syntax, such as tmux
+    `#{pane_id}`, and passes through. A token naming a role the map lacks is a
+    render path that skipped `render_roles`: written out, it leaves literal
+    placeholder text in the app's config, so it raises instead.
+
+    The `ref` modifier writes a `portable_ref` rather than the role's own value,
+    and only the shell's own target asks for it. Every other target renders a
+    config another application reads, which resolves no VGS token.
+    """
+    def repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        modifier = match.group(2)
+        if name not in roles:
+            if name in template_role_names():
+                raise ValueError(f"template-role-missing {source} {{{name}}}")
+            return match.group(0)
+        value = roles.get(name, "")
+        if modifier == "ref":
+            return portable_ref(value)
+        if modifier == "strip":
+            return strip_hash(value)
+        if modifier == "rgb":
+            r, g, b = rgb(value)
+            return f"{r},{g},{b}"
+        return value
+    return TEMPLATE_RE.sub(repl, text)
+
+
+def write_file(path: Path, content: str, mode: int | None = None) -> bool:
+    """Replace the file `path` names atomically and report whether its bytes moved.
+
+    `path` is resolved with `os.path.realpath` first, and the temporary file is
+    created in the resolved target's directory and renamed onto the resolved
+    target. A config symlinked into a dotfiles checkout therefore stays a symlink
+    and its target takes the new content; renaming onto the link itself would
+    replace the link with a plain file and leave the tracked copy behind.
+
+    A destination already holding `content` is left alone and reports False, so a
+    caller can tell a consumer to reload only the files that actually changed. A
+    destination it cannot read reads as changed: bytes that cannot be compared
+    are bytes that must be written. A `mode` is applied either way, so
+    `write_file(path, content, mode)` means `path` holds `content` at `mode`
+    whether or not the bytes moved.
+
+    With `mode`, the temporary file is created at that mode, so no copy of the
+    content ever exists at a wider one — which matters for a config another app
+    keeps at 0600 for its API keys — and is chmod'ed to it while still empty, so
+    a narrow umask cannot leave a user's 0644 config at 0600. Without a mode an
+    existing target keeps its own mode the same way, and a created one takes the
+    process umask."""
+    target = Path(os.path.realpath(path))
+    try:
+        unchanged = target.read_bytes() == content.encode()
+    except OSError:
+        unchanged = False
+    if unchanged:
+        # A failure here raises rather than falling through to a rewrite, so a
+        # mode this call could not set is never reported as a write that set it.
+        if mode is not None and stat.S_IMODE(target.stat().st_mode) != mode:
+            os.chmod(target, mode)
+        return False
+    if mode is None:
+        with contextlib.suppress(FileNotFoundError):
+            mode = stat.S_IMODE(target.stat().st_mode)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    try:
+        # O_EXCL because a name this process built from its own pid and a
+        # nanosecond clock should never already exist; if it does, something
+        # else owns that file and this write must not land in it.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode if mode is not None else 0o666)
+        with os.fdopen(fd, "w") as handle:
+            if mode is not None:
+                # os.open's mode argument caps the file but the umask can narrow
+                # it further, which would hand the destination a mode the caller
+                # did not ask for. The file is still empty here.
+                os.fchmod(fd, mode)
+            handle.write(content)
+        tmp.replace(target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+    return True
+
+
+def _niri() -> Any:
+    """Load the Niri/KDL subsystem only for commands and hooks that use it."""
+    global _NIRI_SUPPORT
+    if _NIRI_SUPPORT is None:
+        import vshell_niri
+        vshell_niri.configure(vshell_niri.NiriRuntime(
+            home=home,
+            cfg_dir=cfg_dir,
+            run=run,
+            write_file=write_file,
+            load_settings=load_settings,
+            coerce_int=_coerce_int,
+            optional_nonnegative_int=_optional_nonnegative_int,
+        ))
+        _NIRI_SUPPORT = vshell_niri
+    return _NIRI_SUPPORT
+
+
+# The reason a theme hook reports when it refuses to act on the login session from a
+# throwaway HOME. Distinct from every absent-app skip, so a working guard is not read as
+# a machine with no kitty, no tmux server or no root.
+SANDBOX_REFUSAL = "refused: not the login user's own session"
+
+
+def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> Tuple[bool, str]:
+    """Push the theme colour into the system Chromium policy. Returns (ok, reason)."""
+    # A shell started against a throwaway HOME (the nested test sandbox) applies its own
+    # default theme, and this hook would push that theme's colour into the real system
+    # policy for every browser on the machine. Only a shell running from the user's own
+    # config may write outside their home.
+    if _sandboxed_home():
+        return False, SANDBOX_REFUSAL
+    color = roles.get("surfaceContainerHigh") or roles.get("background") or "#1a1b26"
+    payload = {"BrowserThemeColor": color.lower()}
+    generated = generated_dir() / "chromium-policy.json"
+    write_file(generated, json.dumps(payload, indent=2) + "\n")
+    target = Path("/etc/chromium/policies/managed/color.json")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_file(target, json.dumps(payload, indent=2) + "\n")
+        return True, ""
+    except PermissionError:
+        if not shutil.which("sudo"):
+            return False, "chromium policy needs root, and sudo is not installed"
+        cmd = ["sudo"]
+        if not allow_prompt:
+            cmd.append("-n")
+        cmd.extend(["install", "-Dm644", str(generated), str(target)])
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE if not allow_prompt else None, stderr=subprocess.PIPE if not allow_prompt else None)
+        if proc.returncode == 0:
+            return True, ""
+        if not allow_prompt:
+            eprint("chromium policy needs root; run `vshell theme chromium-policy` in a terminal")
+        return False, "chromium policy needs root"
+    except Exception as exc:
+        return False, f"chromium policy write failed: {exc}"
+
+
+def _sandboxed_home() -> bool:
+    """Whether this process runs against a throwaway HOME instead of the login user's.
+
+    The nested smoke sandbox runs a full shell on a temporary home carrying its own default
+    theme. Its theme hooks reach running apps through /proc and through runtime paths that
+    name the real uid, and desktop settings through the session bus, so without this they
+    restyle the login session's terminals, editors, monitors and GTK apps from a test's
+    palette.
+
+    Identity, not containment: that sandbox builds its home with a mktemp that honours
+    $TMPDIR, so a sandbox home sits wherever $TMPDIR points, the login home included. A
+    missing $HOME or an unresolvable login user is treated as sandboxed.
+
+    A sudo run is sandboxed too, because sudo's env_reset rewrites $HOME to the target
+    user's home while the acting user resolves through SUDO_USER, so the two differ and
+    every theme hook skips. Theme commands are meant to be run unprivileged; no shipped
+    producer runs them as root.
+    """
+    env_home = os.environ.get("HOME", "").strip()
+    if not env_home:
+        return True
+    try:
+        return Path(env_home).resolve() != login_home().resolve()
+    except (KeyError, OSError):
+        return True
+
+
+def resolve_vshell_cli() -> str:
+    repo_cli = repo_root() / "bin" / "vshell"
+    if repo_cli.exists() and os.access(repo_cli, os.X_OK):
+        return str(repo_cli)
+    local = home() / ".local" / "bin" / "vshell"
+    if local.exists() and os.access(local, os.X_OK):
+        return str(local)
+    return shutil.which("vshell") or str(repo_cli)
+
+
+def open_theme_picker(mode: str = "") -> Dict[str, Any]:
+    cli = resolve_vshell_cli()
+    if mode in {"dark", "light"}:
+        cmd = [cli, "ipc", "call", "theme-picker", "openMode", mode]
+    else:
+        cmd = [cli, "ipc", "call", "theme-picker", "open"]
+    return _run_hook_cmd("theme-picker", cmd, timeout=5)
+
+
+def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
+    try:
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=kwargs.pop("timeout", 8), **kwargs)
+        return {"hook": hook, "ok": proc.returncode == 0, "code": proc.returncode, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+    except subprocess.TimeoutExpired as exc:
+        # A timeout is reported apart from a refusal because the command reached its
+        # target and only the reply was late, so its effect has to be assumed to have
+        # landed. A caller that undoes such an effect reads this rather than `ok`.
+        return {"hook": hook, "ok": False, "timedOut": True, "error": str(exc)}
+    except Exception as exc:
+        return {"hook": hook, "ok": False, "error": str(exc)}
+
+
+def tmux_sockets() -> List[Path]:
+    """Find tmux sockets through environment paths and process environments.
+    A server using TMUX_TMPDIR can be unreachable through the default socket."""
+    if _sandboxed_home():
+        return []
+    uid = os.getuid()
+    # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
+    # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
+    roots = [Path(d) for d in (os.environ.get("TMUX_TMPDIR"), f"/run/user/{uid}", tempfile.gettempdir(), "/tmp") if d]
+    found: List[Path] = []
+    seen = set()
+    # $TMUX names the socket of the server this process runs under, which a
+    # `tmux -S` server puts anywhere at all, including outside every root above.
+    inside = (os.environ.get("TMUX") or "").split(",")[0]
+    if inside:
+        candidate = Path(inside)
+        try:
+            if candidate.is_socket():
+                seen.add(candidate)
+                found.append(candidate)
+        except OSError:
+            pass
+    for root in roots:
+        try:
+            entries = sorted((root / f"tmux-{uid}").iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_socket() or entry in seen:
+                    continue
+            except OSError:
+                continue
+            seen.add(entry)
+            found.append(entry)
+    return found
+
+
+def source_tmux_theme_hook(hook: str) -> Dict[str, Any]:
+    """Load the generated theme into every RUNNING tmux server. Sourcing
+    against a socket with no server would create one, so each socket is probed
+    with a command that fails rather than starting a server."""
+    if _sandboxed_home():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    if not shutil.which("tmux"):
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "tmux not found"}
+    theme = home() / ".config" / "tmux" / "vgs-theme.conf"
+    sourced: List[str] = []
+    failures: List[Dict[str, str]] = []
+    for socket in tmux_sockets():
+        probe = _run_hook_cmd(hook, ["tmux", "-S", str(socket), "list-sessions"], timeout=5)
+        if not probe.get("ok"):
+            continue
+        result = _run_hook_cmd(hook, ["tmux", "-S", str(socket), "source-file", str(theme)], timeout=5)
+        if result.get("ok"):
+            sourced.append(str(socket))
+        else:
+            failures.append({"socket": str(socket), "error": result.get("stderr") or result.get("error") or ""})
+    if failures:
+        return {"hook": hook, "ok": False, "sourced": sourced, "failed": failures}
+    if not sourced:
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "no running tmux server"}
+    return {"hook": hook, "ok": True, "sourced": sourced}
+
+
+def process_pids_by_comm(comm: str) -> List[int]:
+    pids: List[int] = []
+    # Every signal-reload hook (kitty, btop, ghostty) finds its target here.
+    if _sandboxed_home():
+        return pids
+    proc = Path("/proc")
+    if not proc.exists():
+        return pids
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+            name = (entry / "comm").read_text().strip()
+            if name == comm:
+                pids.append(int(entry.name))
+        except Exception:
+            continue
+    return sorted(set(pids))
+
+
+def reload_ghostty_hook() -> Dict[str, Any]:
+    # Guarded as a whole, not only in its /proc half: with no pid to signal this falls
+    # through to a session-bus reload that reaches the login session's ghostty directly.
+    if _sandboxed_home():
+        return {"hook": "ghostty-reload", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    pids = process_pids_by_comm("ghostty")
+    signaled: List[int] = []
+    failures: List[str] = []
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGUSR2)
+            signaled.append(pid)
+        except ProcessLookupError:
+            continue
+        except Exception as exc:
+            failures.append(f"{pid}: {exc}")
+    if signaled or failures:
+        return {"hook": "ghostty-reload", "ok": not failures, "method": "SIGUSR2", "pids": signaled, "error": "; ".join(failures)}
+
+    if shutil.which("gdbus"):
+        result = _run_hook_cmd(
+            "ghostty-reload",
+            ["gdbus", "call", "--session", "--dest", "com.mitchellh.ghostty", "--object-path", "/com/mitchellh/ghostty", "--method", "org.gtk.Actions.Activate", "reload-config", "[]", "{}"],
+            timeout=3,
+        )
+        if result.get("ok"):
+            result["method"] = "dbus"
+            return result
+
+    return {"hook": "ghostty-reload", "ok": True, "skipped": True, "reason": "no running ghostty process"}
+
+
+def nvim_sockets() -> List[Path]:
+    candidates: List[Path] = []
+    if _sandboxed_home():
+        return candidates
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    for base in [Path(runtime), Path("/tmp")]:
+        if not base.exists():
+            continue
+        candidates.extend(base.glob("nvim.*"))
+        candidates.extend(base.glob("nvim.*/0"))
+    return sorted({p for p in candidates if p.exists()})
+
+
+def reload_nvim_hook() -> Dict[str, Any]:
+    if _sandboxed_home():
+        return {"hook": "nvim-reload", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    if not shutil.which("nvim"):
+        return {"hook": "nvim-reload", "ok": True, "skipped": True, "reason": "nvim not found"}
+    sockets = nvim_sockets()
+    if not sockets:
+        return {"hook": "nvim-reload", "ok": True, "skipped": True, "reason": "no nvim sockets"}
+    expr = "luaeval('(function() local ok=pcall(vim.cmd, \"VGSReloadTheme\"); return ok and 1 or 0 end)()')"
+    reloaded: List[str] = []
+    failures: List[str] = []
+    missing: List[str] = []
+    pruned: List[str] = []
+    # A stopped nvim process can leave a socket behind. Ignore connection errors
+    # for these stale paths so they do not mask reload results from live editors.
+    dead_markers = ("connection refused", "e247", "failed to connect", "no such file", "econnrefused")
+    for sock in sockets:
+        result = _run_hook_cmd("nvim-reload", ["nvim", "--server", str(sock), "--remote-expr", expr], timeout=3)
+        stdout = (result.get("stdout") or "").strip()
+        if result.get("ok") and stdout == "1":
+            reloaded.append(str(sock))
+            continue
+        if result.get("ok"):
+            missing.append(str(sock))
+            continue
+        blob = f"{result.get('stderr') or ''} {result.get('error') or ''}".lower()
+        if any(marker in blob for marker in dead_markers):
+            try:
+                path = Path(sock)
+                if path.is_socket():
+                    path.unlink()
+                    pruned.append(str(sock))
+            except Exception:
+                pass
+            continue
+        failures.append(f"{sock}: {result.get('stderr') or result.get('error') or 'failed'}")
+    return {"hook": "nvim-reload", "ok": not failures, "reloaded": reloaded, "missingCommand": missing, "pruned": pruned, "error": "; ".join(failures)}
+
+
+_VGS_INCLUDE_BEGIN = "# BEGIN VGS managed theme include"
+_VGS_INCLUDE_END = "# END VGS managed theme include"
+
+
+def _config_include_value(line: str, separator: str) -> str:
+    stripped = line.strip()
+    if separator not in stripped:
+        return ""
+    prefix, value = stripped.split(separator, 1)
+    if prefix.strip() != "include":
+        return ""
+    value = value.split("#", 1)[0].strip().strip("\"'")
+    return value
+
+
+def _include_resolves_to(value: str, config: Path, target: Path) -> bool:
+    if not value:
+        return False
+    expanded = Path(os.path.expandvars(os.path.expanduser(value)))
+    if not expanded.is_absolute():
+        expanded = config.parent / expanded
+    try:
+        return expanded.resolve(strict=False) == target.resolve(strict=False)
+    except OSError:
+        return expanded.absolute() == target.absolute()
+
+
+def ensure_theme_include(config: Path, target: Path, include_line: str,
+                         separator: str, seed_lines: List[str] | None = None) -> Dict[str, Any]:
+    """Idempotently append one managed include while preserving user content."""
+    original = config.read_text() if config.is_file() else ""
+    if any(
+        _include_resolves_to(_config_include_value(line, separator), config, target)
+        for line in original.splitlines()
+    ):
+        return {"ok": True, "changed": False, "config": str(config), "target": str(target)}
+
+    block_lines = [_VGS_INCLUDE_BEGIN, *(seed_lines or []), include_line, _VGS_INCLUDE_END]
+    block = "\n".join(block_lines) + "\n"
+    if _VGS_INCLUDE_BEGIN in original and _VGS_INCLUDE_END in original:
+        start = original.index(_VGS_INCLUDE_BEGIN)
+        end = original.index(_VGS_INCLUDE_END, start) + len(_VGS_INCLUDE_END)
+        content = original[:start] + block.rstrip("\n") + original[end:]
+        if original.endswith("\n") and not content.endswith("\n"):
+            content += "\n"
+    else:
+        content = original
+        if content and not content.endswith("\n"):
+            content += "\n"
+        if content:
+            content += "\n"
+        content += block
+    write_file(config, content)
+    return {"ok": True, "changed": True, "config": str(config), "target": str(target)}
+
+
+def ensure_foot_theme_config() -> Dict[str, Any]:
+    config = home() / ".config" / "foot" / "foot.ini"
+    target = home() / ".config" / "foot" / "vgs-theme.ini"
+    seed_lines: List[str] = []
+    if not config.exists():
+        xdg_dirs = os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
+        for base in (Path(item) for item in xdg_dirs if item):
+            system_config = base / "foot" / "foot.ini"
+            if system_config.is_file():
+                seed_lines.append(f"include={system_config}")
+                break
+    result = ensure_theme_include(
+        config, target, "include=~/.config/foot/vgs-theme.ini", "=", seed_lines
+    )
+    return {"hook": "foot-config", **result}
+
+
+def ensure_kitty_theme_config() -> Dict[str, Any]:
+    config = home() / ".config" / "kitty" / "kitty.conf"
+    target = home() / ".config" / "kitty" / "vgs-theme.conf"
+    result = ensure_theme_include(config, target, "include vgs-theme.conf", " ")
+    return {"hook": "kitty-config", **result}
+
+
+def ensure_niri_colors_config() -> Dict[str, Any]:
+    return {"hook": "niri-colors-config", **_niri().ensure_niri_include("colors.kdl")}
+
+
+def ensure_qtct_theme_config(version: int) -> Dict[str, Any]:
+    app = f"qt{version}ct"
+    config = home() / ".config" / app / f"{app}.conf"
+    palette = home() / ".config" / app / "colors" / "vgs.conf"
+    original = config.read_text() if config.is_file() else ""
+    lines = original.splitlines()
+    appearance_index = next(
+        (index for index, line in enumerate(lines) if line.strip().lower() == "[appearance]"),
+        -1,
+    )
+    if appearance_index < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("[Appearance]")
+        appearance_index = len(lines) - 1
+    section_end = next(
+        (index for index in range(appearance_index + 1, len(lines))
+         if lines[index].strip().startswith("[") and lines[index].strip().endswith("]")),
+        len(lines),
+    )
+
+    def set_key(key: str, value: str) -> None:
+        nonlocal section_end
+        for index in range(appearance_index + 1, section_end):
+            if re.match(rf"^{re.escape(key)}\s*=", lines[index].strip(), re.IGNORECASE):
+                lines[index] = f"{key}={value}"
+                return
+        lines.insert(section_end, f"{key}={value}")
+        section_end += 1
+
+    set_key("color_scheme_path", str(palette))
+    set_key("custom_palette", "true")
+    content = "\n".join(lines) + "\n"
+    changed = content != original
+    if changed:
+        write_file(config, content)
+    return {"hook": f"{app}-config", "ok": True, "changed": changed, "config": str(config)}
+
+
+# `hyprctl reload` re-reads the whole Hyprland config, so it discards every option a
+# runtime `hyprctl keyword` set, not only the ones VGS renders. VGS owns the reload,
+# so VGS owns what the reload loses. These are the options it puts back.
+_HYPR_RESTORED_OPTIONS = ("general:gaps_in", "general:gaps_out")
+
+# What the hook tells the user when the restore falls short. One place per message,
+# because the apply surfaces each verbatim and turns partial on it. They are three
+# different outcomes and never share wording: the values were never captured, they were
+# captured and could not be written back, or they were written back and the compositor
+# did not confirm it.
+_GAP_WARN_UNREADABLE = ("live gaps unprotected: the compositor did not report "
+                        "{options} before the reload")
+_GAP_WARN_LOST = "live gaps lost to the reload and not restored: {gaps}"
+_GAP_WARN_UNCONFIRMED = ("live gaps written back but not confirmed: the compositor did "
+                         "not report {options} after the restore")
+
+
+def _hypr_option_boxes(env: Dict[str, str]) -> Dict[str, str] | None:
+    """Each restored option's live `css` edge box, or `None` when the compositor did
+    not report all of them.
+
+    A partial read is dropped whole: a box VGS could not read is not an empty box, and
+    writing a keyword from one would set gaps the user never chose. `None` rather than
+    an empty map, because a caller comparing two reads has to tell an option whose
+    value changed from an option the compositor never reported."""
+    boxes: Dict[str, str] = {}
+    for option in _HYPR_RESTORED_OPTIONS:
+        try:
+            proc = subprocess.run(["hyprctl", "getoption", option, "-j"], text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  env=env, timeout=3)
+            box = str(json.loads(proc.stdout or "{}").get("css") or "").strip()
+        except Exception as exc:
+            eprint(f"hypr-reload: reading {option} failed: {exc}")
+            return None
+        if proc.returncode != 0:
+            eprint(f"hypr-reload: reading {option} exited {proc.returncode}")
+            return None
+        if not box:
+            eprint(f"hypr-reload: {option} reports no css box")
+            return None
+        boxes[option] = box
+    return boxes
+
+
+class GapSnapshot(enum.Enum):
+    """What an apply's pre-reload gap read produced.
+
+    `NOT_TAKEN` is both "no reload has run yet" and "Gaps = Custom, so the reloaded
+    values are the ones VGS wrote": neither leaves the user anything to lose, and the
+    restore stays silent. `UNREADABLE` is a read the compositor refused or did not
+    answer in time, which loses the gaps as surely as no restore at all and has to say
+    so. `TAKEN` carries the boxes to write back."""
+
+    NOT_TAKEN = enum.auto()
+    UNREADABLE = enum.auto()
+    TAKEN = enum.auto()
+
+
+class HyprGapRestore:
+    """The live window gaps one apply must put back after its reload.
+
+    Under Gaps = Config and Gaps = Off, VGS renders no gap keys into
+    `~/.config/hypr/vgs/layout.lua`, which is the promise that the user's own Hyprland
+    config owns them. The reload a theme apply runs so the compositor picks up the new
+    colours re-reads that config whole, so until this a gap the user had set at runtime
+    with `hyprctl keyword` went back to the config file's value on every theme change.
+    Under Gaps = Custom the reload restores exactly the values VGS wrote, so nothing is
+    kept. Per-workspace gap rules set at runtime are not restored.
+
+    One instance carries one apply's snapshot. An apply can run the reload more than
+    once and only the values from before its first reload are the user's, so the
+    snapshot is read once and every later reload in that apply reuses it."""
+
+    def __init__(self) -> None:
+        self._state = GapSnapshot.NOT_TAKEN
+        self._before: Dict[str, str] = {}
+        self._read = False
+
+    def snapshot(self, env: Dict[str, str]) -> None:
+        """Read this apply's live gaps, once, and only where VGS leaves them alone."""
+        if self._read:
+            return
+        self._read = True
+        if _hyprland_manages_gaps(_hyprland_gap_override(load_settings())):
+            return
+        boxes = _hypr_option_boxes(env)
+        if boxes is None:
+            self._state = GapSnapshot.UNREADABLE
+            return
+        self._state = GapSnapshot.TAKEN
+        self._before = boxes
+
+    def restore(self, env: Dict[str, str]) -> Dict[str, Any]:
+        """Put back every snapshot value the reload changed, and report what stuck.
+
+        The three shortfalls are reported apart, because they tell the user different
+        things: gaps never captured, gaps captured and not written back, and gaps
+        written back that the compositor did not confirm. A post-reload read the
+        compositor did not answer counts every option as changed, since the snapshot is
+        what the user set and re-applying a value already in place costs one no-op
+        keyword. The writes are confirmed by reading the options again rather than by
+        `hyprctl`'s reply text, so a keyword the compositor refused is named as the lost
+        gap it is instead of passing on a zero exit status."""
+        if self._state is GapSnapshot.NOT_TAKEN:
+            return {}
+        if self._state is GapSnapshot.UNREADABLE:
+            return {"warning": _GAP_WARN_UNREADABLE.format(
+                options=", ".join(_HYPR_RESTORED_OPTIONS))}
+        after = _hypr_option_boxes(env)
+        stale = [option for option, box in self._before.items()
+                 if after is None or after.get(option) != box]
+        if not stale:
+            return {}
+        writes = {option: _run_hook_cmd(
+            "hypr-reload", ["hyprctl", "keyword", option, self._before[option]],
+            env=env, timeout=5) for option in stale}
+        final = _hypr_option_boxes(env)
+        if final is None:
+            # With the confirming read gone the write results are the only witness left.
+            # A write the compositor refused outright put nothing back, so those gaps are
+            # lost rather than unconfirmed; a write that timed out reached it with only
+            # its reply late, which is the case the unconfirmed wording is for.
+            refused = [option for option in stale
+                       if not writes[option].get("ok") and not writes[option].get("timedOut")]
+            if refused == stale:
+                return {"restoredGaps": {}, "warning": _GAP_WARN_LOST.format(
+                    gaps=", ".join(f"{option} {self._before[option]}" for option in refused))}
+            return {"restoredGaps": {}, "warning": _GAP_WARN_UNCONFIRMED.format(
+                options=", ".join(stale))}
+        missed = [option for option in stale if final.get(option) != self._before[option]]
+        result: Dict[str, Any] = {
+            "restoredGaps": {option: self._before[option] for option in stale if option not in missed},
+        }
+        if missed:
+            result["warning"] = _GAP_WARN_LOST.format(
+                gaps=", ".join(f"{option} {self._before[option]}" for option in missed))
+        return result
+
+
+def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any],
+             gap_restore: HyprGapRestore | None = None) -> Dict[str, Any]:
+    if isinstance(hook, dict):
+        name = str(hook.get("name") or hook.get("type") or "hook")
+        return {"hook": name, "ok": True, "skipped": True, "reason": "object hooks are not enabled by default"}
+
+    if hook == "hypr-reload":
+        # This branch discards the inherited HYPRLAND_INSTANCE_SIGNATURE and picks the
+        # newest live instance, so from a throwaway HOME it reloads the login session's
+        # compositor from the sandbox's config.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+        if not shutil.which("hyprctl"):
+            return {"hook": hook, "ok": True, "skipped": True, "reason": "hyprctl not found"}
+        env = os.environ.copy()
+        if not env.get("XDG_RUNTIME_DIR"):
+            env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+        # uwsm can leave stale HYPRLAND_INSTANCE_SIGNATURE in inherited shells after session restart.
+        # Prefer live instances from hyprctl over inherited env, but never let probing abort theme apply.
+        try:
+            instances = subprocess.run(["hyprctl", "instances", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={k: v for k, v in env.items() if k != "HYPRLAND_INSTANCE_SIGNATURE"}, timeout=3)
+            data = json.loads(instances.stdout or "[]")
+            live = sorted(data, key=lambda item: int(item.get("time") or 0), reverse=True)
+            if live:
+                env["HYPRLAND_INSTANCE_SIGNATURE"] = live[0].get("instance") or live[0].get("signature") or ""
+        except Exception as exc:
+            eprint(f"hook {hook} instance probe failed: {exc}")
+        if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            hypr_dir = Path(env["XDG_RUNTIME_DIR"]) / "hypr"
+            if hypr_dir.exists():
+                sockets = sorted(hypr_dir.glob("*/.socket.sock"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if sockets:
+                    env["HYPRLAND_INSTANCE_SIGNATURE"] = sockets[0].parent.name
+        # A caller with several reloads in one apply passes one snapshot holder for all
+        # of them; a lone call gets its own, so the restore never depends on the caller.
+        gaps = gap_restore if gap_restore is not None else HyprGapRestore()
+        gaps.snapshot(env)
+        result = _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
+        # A reload whose reply timed out still reached the compositor and re-read the
+        # config, so its gaps are already gone and the restore has to run. A reload that
+        # hyprctl refused or never started is the one case that leaves them alone.
+        if result.get("ok") or result.get("timedOut"):
+            result.update(gaps.restore(env))
+        return result
+    if hook == "gtk4-reload":
+        # Nautilus answers on the login user's session bus whatever $HOME says.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+        # A quit failure never fails the hook: the stylesheet is already on disk
+        # and the quit is only a freshness nudge for the next Files window.
+        return {"hook": hook, "ok": True, "nautilus": _quit_windowless_nautilus()}
+    if hook == "niri-reload":
+        # NIRI_SOCKET is inherited from the login session, so from a throwaway HOME this
+        # branch makes the login user's compositor re-read its config.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+        if not shutil.which("niri"):
+            return {"hook": hook, "ok": True, "skipped": True, "reason": "niri not found"}
+        if not os.environ.get("NIRI_SOCKET"):
+            return {"hook": hook, "ok": True, "skipped": True, "reason": "not a Niri session"}
+        return _run_hook_cmd(hook, ["niri", "msg", "action", "load-config-file"], timeout=10)
+    if hook == "niri-colors-config":
+        try:
+            return ensure_niri_colors_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "foot-config":
+        try:
+            return ensure_foot_theme_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "kitty-config":
+        try:
+            return ensure_kitty_theme_config()
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "qt6ct-config":
+        try:
+            return ensure_qtct_theme_config(6)
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "qt5ct-config":
+        try:
+            return ensure_qtct_theme_config(5)
+        except (OSError, UnicodeError) as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "tmux-source":
+        return source_tmux_theme_hook(hook)
+    if hook == "ghostty-reload":
+        return reload_ghostty_hook()
+    if hook == "nvim-reload":
+        return reload_nvim_hook()
+    if hook == "pi-theme-link":
+        try:
+            agent = home() / ".pi" / "agent" / "themes" / "vgs-theme.json"
+            user = home() / ".pi" / "themes" / "vgs-theme.json"
+            user.parent.mkdir(parents=True, exist_ok=True)
+            if agent.exists() or agent.is_symlink():
+                if user.exists() or user.is_symlink():
+                    user.unlink()
+                user.symlink_to(agent)
+            return {"hook": hook, "ok": True}
+        except Exception as exc:
+            return {"hook": hook, "ok": False, "error": str(exc)}
+    if hook == "shell-reload":
+        # The IPC socket is found through the real uid's runtime directory, so a shell on
+        # a throwaway HOME reloads the login session's theme from the sandbox's palette.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+        cli = resolve_vshell_cli()
+        result = _run_hook_cmd(hook, [cli, "ipc", "call", "theme", "reload"], timeout=5)
+        # During hermetic/CI smoke there may be no running qs IPC service. Theme files are still valid.
+        if not result.get("ok") and ("Failed to connect" in (result.get("stderr") or "") or "No such file" in (result.get("stderr") or "")):
+            result["optional"] = True
+        return result
+    if hook == "chromium-policy":
+        ok, reason = write_chromium_policy(roles)
+        return {"hook": hook, "ok": ok, "optional": True, "error": reason}
+    if hook == "gtk-settings":
+        return apply_gtk_settings_hook(roles)
+    if hook == "claude-theme":
+        return apply_claude_theme_hook(roles, bp)
+    if hook == "codex-theme":
+        return apply_codex_theme_hook()
+    if hook == "opencode-theme-select":
+        return select_opencode_theme_hook()
+    if hook == "omp-theme-select":
+        return select_omp_theme_hook()
+    if hook == "hermes-skin-select":
+        return select_hermes_skin_hook()
+    if hook == "gemini-theme-select":
+        return select_gemini_theme_hook()
+    if hook == "kitty-reload":
+        return signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
+    if hook == "btop-config":
+        # btop keeps whatever color_theme btop.conf names, so installing
+        # themes/vgs.theme leaves the user on Default until this selects it.
+        # Separate from btop-reload because selecting is wiring the destination
+        # bytes do not carry, while the signal is only worth sending on a change.
+        selected = ensure_btop_color_theme("vgs")
+        result: Dict[str, Any] = {"hook": hook, "ok": selected, "colorThemeSelected": selected}
+        if not selected:
+            result["error"] = "btop color_theme select failed"
+        return result
+    if hook == "btop-reload":
+        return signal_reload_hook("btop-reload", "btop", signal.SIGUSR2)
+    if hook == "vscode-theme":
+        return apply_vscode_theme_hook(roles, bp)
+    if hook == "icon-theme":
+        return apply_icon_theme_hook(roles)
+    if hook == "fastfetch-logo":
+        return apply_fastfetch_logo_hook(roles)
+    if hook == "pywalfox-update":
+        return apply_pywalfox_hook(roles)
+    if hook == "obsidian-theme":
+        return apply_obsidian_theme_hook(roles)
+    return {"hook": hook, "ok": True, "skipped": True, "reason": "unknown hook"}
+
+
+def apply_pywalfox_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # Both commands below reach the browser extension running in the login session, and a
+    # PATH lookup says nothing about whose session that is, so from a throwaway HOME this
+    # hook would push the sandbox's palette into the login user's Firefox.
+    if _sandboxed_home():
+        return {"hook": "pywalfox-update", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    if not shutil.which("pywalfox"):
+        return {"hook": "pywalfox-update", "ok": True, "skipped": True, "reason": "pywalfox not found"}
+    mode = (roles.get("theme_type") or "dark").lower()
+    mode_result = _run_hook_cmd("pywalfox-update", ["pywalfox", mode], timeout=5)
+    update_result = _run_hook_cmd("pywalfox-update", ["pywalfox", "update"], timeout=5)
+    ok = bool(mode_result.get("ok") and update_result.get("ok"))
+    return {"hook": "pywalfox-update", "ok": ok, "optional": True, "mode": mode,
+            "error": "; ".join(x for x in (mode_result.get("stderr", ""), update_result.get("stderr", "")) if x) if not ok else ""}
+
+
+def apply_obsidian_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    """Install the generated (or curated) obsidian CSS as a 'VGS' theme in
+    every vault registered in ~/.config/obsidian/obsidian.json.
+    The user selects the VGS theme once in Obsidian's appearance settings."""
+    css = generated_dir() / "obsidian.css"
+    if not css.exists():
+        return {"hook": "obsidian-theme", "ok": True, "skipped": True, "reason": "no obsidian css generated"}
+    registry = home() / ".config" / "obsidian" / "obsidian.json"
+    if not registry.exists():
+        return {"hook": "obsidian-theme", "ok": True, "skipped": True, "reason": "no obsidian vault registry"}
+    try:
+        vaults = json.loads(registry.read_text()).get("vaults") or {}
+    except Exception as exc:
+        return {"hook": "obsidian-theme", "ok": False, "error": f"unreadable vault registry: {exc}"}
+    manifest = {
+        "name": "VGS",
+        "version": "1.0.0",
+        "minAppVersion": "0.16.0",
+        "description": "Synced with the current VanillaGreen Shell theme",
+        "author": "VGS",
+    }
+    synced: List[str] = []
+    for vault in vaults.values():
+        vault_path = Path(str(vault.get("path") or ""))
+        if not (vault_path / ".obsidian").is_dir():
+            continue
+        theme_dir = vault_path / ".obsidian" / "themes" / "VGS"
+        if not (theme_dir / "manifest.json").exists():
+            write_file(theme_dir / "manifest.json", json.dumps(manifest, indent=2) + "\n")
+        write_file(theme_dir / "theme.css", css.read_text())
+        synced.append(str(vault_path))
+    if not synced:
+        return {"hook": "obsidian-theme", "ok": True, "skipped": True, "reason": "no vaults found"}
+    return {"hook": "obsidian-theme", "ok": True, "vaults": synced}
+
+
+def ensure_btop_color_theme(value: str = "vgs") -> bool:
+    """Point btop.conf at the VGS-installed theme. Installing
+    ~/.config/btop/themes/vgs.theme does NOT select it — btop keeps whatever
+    `color_theme` it had (often "Default"/"TTY", which renders greyscale), so
+    the theme file is ignored until we set the name here."""
+    conf = home() / ".config" / "btop" / "btop.conf"
+    line = f'color_theme = "{value}"'
+    try:
+        if conf.exists():
+            text = conf.read_text()
+            if re.search(r'^\s*color_theme\s*=', text, re.M):
+                new = re.sub(r'^\s*color_theme\s*=.*$', line, text, count=1, flags=re.M)
+            else:
+                new = text.rstrip("\n") + "\n" + line + "\n"
+            if new != text:
+                write_file(conf, new)
+        else:
+            conf.parent.mkdir(parents=True, exist_ok=True)
+            write_file(conf, line + "\n")
+        return True
+    except Exception as exc:
+        eprint(f"btop color_theme select failed: {exc}")
+        return False
+
+
+def signal_reload_hook(hook: str, comm: str, sig: int) -> Dict[str, Any]:
+    if _sandboxed_home():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    pids = process_pids_by_comm(comm)
+    if not pids:
+        return {"hook": hook, "ok": True, "skipped": True, "reason": f"no running {comm} process"}
+    signaled: List[int] = []
+    failures: List[str] = []
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+            signaled.append(pid)
+        except ProcessLookupError:
+            continue
+        except Exception as exc:
+            failures.append(f"{pid}: {exc}")
+    return {"hook": hook, "ok": not failures, "pids": signaled, "error": "; ".join(failures)}
+
+
+VSCODE_VARIANTS = [
+    {"id": "vscode", "ext": "~/.vscode/extensions", "settings": "~/.config/Code/User/settings.json", "cli": ["code"]},
+    {"id": "code-oss", "ext": "~/.vscode-oss/extensions", "settings": "~/.config/Code - OSS/User/settings.json", "cli": ["code-oss"]},
+    {"id": "vscodium", "ext": "~/.vscode-oss/extensions", "settings": "~/.config/VSCodium/User/settings.json", "cli": ["codium", "vscodium"]},
+    {"id": "cursor", "ext": "~/.cursor/extensions", "settings": "~/.config/Cursor/User/settings.json", "cli": ["cursor"]},
+]
+
+
+def hook_state_file() -> Path:
+    return state_dir() / "theme-hooks.json"
+
+
+def load_hook_state() -> Dict[str, Any]:
+    try:
+        return json.loads(hook_state_file().read_text())
+    except Exception:
+        return {}
+
+
+def save_hook_state(state: Dict[str, Any]) -> None:
+    ensure_dirs()
+    write_file(hook_state_file(), json.dumps(state, indent=2) + "\n")
+
+
+def _vgs_vscode_labels(ext_dir: Path) -> set:
+    """Theme labels the local vgs.vgs-theme extension contributes -- the themes VGS
+    owns and may switch between freely."""
+    labels: set = set()
+    pkg = ext_dir / "vgs.vgs-theme-1.0.0" / "package.json"
+    try:
+        data = json.loads(pkg.read_text())
+        for theme in data.get("contributes", {}).get("themes", []):
+            if theme.get("label"):
+                labels.add(str(theme["label"]))
+    except Exception:
+        pass
+    return labels
+
+
+def _set_vscode_color_theme(settings_path: Path, theme_name: str, state: Dict[str, Any], vgs_labels: set) -> str:
+    """Set workbench.colorTheme when VGS owns the current selection.
+    A theme contributed by VGS remains eligible even if the saved pointer
+    differs. Leave an external selection alone unless VGS set it."""
+    try:
+        data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    except Exception as exc:
+        return f"unreadable settings ({exc})"
+    pointers = state.setdefault("vscodePointers", {})
+    key = str(settings_path)
+    current = data.get("workbench.colorTheme")
+    managed = pointers.get(key)
+    if current == theme_name:
+        pointers[key] = theme_name
+        return ""
+    # Leave a genuinely foreign theme alone: one VGS does not provide AND that we
+    # did not set ourselves. A VGS-owned live theme (even if our pointer drifted)
+    # stays ours to switch.
+    if current and managed and current not in vgs_labels and current != managed:
+        pointers[key] = current
+        return "user-set foreign theme left alone"
+    data["workbench.colorTheme"] = theme_name
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    write_file(settings_path, json.dumps(data, indent=2) + "\n")
+    pointers[key] = theme_name
+    return ""
+
+
+def _vscode_extension_installed(ext_dir: Path, ext_id: str) -> bool:
+    if not ext_dir.is_dir() or not ext_id:
+        return False
+    prefix = ext_id.lower() + "-"
+    for entry in ext_dir.iterdir():
+        name = entry.name.lower()
+        if name == ext_id.lower() or name.startswith(prefix):
+            return True
+    return False
+
+
+def _vscode_install_extension(variant: Dict[str, Any], ext_dir: Path, ext_id: str) -> str:
+    """Install a marketplace extension through the variant's own CLI.
+    Returns an empty string on success, else a reason."""
+    cli = next((c for c in variant["cli"] if shutil.which(c)), "")
+    if not cli:
+        return f"no CLI ({'/'.join(variant['cli'])}) to install {ext_id}"
+    result = _run_hook_cmd("vscode-theme", [cli, "--install-extension", ext_id], timeout=90)
+    if not result.get("ok"):
+        return f"install of {ext_id} failed: {result.get('stderr') or result.get('error') or 'unknown error'}"
+    if not _vscode_extension_installed(ext_dir, ext_id):
+        return f"{ext_id} still missing after install"
+    return ""
+
+
+def _vgs_theme_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug or "vgs"
+
+
+def _vgs_theme_identity(bp: Dict[str, Any], fallback: str) -> Tuple[str, str]:
+    """Return the package-owned VS Code label and its file slug."""
+    label = str(bp.get("name") or fallback or "VGS")
+    return label, _vgs_theme_slug(label)
+
+
+def _vgs_active_theme_identity(
+        bp: Dict[str, Any], bundled: List[Tuple[str, str, str, str]]) -> Tuple[str, str]:
+    """Return the active VS Code label and slug.
+
+    A package owns the active identity whenever its curated VS Code file is the
+    installed source. A template-rendered file uses a label that no bundled
+    package owns, even when its blueprint keeps a package display name.
+    """
+    apps = bp.get("apps") or {}
+    if apps.get("vscode-theme.json"):
+        return _vgs_theme_identity(bp, "VGS")
+
+    bundled_labels = {label for _slug, label, _ui, _content in bundled}
+    bundled_slugs = {slug for slug, _label, _ui, _content in bundled}
+    suffix = 1
+    while True:
+        label = "VGS Generated" if suffix == 1 else f"VGS Generated {suffix}"
+        slug = _vgs_theme_slug(label)
+        if label not in bundled_labels and slug not in bundled_slugs:
+            return label, slug
+        suffix += 1
+
+
+def _read_vgs_theme_name(theme_file: Path) -> str:
+    """The theme's display name from its JSON `name` (JSONC-tolerant: some source
+    bundles ship comments/trailing commas)."""
+    try:
+        txt = theme_file.read_text()
+        txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)
+        txt = re.sub(r"(^|[^:])//[^\n]*", lambda m: m.group(1), txt)
+        txt = re.sub(r",(\s*[}\]])", r"\1", txt)
+        name = json.loads(txt).get("name")
+        return str(name) if name else "VGS"
+    except Exception:
+        return "VGS"
+
+
+def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
+    """Return (slug, label, uiTheme, content) for bundled VS Code theme files.
+    A theme package owns its label and slug; the curated file owns only its
+    content. User files overlay built-ins by package name. Register labels
+    before VSCodium starts so its theme picker can resolve them. Apply tab
+    colors from each theme's role map before writing the extension copy."""
+    bundled: List[Tuple[str, str, Path, Dict[str, Any]]] = []
+    slug_owners: Dict[str, str] = {}
+    for package_name in theme_package_names():
+        files = compose_theme_files(package_name)
+        vf = files.get("apps/vscode-theme.json")
+        if not vf:
+            continue
+        bp = load_theme_package(package_name)
+        if not bp:
+            continue
+        label, slug = _vgs_theme_identity(bp, package_name)
+        previous = slug_owners.get(slug)
+        if previous is not None:
+            raise ValueError(
+                f"vscode-theme-slug-collision: {slug}: {previous} and {package_name}")
+        slug_owners[slug] = package_name
+        bundled.append((slug, label, vf, bp))
+
+    out: List[Tuple[str, str, str, str]] = []
+    for slug, label, vf, bp in bundled:
+        # The saved [vscode] overrides reach the bundled copy too: the extension
+        # install writes every copy after the apply hook writes the current theme's.
+        roles = render_roles(bp, target_roles(bp), bp_app_overrides(bp).get("vscode", {}))
+        content = augment_vscode_colors(vf.read_text(), roles)
+        ui = "vs" if blueprint_mode(bp) == "light" else "vs-dark"
+        out.append((slug, label, ui, content))
+    return out
+
+
+def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str,
+                                  identity: Tuple[str, str],
+                                  bundled: List[Tuple[str, str, str, str]]) -> str:
+    """Install/refresh the local vgs.vgs-theme extension. Each VGS theme is
+    contributed under the active label and slug supplied by the caller,
+    so VSCodium shows a matching theme and a live switch actually changes
+    `workbench.colorTheme` (a single shared "VGS" label never refreshes). Applied
+    themes accumulate in a manifest so previously-seen names keep resolving.
+    Returns the active label to point colorTheme at."""
+    ext_root = ext_dir / "vgs.vgs-theme-1.0.0"
+    themes_dir = ext_root / "themes"
+    name, slug = identity
+    ui = "vs" if mode == "light" else "vs-dark"
+    content = theme_file.read_text()
+    write_file(themes_dir / f"{slug}.json", content)
+    write_file(themes_dir / "vgs-theme.json", content)
+    manifest_path = ext_root / "vgs-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        if not isinstance(manifest, dict):
+            manifest = {}
+    except Exception:
+        manifest = {}
+    manifest[slug] = {"label": name, "uiTheme": ui}
+    # Register bundled labels before VSCodium starts. write_file leaves a file
+    # already holding these bytes alone, so an apply that changes nothing does
+    # not make the editor reload its extensions.
+    for b_slug, b_label, b_ui, b_content in bundled:
+        write_file(themes_dir / f"{b_slug}.json", b_content)
+        manifest[b_slug] = {"label": b_label, "uiTheme": b_ui}
+    contributes: List[Dict[str, str]] = []
+    seen = set()
+    for sl, meta in sorted(manifest.items()):
+        label = str(meta.get("label") or sl)
+        if label in seen:
+            continue
+        seen.add(label)
+        contributes.append({"label": label, "uiTheme": str(meta.get("uiTheme") or "vs-dark"),
+                            "path": f"./themes/{sl}.json"})
+    if "VGS" not in seen:
+        contributes.append({"label": "VGS", "uiTheme": ui, "path": "./themes/vgs-theme.json"})
+    package = {
+        "name": "vgs-theme", "displayName": "VGS Theme", "publisher": "vgs",
+        "version": "1.0.0", "engines": {"vscode": "^1.60.0"}, "categories": ["Themes"],
+        "contributes": {"themes": contributes},
+    }
+    write_file(ext_root / "package.json", json.dumps(package, indent=2) + "\n")
+    write_file(manifest_path, json.dumps(manifest, indent=2) + "\n")
+    _register_vgs_vscode_extension(ext_dir)
+    return name
+
+
+# Stable identifiers so the entry is idempotent across installs.
+_VGS_VSCODE_UUID = "b6f8e2a0-1c3d-4e5f-8a9b-0c1d2e3f4a5b"
+_VGS_VSCODE_PUBLISHER_ID = "c1d2e3f4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+
+
+def _register_vgs_vscode_extension(ext_dir: Path) -> None:
+    """VS Code / VSCodium only load extensions listed in `extensions.json`; a
+    local unpacked extension dir is otherwise ignored (no theme appears at all,
+    no matter how many reloads). Add/refresh our entry so the extension loads."""
+    reg = ext_dir / "extensions.json"
+    if not reg.exists():
+        return  # only touch a real, initialized installation
+    try:
+        entries = json.loads(reg.read_text())
+    except Exception:
+        return
+    if not isinstance(entries, list):
+        return
+    ext_root = ext_dir / "vgs.vgs-theme-1.0.0"
+    entries = [e for e in entries
+               if str((e.get("identifier") or {}).get("id", "")).lower() != "vgs.vgs-theme"]
+    entries.append({
+        "identifier": {"id": "vgs.vgs-theme", "uuid": _VGS_VSCODE_UUID},
+        "version": "1.0.0",
+        "location": {"$mid": 1, "path": str(ext_root), "scheme": "file"},
+        "relativeLocation": "vgs.vgs-theme-1.0.0",
+        "metadata": {
+            "isApplicationScoped": False, "isMachineScoped": False, "isBuiltin": False,
+            "installedTimestamp": int(time.time() * 1000), "pinned": True, "source": "vsix",
+            "id": _VGS_VSCODE_UUID, "publisherDisplayName": "vgs",
+            "publisherId": _VGS_VSCODE_PUBLISHER_ID, "isPreReleaseVersion": False,
+        },
+    })
+    write_file(reg, json.dumps(entries, indent=0) + "\n")
+
+
+def apply_vscode_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
+    gen = generated_dir() / "vscode"
+    curated_pointer = gen / "curated.json"
+    theme_file = gen / "vgs-theme.json"
+    mode = (roles.get("theme_type") or "dark").lower()
+    state = load_hook_state()
+    applied: List[str] = []
+    notes: List[str] = []
+
+    curated: Dict[str, Any] | None = None
+    if curated_pointer.exists():
+        with contextlib.suppress(Exception):
+            curated = json.loads(curated_pointer.read_text())
+
+    for variant in VSCODE_VARIANTS:
+        ext_dir = expand_dest(variant["ext"])
+        settings_path = expand_dest(variant["settings"])
+        # Only touch variants the user actually runs — never create app config dirs.
+        if not settings_path.parent.parent.is_dir():
+            continue
+        # Curated pointer: make sure the referenced marketplace theme actually
+        # exists — install it through the variant's own CLI if missing. If that
+        # can't be done, fall back to the generated VGS theme rather than leave
+        # a dangling colorTheme pointer.
+        theme_name = ""
+        if curated and curated.get("name"):
+            ext_id = str(curated.get("extension") or "")
+            if not ext_id or _vscode_extension_installed(ext_dir, ext_id):
+                theme_name = str(curated["name"])
+            else:
+                reason = _vscode_install_extension(variant, ext_dir, ext_id)
+                if reason:
+                    notes.append(f"{variant['id']}: {reason}; using generated VGS theme")
+                else:
+                    theme_name = str(curated["name"])
+        if not theme_name:
+            if not theme_file.exists() or not ext_dir.is_dir():
+                continue
+            bundled = _all_bundled_vscode_themes()
+            identity = _vgs_active_theme_identity(bp, bundled)
+            theme_name = _install_vgs_vscode_extension(
+                ext_dir, theme_file, mode, identity, bundled)
+        note = _set_vscode_color_theme(settings_path, theme_name, state, _vgs_vscode_labels(ext_dir))
+        if note:
+            notes.append(f"{variant['id']}: {note}")
+        else:
+            applied.append(str(settings_path))
+    save_hook_state(state)
+    if not applied and not notes:
+        return {"hook": "vscode-theme", "ok": True, "skipped": True, "reason": "no vscode installation found"}
+    return {"hook": "vscode-theme", "ok": True, "applied": applied, "notes": notes, "curated": bool(curated)}
+
+
+def list_installed_icon_themes() -> List[str]:
+    """Installed GTK/desktop icon themes (dirs with an index.theme that declares
+    icon Directories), for the Icons settings picker. Excludes the hicolor
+    fallback base and cursor-only themes.
+
+    icon_theme_base_dirs() is the one owner of where an icon theme can live, so every
+    set this lists is one the shell's own icon lookup reaches."""
+    ensure_bundled_icon_themes()
+    names: set[str] = set()
+    for d in icon_theme_base_dirs():
+        if not d.is_dir():
+            continue
+        for entry in d.iterdir():
+            index = entry / "index.theme"
+            if not entry.is_dir() or not index.is_file():
+                continue
+            if entry.name in ("hicolor", "default"):
+                continue
+            try:
+                text = index.read_text(errors="ignore")
+            except OSError:
+                continue
+            # Real icon themes declare Directories=; cursor-only themes don't.
+            if re.search(r"^\s*Directories\s*=", text, re.M):
+                names.add(entry.name)
+    return sorted(names, key=str.lower)
+
+
+def icon_theme_user_dir() -> Path:
+    """The user-writable icon directory. ensure_bundled_icon_themes() links the
+    bundled sets into it, and it is one of icon_theme_base_dirs(), so a linked set
+    always reaches both the picker and the shell's icon lookup."""
+    return _xdg_data_home() / "icons"
+
+
+def icon_theme_base_dirs() -> List[Path]:
+    """Directories an icon theme can be installed under, in search order."""
+    data_home = _xdg_data_home()
+    xdg = os.environ.get("XDG_DATA_DIRS", "").strip()
+    if xdg:
+        data_dirs = [Path(d) for d in xdg.split(":") if d] + [data_home]
+    else:
+        data_dirs = [Path("/usr/share"), Path("/usr/local/share"), data_home]
+    for flatpak in (data_home / "flatpak" / "exports" / "share", Path("/var/lib/flatpak/exports/share")):
+        if flatpak not in data_dirs:
+            data_dirs.append(flatpak)
+    return [d / "icons" for d in data_dirs] + [home() / ".icons"]
+
+
+def icon_theme_chain(theme: str, bases: List[Path]) -> List[Path]:
+    """Every installed directory of `theme`, of the themes it inherits breadth-first,
+    then of hicolor, which the icon theme specification makes the last fallback."""
+    order: List[str] = []
+    queue = [theme]
+    while queue:
+        name = queue.pop(0)
+        if not name or name in order:
+            continue
+        order.append(name)
+        index = next((b / name / "index.theme" for b in bases if (b / name / "index.theme").is_file()), None)
+        if index is None:
+            continue
+        inherits = re.search(r"^Inherits=(.*)$", index.read_text(errors="ignore"), re.M)
+        if inherits:
+            queue.extend(part.strip() for part in inherits.group(1).replace('"', "").split(","))
+    if "hicolor" not in order:
+        order.append("hicolor")
+    return [b / name for name in order for b in bases if (b / name).is_dir()]
+
+
+_ICON_SIZE_DIR = re.compile(r"/(\d+)(?:x\d+)?(?:@\d+x)?/")
+
+
+def _icon_path_score(relative: str, chain_position: int) -> Tuple[int, int, bool, bool, int]:
+    """Rank one candidate file for an icon name; the highest tuple wins.
+
+    In order: the context directory (an app icon over a category or action icon of
+    the same name), the earlier position in the inherit chain, SVG over PNG, a
+    scalable directory over a sized one, then the largest bitmap size.
+    `relative` starts with "/" and is the path inside its theme directory.
+    """
+    if "/apps/" in relative:
+        context_rank = 3
+    elif "/categories/" in relative:
+        context_rank = 2
+    elif any(f"/{context}/" in relative for context in ("places", "devices", "mimetypes", "status", "actions")):
+        context_rank = 1
+    else:
+        context_rank = 0
+    scalable = "/scalable/" in relative
+    size = None if scalable else _ICON_SIZE_DIR.search(relative)
+    return (context_rank, -chain_position, relative.endswith(".svg"), scalable, int(size.group(1)) if size else 0)
+
+
+def build_icon_index(dirs: List[Path]) -> Dict[str, str]:
+    """Map every SVG and PNG icon name under `dirs` to its best-scoring file."""
+    best: Dict[str, Tuple[Tuple[int, int, bool, bool, int], str]] = {}
+    for position, theme_dir in enumerate(dirs):
+        prefix = len(str(theme_dir))
+        for current, _subdirs, files in os.walk(theme_dir, followlinks=True):
+            relative_dir = current[prefix:] + "/"
+            for filename in files:
+                if not filename.endswith((".svg", ".png")):
+                    continue
+                name = filename[:-4]
+                score = _icon_path_score(relative_dir + filename, position)
+                if name not in best or score > best[name][0]:
+                    best[name] = (score, os.path.join(current, filename))
+    return {name: path for name, (_score, path) in best.items()}
+
+
+def _icon_index_fingerprint(dirs: List[Path]) -> List[List[Any]]:
+    """Modification times that move when an icon is added to or removed from `dirs`.
+
+    Icon themes keep their files two levels down, `<theme>/<size>/<context>`, so an
+    install or removal changes the mtime of a directory within those two levels, or of
+    index.theme. The chain's own directory list is part of it, so installing or
+    removing an inherited theme also invalidates the index.
+    """
+    def mtime(path: Path) -> int:
+        try:
+            return os.stat(path).st_mtime_ns
+        except FileNotFoundError:
+            return 0
+
+    stamps: List[List[Any]] = []
+    for theme_dir in dirs:
+        stamps.append([str(theme_dir), mtime(theme_dir), mtime(theme_dir / "index.theme")])
+        with os.scandir(theme_dir) as children:
+            level_one = sorted(entry.path for entry in children if entry.is_dir())
+        for child in level_one:
+            stamps.append([child, mtime(Path(child))])
+            with os.scandir(child) as grandchildren:
+                stamps.extend(sorted([entry.path, entry.stat().st_mtime_ns] for entry in grandchildren if entry.is_dir()))
+    return stamps
+
+
+def icon_index(theme: str) -> Dict[str, str]:
+    """The icon name-to-path map for `theme`, rebuilt only when its files changed."""
+    dirs = icon_theme_chain(theme, icon_theme_base_dirs())
+    fingerprint = _icon_index_fingerprint(dirs)
+    cache = cache_dir() / "icon-index" / f"{theme}.json"
+    cached = load_json_file(cache)
+    if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint and isinstance(cached.get("icons"), dict):
+        return cached["icons"]
+    icons = build_icon_index(dirs)
+    write_file(cache, json.dumps({"fingerprint": fingerprint, "icons": icons}, separators=(",", ":")))
+    return icons
+
+
+# The icons the Icons settings picker draws as a sample of a set: a folder, a file
+# manager, a terminal and a settings icon. Yaru paints the folder, the file manager and
+# the settings icon in its accent colour, so the sample separates the shipped accents.
+ICON_PREVIEW_SAMPLES = ("folder", "system-file-manager", "utilities-terminal", "preferences-desktop")
+
+
+def icon_theme_samples(theme: str) -> List[str]:
+    """Absolute paths of ICON_PREVIEW_SAMPLES in `theme`, in that order.
+
+    The paths come out of icon_index(), so a sample is the file the shell would draw
+    for that name and a second read of the same set costs a fingerprint check rather
+    than another walk of its inherit chain. A name the chain lacks is omitted, which
+    leaves the picker a shorter sample rather than a broken image."""
+    found = icon_index(theme)
+    return [found[name] for name in ICON_PREVIEW_SAMPLES if name in found]
+
+
+def _icon_theme_samples_or_none(theme: str) -> List[str]:
+    """icon_theme_samples for one set of the picker's list, or no sample at all.
+
+    list_installed_icon_themes skips a theme directory it cannot read, so the list can
+    name a set whose inherit chain reaches an index.theme that is unreadable or a
+    directory that is not listable. One such set costs its own sample, not the whole
+    list: the picker keeps its tile and draws no icons on it."""
+    try:
+        return icon_theme_samples(theme)
+    except OSError as exc:
+        eprint(f"icon-theme-samples-unreadable: {theme}")
+        eprint(f"The picker draws this set without a sample: {exc}")
+        return []
+
+
+def cmd_icons(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell icons")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_index = sub.add_parser("index", help="print an icon theme's name-to-path map as JSON, cached per theme")
+    p_index.add_argument("theme")
+    args = parser.parse_args(argv)
+    # The theme names a directory and the cache file, and settings.json, which a user
+    # can edit by hand, supplies it.
+    if "/" in args.theme or args.theme in {"", ".", ".."}:
+        eprint(f"icon-theme-name-invalid: {args.theme!r}")
+        eprint("An icon theme name is one directory name.")
+        return 2
+    print(json.dumps(icon_index(args.theme), separators=(",", ":")))
+    return 0
+
+
+# CachingImage and WallpaperThumbnailPreloader name a thumbnail `<hash>@<size>x<size>.png`,
+# and TrackArtService names a download `remote_<hash>`, each hash the eight-hex-digit djb2
+# they share. Any other name, such as a `.tmp` download still being written, is not pruned.
+_IMAGECACHE_NAME = re.compile(r"[0-9a-f]{8}@[0-9]+x[0-9]+\.png|remote_[0-9a-f]{8}")
+IMAGECACHE_MAX_BYTES = 64 * 1024 * 1024
+# icon_index names a cache file `<theme>.json`; write_file's `<theme>.json.tmp.<pid>.<ns>`
+# is a write still in progress and is not pruned.
+_ICON_INDEX_NAME = re.compile(r".+\.json")
+# NotificationService.getImageCachePath: `notif_<epoch ms>_<notification id>.png`.
+_NOTIFICATION_IMAGE_NAME = re.compile(r"notif_[0-9]+_[0-9]+\.png")
+# A popup saves its image before the debounced history write that names it lands, so a
+# fresh unreferenced image may still be about to gain its reference.
+NOTIFICATION_IMAGE_GRACE_SECONDS = 60
+
+
+def _owned_cache_files(directory: Path, name: "re.Pattern[str]") -> List[Tuple[Path, os.stat_result]]:
+    """Regular files directly in `directory` whose whole name matches `name`."""
+    owned: List[Tuple[Path, os.stat_result]] = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not name.fullmatch(entry.name) or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    owned.append((Path(entry.path), entry.stat(follow_symlinks=False)))
+                except FileNotFoundError:
+                    continue
+    except FileNotFoundError:
+        return []
+    return owned
+
+
+def _unlink_cache_file(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def prune_imagecache(max_bytes: int) -> Tuple[int, int]:
+    """Delete imagecache files until the rest fit in `max_bytes`: every track art download
+    before any thumbnail, and the oldest-written first within each.
+
+    A cache hit writes nothing and `~/.cache` may be mounted noatime, so write time is the
+    only age every file carries, and a thumbnail in constant use carries the oldest one.
+    Thumbnails therefore outlast track art, which grows the cache with each track played.
+    Returns the files and bytes removed.
+    """
+    files = sorted(_owned_cache_files(cache_dir() / "imagecache", _IMAGECACHE_NAME),
+                   key=lambda item: (not item[0].name.startswith("remote_"), item[1].st_mtime_ns))
+    total = sum(stat_result.st_size for _, stat_result in files)
+    removed = removed_bytes = 0
+    for path, stat_result in files:
+        if total <= max_bytes:
+            break
+        total -= stat_result.st_size
+        if _unlink_cache_file(path):
+            removed += 1
+            removed_bytes += stat_result.st_size
+    return removed, removed_bytes
+
+
+def reconcile_notification_images(history_file: Path, now: float) -> int:
+    """Delete notification images no entry of `history_file` names, past the save grace.
+
+    An entry names its image by file name, so a history written under another spelling of
+    the cache root still keeps its images. A missing history deletes nothing. Raises
+    ValueError when the history cannot be read as a list of entries, before deleting anything.
+    """
+    try:
+        history = json.loads(history_file.read_text())
+    except FileNotFoundError:
+        return 0
+    entries = history.get("notifications") if isinstance(history, dict) else None
+    if not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries):
+        raise ValueError("expected an object whose notifications field is a list of entries")
+    referenced = {
+        Path(image[len("file://"):]).name
+        for image in (item.get("image") for item in entries)
+        if isinstance(image, str) and image.startswith("file://")
+    }
+    removed = 0
+    for path, stat_result in _owned_cache_files(cache_dir() / "notification_images", _NOTIFICATION_IMAGE_NAME):
+        if path.name in referenced or now - stat_result.st_mtime < NOTIFICATION_IMAGE_GRACE_SECONDS:
+            continue
+        if _unlink_cache_file(path):
+            removed += 1
+    return removed
+
+
+def prune_icon_index() -> int:
+    """Delete the icon-index cache of every theme list_installed_icon_themes() does not name.
+
+    The Icons settings picker indexes every installed set to draw its sample, so an index
+    is kept for each set that picker lists and a set the user uninstalls takes its index
+    with it. An index the shell still reads for a theme that list omits costs one rebuild
+    on its next load. Returns the files removed.
+    """
+    installed = set(list_installed_icon_themes())
+    removed = 0
+    for path, _stat_result in _owned_cache_files(cache_dir() / "icon-index", _ICON_INDEX_NAME):
+        if path.name[:-len(".json")] in installed:
+            continue
+        if _unlink_cache_file(path):
+            removed += 1
+    return removed
+
+
+def cmd_cache(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell cache")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("prune", help="bound the image cache, drop the icon index of uninstalled icon themes, "
+                   "and delete notification images the history no longer names")
+    parser.parse_args(argv)
+    files, size = prune_imagecache(IMAGECACHE_MAX_BYTES)
+    print(f"imagecache-pruned: {files} files {size} bytes")
+    print(f"icon-index-pruned: {prune_icon_index()} files")
+    history_file = cache_dir() / "notification_history.json"
+    try:
+        removed = reconcile_notification_images(history_file, time.time())
+    except ValueError as exc:
+        eprint(f"notification-history-unreadable: {history_file}")
+        eprint(f"No notification image was deleted: {exc}")
+        return 1
+    print(f"notification-images-pruned: {removed} files")
+    return 0
+
+
+def bundled_icons_dir() -> Path:
+    return repo_root() / "config" / "vshell" / "icons"
+
+
+def ensure_bundled_icon_themes() -> List[str]:
+    """Make VGS-bundled icon themes discoverable by symlinking them into the user
+    icon directory, so a theme's `icons.theme` pointer resolves even without a system
+    icon-theme package installed. Idempotent and non-destructive: a real install of
+    the same name anywhere on the icon search path always wins, and an existing real
+    directory is never clobbered."""
+    linked: List[str] = []
+    src_root = bundled_icons_dir()
+    if not src_root.is_dir():
+        return linked
+    dest_root = icon_theme_user_dir()
+    other_roots = [d for d in icon_theme_base_dirs() if d != dest_root]
+    with contextlib.suppress(OSError):
+        dest_root.mkdir(parents=True, exist_ok=True)
+    for theme_dir in sorted(src_root.iterdir()):
+        if not theme_dir.is_dir():
+            continue
+        name = theme_dir.name
+        if any((root / name).is_dir() for root in other_roots):
+            continue  # a real install of this theme elsewhere on the search path wins
+        link = dest_root / name
+        if link.is_symlink():
+            if link.resolve() == theme_dir.resolve():
+                continue
+            with contextlib.suppress(OSError):
+                link.unlink()
+        elif link.exists():
+            continue  # a real user directory already provides it
+        with contextlib.suppress(OSError):
+            link.symlink_to(theme_dir)
+            linked.append(name)
+    return linked
+
+
+def _gsettings_interface_read(hook: str, key: str, **options: Any) -> Dict[str, Any]:
+    """Read one key of ``org.gnome.desktop.interface`` and parse its GVariant text.
+
+    The ``_run_hook_cmd`` result, carrying ``value`` when its stdout parses to a
+    string. A caller that must name why a read failed takes ``stderr`` or
+    ``error`` from the same result; one that only compares values tests ``value``.
+    """
+    result = _run_hook_cmd(hook, ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5, **options)
+    if not result.get("ok"):
+        return result
+    with contextlib.suppress(ValueError, SyntaxError):
+        parsed = ast.literal_eval(result.get("stdout") or "")
+        if isinstance(parsed, str):
+            result["value"] = parsed
+    return result
+
+
+def _gsettings_interface_value(hook: str, key: str) -> Optional[str]:
+    """What ``org.gnome.desktop.interface`` currently holds for a string key.
+
+    ``None`` when the key cannot be read or does not hold a string. A caller
+    compares this against a value it is about to write, so an unreadable key
+    keeps it on its write path instead of skipping on a value nobody read.
+    """
+    return _gsettings_interface_read(hook, key).get("value")
+
+
+def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # The gsettings write below lands in the login user's dconf database over the
+    # session bus, whatever $HOME says.
+    if _sandboxed_home():
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    ensure_bundled_icon_themes()
+    pointer = generated_dir() / "icons.theme"
+    if not pointer.exists():
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "theme ships no icons.theme"}
+    name = pointer.read_text().strip()
+    if not name:
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "empty icons.theme"}
+    if not shutil.which("gsettings"):
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "gsettings not found"}
+    settings = load_settings()
+    # The persisted fixed/per-mode icon choices outrank the applied theme.
+    # iconTheme is a derived QML value; check the fields saved by IconsTab.
+    dark = settings.get("iconThemeDark") or "System Default"
+    light = settings.get("iconThemeLight") or "System Default"
+    if settings.get("iconThemePerMode") or dark not in ("", "System Default") or light not in ("", "System Default"):
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "icon theme managed in VGS settings"}
+    installed = any((base / name).is_dir() for base in icon_theme_base_dirs())
+    if not installed:
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": f"icon theme not installed: {name}"}
+    if _gsettings_interface_value("icon-theme", "icon-theme") == name:
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": f"icon theme already set: {name}"}
+    return _run_hook_cmd("icon-theme", ["gsettings", "set", "org.gnome.desktop.interface", "icon-theme", name], timeout=5)
+
+
+def apply_fastfetch_logo_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    """Render a theme-matched fastfetch logo from the theme wallpaper role.
+
+    fastfetch shows a static image logo; this derives one from the theme's
+    wallpaper role (centre-cropped square, downscaled) so the
+    banner tracks the theme. Output is VGS-named at
+    ``~/.config/vshell/generated/fastfetch/logo.jpg``. If fastfetch has no user
+    config yet, VGS installs its portable boxed-layout seed. Existing fastfetch
+    configs are never replaced.
+    """
+    hook = "fastfetch-logo"
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (home() / ".config")) / "fastfetch"
+    config_jsonc = config_home / "config.jsonc"
+
+    # Do not shadow an effective config from another Fastfetch search root.
+    # The bundled layout is a first-run convenience, never an override.
+    config_roots = [
+        Path(os.environ.get("XDG_CONFIG_HOME") or (home() / ".config")) / "fastfetch",
+        home() / "fastfetch",
+    ]
+    config_roots.extend(
+        Path(entry) / "fastfetch"
+        for entry in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":")
+        if entry
+    )
+    config_roots.append(Path("/etc/fastfetch"))
+    effective_config = next(
+        (
+            root / filename
+            for root in config_roots
+            for filename in ("config.jsonc", "config.json")
+            if (root / filename).is_file()
+        ),
+        None,
+    )
+    config_seeded = False
+    if effective_config is None:
+        seed = repo_root() / "config" / "vshell" / "fastfetch" / "config.jsonc"
+        if seed.is_file():
+            write_file(config_jsonc, seed.read_text())
+            effective_config = config_jsonc
+            config_seeded = True
+
+    wallpaper = roles.get("wallpaper", "")
+    fallback_wallpaper = repo_root() / "config" / "vshell" / "branding" / "fastfetch-logo.jpg"
+    used_fallback_wallpaper = False
+    if (not wallpaper or not Path(wallpaper).is_file()) and fallback_wallpaper.is_file():
+        wallpaper = str(fallback_wallpaper)
+        used_fallback_wallpaper = True
+    if not wallpaper or not Path(wallpaper).is_file():
+        return {
+            "hook": hook,
+            "ok": True,
+            "skipped": True,
+            "reason": "no wallpaper for this theme",
+            "config": str(effective_config or config_jsonc),
+            "configSeeded": config_seeded,
+        }
+    out_dir = generated_dir() / "fastfetch"
+    out = out_dir / "logo.jpg"
+    source_state = out_dir / "source.json"
+    temp_out = out_dir / f".logo.{os.getpid()}.{time.time_ns()}.jpg"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        wallpaper_stat = Path(wallpaper).stat()
+        fingerprint = {
+            "path": str(Path(wallpaper).resolve()),
+            "size": wallpaper_stat.st_size,
+            "mtimeNs": wallpaper_stat.st_mtime_ns,
+        }
+        if out.is_file() and source_state.is_file():
+            with contextlib.suppress(OSError, ValueError, TypeError):
+                if json.loads(source_state.read_text()) == fingerprint:
+                    return {
+                        "hook": hook,
+                        "ok": True,
+                        "path": str(out),
+                        "config": str(effective_config or config_jsonc),
+                        "configSeeded": config_seeded,
+                        "cached": True,
+                        "fallbackWallpaper": used_fallback_wallpaper,
+                    }
+        Image = _wp_thumbs.pil_image()
+        if Image is not None:
+            with Image.open(wallpaper) as im:
+                im = im.convert("RGB")
+                w, h = im.size
+                side = min(w, h)
+                left, top = (w - side) // 2, (h - side) // 2
+                im = im.crop((left, top, left + side, top + side)).resize((600, 600), Image.LANCZOS)
+                im.save(temp_out, "JPEG", quality=90)
+        elif shutil.which("magick"):
+            proc = run([
+                "magick", wallpaper, "-auto-orient", "-resize", "600x600^",
+                "-gravity", "center", "-extent", "600x600", "-quality", "90",
+                str(temp_out),
+            ], timeout=15)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ImageMagick failed")
+        elif shutil.which("ffmpeg"):
+            proc = run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wallpaper,
+                "-vf", "scale=600:600:force_original_aspect_ratio=increase,crop=600:600",
+                "-frames:v", "1", str(temp_out),
+            ], timeout=15)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "ffmpeg failed")
+        else:
+            # Fastfetch decodes the source image itself. Cropping is an
+            # enhancement, so keep minimal installations functional by copying
+            # the wallpaper bytes to the stable logo path.
+            shutil.copy2(wallpaper, temp_out)
+        temp_out.replace(out)
+        write_file(source_state, json.dumps(fingerprint, sort_keys=True) + "\n")
+    except Exception as exc:  # never fail an apply over a decorative logo
+        with contextlib.suppress(OSError):
+            temp_out.unlink()
+        # A seeded config needs a logo path. Preserve an existing logo, or try the
+        # shipped wallpaper without conversion when image generation fails.
+        if not out.is_file() and fallback_wallpaper.is_file():
+            try:
+                shutil.copy2(fallback_wallpaper, temp_out)
+                temp_out.replace(out)
+                fallback_stat = fallback_wallpaper.stat()
+                fallback_fingerprint = {
+                    "path": str(fallback_wallpaper.resolve()),
+                    "size": fallback_stat.st_size,
+                    "mtimeNs": fallback_stat.st_mtime_ns,
+                }
+                write_file(source_state, json.dumps(fallback_fingerprint, sort_keys=True) + "\n")
+                return {
+                    "hook": hook,
+                    "ok": True,
+                    "path": str(out),
+                    "config": str(effective_config or config_jsonc),
+                    "configSeeded": config_seeded,
+                    "fallbackWallpaper": True,
+                    "conversionError": str(exc),
+                }
+            except Exception:
+                with contextlib.suppress(OSError):
+                    temp_out.unlink()
+        if config_seeded and not out.is_file():
+            with contextlib.suppress(OSError):
+                config_jsonc.unlink()
+        return {"hook": hook, "ok": True, "skipped": True, "optional": True, "error": str(exc)}
+    return {
+        "hook": hook,
+        "ok": True,
+        "path": str(out),
+        "config": str(effective_config or config_jsonc),
+        "configSeeded": config_seeded,
+        "fallbackWallpaper": used_fallback_wallpaper,
+    }
+
+
+def _quit_windowless_nautilus() -> Dict[str, Any]:
+    """Quit Nautilus's persistent D-Bus service when it has no open windows.
+
+    GTK4 reads ~/.config/gtk-4.0/gtk.css once per process and never re-reads
+    it, so the lingering org.gnome.Nautilus service keeps opening windows in
+    the previous theme's palette after an apply. Quitting the windowless
+    service is invisible and makes the next Files window start fresh with the
+    regenerated stylesheet. A service that still owns windows is left alone —
+    `nautilus -q` would close them.
+    """
+    if not shutil.which("nautilus"):
+        return {"ok": True, "skipped": True, "reason": "nautilus not found"}
+    if not process_pids_by_comm("nautilus"):
+        return {"ok": True, "skipped": True, "reason": "not running"}
+    try:
+        if os.environ.get("NIRI_SOCKET") and shutil.which("niri"):
+            clients = subprocess.run(["niri", "msg", "-j", "windows"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            open_windows = [c for c in json.loads(clients.stdout or "[]") if c.get("app_id") == "org.gnome.Nautilus"]
+        elif shutil.which("hyprctl"):
+            clients = subprocess.run(["hyprctl", "clients", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            open_windows = [c for c in json.loads(clients.stdout or "[]") if c.get("class") == "org.gnome.Nautilus"]
+        else:
+            # Cannot prove there are no open windows; leave the service alone.
+            return {"ok": True, "skipped": True, "reason": "compositor window query unavailable"}
+    except Exception as exc:
+        return {"ok": True, "skipped": True, "reason": f"window probe failed: {exc}"}
+    if open_windows:
+        return {"ok": True, "skipped": True, "reason": f"{len(open_windows)} window(s) open"}
+    # `nautilus -q` exits 255 even on success (remote GApplication quit), so
+    # confirm by watching the service actually go away instead.
+    try:
+        subprocess.run(["nautilus", "-q"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except Exception as exc:
+        return {"ok": False, "error": f"nautilus -q failed: {exc}"}
+    for _ in range(10):
+        if not process_pids_by_comm("nautilus"):
+            return {"ok": True, "quit": True}
+        time.sleep(0.2)
+    return {"ok": False, "error": "nautilus still running after quit"}
+
+
+def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # gsettings writes travel over the session bus to the login user's dconf
+    # database whatever $HOME says, and Nautilus answers on the same bus.
+    if _sandboxed_home():
+        return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+    mode = (roles.get("theme_type") or "dark").lower()
+    color_scheme = "prefer-light" if mode == "light" else "prefer-dark"
+    gtk_theme = "adw-gtk3" if mode == "light" else "adw-gtk3-dark"
+    if not (Path("/usr/share/themes") / gtk_theme).exists():
+        gtk_theme = "Adwaita" if mode == "light" else "Adwaita-dark"
+    if not shutil.which("gsettings"):
+        return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": "gsettings not found"}
+    # A key the session already holds is read out of the write list, so an apply
+    # that moves neither writes nothing and takes no sleep, and one that moves a
+    # single key writes that key alone. An unreadable key stays pending: skipping
+    # it would drop a write on a value nobody read.
+    pending = [(key, value) for key, value in (("gtk-theme", gtk_theme), ("color-scheme", color_scheme))
+               if _gsettings_interface_value("gtk-settings", key) != value]
+    if not pending:
+        return {"hook": "gtk-settings", "ok": True, "skipped": True,
+                "reason": "gtk-theme and color-scheme already set",
+                "colorScheme": color_scheme, "gtkTheme": gtk_theme}
+    failures: List[str] = []
+    for index, (key, value) in enumerate(pending):
+        if index:
+            # Separate two writes so their portal notifications do not arrive
+            # together during the theme-apply burst.
+            time.sleep(0.3)
+        cmd = ["gsettings", "set", "org.gnome.desktop.interface", key, value]
+        result = _run_hook_cmd("gtk-settings", cmd, timeout=5)
+        if not result.get("ok"):
+            failures.append(result.get("stderr") or result.get("error") or " ".join(cmd))
+    return {"hook": "gtk-settings", "ok": not failures, "colorScheme": color_scheme, "gtkTheme": gtk_theme, "error": "; ".join(failures)}
+
+
+FONT_HINTING = {"none", "slight", "medium", "full"}
+FONT_SUBPIXEL = {"none", "rgb", "bgr", "vrgb", "vbgr"}
+FONT_LCD_FILTER = {"default", "light", "legacy", "none"}
+FC_HINT_CONST = {"none": "hintnone", "slight": "hintslight", "medium": "hintmedium", "full": "hintfull"}
+FC_LCD_CONST = {"default": "lcddefault", "light": "lcdlight", "legacy": "lcdlegacy", "none": "lcdnone"}
+GTK_SETTINGS_BEGIN = "# BEGIN VGS font rendering"
+GTK_SETTINGS_END = "# END VGS font rendering"
+FONT_SIZE_DESCRIPTION_PREFIX = "VGS font size overrides: "
+
+
+def _choice(value: Any, allowed: Iterable[str], fallback: str) -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate if candidate in allowed else fallback
+
+
+def _bool_setting(value: Any, fallback: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return fallback
+
+
+def system_font_env() -> Dict[str, Any]:
+    session = (os.environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION") or "").strip()
+    gsettings_keys: List[str] = []
+    if shutil.which("gsettings"):
+        with contextlib.suppress(Exception):
+            proc = subprocess.run(["gsettings", "list-keys", "org.gnome.desktop.interface"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            if proc.returncode == 0:
+                gsettings_keys = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    xsettings_managers = []
+    for comm in ("gsd-xsettings", "xsettingsd", "xfsettingsd"):
+        if process_pids_by_comm(comm):
+            xsettings_managers.append(comm)
+    return {
+        "sessionType": session or "unknown",
+        "desktop": desktop or "unknown",
+        "isWayland": session == "wayland",
+        "isX11": session in {"x11", "xorg"},
+        "gsettingsAvailable": bool(gsettings_keys),
+        "gsettingsKeys": gsettings_keys,
+        "xsettingsManagers": xsettings_managers,
+        "fontconfigPath": str(home() / ".config" / "fontconfig" / "conf.d" / "60-vgs-fonts.conf"),
+        "gtk3SettingsPath": str(home() / ".config" / "gtk-3.0" / "settings.ini"),
+        "gtk4SettingsPath": str(home() / ".config" / "gtk-4.0" / "settings.ini"),
+        "qtMechanism": "fontconfig",
+    }
+
+
+def normalized_system_font_settings(settings: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    settings = settings or load_settings()
+    env = system_font_env()
+    wayland = bool(env.get("isWayland"))
+
+    def group(prefix: str) -> Dict[str, Any]:
+        family = str(settings.get(f"{prefix}Family") or "").strip()
+        if any(ord(char) < 32 for char in family):
+            raise ValueError("Font family names cannot contain control characters")
+        subpixel = _choice(settings.get(f"{prefix}Subpixel"), FONT_SUBPIXEL, "none")
+        if wayland:
+            subpixel = "none"
+        hinting = _choice(settings.get(f"{prefix}Hinting"), FONT_HINTING, "slight")
+        lcd_filter = _choice(settings.get(f"{prefix}LcdFilter"), FONT_LCD_FILTER, "default")
+        return {
+            "family": family,
+            "size": _coerce_int(settings.get("systemFontSize", 11), 11, 6, 32),
+            "antialias": _bool_setting(settings.get(f"{prefix}Antialias"), True),
+            "hinting": hinting,
+            "subpixel": subpixel,
+            "lcdFilter": lcd_filter,
+            "autohint": _bool_setting(settings.get(f"{prefix}Autohint"), False),
+        }
+
+    return {
+        "managed": _bool_setting(settings.get("systemFontsManaged"), True),
+        "interface": group("systemFontInterface"),
+        "monospace": group("systemFontMono"),
+        "environment": env,
+    }
+
+
+def _fontconfig_edits(group: Dict[str, Any], indent: str = "    ") -> List[str]:
+    antialias = "true" if group["antialias"] else "false"
+    hinting_enabled = group["hinting"] != "none"
+    hinting = "true" if hinting_enabled else "false"
+    hintstyle = FC_HINT_CONST[group["hinting"]]
+    rgba = group["subpixel"]
+    lcd = FC_LCD_CONST[group["lcdFilter"]]
+    autohint = "true" if group["autohint"] else "false"
+    return [
+        f'{indent}<edit name="antialias" mode="assign"><bool>{antialias}</bool></edit>',
+        f'{indent}<edit name="hinting" mode="assign"><bool>{hinting}</bool></edit>',
+        f'{indent}<edit name="hintstyle" mode="assign"><const>{hintstyle}</const></edit>',
+        f'{indent}<edit name="rgba" mode="assign"><const>{rgba}</const></edit>',
+        f'{indent}<edit name="lcdfilter" mode="assign"><const>{lcd}</const></edit>',
+        f'{indent}<edit name="autohint" mode="assign"><bool>{autohint}</bool></edit>',
+    ]
+
+
+def render_system_fontconfig(config: Dict[str, Any]) -> str:
+    # saxutils imports urllib.request, which most helper calls never use.
+    from xml.sax.saxutils import escape as xml_escape
+
+    interface = config["interface"]
+    mono = config["monospace"]
+    description = "VGS managed font rendering"
+    if config.get("sizeOverrides") is not None:
+        description = FONT_SIZE_DESCRIPTION_PREFIX + json.dumps(config["sizeOverrides"])
+    lines = [
+        '<?xml version="1.0"?>',
+        '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
+        '<fontconfig>',
+        f'  <description>{xml_escape(description)}</description>',
+        "  <match target=\"font\">",
+        *_fontconfig_edits(interface, "    "),
+        "  </match>",
+        "  <match target=\"font\">",
+        '    <test name="spacing" compare="eq"><const>mono</const></test>',
+        *_fontconfig_edits(mono, "    "),
+        "  </match>",
+        "</fontconfig>",
+        "",
+    ]
+    aliases = []
+    for generic, group in (("sans-serif", interface), ("monospace", mono)):
+        if group.get("family"):
+            aliases.append(f'  <alias><family>{generic}</family><prefer><family>{xml_escape(group["family"])}</family></prefer></alias>')
+    lines[-2:-2] = aliases
+    return "\n".join(lines)
+
+
+def _strip_managed_block(lines: List[str]) -> List[str]:
+    out: List[str] = []
+    skipping = False
+    for line in lines:
+        if line.strip() == GTK_SETTINGS_BEGIN:
+            skipping = True
+            continue
+        if line.strip() == GTK_SETTINGS_END:
+            skipping = False
+            continue
+        if not skipping:
+            out.append(line)
+    return out
+
+
+def _font_description_with_size(description: str, size: int) -> str:
+    """Replace Pango's size while retaining family, style and variation settings."""
+    parts = re.split(r"(\s+[@#])", description.strip(), maxsplit=1)
+    family_style = re.sub(r"\s+\d+(?:\.\d+)?(?:px)?$", "", parts[0])
+    return f"{family_style} {size}" + "".join(parts[1:])
+
+
+def _gsettings_font_description(key: str, schema_default: bool = False) -> str:
+    options = {"env": {**os.environ, "GSETTINGS_BACKEND": "memory"}} if schema_default else {}
+    result = _gsettings_interface_read("system-fonts-read", key, **options)
+    if not result.get("ok"):
+        raise ValueError(result.get("stderr") or result.get("error") or f"Could not read {key}")
+    if not (result.get("value") or "").strip():
+        raise ValueError(f"Invalid font description for {key}")
+    return result["stdout"]
+
+
+def _merge_gtk_settings(path: Path, values: Dict[str, str] | None, size: int | None = None, default_font: str = "Sans 10") -> bool:
+    original = path.read_text().splitlines() if path.exists() else []
+    lines = _strip_managed_block(original)
+    if values is None:
+        text = "\n".join(lines).rstrip() + ("\n" if lines else "")
+        if path.exists() and text != path.read_text():
+            write_file(path, text)
+            return True
+        return False
+
+    settings_start = -1
+    insert_at = len(lines)
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[Settings]":
+            settings_start = idx
+            insert_at = len(lines)
+            for j in range(idx + 1, len(lines)):
+                s = lines[j].strip()
+                if s.startswith("[") and s.endswith("]"):
+                    insert_at = j
+                    break
+            break
+
+    if size is not None and "gtk-font-name" not in values:
+        description = default_font
+        if settings_start >= 0:
+            for line in lines[settings_start + 1:insert_at]:
+                key, separator, value = line.partition("=")
+                if separator and key.strip() == "gtk-font-name":
+                    description = value.strip()
+        values = {**values, "gtk-font-name": _font_description_with_size(description, size)}
+    block = [GTK_SETTINGS_BEGIN]
+    for key, value in values.items():
+        block.append(f"{key}={value}")
+    block.append(GTK_SETTINGS_END)
+
+    if settings_start < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["[Settings]", *block])
+    else:
+        if insert_at > settings_start + 1 and lines[insert_at - 1].strip():
+            block = ["", *block]
+        lines[insert_at:insert_at] = block
+
+    text = "\n".join(lines).rstrip() + "\n"
+    if path.exists() and text == path.read_text():
+        return False
+    write_file(path, text)
+    return True
+
+
+def _gtk_values(group: Dict[str, Any]) -> Dict[str, str]:
+    values = {
+        "gtk-xft-antialias": "1" if group["antialias"] else "0",
+        "gtk-xft-hinting": "0" if group["hinting"] == "none" else "1",
+        "gtk-xft-hintstyle": FC_HINT_CONST[group["hinting"]],
+        "gtk-xft-rgba": group["subpixel"],
+    }
+    if group.get("family"):
+        values["gtk-font-name"] = f'{group["family"]} {group["size"]}'
+    return values
+
+
+def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -> Dict[str, Any]:
+    keys = set(config.get("environment", {}).get("gsettingsKeys") or [])
+    if not shutil.which("gsettings") or not keys:
+        return {"mechanism": "gsettings", "ok": True, "skipped": True, "reason": "schema not available"}
+    wanted = [
+        ("font-antialiasing", "reset" if reset else ("rgba" if config["interface"]["subpixel"] != "none" and config["interface"]["antialias"] else ("grayscale" if config["interface"]["antialias"] else "none"))),
+        ("font-hinting", "reset" if reset else config["interface"]["hinting"]),
+        ("font-rgba-order", "reset" if reset else (config["interface"]["subpixel"] if config["interface"]["subpixel"] != "none" else "rgb")),
+    ]
+    for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
+        family = group.get("family")
+        originals = (config.get("sizeOverrides") or {}).get("gsettings", {})
+        if reset and key in originals:
+            wanted.append((key, originals[key] if originals[key] is not None else "reset"))
+        elif not reset and not family and key in config.get("fontDescriptions", {}):
+            wanted.append((key, repr(_font_description_with_size(config["fontDescriptions"][key], group["size"]))))
+        elif (family and not reset) or generic in config.get("ownedFamilies", []):
+            wanted.append((key, repr(f'{family} {group["size"]}') if family and not reset else "reset"))
+    results = []
+    failures = []
+    for key, value in wanted:
+        if key not in keys:
+            results.append({"key": key, "skipped": True, "reason": "key missing"})
+            continue
+        cmd = ["gsettings", "reset", "org.gnome.desktop.interface", key] if value == "reset" else ["gsettings", "set", "org.gnome.desktop.interface", key, value]
+        result = _run_hook_cmd("system-fonts-gsettings", cmd, timeout=5)
+        results.append({"key": key, "ok": result.get("ok"), "stderr": result.get("stderr", "")})
+        if not result.get("ok"):
+            failures.append(f"{key}: {result.get('stderr') or result.get('error') or 'failed'}")
+    return {"mechanism": "gsettings", "ok": not failures, "results": results, "error": "; ".join(failures)}
+
+
+def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str, Any]:
+    ensure_dirs()
+    config = normalized_system_font_settings()
+    if reset or not config["managed"]:
+        config["managed"] = False
+
+    fc_path = home() / ".config" / "fontconfig" / "conf.d" / "60-vgs-fonts.conf"
+    gtk3_path = home() / ".config" / "gtk-3.0" / "settings.ini"
+    gtk4_path = home() / ".config" / "gtk-4.0" / "settings.ini"
+    previous = ET.parse(fc_path).getroot() if fc_path.exists() else ET.Element("fontconfig")
+    config["ownedFamilies"] = [alias.findtext("family") for alias in previous.findall("alias")]
+    description = previous.findtext("description", "")
+    size_overrides = json.loads(description[len(FONT_SIZE_DESCRIPTION_PREFIX):]) if description.startswith(FONT_SIZE_DESCRIPTION_PREFIX) else None
+    if size_only and config["managed"] and size_overrides is None:
+        size_overrides = {"gsettings": {}}
+    config["sizeOverrides"] = size_overrides
+    config["fontDescriptions"] = {}
+    if size_overrides is not None and config["managed"]:
+        try:
+            for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
+                if key not in config["environment"].get("gsettingsKeys", []):
+                    continue
+                raw = _gsettings_font_description(key)
+                originals = size_overrides["gsettings"]
+                if key not in originals:
+                    originals[key] = None if generic in config["ownedFamilies"] else raw
+                if not group["family"] and generic in config["ownedFamilies"]:
+                    raw = originals[key] if originals[key] is not None else _gsettings_font_description(key, schema_default=True)
+                config["fontDescriptions"][key] = ast.literal_eval(raw)
+        except (OSError, ValueError, SyntaxError) as error:
+            return {"success": False, "partial": False, "managed": config["managed"], "error": str(error)}
+    changed: List[str] = []
+    warnings: List[str] = []
+
+    if config["managed"]:
+        text = render_system_fontconfig(config)
+        if not fc_path.exists() or fc_path.read_text() != text:
+            write_file(fc_path, text)
+            changed.append(str(fc_path))
+        gtk_values = _gtk_values(config["interface"])
+        size = config["interface"]["size"] if size_overrides is not None else None
+        default_font = config["fontDescriptions"].get("font-name", "Sans 10")
+        if _merge_gtk_settings(gtk3_path, gtk_values, size, default_font):
+            changed.append(str(gtk3_path))
+        if _merge_gtk_settings(gtk4_path, gtk_values, size, default_font):
+            changed.append(str(gtk4_path))
+        gs = _gsettings_set_font_rendering(config, reset=False)
+    else:
+        if _merge_gtk_settings(gtk3_path, None):
+            changed.append(str(gtk3_path))
+        if _merge_gtk_settings(gtk4_path, None):
+            changed.append(str(gtk4_path))
+        gs = _gsettings_set_font_rendering(config, reset=True)
+        if gs.get("ok"):
+            with contextlib.suppress(FileNotFoundError):
+                fc_path.unlink()
+                changed.append(str(fc_path))
+
+    if not gs.get("ok"):
+        warnings.append(gs.get("error") or "gsettings failed")
+
+    fc_cache = {"mechanism": "fc-cache", "ok": True, "skipped": True, "reason": "fc-cache not found"}
+    if shutil.which("fc-cache"):
+        fc_cache = _run_hook_cmd("system-fonts-fc-cache", ["fc-cache", "-f"], timeout=20)
+        if not fc_cache.get("ok"):
+            warnings.append(fc_cache.get("stderr") or fc_cache.get("error") or "fc-cache failed")
+
+    return {
+        "success": not warnings,
+        "partial": bool(warnings),
+        "managed": config["managed"],
+        "changed": changed,
+        "environment": config["environment"],
+        "effective": {"interface": config["interface"], "monospace": config["monospace"]},
+        "mechanisms": [gs, fc_cache],
+        "warnings": warnings,
+        "restartHint": "gsettings-aware apps may update live; fontconfig and many Qt/browser apps need restart.",
+    }
+
+
+# The mode VGS gives a settings file it creates for another app. Hermes and
+# oh-my-pi keep provider credentials beside the theme key in these files, so a
+# file VGS brings into existence starts owner-only rather than at the umask.
+CREATED_CONFIG_MODE = 0o600
+
+
+def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
+                        create: bool = False) -> Dict[str, Any]:
+    """Write one key into another app's own settings file, and only when it differs.
+
+    `keys` walks to the key: ("ui", "theme") sets a nested one. With `create`
+    false an absent file stays absent, for an app whose settings file VGS has
+    no reason to bring into existence. An existing file keeps its own
+    permissions; a created one starts at CREATED_CONFIG_MODE.
+    """
+    # write_file keeps an existing file's mode, so only a created one names it.
+    mode: int | None = CREATED_CONFIG_MODE
+    data: Dict[str, Any] = {}
+    if path.exists():
+        mode = None
+        try:
+            data = json.loads(path.read_text() or "{}")
+        except (OSError, ValueError, UnicodeError) as exc:
+            return {"ok": False, "error": f"unreadable {path}: {exc}"}
+        if not isinstance(data, dict):
+            return {"ok": False, "error": f"{path} is not a JSON object"}
+    elif not create:
+        return {"ok": True, "skipped": True, "reason": f"{path} not found"}
+    node = data
+    for key in keys[:-1]:
+        child = node.get(key)
+        if child is None:
+            child = {}
+            node[key] = child
+        elif not isinstance(child, dict):
+            return {"ok": False, "error": f"{path}: {key} is not a JSON object"}
+        node = child
+    if node.get(keys[-1]) == value:
+        return {"ok": True, "path": str(path), "changed": False}
+    node[keys[-1]] = value
+    try:
+        write_file(path, json.dumps(data, indent=2) + "\n", mode)
+    except OSError as exc:
+        return {"ok": False, "error": f"cannot write {path}: {exc}"}
+    return {"ok": True, "path": str(path), "changed": True}
+
+
+# A theme name VGS selects for another app. Anything outside this shape would
+# need YAML quoting rules that the textual writer below deliberately does not own.
+_YAML_PLAIN_SCALAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict[str, Any]:
+    """Set `parent.<key>` scalars in a block-style YAML config, leaving every
+    other line untouched and writing only when a value differs.
+
+    VGS depends on no YAML library, and the agent CLIs that select a theme this
+    way keep a hand-edited config, so the edit is textual: it reads the block
+    the keys live in and refuses a shape it cannot read rather than rewriting
+    the user's file. The file is created when absent, because selecting a theme
+    is the only way these CLIs read one. An existing file keeps its own
+    permissions; a created one starts at CREATED_CONFIG_MODE, because these
+    configs hold provider credentials.
+    """
+    for key, value in values.items():
+        if not _YAML_PLAIN_SCALAR_RE.match(value):
+            return {"ok": False, "error": f"{parent}.{key}: {value!r} is not a plain YAML scalar"}
+    # write_file keeps an existing file's mode, so only a created one names it.
+    mode: int | None = CREATED_CONFIG_MODE
+    text = ""
+    if path.exists():
+        mode = None
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeError) as exc:
+            return {"ok": False, "error": f"unreadable {path}: {exc}"}
+    lines = text.splitlines()
+    changed = False
+    for key, value in values.items():
+        lines, error, edited = _yaml_block_set(lines, parent, key, value)
+        if error:
+            return {"ok": False, "error": f"{path}: {error}"}
+        changed = changed or edited
+    if not changed:
+        return {"ok": True, "path": str(path), "changed": False}
+    try:
+        write_file(path, "\n".join(lines) + "\n", mode)
+    except OSError as exc:
+        return {"ok": False, "error": f"cannot write {path}: {exc}"}
+    return {"ok": True, "path": str(path), "changed": True}
+
+
+def _yaml_indent(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" "))]
+
+
+def _yaml_block_set(lines: List[str], parent: str, key: str,
+                    value: str) -> Tuple[List[str], str, bool]:
+    """One `parent:` block edit for set_yaml_config_key.
+
+    Returns the lines, an error naming the shape it refused, and whether the
+    value changed. Only entries at the block's own child indent are candidates,
+    so a same-named key in a nested block is never the one rewritten.
+    """
+    head = re.compile(rf"^{re.escape(parent)}:\s*(?:#.*)?$")
+    start = next((i for i, line in enumerate(lines) if head.match(line)), -1)
+    if start < 0:
+        if any(re.match(rf"^{re.escape(parent)}\s*:", line) for line in lines):
+            return lines, f"{parent} is not a block mapping", False
+        # Keep the file's own blank lines; drop only the trailing ones, so the
+        # appended block does not float away from the content above it.
+        tail = len(lines)
+        while tail > 0 and not lines[tail - 1].strip():
+            tail -= 1
+        return lines[:tail] + [f"{parent}:", f"  {key}: {value}"] + lines[tail:], "", True
+    end = len(lines)
+    indent = ""
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        lead = _yaml_indent(lines[i])
+        if not lead:
+            end = i
+            break
+        indent = indent or lead
+    indent = indent or "  "
+    entry = re.compile(rf"^{re.escape(indent)}{re.escape(key)}\s*:\s*(.*)$")
+    for i in range(start + 1, end):
+        match = entry.match(lines[i])
+        if not match:
+            continue
+        current = match.group(1).split("#", 1)[0].strip().strip("\"'")
+        if current == value:
+            return lines, "", False
+        return lines[:i] + [f"{indent}{key}: {value}"] + lines[i + 1:], "", True
+    tail = end
+    while tail > start + 1 and not lines[tail - 1].strip():
+        tail -= 1
+    return lines[:tail] + [f"{indent}{key}: {value}"] + lines[tail:], "", True
+
+
+# Agent CLIs that read a custom theme from a file VGS renders, then need their
+# own settings file pointed at it. Each selection runs after that file is on
+# disk, so a hook never names a theme the CLI cannot load.
+# opencode moves theme, keybinds and tui out of opencode.json into tui.json once,
+# and skips that migration entirely when tui.json already exists. Its migration
+# fires on a string `theme`, an object `keybinds`, or a `tui` object carrying one
+# of these three settings; a `tui` holding anything else moves nothing.
+OPENCODE_MIGRATED_TUI_KEYS = ("scroll_speed", "scroll_acceleration", "diff_style")
+
+
+def _opencode_migration_pending() -> str:
+    """Why opencode's tui.json migration must run first, or "".
+
+    A config this cannot read counts as pending: creating tui.json beside it
+    cancels the migration for good, so an unreadable file must not read the
+    same as one with nothing left to move.
+    """
+    for name in ("opencode.json", "opencode.jsonc"):
+        path = expand_dest(f"~/.config/opencode/{name}")
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(_strip_jsonc(path.read_text()))
+        except (OSError, ValueError, UnicodeError) as exc:
+            return f"{path} is unreadable ({exc}), so whether opencode has keys to migrate is unknown"
+        if not isinstance(data, dict):
+            continue
+        tui = data.get("tui")
+        if (isinstance(data.get("theme"), str)
+                or isinstance(data.get("keybinds"), dict)
+                or (isinstance(tui, dict) and any(key in tui for key in OPENCODE_MIGRATED_TUI_KEYS))):
+            return f"opencode has yet to migrate {path} into tui.json"
+    return ""
+
+
+def select_opencode_theme_hook() -> Dict[str, Any]:
+    hook = "opencode-theme-select"
+    if not expand_dest("~/.config/opencode/themes/vgs.json").exists():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "no opencode theme rendered"}
+    tui = expand_dest("~/.config/opencode/tui.json")
+    pending = "" if tui.exists() else _opencode_migration_pending()
+    if pending:
+        # Creating tui.json here would cancel that migration and strand the
+        # user's keybinds. Their next opencode start moves them; the apply after
+        # that selects the theme.
+        return {"hook": hook, "ok": True, "skipped": True, "reason": pending}
+    return {"hook": hook, **set_json_config_key(tui, ("theme",), "vgs", create=True)}
+
+
+def select_gemini_theme_hook() -> Dict[str, Any]:
+    hook = "gemini-theme-select"
+    theme = expand_dest("~/.gemini/themes/vgs.json")
+    if not theme.exists():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "no gemini theme rendered"}
+    # Gemini CLI reads ui.theme as a file path when it ends in .json, and refuses
+    # a path outside the home directory.
+    return {"hook": hook, **set_json_config_key(
+        expand_dest("~/.gemini/settings.json"), ("ui", "theme"), str(theme), create=True)}
+
+
+def select_hermes_skin_hook() -> Dict[str, Any]:
+    hook = "hermes-skin-select"
+    if not expand_dest("~/.hermes/skins/vgs.yaml").exists():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": "no hermes skin rendered"}
+    return {"hook": hook, **set_yaml_config_key(
+        expand_dest("~/.hermes/config.yaml"), "display", {"skin": "vgs"})}
+
+
+# oh-my-pi loads the first of these that exists and ignores the rest, so writing
+# the second one would hide a user's whole configuration behind a theme block.
+OMP_CONFIG_NAMES = ("config.yml", "config.yaml")
+
+
+def omp_config_path() -> Path:
+    agent = expand_dest("~/.omp/agent")
+    for name in OMP_CONFIG_NAMES:
+        if (agent / name).exists():
+            return agent / name
+    return agent / OMP_CONFIG_NAMES[0]
+
+
+def select_omp_theme_hook() -> Dict[str, Any]:
+    hook = "omp-theme-select"
+    themes = expand_dest("~/.omp/agent/themes")
+    absent = [mode for mode in THEME_MODES if not (themes / f"vgs-{mode}.json").exists()]
+    if absent:
+        return {"hook": hook, "ok": True, "skipped": True,
+                "reason": f"no omp theme rendered for {', '.join(absent)}"}
+    return {"hook": hook, **set_yaml_config_key(
+        omp_config_path(), "theme",
+        {mode: f"vgs-{mode}" for mode in THEME_MODES})}
+
+
+# The theme name Codex reads from its [tui] table, and the basename of the
+# rendered themes/targets/codex-vgs destination it resolves that name against.
+CODEX_THEME_NAME = "vgs"
+_CODEX_TUI_HEADER_RE = re.compile(r"^[ \t]*\[[ \t]*(?:tui|\"tui\"|'tui')[ \t]*\][ \t]*(?:#[^\r\n]*)?\r?$", re.M)
+_CODEX_TABLE_HEADER_RE = re.compile(r"^[ \t]*\[", re.M)
+_CODEX_THEME_KEY_RE = re.compile(r"^[ \t]*theme[ \t]*=[^\r\n]*", re.M)
+
+
+def _codex_config_with_theme(text: str, value: str, header: Optional[re.Match]) -> str:
+    """`text` with `theme` set inside its [tui] table, every other byte kept.
+
+    config.toml carries the user's whole Codex setup — model, approvals, one
+    table per project — so this rewrites the one line rather than re-emitting a
+    parsed document, which would drop their comments and key order.
+    """
+    line = f'theme = "{value}"'
+    if not header:
+        prefix = text.rstrip("\n") + "\n\n" if text.strip() else ""
+        return f"{prefix}[tui]\n{line}\n"
+    body_start = header.end()
+    following = _CODEX_TABLE_HEADER_RE.search(text, body_start)
+    body_end = following.start() if following else len(text)
+    body = text[body_start:body_end]
+    key = _CODEX_THEME_KEY_RE.search(body)
+    # body opens with the newline that ends the [tui] header line, so an
+    # inserted key lands on the table's first line.
+    new_body = body[:key.start()] + line + body[key.end():] if key else f"\n{line}{body}"
+    return text[:body_start] + new_body + text[body_end:]
+
+
+def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str, Any]:
+    """Select `value` as Codex's TUI theme in `config`, changing no other key.
+
+    Installing ~/.codex/themes/vgs.tmTheme does not select it: Codex keeps
+    whatever `[tui] theme` it had, so the file is ignored until this sets it.
+    """
+    try:
+        text = config.read_bytes().decode("utf-8") if config.exists() else ""
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"ok": False, "error": f"codex config unreadable: {exc}"}
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        # Codex cannot read this file either. Rewriting it would either keep it
+        # broken or silently discard the user's settings.
+        return {"ok": False, "error": f"codex config is not valid TOML: {exc}"}
+    tui = before.get("tui") if isinstance(before.get("tui"), dict) else {}
+    if tui.get("theme") == value:
+        return {"ok": True, "theme": value, "unchanged": True, "config": str(config)}
+    header = _CODEX_TUI_HEADER_RE.search(text)
+    if header is None and "tui" in before:
+        return {"ok": False, "error": f"codex-tui-header-unrecognised: {config}\n"
+                "Codex [tui] header spelling was not recognised; config left unchanged"}
+    new_text = _codex_config_with_theme(text, value, header)
+    expected = {**before, "tui": {**tui, "theme": value}}
+    try:
+        after = tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:
+        return {"ok": False, "error": f"codex theme edit would break the config: {exc}"}
+    if after != expected:
+        # The key is spelled in a form this editor does not rewrite (a dotted
+        # `tui.theme`, or an inline `tui = { ... }` table). Writing anyway would
+        # leave two spellings of one key behind.
+        return {"ok": False, "error": "codex config sets [tui] theme in a form VGS cannot rewrite"}
+    # config.toml carries [mcp_servers.*] env values and [model_providers]
+    # http_headers, which hold API keys, so a file the user kept private must not
+    # come back world-readable under this process's umask, and one VGS brings into
+    # existence must not start that way either. write_file keeps an existing
+    # file's mode, so only a created one names it.
+    try:
+        write_file(config, new_text, None if config.exists() else CREATED_CONFIG_MODE)
+    except OSError as exc:
+        return {"ok": False, "error": f"codex config write failed: {exc}"}
+    return {"ok": True, "theme": value, "config": str(config)}
+
+
+def apply_codex_theme_hook() -> Dict[str, Any]:
+    codex_home = home() / ".codex"
+    if not codex_home.is_dir():
+        return {"hook": "codex-theme", "ok": True, "skipped": True, "reason": "~/.codex not found"}
+    return {"hook": "codex-theme", **set_codex_tui_theme(codex_home / "config.toml")}
+def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], List[str]]:
+    """One Claude Code theme file for `bp` rendered in `mode`, and its shortfalls.
+
+    Per-app overrides merge into the roles first, so an override a user sets for
+    the claude app reaches the file and then passes the same readability
+    enforcement as the palette's own colours. The theme package may carry
+    `apps/claude-<mode>.json`, whose `overrides` are merged over the computed
+    ones so a curated file states only what differs.
+
+    The diff rules are re-measured once every source has contributed, so a
+    curated band that closes a rule generation could not reach stops warning,
+    and a curated band that breaks one is reported.
+    """
+    roles = {**target_roles(bp), **bp_app_overrides(bp).get(CLAUDE_CURATED_APP, {})}
+    overrides = claude_theme_overrides(roles)
+    curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
+    where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path
+             else f"{bp.get('name') or mode} vgs-{mode}.json")
+    if curated_path:
+        # Claude Code ignores a key it does not carry and reports nothing, so a
+        # shape mistake in a theme package has to be named here or it reads as a
+        # successful apply that painted none of the curated colours.
+        try:
+            document = load_required_json_file(Path(curated_path))
+        except RuntimeError as exc:
+            raise ValueError(f"{where}: {exc}") from exc
+        if not isinstance(document, dict):
+            raise ValueError(f"{where}: expected an object, found {type(document).__name__}")
+        unexpected = sorted(set(document) - {"overrides"})
+        if unexpected:
+            raise ValueError(f"{where}: keys outside overrides: {', '.join(unexpected)}")
+        curated = document.get("overrides") or {}
+        if not isinstance(curated, dict):
+            raise ValueError(f"{where}: overrides must be an object, found {type(curated).__name__}")
+        unknown = sorted(set(curated) - set(overrides))
+        if unknown:
+            raise ValueError(f"{where}: tokens Claude Code does not carry: {', '.join(unknown)}")
+        overrides.update(curated)
+    # One rule over the merged map, after every source has contributed. Every
+    # value leaves in the single form clean_hex produces, so a hand-written theme
+    # package cannot put a bare or upper-case hex in the file, and a value it
+    # cannot read at all is refused by name. Claude Code drops a value it cannot
+    # use as silently as a key it does not carry, and paints its base colour.
+    # VGS writes hex, so its other value forms are refused rather than painted.
+    unreadable = sorted(token for token, value in overrides.items()
+                        if not isinstance(value, str) or not clean_hex(value, ""))
+    if unreadable:
+        raise ValueError(f"{where}: values that are not hex colours: {', '.join(unreadable)}")
+    overrides = {token: clean_hex(value) for token, value in overrides.items()}
+    return ({"name": f"vgs-{mode}", "base": mode, "overrides": overrides},
+            claude_diff_shortfalls(overrides))
+
+
+def apply_claude_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Write both Claude Code themes and select the applied theme's mode.
+
+    Claude Code watches its themes folder and repaints a running session, so a
+    switch within one mode needs no settings write and no restart.
+
+    One mode is one unit of work: its render, its write and, for the applied mode,
+    the settings selection. The loop's handler owns all of it, so no step can raise
+    past the hook into the apply, and a broken counterpart mode still leaves the
+    user on the mode they applied. The selection goes through the shared settings
+    writer, which every agent CLI's theme selection uses.
+    """
+    claude_dir = home() / ".claude"
+    if not claude_dir.is_dir():
+        return {"hook": "claude-theme", "ok": True, "skipped": True, "reason": "~/.claude not found"}
+    mode = (roles.get("theme_type") or "dark").lower()
+    theme = f"custom:vgs-{mode}"
+    themes = list_themes()
+    standing: Dict[str, str] = {}
+    shortfalls: List[str] = []
+    errors: List[str] = []
+    unchanged: List[str] = []
+    selected: bool | None = None
+    for file_mode in ("dark", "light"):
+        destination = claude_dir / "themes" / f"vgs-{file_mode}.json"
+        # The handler reports the file the failing step touched, not the mode.
+        step = f"vgs-{file_mode}.json"
+        try:
+            content, missed = claude_theme_file(mode_variant_blueprint(bp, file_mode, themes), file_mode)
+            text = json.dumps(content, indent=2) + "\n"
+            # Every open session reloads a theme file that changes, so matching
+            # bytes are left alone. The comparison is an optimisation: bytes it
+            # cannot read mean write, not fail.
+            existing = None
+            with contextlib.suppress(OSError, UnicodeError):
+                existing = destination.read_text()
+            if existing == text:
+                unchanged.append(str(destination))
+            else:
+                write_file(destination, text)
+            standing[file_mode] = str(destination)
+            shortfalls.extend(f"vgs-{file_mode}.json: {line}" for line in missed)
+            if file_mode == mode:
+                step = "settings.json"
+                written = set_json_config_key(
+                    claude_dir / "settings.json", ("theme",), theme, create=True)
+                if not written.get("ok"):
+                    raise ValueError(str(written.get("error")))
+                selected = not written.get("changed")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, UnicodeError) as exc:
+            errors.append(f"{step}: {exc}")
+    result: Dict[str, Any] = {
+        "hook": "claude-theme", "ok": not errors, "theme": theme,
+        "themes": sorted(standing.values()), "unchangedThemes": sorted(unchanged),
+    }
+    if selected is not None:
+        result["unchanged"] = selected
+    if shortfalls:
+        # One line per apply, not one per token: a restyled palette misses several
+        # at once and the user needs to know the theme is compromised, not a list.
+        result["warning"] = f"{len(shortfalls)} diff rule(s) below target: " + "; ".join(shortfalls)
+    if errors:
+        result["error"] = "; ".join(errors)
+    return result
+
+
+def detect_target(cfg: Dict[str, Any]) -> bool:
+    """App detection for default-on/off: binary on PATH or config dir present."""
+    det = cfg.get("detect")
+    if not isinstance(det, dict):
+        return True
+    for command in det.get("commands", []) or []:
+        if shutil.which(str(command)):
+            return True
+    for path in det.get("paths", []) or []:
+        if expand_dest(str(path)).exists():
+            return True
+    return False
+
+
+def theme_apps_settings() -> Dict[str, bool]:
+    apps = load_settings().get("themeApps")
+    if isinstance(apps, dict):
+        return {str(k): bool(v) for k, v in apps.items()}
+    return {}
+
+
+def target_enabled(cfg: Dict[str, Any], theme_apps: Dict[str, bool]) -> bool:
+    """Shell targets always render; user toggles win; else detection decides."""
+    app = str(cfg.get("app") or "")
+    if app in ("", "shell"):
+        return True
+    if app in theme_apps:
+        return theme_apps[app]
+    return detect_target(cfg)
+
+
+def applied_blueprint() -> Dict[str, Any] | None:
+    """The last applied blueprint exactly as `apply_theme_obj` wrote it, or None.
+
+    Unlike `current_theme_obj`, this resolves no package, so it still answers for
+    a theme applied under a name no package carries. A file that is missing or
+    unreadable answers None; every caller has a second source.
+
+    The palette's wallpaper comes back absolute, so callers see the same value
+    `apply_theme_obj` was handed: `applied_theme_state` records the reference form
+    and `resolved_wallpaper` reads it, recovering a record an installation that is
+    gone wrote.
+    """
+    current_bp_path = cfg_dir() / "theme-current.json"
+    if current_bp_path.exists():
+        with contextlib.suppress(Exception):
+            bp = json.loads(current_bp_path.read_text())
+            if isinstance(bp, dict):
+                palette = bp.get("palette")
+                if isinstance(palette, dict) and palette.get("wallpaper"):
+                    bp["palette"] = {**palette, "wallpaper": resolved_wallpaper(str(palette["wallpaper"]))}
+                return bp
+    return None
+
+
+def current_theme_obj() -> Dict[str, Any]:
+    """The last applied theme as a full object (palette + curated apps).
+
+    The package is matched by exact name: an applied name is not something a user
+    typed, and a theme applied under an unsaved name that is part of another
+    package's name must not take that package's curated files or overrides.
+    """
+    bp = applied_blueprint()
+    if bp is not None:
+        # Re-resolve the package so curated apps/ files reflect disk state.
+        pkg = find_theme_exact(str(bp.get("name") or ""))
+        return pkg if pkg and pkg.get("package") else bp
+    return find_theme_exact(str(current_theme().get("name") or "")) or blueprint_from_current_theme()
+
+
+def theme_apps_inventory(theme_apps: Dict[str, bool]) -> List[Dict[str, Any]]:
+    """Per-app view over targets: toggle state from `theme_apps`, detection, curated status."""
+    cur = current_theme_obj()
+    curated_available = set((cur.get("apps") or {}).keys())
+    apps: Dict[str, Dict[str, Any]] = {}
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        app = str(cfg.get("app") or cfg_path.parent.name)
+        entry = apps.setdefault(app, {
+            "app": app, "targets": [], "destinations": [], "curatedFiles": [],
+            "detected": False, "always": app in ("", "shell"),
+        })
+        entry["targets"].append(cfg_path.parent.name)
+        if cfg.get("destination"):
+            entry["destinations"].append(cfg["destination"])
+        if cfg.get("curatedFile"):
+            entry["curatedFiles"].append(cfg["curatedFile"])
+        entry["detected"] = entry["detected"] or detect_target(cfg)
+    out: List[Dict[str, Any]] = []
+    for app, entry in sorted(apps.items()):
+        configured = theme_apps.get(app)
+        enabled = True if entry["always"] else (configured if configured is not None else entry["detected"])
+        entry["enabled"] = bool(enabled)
+        entry["configured"] = configured is not None
+        entry["curated"] = any(name in curated_available for name in entry["curatedFiles"])
+        entry["curatedFiles"] = sorted(set(entry["curatedFiles"]))
+        out.append(entry)
+    return out
+
+
+def _strip_jsonc(text: str) -> str:
+    """Strip // and /* */ comments and trailing commas outside of strings so a
+    JSONC document parses with the strict json module."""
+    out: List[str] = []
+    i, n = 0, len(text)
+    in_str = esc = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
+    """Derive active and modified tab colors for a curated VS Code theme.
+    Use its own colors with role-map fallbacks. Accent labels and borders
+    distinguish active tabs; modified borders use a theme color.
+    Parse JSONC and emit JSON. Return the source unchanged on parse failure."""
+    try:
+        data = json.loads(_strip_jsonc(text))
+    except Exception:
+        return text
+    colors = data.get("colors")
+    if not isinstance(colors, dict):
+        return text
+
+    dark = str(roles.get("theme_type") or "dark").lower() != "light"
+    prefer = "#ffffff" if dark else "#000000"
+    accent = clean_hex(roles.get("accent") or roles.get("primary") or prefer)
+
+    def hex6(v: Any) -> str | None:
+        # Normalize #rgb / #rgba / #rrggbb / #rrggbbaa to opaque #rrggbb; alpha is
+        # dropped because it is meaningless for the luminance/blend math here.
+        if not isinstance(v, str):
+            return None
+        s = v.strip().lstrip("#")
+        if len(s) in (3, 4):
+            s = "".join(ch * 2 for ch in s[:3])
+        elif len(s) in (6, 8):
+            s = s[:6]
+        else:
+            return None
+        try:
+            int(s, 16)
+        except ValueError:
+            return None
+        return "#" + s.lower()
+
+    def pick(*keys: str) -> str | None:
+        for k in keys:
+            h = hex6(colors.get(k))
+            if h:
+                return h
+        return None
+
+    editor_bg = pick("editor.background") or clean_hex(roles.get("background") or ("#101318" if dark else "#f4f4f4"))
+
+    def alpha_of(v: Any) -> float:
+        if not isinstance(v, str):
+            return 1.0
+        s = v.strip().lstrip("#")
+        if len(s) == 4:
+            return int(s[3] * 2, 16) / 255.0
+        if len(s) == 8:
+            return int(s[6:8], 16) / 255.0
+        return 1.0
+
+    def effective(*keys: str) -> str | None:
+        # Opaque color as actually seen: composite the theme's value (which may be
+        # translucent, e.g. rose-pine tabs) over the editor background.
+        for k in keys:
+            h = hex6(colors.get(k))
+            if h:
+                return blend(editor_bg, h, alpha_of(colors.get(k)))
+        return None
+
+    # The active tab's background is left to the theme; the active signal is the
+    # accent top border + accent label (the Catppuccin model). Composite the
+    # theme's active bg (may be translucent, e.g. rose-pine) only to judge label
+    # legibility.
+    active_bg = effective("tab.activeBackground") or editor_bg
+
+    # Preserve hue when raising active-label contrast so the label stays accented.
+    fg = accent
+    guard = 0
+    while contrast_ratio(fg, active_bg) < 3.0 and guard < 8:
+        fg = lighten(fg, 0.12) if dark else darken(fg, 0.12)
+        guard += 1
+    colors["tab.activeForeground"] = fg
+    colors["tab.hoverForeground"] = fg
+    colors.setdefault("tab.inactiveForeground",
+                      pick("descriptionForeground") or clean_hex(roles.get("outline") or "#808080"))
+
+    # Transparent bottom borders override underline colors supplied by a theme.
+    for k in ("tab.activeBorder", "tab.unfocusedActiveBorder", "tab.hoverBorder"):
+        colors[k] = "#00000000"
+
+    # Use the accent for the saved active tab's top border.
+    colors["tab.activeBorderTop"] = accent
+    colors.setdefault("tab.unfocusedActiveBorderTop", accent + "80")
+
+    # Modified tabs use a distinct theme color. VS Code shows the top border
+    # only with workbench.editor.highlightModifiedTabs; otherwise it uses a dot.
+    modified = pick("editorGutter.modifiedBackground", "gitDecoration.modifiedResourceForeground") \
+        or clean_hex(roles.get("warning") or accent)
+    colors.setdefault("tab.activeModifiedBorder", modified)
+    colors.setdefault("tab.inactiveModifiedBorder", modified + "66")
+    colors.setdefault("tab.unfocusedActiveModifiedBorder", modified + "99")
+    colors.setdefault("tab.unfocusedInactiveModifiedBorder", modified + "66")
+
+    # VS Code's integrated terminal is a terminal, so it takes the theme's
+    # terminal slots rather than the curated theme's own guess at them: a program
+    # printing ANSI there reads what it reads in ghostty or kitty. A blueprint
+    # that did not load supplies no slots, and the curated values stand.
+    for index, key in enumerate(VSCODE_ANSI_KEYS):
+        slot = roles.get(f"terminal_color{index}")
+        if slot:
+            colors[key] = slot
+
+    data["colors"] = colors
+    return json.dumps(data, indent=2) + "\n"
+
+
+def curated_file_text(path: Path, dest: Path, roles: Dict[str, str], app: str = "") -> str:
+    """A curated apps/ file as it lands at `dest`: verbatim, with only
+    {wallpaper}-style path tokens rendered."""
+    text = path.read_text()
+    if "{wallpaper}" in text:
+        text = text.replace("{wallpaper}", roles.get("wallpaper", ""))
+    if app == "vscode" and dest.suffix == ".json":
+        text = augment_vscode_colors(text, roles)
+    return text
+
+
+def declared_hooks(cfg: Dict[str, Any], key: str) -> List[Any]:
+    """A target's `hook` or `reloadHook` value as a list. Each key accepts one
+    hook name or a list of them."""
+    value = cfg.get(key) or []
+    return list(value) if isinstance(value, list) else [value]
+
+
+class _TargetWrite(NamedTuple):
+    """One file a target renders, and the curated name it came from, if any."""
+    dest: Path
+    content: str
+    curated: str
+
+
+class _TargetPlan(NamedTuple):
+    """One theme target's output, rendered into memory before anything is committed.
+
+    `hooks` and `reload_hooks` are the target's two declared hook lists.
+    `reload_hooks` tells a running application to re-read a file this target
+    wrote, so it is worth running only when those bytes moved. `hooks` asserts
+    wiring no destination of this target carries — the icon-theme gsettings key,
+    btop's selected `color_theme`, a VS Code variant installed since the last
+    apply — so it runs on every apply that reaches this target's commit. Most
+    such hooks compare their own inputs and return without writing when the
+    state is already right; `pi-theme-link` re-asserts its wiring
+    unconditionally.
+    """
+    target: str
+    writes: List[_TargetWrite]
+    stale_curated: Optional[Path]
+    hooks: List[Any]
+    reload_hooks: List[Any]
+
+
+def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
+                    only_target: str | None = None, run_hooks: bool = True,
+                    theme_apps: Dict[str, bool] | None = None) -> Dict[str, Any]:
+    """Apply one complete theme batch without interleaving another mutation.
+
+    `theme_apps` is the app enable set; None reads it from settings.json."""
+    with theme_mutation_lock():
+        return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks, theme_apps)
+
+
+def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """`bp` as `theme-current.json` records it: the applied palette, stamped.
+
+    Where the package sits on disk is not part of the applied state. `path`,
+    `builtin`, `userDir`, `backgrounds` and `packagedPreview` are re-resolved from
+    the package by every reader that wants them, and a copy kept here would
+    outlive the directory it names once the package is removed or renamed. What one
+    rebuild withheld is not applied state either: `WITHHELD_CURATED_KEY` answers
+    for the apply that carried it, and the next rebuild asks the question again.
+
+    The palette's input wallpaper is the one path that survives, and it is recorded
+    as a `portable_ref` for the same reason the keys above are dropped: it names a
+    file inside a theme package, and an absolute path to one outlives the directory
+    that held it. `applied_blueprint` resolves it back.
+
+    One owner, so a fixture seeding an applied theme writes the file the apply
+    writes. `path` and `package` are the keys `save_curated_terms` gates
+    on, so a seeded state richer than the real one hides a refused exemption.
+    """
+    current = dict(bp)
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview",
+                WITHHELD_CURATED_KEY):
+        current.pop(key, None)
+    palette = current.get("palette")
+    if isinstance(palette, dict) and palette.get("wallpaper"):
+        current["palette"] = {**palette, "wallpaper": portable_ref(str(palette["wallpaper"]))}
+    current["appliedAt"] = int(time.time() * 1000)
+    return current
+
+
+def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
+                              only_target: str | None = None,
+                              run_hooks: bool = True,
+                              theme_apps: Dict[str, bool] | None = None) -> Dict[str, Any]:
+    ensure_dirs()
+    roles = target_roles(bp)
+    external_roles = app_target_roles(bp, roles)
+    curated_apps: Dict[str, str] = bp.get("apps") or {}
+    app_overrides = bp_app_overrides(bp)
+    if theme_apps is None:
+        theme_apps = theme_apps_settings()
+    rendered: List[str] = []
+    changed: List[str] = []
+    curated_used: List[str] = []
+    skipped: List[str] = []
+    hook_specs: List[Any] = []
+    warnings: List[str] = []
+    # Both-mode targets cost two extra palette derivations and a theme-directory
+    # scan for the pair, so resolve them once and only when a target asks.
+    mode_maps: Dict[str, Dict[str, str]] = {}
+
+    def resolve_mode_maps() -> Dict[str, Dict[str, str]]:
+        if not mode_maps:
+            mode_maps.update(mode_variant_role_maps(bp))
+        return mode_maps
+
+    def warn(message: str) -> None:
+        warnings.append(message)
+        eprint(message)
+
+    def plan_target(cfg_path: Path, cfg: Dict[str, Any]) -> _TargetPlan:
+        """Render one target's files into memory. Nothing here touches a destination."""
+        curated_name = str(cfg.get("curatedFile") or "")
+        curated_src = curated_apps.get(curated_name) if curated_name else None
+        dest = expand_dest(cfg["destination"]) if cfg.get("destination") else None
+        curated_dest = expand_dest(cfg["curatedDestination"]) if cfg.get("curatedDestination") else dest
+        # A curated file wins over generation; "additional" targets render the
+        # template too because the curated artifact lands beside it (e.g. nvim
+        # colorscheme spec next to the always-generated role table).
+        additional = cfg.get("curatedMode") == "additional"
+        # A curated *theme* file replaces the generated template output at the
+        # main destination (e.g. a full vscode-theme.json derived from the
+        # theme's nvim colorscheme, for themes with an official nvim colorscheme
+        # but no official VS Code extension). Distinct from curatedFile, which is
+        # a pointer-style artifact landing at curatedDestination.
+        curated_theme_name = str(cfg.get("curatedThemeFile") or "")
+        curated_theme_src = curated_apps.get(curated_theme_name) if curated_theme_name else None
+        app_id = str(cfg.get("app") or "")
+        base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
+        target_overrides = app_overrides.get(app_id) or {}
+        target_role_map = render_roles(bp, base_role_map, target_overrides)
+        writes: List[_TargetWrite] = []
+        stale_curated: Optional[Path] = None
+        if curated_src and curated_dest:
+            writes.append(_TargetWrite(curated_dest, curated_file_text(
+                Path(curated_src), curated_dest, target_role_map), curated_name))
+        elif cfg.get("curatedDestination") and curated_dest:
+            # No curated file in this theme: drop the stale curated artifact so
+            # consumers fall back to the generated output.
+            stale_curated = curated_dest
+        if curated_theme_src and dest:
+            writes.append(_TargetWrite(dest, curated_file_text(
+                Path(curated_theme_src), dest, target_role_map, app_id), curated_theme_name))
+        if cfg.get("template") and dest and (not curated_src or additional) and not curated_theme_src:
+            template = (cfg_path.parent / cfg["template"]).read_text()
+            for pass_roles, pass_dest in target_render_passes(
+                cfg, target_role_map, dest, resolve_mode_maps, target_overrides
+            ):
+                writes.append(_TargetWrite(pass_dest, render_template(
+                    template, pass_roles, f"{cfg_path.parent.name}/{cfg['template']}"), ""))
+        return _TargetPlan(cfg_path.parent.name, writes, stale_curated,
+                           declared_hooks(cfg, "hook"), declared_hooks(cfg, "reloadHook"))
+
+    plans: List[_TargetPlan] = []
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        if only_target and cfg_path.parent.name != only_target:
+            continue
+        cfg = json.loads(cfg_path.read_text())
+        if only_app and str(cfg.get("app") or "") != only_app:
+            continue
+        if not target_enabled(cfg, theme_apps):
+            # Disabled apps keep their last output; VGS just stops updating it.
+            skipped.append(str(cfg.get("app") or cfg_path.parent.name))
+            continue
+        try:
+            plans.append(plan_target(cfg_path, cfg))
+        except (OSError, UnicodeError) as exc:
+            # The theme package supplies the curated files and the distribution
+            # the templates, so a half-installed package costs its own target and
+            # leaves every other target rendering.
+            warn(f"{cfg_path.parent.name}: render failed: {exc}")
+
+    # Nothing above reached a destination, so every target below commits from a
+    # complete render: a broken template can no longer land half an apply.
+    for plan in plans:
+        target_changed = False
+        if plan.stale_curated is not None:
+            try:
+                plan.stale_curated.unlink()
+                target_changed = True
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                # The removal exists so consumers fall back to the generated
+                # output, so a curated artifact that cannot be removed must not
+                # also cost the generated write below.
+                warn(f"{plan.target}: {exc}")
+        try:
+            for write in plan.writes:
+                if write_file(write.dest, write.content):
+                    target_changed = True
+                    changed.append(str(write.dest))
+                rendered.append(str(write.dest))
+                if write.curated:
+                    curated_used.append(write.curated)
+        except OSError as exc:
+            # The destination belongs to another application, so a read-only
+            # mount or a root-owned config directory is that target's failure and
+            # not the apply's: the rest still land and the state files still get
+            # written, which is what stops the next apply starting from a palette
+            # the shell is no longer showing.
+            warn(f"{plan.target}: {exc}")
+            continue
+        # Both lists sit after the commit, so a target that could not land sends
+        # neither: a file that is not on disk must claim no reload and no wiring.
+        # The order is the contract for a target declaring both — kitty writes its
+        # include line before the SIGUSR1 that makes kitty re-read it.
+        hook_specs.extend(plan.hooks)
+        # A reload verb tells a running application to re-read a file this target
+        # wrote, so it is worth sending only when those bytes moved. A pick that
+        # keeps the palette moves only the targets whose template names the
+        # wallpaper role, in any of its forms; an extracting pick re-derives the
+        # palette and moves them all.
+        if target_changed:
+            hook_specs.extend(plan.reload_hooks)
+
+    if not only_app and not only_target:
+        # Before the hooks: a hook that raises past its own handler must not leave
+        # the applied theme unrecorded, or the next rebuild from the current theme
+        # starts from the previous palette while the shell shows this one.
+        try:
+            write_file(cfg_dir() / "theme-current.json",
+                       json.dumps(applied_theme_state(bp), indent=2) + "\n")
+        except OSError as exc:
+            warn(f"theme-current.json: {exc}")
+    # One snapshot of the live gaps for the whole apply: the values from before its
+    # first compositor reload are the user's, whatever a later reload in the same apply
+    # finds.
+    gap_restore = HyprGapRestore()
+    hook_results = [run_hook(hook, roles, bp, gap_restore) for hook in hook_specs] if run_hooks else []
+    # One line per apply, as the Claude Code hook's own shortfall warning is: the
+    # user needs to know the declared chrome is compromised, not a list of every
+    # role. The tones are already written as declared; this only names them.
+    # The file the palette no longer reads, named once, in the same shape. The
+    # save keeps it rather than deleting it, so without this line a colour edit
+    # left a vendor's chrome on disk and silently unused.
+    inert = inert_declarations_path(bp)
+    if inert:
+        warn(f"declared UI roles: {inert} is not read for a generated palette")
+    # The curated files the rebuild withheld, named once in the shape the
+    # declarations line above uses and for the same reason: they are still on disk
+    # and this apply does not read them, so
+    # without this line a wallpaper change or an unsaved colour edit swapped a
+    # theme's hand-picked diff bands for the generated ones with nothing said.
+    withheld = [str(name) for name in (bp.get(WITHHELD_CURATED_KEY) or [])]
+    if withheld:
+        warn(f"curated app files: {', '.join(withheld)} not read, "
+             "picked against a palette this apply does not paint")
+    declared_missed = ui_role_shortfalls(roles, declared_ui_roles(bp))
+    if declared_missed:
+        warn(f"declared UI roles: {len(declared_missed)} rule(s) below target: "
+             + "; ".join(declared_missed))
+    for result in hook_results:
+        # A hook can degrade one unit of work and fail another, so a warning is
+        # read before the verdict rather than inside the passing branch. The apply
+        # contract carries both to the user and turns the apply partial; nothing
+        # downstream reads a hook's own fields.
+        if result.get("warning"):
+            warnings.append(f"{result.get('hook')}: {result['warning']}")
+            eprint(f"hook {result.get('hook')}: {result['warning']}")
+        if result.get("ok"):
+            continue
+        msg = result.get("error") or result.get("stderr") or result.get("stdout") or "failed"
+        warnings.append(f"{result.get('hook')}: {msg}")
+        eprint(f"hook {result.get('hook')} failed: {msg}")
+    return {"success": True, "partial": bool(warnings), "name": bp.get("name"), "rendered": rendered, "changed": changed, "curated": sorted(set(curated_used)), "skipped": sorted(set(skipped)), "hooks": hook_results, "warnings": warnings, "wallpaper": roles.get("wallpaper", "")}
+
+
+# --- Theme preview screenshots -------------------------------------------------
+#
+# The preview.jpg every theme package ships is a real screenshot, captured by
+# scripts/capture-theme-previews.py from the checkout that owns a Hyprland session:
+# a nested Hyprland session (hidden on the parent compositor inside a silent
+# special workspace) runs themed app instances plus a minimal Quickshell flyout,
+# then grim captures the virtual output. No runtime path captures; a theme with
+# no shipped screenshot paints the palette card `theme_preview` draws.
+
+PREVIEW_SIZE = (2560, 1440)
+PREVIEW_OUTPUT = "VGSPREVIEW"
+# Nested Hyprland windows use the aquamarine class. Stage them fullscreen
+# on a headless output with no_focus to limit pointer-driven focus changes.
+# Silent workspace placement avoids activating the staging monitor at map time.
+# The workspace rule binds that workspace to the staging output.
+# Runtime rules are cleared by config reloads. Reassert them before captures;
+# the _VGS_PREVIEW_STAGE flag avoids duplicate registration within a Lua session.
+# The window rule matches every nested Hyprland window, so its handle keeps it single and
+# the stage retires it: left enabled, it parks the next nested session on a workspace no
+# monitor shows, where that session never renders.
+PREVIEW_WINDOW_RULE_HANDLE = "_VGS_PREVIEW_WINDOW_RULE"
+PREVIEW_STAGE_ON_LUA = (
+    'if not _VGS_PREVIEW_STAGE then _VGS_PREVIEW_STAGE = true '
+    'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
+    f'if {PREVIEW_WINDOW_RULE_HANDLE} == nil then '
+    f'{PREVIEW_WINDOW_RULE_HANDLE} = hl.window_rule({{ match = {{ class = "^(aquamarine)$" }}, '
+    'workspace = "name:vgspreview silent", float = false, fullscreen_state = 2, '
+    'no_initial_focus = true, no_focus = true }) end'
+)
+PREVIEW_STAGE_OFF_LUA = (
+    f'if {PREVIEW_WINDOW_RULE_HANDLE} ~= nil then '
+    f'{PREVIEW_WINDOW_RULE_HANDLE}:set_enabled(false) {PREVIEW_WINDOW_RULE_HANDLE} = nil end'
+)
+PREVIEW_WINDOW_RULE_LEGACY = f"monitor {PREVIEW_OUTPUT}, class:^(aquamarine)$"
+PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS = "nofocus, class:^(aquamarine)$"
+# A user rule that floats the class would otherwise size the capture window itself.
+PREVIEW_WINDOW_RULE_LEGACY_TILE = "tile, class:^(aquamarine)$"
+
+PREVIEW_SAMPLE_CODE = '''import QtQuick
+import Quickshell
+import qs.Common
+import qs.Services
+
+Item {
+    id: root
+
+    readonly property var log: Log.scoped("VGS")
+    property bool osdSurfacesLoaded: true
+    property int pendingOsdResumeReloads: 0
+
+    function recreateOsdSurfaces() {
+        OSDManager.currentOSDsByScreen = ({});
+        osdSurfacesLoaded = false;
+        osdSurfaceReloadTimer.restart();
+    }
+
+    function showSwitchUserModal() {
+        switchUserModalLoader.active = true;
+        Qt.callLater(() => {
+            if (switchUserModalLoader.item)
+                switchUserModalLoader.item.showFromPowerMenu();
+        });
+    }
+
+    Instantiator {
+        id: daemonPluginInstantiator
+        asynchronous: true
+        model: Object.keys(PluginService.pluginDaemonComponents)
+
+        delegate: Loader {
+            id: daemonLoader
+            property string pluginId: modelData
+            sourceComponent: PluginService.pluginDaemonComponents[pluginId]
+        }
+    }
+}
+'''
+
+PREVIEW_SHOWCASE_SCRIPT = r'''#!/usr/bin/env bash
+r() { printf '\e[%sm%s\e[0m' "$1" "$2"; }
+printf '\e[1m%s\e[0m · %s\n\n' "$VGS_PREVIEW_NAME" "$VGS_PREVIEW_MODE"
+for i in 0 1 2 3 4 5 6 7; do printf '\e[4%sm   \e[0m' "$i"; done; printf '\n'
+for i in 0 1 2 3 4 5 6 7; do printf '\e[10%sm   \e[0m' "$i"; done; printf '\n\n'
+printf '%s\n' "$(r 32 '❯') git status"
+printf '%s\n' "On branch $(r 36 main)"
+printf '%s\n' "Changes not staged for commit:"
+printf '%s\n' "  $(r 31 'modified:   Services/ThemeService.qml')"
+printf '%s\n' "  $(r 31 'modified:   bin/vshell-helper')"
+printf '\n%s\n' "$(r 32 '❯') make check"
+printf '%s\n' "$(r 32 '✓') lint      $(r 90 '0.41s')"
+printf '%s\n' "$(r 32 '✓') tests     $(r 90 '2.13s')"
+printf '%s\n' "$(r 33 '⚠') coverage  $(r 90 '87%')"
+printf '\n%s ' "$(r 32 '❯')"
+sleep 3600
+'''
+
+# @THEME_LUA@ is substituted with the rendered nvim theme table for the previewed
+# blueprint, so highlights use the same role colors the real VGS nvim target gets.
+# @THEME_COLORSCHEME@/@THEME_RTP@ carry a curated theme's real colorscheme (parsed
+# from apps/neovim.lua) so previews match what the nvim bridge activates.
+PREVIEW_NVIM_INIT = '''local t = dofile("@THEME_LUA@")
+
+vim.opt.termguicolors = true
+vim.opt.number = true
+vim.opt.swapfile = false
+vim.opt.showmode = false
+vim.opt.ruler = false
+vim.opt.laststatus = 3
+vim.opt.cursorline = true
+vim.opt.signcolumn = "no"
+vim.opt.fillchars = { eob = " ", vert = "\\u{2502}" }
+
+local spec_colorscheme = "@THEME_COLORSCHEME@"
+local spec_applied = false
+if spec_colorscheme ~= "" then
+    for dir in string.gmatch("@THEME_RTP@", "[^;]+") do
+        if (vim.uv or vim.loop).fs_stat(dir) then
+            vim.opt.rtp:prepend(dir)
+        end
+    end
+    vim.o.background = "@THEME_MODE@"
+    spec_applied = pcall(vim.cmd.colorscheme, spec_colorscheme)
+end
+
+local function hi(group, opts)
+    -- With a real colorscheme active, only the preview chrome groups (statusline
+    -- mock, fake neo-tree) are ours to define; editor groups stay upstream.
+    if spec_applied and not (group:match("^Stl") or group:match("^Tree")) then
+        return
+    end
+    vim.api.nvim_set_hl(0, group, opts)
+end
+hi("Normal", { fg = t.fg, bg = t.bg })
+hi("NormalNC", { fg = t.fg, bg = t.bg })
+hi("CursorLine", { bg = t.surface_container })
+hi("CursorLineNr", { fg = t.accent, bold = true })
+hi("LineNr", { fg = t.muted })
+hi("EndOfBuffer", { fg = t.bg, bg = t.bg })
+hi("WinSeparator", { fg = t.outline_variant, bg = t.bg })
+hi("Visual", { fg = t.selection_fg, bg = t.selection_bg })
+hi("Comment", { fg = t.muted, italic = true })
+hi("String", { fg = t.green })
+hi("Character", { fg = t.green })
+hi("Number", { fg = t.yellow })
+hi("Float", { fg = t.yellow })
+hi("Boolean", { fg = t.yellow })
+hi("Constant", { fg = t.yellow })
+hi("Identifier", { fg = t.fg })
+hi("Function", { fg = t.blue })
+hi("Statement", { fg = t.magenta })
+hi("Keyword", { fg = t.magenta })
+hi("Conditional", { fg = t.magenta })
+hi("Repeat", { fg = t.magenta })
+hi("Operator", { fg = t.cyan })
+hi("Type", { fg = t.yellow })
+hi("StorageClass", { fg = t.magenta })
+hi("Special", { fg = t.cyan })
+hi("PreProc", { fg = t.magenta })
+hi("Include", { fg = t.magenta })
+hi("Delimiter", { fg = t.fg })
+hi("MatchParen", { fg = t.accent, bold = true })
+hi("Title", { fg = t.blue, bold = true })
+hi("Directory", { fg = t.blue })
+hi("StatusLine", { fg = t.status_fg, bg = t.status_bg })
+hi("StatusLineNC", { fg = t.status_muted, bg = t.status_bg })
+hi("StlMode", { fg = t.on_primary, bg = t.accent, bold = true })
+hi("StlMeta", { fg = t.status_fg, bg = t.surface_container_high })
+hi("StlText", { fg = t.status_muted, bg = t.status_bg })
+hi("TreeNormal", { fg = t.fg, bg = t.surface_container_low })
+hi("TreeTitle", { fg = t.blue, bold = true })
+hi("TreeRoot", { fg = t.fg, bold = true })
+hi("TreeDir", { fg = t.blue })
+hi("TreeFile", { fg = t.fg })
+hi("TreeMuted", { fg = t.muted })
+
+vim.o.statusline = table.concat({
+    "%#StlMode#  NORMAL ",
+    "%#StlMeta# \\u{e0a0} main \\u{00b7} +19 ",
+    "%#StlText# %f %m",
+    "%=",
+    "%#StlText# utf-8 \\u{2502} %{&filetype} \\u{2502} 1%% ",
+    "%#StlMode# %l:%c ",
+})
+
+local tree = {
+    " Neo-tree",
+    "",
+    " \\u{f07b}  ~/dev/vgs",
+    " \\u{203a} \\u{f07b}  .agents",
+    " \\u{203a} \\u{f07b}  .claude",
+    " \\u{203a} \\u{f07b}  bin",
+    " \\u{203a} \\u{f07b}  config",
+    " \\u{203a} \\u{f07b}  docs",
+    " \\u{2304} \\u{f07c}  quickshell",
+    "  \\u{2304} \\u{f07c}  vshell",
+    "   \\u{203a} \\u{f07b}  Common",
+    "   \\u{203a} \\u{f07b}  Modals",
+    "   \\u{203a} \\u{f07b}  Modules",
+    "   \\u{203a} \\u{f07b}  Services",
+    "   \\u{203a} \\u{f07b}  Widgets",
+    "   \\u{203a} \\u{f07b}  assets",
+    "     \\u{f15b}  CODENAME",
+    "     \\u{f15b}  LICENSE",
+    "     \\u{f15b}  README.md",
+    "     \\u{f15b}  VGS.qml",
+    "     \\u{f15b}  VGSIPC.qml",
+    "     \\u{f15b}  shell.qml",
+    " \\u{203a} \\u{f07b}  systemd",
+    " \\u{2304} \\u{f07c}  themes",
+    "  \\u{203a} \\u{f07b}  blueprints",
+    "  \\u{203a} \\u{f07b}  targets",
+}
+
+vim.api.nvim_create_autocmd("VimEnter", {
+    callback = function()
+        vim.cmd("topleft 30vnew")
+        local buf = vim.api.nvim_get_current_buf()
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree)
+        vim.bo[buf].buftype = "nofile"
+        vim.bo[buf].modifiable = false
+        vim.wo.number = false
+        vim.wo.cursorline = false
+        vim.wo.winfixwidth = true
+        vim.wo.winhighlight = "Normal:TreeNormal,EndOfBuffer:TreeNormal"
+        vim.fn.matchadd("TreeTitle", "^ Neo-tree")
+        vim.fn.matchadd("TreeRoot", "dev/vgs")
+        vim.fn.matchadd("TreeMuted", "[\\u{203a}\\u{2304}]")
+        vim.fn.matchadd("TreeDir", "[\\u{f07b}\\u{f07c}].*")
+        vim.fn.matchadd("TreeFile", "\\u{f15b}.*")
+        vim.cmd("wincmd l")
+    end,
+})
+'''
+
+
+def theme_previews_dir() -> Path:
+    return cache_dir() / "theme-previews"
+
+
+def blueprint_safe_name(bp: Dict[str, Any]) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
+
+
+def preview_wallpaper(bp: Dict[str, Any]) -> str:
+    """Wallpaper shown behind the preview: the blueprint's own, else the live one."""
+    wp = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
+    if wp and Path(wp).exists():
+        return wp
+    try:
+        wp = resolve_path(current_theme().get("wallpaper", ""))
+    except Exception:
+        wp = ""
+    return wp if wp and Path(wp).exists() else ""
+
+
+def preview_gtk_theme(mode: str) -> str:
+    gtk_theme = "adw-gtk3" if mode == "light" else "adw-gtk3-dark"
+    if not (Path("/usr/share/themes") / gtk_theme).exists():
+        gtk_theme = "Adwaita" if mode == "light" else "Adwaita-dark"
+    return gtk_theme
+
+
+def preview_file_manager(root: Path) -> List[str] | None:
+    """Command prefix for the preview file manager, most preferred first."""
+    if shutil.which("dolphin"):
+        return ["dolphin", str(root)]
+    if shutil.which("nautilus"):
+        return ["nautilus", "--new-window", str(root)]
+    if shutil.which("thunar"):
+        return ["thunar", str(root)]
+    return None
+
+
+# The preview file manager uses a synthetic home to keep user filenames
+# out of shipped screenshots and keep their contents consistent.
+PREVIEW_SAMPLE_HOME = {
+    "Desktop": [],
+    "Documents": ["notes.md", "invoice.pdf"],
+    "Downloads": ["vshell-0.3.0.tar.zst"],
+    "Music": [],
+    "Pictures": ["wallpaper.jpg"],
+    "Projects": ["palette-kit", "shell"],
+    "Videos": [],
+}
+
+
+def write_preview_home(tmp: Path) -> Path:
+    """Build the synthetic home the preview file manager browses."""
+    root = tmp / "home"
+    for folder, children in PREVIEW_SAMPLE_HOME.items():
+        (root / folder).mkdir(parents=True, exist_ok=True)
+        for child in children:
+            target = root / folder / child
+            if "." in child:
+                target.write_text("")
+            else:
+                target.mkdir(exist_ok=True)
+    (root / ".config").mkdir(exist_ok=True)
+    (root / "README.md").write_text("")
+    return root
+
+
+def render_target_template(target: str, template: str, roles: Dict[str, str]) -> str:
+    return render_template((targets_dir() / target / template).read_text(), roles, f"{target}/{template}")
+
+
+def parse_nvim_spec(spec_path: Path) -> Tuple[str, List[str]]:
+    """Best-effort read of a curated neovim.lua lazy spec: the colorscheme name
+    and candidate plugin runtime dirs under the user's lazy.nvim data dir."""
+    try:
+        text = spec_path.read_text()
+    except OSError:
+        return "", []
+    m = re.search(r'colorscheme\s*=\s*"([^"]+)"', text)
+    colorscheme = m.group(1) if m else ""
+    lazy_root = home() / ".local" / "share" / "nvim" / "lazy"
+    dirs: List[str] = []
+    for repo in re.findall(r'"([\w.-]+/[\w.-]+)"', text):
+        candidates = [repo.split("/", 1)[1]]
+        name_m = re.search(r'"%s"\s*,\s*\n?\s*name\s*=\s*"([^"]+)"' % re.escape(repo), text)
+        if name_m:
+            candidates.insert(0, name_m.group(1))
+        for cand in candidates:
+            path = lazy_root / cand
+            if path.is_dir():
+                dirs.append(str(path))
+                break
+    return colorscheme, dirs
+
+
+def write_preview_tree(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path) -> Dict[str, Any]:
+    """Render the isolated config tree used by the preview session."""
+    mode = (roles.get("theme_type") or "dark").lower()
+    app_roles = render_roles(bp, roles)
+    cfg = tmp / "config"
+    (cfg / "gtk-3.0").mkdir(parents=True)
+    (cfg / "gtk-4.0").mkdir(parents=True)
+    (cfg / "gtk-3.0" / "gtk.css").write_text(render_target_template("gtk3-vgs", "gtk.css", app_roles))
+    (cfg / "gtk-4.0" / "gtk.css").write_text(render_target_template("gtk4-vgs", "gtk.css", app_roles))
+    (cfg / "qt6ct" / "colors").mkdir(parents=True)
+    (cfg / "qt6ct" / "colors" / "vgs.conf").write_text(render_target_template("qt6ct-vgs", "vgs.conf", app_roles))
+    (cfg / "qt6ct" / "qt6ct.conf").write_text(
+        "[Appearance]\ncolor_scheme_path=" + str(cfg / "qt6ct" / "colors" / "vgs.conf") + "\ncustom_palette=true\n"
+    )
+
+    ghostty_conf = tmp / "ghostty.conf"
+    ghostty_conf.write_text(
+        render_target_template("ghostty-vgs", "ghostty.conf", app_roles)
+        + "\nfont-size = 11\nwindow-padding-x = 14\nwindow-padding-y = 10\nconfirm-close-surface = false\ncursor-style-blink = false\n"
+    )
+
+    (tmp / "sample.qml").write_text(PREVIEW_SAMPLE_CODE)
+    theme_lua = tmp / "theme.nvim.lua"
+    theme_lua.write_text(render_target_template("nvim-vgs", "vgs-theme.lua", app_roles))
+    colorscheme, rtp_dirs = "", []
+    nvim_spec = (bp.get("apps") or {}).get("neovim.lua")
+    if nvim_spec:
+        colorscheme, rtp_dirs = parse_nvim_spec(Path(nvim_spec))
+    nvim_init = (PREVIEW_NVIM_INIT
+                 .replace("@THEME_LUA@", str(theme_lua))
+                 .replace("@THEME_COLORSCHEME@", colorscheme if rtp_dirs else "")
+                 .replace("@THEME_RTP@", ";".join(rtp_dirs))
+                 .replace("@THEME_MODE@", mode))
+    (tmp / "nvim-init.lua").write_text(nvim_init)
+    showcase = tmp / "showcase.sh"
+    showcase.write_text(PREVIEW_SHOWCASE_SCRIPT)
+    showcase.chmod(0o755)
+
+    theme_json = tmp / "theme.json"
+    theme_json.write_text(render_target_template("vgs-shell", "vgs-theme.json", roles))
+
+    # App manifest consumed by the in-session capture step, which measures the
+    # real output size and places these windows itself.
+    name = str(bp.get("name") or "theme")
+    ghostty = ["ghostty", "--config-default-files=false", f"--config-file={ghostty_conf}"]
+    common_env = {"VGS_PREVIEW_NAME": name, "VGS_PREVIEW_MODE": mode}
+    apps = [
+        {"class": "vgs.preview.nvim", "slot": "nvim", "env": common_env,
+         "cmd": [*ghostty, "--class=vgs.preview.nvim", "-e", "nvim", "-u", str(tmp / "nvim-init.lua"), str(tmp / "sample.qml")]},
+        {"class": "vgs.preview.term", "slot": "term", "env": common_env,
+         "cmd": [*ghostty, "--class=vgs.preview.term", "-e", "bash", str(showcase)]},
+    ]
+    sample_home = write_preview_home(tmp)
+    fm = preview_file_manager(sample_home)
+    if fm:
+        fm_cmd = list(fm)
+        if shutil.which("dbus-run-session"):
+            fm_cmd = ["dbus-run-session", "--", *fm_cmd]
+        apps.append({
+            "class": "org.gnome.Nautilus" if fm[0] == "nautilus" else fm[0],
+            "slot": "files",
+            "env": {
+                "XDG_CONFIG_HOME": str(cfg),
+                "GTK_THEME": preview_gtk_theme(mode),
+                "QT_QPA_PLATFORMTHEME": "qt6ct",
+                # HOME too, so the sidebar's "Home" and the breadcrumb match the
+                # pane instead of pointing back at the real account.
+                "HOME": str(sample_home),
+                # Drop the udisks volume monitor: without it the sidebar lists
+                # this machine's drives by label, which is both machine-specific
+                # and more of the user's setup than a shipped screenshot should
+                # show. "unix" keeps only mounts the sample home implies.
+                "GIO_USE_VOLUME_MONITOR": "unix",
+            },
+            "cmd": fm_cmd,
+        })
+    (tmp / "apps.json").write_text(json.dumps(apps, indent=2))
+
+    return {"config": cfg, "ghostty": ghostty_conf, "theme_json": theme_json, "gtk_theme": preview_gtk_theme(mode)}
+
+
+def preview_layout(width: int, height: int) -> Dict[str, Tuple[int, int, int, int]]:
+    """Window rects for the preview mosaic, computed from the real output size."""
+    gap = 20
+    bar_h = 50
+    col_x = width // 2 + gap // 2
+    col_w = width - col_x - gap
+    left_w = col_x - gap - gap // 2
+    top_y = bar_h + gap
+    fm_h = (height - top_y - gap) * 52 // 100
+    term_y = top_y + fm_h + gap
+    return {
+        "nvim": (gap, top_y, left_w, height - top_y - gap),
+        "files": (col_x, top_y, col_w, fm_h),
+        "term": (col_x, term_y, col_w, height - term_y - gap),
+    }
+
+
+def preview_canvas() -> Tuple[int, int]:
+    """Return the fixed target size for preview captures.
+    preview_stage adds parent gaps, borders and reserved areas to the staging output."""
+    return PREVIEW_SIZE
+
+
+def _css_box(value: str) -> Tuple[int, int, int, int]:
+    """CSS-shorthand edge values (`10`, `10 20`, `10 20 30`, `10 20 30 40`)."""
+    try:
+        parts = [int(float(v)) for v in value.split()]
+    except ValueError:
+        return (0, 0, 0, 0)
+    if len(parts) == 1:
+        return (parts[0],) * 4  # type: ignore[return-value]
+    if len(parts) == 2:
+        return (parts[0], parts[1], parts[0], parts[1])
+    if len(parts) == 3:
+        return (parts[0], parts[1], parts[2], parts[1])
+    if len(parts) >= 4:
+        return (parts[0], parts[1], parts[2], parts[3])
+    return (0, 0, 0, 0)
+
+
+def preview_stage_chrome() -> Tuple[int, int]:
+    """Pixels the parent compositor spends on gaps and borders around the
+    staged capture window. The nested session never sees them, so the staging
+    output has to be that much larger for the capture to be PREVIEW_SIZE."""
+    def opt(name: str) -> Dict[str, Any]:
+        try:
+            return json.loads(run(["hyprctl", "getoption", name, "-j"]).stdout or "{}")
+        except Exception:
+            return {}
+    border = max(0, int(opt("general:border_size").get("int") or 0))
+    top, right, bottom, left = _css_box(str(opt("general:gaps_out").get("css") or "0"))
+    return left + right + 2 * border, top + bottom + 2 * border
+
+
+def preview_stage_reserved() -> Tuple[int, int]:
+    """Area a shell bar has claimed on the staging output, if it drew one."""
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        try:
+            for m in json.loads(run(["hyprctl", "monitors", "-j"]).stdout or "[]"):
+                if m.get("name") != PREVIEW_OUTPUT:
+                    continue
+                res = m.get("reserved") or [0, 0, 0, 0]
+                if any(res):
+                    return res[0] + res[2], res[1] + res[3]
+        except Exception:
+            break
+        time.sleep(0.3)
+    return 0, 0
+
+
+def preview_hyprland_config(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path, tree: Dict[str, Any], canvas: Tuple[int, int]) -> Path:
+    """Write the nested-session native-Lua Hyprland config."""
+    width, height = canvas
+    accent = roles.get("accent", "#7aa2f7").lstrip("#")
+    outline = roles.get("outline", roles.get("bright_black", "#444444")).lstrip("#")
+    bg = roles.get("background", "#101010").lstrip("#")
+    helper = str(helper_entrypoint())
+    qs_preview = repo_root() / "quickshell" / "vshell-preview" / "shell.qml"
+
+    lines = [
+        "-- Generated transiently by VGS for theme preview capture.",
+        "hl.monitor({",
+        '  output = "",',
+        f'  mode = "{width}x{height}@60",',
+        '  position = "0x0",',
+        "  scale = 1,",
+        "})",
+        "",
+        "hl.config({",
+        "  misc = {",
+        "    disable_hyprland_logo = true,",
+        "    disable_splash_rendering = true,",
+        "    disable_watchdog_warning = true,",
+        f'    background_color = "rgb({bg})",',
+        "  },",
+        "  animations = {",
+        "    enabled = false,",
+        "  },",
+        "  cursor = {",
+        "    inactive_timeout = 1,",
+        "  },",
+        "  decoration = {",
+        "    rounding = 10,",
+        "    blur = {",
+        "      enabled = false,",
+        "    },",
+        "    shadow = {",
+        "      enabled = false,",
+        "    },",
+        "  },",
+        "  general = {",
+        "    gaps_in = 10,",
+        "    gaps_out = 20,",
+        "    border_size = 2,",
+        "    col = {",
+        f'      active_border = "rgb({accent})",',
+        f'      inactive_border = "rgb({outline})",',
+        "    },",
+        "  },",
+        "})",
+        "",
+        'hl.on("hyprland.start", function()',
+    ]
+    layout = preview_layout(width, height)
+    apps = json.loads((tmp / "apps.json").read_text())
+    for app in apps:
+        rect = layout.get(app.get("slot", ""))
+        if not rect:
+            continue
+        x, y, w, h = rect
+        env_prefix = [f"{key}={value}" for key, value in (app.get("env") or {}).items()]
+        command = shlex.join(["env", *env_prefix, *[str(part) for part in app["cmd"]]])
+        lines.extend([
+            f"  hl.exec_cmd({_lua_string(command)}, {{",
+            "    float = true,",
+            "    no_anim = true,",
+            f"    move = {{{x}, {y}}},",
+            f"    size = {{{w}, {h}}},",
+            "  })",
+        ])
+    if shutil.which("qs") and qs_preview.exists():
+        wallpaper = preview_wallpaper(bp)
+        qs_command = shlex.join([
+            "env",
+            f"VGS_PREVIEW_THEME={tree['theme_json']}",
+            f"VGS_PREVIEW_WALLPAPER={wallpaper}",
+            "qs",
+            "-p",
+            str(qs_preview),
+        ])
+        lines.append(f"  hl.exec_cmd({_lua_string(qs_command)})")
+    capture_command = shlex.join([
+        helper,
+        "theme",
+        "preview-capture",
+        "--dir",
+        str(tmp),
+        "--windows",
+        str(len(apps)),
+    ])
+    lines.extend([
+        f"  hl.exec_cmd({_lua_string(capture_command)})",
+        "end)",
+    ])
+    config = tmp / "hyprland.lua"
+    config.write_text("\n".join(lines) + "\n")
+    return config
+
+
+def preview_hyprctl_json(*args: str) -> Any:
+    try:
+        return json.loads(run(["hyprctl", *args, "-j"]).stdout or "[]")
+    except Exception:
+        return []
+
+
+def preview_focus_target(monitors: List[Dict[str, Any]]) -> str | None:
+    try:
+        x, y = (run(["hyprctl", "cursorpos"]).stdout or "").strip().split(",")
+        cx, cy = int(x.strip()), int(y.strip())
+        for m in monitors:
+            if m.get("name") == PREVIEW_OUTPUT:
+                continue
+            scale = m.get("scale") or 1
+            mx, my = m.get("x", 0), m.get("y", 0)
+            if mx <= cx < mx + m.get("width", 0) / scale and my <= cy < my + m.get("height", 0) / scale:
+                return m.get("name")
+    except Exception:
+        pass
+    return next((m.get("name") for m in monitors if m.get("name") != PREVIEW_OUTPUT), None)
+
+
+def preview_dispatch(lua_call: str, legacy: List[str]) -> None:
+    # hl.dsp calls construct dispatches; hl.dispatch executes them.
+    if not _hyprctl_eval_ok(run(["hyprctl", "eval", f"hl.dispatch({lua_call})"])):
+        run(["hyprctl", "dispatch", *legacy])
+
+
+def preview_guard_focus() -> None:
+    """Keep the invisible staging output from holding the user's workspaces or focus.
+
+    Two live compositor behaviors make a one-shot guard insufficient, so this
+    runs on the capture pump cadence, not just at stage time:
+    - Recreating VGSPREVIEW looks like a reconnecting monitor; Hyprland hands it
+      back (asynchronously, after `output create` returns) every workspace whose
+      last monitor was VGSPREVIEW — including real user workspaces from a prior
+      run, teleporting their windows onto the invisible output.
+    - Mapping a nested-capture window switches the *active monitor* to
+      VGSPREVIEW even though `no_focus` keeps the window itself unfocusable, so
+      the user's next keystroke lands on the invisible output.
+    """
+    monitors = preview_hyprctl_json("monitors")
+    if not any(m.get("name") == PREVIEW_OUTPUT for m in monitors):
+        return
+    target = preview_focus_target(monitors)
+    if not target:
+        return
+    preview_ws = {w.get("id"): w for w in preview_hyprctl_json("workspaces") if w.get("monitor") == PREVIEW_OUTPUT}
+    hijacked = {
+        c["workspace"]["id"]
+        for c in preview_hyprctl_json("clients")
+        if c.get("workspace") and c["workspace"].get("id") in preview_ws and c.get("class") != "aquamarine"
+    }
+    for ws_id in hijacked:
+        name = preview_ws[ws_id].get("name") or ""
+        ws_sel = str(ws_id) if ws_id > 0 else json.dumps(name)
+        legacy_sel = str(ws_id) if ws_id > 0 else (name if name.startswith("special:") else f"name:{name}")
+        preview_dispatch(
+            f'hl.dsp.workspace.move({{ workspace = {ws_sel}, monitor = "{target}" }})',
+            ["moveworkspacetomonitor", legacy_sel, target],
+        )
+    if hijacked:
+        monitors = preview_hyprctl_json("monitors")
+    focused = next((m.get("name") for m in monitors if m.get("focused")), None)
+    if focused == PREVIEW_OUTPUT:
+        preview_dispatch(f'hl.dsp.focus({{ monitor = "{target}" }})', ["focusmonitor", target])
+
+
+def png_size(path: Path) -> Tuple[int, int] | None:
+    """Width/height straight out of the PNG IHDR chunk (no PIL dependency)."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(24)
+        if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    except OSError:
+        return None
+
+
+def generate_theme_preview(bp: Dict[str, Any], out_path: Path) -> Dict[str, Any]:
+    """Capture a preview, retrying once if the staging output handed the nested
+    session the wrong geometry — every shipped preview must share one size."""
+    result = {}
+    for attempt in range(2):
+        canvas = preview_canvas()
+        result = capture_theme_preview(bp, out_path, canvas)
+        if not result.get("success"):
+            return result
+        size = png_size(out_path)
+        if size is None or size == canvas:
+            return result
+        eprint(f"preview for {bp.get('name')} captured at {size[0]}x{size[1]}, expected {canvas[0]}x{canvas[1]}"
+               + ("; retrying" if attempt == 0 else ""))
+    return result
+
+
+def capture_theme_preview(bp: Dict[str, Any], out_path: Path, canvas: Tuple[int, int]) -> Dict[str, Any]:
+    missing = [tool for tool in ("Hyprland", "ghostty", "nvim", "grim") if not shutil.which(tool)]
+    if missing:
+        return {"success": False, "error": f"preview requires: {', '.join(missing)}"}
+    tmp = Path(tempfile.mkdtemp(prefix="vgs-preview-"))
+    log_path = tmp / "hyprland.log"
+    try:
+        roles = target_roles(bp)
+        tree = write_preview_tree(bp, roles, tmp)
+        config = preview_hyprland_config(bp, roles, tmp, tree, canvas)
+        env = os.environ.copy()
+        env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        shot = tmp / "shot.png"
+        done = tmp / "done"
+        pump_shot = tmp / "pump.png"
+        with log_path.open("w") as log:
+            proc = subprocess.Popen(["Hyprland", "--config", str(config)], env=env, stdout=log, stderr=log, cwd=tmp)
+            try:
+                deadline = time.time() + 60
+                while time.time() < deadline and proc.poll() is None and not done.exists():
+                    # Capture the headless output to keep nested render callbacks flowing.
+                    run(["grim", "-o", PREVIEW_OUTPUT, str(pump_shot)])
+                    preview_guard_focus()
+                    time.sleep(0.8)
+            finally:
+                # On every exit, a stop signal's included, the nested session goes
+                # before the temp directory holding its config and log is removed.
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+        if not shot.exists():
+            tail = "\n".join(log_path.read_text().splitlines()[-6:]) if log_path.exists() else ""
+            return {"success": False, "error": f"preview session produced no screenshot ({tail or 'no log'})"}
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(shot), out_path)
+        return {"success": True, "preview": str(out_path)}
+    finally:
+        if os.environ.get("VGS_PREVIEW_KEEP"):
+            eprint(f"preview debug artifacts kept at {tmp}")
+        else:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def preview_stage():
+    """Stage a hidden capture surface on the parent compositor.
+
+    Creates a headless output and a runtime window rule that parks nested
+    preview compositors there fullscreen. Yields (staged, reassert); callers
+    should invoke reassert() before each capture so a mid-run config reload
+    (theme apply hook, manual reload) cannot leave capture windows stealing
+    focus on the user's monitors.
+    """
+    staged = False
+
+    def cursor_pos() -> Tuple[int, int] | None:
+        try:
+            x, y = (run(["hyprctl", "cursorpos"]).stdout or "").strip().split(",")
+            return int(x.strip()), int(y.strip())
+        except Exception:
+            return None
+
+    def restore_cursor(pos: Tuple[int, int] | None) -> None:
+        # Output layout changes warp the cursor; put it back where the user had it.
+        if pos:
+            preview_dispatch(f"hl.dsp.cursor.move({{ x = {pos[0]}, y = {pos[1]} }})", ["movecursor", str(pos[0]), str(pos[1])])
+
+    def focused_monitor() -> str | None:
+        return next((m.get("name") for m in preview_hyprctl_json("monitors") if m.get("focused")), None)
+
+    def refusal_text(reply: subprocess.CompletedProcess[str]) -> str:
+        # hyprctl carries a refusal on stdout and a transport failure on stderr.
+        return (reply.stdout or reply.stderr or "").strip() or "no reply"
+
+    def enforce_monitor(name: str | None) -> None:
+        # Output add/remove shifts Hyprland's focused monitor as a side effect
+        # (cursor warp + follow_mouse); put keyboard focus back where it was.
+        if name and name != PREVIEW_OUTPUT and focused_monitor() != name:
+            preview_dispatch(f'hl.dsp.focus({{ monitor = "{name}" }})', ["focusmonitor", name])
+
+    legacy_rule = False
+    lua_rule = False
+
+    def reassert() -> None:
+        if staged and not legacy_rule:
+            run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
+        if staged:
+            # Workspace adoption is asynchronous and can recur after a config reload.
+            # Repair it before captures and during the capture pump.
+            preview_guard_focus()
+
+    # Staging runs inside the try, so a stop signal mid-stage still retires what it
+    # registered and removes an output it created.
+    try:
+        if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            pos = cursor_pos()
+            prev_mon = focused_monitor()
+            run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
+            restore_cursor(pos)
+            pos = cursor_pos()
+            # Rules go in BEFORE the output exists: the workspace rule's `default`
+            # flag decides which workspace the new output activates, and silent
+            # window placement only keeps the nested session rendering (and thus
+            # alive) when its target workspace is the staging output's active one.
+            hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
+            rules_ok = lua_rule = _hyprctl_eval_ok(hook)
+            if not rules_ok:
+                # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
+                # needs a config reload to clear it.
+                rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_TILE])
+                rules_ok = legacy_rule = _hyprctl_eval_ok(rule)
+                if not rules_ok:
+                    # The caller's own diagnostic tells the operator to run from the
+                    # Hyprland session, which is where they already are. Name the
+                    # compositor's refusal of each spelling instead.
+                    for spelling, reply in (("eval", hook), ("keyword", rule)):
+                        eprint(f"preview staging rule refused (hyprctl {spelling} exit {reply.returncode}): {refusal_text(reply)}")
+            create_ok = False
+            if rules_ok:
+                create = run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT])
+                create_ok = _hyprctl_eval_ok(create)
+                if not create_ok:
+                    # Same reason as the rule refusal above: without the compositor's own
+                    # reply the operator is told to move to the session they are in.
+                    eprint(f"preview staging output refused (hyprctl output create exit {create.returncode}): {refusal_text(create)}")
+            if create_ok:
+                staged = True
+                # The output inherits the user's default scale; force scale 1 so the
+                # nested session sees the full logical resolution.
+                def set_mode(w: int, h: int) -> None:
+                    mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
+                    if not _hyprctl_eval_ok(mode):
+                        run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
+
+                # Grow the output by whatever the parent spends on window chrome so
+                # the staged capture window is exactly PREVIEW_SIZE. Gaps, borders
+                # and a bar's exclusive zone are all user config, and previews are
+                # committed to the repo — they cannot vary with them.
+                width, height = PREVIEW_SIZE
+                chrome_w, chrome_h = preview_stage_chrome()
+                set_mode(width + chrome_w, height + chrome_h)
+                res_w, res_h = preview_stage_reserved()
+                if res_w or res_h:
+                    set_mode(width + chrome_w + res_w, height + chrome_h + res_h)
+                preview_guard_focus()
+                restore_cursor(pos)
+                enforce_monitor(prev_mon)
+
+        yield staged, reassert
+    finally:
+        # Whether or not the output came up: the rule alone parks nested windows unseen.
+        if lua_rule:
+            retired = run(["hyprctl", "eval", PREVIEW_STAGE_OFF_LUA])
+            if not _hyprctl_eval_ok(retired):
+                eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {refusal_text(retired)}")
+        if legacy_rule:
+            run(["hyprctl", "reload"])
+        if staged:
+            pos = cursor_pos()
+            # Honor where the user is focused NOW (not at stage time); if the
+            # invisible output somehow holds focus, fall back to the monitor
+            # under the cursor.
+            end_mon = focused_monitor()
+            if end_mon == PREVIEW_OUTPUT:
+                end_mon = preview_focus_target(preview_hyprctl_json("monitors"))
+            run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
+            restore_cursor(pos)
+            enforce_monitor(end_mon)
+
+
+def _exit_on_sigterm(signum: int, _frame: Any) -> None:
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def preview_lock():
+    ensure_dirs()
+    theme_previews_dir().mkdir(parents=True, exist_ok=True)
+    lock_path = theme_previews_dir() / ".lock"
+    with lock_path.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def cmd_theme_preview_capture(args: argparse.Namespace) -> int:
+    """Runs inside the nested preview compositor: wait for windows, capture, exit."""
+    tmp = Path(args.dir)
+    deadline = time.time() + args.wait
+    while time.time() < deadline:
+        try:
+            clients = json.loads(run(["hyprctl", "clients", "-j"]).stdout or "[]")
+            if len([c for c in clients if c.get("mapped")]) >= args.windows:
+                break
+        except Exception:
+            pass
+        time.sleep(0.25)
+    preview_dispatch("hl.dsp.cursor.move({ x = 5000, y = 5000 })", ["movecursor", "5000", "5000"])
+    time.sleep(args.settle)
+    (tmp / "clients.json").write_text(run(["hyprctl", "clients", "-j"]).stdout or "[]")
+    (tmp / "monitors.json").write_text(run(["hyprctl", "monitors", "-j"]).stdout or "[]")
+    shot = tmp / "shot.png"
+    for _ in range(3):
+        try:
+            result = run(["grim", str(shot)], timeout=10)
+        except subprocess.TimeoutExpired:
+            continue
+        if result.returncode == 0 and shot.exists() and shot.stat().st_size > 0:
+            break
+        eprint(f"grim attempt failed: {result.stderr}")
+        time.sleep(1.0)
+    (tmp / "done").touch()
+    preview_dispatch("hl.dsp.exit()", ["exit"])
+    return 0
+
+
+def default_theme_blueprint() -> Dict[str, Any]:
+    return find_theme(DEFAULT_THEME_NAME) or {"name": DEFAULT_THEME_NAME, "palette": {"colors": DEFAULT_COLORS, "mode": "dark", "extendedColors": {}}}
+
+
+def resolved_shell_theme(theme: Dict[str, Any]) -> Dict[str, Any]:
+    """`~/.config/vshell/theme.json` with its wallpaper reference resolved.
+
+    The shell's target template renders `{wallpaper.ref}`, so the file holds a
+    `portable_ref` and never an absolute path into the directory the applying shell
+    ran from. Every reader of that file's wallpaper passes through here, so what a
+    caller sees is the path on this machine now, a file an earlier version wrote
+    absolutely included. `current_theme_name` reads the name alone and does not.
+    """
+    if not theme.get("wallpaper"):
+        return theme
+    return {**theme, "wallpaper": resolved_wallpaper(str(theme["wallpaper"]))}
+
+
+def repair_theme_state() -> List[str]:
+    """Rewrite this helper's own durable files whose wallpaper this installation can
+    repair, and report which ones moved.
+
+    `current_theme` and `applied_blueprint` repair what they return, but a reader that
+    opens the file itself sees the bytes: `MethodTheme`'s watcher is such a reader, and
+    without this a session that pinned a removed checkout keeps naming it forever.
+    `theme init` runs this, and the shell runs `theme init` on every start.
+
+    A file whose wallpaper `recovered_package_ref` declines is left alone, so this
+    writes nothing on the ordinary start where every path already resolves.
+    """
+    moved: List[str] = []
+    for path, read_key in ((cfg_dir() / "theme.json", None), (cfg_dir() / "theme-current.json", "palette")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        holder = data.get(read_key) if read_key else data
+        if not isinstance(holder, dict):
+            continue
+        recorded = str(holder.get("wallpaper") or "")
+        repaired = portable_ref(resolved_wallpaper(recorded))
+        if not recorded or repaired == recorded:
+            continue
+        holder["wallpaper"] = repaired
+        try:
+            write_file(path, json.dumps(data, indent=2) + "\n")
+        except OSError as exc:
+            eprint(f"{path.name}: {exc}")
+            continue
+        moved.append(path.name)
+    return moved
+
+
+def current_theme() -> Dict[str, Any]:
+    """The applied theme's shell state, read-only.
+
+    With no theme.json yet this answers with the shell state an apply of the default
+    theme would write, and writes nothing. Applying that theme is `theme init`, an
+    explicit step: its hooks write session-wide settings that a process on a throwaway
+    HOME still reaches.
+    """
+    theme_file = cfg_dir() / "theme.json"
+    if theme_file.exists():
+        return resolved_shell_theme(json.loads(theme_file.read_text()))
+    return resolved_shell_theme(json.loads(
+        render_target_template("vgs-shell", "vgs-theme.json", target_roles(default_theme_blueprint()))))
+
+
+def blueprint_from_theme_json(theme: Dict[str, Any], name: str | None = None, mode: str | None = None, wallpaper: str | None = None) -> Dict[str, Any]:
+    colors_obj = theme.get("colors", {})
+    data = {
+        "background": colors_obj.get("background", DEFAULT_COLORS[0]),
+        "foreground": colors_obj.get("foreground", DEFAULT_COLORS[7]),
+        "accent": colors_obj.get("accent", DEFAULT_COLORS[4]),
+        "cursor": colors_obj.get("cursor", colors_obj.get("accent", DEFAULT_COLORS[4])),
+        "selection_background": colors_obj.get("selectionBackground", colors_obj.get("accent", DEFAULT_COLORS[4])),
+        "selection_foreground": colors_obj.get("selectionForeground", DEFAULT_COLORS[15]),
+        "mode": mode or theme.get("mode", "dark"),
+    }
+    for i, ansi in enumerate(ANSI_NAMES):
+        data[f"color{i}"] = colors_obj.get(CAMEL.get(ansi, ansi), colors_obj.get(ansi, DEFAULT_COLORS[i]))
+    source = str(theme.get("source") or "generated")
+    if mode and mode != theme.get("mode"):
+        # This mode transform approximates colors without extracting a wallpaper palette.
+        source = "generated"
+        bg = data["background"]
+        fg = data["foreground"]
+        data["background"], data["foreground"] = (lighten(fg, 0.10), darken(bg, 0.20)) if mode == "light" else (darken(fg, 0.78), lighten(bg, 0.55))
+        data["color0"] = data["background"]
+        data["color7"] = blend(data["foreground"], data["background"], 0.25)
+        data["color8"] = lighten(data["background"], 0.25) if mode == "dark" else darken(data["background"], 0.15)
+        data["color15"] = data["foreground"]
+    return palette_from_colors_map(data, name=name or theme.get("name", "vgs-theme"), wallpaper=wallpaper if wallpaper is not None else theme.get("wallpaper", ""), source=source)
+
+
+def theme_json_from_blueprint(bp: Dict[str, Any]) -> Dict[str, Any]:
+    roles = target_roles(bp)
+    colors = {"background": roles["background"], "foreground": roles["foreground"], "accent": roles["accent"], "cursor": roles["cursor"], "selectionForeground": roles["selection_foreground"], "selectionBackground": roles["selection_background"]}
+    for ansi in ANSI_NAMES:
+        colors[CAMEL.get(ansi, ansi)] = roles[ansi]
+    return {"name": bp.get("name", "vgs-theme"), "source": blueprint_source(bp), "mode": roles.get("theme_type", "dark"), "wallpaper": roles.get("wallpaper", ""), "colors": colors}
+
+
+def blueprint_mode_variant(base: Dict[str, Any], mode: str, wallpaper: str) -> Dict[str, Any]:
+    return blueprint_from_theme_json(theme_json_from_blueprint(base), name=base.get("name", "vgs-theme"), mode=mode, wallpaper=wallpaper)
+
+
+def blueprint_from_current_theme(name: str | None = None, mode: str | None = None) -> Dict[str, Any]:
+    cur = current_theme()
+    return with_current_terminal_slots(blueprint_from_theme_json(
+        cur, name=name or cur.get("name", "vgs-theme"), mode=mode, wallpaper=cur.get("wallpaper", "")))
+
+
+def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Give a blueprint rebuilt from the applied theme's colours that theme's
+    terminal slots and declared UI roles, its package's `contrastShortfalls`, and
+    its package's per-app overrides through `with_current_app_overrides`. The
+    shortfall list comes from the package alone, since only a package's
+    theme.json declares one.
+
+    Neither the shell's theme.json nor the palette inside theme-current.json
+    holds them, so every rebuild from the current theme passes through here. A
+    rebuild into the other mode takes none, since the slots were chosen against
+    the applied background.
+
+    The applied blueprint answers first: a theme applied under a name with no
+    saved package, as `apply-colors --name` without `--save` leaves behind, holds
+    its slots there and nowhere else. The saved package under the shell state's
+    name answers whenever the applied blueprint carries no slots for the rebuilt
+    mode. Because the applied blueprint wins, a package whose
+    terminal-colors.toml is edited on disk reaches a rebuild only after the theme
+    is applied again. Mutate and return bp.
+    """
+    slots: Dict[str, str] = {}
+    declared: Dict[str, str] = {}
+    applied = applied_blueprint()
+    if applied and blueprint_mode(applied) == blueprint_mode(bp):
+        slots = dict(applied.get("terminalColors") or {})
+        declared = dict(applied.get("uiRoles") or {})
+    package = applied_theme_package()
+    if package and blueprint_mode(package) != blueprint_mode(bp):
+        package = None
+    if package:
+        slots = slots or dict(package.get("terminalColors") or {})
+        declared = declared or dict(package.get("uiRoles") or {})
+    bp["terminalColors"] = slots
+    bp["contrastShortfalls"] = list((package or {}).get("contrastShortfalls") or [])
+    # Declared roles answer from the same two sources under the same mode rule.
+    # Without the carry a wallpaper change or a saved colour edit rebuilt the
+    # theme without them and the save then deleted the package's own file. The
+    # carry still goes through the one owner, because `apply-colors --save`
+    # rebuilds a generated blueprint and would otherwise carry declarations its
+    # own render ignores.
+    bp["uiRoles"] = declared_ui_roles(dict(bp, uiRoles=declared))
+    return with_current_app_overrides(bp, package)
+
+
+def with_current_app_overrides(bp: Dict[str, Any], package: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Carry `package`'s per-app overrides on bp for `save_theme_package`.
+
+    `package` is the applied package in bp's mode, or None, which carries
+    nothing and leaves the save to its next source. The overrides come from the
+    package alone, since an unsaved theme has none to carry. Mutate and return bp.
+    """
+    if package:
+        bp[CURRENT_APP_OVERRIDES_KEY] = bp_app_overrides(package)
+    return bp
+
+
+def applied_theme_package() -> Dict[str, Any] | None:
+    """The saved package whose name is exactly the shell state's theme name, or None.
+
+    Found by name, not through `current_theme_obj`, whose fallback rebuilds from
+    the current theme and so carries no package. Exact, because a theme applied
+    under an unsaved name that is part of another package's name would otherwise
+    take that package's slots and overrides.
+    """
+    applied_name = str(current_theme().get("name") or "")
+    package = find_theme_exact(applied_name) if applied_name else None
+    return package if package and package.get("package") else None
+
+
+def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Restore current-package sources to a matching palette-only blueprint.
+    Wallpaper changes must retain curated app files and package identity;
+    otherwise apply falls back to generated app themes. Mutate and return bp.
+    Leave non-matching names and non-package themes unchanged.
+
+    The curated files come from the package on disk, resolved through
+    `applied_theme_package`, which `with_current_terminal_slots` reads too so both
+    halves of a rebuild name one package. The palette is the rebuild's own, out of
+    the shell's `theme.json`. The two part on every reach `applied_palette_parted`
+    names, and a merge-style curated file from a parted palette was picked against
+    colours this blueprint does not hold, so the apply would paint its bands over
+    colours nobody chose them for.
+
+    Under the package's own mode such a file is left out of `apps` and named in
+    `WITHHELD_CURATED_KEY` for the apply to report; in the other mode it is carried
+    and the apply paints it and reports nothing, deliberately, because a rebuild
+    into the other mode is a transform of the package's palette rather than a
+    different revision of it and the counterpart mode's curated file is the file
+    that render wants. `theme mode --transform` is the shipped route there and
+    `transformed_mode_blueprint` owns it. This answers for the apply alone either
+    way: what becomes of the file on disk and of the record beside it is the rule
+    `materialize_theme_package` owns, which asks nothing of the mode or the route.
+
+    Only merge-style files. A replacing curated file is the whole output with no
+    palette-derived value under it to disagree with, and for a pointer-style target
+    such as icons there is no template behind it, so withholding one would leave
+    the apply nothing to write. The package identity keys carry either way: which
+    package this is has not changed, only which palette.
+    """
+    if str(current_theme().get("name") or "") != str(bp.get("name") or ""):
+        return bp
+    cur = applied_theme_package()
+    if cur is None:
+        return bp
+    apps = cur.get("apps") or {}
+    if apps and blueprint_mode(cur) == blueprint_mode(bp) and applied_palette_parted(bp, cur):
+        withheld = sorted(set(apps) & CLAUDE_CURATED_FILES)
+        if withheld:
+            bp[WITHHELD_CURATED_KEY] = withheld
+            apps = {name: path for name, path in apps.items() if name not in withheld}
+    if apps:
+        bp["apps"] = apps
+    for key in ("package", "path", "builtin", "userDir"):
+        if cur.get(key) is not None and key not in bp:
+            bp[key] = cur[key]
+    return bp
+
+
+def current_theme_color_data(mode: str | None = None, wallpaper: str | None = None) -> Dict[str, str]:
+    current_bp_path = cfg_dir() / "theme-current.json"
+    if current_bp_path.exists():
+        try:
+            bp = json.loads(current_bp_path.read_text())
+            pal = bp.get("palette", {})
+            colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
+            while len(colors) < 16:
+                colors.append(DEFAULT_COLORS[len(colors)])
+            ext = pal.get("extendedColors") or {}
+            data: Dict[str, str] = {
+                "background": clean_hex(ext.get("background") or colors[0], colors[0]),
+                "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+                "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+                "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+                "selection_background": clean_hex(ext.get("selection_background") or ext.get("selectionBackground") or colors[4], colors[4]),
+                "selection_foreground": clean_hex(ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15], colors[15]),
+                "mode": mode or (pal.get("mode") or ("light" if pal.get("lightMode") else "dark") or "dark"),
+            }
+            if wallpaper is not None:
+                data["wallpaper"] = wallpaper
+            for i, ansi in enumerate(ANSI_NAMES):
+                data[f"color{i}"] = colors[i]
+                data[ansi] = colors[i]
+            return data
+        except Exception as exc:
+            eprint(f"theme-current fallback failed: {exc}")
+
+    cur = current_theme()
+    colors_obj = cur.get("colors", {})
+    data: Dict[str, str] = {
+        "background": colors_obj.get("background", DEFAULT_COLORS[0]),
+        "foreground": colors_obj.get("foreground", DEFAULT_COLORS[7]),
+        "accent": colors_obj.get("accent", DEFAULT_COLORS[4]),
+        "cursor": colors_obj.get("cursor", colors_obj.get("accent", DEFAULT_COLORS[4])),
+        "selection_background": colors_obj.get("selectionBackground", colors_obj.get("accent", DEFAULT_COLORS[4])),
+        "selection_foreground": colors_obj.get("selectionForeground", DEFAULT_COLORS[15]),
+        "mode": mode or cur.get("mode", "dark"),
+    }
+    if wallpaper is not None:
+        data["wallpaper"] = wallpaper
+    for i, ansi in enumerate(ANSI_NAMES):
+        data[f"color{i}"] = colors_obj.get(CAMEL.get(ansi, ansi), colors_obj.get(ansi, DEFAULT_COLORS[i]))
+    return data
+
+
+def parse_color_edits(edits: List[str]) -> Dict[str, str]:
+    """Parse `role=hex` edits into a normalized base-color map (colorN + ANSI in sync)."""
+    valid_keys = {"background", "foreground", "accent", "cursor", "selection_background", "selection_foreground", *ANSI_NAMES, *{f"color{i}" for i in range(16)}}
+    out: Dict[str, str] = {}
+    for raw in edits:
+        if "=" not in raw:
+            raise ValueError(f"invalid color edit: {raw}")
+        key, value = raw.split("=", 1)
+        key = key.strip().replace("-", "_")
+        if key in CAMEL.values():
+            reverse = {v: k for k, v in CAMEL.items()}
+            key = reverse[key]
+        key = key.lower()
+        # The refusal names the spelling the edit used, not the slot the table
+        # resolved it to, which the caller never typed.
+        spelled, key = key, COLOR_KEY_ALIASES.get(key, key)
+        if key not in valid_keys:
+            raise ValueError(f"unsupported color role: {spelled}")
+        parsed = parse_hex_strict(value, key)
+        out[key] = parsed
+        if key in ANSI_NAMES:
+            out[f"color{ANSI_NAMES.index(key)}"] = parsed
+        elif key.startswith("color") and key[5:].isdigit():
+            idx = int(key[5:])
+            if 0 <= idx < len(ANSI_NAMES):
+                out[ANSI_NAMES[idx]] = parsed
+    return out
+
+
+def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
+    """Merge edits over a theme's base palette, write the overlay colors.toml
+    (source preserved, no contrast rewrite), then re-apply.
+
+    The written colours are the package's raw colours as they load with the edit
+    over them, so over a built-in theme `write_user_layer` keeps the keys the
+    user has set, this edit's and the ones the overlay already held."""
+    target = None
+    if name and name != "manual-theme":
+        target = find_theme(name)
+    if target is None:
+        target = find_theme(str(current_theme().get("name") or ""))
+    if not target or not target.get("package"):
+        raise ValueError(f"not a theme package: {name or current_theme().get('name', '(current)')}; save it first")
+    edit_map = parse_color_edits(edits)
+    pkg_dir_name = Path(str(target.get("path"))).name
+    overlay = user_themes_dir() / pkg_dir_name / "colors.toml"
+    values = {**package_colors_map(pkg_dir_name),
+              **{key: value for key, value in edit_map.items() if key in BASE_COLOR_KEYS}}
+    write_user_layer(pkg_dir_name, "colors.toml", values)
+    refreshed = load_theme_package(pkg_dir_name) or target
+    result = apply_theme_obj(refreshed)
+    result["persisted"] = str(overlay)
+    result["name"] = refreshed.get("name")
+    return result
+
+
+def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wallpaper: str | None = None, save: bool = False) -> Dict[str, Any]:
+    data = current_theme_color_data(mode=mode, wallpaper=wallpaper)
+    data.update(parse_color_edits(edits))
+    bp = with_current_terminal_slots(palette_from_colors_map(
+        data, name=name or current_theme().get("name", "manual"),
+        wallpaper=wallpaper if wallpaper is not None else current_theme().get("wallpaper", "")))
+    result = apply_theme_obj(bp)
+    result["saved"] = ""
+    if save:
+        result["saved"] = str(save_theme_package(bp, name))
+    return result
+
+
+def theme_role_universe(bp: Dict[str, Any]) -> Dict[str, str]:
+    """Hex-valued derived roles for a theme — the app-override role namespace."""
+    roles = render_roles(bp, app_target_roles(bp, target_roles(bp)))
+    return {k: v for k, v in roles.items() if isinstance(v, str) and HEX_RE.match(str(v).strip())}
+
+
+def app_template_roles(app: str, bp: Dict[str, Any], effective_roles: Dict[str, str]) -> List[str]:
+    """Ordered, unique role tokens the app's rendered targets consume for this theme."""
+    curated_apps = bp.get("apps") or {}
+    skip = {"name", "source", "theme_type", "wallpaper"}
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        if str(cfg.get("app") or "") != app or not cfg.get("template"):
+            continue
+        curated_name = str(cfg.get("curatedFile") or "")
+        additional = cfg.get("curatedMode") == "additional"
+        if curated_name and curated_name in curated_apps and not additional:
+            continue  # curated file wins verbatim; nothing generated to override
+        template = (cfg_path.parent / cfg["template"]).read_text()
+        for match in TEMPLATE_RE.finditer(template):
+            token = match.group(1)
+            # A both-mode target writes `dark_<role>`/`light_<role>`; the editor
+            # offers the plain role, and an override on it reaches both variants.
+            for mode in THEME_MODES:
+                if token.startswith(f"{mode}_") and token[len(mode) + 1:] in effective_roles:
+                    token = token[len(mode) + 1:]
+                    break
+            if token in seen or token in skip:
+                continue
+            value = effective_roles.get(token)
+            if isinstance(value, str) and HEX_RE.match(str(value).strip()):
+                seen.add(token)
+                ordered.append(token)
+    return ordered
+
+
+def app_curated_file(app: str, bp: Dict[str, Any]) -> str:
+    """The curated file name this app installs for the current theme, or ""."""
+    apps = bp.get("apps") or {}
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        if str(cfg.get("app") or "") == app and str(cfg.get("curatedFile") or "") in apps:
+            return str(cfg.get("curatedFile"))
+    return ""
+
+
+def curated_app_colors(app: str, bp: Dict[str, Any], curated_name: str | None = None) -> List[Dict[str, Any]]:
+    """Deduped unique #rrggbb colors in the app's curated file, each with the
+    keys that reference it. Powers curated-app palette editing (recolor-all)."""
+    apps = bp.get("apps") or {}
+    if curated_name is None:
+        curated_name = app_curated_file(app, bp)
+    if not curated_name or curated_name not in apps:
+        return []
+    try:
+        text = Path(apps[curated_name]).read_text(errors="ignore")
+    except OSError:
+        return []
+    by_hex: Dict[str, List[str]] = {}
+    order: List[str] = []
+    for line in text.splitlines():
+        label = ""
+        lm = re.search(r'([A-Za-z0-9_.\[\]-]+)\s*[=:]', line)
+        if lm:
+            label = lm.group(1)
+            b = re.search(r'\[([^\]]+)\]', label)
+            if b:
+                label = b.group(1)
+        for m in re.finditer(r'#[0-9a-fA-F]{6}\b', line):
+            hexv = m.group(0).lower()
+            if hexv not in by_hex:
+                by_hex[hexv] = []
+                order.append(hexv)
+            if label and label not in by_hex[hexv]:
+                by_hex[hexv].append(label)
+    return [{"value": h, "keys": by_hex[h]} for h in order]
+
+
+def app_role_view(app: str, bp: Dict[str, Any]) -> Dict[str, Any]:
+    """{roles:[{role,value,overridden}], curated:bool, curatedColors:[...]} —
+    editable roles for template apps, or the file's colors for curated apps."""
+    effective = theme_role_universe(bp)
+    overrides = bp_app_overrides(bp).get(app, {})
+    roles: List[Dict[str, Any]] = []
+    for role in app_template_roles(app, bp, effective):
+        slot = TERMINAL_SLOT_INDEX.get(role)
+        keys = terminal_slot_override_keys(slot) if slot is not None else (role,)
+        saved = [key for key in keys if overrides.get(key)]
+        roles.append({
+            "role": role,
+            "value": overrides[saved[0]] if saved else effective.get(role, ""),
+            "overridden": bool(saved),
+        })
+    curated = not roles
+    curated_name = app_curated_file(app, bp) if curated else ""
+    return {
+        "roles": roles,
+        "curated": curated,
+        "curatedColors": curated_app_colors(app, bp, curated_name) if curated else [],
+        "curatedFile": curated_name,
+    }
+
+
+def set_theme_adjustments(pkg_dir_name: str, adj: Dict[str, int]) -> Dict[str, int]:
+    """Store restyle adjustments in the overlay theme.json (omit when all zero).
+
+    `write_user_layer` drops the overlay theme.json when clearing leaves no key
+    differing from the built-in file and no record a user `apps/` file needs, so
+    the theme reads unmodified again.
+    """
+    adj = normalize_adjustments(adj)
+    meta = read_theme_overlay_meta(pkg_dir_name)
+    if adjustments_all_zero(adj):
+        meta.pop("adjustments", None)
+    else:
+        meta["adjustments"] = adj
+    write_user_layer(pkg_dir_name, "theme.json", meta)
+    return adj
+
+
+def load_deps() -> Dict[str, Any]:
+    try:
+        return json.loads(deps_file().read_text())
+    except Exception:
+        return {"version": 1, "features": {}}
+
+
+def command_exists(name: str) -> bool:
+    if not name:
+        return False
+    if "/" in name:
+        return Path(resolve_path(name)).exists()
+    if shutil.which(name):
+        return True
+    local = home() / ".local" / "bin" / name
+    return local.exists() and os.access(local, os.X_OK)
+
+
+def _wayland_socket_owner() -> str:
+    """Return the compositor owning this process's active Wayland socket."""
+    socket_path = os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
+    if not os.path.isabs(socket_path):
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        socket_path = os.path.join(runtime_dir, socket_path)
+    try:
+        inode = ""
+        for line in Path("/proc/net/unix").read_text(errors="replace").splitlines():
+            fields = line.split()
+            if len(fields) >= 8 and fields[-1] == socket_path:
+                inode = fields[6]
+                break
+        if not inode:
+            return ""
+        target = f"socket:[{inode}]"
+        for process in Path("/proc").glob("[0-9]*"):
+            for fd in (process / "fd").glob("*"):
+                try:
+                    if os.readlink(fd) != target:
+                        continue
+                    name = (process / "comm").read_text().strip().lower()
+                    if name in {"hyprland", "niri"}:
+                        return name
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return ""
+
+
+def detect_compositor() -> Dict[str, str]:
+    owner = _wayland_socket_owner()
+    if owner:
+        return {"compositor": owner, "source": "wayland-socket-owner"}
+    if os.environ.get("NIRI_SOCKET") and command_exists("niri"):
+        try:
+            if run(["niri", "msg", "version"], timeout=2).returncode == 0:
+                return {"compositor": "niri", "source": "live-niri-ipc"}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and command_exists("hyprctl"):
+        try:
+            if run(["hyprctl", "-j", "version"], timeout=2).returncode == 0:
+                return {"compositor": "hyprland", "source": "live-hyprland-ipc"}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {"compositor": "unknown", "source": "none"}
+
+
+# Probe required command capabilities directly. Version output alone does not
+# show whether a required operation works. See docs/decisions/D005-dependency-version-constraints.md.
+CAPABILITY_PROBES: Dict[str, Dict[str, Any]] = {
+    "jq": {
+        # VGS jq programs require regex builtins, including gsub with flags.
+        "argv": ["jq", "-ne", '("a" | test("a")) and (("ab" | gsub("b"; "c"; "i")) == "ac")'],
+        "requirement": "needs regex builtins (jq >= 1.5)",
+    },
+}
+
+# Probing shells out, and a command can appear in several feature groups, so the
+# verdict is computed once per process.
+_CAPABILITY_PROBE_CACHE: Dict[str, bool] = {}
+
+
+def capability_probe_ok(command: str) -> bool:
+    """Return whether the capability probe succeeds.
+    Execution errors and timeouts are treated as satisfied; only a probe
+    that completes with a non-zero exit rejects the command."""
+    probe = CAPABILITY_PROBES.get(command)
+    if not probe:
+        return True
+    if command in _CAPABILITY_PROBE_CACHE:
+        return _CAPABILITY_PROBE_CACHE[command]
+    try:
+        completed = subprocess.run(
+            probe["argv"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        ok = completed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = True
+    _CAPABILITY_PROBE_CACHE[command] = ok
+    return ok
+
+
+def _unusable_commands(commands: Iterable[str]) -> List[str]:
+    """Present-but-unusable entries, phrased for the same list as `missing`.
+
+    `missing` is joined into user-facing text, and "installed but unusable" is
+    not the same problem as "not installed" — installing the package again does
+    not fix it. The entry says which, so the message cannot be acted on wrongly.
+    """
+    unusable = []
+    for command in commands:
+        if command not in CAPABILITY_PROBES:
+            continue
+        if not command_exists(command):
+            continue  # already reported as missing; do not say it twice
+        if capability_probe_ok(command):
+            continue
+        unusable.append(f"{command} (installed but unusable: {CAPABILITY_PROBES[command]['requirement']})")
+    return unusable
+
+
+def feature_status() -> Dict[str, Any]:
+    data = load_deps()
+    compositor = detect_compositor()["compositor"]
+    features: Dict[str, Any] = {}
+    for feature, spec in (data.get("features") or {}).items():
+        commands = list(spec.get("commands") or [])
+        compositor_commands = {
+            str(name): list(values or [])
+            for name, values in (spec.get("compositorCommands") or {}).items()
+        }
+        selected_compositor = compositor if compositor in compositor_commands else ""
+        if selected_compositor:
+            commands.extend(compositor_commands[selected_compositor])
+        missing = [cmd for cmd in commands if not command_exists(cmd)]
+        # Include failed capability probes in the missing list so existing consumers
+        # can report commands that are installed but unusable.
+        unusable = _unusable_commands(commands)
+        missing.extend(unusable)
+        alternatives = [list(group) for group in (spec.get("anyCommands") or [])]
+        missing_alternatives = [
+            group for group in alternatives
+            if not any(command_exists(command) for command in group)
+        ]
+        missing.extend("|".join(group) for group in missing_alternatives)
+        if compositor_commands and not selected_compositor:
+            branch_missing = {
+                name: [command for command in branch if not command_exists(command)]
+                for name, branch in compositor_commands.items()
+            }
+            if not any(len(values) == 0 for values in branch_missing.values()):
+                missing.append("|".join(
+                    f"{name}:{','.join(values)}" for name, values in branch_missing.items()
+                ))
+        features[feature] = {
+            "available": len(missing) == 0,
+            "required": bool(spec.get("required", False)),
+            "commands": commands,
+            "anyCommands": alternatives,
+            "compositorCommands": compositor_commands,
+            "compositor": selected_compositor or compositor,
+            "missing": missing,
+            # Also broken out, so a machine consumer can tell "reinstall this"
+            # from "upgrade this" without parsing the sentence.
+            "unusable": unusable,
+            "requiresFeatures": list(spec.get("requiresFeatures") or []),
+        }
+    # Feature-to-feature requirements, resolved once every group is known. This
+    # is what lets one group own a command list (`terminal`) while the groups
+    # that need it still report unavailable, instead of restating the list.
+    for feature, entry in features.items():
+        for required in entry["requiresFeatures"]:
+            dependency = features.get(required)
+            if dependency and not dependency["available"]:
+                entry["missing"].append(f"@{required}")
+                entry["available"] = False
+    return {"version": data.get("version", 1), "compositor": compositor, "features": features}
+
+
+QS_BINARIES = ("qs", "quickshell")
+# Sorts after every real ISO launch time, so an entry whose launch time the
+# registry did not report lists last.
+QS_UNKNOWN_LAUNCH_TIME = "~"
+
+
+def _proc_root() -> Path:
+    return Path(os.environ.get("VSHELL_PROC_ROOT", "/proc"))
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    return (_proc_root() / str(pid)).exists()
+
+
+def _proc_stat_fields(pid: int) -> List[str]:
+    """/proc/<pid>/stat from field 3 onward, or [] when unreadable.
+
+    comm (field 2) is parenthesised and may contain spaces, so everything after
+    the final ')' is parsed positionally: index 0 is field 3 (state).
+    """
+    if pid <= 0:
+        return []
+    try:
+        data = (_proc_root() / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return data.rpartition(")")[2].split()
+
+
+def _vgs_peer_alive(pid: int) -> bool:
+    """True when ``pid`` is a live Quickshell process *right now*.
+
+    A registry entry only records the pid a shell had. After a hard kill the
+    entry can outlive the process and the number can be reused by something
+    unrelated, and a zombie keeps a readable /proc entry while owning no
+    surfaces. Either would list a shell that is not running, so an entry is
+    confirmed against the process actually running under that pid.
+    """
+    fields = _proc_stat_fields(pid)
+    if not fields:
+        return False
+    if fields[0] == "Z":  # exited, not yet reaped: owns no surfaces
+        return False
+    proc = _proc_root() / str(pid)
+    try:
+        executable = os.path.basename(os.path.realpath(proc / "exe"))
+    except OSError:
+        executable = ""
+    if executable in QS_BINARIES:
+        return True
+    # The process name can reject an unrelated process when exe cannot be read.
+    try:
+        comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    return comm in QS_BINARIES
+
+
+def vgs_shell_entry() -> Path:
+    """Path of the QML entrypoint this checkout would launch."""
+    root = os.environ.get("VSHELL_ROOT", "").strip()
+    base = Path(root) if root else repo_root()
+    return base / "quickshell" / "vshell" / "shell.qml"
+
+
+def _resolve_path(value: str) -> str:
+    try:
+        return str(Path(value).resolve())
+    except OSError:
+        return value
+
+
+def qs_list_instances() -> Dict[str, Any]:
+    """Read the Quickshell instance registry for the current XDG_RUNTIME_DIR.
+
+    A sandboxed smoke run has its own runtime dir, so its instances are
+    intentionally invisible here.
+    """
+    binary = ""
+    for name in QS_BINARIES:
+        binary = shutil.which(name) or ""
+        if binary:
+            break
+    if not binary:
+        # Distinct from a failed read: there is no registry to consult here at
+        # all, so a caller can skip rather than report an unverified session.
+        return {"ok": False, "error": "quickshell CLI (qs) not found",
+                "cliMissing": True, "instances": []}
+    try:
+        proc = subprocess.run(
+            [binary, "list", "--all", "--json"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc), "instances": []}
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"qs list exited {proc.returncode}"
+        return {"ok": False, "error": detail, "instances": []}
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"unparsable qs list output: {exc}", "instances": []}
+    if not isinstance(data, list):
+        return {"ok": False, "error": "unexpected qs list output", "instances": []}
+    return {"ok": True, "instances": [entry for entry in data if isinstance(entry, dict)]}
+
+
+def _vgs_instance_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        pid = int(entry.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    return {
+        "pid": pid,
+        "id": str(entry.get("id") or ""),
+        "shellId": str(entry.get("shell_id") or ""),
+        "configPath": str(entry.get("config_path") or ""),
+        "launchTime": str(entry.get("launch_time") or ""),
+    }
+
+
+def _vgs_instance_matches(entry: Dict[str, Any], shell_path: str) -> bool:
+    if not entry["configPath"]:
+        return False
+    return _resolve_path(entry["configPath"]) == shell_path
+
+
+def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
+    return (entry["launchTime"] or QS_UNKNOWN_LAUNCH_TIME, entry["pid"])
+
+
+def vgs_instance_report(config_path: str = "") -> Dict[str, Any]:
+    """Inventory of live VGS shells launched from one entrypoint, oldest first.
+
+    ``ok`` is false when the registry cannot be read; ``cliMissing`` separates a
+    host with no Quickshell CLI from a failed read.
+    """
+    shell_path = _resolve_path(config_path) if config_path else _resolve_path(str(vgs_shell_entry()))
+    listing = qs_list_instances()
+    report: Dict[str, Any] = {"ok": bool(listing["ok"]), "shellPath": shell_path, "instances": []}
+    if not listing["ok"]:
+        report["error"] = listing.get("error", "")
+        report["cliMissing"] = bool(listing.get("cliMissing"))
+        return report
+    matches = [
+        entry for entry in map(_vgs_instance_entry, listing["instances"])
+        if _vgs_instance_matches(entry, shell_path) and _vgs_peer_alive(entry["pid"])
+    ]
+    matches.sort(key=_vgs_instance_order)
+    report["instances"] = matches
+    return report
+
+
+def cmd_instances(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell instances")
+    sub = parser.add_subparsers(dest="cmd")
+    p_list = sub.add_parser("list", help="list live VGS Quickshell instances")
+    p_list.add_argument("--json", action="store_true")
+    p_list.add_argument("--config-path", default="")
+    if not argv or argv[0].startswith("-"):
+        argv = ["list", *(argv or [])]
+    args = parser.parse_args(argv)
+
+    report = vgs_instance_report(args.config_path)
+    if args.json:
+        print(json.dumps(report))
+    if not report["ok"]:
+        # Distinguish a missing registry from a failed registry read for callers.
+        if not args.json:
+            eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
+        return 2 if report.get("cliMissing") else 1
+    if args.json:
+        return 0
+    if not report["instances"]:
+        print("no live VGS Quickshell instances")
+        return 0
+    for entry in report["instances"]:
+        print(f"{entry['pid']}\t{entry['id']}\t{entry['launchTime']}\t{entry['configPath']}")
+    return 0
+
+
+def cmd_compositor(argv: List[str]) -> int:
+    if not argv or argv[0] != "current":
+        eprint("Usage: vshell compositor current [--json]")
+        return 2
+    result = detect_compositor()
+    if "--json" in argv:
+        print(json.dumps(result))
+    else:
+        print(result["compositor"])
+    return 0
+
+
+def cmd_deps(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell deps")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_status = sub.add_parser("status")
+    p_status.add_argument("--json", action="store_true")
+    p_check = sub.add_parser("check")
+    p_check.add_argument("feature")
+    p_check.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    status = feature_status()
+    if args.cmd == "status":
+        # Notification ownership is not a missing-command problem, so it is not
+        # a feature group -- but a lost D-Bus race disables the shell's most
+        # visible subsystem, and this is where a user looks for that.
+        notifications = notification_status()
+        if args.json:
+            print(json.dumps({**status, "notifications": notifications}, indent=2))
+        else:
+            for name, info in status.get("features", {}).items():
+                marker = "ok" if info.get("available") else "missing: " + ", ".join(info.get("missing") or [])
+                print(f"{name}: {marker}")
+            _print_notification_status(notifications)
+        return 0
+    if args.cmd == "check":
+        info = (status.get("features") or {}).get(args.feature)
+        if not info:
+            if args.json:
+                print(json.dumps({"feature": args.feature, "available": False, "missing": ["unknown feature"]}))
+            else:
+                print("missing: unknown feature")
+            return 1
+        if args.json:
+            out = {"feature": args.feature, **info}
+            print(json.dumps(out, indent=2))
+        else:
+            print("ok" if info.get("available") else "missing: " + ", ".join(info.get("missing") or []))
+        return 0 if info.get("available") else 1
+    return 2
+
+
+def asdcontrol_path() -> Path | None:
+    bundled = repo_root() / "bin" / "vshell-asdcontrol"
+    if bundled.exists() and os.access(bundled, os.X_OK):
+        probe = run([str(bundled), "--list-all"])
+        if probe.returncode == 0:
+            return bundled
+    src = repo_root() / "third_party" / "asdcontrol" / "asdcontrol.cpp"
+    compiler = shutil.which("g++") or shutil.which("c++")
+    if not src.exists() or not compiler:
+        return None
+    out = cache_dir() / "bin" / "asdcontrol"
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+            built = run([compiler, "-std=c++17", "-O2", str(src), "-o", str(out)])
+            if built.returncode != 0:
+                return None
+            out.chmod(0o755)
+        return out if os.access(out, os.X_OK) else None
+    except Exception:
+        return None
+
+
+
+def _read_text(path: "Path | str") -> str | None:
+    try:
+        return Path(path).read_text(errors="ignore").strip()
+    except OSError:
+        return None
+
+
+def _read_bytes(path: "Path | str") -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return b""
+
+
+def _run_timeout(cmd: List[str], timeout: float = 6.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout:g}s")
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, 127, "", "command not found")
+
+
+def _percent_from_raw(raw: int, min_value: int = 400, max_value: int = 60000) -> int:
+    if max_value <= min_value:
+        return 0
+    return max(0, min(100, round(((raw - min_value) / (max_value - min_value)) * 100)))
+
+
+def _raw_from_percent(percent: int, min_value: int = 400, max_value: int = 60000) -> int:
+    percent = max(0, min(100, int(percent)))
+    return round(min_value + (max_value - min_value) * (percent / 100.0))
+
+
+
+_IFACE_RE = re.compile(r"^\d+-[\d.]+:\d+\.\d+$")
+
+
+def _usb_identity_from_syspath(path: Path) -> Dict[str, Any] | None:
+    """Walk a sysfs device path up to its USB device and read stable identity.
+
+    Returns vendor/product (lowercase hex, no 0x), serial, human USB product
+    name, the owning HID interface number, and the USB device path. Interface
+    number is *discovered*, never assumed.
+    """
+    interface = ""
+    for node in [path, *path.parents]:
+        if not interface and _IFACE_RE.match(node.name):
+            interface = node.name
+        if (node / "idVendor").exists():
+            vendor = _read_text(node / "idVendor")
+            product = _read_text(node / "idProduct")
+            if not vendor or not product:
+                return None
+            ifnum = ""
+            if interface:
+                m = re.search(r":\d+\.(\d+)$", interface)
+                if m:
+                    ifnum = str(int(m.group(1)))
+            return {
+                "vendor": vendor.lower(),
+                "product": product.lower(),
+                "serial": _read_text(node / "serial") or "",
+                "usbName": _read_text(node / "product") or "",
+                "interface": ifnum,
+                "usbPath": node.name,
+            }
+    return None
+
+
+def _class_device_identity(subsystem: str, name: str) -> Dict[str, Any] | None:
+    link = Path("/sys/class") / subsystem / name
+    if not link.exists():
+        return None
+    try:
+        real = link.resolve()
+    except OSError:
+        return None
+    return _usb_identity_from_syspath(real)
+
+
+def _udev_identity_fallback(node: str) -> Dict[str, Any] | None:
+    """Last-resort identity via `udevadm info -a` when sysfs walking fails."""
+    if not command_exists("udevadm"):
+        return None
+    cp = run(["udevadm", "info", "-a", "-n", node])
+    fields = {"vendor": "", "product": "", "serial": "", "usbName": "", "interface": ""}
+    attr_map = {
+        "idVendor": "vendor",
+        "idProduct": "product",
+        "serial": "serial",
+        "product": "usbName",
+        "bInterfaceNumber": "interface",
+    }
+    for line in (cp.stdout or "").splitlines():
+        for attr, key in attr_map.items():
+            m = re.search(r'ATTRS\{' + attr + r'\}=="([^"]+)"', line)
+            if m and not fields[key]:
+                fields[key] = m.group(1)
+    if not fields["vendor"] or not fields["product"]:
+        return None
+    ifnum = fields["interface"]
+    if ifnum:
+        try:
+            ifnum = str(int(ifnum))
+        except ValueError:
+            pass
+    return {
+        "vendor": fields["vendor"].lower(),
+        "product": fields["product"].lower(),
+        "serial": fields["serial"],
+        "usbName": fields["usbName"],
+        "interface": ifnum,
+        "usbPath": "",
+    }
+
+
+def _hiddev_nodes() -> List[Dict[str, Any]]:
+    """All /dev/usb/hiddev* + /dev/hiddev* nodes with owning-USB identity."""
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in sorted(set(glob.glob("/dev/usb/hiddev*") + glob.glob("/dev/hiddev*"))):
+        real = os.path.realpath(node)
+        if real in seen:
+            continue
+        seen.add(real)
+        ident = _class_device_identity("usbmisc", os.path.basename(node)) or _udev_identity_fallback(node)
+        if ident is None:
+            continue
+        ident["node"] = node
+        out.append(ident)
+    return out
+
+
+def _hidraw_nodes() -> List[Dict[str, Any]]:
+    """All /dev/hidraw* nodes with owning-USB identity + HID report descriptor.
+
+    hidraw is created by the HID core for every HID device, so it works even
+    when CONFIG_USB_HIDDEV is disabled (unlike hiddev / asdcontrol).
+    """
+    out: List[Dict[str, Any]] = []
+    for sysdir in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        name = os.path.basename(sysdir)
+        node = f"/dev/{name}"
+        if not os.path.exists(node):
+            continue
+        devlink = os.path.join(sysdir, "device")
+        ident = None
+        if os.path.exists(devlink):
+            ident = _usb_identity_from_syspath(Path(os.path.realpath(devlink)))
+        if ident is None:
+            ident = _hid_id_from_uevent(os.path.join(devlink, "uevent"))
+        if ident is None:
+            continue
+        ident["node"] = node
+        ident["hidraw"] = name
+        ident["descriptor"] = _read_bytes(os.path.join(devlink, "report_descriptor"))
+        out.append(ident)
+    return out
+
+
+def _hid_id_from_uevent(uevent_path: str) -> Dict[str, Any] | None:
+    text = _read_text(uevent_path)
+    if not text:
+        return None
+    m = re.search(r"HID_ID=[0-9a-fA-F]+:0*([0-9a-fA-F]{1,4}):0*([0-9a-fA-F]{1,4})", text)
+    if not m:
+        return None
+    return {
+        "vendor": m.group(1).lower().zfill(4),
+        "product": m.group(2).lower().zfill(4),
+        "serial": "",
+        "usbName": "",
+        "interface": "",
+        "usbPath": "",
+    }
+
+
+
+APPLE_REPORT_ID = 1
+APPLE_REPORT_LEN = 7
+
+
+def _hidioc_get_feature(length: int) -> int:
+    # _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x07, length)
+    return (3 << 30) | (length << 16) | (ord("H") << 8) | 0x07
+
+
+def _hidioc_set_feature(length: int) -> int:
+    # _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, length)
+    return (3 << 30) | (length << 16) | (ord("H") << 8) | 0x06
+
+
+def _apple_encode(raw: int) -> bytearray:
+    buf = bytearray(APPLE_REPORT_LEN)
+    buf[0] = APPLE_REPORT_ID
+    buf[1] = raw & 0xFF
+    buf[2] = (raw >> 8) & 0xFF
+    buf[3] = (raw >> 16) & 0xFF
+    buf[4] = (raw >> 24) & 0xFF
+    return buf
+
+
+def _apple_decode(buf: "bytes | bytearray") -> int:
+    return buf[1] | (buf[2] << 8) | (buf[3] << 16) | (buf[4] << 24)
+
+
+def _apple_hidraw_read(node: str) -> int | None:
+    fd = None
+    for mode in (os.O_RDONLY, os.O_RDWR):
+        try:
+            fd = os.open(node, mode)
+            break
+        except OSError:
+            fd = None
+    if fd is None:
+        return None
+    try:
+        buf = _apple_encode(0)
+        try:
+            n = fcntl.ioctl(fd, _hidioc_get_feature(APPLE_REPORT_LEN), buf, True)
+        except OSError:
+            return None
+        if n < 5:
+            return None
+        return _apple_decode(buf)
+    finally:
+        os.close(fd)
+
+
+def _apple_hidraw_write(node: str, raw: int) -> None:
+    fd = os.open(node, os.O_RDWR)
+    try:
+        buf = _apple_encode(raw)
+        fcntl.ioctl(fd, _hidioc_set_feature(APPLE_REPORT_LEN), buf, True)
+    finally:
+        os.close(fd)
+
+
+def _apple_descriptor_is_monitor(desc: bytes) -> bool:
+    """Return whether the HID descriptor declares a Monitor or VESA usage page.
+    Unknown descriptors return True so the brightness-value probe can still
+    check interfaces whose descriptors cannot be classified."""
+    if not desc:
+        return True
+    return (
+        b"\x05\x80" in desc
+        or b"\x05\x82" in desc
+        or b"\x06\x80\x00" in desc
+        or b"\x06\x82\x00" in desc
+    )
+
+
+def _apple_raw_in_range(raw: int, spec: Dict[str, Any]) -> bool:
+    lo = max(0, int(spec["min"]) // 2)
+    hi = max(int(spec["max"]), APPLE_RAW_PROBE_CEILING)
+    hi += hi // 10
+    return lo <= raw <= hi
+
+
+def _apple_control_channels() -> Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]]:
+    """Group Apple-display HID candidates by (product, serial)."""
+    groups: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
+    for node in _hidraw_nodes():
+        if node.get("vendor") != APPLE_VENDOR or node.get("product") not in APPLE_DISPLAYS:
+            continue
+        key = (node["product"], node.get("serial", ""))
+        groups.setdefault(key, {"hidraw": [], "hiddev": []})["hidraw"].append(node)
+    for node in _hiddev_nodes():
+        if node.get("vendor") != APPLE_VENDOR or node.get("product") not in APPLE_DISPLAYS:
+            continue
+        key = (node["product"], node.get("serial", ""))
+        groups.setdefault(key, {"hidraw": [], "hiddev": []})["hiddev"].append(node)
+    return groups
+
+
+def _apple_devices(include_unavailable: bool = False) -> Tuple[List[Dict[str, Any]], List[str]]:
+    devices: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    groups = _apple_control_channels()
+    if not groups:
+        return devices, errors
+
+    product_index: Dict[str, int] = {}
+    asd_cache: Dict[str, Any] = {"built": False, "path": None}
+
+    def get_asd() -> Path | None:
+        if not asd_cache["built"]:
+            asd_cache["path"] = asdcontrol_path()
+            asd_cache["built"] = True
+        return asd_cache["path"]
+
+    for (product, serial), chans in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        spec = APPLE_DISPLAYS[product]
+        idx = product_index.get(product, 0)
+        product_index[product] = idx + 1
+        serial_suffix = re.sub(r"[^A-Za-z0-9]", "", serial)[-8:].lower()
+        if idx == 0:
+            dev_id = spec["alias"]
+        elif serial_suffix:
+            dev_id = f"{spec['alias']}-{serial_suffix}"
+        else:
+            dev_id = f"{spec['alias']}-{idx + 1}"
+
+        method = ""
+        node = ""
+        raw: int | None = None
+
+        # 1) Native hidraw feature report (no kernel CONFIG_USB_HIDDEV needed).
+        # The in-range read probe is the actual proof an interface is the
+        # brightness control; a Monitor/VESA report descriptor is only a
+        # tie-breaker preference (never an exclusion), so an unusual descriptor
+        # can't hide a control interface that answers a valid brightness read.
+        hidraw_hits: List[Tuple[Dict[str, Any], int]] = []
+        for cand in sorted(chans["hidraw"], key=lambda c: c.get("interface", "")):
+            if not os.access(cand["node"], os.R_OK):
+                continue
+            val = _apple_hidraw_read(cand["node"])
+            if val is None or not _apple_raw_in_range(val, spec):
+                continue
+            hidraw_hits.append((cand, val))
+        if hidraw_hits:
+            cand, val = next(
+                ((c, v) for c, v in hidraw_hits if _apple_descriptor_is_monitor(c.get("descriptor", b""))),
+                hidraw_hits[0],
+            )
+            method, node, raw = "hidraw", cand["node"], val
+
+        if not method:
+            asd = get_asd()
+            if asd:
+                for cand in sorted(chans["hiddev"], key=lambda c: c.get("interface", "")):
+                    if not os.access(cand["node"], os.R_OK):
+                        continue
+                    cp = run([str(asd), "--silent", cand["node"]])
+                    if cp.returncode != 0:
+                        continue
+                    m = re.search(r"BRIGHTNESS\s*=\s*(\d+)", cp.stdout or "")
+                    if not m:
+                        continue
+                    val = int(m.group(1))
+                    if not _apple_raw_in_range(val, spec):
+                        continue
+                    method, node, raw = "asdcontrol", cand["node"], val
+                    break
+
+        all_nodes = chans["hidraw"] + chans["hiddev"]
+        writable = bool(node) and os.access(node, os.W_OK)
+        available = bool(method) and writable
+        reason = ""
+
+        if not method:
+            sample = all_nodes[0]["node"] if all_nodes else ""
+            any_readable = any(os.access(c["node"], os.R_OK) for c in all_nodes)
+            if all_nodes and not any_readable:
+                # The udev rule can exist before the device receives its uaccess ACL.
+                # Retrigger the nodes to request permissions without reinstalling the rule.
+                if _apple_udev_rule_state() == "installed":
+                    fix = ("Run: sudo udevadm trigger --action=change "
+                           "--subsystem-match=hidraw")
+                else:
+                    fix = "Run: sudo vshell brightness install-udev"
+                reason = (
+                    f"{spec['label']}: HID control node is not accessible to this user "
+                    f"(no uaccess). {fix}"
+                )
+            elif not chans["hidraw"] and not get_asd():
+                reason = (
+                    f"{spec['label']}: no readable hidraw node and asdcontrol could not be built "
+                    f"(install g++/c++ or ship bin/vshell-asdcontrol)"
+                )
+            else:
+                reason = (
+                    f"{spec['label']}: HID interfaces did not answer a brightness read. "
+                    f"Run `sudo vshell brightness install-udev` and reconnect the display"
+                )
+            errors.append(reason)
+            node = sample
+            raw = _raw_from_percent(50, spec["min"], spec["max"])
+        elif not writable:
+            reason = (
+                f"{spec['label']}: control node {node} is readable but not writable. "
+                f"Run: sudo vshell brightness install-udev"
+            )
+            errors.append(reason)
+
+        if not available and not include_unavailable:
+            continue
+
+        percent = _percent_from_raw(int(raw), spec["min"], spec["max"])
+        devices.append({
+            "id": dev_id,
+            "name": dev_id,
+            "label": spec["label"],
+            "class": "apple",
+            "backend": method or "hidraw",
+            "method": method or "hidraw",
+            "path": node,
+            "current": int(raw),
+            "currentPercent": percent,
+            "max": 100,
+            "rawMin": int(spec["min"]),
+            "rawMax": int(spec["max"]),
+            "serial": serial,
+            "product": product,
+            "connector": "",
+            "monitorName": spec["label"],
+            "available": available,
+            "reason": reason,
+        })
+    return devices, errors
+
+
+def _set_apple(dev: Dict[str, Any], raw: int) -> None:
+    raw = max(int(dev["rawMin"]), min(int(dev["rawMax"]), int(raw)))
+    method = dev.get("method") or "hidraw"
+    node = str(dev["path"])
+    if method == "hidraw":
+        try:
+            _apple_hidraw_write(node, raw)
+        except OSError as exc:
+            raise RuntimeError(f"hidraw write to {node} failed: {exc}") from exc
+    else:
+        asd = asdcontrol_path()
+        if not asd:
+            raise FileNotFoundError("asdcontrol unavailable")
+        cp = run([str(asd), "--silent", "--brief", node, str(raw)])
+        if cp.returncode != 0:
+            raise RuntimeError((cp.stderr or cp.stdout or "asdcontrol failed").strip())
+
+
+
+DDC_BRIGHTNESS_VCP = "10"
+
+
+def _parse_ddc_detect(text: str) -> List[Dict[str, Any]]:
+    displays: List[Dict[str, Any]] = []
+    cur: Dict[str, Any] | None = None
+    for raw_line in text.splitlines():
+        if not raw_line.strip():
+            continue
+        indented = raw_line[0].isspace()
+        line = raw_line.strip()
+        if not indented:
+            m = re.match(r"^Display\s+(\d+)", line)
+            inv = re.match(r"^(Invalid display|Display .*not accessible)", line)
+            if m or inv:
+                if cur:
+                    displays.append(cur)
+                cur = {
+                    "index": int(m.group(1)) if m else None,
+                    "invalid": bool(inv),
+                    "bus": None,
+                    "connector": "",
+                    "mfg": "",
+                    "model": "",
+                    "serial": "",
+                    "product_code": "",
+                    "unsupported": False,
+                }
+                continue
+        if cur is None:
+            continue
+        bus_m = re.search(r"/dev/i2c-(\d+)", line)
+        if bus_m and cur["bus"] is None:
+            cur["bus"] = int(bus_m.group(1))
+        if line.startswith("DRM connector:"):
+            conn = line.split(":", 1)[1].strip()
+            cur["connector"] = re.sub(r"^card\d+-", "", conn)
+        elif line.startswith("Mfg id:"):
+            rest = line.split(":", 1)[1].strip()
+            cur["mfg"] = rest.split()[0] if rest else ""
+        elif line.startswith("Model:"):
+            cur["model"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Serial number:"):
+            cur["serial"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Product code:"):
+            rest = line.split(":", 1)[1].strip()
+            cur["product_code"] = rest.split()[0] if rest else ""
+        elif "does not support DDC" in line or "DDC communication failed" in line:
+            cur["unsupported"] = True
+    if cur:
+        displays.append(cur)
+    return displays
+
+
+def _parse_ddc_getvcp(text: str) -> Tuple[int, int] | None:
+    m = re.search(r"VCP\s+10\s+C\s+(\d+)\s+(\d+)", text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m2 = re.search(r"current value\s*=\s*(\d+).*?max value\s*=\s*(\d+)", text, re.DOTALL)
+    if m2:
+        return int(m2.group(1)), int(m2.group(2))
+    return None
+
+
+def _ddc_stable_id(d: Dict[str, Any]) -> str:
+    parts = [d.get("mfg") or "", d.get("model") or "", d.get("serial") or ""]
+    key = "-".join(p for p in parts if p)
+    if not d.get("serial"):
+        # Without an EDID serial, two identical models would collide on id, and
+        # QML keys every device by id -- so disambiguate by the (reasonably
+        # stable) connector, falling back to the i2c bus.
+        extra = d.get("connector") or (f"bus{d.get('bus')}" if d.get("bus") is not None else "")
+        key = "-".join(x for x in (key, extra) if x)
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", key).strip("-").lower()
+    return "ddc-" + (slug or "display")
+
+
+_DDC_DETECT_MEMO: List[Dict[str, Any]] | None = None
+_DDC_DETECT_TTL = 30.0
+
+
+def _ddc_detect(force: bool = False) -> List[Dict[str, Any]]:
+    """`ddcutil detect` topology, cached in-process and on disk.
+
+    detect is slow (seconds) and its bus<->display mapping is stable across a
+    cabling generation, so it is cached with a short TTL to keep the periodic
+    device poll and per-keypress `set` off the ddcutil hot path (a fresh detect
+    on every call could blow the backend/CLI timeout budgets on a multi-monitor
+    rig). Live brightness values are still read fresh via getvcp; only the
+    topology is cached.
+    """
+    global _DDC_DETECT_MEMO
+    if _DDC_DETECT_MEMO is not None and not force:
+        return _DDC_DETECT_MEMO
+    cache = cache_dir() / "ddc-detect.json"
+    if not force and cache.exists():
+        try:
+            if (time.time() - cache.stat().st_mtime) < _DDC_DETECT_TTL:
+                _DDC_DETECT_MEMO = json.loads(cache.read_text())
+                return _DDC_DETECT_MEMO
+        except Exception:
+            pass
+    cp = _run_timeout(["ddcutil", "detect"], timeout=10.0)
+    data = _parse_ddc_detect(cp.stdout or "")
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(data))
+    except OSError:
+        pass
+    _DDC_DETECT_MEMO = data
+    return data
+
+
+def _ddc_invalidate() -> None:
+    """Drop the cached detect topology so the next scan re-runs `ddcutil detect`
+    (call after a setvcp fails -- the monitor may have moved i2c bus)."""
+    global _DDC_DETECT_MEMO
+    _DDC_DETECT_MEMO = None
+    try:
+        (cache_dir() / "ddc-detect.json").unlink()
+    except OSError:
+        pass
+
+
+def _ddc_read(bus: int) -> Tuple[int, int] | None:
+    cp = _run_timeout(["ddcutil", "--bus", str(bus), "getvcp", DDC_BRIGHTNESS_VCP, "--brief"], timeout=6.0)
+    if cp.returncode != 0:
+        return None
+    return _parse_ddc_getvcp(cp.stdout or "")
+
+
+def _ddc_devices(include_unavailable: bool = False) -> Tuple[List[Dict[str, Any]], List[str]]:
+    devices: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    if not command_exists("ddcutil"):
+        return devices, errors
+    for d in _ddc_detect():
+        if d.get("invalid"):
+            continue
+        bus = d.get("bus")
+        dev_id = _ddc_stable_id(d)
+        label = d.get("model") or d.get("connector") or dev_id
+        base = {
+            "id": dev_id,
+            "name": dev_id,
+            "label": label,
+            "class": "ddc",
+            "backend": "ddcutil",
+            "method": "ddcutil",
+            "bus": bus,
+            "connector": d.get("connector", ""),
+            "monitorName": d.get("model", ""),
+            "serial": d.get("serial", ""),
+            "max": 100,
+        }
+        if d.get("unsupported") or bus is None:
+            reason = f"{label}: does not support DDC/CI brightness control"
+            errors.append(reason)
+            if include_unavailable:
+                devices.append({**base, "current": 0, "currentPercent": 0, "available": False, "reason": reason})
+            continue
+        read = _ddc_read(bus)
+        if read is None:
+            reason = (
+                f"{label} on /dev/i2c-{bus}: DDC read of VCP 0x10 failed "
+                f"(monitor may not implement brightness, or i2c-dev permissions are missing)"
+            )
+            errors.append(reason)
+            if include_unavailable:
+                devices.append({**base, "current": 0, "currentPercent": 0, "available": False, "reason": reason})
+            continue
+        cur, maxv = read
+        percent = round(cur / maxv * 100) if maxv else 0
+        devices.append({
+            **base,
+            "current": cur,
+            "currentPercent": max(0, min(100, percent)),
+            "vcpMax": maxv,
+            "available": True,
+            "reason": "",
+        })
+    return devices, errors
+
+
+def _ddc_set(dev: Dict[str, Any], percent: int) -> None:
+    bus = dev.get("bus")
+    if bus is None:
+        raise ValueError(f"{dev.get('id')}: no i2c bus resolved for DDC write")
+    maxv = int(dev.get("vcpMax") or 100)
+    value = max(0, min(maxv, round(percent / 100.0 * maxv)))
+    cp = _run_timeout(["ddcutil", "--bus", str(bus), "setvcp", DDC_BRIGHTNESS_VCP, str(value)], timeout=6.0)
+    if cp.returncode != 0:
+        _ddc_invalidate()
+        raise RuntimeError((cp.stderr or cp.stdout or "ddcutil setvcp failed").strip())
+
+
+
+def _brightnessctl_devices() -> Tuple[List[Dict[str, Any]], List[str]]:
+    if not command_exists("brightnessctl"):
+        return [], []
+    cp = run(["brightnessctl", "-m", "-c", "backlight"])
+    if cp.returncode != 0:
+        return [], []
+    devices: List[Dict[str, Any]] = []
+    for line in (cp.stdout or "").splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+        name = parts[0]
+        try:
+            current = int(re.sub(r"\D", "", parts[2]) or "0")
+            max_value = int(re.sub(r"\D", "", parts[4]) or "100")
+        except ValueError:
+            continue
+        if max_value <= 0:
+            continue
+        pct_match = re.search(r"(\d+)%", parts[3])
+        pct = int(pct_match.group(1)) if pct_match else (round(current / max_value * 100) if max_value > 0 else 0)
+        devices.append({
+            "id": name,
+            "name": name,
+            "label": name.replace("_", " ").title(),
+            "class": "backlight",
+            "backend": "brightnessctl",
+            "method": "brightnessctl",
+            "current": current,
+            "currentPercent": max(0, min(100, pct)),
+            "max": max_value,
+            "displayMax": 100,
+            "connector": "",
+            "monitorName": "",
+            "serial": "",
+            "available": True,
+            "reason": "",
+        })
+    return devices, []
+
+
+
+def _parse_edid(data: bytes) -> Dict[str, Any]:
+    if len(data) < 128:
+        return {}
+    mfg_raw = (data[8] << 8) | data[9]
+    mfg = "".join(chr(((mfg_raw >> shift) & 0x1F) + ord("A") - 1) for shift in (10, 5, 0))
+    if not re.fullmatch(r"[A-Z]{3}", mfg):
+        mfg = ""
+    product = data[10] | (data[11] << 8)
+    serial_num = data[12] | (data[13] << 8) | (data[14] << 16) | (data[15] << 24)
+    name = ""
+    serial_str = ""
+    for off in (54, 72, 90, 108):
+        block = data[off:off + 18]
+        if len(block) < 18 or block[0] != 0 or block[1] != 0 or block[2] != 0:
+            continue
+        tag = block[3]
+        text = block[5:18].split(b"\n")[0].split(b"\x00")[0].decode("ascii", "ignore").strip()
+        if tag == 0xFC:
+            name = text
+        elif tag == 0xFF:
+            serial_str = text
+    return {"mfg": mfg, "product": product, "serialNum": serial_num, "serial": serial_str, "name": name}
+
+
+def _drm_monitors() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for card in sorted(glob.glob("/sys/class/drm/card*-*")):
+        if _read_text(Path(card) / "status") != "connected":
+            continue
+        sysconnector = os.path.basename(card)
+        connector = re.sub(r"^card\d+-", "", sysconnector)
+        out.append({
+            "connector": connector,
+            "sysconnector": sysconnector,
+            "edid": _parse_edid(_read_bytes(os.path.join(card, "edid"))),
+        })
+    return out
+
+
+def _thunderbolt_apple() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for d in sorted(glob.glob("/sys/bus/thunderbolt/devices/*-*")):
+        name = _read_text(Path(d) / "device_name") or ""
+        vendor = _read_text(Path(d) / "vendor_name") or ""
+        if not name:
+            continue
+        product = APPLE_TB_NAMES.get(name.strip().lower())
+        if product and "apple" in vendor.lower():
+            out.append({"path": os.path.basename(d), "name": name, "vendor": vendor, "product": product})
+    return out
+
+
+def _primary_connector() -> str:
+    if os.environ.get("NIRI_SOCKET") and command_exists("niri"):
+        focused = run(["niri", "msg", "-j", "focused-output"])
+        try:
+            name = str((json.loads(focused.stdout or "{}") or {}).get("name") or "")
+            if name:
+                return name
+        except Exception:
+            pass
+        outputs = run(["niri", "msg", "-j", "outputs"])
+        try:
+            data = json.loads(outputs.stdout or "{}")
+            origin = next((name for name, output in data.items()
+                           if (output.get("logical") or {}).get("x") == 0
+                           and (output.get("logical") or {}).get("y") == 0), "")
+            selected = origin or next(iter(data), "")
+            if selected:
+                return selected
+        except Exception:
+            pass
+    if not command_exists("hyprctl"):
+        return ""
+    cp = run(["hyprctl", "-j", "monitors"])
+    try:
+        mons = json.loads(cp.stdout or "[]")
+    except Exception:
+        return ""
+    if not isinstance(mons, list) or not mons:
+        return ""
+    focused = next((m for m in mons if m.get("focused")), None)
+    if focused:
+        return str(focused.get("name", ""))
+    origin = next((m for m in mons if m.get("x") == 0 and m.get("y") == 0), None)
+    if origin:
+        return str(origin.get("name", ""))
+    return str(mons[0].get("name", ""))
+
+
+
+_BACKEND_PRIORITY = {"backlight": 0, "ddc": 1, "apple": 2}
+
+
+def _dedup_devices(devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse one physical display seen on multiple backends by EDID serial,
+    keeping the highest-priority backend (backlight > ddc > apple)."""
+    by_serial: Dict[str, int] = {}
+    result: List[Dict[str, Any]] = []
+    for dev in devices:
+        serial = (dev.get("serial") or "").strip().lower()
+        if not serial:
+            result.append(dev)
+            continue
+        if serial not in by_serial:
+            by_serial[serial] = len(result)
+            result.append(dev)
+            continue
+        i = by_serial[serial]
+        if _BACKEND_PRIORITY.get(dev.get("class"), 9) < _BACKEND_PRIORITY.get(result[i].get("class"), 9):
+            result[i] = dev
+    return result
+
+
+def _annotate_roles(devices: List[Dict[str, Any]]) -> None:
+    drm = _drm_monitors()
+    for dev in devices:
+        if dev.get("connector"):
+            continue
+        serial = (dev.get("serial") or "").strip()
+        if not serial:
+            continue
+        for m in drm:
+            edid = m.get("edid") or {}
+            if edid.get("serial") and edid["serial"] == serial:
+                dev["connector"] = m["connector"]
+                break
+    primary = _primary_connector()
+    for dev in devices:
+        dev["role"] = "primary" if (primary and dev.get("connector") == primary) else ""
+    if devices and not any(dev.get("role") == "primary" for dev in devices):
+        for dev in devices:
+            if dev.get("class") == "backlight":
+                dev["role"] = "primary"
+                break
+        else:
+            devices[0]["role"] = "primary"
+
+
+def brightness_state(include_unavailable: bool = False) -> Dict[str, Any]:
+    devices: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    backlights, backlight_errors = _brightnessctl_devices()
+    ddc, ddc_errors = _ddc_devices(include_unavailable=include_unavailable)
+    apple, apple_errors = _apple_devices(include_unavailable=include_unavailable)
+    for group in (backlights, ddc, apple):
+        devices.extend(group)
+    errors.extend([e for e in (backlight_errors + ddc_errors + apple_errors) if e])
+    devices = _dedup_devices(devices)
+    alias_order = {spec["alias"]: i for i, spec in enumerate(APPLE_DISPLAYS.values())}
+    devices.sort(key=lambda d: (
+        _BACKEND_PRIORITY.get(d.get("class"), 9),
+        alias_order.get(str(d.get("id")), 99),
+        str(d.get("id")),
+    ))
+    _annotate_roles(devices)
+    return {"devices": devices, "errors": errors}
+
+
+def _primary_device(devices: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    for dev in devices:
+        if dev.get("role") == "primary":
+            return dev
+    for dev in devices:
+        if dev.get("class") == "backlight":
+            return dev
+    return devices[0] if devices else None
+
+
+def _resolve_targets(target: str, devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Resolve a target to one or more devices.
+
+    Accepts: stable id / name, legacy alias (apple-xdr/apple-studio),
+    connector (DP-1), role (primary/all/default), or a monitor-name substring.
+    Empty target resolves to the primary display.
+    """
+    t = (target or "").strip()
+    low = t.lower()
+    if not t or low in ("primary", "default"):
+        dev = _primary_device(devices)
+        return [dev] if dev else []
+    if low == "all":
+        controllable = [d for d in devices if d.get("available")]
+        return controllable or devices
+    for dev in devices:
+        if dev.get("id") == t or dev.get("name") == t:
+            return [dev]
+    for dev in devices:
+        if dev.get("class") == "apple" and APPLE_DISPLAYS.get(dev.get("product"), {}).get("alias") == low:
+            return [dev]
+    for dev in devices:
+        if (dev.get("connector") or "").lower() == low:
+            return [dev]
+    for dev in devices:
+        haystack = (dev.get("monitorName") or dev.get("label") or "").lower()
+        if low and low in haystack:
+            return [dev]
+    return []
+
+
+def _find_brightness_device(device_id: str) -> Dict[str, Any] | None:
+    devices = brightness_state(include_unavailable=True).get("devices", [])
+    matches = _resolve_targets(device_id, devices)
+    return matches[0] if matches else None
+
+
+def _refresh_device_current(dev: Dict[str, Any]) -> None:
+    """Re-read just this device's current value in place after a write, instead
+    of re-scanning every backend (a second full state scan would re-run
+    `ddcutil detect`/getvcp on unrelated displays)."""
+    klass = dev.get("class")
+    try:
+        if klass == "apple":
+            val = None
+            if (dev.get("method") or "hidraw") == "hidraw":
+                val = _apple_hidraw_read(str(dev.get("path", "")))
+            else:
+                asd = asdcontrol_path()
+                if asd:
+                    cp = run([str(asd), "--silent", str(dev.get("path", ""))])
+                    m = re.search(r"BRIGHTNESS\s*=\s*(\d+)", cp.stdout or "")
+                    if m:
+                        val = int(m.group(1))
+            if val is not None:
+                dev["current"] = val
+                dev["currentPercent"] = _percent_from_raw(val, int(dev["rawMin"]), int(dev["rawMax"]))
+        elif klass == "ddc":
+            bus = dev.get("bus")
+            read = _ddc_read(int(bus)) if bus is not None else None
+            if read:
+                cur, maxv = read
+                dev["current"] = cur
+                dev["vcpMax"] = maxv
+                dev["currentPercent"] = max(0, min(100, round(cur / maxv * 100) if maxv else 0))
+        elif klass == "backlight":
+            for d in _brightnessctl_devices()[0]:
+                if d.get("id") == dev.get("id"):
+                    dev["current"] = d["current"]
+                    dev["currentPercent"] = d["currentPercent"]
+                    break
+    except Exception:
+        pass
+
+
+def _set_brightness_device(target: str, value: str, relative: bool = False) -> Dict[str, Any]:
+    t = (target or "").strip()
+    low = t.lower()
+    matches: List[Dict[str, Any]] | None = None
+    # Fast path: an exact id/alias for a non-DDC display resolves against the
+    # cheap backends (backlight + Apple HID) first, so an Apple/backlight
+    # keypress never triggers a ddcutil scan.
+    if t and low not in ("primary", "default", "all"):
+        cheap = _apple_devices(include_unavailable=True)[0] + _brightnessctl_devices()[0]
+        cand = _resolve_targets(t, cheap)
+        if cand:
+            c = cand[0]
+            if c.get("id") == t or c.get("name") == t or APPLE_DISPLAYS.get(c.get("product"), {}).get("alias") == low:
+                matches = cand
+    if matches is None:
+        matches = _resolve_targets(t, brightness_state(include_unavailable=True).get("devices", []))
+    if not matches:
+        raise ValueError(f"brightness device not found: {target or '(default)'}")
+    results: List[Dict[str, Any]] = []
+    for dev in matches:
+        if not dev.get("available"):
+            raise PermissionError(dev.get("reason") or f"{dev.get('label', dev.get('id'))} is not controllable")
+        current = int(dev.get("currentPercent", 0))
+        if relative:
+            try:
+                target_pct = current + int(str(value))
+            except ValueError:
+                raise ValueError(f"invalid brightness delta: {value}")
+        else:
+            try:
+                target_pct = int(str(value).rstrip("%"))
+            except ValueError:
+                raise ValueError(f"invalid brightness value: {value}")
+        target_pct = max(0, min(100, target_pct))
+        klass = dev.get("class")
+        if klass == "apple":
+            _set_apple(dev, _raw_from_percent(target_pct, dev["rawMin"], dev["rawMax"]))
+        elif klass == "ddc":
+            _ddc_set(dev, target_pct)
+        elif klass == "backlight":
+            cp = run(["brightnessctl", "-d", str(dev["id"]), "set", f"{target_pct}%"])
+            if cp.returncode != 0:
+                raise RuntimeError((cp.stderr or cp.stdout or "brightnessctl failed").strip())
+        else:
+            raise ValueError(f"unsupported brightness backend for {dev.get('id')}: {klass}")
+        _refresh_device_current(dev)
+        results.append(dev)
+    return {"device": results[0], "devices": results}
+
+
+
+def _asd_available_hint() -> bool:
+    bundled = repo_root() / "bin" / "vshell-asdcontrol"
+    if bundled.exists() and os.access(bundled, os.X_OK):
+        return True
+    cached = cache_dir() / "bin" / "asdcontrol"
+    if cached.exists() and os.access(cached, os.X_OK):
+        return True
+    return bool(shutil.which("g++") or shutil.which("c++"))
+
+
+def _drm_uncontrollable_reason(edid: Dict[str, Any]) -> str:
+    if not command_exists("ddcutil"):
+        return (
+            "Connected as a video output with no control backend. Install `ddcutil` to try "
+            "DDC/CI brightness over the video link, then re-run `vshell brightness doctor`."
+        )
+    return (
+        "Connected as a video output but no brightness control channel responded "
+        "(DDC/CI unsupported or blocked; check the i2c-dev module and i2c permissions)."
+    )
+
+
+def brightness_doctor() -> Dict[str, Any]:
+    devices = brightness_state(include_unavailable=True).get("devices", [])
+    drm = _drm_monitors()
+    tb = _thunderbolt_apple()
+    apple_usb_products = {
+        n["product"] for n in (_hidraw_nodes() + _hiddev_nodes())
+        if n.get("vendor") == APPLE_VENDOR and n.get("product") in APPLE_DISPLAYS
+    }
+    entries: List[Dict[str, Any]] = []
+    matched_serials = {(d.get("serial") or "").lower() for d in devices if d.get("serial")}
+    matched_connectors = {(d.get("connector") or "").lower() for d in devices if d.get("connector")}
+
+    for dev in devices:
+        detail = ""
+        if dev.get("available"):
+            detail = f"{dev.get('currentPercent')}% via {dev.get('backend')}"
+        entries.append({
+            "id": dev.get("id"),
+            "label": dev.get("label"),
+            "class": dev.get("class"),
+            "backend": dev.get("backend", ""),
+            "connector": dev.get("connector", ""),
+            "serial": dev.get("serial", ""),
+            "role": dev.get("role", ""),
+            "controllable": bool(dev.get("available")),
+            "detail": detail,
+            "reason": dev.get("reason", ""),
+        })
+
+    for t in tb:
+        if t["product"] in apple_usb_products:
+            continue
+        spec = APPLE_DISPLAYS.get(t["product"], {})
+        entries.append({
+            "id": spec.get("alias", t["name"]),
+            "label": t["name"],
+            "class": "apple",
+            "backend": "",
+            "connector": "",
+            "serial": "",
+            "role": "",
+            "controllable": False,
+            "detail": "",
+            "reason": (
+                f"{t['name']} is connected over Thunderbolt (video/DisplayPort tunnel is up) but its USB "
+                f"control interface ({APPLE_VENDOR}:{t['product']}) is not enumerated -- the host is not "
+                f"tunneling USB to the display, so no backend can reach its brightness. This is a "
+                f"Thunderbolt/USB-tunnel limitation, not a permissions problem. Get the display's USB to "
+                f"enumerate (BIOS/firmware Thunderbolt USB tunneling, or a cabling path that carries USB); "
+                f"HDR/EDR 'brightness upscaling' to higher nits is a separate GPU/compositor feature, not "
+                f"this USB control channel."
+            ),
+        })
+
+    for m in drm:
+        conn = m["connector"]
+        edid = m.get("edid") or {}
+        if conn.lower() in matched_connectors:
+            continue
+        if edid.get("serial") and edid["serial"].lower() in matched_serials:
+            continue
+        if edid.get("mfg") == "APP" and tb:
+            continue  # already reported as a Thunderbolt Apple display above
+        entries.append({
+            "id": conn,
+            "label": edid.get("name") or conn,
+            "class": "",
+            "backend": "",
+            "connector": conn,
+            "serial": edid.get("serial", ""),
+            "role": "",
+            "controllable": False,
+            "detail": "",
+            "reason": _drm_uncontrollable_reason(edid),
+        })
+
+    controllable = sum(1 for e in entries if e["controllable"])
+    return {
+        "displays": entries,
+        "controllable": controllable,
+        "total": len(entries),
+        "backends": {
+            "brightnessctl": command_exists("brightnessctl"),
+            "ddcutil": command_exists("ddcutil"),
+            "asdcontrol": _asd_available_hint(),
+            "i2c_dev": bool(glob.glob("/dev/i2c-*")),
+            "udev_rule_state": _apple_udev_rule_state(),
+            "udev_rule_installed": _apple_udev_rule_state() == "installed",
+        },
+    }
+
+
+
+APPLE_UDEV_RULE_PATH = "/etc/udev/rules.d/60-vshell-apple-displays.rules"
+
+
+def _apple_udev_rule_state() -> str:
+    """installed | symlink | missing.
+
+    `symlink` matters: udevd reads its rules before /home is mounted, so a rule
+    symlinked into a home-directory dotfiles repo is invisible for devices that
+    enumerate early in boot, and those nodes never get the uaccess ACL.
+    """
+    dest = Path(APPLE_UDEV_RULE_PATH)
+    if dest.is_symlink():
+        return "symlink"
+    return "installed" if dest.exists() else "missing"
+
+
+def _apple_udev_rules_text() -> str:
+    lines = [
+        "# VGS Apple display brightness access.",
+        "# Generated by `vshell brightness install-udev` from bin/vshell_helper.py; do not hand-edit.",
+        "#",
+        "# Matched by USB product id only (no interface-path / DEVPATH pinning), so re-cabling the",
+        '# display to any DP/USB/Thunderbolt port keeps working. TAG+="uaccess" grants the active-seat',
+        "# user access to every HID control endpoint the display exposes; VGS probes them at runtime to",
+        "# find the brightness-control interface, so the interface number never has to be hardcoded.",
+    ]
+    # NB: udev does not accept trailing inline comments on a rule line, so each
+    # display's label goes on its own comment line above its rules.
+    for product, spec in sorted(APPLE_DISPLAYS.items()):
+        lines.append("")
+        lines.append(f"# {spec['label']} ({APPLE_VENDOR}:{product})")
+        lines.append(
+            f'SUBSYSTEM=="usbmisc", KERNEL=="hiddev*", '
+            f'ATTRS{{idVendor}}=="{APPLE_VENDOR}", ATTRS{{idProduct}}=="{product}", '
+            f'TAG+="uaccess", MODE="0660", GROUP="users"'
+        )
+        lines.append(
+            f'SUBSYSTEM=="hidraw", '
+            f'ATTRS{{idVendor}}=="{APPLE_VENDOR}", ATTRS{{idProduct}}=="{product}", '
+            f'TAG+="uaccess", MODE="0660", GROUP="users"'
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _install_apple_udev(dry_run: bool = False) -> Dict[str, Any]:
+    rule_text = _apple_udev_rules_text()
+    dest = Path(APPLE_UDEV_RULE_PATH)
+    if dry_run:
+        return {"ok": True, "dryRun": True, "path": str(dest), "rule": rule_text}
+    if os.geteuid() != 0:
+        return {"ok": False, "error": "run as root: sudo vshell brightness install-udev"}
+    # A symlink here (e.g. into a dotfiles repo under /home) is unreadable when udevd
+    # starts, because /home is often a separate mount that is not up yet. Devices
+    # enumerated in that window silently miss uaccess. Always land a real file.
+    was_symlink = dest.is_symlink()
+    existing = None if was_symlink else (_read_text(dest) if dest.exists() else None)
+    unchanged = existing is not None and existing.strip() == rule_text.strip()
+    if not unchanged:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if was_symlink:
+            dest.unlink()
+        dest.write_text(rule_text)
+    if command_exists("udevadm"):
+        run(["udevadm", "control", "--reload-rules"])
+        run(["udevadm", "trigger", "--subsystem-match=usbmisc", "--action=add"])
+        run(["udevadm", "trigger", "--subsystem-match=hidraw", "--action=add"])
+    return {
+        "ok": True,
+        "path": str(dest),
+        "changed": not unchanged,
+        "replacedSymlink": was_symlink,
+        "status": "unchanged" if unchanged else "installed",
+    }
+
+
+def cmd_brightness(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell brightness")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_list = sub.add_parser("list")
+    p_list.add_argument("--json", action="store_true")
+    p_list.add_argument("--include-unavailable", action="store_true")
+    p_set = sub.add_parser("set")
+    p_set.add_argument("device")
+    p_set.add_argument("percent")
+    p_set.add_argument("--json", action="store_true")
+    p_adjust = sub.add_parser("adjust")
+    p_adjust.add_argument("device")
+    p_adjust.add_argument("delta")
+    p_adjust.add_argument("--json", action="store_true")
+    p_inc = sub.add_parser("increment")
+    p_inc.add_argument("device")
+    p_inc.add_argument("step", nargs="?", default="5")
+    p_inc.add_argument("--json", action="store_true")
+    p_dec = sub.add_parser("decrement")
+    p_dec.add_argument("device")
+    p_dec.add_argument("step", nargs="?", default="5")
+    p_dec.add_argument("--json", action="store_true")
+    p_doctor = sub.add_parser("doctor")
+    p_doctor.add_argument("--json", action="store_true")
+    p_install = sub.add_parser("install-udev")
+    p_install.add_argument("--json", action="store_true")
+    p_install.add_argument("--print", dest="print_rule", action="store_true", help="print the generated rule without installing")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "list":
+        state = brightness_state(include_unavailable=args.include_unavailable)
+        if args.json:
+            print(json.dumps(state, indent=2))
+        else:
+            for dev in state.get("devices", []):
+                label = dev.get("label") or dev.get("id")
+                flags = []
+                if dev.get("role") == "primary":
+                    flags.append("primary")
+                if dev.get("connector"):
+                    flags.append(dev["connector"])
+                if not dev.get("available"):
+                    flags.append("unavailable")
+                suffix = f" ({', '.join(flags)})" if flags else ""
+                print(f"{dev.get('id')}: {label} {dev.get('currentPercent')}% [{dev.get('backend')}]{suffix}")
+            for err in state.get("errors", []):
+                eprint(err)
+        return 0 if state.get("devices") else 1
+
+    if args.cmd in {"set", "adjust", "increment", "decrement"}:
+        try:
+            if args.cmd == "set":
+                result = _set_brightness_device(args.device, args.percent, relative=False)
+            elif args.cmd == "adjust":
+                delta = args.delta
+                result = _set_brightness_device(args.device, delta if delta.startswith(("+", "-")) else f"+{delta}", relative=True)
+            elif args.cmd == "increment":
+                result = _set_brightness_device(args.device, f"+{args.step}", relative=True)
+            else:
+                result = _set_brightness_device(args.device, f"-{args.step}", relative=True)
+        except Exception as exc:
+            if getattr(args, "json", False):
+                print(json.dumps({"error": str(exc)}))
+            else:
+                eprint(str(exc))
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps(result, indent=2))
+        else:
+            for dev in result.get("devices", [result.get("device", {})]):
+                print(f"{dev.get('id', args.device)}: {dev.get('currentPercent', '?')}%")
+        return 0
+
+    if args.cmd == "doctor":
+        report = brightness_doctor()
+        if args.json:
+            print(json.dumps(report, indent=2))
+            return 0
+        b = report["backends"]
+        print("Backends:")
+        print(f"  brightnessctl (backlight): {'yes' if b['brightnessctl'] else 'no'}")
+        print(f"  ddcutil (DDC/CI):          {'yes' if b['ddcutil'] else 'no'}"
+              + ("" if b["ddcutil"] else "  -> install `ddcutil` for standard external monitors"))
+        print(f"  asdcontrol/hidraw (Apple): {'yes' if b['asdcontrol'] else 'no'}")
+        print(f"  i2c-dev nodes present:     {'yes' if b['i2c_dev'] else 'no'}")
+        rule_state = b.get("udev_rule_state", "missing")
+        rule_note = {
+            "installed": "yes",
+            "symlink": "yes, but symlinked outside /etc -> unreadable at early boot; "
+                       "run `sudo vshell brightness install-udev` to land a real file",
+            "missing": "no",
+        }[rule_state]
+        print(f"  Apple udev rule installed: {rule_note}")
+        print(f"\nDisplays ({report['controllable']}/{report['total']} controllable):")
+        for e in report["displays"]:
+            head = e.get("label") or e.get("id")
+            tag = f" [{e['connector']}]" if e.get("connector") else ""
+            role = " *primary" if e.get("role") == "primary" else ""
+            if e["controllable"]:
+                print(f"  ✓ {head}{tag}{role}: {e['detail']}")
+            else:
+                print(f"  ✗ {head}{tag}{role}: {e['reason']}")
+        return 0
+
+    if args.cmd == "install-udev":
+        if getattr(args, "print_rule", False):
+            print(_apple_udev_rules_text(), end="")
+            return 0
+        result = _install_apple_udev()
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif result.get("ok"):
+            print(f"{result.get('status', 'installed')}: {result['path']}")
+        else:
+            eprint(result.get("error", "install-udev failed"))
+        return 0 if result.get("ok") else 1
+
+    return 2
+
+
+
+_DEVTOOLS: Any = None
+
+
+def _devtools() -> Any:
+    """Load the mise/agent/dev-env subsystem only for the commands that use it."""
+    global _DEVTOOLS
+    if _DEVTOOLS is None:
+        import vshell_devtools
+        vshell_devtools.configure(vshell_devtools.DevToolsRuntime(
+            home=home, state_dir=state_dir, repo_root=repo_root, run=run,
+            command_exists=command_exists, load_settings=load_settings,
+            load_required_json_file=load_required_json_file, eprint=eprint,
+            spawn_terminal=spawn_terminal, spawn_app=spawn_app, notify_user=notify_user,
+            tui_app_id=TERMINAL_TUI_APP_ID))
+        _DEVTOOLS = vshell_devtools
+    return _DEVTOOLS
+
+
+_APPS: Any = None
+
+
+def _apps() -> Any:
+    """Load the application-uninstall path only for the command that uses it."""
+    global _APPS
+    if _APPS is None:
+        _devtools()
+        import vshell_apps
+        _APPS = vshell_apps
+    return _APPS
+
+
+_UPDATE: Any = None
+
+
+def _update() -> Any:
+    global _UPDATE
+    if _UPDATE is None:
+        import vshell_update
+        vshell_update.configure(_devtools().runtime())
+        _UPDATE = vshell_update
+    return _UPDATE
+
+
+_AI_USAGE: Any = None
+
+
+def _ai_usage() -> Any:
+    """Load the AI-usage source store and the AI Gateway provider on demand."""
+    global _AI_USAGE
+    if _AI_USAGE is None:
+        import vshell_ai_usage
+        vshell_ai_usage.configure(vshell_ai_usage.AiUsageRuntime(
+            state_dir=state_dir,
+            cache_dir=cache_dir,
+            eprint=eprint,
+        ))
+        _AI_USAGE = vshell_ai_usage
+    return _AI_USAGE
+
+
+def _ai_usage_backend() -> str:
+    """The discovery backend that finds Claude and Codex logins on disk.
+
+    The repository copy wins so a checkout tests its own backend; an installed
+    ~/.local/bin/ai-usage is what a packaged shell uses.
+    """
+    cmd_env = os.environ.get("VSHELL_AI_USAGE_CMD", "").strip()
+    candidates = [cmd_env] if cmd_env else []
+    candidates.extend([str(repo_root() / "bin" / "vshell-ai-usage"), str(home() / ".local" / "bin" / "ai-usage"), "ai-usage"])
+    return next((c for c in candidates if ("/" in c and Path(c).exists()) or ("/" not in c and shutil.which(c))), "")
+
+
+def _ai_usage_admin(argv: List[str]) -> int:
+    """Read and change where a provider's accounts come from.
+
+    Separate from the fetch path because these emit their own shapes and take
+    a key on stdin. The fetch path emits one provider-stamped usage payload and
+    nothing else, which is the contract the widget rejects payloads against.
+    """
+    module = _ai_usage()
+    sub = argv[0]
+    args = argv[1:]
+    provider = args[0] if args else ""
+
+    def reply(payload: Dict[str, Any]) -> int:
+        print(json.dumps(payload))
+        return 0
+
+    if sub in {"-h", "--help", "help"}:
+        eprint(module.AI_USAGE_USAGE)
+        return 0
+    if provider == "":
+        eprint(module.AI_USAGE_USAGE)
+        return 2
+    if sub == "sources":
+        return reply(module.sources_report(provider, _ai_usage_backend()))
+    if sub == "set-key":
+        # allow_abbrev=False, or argparse accepts `--key` as an unambiguous
+        # prefix of `--key-id` and stores a SECRET as a key id — which is then
+        # written to the store in the clear and sent in a URL query string.
+        parser = argparse.ArgumentParser(prog="vshell ai-usage set-key", add_help=False,
+                                         allow_abbrev=False)
+        parser.add_argument("provider")
+        parser.add_argument("--label", default="")
+        parser.add_argument("--key-id", dest="key_id", default="")
+        try:
+            parsed = parser.parse_args(args)
+        except SystemExit:
+            return reply({"ok": False, "error": "could not read the arguments for set-key"})
+        # Read from stdin, never argv. One line: the caller writes the key and
+        # a newline, so this returns without waiting for the stream to close.
+        return reply(module.set_key(parsed.provider, sys.stdin.readline().strip(),
+                                    parsed.label.strip(), parsed.key_id.strip()))
+    if sub == "clear-key":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "clear-key needs a provider and an account id"})
+        return reply(module.clear_key(provider, args[1]))
+    if sub == "add-dir":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "add-dir needs a provider and a path"})
+        return reply(module.add_dir(provider, args[1]))
+    if sub == "remove-dir":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "remove-dir needs a provider and a path"})
+        return reply(module.remove_dir(provider, args[1]))
+    eprint(module.AI_USAGE_USAGE)
+    return 2
+
+
+def cmd_ai_usage(argv: List[str]) -> int:
+    # A provider name asks for usage; anything else administers the sources
+    # that usage is read from, and answers in its own shape.
+    if argv and argv[0] not in _ai_usage().PROVIDERS:
+        return _ai_usage_admin(argv)
+    provider = argv[0] if argv else "claude"
+
+    def emit(payload: Dict[str, Any]) -> int:
+        # Stamp errors and unstamped backend payloads with the requested provider.
+        # The widget drops unstamped payloads, which would hide the actual failure.
+        payload.setdefault("provider", provider)
+        print(json.dumps(payload))
+        return 0
+
+    # AI Gateway has no local login to discover, so it is fetched here from a
+    # stored key rather than through the on-disk discovery backend.
+    if provider in _ai_usage().KEY_PROVIDERS:
+        return emit(_ai_usage().gateway_payload())
+    runner = _ai_usage_backend()
+    if not runner:
+        return emit({"ok": False, "error": "ai-usage backend not found"})
+    proc = subprocess.run([runner, provider], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        return emit({"ok": False, "error": proc.stderr.strip() or "ai-usage failed"})
+    # A backend that answered can still have degraded: one account it could not
+    # normalize, one source file it could not read. Its diagnostic is the only
+    # record of that, and discarding it on success left the cause nowhere.
+    if proc.stderr.strip():
+        eprint(proc.stderr.strip())
+    out = proc.stdout.strip()
+    try:
+        parsed = json.loads(out) if out else None
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return emit(parsed)
+    return emit({"ok": False, "error": "ai-usage returned no data" if not out else "ai-usage returned unreadable output"})
+
+
+def cmd_fonts(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell fonts")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_status = sub.add_parser("status")
+    p_status.add_argument("--json", action="store_true")
+    p_apply = sub.add_parser("apply")
+    p_apply.add_argument("--json", action="store_true")
+    p_apply.add_argument("--size-only", action="store_true", help="Apply the selected size without replacing default font families")
+    p_reset = sub.add_parser("reset")
+    p_reset.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "status":
+        result = normalized_system_font_settings()
+        print(json.dumps(result, indent=2) if args.json else f"managed={result.get('managed')} session={result.get('environment', {}).get('sessionType')}")
+        return 0
+    if args.cmd == "apply":
+        result = apply_system_fonts(reset=False, size_only=args.size_only)
+        print(json.dumps(result, indent=2) if args.json else ("System fonts applied" if result.get("success") else "System fonts partially applied"))
+        return 0 if result.get("success") else 1
+    if args.cmd == "reset":
+        # The shell owns settings.json, so reset saves nothing and reports
+        # `managed`.
+        result = apply_system_fonts(reset=True)
+        print(json.dumps(result, indent=2) if args.json else
+              "VGS system font overrides removed\n"
+              "not-saved: systemFontsManaged=false\n"
+              "The reset applied to this run only and was not saved. Settings > Typography holds the setting.")
+        return 0 if result.get("success") else 1
+    return 2
+
+
+def cmd_capture(argv: List[str]) -> int:
+    if not argv:
+        eprint("Usage: vshell capture screenshot|screenrecording|text [...]")
+        return 2
+    kind, rest = argv[0], argv[1:]
+    scripts = {
+        "screenshot": repo_root() / "bin" / "vshell-capture-screenshot",
+        "screenrecording": repo_root() / "bin" / "vshell-capture-screenrecording",
+        "recording": repo_root() / "bin" / "vshell-capture-screenrecording",
+        "text": repo_root() / "bin" / "vshell-capture-text-extraction",
+        "ocr": repo_root() / "bin" / "vshell-capture-text-extraction",
+    }
+    script = scripts.get(kind)
+    if not script:
+        eprint("Usage: vshell capture screenshot|screenrecording|text [...]")
+        return 2
+    os.execv(str(script), [str(script), *rest])
+    return 127
+
+
+_THEME_MUTATING_COMMANDS = {
+    "init",
+    "apply",
+    "apply-blueprint",
+    "apply-colors",
+    "app-colors",
+    "app-curated-recolor",
+    "clear-wallpaper",
+    "chromium-policy",
+    "delete",
+    "duplicate",
+    "edit-app",
+    "import-colors",
+    "migrate",
+    "mode",
+    "regenerate",
+    "reset-app",
+    "restyle",
+    "revert",
+    "save-current",
+    "set-pair",
+    "set-wallpaper",
+    "star",
+    "toggle",
+    "unstar",
+    "wallpaper-add",
+    "wallpaper-default",
+    "wallpaper-delete",
+    "wallpaper-remove",
+}
+
+
+def _theme_command_mutates(argv: List[str]) -> bool:
+    """Whether a theme CLI invocation can alter theme or generated state."""
+    if not argv:
+        return False
+    command = argv[0]
+    if command in _THEME_MUTATING_COMMANDS:
+        return True
+    if command == "extract-wallpaper":
+        return "--apply" in argv or "--save" in argv
+    if command == "apps":
+        return "--enable" in argv or "--disable" in argv
+    # Catalog commands lock their own directory swaps. Locking the full download
+    # would block theme and wallpaper changes during the network transfer.
+    return False
+
+
+def cmd_theme(argv: List[str]) -> int:
+    if _theme_command_mutates(argv):
+        with theme_mutation_lock():
+            return _cmd_theme_unlocked(argv)
+    return _cmd_theme_unlocked(argv)
+
+
+def _cmd_theme_unlocked(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell theme")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("current").add_argument("--json", action="store_true")
+    sub.add_parser("get-mode").add_argument("--json", action="store_true")
+    sub.add_parser("list").add_argument("--json", action="store_true")
+    sub.add_parser("list-blueprints").add_argument("--json", action="store_true")
+    p_apply = sub.add_parser("apply")
+    p_apply.add_argument("name")
+    p_apply.add_argument("--json", action="store_true")
+    p_apply_bp = sub.add_parser("apply-blueprint")
+    p_apply_bp.add_argument("name")
+    p_apply_bp.add_argument("--json", action="store_true")
+    p_import = sub.add_parser("import-colors")
+    p_import.add_argument("path")
+    p_import.add_argument("--name", default="imported")
+    p_import.add_argument("--wallpaper", default="")
+    p_import.add_argument("--apply", action="store_true")
+    p_import.add_argument("--json", action="store_true")
+    p_extract = sub.add_parser("extract-wallpaper")
+    p_extract.add_argument("path")
+    p_extract.add_argument("--name", default="wallpaper")
+    p_extract.add_argument("--scheme", default="scheme-tonal-spot", choices=sorted(MATUGEN_SCHEMES))
+    p_extract.add_argument("--contrast", type=float, default=0.0)
+    p_extract.add_argument("--mode", default="auto", choices=sorted(THEME_MODES))
+    p_extract.add_argument("--apply", action="store_true")
+    p_extract.add_argument("--save", action="store_true")
+    p_extract.add_argument("--json", action="store_true")
+    p_save = sub.add_parser("save-current")
+    p_save.add_argument("--name", required=True)
+    p_save.add_argument("--json", action="store_true")
+    p_apply_colors = sub.add_parser("apply-colors")
+    p_apply_colors.add_argument("--name", default="manual-theme")
+    p_apply_colors.add_argument("--mode", default="", choices=["", "dark", "light"])
+    p_apply_colors.add_argument("--wallpaper", default=None)
+    p_apply_colors.add_argument("--set", dest="edits", action="append", default=[])
+    p_apply_colors.add_argument("--save", action="store_true")
+    p_apply_colors.add_argument("--persist", action="store_true", help="write the merged palette into the current theme's overlay colors.toml")
+    p_apply_colors.add_argument("--json", action="store_true")
+    p_revert = sub.add_parser("revert", help="drop a built-in theme's user overlay (reset to repo defaults)")
+    p_revert.add_argument("name")
+    p_revert.add_argument("--json", action="store_true")
+    p_restyle = sub.add_parser("restyle", help="non-destructive perceptual whole-palette adjustments")
+    p_restyle.add_argument("--name", default="", help="theme name (default: current)")
+    p_restyle.add_argument("--brightness", type=int)
+    p_restyle.add_argument("--vibrancy", type=int)
+    p_restyle.add_argument("--contrast", type=int)
+    p_restyle.add_argument("--hue", type=int)
+    p_restyle.add_argument("--temperature", type=int)
+    p_restyle.add_argument("--reset", action="store_true", help="clear all adjustments")
+    p_restyle.add_argument("--preview", action="store_true",
+                           help="render only the live VGS shell palette without persisting")
+    p_restyle.add_argument("--json", action="store_true")
+    p_app_roles = sub.add_parser("app-roles", help="list the roles an app's target consumes with resolved values")
+    p_app_roles.add_argument("app")
+    p_app_roles.add_argument("--theme", default="", help="theme name (default: current)")
+    p_app_roles.add_argument("--json", action="store_true")
+    p_app_colors = sub.add_parser("app-colors", help="edit per-app color overrides stored in the theme")
+    p_app_colors.add_argument("app")
+    p_app_colors.add_argument("--theme", default="", help="theme name (default: current)")
+    p_app_colors.add_argument("--set", dest="edits", action="append", default=[], metavar="ROLE=HEX")
+    p_app_colors.add_argument("--reset", action="store_true", help="clear this app's overrides")
+    p_app_colors.add_argument("--json", action="store_true")
+    p_setwp = sub.add_parser("set-wallpaper")
+    p_setwp.add_argument("path")
+    p_setwp.add_argument("--extract", action="store_true")
+    p_setwp.add_argument("--name", default="")
+    p_setwp.add_argument("--scheme", default="scheme-tonal-spot", choices=sorted(MATUGEN_SCHEMES))
+    p_setwp.add_argument("--contrast", type=float, default=0.0)
+    p_setwp.add_argument("--mode", default="auto", choices=sorted(THEME_MODES))
+    p_setwp.add_argument("--save", action="store_true")
+    p_setwp.add_argument("--json", action="store_true")
+    p_clearwp = sub.add_parser("clear-wallpaper")
+    p_clearwp.add_argument("--json", action="store_true")
+    p_thumbs = sub.add_parser("wallpaper-thumbs", help="build the switcher's sliver thumbnails")
+    p_thumbs.add_argument("name", nargs="?", default="", help="theme name (default: current)")
+    p_thumbs.add_argument("--all", action="store_true", help="every installed theme, and prune orphans")
+    p_thumbs.add_argument("--json", action="store_true")
+    p_wps = sub.add_parser("wallpapers")
+    p_wps.add_argument("name", nargs="?", default="", help="theme name (default: current)")
+    p_wps.add_argument("--all", action="store_true", help="every installed theme's wallpapers, after --folder's images")
+    p_wps.add_argument("--folder", default="", help="with --all, the folder whose images come first")
+    p_wps.add_argument("--json", action="store_true")
+    p_wp_add = sub.add_parser("wallpaper-add")
+    p_wp_add.add_argument("path")
+    p_wp_add.add_argument("--theme", default="", help="theme name (default: current)")
+    p_wp_add.add_argument("--json", action="store_true")
+    p_wp_rm = sub.add_parser("wallpaper-remove")
+    p_wp_rm.add_argument("file")
+    p_wp_rm.add_argument("--theme", default="", help="theme name (default: current)")
+    p_wp_rm.add_argument("--json", action="store_true")
+    p_wp_del = sub.add_parser("wallpaper-delete")
+    p_wp_del.add_argument("path")
+    p_wp_del.add_argument("--folder", default="", help="the wallpaper folder, whose images may be deleted")
+    p_wp_del.add_argument("--applied", action="append", default=[], metavar="PATH",
+                          help="an image the session or lock screen still names, which is refused; repeat per image")
+    p_wp_del.add_argument("--json", action="store_true")
+    p_wp_repair = sub.add_parser(
+        "wallpaper-repair",
+        help="answer with the wallpaper this installation holds for each path that needs repairing")
+    p_wp_repair.add_argument("paths", nargs="*")
+    p_wp_repair.add_argument("--json", action="store_true")
+    p_wp_def = sub.add_parser("wallpaper-default")
+    p_wp_def.add_argument("file")
+    p_wp_def.add_argument("--theme", default="", help="theme name (default: current)")
+    p_wp_def.add_argument("--json", action="store_true")
+    p_mode = sub.add_parser("mode")
+    p_mode.add_argument("value", choices=["light", "dark", "toggle"])
+    p_mode.add_argument("--transform", action="store_true", help="derive a lossy mode variant from the current palette instead of switching to a paired blueprint")
+    p_mode.add_argument("--json", action="store_true")
+    p_toggle = sub.add_parser("toggle")
+    p_toggle.add_argument("--transform", action="store_true")
+    p_toggle.add_argument("--json", action="store_true")
+    p_pick = sub.add_parser("pick")
+    p_pick.add_argument("mode", nargs="?", default="all", choices=["all", "dark", "light"])
+    p_pick.add_argument("--json", action="store_true")
+    p_capture = sub.add_parser("preview-capture")
+    p_capture.add_argument("--dir", required=True)
+    p_capture.add_argument("--windows", type=int, default=3)
+    p_capture.add_argument("--wait", type=float, default=20.0)
+    p_capture.add_argument("--settle", type=float, default=4.0)
+    p_chrom = sub.add_parser("chromium-policy")
+    p_chrom.add_argument("--json", action="store_true")
+    p_lint = sub.add_parser("lint")
+    p_lint.add_argument("name", nargs="?", default="")
+    p_lint.add_argument("--all", action="store_true", help="lint every theme; exit 1 on any unlisted warning or package that does not load")
+    p_lint.add_argument("--json", action="store_true")
+    p_migrate = sub.add_parser("migrate")
+    p_migrate.add_argument("name", nargs="?", default="")
+    p_migrate.add_argument("--all", action="store_true", help="convert every v1 blueprint into a theme package")
+    p_migrate.add_argument("--keep-blueprint", action="store_true")
+    p_migrate.add_argument("--json", action="store_true")
+    p_apps = sub.add_parser("apps")
+    p_apps.add_argument("--enable", default="", metavar="APP")
+    p_apps.add_argument("--disable", default="", metavar="APP")
+    p_apps.add_argument("--json", action="store_true")
+    p_regen = sub.add_parser("regenerate")
+    p_regen.add_argument("name")
+    p_regen.add_argument("--app", default="", help="regenerate a single app file (curated file name or app id)")
+    p_regen.add_argument("--yes", action="store_true", help="skip the overwrite confirmation")
+    p_regen.add_argument("--json", action="store_true")
+    p_edit = sub.add_parser("edit-app")
+    p_edit.add_argument("app")
+    p_edit.add_argument("--theme", default="", help="theme name (default: current)")
+    p_edit.add_argument("--json", action="store_true")
+    p_reset = sub.add_parser("reset-app")
+    p_reset.add_argument("app")
+    p_reset.add_argument("--theme", default="", help="theme name (default: current)")
+    p_reset.add_argument("--json", action="store_true")
+    p_pair = sub.add_parser("set-pair")
+    p_pair.add_argument("name")
+    p_pair.add_argument("pair", help="counterpart theme name; empty string clears")
+    p_pair.add_argument("--json", action="store_true")
+    p_del = sub.add_parser("delete")
+    p_del.add_argument("name")
+    p_del.add_argument("--json", action="store_true")
+    p_dup = sub.add_parser("duplicate")
+    p_dup.add_argument("name")
+    p_dup.add_argument("--as", dest="new_name", default="", help="name for the copy (default: <name>-copy)")
+    p_dup.add_argument("--json", action="store_true")
+    for verb in ("star", "unstar"):
+        p_star = sub.add_parser(verb, help=f"{verb} a theme for the switcher's Starred list")
+        p_star.add_argument("name")
+        p_star.add_argument("--json", action="store_true")
+    p_catalog = sub.add_parser("catalog", help="download the wallpapers of themes that have none on disk")
+    catalog_sub = p_catalog.add_subparsers(dest="catalog_cmd", required=True)
+    p_cat_list = catalog_sub.add_parser("list", help="every published theme with its wallpaper state")
+    p_cat_list.add_argument("--json", action="store_true")
+    p_cat_install = catalog_sub.add_parser("install", help="download theme wallpapers into ~/.config/vshell/themes")
+    p_cat_install.add_argument("names", nargs="*", default=[])
+    p_cat_install.add_argument("--all", action="store_true", help="download the wallpapers of every theme that has none")
+    p_cat_install.add_argument("--force", action="store_true", help="re-download wallpapers that are already on disk")
+    p_cat_install.add_argument("--json", action="store_true")
+    p_cat_updates = catalog_sub.add_parser("updates", help="downloads the shipped catalog pins a newer archive for")
+    p_cat_updates.add_argument("--json", action="store_true")
+    p_cat_update = catalog_sub.add_parser("update", help="update downloaded wallpapers, keeping the ones the user changed")
+    p_cat_update.add_argument("names", nargs="*", default=[])
+    p_cat_update.add_argument("--all", action="store_true", help="update every download that has an update")
+    p_cat_update.add_argument("--json", action="store_true")
+    p_cat_remove = catalog_sub.add_parser("remove", help="remove a theme's downloaded wallpapers")
+    p_cat_remove.add_argument("names", nargs="+")
+    p_cat_remove.add_argument("--json", action="store_true")
+    p_icons = sub.add_parser("icons", help="list installed icon themes and the current theme's icon set")
+    p_icons.add_argument("--json", action="store_true")
+    p_init = sub.add_parser("init", help="apply the default theme when no theme is applied yet")
+    p_init.add_argument("--json", action="store_true")
+    p_recolor = sub.add_parser("app-curated-recolor", help="recolor a curated app file (replace all uses of a hex)")
+    p_recolor.add_argument("app")
+    p_recolor.add_argument("--set", dest="edits", action="append", default=[], metavar="OLDHEX=NEWHEX")
+    p_recolor.add_argument("--theme", default="", help="theme name (default: current)")
+    p_recolor.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "init":
+        shrink_theme_overlays()
+        applied = not (cfg_dir() / "theme.json").exists()
+        if applied:
+            apply_theme_obj(default_theme_blueprint())
+        # After the apply, so a fresh install writes its own state before this reads
+        # it, and before the name below, which is what the shell waits on.
+        repaired = repair_theme_state()
+        name = str(current_theme().get("name") or "")
+        if args.json:
+            print(json.dumps({"applied": applied, "name": name, "repaired": repaired}, indent=2))
+        else:
+            print(name)
+        return 0
+    if args.cmd == "current":
+        data = current_theme()
+        if args.json:
+            bp = find_theme(str(data.get("name") or ""))
+            augmented = dict(data)
+            augmented["adjustments"] = normalize_adjustments(bp.get("adjustments") if bp else None)
+            augmented["modified"] = bool(bp and bp.get("modified"))
+            augmented["builtin"] = bool(bp and bp.get("builtin"))
+            print(json.dumps(augmented, indent=2))
+        else:
+            print(data.get("name", "vgs-theme"))
+        return 0
+    if args.cmd == "get-mode":
+        mode = current_theme().get("mode", "dark")
+        if args.json:
+            print(json.dumps({"mode": mode}, indent=2))
+        else:
+            print(mode)
+        return 0
+    if args.cmd in {"list", "list-blueprints"}:
+        bps = list_themes()
+        if args.json:
+            entries = []
+            live_previews: Set[str] = set()
+            for b in bps:
+                pal = b.get("palette", {})
+                ext = pal.get("extendedColors") or {}
+                preview = theme_preview(b)
+                if preview and Path(preview).parent == theme_previews_dir():
+                    live_previews.add(Path(preview).name)
+                package_dir = Path(str(b.get("path") or "")).name if b.get("package") else ""
+                entries.append({
+                    "name": b.get("name"),
+                    "source": blueprint_source(b),
+                    "package": bool(b.get("package")),
+                    "apps": sorted((b.get("apps") or {}).keys()),
+                    "colors": pal.get("colors", []),
+                    "background": ext.get("background", ""),
+                    "foreground": ext.get("foreground", ""),
+                    "accent": ext.get("accent", ""),
+                    "wallpaper": pal.get("wallpaper", ""),
+                    "backgrounds": b.get("backgrounds", []),
+                    "defaultWallpaper": pal.get("wallpaper", ""),
+                    "mode": blueprint_mode(b),
+                    "pair": b.get("pair", ""),
+                    "builtin": b.get("builtin", False),
+                    "preview": preview,
+                    "thumbnail": theme_thumbnail_path(str(b.get("name") or "")),
+                    # A legacy v1 blueprint has no package directory to hold wallpapers.
+                    "installed": bool(package_dir) and catalog_imagery_installed(package_dir),
+                    "starred": bool(b.get("starred")),
+                    "modified": bool(b.get("modified")),
+                    "catalogOwned": bool(b.get("catalogOwned")),
+                    "catalogPristine": bool(b.get("catalogPristine")),
+                    "adjustments": normalize_adjustments(b.get("adjustments")),
+                    "appOverrides": b.get("appOverrides") or {},
+                    "timestamp": b.get("timestamp", 0),
+                })
+            prune_theme_previews(live_previews)
+            print(json.dumps({"blueprints": entries, "count": len(entries)}, indent=2))
+        else:
+            print("\n".join(str(b.get("name")) for b in bps))
+        return 0
+    if args.cmd in {"apply", "apply-blueprint"}:
+        bp = find_theme(args.name)
+        if not bp:
+            eprint(f"Blueprint not found: {args.name}")
+            return 1
+        result = apply_theme_obj(bp)
+        print(json.dumps(result, indent=2) if args.json else f"Applied {bp.get('name')}")
+        return 0
+    if args.cmd == "import-colors":
+        path = Path(resolve_path(args.path))
+        try:
+            colors = parse_colors_toml(path)
+        except Exception as exc:
+            eprint(str(exc))
+            if args.json:
+                print(json.dumps({"success": False, "error": str(exc)}, indent=2))
+            return 1
+        bp = palette_from_colors_map(colors, name=args.name, wallpaper=resolve_path(args.wallpaper))
+        saved = save_theme_package(bp, args.name)
+        result = {"success": True, "saved": str(saved), "blueprint": bp}
+        if args.apply:
+            result["apply"] = apply_theme_obj(bp)
+        print(json.dumps(result, indent=2) if args.json else str(saved))
+        return 0
+    if args.cmd == "extract-wallpaper":
+        path = Path(resolve_path(args.path)).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        bp = blueprint_from_wallpaper(path, name=args.name, scheme=args.scheme, contrast=args.contrast, mode=args.mode)
+        result = {"success": True, "blueprint": bp, "saved": ""}
+        if args.apply:
+            result["apply"] = apply_theme_obj(bp)
+        if args.save:
+            result["saved"] = str(save_theme_package(bp, args.name))
+        print(json.dumps(result, indent=2) if args.json else (result.get("saved") or json.dumps(bp)))
+        return 0
+    if args.cmd == "set-wallpaper":
+        path = Path(resolve_path(args.path)).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        if args.extract:
+            bp = blueprint_from_wallpaper(path, name=args.name or current_theme().get("name", "wallpaper"), scheme=args.scheme, contrast=args.contrast, mode=args.mode)
+        else:
+            bp = carry_curated_apps(blueprint_from_current_theme(name=args.name or current_theme().get("name", "vgs-theme")))
+            pal = dict(bp.get("palette", {}))
+            pal["wallpaper"] = str(path)
+            bp["palette"] = pal
+        result = apply_theme_obj(bp)
+        result["saved"] = ""
+        if args.save:
+            result["saved"] = str(save_theme_package(bp, bp.get("name", args.name)))
+        print(json.dumps(result, indent=2) if args.json else f"Wallpaper set: {path}")
+        return 0
+    if args.cmd == "clear-wallpaper":
+        bp = carry_curated_apps(blueprint_from_current_theme(name=current_theme().get("name", "vgs-theme")))
+        pal = dict(bp.get("palette", {}))
+        pal["wallpaper"] = ""
+        bp["palette"] = pal
+        result = apply_theme_obj(bp)
+        result["saved"] = ""
+        print(json.dumps(result, indent=2) if args.json else "Wallpaper cleared")
+        return 0
+    if args.cmd == "wallpaper-thumbs":
+        if args.all:
+            paths = installed_wallpaper_paths()
+        else:
+            bp = resolve_theme_package(args.name)
+            if not bp:
+                eprint(f"Theme package not found: {args.name or current_theme().get('name', '')}")
+                return 1
+            paths = [Path(str(e["path"])) for e in theme_wallpaper_entries(bp)]
+        # Pruning is only correct over the COMPLETE set — see build_wallpaper_thumbs.
+        result = _wp_thumbs.build_all(paths, prune=bool(args.all))
+        result["total"] = len(paths)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"thumbnails: {result['built']} built, {result['reused']} reused, "
+                  f"{len(result['failed'])} failed, {result['pruned']} pruned -> {result['dir']}")
+        return 1 if result["failed"] and not result["built"] and not result["reused"] else 0
+    if args.cmd == "wallpapers" and args.all:
+        entries = all_wallpaper_entries(args.folder)
+        if args.json:
+            print(json.dumps({"wallpapers": entries, "count": len(entries)}, indent=2))
+        else:
+            for e in entries:
+                print(f"{e['source']:<24} {e['file']}")
+        return 0
+    if args.cmd == "wallpapers":
+        bp = resolve_theme_package(args.name)
+        if not bp:
+            eprint(f"Theme package not found: {args.name or current_theme().get('name', '')}")
+            return 1
+        entries = theme_wallpaper_entries(bp)
+        if args.json:
+            print(json.dumps({"theme": bp.get("name"), "wallpapers": entries, "count": len(entries)}, indent=2))
+        else:
+            for e in entries:
+                print(f"{'*' if e['default'] else ' '} {e['origin']:<7} {e['file']}")
+        return 0
+    if args.cmd == "wallpaper-add":
+        bp = resolve_theme_package(args.theme)
+        if not bp:
+            eprint(f"Theme package not found: {args.theme or current_theme().get('name', '')}")
+            return 1
+        src = Path(args.path).expanduser()
+        if not src.is_file():
+            eprint(f"Not a file: {args.path}")
+            return 1
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        dest_dir = user_themes_dir() / pkg_dir_name / "backgrounds"
+        if src.parent.resolve() in {dest_dir.resolve(), (builtin_themes_dir() / pkg_dir_name / "backgrounds").resolve()}:
+            # A file the theme already holds, which wallpaper-remove hid: adding it back unhides it and copies nothing.
+            dest = src
+        else:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+            counter = 1
+            while dest.exists():
+                dest = dest_dir / f"{src.stem}-{counter}{src.suffix}"
+                counter += 1
+            shutil.copy2(src, dest)
+        meta = read_theme_overlay_meta(pkg_dir_name)
+        if dest.name in hidden_background_names(meta):
+            set_background_hidden(meta, dest.name, False)
+            write_user_layer(pkg_dir_name, "theme.json", meta)
+        result = {"success": True, "theme": bp.get("name"), "file": dest.name, "path": str(dest)}
+        print(json.dumps(result, indent=2) if args.json else f"Added {dest.name} to {bp.get('name')}")
+        return 0
+    if args.cmd == "wallpaper-remove":
+        bp = resolve_theme_package(args.theme)
+        if not bp:
+            eprint(f"Theme package not found: {args.theme or current_theme().get('name', '')}")
+            return 1
+        fname = Path(args.file).name
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        # Removal hides the file by name and deletes nothing, so it stays on disk and in `wallpapers --all`;
+        # wallpaper-delete deletes. A catalog download's marker is untouched, so its imagery still reads installed.
+        if not any((root / pkg_dir_name / "backgrounds" / fname).is_file() for root in (user_themes_dir(), builtin_themes_dir())):
+            eprint(f"Wallpaper not found in {bp.get('name')}: {fname}")
+            return 1
+        meta = read_theme_overlay_meta(pkg_dir_name)
+        set_background_hidden(meta, fname, True)
+        if str(meta.get("wallpaper") or "") == fname:
+            meta.pop("wallpaper", None)
+        write_user_layer(pkg_dir_name, "theme.json", meta)
+        result = {"success": True, "theme": bp.get("name"), "file": fname, "hidden": fname}
+        print(json.dumps(result, indent=2) if args.json else f"Removed {fname} from {bp.get('name')}")
+        return 0
+    if args.cmd == "wallpaper-delete":
+        try:
+            result = delete_wallpaper(args.path, args.folder, args.applied)
+        except (OSError, ValueError) as exc:
+            eprint(str(exc))
+            return 1
+        print(json.dumps(result, indent=2) if args.json else f"Deleted {result['deleted']}")
+        return 0
+    if args.cmd == "wallpaper-repair":
+        # The shell owns session.json and this owns the rule, so the answer crosses
+        # the boundary rather than the write: SessionData applies it per key, which
+        # keeps each monitor's and each mode's own value.
+        repaired = {path: resolved_wallpaper(path) for path in args.paths}
+        moved = {path: value for path, value in repaired.items() if value != path}
+        print(json.dumps({"repaired": moved}, indent=2) if args.json
+              else "\n".join(f"{path}\t{value}" for path, value in moved.items()))
+        return 0
+    if args.cmd == "wallpaper-default":
+        bp = resolve_theme_package(args.theme)
+        if not bp:
+            eprint(f"Theme package not found: {args.theme or current_theme().get('name', '')}")
+            return 1
+        fname = Path(args.file).name
+        entries = theme_wallpaper_entries(bp)
+        if fname not in {e["file"] for e in entries}:
+            eprint(f"Wallpaper not in {bp.get('name')}'s set: {fname}")
+            return 1
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        meta = read_theme_overlay_meta(pkg_dir_name)
+        meta["wallpaper"] = fname
+        write_user_layer(pkg_dir_name, "theme.json", meta)
+        result = {"success": True, "theme": bp.get("name"), "default": fname}
+        print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} default wallpaper: {fname}")
+        return 0
+    if args.cmd == "save-current":
+        bp = blueprint_from_current_theme(name=args.name)
+        saved = save_theme_package(bp, args.name)
+        print(json.dumps({"success": True, "saved": str(saved)}, indent=2) if args.json else str(saved))
+        return 0
+    if args.cmd == "apply-colors":
+        try:
+            if args.persist:
+                result = persist_color_edits(args.edits, args.name)
+            else:
+                result = apply_color_edits(args.edits, args.name, mode=args.mode or None, wallpaper=args.wallpaper, save=args.save)
+        except Exception as exc:
+            eprint(str(exc))
+            if args.json:
+                print(json.dumps({"success": False, "error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps(result, indent=2) if args.json else f"Applied {result.get('name') or args.name}")
+        return 0
+    if args.cmd == "revert":
+        bp = find_theme(args.name)
+        if not bp:
+            eprint(f"Theme not found: {args.name}")
+            return 1
+        if not bp.get("builtin"):
+            eprint(f"{bp.get('name')} is a user theme; use `vshell theme delete {args.name}` instead")
+            if args.json:
+                print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False, "error": "not a built-in theme"}, indent=2))
+            return 1
+        drop_theme_overlay(Path(str(bp.get("path"))).name)
+        applied = False
+        if str(bp.get("name")) == str(current_theme().get("name")):
+            reverted = find_theme(args.name)
+            if reverted:
+                apply_theme_obj(reverted)
+                applied = True
+        # Dropping the overlay can take user backgrounds with it, so the same
+        # orphaning applies as a delete or a removal.
+        result = {"reverted": True, "name": bp.get("name"), "applied": applied,
+                  "thumbsPruned": prune_wallpaper_thumbs_now()}
+        print(json.dumps(result, indent=2) if args.json else f"Reverted {bp.get('name')} to defaults")
+        return 0
+    if args.cmd == "restyle":
+        target = find_theme(args.name) if args.name else current_theme_obj()
+        if not target or not target.get("package"):
+            msg = f"not a theme package: {args.name or current_theme().get('name', '(current)')}; save it first"
+            eprint(msg)
+            if args.json:
+                print(json.dumps({"success": False, "error": msg}, indent=2))
+            return 1
+        pkg_dir_name = Path(str(target.get("path"))).name
+        if args.reset:
+            adj = normalize_adjustments({})
+        else:
+            adj = normalize_adjustments(target.get("adjustments"))
+            for key in ADJUST_KEYS:
+                value = getattr(args, key)
+                if value is not None:
+                    adj[key] = value
+            adj = normalize_adjustments(adj)
+        if args.preview:
+            preview_target = dict(target)
+            preview_target["adjustments"] = adj
+            applied = False
+            if str(target.get("name")) == str(current_theme().get("name")):
+                apply_theme_obj(
+                    preview_target,
+                    only_target="vgs-shell",
+                    run_hooks=False,
+                )
+                applied = True
+            result = {
+                "success": True,
+                "preview": True,
+                "name": target.get("name"),
+                "adjustments": adj,
+                "applied": applied,
+            }
+            print(json.dumps(result, indent=2) if args.json else f"Previewed {target.get('name')}: {adj}")
+            return 0
+        stored = set_theme_adjustments(pkg_dir_name, adj)
+        applied = False
+        if str(target.get("name")) == str(current_theme().get("name")):
+            refreshed = load_theme_package(pkg_dir_name)
+            if refreshed:
+                apply_theme_obj(refreshed)
+                applied = True
+        result = {"success": True, "name": target.get("name"), "adjustments": stored, "applied": applied}
+        print(json.dumps(result, indent=2) if args.json else f"Restyled {target.get('name')}: {stored}")
+        return 0
+    if args.cmd == "app-roles":
+        bp = find_theme(args.theme) if args.theme else current_theme_obj()
+        if not bp:
+            eprint(f"Theme not found: {args.theme or '(current)'}")
+            return 1
+        view = app_role_view(args.app, bp)
+        if args.json:
+            print(json.dumps(view, indent=2))
+        else:
+            if not view["roles"]:
+                print(f"{args.app}: no editable roles" + (" (curated)" if view["curated"] else ""))
+            for role in view["roles"]:
+                mark = "*" if role["overridden"] else " "
+                print(f"{mark} {role['role']}: {role['value']}")
+        return 0
+    if args.cmd == "app-colors":
+        # The app id becomes a `[section]` header in app-colors.toml; a stray
+        # newline/']'/'#' would corrupt the file and silently drop every
+        # override on the next read, so constrain it to safe token chars.
+        if not re.match(r"^[A-Za-z0-9._-]+$", args.app or ""):
+            msg = f"invalid app id: {args.app!r}"
+            eprint(msg)
+            if args.json:
+                print(json.dumps({"success": False, "error": msg}, indent=2))
+            return 1
+        bp = find_theme(args.theme) if args.theme else current_theme_obj()
+        if not bp:
+            eprint(f"Theme not found: {args.theme or '(current)'}")
+            return 1
+        if not bp.get("package"):
+            eprint(f"{bp.get('name')} is a legacy blueprint; run `vshell theme migrate {bp.get('name')}` first")
+            return 1
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        universe = theme_role_universe(bp)
+        overrides = read_user_app_overrides(pkg_dir_name)
+        app_roles = dict(overrides.get(args.app, {}))
+        try:
+            if args.reset:
+                app_roles = {}
+            for raw in args.edits:
+                if "=" not in raw:
+                    raise ValueError(f"invalid override: {raw}")
+                role, value = raw.split("=", 1)
+                role = role.strip()
+                if role not in universe:
+                    raise ValueError(f"unknown role: {role}")
+                parsed = parse_hex_strict(value, role)
+                slot = TERMINAL_SLOT_INDEX.get(role)
+                if slot is not None:
+                    # One saved key per terminal slot, so the row just set is the colour painted.
+                    for key in terminal_slot_override_keys(slot):
+                        app_roles.pop(key, None)
+                app_roles[role] = parsed
+        except ValueError as exc:
+            eprint(str(exc))
+            if args.json:
+                print(json.dumps({"success": False, "error": str(exc)}, indent=2))
+            return 1
+        if app_roles:
+            overrides[args.app] = app_roles
+        else:
+            overrides.pop(args.app, None)
+        write_user_layer(pkg_dir_name, "app-colors.toml", overrides)
+        applied = None
+        refreshed = load_theme_package(pkg_dir_name) or bp
+        if str(refreshed.get("name")) == str(current_theme().get("name")):
+            applied = apply_theme_obj(refreshed, only_app=args.app)
+        result = {"success": True, "app": args.app, "theme": bp.get("name"), "overrides": app_roles, "applied": applied}
+        print(json.dumps(result, indent=2) if args.json else (f"{args.app}: {len(app_roles)} override(s)" if app_roles else f"{args.app}: overrides cleared"))
+        return 0
+    if args.cmd == "app-curated-recolor":
+        if not re.match(r"^[A-Za-z0-9._-]+$", args.app or ""):
+            msg = f"invalid app id: {args.app!r}"
+            eprint(msg)
+            if args.json:
+                print(json.dumps({"success": False, "error": msg}, indent=2))
+            return 1
+        bp = find_theme(args.theme) if args.theme else current_theme_obj()
+        if not bp or not bp.get("package"):
+            msg = f"not an editable theme package: {args.theme or '(current)'}"
+            eprint(msg)
+            if args.json:
+                print(json.dumps({"success": False, "error": msg}, indent=2))
+            return 1
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        curated_name = app_curated_file(args.app, bp)
+        apps = bp.get("apps") or {}
+        if not curated_name or curated_name not in apps:
+            msg = f"{args.app} has no curated file for this theme"
+            eprint(msg)
+            if args.json:
+                print(json.dumps({"success": False, "error": msg}, indent=2))
+            return 1
+        try:
+            pairs = []
+            for raw in args.edits:
+                if "=" not in raw:
+                    raise ValueError(f"invalid recolor: {raw}")
+                old, new = raw.split("=", 1)
+                pairs.append((parse_hex_strict(old, "from"), parse_hex_strict(new, "to")))
+        except ValueError as exc:
+            eprint(str(exc))
+            if args.json:
+                print(json.dumps({"success": False, "error": str(exc)}, indent=2))
+            return 1
+        overlay = user_themes_dir() / pkg_dir_name / "apps" / curated_name
+        source_text = Path(apps[curated_name]).read_text(errors="ignore")
+        text = overlay.read_text(errors="ignore") if overlay.exists() else source_text
+        # Single simultaneous pass over full-token #rrggbb matches: the boundary
+        # guard `(?![0-9a-fA-F])` avoids clipping 8-digit #rrggbbaa colors, and the
+        # dict lookup means an A=B,B=C batch can't cascade A into C.
+        mapping = {old.lower(): new for old, new in pairs}
+        changed = 0
+
+        def _recolor(match: "re.Match[str]") -> str:
+            nonlocal changed
+            replacement = mapping.get(match.group(0).lower())
+            if replacement is None:
+                return match.group(0)
+            changed += 1
+            return replacement
+
+        text = re.sub(r'#[0-9a-fA-F]{6}(?![0-9a-fA-F])', _recolor, text)
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        write_file(overlay, text)
+        applied = None
+        refreshed = load_theme_package(pkg_dir_name) or bp
+        if str(refreshed.get("name")) == str(current_theme().get("name")):
+            applied = apply_theme_obj(refreshed, only_app=args.app)
+        result = {"success": True, "app": args.app, "theme": bp.get("name"), "replaced": changed, "applied": applied}
+        print(json.dumps(result, indent=2) if args.json else f"{args.app}: recolored {changed} occurrence(s)")
+        return 0
+    if args.cmd in {"mode", "toggle"}:
+        cur = current_theme()
+        cur_mode = "light" if (cur.get("mode") or "dark") == "light" else "dark"
+        target = args.value if args.cmd == "mode" else "toggle"
+        if target == "toggle":
+            target = "dark" if cur_mode == "light" else "light"
+        cur_name = cur.get("name", "")
+        if args.transform:
+            base = find_theme(cur_name)
+            bp = (transformed_mode_blueprint(base, target, cur.get("wallpaper", "")) if base
+                  else blueprint_from_current_theme(name=cur_name or "vgs-theme", mode=target))
+            result = apply_theme_obj(bp)
+            print(json.dumps(result, indent=2) if args.json else f"Mode set: {target}")
+            return 0
+        if target == cur_mode:
+            result = {"success": True, "unchanged": True, "mode": target, "name": cur_name}
+            print(json.dumps(result, indent=2) if args.json else f"Already {target}: {cur_name}")
+            return 0
+        base = find_theme(cur_name)
+        pair = paired_blueprint(base, target) if base else None
+        if pair:
+            result = apply_theme_obj(pair)
+            result["mode"] = target
+            result["pairedFrom"] = cur_name
+            print(json.dumps(result, indent=2) if args.json else f"Applied {pair.get('name')} ({target} pair of {cur_name})")
+            return 0
+        # No curated counterpart: never invent one silently — hand the choice to the user.
+        picker = open_theme_picker(target)
+        opened = bool(picker.get("ok"))
+        hint = f"No {target} pair for '{cur_name}'. Run: vshell theme pick {target}"
+        result = {"success": True, "action": "pick", "mode": target, "pickerOpened": opened}
+        if not opened:
+            result["hint"] = hint
+        print(json.dumps(result, indent=2) if args.json else (f"No {target} pair for '{cur_name}'; opened theme picker" if opened else hint))
+        return 0
+    if args.cmd == "pick":
+        picker = open_theme_picker("" if args.mode == "all" else args.mode)
+        opened = bool(picker.get("ok"))
+        result = {"success": opened, "mode": args.mode, "pickerOpened": opened}
+        if not opened:
+            result["error"] = picker.get("stderr") or picker.get("error") or "theme picker IPC unavailable"
+        print(json.dumps(result, indent=2) if args.json else ("Theme picker opened" if opened else str(result["error"])))
+        return 0 if opened else 1
+    if args.cmd == "preview-capture":
+        return cmd_theme_preview_capture(args)
+    if args.cmd == "chromium-policy":
+        roles = target_roles(blueprint_from_current_theme())
+        ok, reason = write_chromium_policy(roles, allow_prompt=sys.stdin.isatty())
+        if args.json:
+            print(json.dumps({"success": ok, "error": reason}, indent=2))
+        else:
+            print("ok" if ok else f"failed: {reason}")
+        return 0 if ok else 1
+    if args.cmd == "lint":
+        unloaded: List[str] = []
+        if args.all:
+            targets = list_themes()
+            # list_themes skips a package whose theme.json does not read, with only a
+            # stderr note; the gate counts it rather than passing without it.
+            loaded = {Path(bp.get("path", "")).name for bp in targets if bp.get("package")}
+            unloaded = [name for name in theme_package_names() if name not in loaded]
+        else:
+            if args.name:
+                bp = find_theme(args.name)
+            else:
+                # Default to the last applied blueprint so lint sees raw palette data.
+                bp = applied_blueprint() or find_theme(current_theme().get("name", ""))
+            if not bp:
+                eprint(f"Theme not found: {args.name or '(current)'}")
+                return 1
+            targets = [bp]
+        payloads = []
+        for bp in targets:
+            results = lint_blueprint(bp)
+            warnings = [w for w in results if not w["known"]]
+            payloads.append({"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings,
+                             "count": len(warnings), "known": [w for w in results if w["known"]]})
+        count = sum(payload["count"] for payload in payloads) + len(unloaded)
+        if args.json:
+            print(json.dumps({"themes": payloads, "unloaded": unloaded, "count": count} if args.all else payloads[0],
+                             indent=2))
+        else:
+            for name in unloaded:
+                print(f"{name}: theme package did not load")
+            for payload in payloads:
+                if payload["warnings"]:
+                    print(f"{payload['name']} ({payload['source']}): {payload['count']} warning(s)")
+                    for w in payload["warnings"]:
+                        print(f"  - {w['message']}")
+                else:
+                    print(f"{payload['name']} ({payload['source']}): no warnings")
+                if payload["known"]:
+                    print(f"{len(payload['known'])} known upstream shortfall(s):")
+                    for w in payload["known"]:
+                        print(f"  - {w['message']}")
+        # Only the every-theme lint is a gate; one theme's lint stays a report.
+        return 1 if args.all and count else 0
+    if args.cmd == "migrate":
+        if not args.name and not args.all:
+            eprint("Usage: vshell theme migrate <name> | --all")
+            return 2
+        candidates = [b for b in list_themes() if not b.get("package")]
+        if args.name:
+            match = find_theme(args.name)
+            if not match:
+                eprint(f"Theme not found: {args.name}")
+                return 1
+            if match.get("package"):
+                eprint(f"{match.get('name')} is already a theme package")
+                return 1
+            candidates = [match]
+        migrated = []
+        for bp in candidates:
+            root = materialize_theme_package(bp, user=not bp.get("builtin"))
+            old_path = bp.get("path", "")
+            if old_path and not args.keep_blueprint and not bp.get("builtin"):
+                with contextlib.suppress(OSError):
+                    Path(old_path).unlink()
+            migrated.append({"name": bp.get("name"), "package": str(root)})
+        if args.json:
+            print(json.dumps({"success": True, "migrated": migrated, "count": len(migrated)}, indent=2))
+        else:
+            for entry in migrated:
+                print(f"{entry['name']} -> {entry['package']}")
+            if not migrated:
+                print("Nothing to migrate: all themes are packages already")
+        return 0
+    if args.cmd == "apps":
+        if args.enable and args.disable:
+            eprint("Use either --enable or --disable, not both")
+            return 2
+        toggled = args.enable or args.disable
+        # The shell owns settings.json, so the toggle is an argument: it applies to
+        # this run, the resulting set is reported, and nothing is saved. Settings >
+        # Colors stores the toggle before it runs this.
+        theme_apps = theme_apps_settings()
+        result: Dict[str, Any] = {}
+        if toggled:
+            known = {entry["app"] for entry in theme_apps_inventory(theme_apps)}
+            if toggled not in known:
+                eprint(f"Unknown app: {toggled} (known: {', '.join(sorted(known))})")
+                return 1
+            theme_apps = {**theme_apps, toggled: bool(args.enable)}
+            if args.enable:
+                result["applied"] = apply_theme_obj(current_theme_obj(), only_app=toggled,
+                                                    theme_apps=theme_apps)
+        inventory = theme_apps_inventory(theme_apps)
+        if args.json:
+            print(json.dumps({"apps": inventory, "count": len(inventory),
+                              "themeApps": theme_apps, **result}, indent=2))
+        else:
+            for entry in inventory:
+                state = "always on" if entry["always"] else ("on" if entry["enabled"] else "off")
+                origin = "" if entry["always"] else (" (setting)" if entry["configured"] else " (auto)")
+                detected = "" if entry["detected"] or entry["always"] else " — not installed"
+                curated = " [curated]" if entry["curated"] else ""
+                print(f"{entry['app']}: {state}{origin}{detected}{curated}")
+            if toggled:
+                print(f"not-saved: themeApps.{toggled}={'true' if args.enable else 'false'}\n"
+                      "The toggle applied to this run only and was not saved. Settings > Colors stores it.")
+        return 0
+    if args.cmd == "regenerate":
+        bp = find_theme(args.name)
+        if not bp:
+            eprint(f"Theme not found: {args.name}")
+            return 1
+        if not bp.get("package"):
+            eprint(f"{bp.get('name')} is a legacy blueprint; run `vshell theme migrate {bp.get('name')}` first")
+            return 1
+        rendered_apps = rendered_apps_for(bp, bp_app_overrides(bp))
+        if args.app:
+            match = {k: v for k, v in rendered_apps.items() if k == args.app or k.split(".")[0] == args.app}
+            if not match:
+                eprint(f"No regenerable app file matches: {args.app} (have: {', '.join(sorted(rendered_apps))})")
+                return 1
+            rendered_apps = match
+        existing = set((bp.get("apps") or {}).keys()) & set(rendered_apps.keys())
+        if existing and not args.yes:
+            warning = f"Overwrites hand-edits in apps/: {', '.join(sorted(existing))}"
+            if sys.stdin.isatty():
+                reply = input(f"{warning}. Continue? [y/N] ").strip().lower()
+                if reply not in {"y", "yes"}:
+                    print("Aborted")
+                    return 1
+            else:
+                eprint(f"{warning}. Re-run with --yes to confirm.")
+                return 1
+        if blueprint_source(bp) == "curated":
+            eprint(f"note: {bp.get('name')} is curated; regenerating replaces curated files with palette renders")
+        # The loader kept these against the package's own palette, and this write
+        # moves no colour, so they are files the record must go on certifying.
+        root = materialize_theme_package(bp, apps=rendered_apps,
+                                        vouched=sorted(set(bp.get("apps") or {}) & CLAUDE_CURATED_FILES))
+        result = {"success": True, "package": str(root), "regenerated": sorted(rendered_apps.keys())}
+        print(json.dumps(result, indent=2) if args.json else "\n".join(f"regenerated apps/{n}" for n in sorted(rendered_apps)))
+        return 0
+    if args.cmd in {"edit-app", "reset-app"}:
+        bp = find_theme(args.theme) if args.theme else current_theme_obj()
+        if not bp:
+            eprint(f"Theme not found: {args.theme or '(current)'}")
+            return 1
+        if not bp.get("package"):
+            eprint(f"{bp.get('name')} is a legacy blueprint; run `vshell theme migrate {bp.get('name')}` first")
+            return 1
+        cfg = None
+        for cfg_path in sorted(targets_dir().glob("*/config.json")):
+            candidate = json.loads(cfg_path.read_text())
+            if str(candidate.get("app") or "") == args.app and candidate.get("curatedFile"):
+                cfg = candidate
+                cfg_dir_path = cfg_path.parent
+                break
+        if not cfg:
+            eprint(f"App has no curated file support: {args.app}")
+            return 1
+        filename = str(cfg["curatedFile"])
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        user_path = user_themes_dir() / pkg_dir_name / "apps" / filename
+        if args.cmd == "edit-app":
+            created = False
+            if not user_path.exists():
+                # First edit: seed from the curated file if the theme ships one,
+                # else from the current palette render.
+                existing = (bp.get("apps") or {}).get(filename)
+                if existing:
+                    content = Path(existing).read_text()
+                elif cfg.get("template"):
+                    content = render_template((cfg_dir_path / cfg["template"]).read_text(),
+                                              render_roles(bp, target_roles(bp),
+                                                           bp_app_overrides(bp).get(args.app, {})),
+                                              f"{cfg_dir_path.name}/{cfg['template']}")
+                else:
+                    eprint(f"{args.app} has no template to seed from; create {user_path} by hand")
+                    return 1
+                write_file(user_path, content)
+                created = True
+            result = {"success": True, "path": str(user_path), "created": created, "app": args.app, "theme": bp.get("name")}
+            print(json.dumps(result, indent=2) if args.json else str(user_path))
+            return 0
+        removed = user_path.exists()
+        with contextlib.suppress(OSError):
+            user_path.unlink()
+        refreshed = load_theme_package(pkg_dir_name) or bp
+        applied = None
+        if refreshed.get("name") == current_theme().get("name"):
+            applied = apply_theme_obj(refreshed, only_app=args.app)
+        result = {"success": True, "removed": removed, "app": args.app, "theme": bp.get("name"), "applied": applied}
+        print(json.dumps(result, indent=2) if args.json else (f"reset {args.app}" if removed else f"nothing to reset for {args.app}"))
+        return 0
+    if args.cmd == "set-pair":
+        bp = find_theme(args.name)
+        if not bp or not bp.get("package"):
+            eprint(f"Theme package not found: {args.name}")
+            return 1
+        pkg_dir_name = Path(str(bp.get("path"))).name
+        meta = read_theme_overlay_meta(pkg_dir_name)
+        meta["pair"] = args.pair
+        write_user_layer(pkg_dir_name, "theme.json", meta)
+        result = {"success": True, "name": bp.get("name"), "pair": args.pair}
+        print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} pairs with {args.pair or '(none)'}")
+        return 0
+    if args.cmd in {"star", "unstar"}:
+        bp = find_theme(args.name)
+        if not bp or not bp.get("package"):
+            eprint(f"Theme package not found: {args.name}")
+            return 1
+        starred = args.cmd == "star"
+        set_theme_starred(Path(str(bp.get("path"))).name, starred)
+        result = {"success": True, "name": bp.get("name"), "starred": starred}
+        print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} {'starred' if starred else 'unstarred'}")
+        return 0
+    if args.cmd == "delete":
+        bp = find_theme(args.name)
+        if not bp:
+            eprint(f"Theme not found: {args.name}")
+            return 1
+        if bp.get("builtin"):
+            eprint(f"{bp.get('name')} is built-in; only its user overlay can be removed")
+            if bp.get("userDir"):
+                shutil.rmtree(bp["userDir"], ignore_errors=True)
+                pruned = prune_wallpaper_thumbs_now()
+                print(json.dumps({"success": True, "removedOverlay": bp["userDir"], "thumbsPruned": pruned}, indent=2) if args.json else f"Removed user overlay: {bp['userDir']}")
+                return 0
+            return 1
+        removed = []
+        if bp.get("package"):
+            shutil.rmtree(bp["path"], ignore_errors=True)
+            removed.append(bp["path"])
+        elif bp.get("path"):
+            with contextlib.suppress(OSError):
+                Path(bp["path"]).unlink()
+                removed.append(bp["path"])
+        result = {"success": bool(removed), "removed": removed}
+        if removed:
+            result["thumbsPruned"] = prune_wallpaper_thumbs_now()
+        print(json.dumps(result, indent=2) if args.json else "\n".join(f"deleted {p}" for p in removed))
+        return 0 if removed else 1
+    if args.cmd == "duplicate":
+        bp = find_theme(args.name)
+        if not bp:
+            eprint(f"Theme not found: {args.name}")
+            return 1
+        new_name = args.new_name or f"{bp.get('name')}-copy"
+        safe_new = re.sub(r"[^A-Za-z0-9_.-]+", "-", new_name).strip("-") or "theme-copy"
+        dest = user_themes_dir() / safe_new
+        if dest.exists():
+            eprint(f"Theme already exists: {safe_new}")
+            return 1
+        if bp.get("package"):
+            duplicate_theme_package(Path(str(bp.get("path"))).name, safe_new, new_name)
+        else:
+            bp = dict(bp)
+            bp["name"] = new_name
+            materialize_theme_package(bp)
+        result = {"success": True, "name": new_name, "package": str(dest)}
+        print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} duplicated to {dest}")
+        return 0
+    if args.cmd == "catalog":
+        catalog = load_theme_catalog()
+        if args.catalog_cmd == "list":
+            entries = catalog_entries()
+            if args.json:
+                source = catalog.get("source") or {}
+                print(json.dumps({
+                    "themes": entries,
+                    "count": len(entries),
+                    "installedCount": sum(1 for e in entries if e["imageryInstalled"]),
+                    "totalSize": sum(e["imagerySize"] for e in entries),
+                    "ref": source.get("ref", ""),
+                    "repo": source.get("repo", ""),
+                }, indent=2))
+            else:
+                for entry in entries:
+                    print(f"{'*' if entry['imageryInstalled'] else ' '} {entry['name']}")
+            return 0
+        if args.catalog_cmd == "updates":
+            pending = catalog_updates()
+            if args.json:
+                print(json.dumps({"themes": pending, "count": len(pending)}, indent=2))
+            else:
+                for item in pending:
+                    note = "" if item["digests"] else " (no file digests; reinstall with install --force)"
+                    print(f"{item['name']}: r{item['installedRev']} -> r{item['latestRev']}{note}")
+            return 0
+
+        base_urls, allow_local = theme_catalog_base_urls(catalog)
+        if args.catalog_cmd == "update":
+            names = [item["name"] for item in catalog_updates()] if args.all else list(args.names)
+            if not names and not args.all:
+                eprint("Nothing to update (pass theme names or --all)")
+                return 2
+            updates: List[Dict[str, Any]] = []
+            failures = 0
+            for name in names:
+                entry = catalog_theme_entry(catalog, name)
+                try:
+                    if not entry:
+                        raise ValueError("not in the theme catalog")
+                    updates.append(catalog_update_theme(entry, base_urls, allow_local))
+                except Exception as exc:
+                    updates.append({"name": name, "status": "failed", "error": str(exc)})
+                    failures += 1
+            if args.json:
+                print(json.dumps({"success": failures == 0, "results": updates,
+                                  "updated": [r["name"] for r in updates if r["status"] == "updated"]}, indent=2))
+            else:
+                for result in updates:
+                    kept = (result.get("files") or {}).get("kept") or []
+                    detail = result.get("error") or (f"kept {', '.join(kept)}" if kept else "")
+                    print(f"{result['name']}: {result['status']}" + (f" ({detail})" if detail else ""))
+            return 0 if failures == 0 else 1
+        if args.catalog_cmd == "install":
+            names = list(args.names)
+            if args.all:
+                names = [e["name"] for e in catalog_entries() if not e["imageryInstalled"]]
+            if not names:
+                eprint("Nothing to download (pass theme names or --all)")
+                return 2
+            results: List[Dict[str, Any]] = []
+            failures = 0
+            for name in names:
+                entry = catalog_theme_entry(catalog, name)
+                if not entry:
+                    results.append({"name": name, "status": "failed", "error": "not in the theme catalog"})
+                    failures += 1
+                    continue
+                try:
+                    results.append(catalog_download_theme(entry, base_urls, allow_local, force=args.force))
+                except Exception as exc:
+                    results.append({"name": name, "status": "failed", "error": str(exc)})
+                    failures += 1
+            installed_now = [r["name"] for r in results if r.get("status") == "installed"]
+            payload = {
+                "success": failures == 0,
+                "results": results,
+                "installed": installed_now,
+                "bytes": sum(int(r.get("bytes") or 0) for r in results),
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2))
+            else:
+                for result in results:
+                    detail = result.get("error") or result.get("reason") or result.get("path", "")
+                    print(f"{result['name']}: {result['status']}" + (f" ({detail})" if detail else ""))
+            return 0 if failures == 0 else 1
+        if args.catalog_cmd == "remove":
+            results = []
+            failures = 0
+            for name in args.names:
+                try:
+                    results.append(catalog_remove_theme(name))
+                except Exception as exc:
+                    results.append({"name": name, "status": "failed", "error": str(exc)})
+                    failures += 1
+            if args.json:
+                print(json.dumps({"success": failures == 0, "results": results}, indent=2))
+            else:
+                for result in results:
+                    print(f"{result['name']}: {result['status']}" + (
+                        f" ({result['error']})" if result.get("error") else ""))
+            return 0 if failures == 0 else 1
+        return 2
+    if args.cmd == "icons":
+        installed = list_installed_icon_themes()
+        theme_icon = ""
+        pointer = generated_dir() / "icons.theme"
+        if pointer.exists():
+            theme_icon = pointer.read_text().strip()
+        result = {
+            "sets": [{"name": name, "samples": _icon_theme_samples_or_none(name)} for name in installed],
+            "themeIcon": theme_icon,
+        }
+        print(json.dumps(result, indent=2) if args.json else "\n".join(installed))
+        return 0
+    return 1
+
+
+def clipboard_state_file() -> Path:
+    return state_dir() / "clipboard-history.json"
+
+
+def clipboard_images_dir() -> Path:
+    return state_dir() / "clipboard-images"
+
+
+@contextlib.contextmanager
+def clipboard_state_lock():
+    ensure_dirs()
+    lock_path = state_dir() / "clipboard-history.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def load_clipboard_state() -> Dict[str, Any]:
+    ensure_dirs()
+    path = clipboard_state_file()
+    if not path.exists():
+        return {"nextId": 1, "entries": []}
+    try:
+        data = json.loads(path.read_text())
+        data.setdefault("nextId", 1)
+        data.setdefault("entries", [])
+        return data
+    except Exception as exc:
+        corrupt = path.with_suffix(path.suffix + f".corrupt-{int(time.time())}")
+        try:
+            path.replace(corrupt)
+            msg = f"clipboard history was corrupt; moved to {corrupt}: {exc}"
+            eprint(msg)
+            return {"nextId": 1, "entries": [], "_warning": msg}
+        except Exception:
+            msg = f"clipboard history was corrupt and could not be moved: {exc}"
+            eprint(msg)
+            return {"nextId": 1, "entries": [], "_warning": msg}
+
+
+def clipboard_entry_recency(entry: Dict[str, Any]) -> Tuple[int, int]:
+    return (int(entry.get("timestamp") or 0), int(entry.get("id") or 0))
+
+
+def save_clipboard_state(data: Dict[str, Any]) -> None:
+    ensure_dirs()
+    # Keep history bounded; pinned entries plus newest unpinned entries.
+    # Inline base64 "data" is a legacy field (image blobs live on disk, text is
+    # stored in "text"), so drop it on every save to migrate old state files.
+    entries = [{k: v for k, v in e.items() if k != "data"} for e in (data.get("entries") or [])]
+    pinned = [e for e in entries if e.get("pinned")]
+    unpinned = [e for e in entries if not e.get("pinned")]
+    unpinned = sorted(unpinned, key=clipboard_entry_recency, reverse=True)[:100]
+    data = dict(data)
+    data.pop("_warning", None)
+    data["entries"] = pinned + unpinned
+    write_file(clipboard_state_file(), json.dumps(data, indent=2) + "\n")
+
+
+def clipboard_entry_public(entry: Dict[str, Any]) -> Dict[str, Any]:
+    text = entry.get("text") or ""
+    preview = entry.get("preview") or ("Image" if entry.get("isImage") else text[:240])
+    mime = entry.get("mime") or ("image/png" if entry.get("isImage") else "text/plain")
+    return {
+        "id": entry.get("id"),
+        "hash": entry.get("hash") or "",
+        "preview": preview,
+        "text": text if len(text) <= 500 else text[:500],
+        "size": int(entry.get("size") or len(text)),
+        "isImage": bool(entry.get("isImage")),
+        "mime": mime,
+        "mimeType": mime,
+        "pinned": bool(entry.get("pinned")),
+        "timestamp": entry.get("timestamp") or 0,
+        "path": entry.get("path") or "",
+    }
+
+
+def _wl_paste_text() -> str | None:
+    if not shutil.which("wl-paste"):
+        return None
+    proc = subprocess.run(["wl-paste", "--no-newline", "--type", "text"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    try:
+        return proc.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _wl_paste_image() -> Tuple[str, bytes] | None:
+    if not shutil.which("wl-paste"):
+        return None
+    types = subprocess.run(["wl-paste", "--list-types"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+    if types.returncode != 0:
+        return None
+    mime = next((line.strip() for line in types.stdout.splitlines() if line.strip().startswith("image/")), "")
+    if not mime:
+        return None
+    proc = subprocess.run(["wl-paste", "--type", mime], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return mime, proc.stdout
+
+
+def clipboard_poll_current() -> None:
+    state = load_clipboard_state()
+    entries: List[Dict[str, Any]] = list(state.get("entries") or [])
+    text = _wl_paste_text()
+    new_entry: Dict[str, Any] | None = None
+    if text is not None and text != "":
+        digest = hashlib.sha256(("text\0" + text).encode("utf-8", errors="replace")).hexdigest()
+        new_entry = {
+            "hash": digest,
+            "text": text,
+            "preview": text.replace("\n", " ")[:240],
+            "size": len(text),
+            "isImage": False,
+            "mime": "text/plain",
+        }
+    else:
+        image = _wl_paste_image()
+        if image:
+            mime, blob = image
+            digest = hashlib.sha256(b"image\0" + blob).hexdigest()
+            img_dir = clipboard_images_dir()
+            img_dir.mkdir(parents=True, exist_ok=True)
+            suffix = "png" if mime == "image/png" else mime.split("/")[-1].replace("+xml", "")
+            image_path = img_dir / f"{digest}.{suffix}"
+            if not image_path.exists():
+                image_path.write_bytes(blob)
+            new_entry = {
+                "hash": digest,
+                "text": "",
+                "preview": f"Image ({mime})",
+                "size": len(blob),
+                "isImage": True,
+                "mime": mime,
+                "path": str(image_path),
+            }
+    if not new_entry:
+        return
+    existing = next((e for e in entries if e.get("hash") == new_entry["hash"]), None)
+    if existing:
+        # Re-copied content bumps to the top by recency instead of keeping
+        # its original position.
+        existing["timestamp"] = int(time.time() * 1000)
+        existing["id"] = int(existing.get("id") or state.get("nextId") or 1)
+    else:
+        new_entry["id"] = int(state.get("nextId") or 1)
+        state["nextId"] = int(new_entry["id"]) + 1
+        new_entry["timestamp"] = int(time.time() * 1000)
+        new_entry["pinned"] = False
+        entries.insert(0, new_entry)
+    state["entries"] = sorted(entries, key=clipboard_entry_recency, reverse=True)
+    save_clipboard_state(state)
+
+
+def clipboard_find_entry(state: Dict[str, Any], entry_id: Any) -> Dict[str, Any] | None:
+    try:
+        wanted = int(entry_id)
+    except Exception:
+        return None
+    return next((e for e in state.get("entries") or [] if int(e.get("id") or -1) == wanted), None)
+
+
+def wl_copy_bytes(blob: bytes, mime: str | None = None) -> Tuple[bool, str]:
+    if not shutil.which("wl-copy"):
+        return False, "wl-copy not found"
+    cmd = ["wl-copy"]
+    if mime:
+        cmd.extend(["--type", mime])
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+        assert proc.stdin is not None
+        proc.stdin.write(blob)
+        proc.stdin.close()
+        try:
+            code = proc.wait(timeout=0.6)
+            if code != 0:
+                err = (proc.stderr.read() if proc.stderr else b"").decode(errors="replace").strip()
+                return False, err or "wl-copy failed"
+        except subprocess.TimeoutExpired:
+            # wl-copy may stay foreground to serve the Wayland clipboard; that is success.
+            pass
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def wl_copy_text(text: str) -> Tuple[bool, str]:
+    return wl_copy_bytes(text.encode("utf-8", errors="replace"), None)
+
+
+def clipboard_copy_entry(entry: Dict[str, Any]) -> bool:
+    if entry.get("isImage"):
+        path = entry.get("path") or ""
+        if not path or not Path(path).exists():
+            return False
+        ok, _err = wl_copy_bytes(Path(path).read_bytes(), entry.get("mime") or "image/png")
+        return ok
+    text = entry.get("text") or ""
+    ok, _err = wl_copy_text(text)
+    return ok
+
+
+def clipboard_rpc(method: str, params: Dict[str, Any] | None) -> Dict[str, Any]:
+    # The clipboard watcher owns refreshes. Reads use the stored snapshot to
+    # avoid transferring the full clipboard on every history request.
+    params = params or {}
+    state = load_clipboard_state()
+    warning = state.pop("_warning", "")
+    entries = list(state.get("entries") or [])
+    entries.sort(key=lambda e: (not bool(e.get("pinned")),) + tuple(-v for v in clipboard_entry_recency(e)))
+
+    def respond(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if warning:
+            payload["warning"] = warning
+        return payload
+
+    if method == "clipboard.getHistory":
+        return respond({"result": [clipboard_entry_public(e) for e in entries]})
+    if method == "clipboard.search":
+        query = str(params.get("query") or "").lower()
+        limit = int(params.get("limit") or 20)
+        matches = [e for e in entries if query in (e.get("preview") or e.get("text") or "").lower()]
+        return respond({"result": {"entries": [clipboard_entry_public(e) for e in matches[:limit]]}})
+    if method == "clipboard.getEntry":
+        entry = clipboard_find_entry(state, params.get("id"))
+        if not entry:
+            return respond({"result": None})
+        data = ""
+        if entry.get("isImage"):
+            if entry.get("path") and Path(entry["path"]).exists():
+                blob = Path(entry["path"]).read_bytes()
+                if len(blob) <= 2_000_000:
+                    data = base64.b64encode(blob).decode("ascii")
+        else:
+            data = base64.b64encode((entry.get("text") or "").encode("utf-8", errors="replace")).decode("ascii")
+        return respond({"result": {**clipboard_entry_public(entry), "data": data}})
+    if method == "clipboard.copyEntry":
+        entry = clipboard_find_entry(state, params.get("id"))
+        if not entry:
+            return respond({"error": "entry not found"})
+        if not clipboard_copy_entry(entry):
+            return respond({"error": "failed to copy entry"})
+        return respond({"result": True})
+    if method == "clipboard.copy":
+        text = str(params.get("text") or "")
+        ok, err = wl_copy_text(text)
+        if not ok:
+            return respond({"error": err or "wl-copy failed"})
+        clipboard_poll_current()
+        return respond({"result": True})
+    if method == "clipboard.deleteEntry":
+        entry = clipboard_find_entry(state, params.get("id"))
+        if not entry:
+            return respond({"result": True})
+        state["entries"] = [e for e in state.get("entries") or [] if int(e.get("id") or -1) != int(entry.get("id") or -1)]
+        save_clipboard_state(state)
+        return respond({"result": True})
+    if method == "clipboard.getPinnedCount":
+        return respond({"result": {"count": len([e for e in entries if e.get("pinned")])}})
+    if method in {"clipboard.pinEntry", "clipboard.unpinEntry"}:
+        entry = clipboard_find_entry(state, params.get("id"))
+        if not entry:
+            return respond({"error": "entry not found"})
+        entry["pinned"] = method == "clipboard.pinEntry"
+        save_clipboard_state(state)
+        return respond({"result": True})
+    if method == "clipboard.clearHistory":
+        state["entries"] = [e for e in state.get("entries") or [] if e.get("pinned")]
+        save_clipboard_state(state)
+        return respond({"result": True})
+    if method == "clipboard.getConfig":
+        return respond({"result": {}})
+    if method == "clipboard.setConfig":
+        return respond({"result": True})
+    return respond({"error": f"unsupported VGS clipboard method: {method}"})
+
+
+def cmd_clipboard(argv: List[str]) -> int:
+    if len(argv) >= 1 and argv[0] == "rpc":
+        parser = argparse.ArgumentParser(prog="vshell clipboard rpc")
+        parser.add_argument("method")
+        parser.add_argument("params", nargs="?", default="{}")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(argv[1:])
+        try:
+            params = json.loads(args.params or "{}")
+            with clipboard_state_lock():
+                response = clipboard_rpc(args.method, params)
+        except Exception as exc:
+            response = {"error": str(exc)}
+        print(json.dumps(response, indent=2) if args.json else json.dumps(response))
+        return 1 if response.get("error") else 0
+    if len(argv) >= 1 and argv[0] == "poll":
+        with clipboard_state_lock():
+            clipboard_poll_current()
+        return 0
+    if len(argv) >= 1 and argv[0] == "watch":
+        if not shutil.which("wl-paste"):
+            eprint("wl-paste not found")
+            return 1
+        # Only one fallback watcher may hold the lock; duplicates would transfer
+        # the clipboard repeatedly for each change.
+        ensure_dirs()
+        lock = (state_dir() / "clipboard-watch.lock").open("a+")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            eprint("clipboard watcher already running")
+            return 0
+        # Exec wl-paste so its supervisor owns the watcher process directly.
+        # Inherit the lock descriptor so the lock lasts as long as the watcher.
+        os.set_inheritable(lock.fileno(), True)
+        os.execvp("wl-paste", ["wl-paste", "--watch", resolve_vshell_cli(), "clipboard", "poll"])
+    if len(argv) >= 1 and argv[0] == "history":
+        with clipboard_state_lock():
+            response = clipboard_rpc("clipboard.getHistory", {})
+        print(json.dumps(response.get("result", []), indent=2))
+        return 0
+    if len(argv) >= 1 and argv[0] == "copy":
+        text = argv[1] if len(argv) >= 2 else sys.stdin.read()
+        if shutil.which("wl-copy"):
+            ok, err = wl_copy_text(text)
+            if not ok:
+                eprint(err or "wl-copy failed")
+                return 1
+            with clipboard_state_lock():
+                clipboard_poll_current()
+            return 0
+        if shutil.which("xclip"):
+            proc = subprocess.run(["xclip", "-selection", "clipboard"], input=text, text=True, stderr=subprocess.PIPE)
+            if proc.returncode != 0:
+                eprint(proc.stderr.strip() or "xclip failed")
+                return proc.returncode or 1
+            return 0
+        eprint("No clipboard tool found")
+        return 1
+    eprint("Usage: vshell clipboard rpc|history|poll|watch|copy")
+    return 2
+
+
+def cmd_download(argv: List[str]) -> int:
+    timeout = "30"
+    curl_args = ["curl", "-fsSL"]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in {"-4", "-6"}:
+            curl_args.append(a)
+        elif a == "--timeout" and i + 1 < len(argv):
+            timeout = argv[i + 1]
+            i += 1
+        else:
+            curl_args.extend(["--max-time", timeout, a])
+        i += 1
+    return subprocess.run(curl_args).returncode
+
+
+_MERCURY: Any = None
+
+
+def _mercury() -> Any:
+    """Load the Mercury subsystem only for the command that uses it."""
+    global _MERCURY
+    if _MERCURY is None:
+        import vshell_mercury
+        vshell_mercury.configure(vshell_mercury.MercuryRuntime(
+            state_dir=state_dir,
+            eprint=eprint,
+        ))
+        _MERCURY = vshell_mercury
+    return _MERCURY
+
+
+def cmd_mercury(argv: List[str]) -> int:
+    return _mercury().cmd_mercury(argv)
+
+
+def cmd_trash(argv: List[str]) -> int:
+    if not argv:
+        eprint("Usage: vshell trash count|put|empty")
+        return 2
+    if argv[0] == "count":
+        proc = run(["gio", "trash", "--list"]) if shutil.which("gio") else run(["find", str(home() / ".local/share/Trash/files"), "-mindepth", "1", "-maxdepth", "1"])
+        print(len([l for l in proc.stdout.splitlines() if l.strip()]))
+        return 0
+    if argv[0] == "put" and len(argv) >= 2:
+        return subprocess.run(["gio", "trash", argv[1]] if shutil.which("gio") else ["rm", "-rf", argv[1]]).returncode
+    if argv[0] == "empty":
+        return subprocess.run(["gio", "trash", "--empty"] if shutil.which("gio") else ["rm", "-rf", str(home() / ".local/share/Trash/files")]).returncode
+    return 2
+
+
+def cmd_color(argv: List[str]) -> int:
+    if len(argv) >= 1 and argv[0] == "pick":
+        want_json = "--json" in argv
+        fmt = "hex"
+        if "--rgb" in argv:
+            fmt = "rgb"
+        if "--hsv" in argv:
+            fmt = "hsv"
+        niri_session = bool(
+            os.environ.get("NIRI_SOCKET")
+            and shutil.which("niri")
+            and run(["niri", "msg", "version"]).returncode == 0
+        )
+        if niri_session and shutil.which("slurp") and shutil.which("grim"):
+            selection = run(["slurp", "-p", "-f", "%x,%y 1x1"])
+            if selection.returncode != 0 or not selection.stdout.strip():
+                eprint(selection.stderr.strip())
+                return selection.returncode or 1
+            image = subprocess.run(
+                ["grim", "-g", selection.stdout.strip(), "-t", "ppm", "-"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            if image.returncode != 0:
+                eprint(image.stderr.decode(errors="replace").strip())
+                return image.returncode
+            try:
+                r, g, b = ppm_first_pixel(image.stdout)
+                hx = f"#{r:02x}{g:02x}{b:02x}"
+            except ValueError as exc:
+                eprint(str(exc))
+                return 1
+        elif shutil.which("hyprpicker"):
+            proc = run(["hyprpicker", "-q", "-r", "-l", "-f", "hex"])
+            if proc.returncode != 0:
+                eprint(proc.stderr.strip())
+                return proc.returncode
+            hx = clean_hex(proc.stdout.strip())
+        else:
+            eprint("color picking requires hyprpicker, or grim + slurp in a Niri session")
+            return 1
+        r, g, b = rgb(hx)
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        if want_json:
+            print(json.dumps({"hex": hx, "rgb": {"r": r, "g": g, "b": b}, "hsv": {"h": round(h * 360), "s": round(s * 100), "v": round(v * 100)}}))
+        elif fmt == "rgb":
+            print(f"{r} {g} {b}")
+        elif fmt == "hsv":
+            print(f"{round(h*360)} {round(s*100)} {round(v*100)}")
+        else:
+            print(hx)
+        return 0
+    return 2
+
+
+def ppm_first_pixel(data: bytes) -> Tuple[int, int, int]:
+    if not data.startswith(b"P6"):
+        raise ValueError("grim returned an unsupported image format")
+    index = 2
+    tokens: List[bytes] = []
+    while len(tokens) < 3:
+        while index < len(data) and data[index:index + 1].isspace():
+            index += 1
+        if index < len(data) and data[index:index + 1] == b"#":
+            newline = data.find(b"\n", index)
+            if newline < 0:
+                raise ValueError("invalid PPM header")
+            index = newline + 1
+            continue
+        start = index
+        while index < len(data) and not data[index:index + 1].isspace():
+            index += 1
+        if start == index:
+            raise ValueError("invalid PPM header")
+        tokens.append(data[start:index])
+    if index >= len(data) or not data[index:index + 1].isspace():
+        raise ValueError("invalid PPM header")
+    if data[index:index + 2] == b"\r\n":
+        index += 2
+    else:
+        index += 1
+    try:
+        width, height, maximum = (int(token) for token in tokens)
+    except ValueError as exc:
+        raise ValueError("invalid PPM header") from exc
+    if width < 1 or height < 1 or maximum != 255 or len(data) < index + 3:
+        raise ValueError("invalid PPM pixel data")
+    return data[index], data[index + 1], data[index + 2]
+
+
+_HYPR_BINDD_RE = re.compile(r'^bindd\(\s*"([^"]*)"\s*,.*,\s*"([^"]*)"\s*\)')
+
+# X11 keycodes are evdev codes + 8. F13-F24 are the block standard layouts
+# leave without a keysym, so a bind on one can only be written as code:N --
+# which is also all hyprctl can report back for it.
+_EVDEV_KEYCODE_NAMES = {183 + i: f"F{13 + i}" for i in range(12)}
+
+
+def _keycode_display_name(raw: str) -> str:
+    """"code:191" -> "F13", when the keycode has a well-known name."""
+    if not raw.startswith("code:"):
+        return raw
+    try:
+        x_keycode = int(raw[len("code:"):])
+    except ValueError:
+        return raw
+    return _EVDEV_KEYCODE_NAMES.get(x_keycode - 8, raw)
+
+
+def _keybind_labels() -> Dict[str, str]:
+    """User-supplied display names, keyed by whole combo or by its key.
+
+    A remapper (input-remapper mod_tap, QMK, a firmware layer) can put a key
+    on the wire that no layout names and that no longer resembles the key that
+    was physically pressed. Only the person who set it up knows what they
+    press, so that label has to come from them."""
+    path = home() / ".config" / "vshell" / "keybind-labels.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v.strip()}
+
+
+def _display_combo(combo: str, labels: Dict[str, str]) -> str:
+    """Name the key a bind fires on, as a person would say it."""
+    if not combo:
+        return combo
+    if combo in labels:
+        return labels[combo]
+    parts = [part.strip() for part in combo.split("+")]
+    # Either spelling can carry the label: the raw code the bind was written
+    # with, or the key name it resolves to.
+    named = _keycode_display_name(parts[-1])
+    parts[-1] = labels.get(parts[-1]) or labels.get(named) or named
+    return "+".join(parts)
+
+
+def _hypr_raw_bind_keys() -> Dict[str, str]:
+    """Map bindd() description -> literal key, for keys hyprctl cannot report.
+
+    `hyprctl binds -j` reports key=""/keycode=0 for a bind made by raw keycode
+    (e.g. bindd("code:191", ...)) when the active layout leaves that code
+    unmapped to any keysym, so the JSON alone can't recover what was bound;
+    only the source text still has it.
+
+    A description is the only handle the JSON and the source share, and it is
+    not a unique one, so this stays deliberately narrow: keycode binds only,
+    since hyprctl reports every other key itself and matching those would let
+    one bind lend its key to another that merely shares a description; and a
+    description bound to two different keycodes is dropped rather than guessed
+    at. Commented-out binds are excluded by matching at the start of the line,
+    because rebinding by comment-out-and-retype leaves the dead line above the
+    live one."""
+    hypr_dir = home() / ".config" / "hypr"
+    mapping: Dict[str, str] = {}
+    ambiguous: Set[str] = set()
+    if not hypr_dir.is_dir():
+        return mapping
+    # Sorted so a stray copy of a config cannot win or lose by directory order.
+    for path in sorted(hypr_dir.rglob("*.lua")):
+        try:
+            # errors="replace": one undecodable byte in an unrelated file must
+            # not cost the whole cheatsheet.
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            m = _HYPR_BINDD_RE.match(line.strip())
+            if not m:
+                continue
+            # The literal can carry its modifiers ("SUPER, code:191"), and
+            # hyprctl reports those reliably. Only the key is missing.
+            key = re.split(r"[,+]", m.group(1))[-1].strip()
+            desc = m.group(2)
+            if not key.startswith("code:"):
+                continue
+            if mapping.get(desc, key) != key:
+                ambiguous.add(desc)
+            mapping.setdefault(desc, key)
+    for desc in ambiguous:
+        mapping.pop(desc, None)
+    return mapping
+
+
+def hypr_binds_json() -> Dict[str, Any]:
+    proc = run(["hyprctl", "binds", "-j"]) if shutil.which("hyprctl") else subprocess.CompletedProcess([], 1, "", "")
+    binds: Dict[str, List[Dict[str, Any]]] = {"Window": [], "Workspace": [], "System": [], "Execute": [], "Other": []}
+    try:
+        data = json.loads(proc.stdout or "[]")
+    except Exception:
+        data = []
+    raw_keys: Optional[Dict[str, str]] = None
+    labels = _keybind_labels()
+    for b in data:
+        mods = b.get("modmask", 0)
+        key = b.get("key") or (f"code:{b.get('keycode')}" if b.get("keycode") else "")
+        mod_names = []
+        # Hyprland bitmask: shift=1 caps=2 ctrl=4 alt=8 mod2=16 mod3=32 super=64 mod5=128
+        if mods & 64: mod_names.append("Super")
+        if mods & 4: mod_names.append("Ctrl")
+        if mods & 8: mod_names.append("Alt")
+        if mods & 1: mod_names.append("Shift")
+        combo = "+".join(mod_names + ([key] if key else []))
+        dispatcher = b.get("dispatcher", "")
+        arg = b.get("arg", "")
+        desc = b.get("description") or arg or dispatcher
+        if not key and desc:
+            if raw_keys is None:
+                raw_keys = _hypr_raw_bind_keys()
+            key = raw_keys.get(desc, "")
+            combo = "+".join(mod_names + ([key] if key else []))
+        combo = _display_combo(combo, labels)
+        action = (dispatcher + (" " + arg if arg else "")).strip()
+        cat = "Other"
+        if "workspace" in action:
+            cat = "Workspace"
+        elif dispatcher in {"exec", "spawn"}:
+            cat = "Execute"
+        elif any(x in action for x in ["window", "move", "resize", "focus", "group", "killactive"]):
+            cat = "Window"
+        elif any(x in action for x in ["dpms", "exit", "lock", "night", "reload"]):
+            cat = "System"
+        binds.setdefault(cat, []).append({"key": combo, "desc": desc, "action": action, "source": "hyprland"})
+    # Drop empty categories because the cheatsheet allocates a column per category.
+    binds = {cat: entries for cat, entries in binds.items() if entries}
+    return {"provider": "hyprland", "modKey": "Super", "vgsBindsIncluded": True, "vgsStatus": {"exists": True, "included": True, "readOnly": True, "configFormat": "lua", "statusMessage": "VGS reads live Hyprland binds read-only; change them in your Hyprland config"}, "binds": binds}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def cmd_keybinds(argv: List[str]) -> int:
+    if len(argv) >= 2 and argv[0] == "show":
+        provider = argv[1]
+        if provider == "hyprland":
+            print(json.dumps(hypr_binds_json()))
+            return 0
+        if provider == "niri":
+            print(json.dumps(_niri().niri_binds_json()))
+            return 0
+        print(json.dumps({"provider": provider, "binds": {}}))
+        return 0
+    if len(argv) >= 3 and argv[0] == "set" and argv[1] == "niri":
+        parser = argparse.ArgumentParser(prog="vshell keybinds set niri")
+        parser.add_argument("key")
+        parser.add_argument("action")
+        parser.add_argument("--desc", default="")
+        parser.add_argument("--replace-key", default="")
+        parser.add_argument("--cooldown-ms", type=int, default=0)
+        parser.add_argument("--allow-when-locked", action="store_true")
+        parser.add_argument("--no-repeat", action="store_true")
+        parser.add_argument("--no-inhibiting", action="store_true")
+        parser.add_argument("--flags", default="")
+        args = parser.parse_args(argv[2:])
+        try:
+            with _niri().niri_config_lock():
+                binds = [bind for bind in _niri()._load_vgs_niri_binds()
+                         if bind.get("key") not in {args.key, args.replace_key}]
+                binds.append({
+                    "key": args.key,
+                    "action": args.action,
+                    "desc": args.desc,
+                    "cooldownMs": max(0, args.cooldown_ms),
+                    "allowWhenLocked": args.allow_when_locked,
+                    "allowInhibiting": not args.no_inhibiting,
+                    "repeat": not args.no_repeat,
+                })
+                _niri()._write_vgs_niri_binds(binds)
+                reload_result = _niri()._reload_niri()
+        except ValueError as exc:
+            eprint(str(exc))
+            return 2
+        if reload_result.get("attempted") and not reload_result.get("ok"):
+            eprint(reload_result.get("stderr") or reload_result.get("stdout") or "Niri config reload failed")
+            return 1
+        return 0
+    if len(argv) >= 3 and argv[0] in {"remove", "reset"} and argv[1] == "niri":
+        key = argv[2]
+        with _niri().niri_config_lock():
+            _niri()._write_vgs_niri_binds([
+                bind for bind in _niri()._load_vgs_niri_binds()
+                if bind.get("key") != key
+            ])
+            reload_result = _niri()._reload_niri()
+        if reload_result.get("attempted") and not reload_result.get("ok"):
+            eprint(reload_result.get("stderr") or reload_result.get("stdout") or "Niri config reload failed")
+            return 1
+        return 0
+    if argv and argv[0] in {"set", "remove", "reset"}:
+        eprint("VGS keybind editing is not implemented for this config; edit your Hyprland keybind config directly")
+        return 1
+    return 2
+
+
+def scratchpad_session_compositor() -> str:
+    """Return the running compositor, or an empty string when none is detected.
+    Installed compositor binaries do not identify the active session."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return "hyprland"
+    if os.environ.get("NIRI_SOCKET"):
+        return "niri"
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").strip()
+    if desktop:
+        folded = desktop.lower()
+        for name in ("hyprland", "niri"):
+            if name in folded:
+                return name
+        # A desktop that is set and is neither of those is still a session, and
+        # reporting it as "nothing is running" would let generation proceed
+        # under a compositor that will never read the result.
+        return desktop.split(":")[0].lower()
+    return ""
+
+
+def scratchpad_compositor_supported() -> Tuple[bool, str]:
+    """Select the scratchpad backend for the detected session.
+    Niri uses named workspaces; Hyprland uses special workspaces.
+    With no session, allow config generation for Hyprland. Live actions
+    check session availability separately."""
+    session = scratchpad_session_compositor()
+    if session:
+        return (session in ("hyprland", "niri"), session)
+    return (True, "none")
+
+
+def cmd_scratchpad(argv: List[str]) -> int:
+    if not argv:
+        eprint("Usage: vshell scratchpad <apply|status|toggle|show|hide|preload|release|match|resolve> ...")
+        return 2
+    action, rest = argv[0], argv[1:]
+
+    supported, compositor = scratchpad_compositor_supported()
+    if not supported and action in {"apply", "toggle", "show", "hide", "preload"}:
+        # Live actions require a supported running compositor, including hide.
+        message = f"VGS scratchpads require Hyprland or Niri; this session is running {compositor}."
+        if "--json" in rest:
+            print(json.dumps({"ok": False, "unsupported": True,
+                              "compositor": compositor, "error": message}, indent=2))
+        else:
+            eprint(message)
+        return 1
+
+    on_niri = compositor == "niri"
+
+    if action == "apply":
+        parser = argparse.ArgumentParser(prog="vshell scratchpad apply")
+        parser.add_argument("--no-reload", action="store_true")
+        # Renders to a scratch path and prints it instead of touching the live
+        # compositor config, so generation can be reviewed and diffed without a
+        # session being reconfigured underneath the user.
+        parser.add_argument("--dry-run", metavar="PATH", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        if args.dry_run:
+            problems: List[Dict[str, str]] = []
+            pads = load_scratchpads(problems)
+            if on_niri:
+                content, meta = render_scratchpads_kdl(pads, problems)
+            else:
+                monitors, resolved = scratchpad_monitors()
+                content, meta = render_scratchpads_lua(pads, monitors, resolved)
+            write_file(Path(args.dry_run), content)
+            result = {"ok": True, "path": args.dry_run, "compositor": compositor,
+                      "scratchpads": meta, "problems": problems, "dryRun": True}
+        else:
+            result = (apply_scratchpads_niri(reload=not args.no_reload) if on_niri
+                      else apply_scratchpads(reload=not args.no_reload))
+        print(json.dumps(result, indent=2) if args.json else
+              ("ok" if result.get("ok") else (result.get("error") or "failed")))
+        return 0 if result.get("ok") else 1
+
+    if action == "status":
+        problems: List[Dict[str, str]] = []
+        pads = load_scratchpads(problems)
+        if on_niri:
+            path = scratchpad_niri_config_path()
+            # No monitor query: Niri resolves the percentage and the anchor
+            # itself, so nothing here is generated against a guessed display and
+            # `monitorsResolved` is truthfully not an open question.
+            _, meta = render_scratchpads_kdl(pads, problems)
+            print(json.dumps({
+                "ok": True,
+                "compositor": "niri",
+                "problems": problems,
+                "path": str(path),
+                "generated": path.exists(),
+                "monitorsResolved": True,
+                "monitors": [],
+                "unsupported": meta["unsupported"],
+                "include": scratchpad_niri_include_status(),
+                "scratchpads": pads,
+            }, indent=2))
+            return 0
+        monitors, resolved = scratchpad_monitors()
+        print(json.dumps({
+            "ok": True,
+            "compositor": compositor,
+            "problems": problems,
+            "path": str(scratchpad_config_path()),
+            "generated": scratchpad_config_path().exists(),
+            "monitorsResolved": resolved,
+            "monitors": [{"name": m.get("name"), "logical": monitor_logical_size(m)} for m in monitors],
+            "unsupported": [],
+            "include": scratchpad_include_status(),
+            "scratchpads": pads,
+        }, indent=2))
+        return 0
+
+    # Show all live windows a pad pattern claims before the user saves it.
+    # A class pattern can match every instance of an application.
+    if action == "match":
+        parser = argparse.ArgumentParser(prog="vshell scratchpad match")
+        parser.add_argument("id", nargs="?", default="")
+        parser.add_argument("--class-regex", default="")
+        parser.add_argument("--title-exclude", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        pattern, exclude = args.class_regex, args.title_exclude
+        if not pattern:
+            pad = {p["id"]: p for p in load_scratchpads()}.get(args.id)
+            if pad is None:
+                eprint(f"unknown scratchpad: {args.id or '(none)'}")
+                return 2
+            pattern, exclude = pad["classRegex"], pad["titleExclude"]
+        result = scratchpad_matching_windows(pattern, exclude)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif not result.get("ok"):
+            # A regex that failed to compile has no match count. Report the error
+            # instead of claiming that no windows match.
+            eprint(result.get("error") or "could not evaluate the pattern")
+        elif result.get("known") is False:
+            # Without a session query, the match count is unknown.
+            print(f"unknown: no Hyprland session to ask about {pattern}")
+        else:
+            print(f"{result['count']} live window(s) match {pattern}")
+        return 0 if result.get("ok") else 1
+
+    if action == "resolve" and rest:
+        pads = {pad["id"]: pad for pad in load_scratchpads()}
+        pad = pads.get(rest[0])
+        if pad is None:
+            eprint(f"unknown scratchpad: {rest[0]}")
+            return 2
+        if on_niri:
+            # Niri resolves proportions and anchors at map time; generation can report
+            # the rule but cannot supply a resolved pixel rectangle.
+            relative_to = SCRATCHPAD_NIRI_ANCHORS[pad["anchor"]]
+            print(json.dumps({
+                "id": pad["id"],
+                "compositor": "niri",
+                "workspace": scratchpad_niri_workspace(pad["id"]),
+                "monitor": pad["monitor"],
+                "resolvedBy": "niri",
+                "rule": {
+                    "width": _niri_scratchpad_size_line("default-column-width", pad, "width").strip(),
+                    "height": _niri_scratchpad_size_line("default-window-height", pad, "height").strip(),
+                    "relativeTo": relative_to,
+                    "offsetX": pad["offsetX"],
+                    "offsetY": pad["offsetY"],
+                    "centred": not relative_to,
+                },
+            }, indent=2))
+            return 0
+        monitors, resolved = scratchpad_monitors()
+        monitor = pick_scratchpad_monitor(monitors, rest[1] if len(rest) > 1 else pad["monitor"])
+        print(json.dumps({
+            "id": pad["id"],
+            "compositor": compositor,
+            "monitor": monitor.get("name") or "",
+            "monitorsResolved": resolved,
+            "geometry": resolve_scratchpad_geometry(pad, monitor),
+        }, indent=2))
+        return 0
+
+    if action == "release" and rest:
+        parser = argparse.ArgumentParser(prog="vshell scratchpad release")
+        parser.add_argument("id")
+        parser.add_argument("--class-regex", default="")
+        parser.add_argument("--title-exclude", default="")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(rest)
+        result = (scratchpad_release_niri(args.id, args.class_regex, args.title_exclude) if on_niri
+                  else scratchpad_release(args.id, args.class_regex, args.title_exclude))
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif not result.get("ok"):
+            eprint(result.get("error") or "scratchpad release failed")
+        return 0 if result.get("ok") else 1
+
+    if action in {"toggle", "show", "hide", "preload"} and rest:
+        # Both backends accept the same flags for this operation.
+        toggle_fn = scratchpad_toggle_niri if on_niri else scratchpad_toggle
+        result = toggle_fn(rest[0],
+                           reveal_only=(action == "show"),
+                           launch_only=(action == "preload"),
+                           hide_only=(action == "hide"),
+                           keep_focus=("--keep-focus" in rest))
+        if not result.get("ok"):
+            eprint(result.get("error") or "scratchpad toggle failed")
+            return 1
+        if "--json" in rest:
+            print(json.dumps(result, indent=2))
+        return 0
+
+    eprint(f"Unknown scratchpad action: {action}")
+    return 2
+
+
+def hyprland_outputs_current() -> Dict[str, Any]:
+    """Read native monitor state without probing USB or I2C devices."""
+    proc = run(["hyprctl", "-j", "monitors", "all"], timeout=5)
+    if proc.returncode:
+        raise ValueError(proc.stderr or proc.stdout or "Could not read displays")
+    monitors = json.loads(proc.stdout)
+    if not isinstance(monitors, list):
+        raise ValueError("Hyprland returned invalid monitor data")
+    outputs = {}
+    transforms = ["Normal", "90", "180", "270", "Flipped", "Flipped90", "Flipped180", "Flipped270"]
+    for monitor in monitors:
+        modes = []
+        for value in monitor.get("availableModes", []):
+            match = re.fullmatch(r"(\d+)x(\d+)@([\d.]+)Hz", value)
+            if not match:
+                raise ValueError(f"Invalid display mode: {value}")
+            mode = {"width": int(match[1]), "height": int(match[2]), "refresh_rate": round(float(match[3]) * 1000)}
+            if mode not in modes:
+                modes.append(mode)
+        current = {"width": monitor["width"], "height": monitor["height"], "refresh_rate": round(monitor["refreshRate"] * 1000)}
+        index = next((i for i, mode in enumerate(modes) if mode["width"] == current["width"] and mode["height"] == current["height"] and abs(mode["refresh_rate"] - current["refresh_rate"]) <= 15), -1)
+        if index < 0 and not monitor.get("disabled", False):
+            modes.append(current)
+            index = len(modes) - 1
+        elif index < 0 and modes:
+            index = 0
+        pixel_format = monitor.get("currentFormat", "")
+        settings = {"bitdepth": 10 if "2101010" in pixel_format else 8,
+                    "colorManagement": monitor.get("colorManagementPreset", "auto"),
+                    "sdrBrightness": monitor.get("sdrBrightness", 1),
+                    "sdrSaturation": monitor.get("sdrSaturation", 1),
+                    "disabled": monitor.get("disabled", False)}
+        outputs[monitor["name"]] = {
+            "name": monitor["name"], "make": monitor.get("make", ""), "model": monitor.get("model", ""),
+            "serial": monitor.get("serial", ""), "enabled": not monitor.get("disabled", False),
+            "physicalWidth": monitor.get("physicalWidth", 0), "physicalHeight": monitor.get("physicalHeight", 0),
+            "connected": True, "modes": modes, "current_mode": index, "currentFormat": pixel_format,
+            "vrr_enabled": monitor.get("vrr", False), "vrr_supported": monitor.get("model") not in {"StudioDisplay", "ProDisplayXDR"},
+            "mirror": "" if monitor.get("mirrorOf", "none") == "none" else monitor["mirrorOf"],
+            "hyprlandSettings": settings,
+            "logical": {"x": monitor["x"], "y": monitor["y"], "scale": monitor["scale"],
+                        "transform": transforms[monitor["transform"]], "width": current["width"], "height": current["height"]}}
+    result: Dict[str, Any] = {"ok": True, "outputs": outputs}
+    _, _, transaction = _hyprland_outputs_paths()
+    if transaction.exists():
+        preview = json.loads(transaction.read_text())
+        if preview.get("error"):
+            result.update(recoveryError=preview["error"], recoveryToken=preview["token"])
+    return result
+
+
+def _hyprland_output_identifier(payload: Dict[str, Any], name: str, output: Dict[str, Any], *, settings_lookup: bool = False) -> str:
+    """Resolve the persisted selector or the existing settings-map key."""
+    if payload.get("displayNameMode") != "model" or not output.get("make") or not output.get("model"):
+        return name
+    if settings_lookup and output.get("explicitIdentifier"):
+        return name
+    # Native rules cannot use the synthetic serial kept in settings-map keys.
+    if not output.get("serial") and not settings_lookup:
+        return name
+    return ("desc:" + output["make"] + " " + output["model"] + " " + (output.get("serial") or "Unknown")).replace(",", "")
+
+
+def _hyprland_output_settings(payload: Dict[str, Any], name: str, output: Dict[str, Any]) -> Dict[str, Any]:
+    identifier = _hyprland_output_identifier(payload, name, output, settings_lookup=True)
+    options = dict(output.get("hyprlandSettings", {}))
+    options.update(payload.get("settings", {}).get(identifier, {}))
+    return options
+
+
+def render_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> str:
+    """Generate complete native rules from the settings page's output snapshot."""
+    outputs = payload["outputs"]
+    if not isinstance(outputs, dict) or not outputs:
+        raise ValueError("No displays to configure")
+    transforms = ["Normal", "90", "180", "270", "Flipped", "Flipped90", "Flipped180", "Flipped270"]
+    lines = ["-- Generated by VGS Displays.\n"]
+    enabled = 0
+    for name, output in outputs.items():
+        if name not in live:
+            raise ValueError(f"Display {name} disconnected. Refresh before applying.")
+        options = _hyprland_output_settings(payload, name, output)
+        fields: Dict[str, Any] = {"output": _hyprland_output_identifier(payload, name, output), "disabled": False}
+        if options.get("disabled", not output.get("enabled", True)):
+            fields["disabled"] = True
+        else:
+            enabled += 1
+            if not 0 <= output["current_mode"] < len(output["modes"]):
+                raise ValueError(f"{name}: select an available resolution before enabling this display")
+            mode = output["modes"][output["current_mode"]]
+            if mode not in live[name]["modes"]:
+                raise ValueError(f"{name}: resolution or refresh rate is no longer available")
+            logical = output["logical"]
+            scale = float(logical["scale"])
+            if not math.isfinite(scale) or scale <= 0 or any(abs(d / scale - round(d / scale)) > 0.001 for d in (mode["width"], mode["height"])):
+                raise ValueError(f"{name}: scale must produce whole logical pixels")
+            fields.update(mode=f'{mode["width"]}x{mode["height"]}@{mode["refresh_rate"] / 1000:.3f}',
+                          position=f'{int(logical["x"])}x{int(logical["y"])}', scale=scale,
+                          transform=transforms.index(logical["transform"]),
+                          vrr=2 if options.get("vrrFullscreenOnly") else int(bool(output.get("vrr_enabled"))))
+            mirror = output.get("mirror", "")
+            fields["mirror"] = mirror
+            if mirror:
+                if mirror == name or mirror not in live:
+                    raise ValueError(f"{name}: invalid mirror display")
+                fields["mirror"] = mirror
+            depth = options.get("bitdepth", 8)
+            if depth not in (8, 10):
+                raise ValueError(f"{name}: choose 8-bit or 10-bit colour")
+            cm = options.get("colorManagement", "auto")
+            if cm not in {"auto", "srgb", "dcip3", "dp3", "adobe", "wide", "edid", "hdr", "hdredid"}:
+                raise ValueError(f"{name}: unknown colour mode")
+            if cm in {"hdr", "hdredid"} and depth != 10:
+                raise ValueError(f"{name}: HDR requires 10-bit output")
+            fields.update(bitdepth=depth, cm=cm)
+            for key, field, minimum, maximum in [("sdrBrightness", "sdrbrightness", 0.1, 5), ("sdrSaturation", "sdrsaturation", 0, 3)]:
+                value = float(options.get(key, 1))
+                if not math.isfinite(value) or not minimum <= value <= maximum:
+                    raise ValueError(f"{name}: invalid {key}")
+                fields[field] = value
+            icc = options.get("icc", "")
+            if icc:
+                if cm in {"hdr", "hdredid"}:
+                    raise ValueError(f"{name}: ICC profiles cannot be used with HDR")
+                path = Path(icc)
+                if not path.is_absolute():
+                    raise ValueError("Choose an absolute ICC profile path")
+                with path.open("rb") as stream:
+                    header = stream.read(128)
+                if len(header) != 128 or header[36:40] != b"acsp" or header[12:16] != b"mntr" or header[16:20] != b"RGB ":
+                    raise ValueError(f"{icc}: not an RGB display ICC profile")
+                try:
+                    from PIL import ImageCms
+                except ImportError as error:
+                    raise ValueError("ICC profiles require Pillow colour management support") from error
+                try:
+                    ImageCms.getOpenProfile(str(path))
+                except ImageCms.PyCMSError as error:
+                    raise ValueError(f"{icc}: invalid ICC profile: {error}") from error
+                fields["icc"] = str(path)
+        rendered = []
+        for key, value in fields.items():
+            encoded = _lua_bool(value) if isinstance(value, bool) else (_lua_string(value) if isinstance(value, str) else str(value))
+            rendered.append(f"{key} = {encoded}")
+        lines.append("hl.monitor({ " + ", ".join(rendered) + " })\n")
+    if not enabled:
+        raise ValueError("At least one display must remain enabled")
+    return "".join(lines)
+
+
+def verify_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> None:
+    """Reject driver fallback instead of asking the user to confirm an unapplied mode."""
+    for name, output in payload["outputs"].items():
+        options = _hyprland_output_settings(payload, name, output)
+        disabled = options.get("disabled", not output.get("enabled", True))
+        actual = live.get(name)
+        if disabled:
+            if actual and actual["enabled"]:
+                raise ValueError(f"{name}: the display did not turn off")
+            continue
+        if not actual or not actual["enabled"]:
+            raise ValueError(f"{name}: the display did not return after applying changes")
+        mode = output["modes"][output["current_mode"]]
+        active = actual["modes"][actual["current_mode"]]
+        if mode["width"] != active["width"] or mode["height"] != active["height"] or abs(mode["refresh_rate"] - active["refresh_rate"]) > 15:
+            raise ValueError(f"{name}: the GPU rejected the selected resolution or refresh rate")
+        for key in ("x", "y", "transform"):
+            if output["logical"][key] != actual["logical"][key]:
+                raise ValueError(f"{name}: the compositor did not apply {key}")
+        # Hyprland stores scale as float32, while the UI sends a double.
+        if not math.isclose(output["logical"]["scale"], actual["logical"]["scale"], rel_tol=1e-6, abs_tol=1e-6):
+            raise ValueError(f"{name}: the compositor did not apply scale")
+        if options.get("bitdepth", 8) != actual["hyprlandSettings"]["bitdepth"]:
+            raise ValueError(f"{name}: the GPU could not use the selected colour depth")
+        cm = options.get("colorManagement", "auto")
+        if not options.get("icc") and cm != "auto" and cm != actual["hyprlandSettings"]["colorManagement"]:
+            raise ValueError(f"{name}: the GPU did not apply the selected colour mode")
+
+
+def _hyprland_outputs_paths() -> Tuple[Path, Path, Path]:
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(home() / ".config"))) / "hypr"
+    return config / "hyprland.lua", config / "vgs" / "outputs.lua", cfg_dir() / "display-preview.json"
+
+
+_HYPRLAND_OUTPUTS_INCLUDE = '\npackage.loaded["vgs.outputs"] = nil\nrequire("vgs.outputs")\n'
+
+
+def _hyprland_outputs_reload() -> None:
+    proc = run(["hyprctl", "reload"], timeout=5)
+    if proc.returncode:
+        raise ValueError(proc.stderr or proc.stdout or "Hyprland reload failed")
+    errors = run(["hyprctl", "configerrors"], timeout=5)
+    if errors.returncode or errors.stdout.strip():
+        raise ValueError(errors.stderr or errors.stdout or "Could not check display configuration")
+
+
+def _hyprland_outputs_restore(state: Dict[str, Any], fragment: Path, transaction: Path) -> None:
+    try:
+        write_file(fragment, state["previous"])
+        _hyprland_outputs_reload()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        state["error"] = str(error)
+        write_file(transaction, json.dumps(state))
+        raise
+    transaction.unlink()
+
+
+def hyprland_outputs_command(action: str, args: List[str]) -> Dict[str, Any]:
+    """Own display previews, persistence and recovery independently of QML lifetime."""
+    config, fragment, transaction = _hyprland_outputs_paths()
+    arity = {"current": 0, "status": 0, "setup": 0, "watch": 1, "expire": 1, "confirm": 1, "revert": 1, "preview": 1, "write": 1}
+    if action not in arity or len(args) != arity[action]:
+        raise ValueError(f"Invalid arguments for display action: {action}")
+    if action == "status":
+        return {"ok": True, "exists": config.exists(), "included": fragment.is_file() and config.exists() and config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE), "configFormat": "lua", "readOnly": False}
+    if action == "watch":
+        token = args[0]
+        while transaction.exists():
+            time.sleep(1)
+            result = hyprland_outputs_command("expire", [token])
+            if result.get("finished"):
+                break
+        return {"ok": True}
+    transaction.parent.mkdir(parents=True, exist_ok=True)
+    with transaction.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if action in {"current", "preview", "write"} and transaction.exists():
+            state = json.loads(transaction.read_text())
+            instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+            if state["instance"] != instance or (time.time() >= state["deadline"] and not state.get("error")):
+                state["instance"] = instance
+                try:
+                    _hyprland_outputs_restore(state, fragment, transaction)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    if action != "current":
+                        raise
+                    result = hyprland_outputs_current()
+                    result.update(recoveryError=state["error"], recoveryToken=state["token"])
+                    return result
+        if action == "current":
+            return hyprland_outputs_current()
+        if action == "setup":
+            original = config.read_text()
+            if not fragment.exists():
+                write_file(fragment, "-- Display overrides saved by VGS.\n")
+            if not original.endswith(_HYPRLAND_OUTPUTS_INCLUDE):
+                backup = config.with_name(f"hyprland.lua.backup-{time.time_ns()}")
+                write_file(backup, original)
+                target = config.resolve(strict=True)
+                write_file(target, original.rstrip() + _HYPRLAND_OUTPUTS_INCLUDE)
+                try:
+                    _hyprland_outputs_reload()
+                except (ValueError, subprocess.SubprocessError):
+                    write_file(target, original)
+                    _hyprland_outputs_reload()
+                    raise
+            return {"ok": True}
+        if action in {"confirm", "revert", "expire"}:
+            if not transaction.exists():
+                if action == "expire":
+                    return {"ok": True, "finished": True}
+                raise ValueError("Display preview has expired. Refresh the display settings.")
+            state = json.loads(transaction.read_text())
+            if state["token"] != args[0]:
+                if action == "expire":
+                    return {"ok": True, "finished": True}
+                raise ValueError("Display preview belongs to another change")
+            expired = time.time() >= state["deadline"]
+            if action == "expire" and not expired:
+                return {"ok": True, "finished": False}
+            if action != "confirm" or expired:
+                _hyprland_outputs_restore(state, fragment, transaction)
+                if action == "confirm":
+                    raise ValueError("Display preview expired and was restored")
+            else:
+                transaction.unlink()
+            return {"ok": True, "finished": True}
+        if action not in {"preview", "write"}:
+            raise ValueError(f"Unknown display action: {action}")
+        if transaction.exists():
+            raise ValueError("Confirm or revert the current display preview first")
+        if not config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE):
+            raise ValueError("Set up display configuration before applying changes")
+        payload = json.loads(args[0])
+        live = hyprland_outputs_current()["outputs"]
+        content = render_hyprland_outputs(payload, live)
+        previous = fragment.read_text()
+        # Preserve the writer's exact offline rules; ICC paths need not be available while unplugged.
+        prefixes = tuple(f'hl.monitor({{ output = {_lua_string(name)},' for name in payload.get("preserve", []) if name not in live)
+        content += "".join(line for line in previous.splitlines(keepends=True) if line.startswith(prefixes))
+        state = {"token": str(time.time_ns()), "deadline": time.time() + 20, "previous": previous,
+                 "instance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")}
+        write_file(transaction, json.dumps(state))
+        try:
+            # The helper outlives a failed shell reload and restores the saved rules.
+            subprocess.Popen([sys.executable, str(helper_entrypoint()), "config", "hyprland-outputs-watch", state["token"]],
+                             start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            write_file(fragment, content)
+            _hyprland_outputs_reload()
+            time.sleep(0.5)
+            verify_hyprland_outputs(payload, hyprland_outputs_current()["outputs"])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            _hyprland_outputs_restore(state, fragment, transaction)
+            raise
+        if action == "write":
+            transaction.unlink()
+        return {"ok": True, "token": state["token"]}
+
+
+def cmd_config(argv: List[str]) -> int:
+    if argv and argv[0].startswith("hyprland-outputs-"):
+        try:
+            result = hyprland_outputs_command(argv[0][len("hyprland-outputs-"):], argv[1:])
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+            result = {"ok": False, "error": str(exc)}
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 3 and argv[0] == "repair-include":
+        compositor, filename = argv[1], argv[2]
+        json_output = "--json" in argv[3:]
+        if compositor != "niri":
+            eprint("include repair is helper-owned only for Niri configs")
+            return 2
+        result = _niri().ensure_niri_include(filename)
+        print(json.dumps(result, indent=2) if json_output else (
+            str(result.get("config") or result.get("error") or "")
+        ))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 3 and argv[0] == "resolve-include":
+        compositor, filename = argv[1], argv[2]
+        conf = home() / ".config" / ("hypr/hyprland.lua" if compositor == "hyprland" else "niri/config.kdl" if compositor == "niri" else "mango/config.conf")
+        if compositor == "niri":
+            result = _niri().niri_include_status(filename)
+            if not result.get("ok"):
+                eprint(result.get("error") or "invalid Niri include")
+                return 2
+        else:
+            result = {"exists": conf.exists(), "included": True, "configFormat": "lua" if compositor == "hyprland" else "", "readOnly": True, "path": str(conf), "includePath": filename, "statusMessage": "VGS reads this compositor config read-only; edit it directly"}
+        print(json.dumps(result))
+        return 0
+    if len(argv) >= 2 and argv[0] == "apply-layout":
+        parser = argparse.ArgumentParser(prog="vshell config apply-layout")
+        parser.add_argument("compositor", choices=["hyprland", "niri"])
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(argv[1:])
+        result = apply_hyprland_layout() if args.compositor == "hyprland" else _niri().apply_niri_layout()
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print("ok" if result.get("ok") else (result.get("error") or "failed"))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 2 and argv[0] == "apply-cursor" and argv[1] == "niri":
+        result = _niri().apply_niri_cursor()
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 3 and argv[0] == "niri-output-apply":
+        try:
+            config = json.loads(argv[2])
+        except Exception as exc:
+            eprint(f"invalid Niri output config: {exc}")
+            return 2
+        result = _niri().apply_niri_output(argv[1], config)
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) == 1 and argv[0] in {"niri-outputs-current", "niri-validate", "niri-reload"}:
+        if argv[0] == "niri-outputs-current":
+            result = _niri().niri_outputs_current()
+        elif argv[0] == "niri-validate":
+            result = _niri().niri_validate_config()
+        else:
+            result = _niri().niri_reload_config()
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 2 and argv[0] in {"niri-outputs-write", "niri-outputs-validate"}:
+        try:
+            payload = json.loads(argv[1])
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            result = (_niri().niri_outputs_write(payload)
+                      if argv[0] == "niri-outputs-write"
+                      else _niri().niri_outputs_validate(payload))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            eprint(f"invalid Niri outputs payload: {exc}")
+            return 2
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
+    if len(argv) >= 3 and argv[0] == "windowrules":
+        action = argv[1]
+        compositor = argv[2]
+        if compositor == "niri":
+            try:
+                if action == "list":
+                    print(json.dumps(_niri().niri_windowrules_json()))
+                    return 0
+                if action == "add" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_add(json.loads(argv[3]))
+                elif action == "update" and len(argv) >= 5:
+                    result = _niri().niri_windowrule_update(argv[3], json.loads(argv[4]))
+                elif action == "remove" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_remove(argv[3])
+                elif action == "reorder" and len(argv) >= 4:
+                    result = _niri().niri_windowrule_reorder(json.loads(argv[3]))
+                else:
+                    return 2
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                eprint(f"invalid Niri window rule: {exc}")
+                return 2
+            print(json.dumps(result))
+            return 0 if result.get("ok") else 1
+        if action == "list":
+            message = "VGS window rule editor is read-only for this compositor config"
+            print(json.dumps({
+                "rules": [],
+                "readOnly": True,
+                "status": message,
+                "vgsStatus": {
+                    "exists": False,
+                    "included": False,
+                    "configFormat": "lua" if compositor == "hyprland" else "",
+                    "readOnly": True,
+                    "statusMessage": message,
+                },
+            }))
+            return 0
+        eprint("VGS window rule editing is not implemented for this config; edit your Hyprland window rules directly")
+        return 1
+    return 2
+
+
+def _coerce_int(value: Any, default: int, lo: int, hi: int) -> int:
+    try:
+        parsed = int(round(float(value)))
+    except Exception:
+        parsed = default
+    return max(lo, min(hi, parsed))
+
+
+def _optional_nonnegative_int(value: Any, lo: int, hi: int) -> int | None:
+    try:
+        parsed = int(round(float(value)))
+    except Exception:
+        return None
+    if parsed < 0:
+        return None
+    return max(lo, min(hi, parsed))
+
+
+def _lua_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _lua_string(value: Any) -> str:
+    """Quote a scalar for native Hyprland Lua without ASCII-only \\u escapes."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
+    lines: List[str] = []
+    for key, value in fields.items():
+        if isinstance(value, bool):
+            rendered = _lua_bool(value)
+        else:
+            rendered = str(value)
+        lines.append(f"{indent}{key} = {rendered},")
+    return lines
+
+
+def _hyprland_gap_override(settings: Dict[str, Any]) -> int:
+    """The Gaps setting: the inner gap VGS renders, or a negative mode."""
+    return _coerce_int(settings.get("hyprlandLayoutGapsOverride", -1), -1, -2, 50)
+
+
+def _hyprland_manages_gaps(gaps_mode: int) -> bool:
+    """Whether VGS renders `general:gaps_in` and `general:gaps_out` into layout.lua.
+
+    False for the two negative modes, Config and Off, where the user's own Hyprland
+    config owns both keys and VGS writes neither. One owner for the question, so the
+    layout renderer and the theme reload hook answer it the same way."""
+    return gaps_mode >= 0
+
+
+def _hyprland_layout_payload(settings: Dict[str, Any], scale: float = 1) -> Tuple[str, Dict[str, Any]]:
+    shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
+    shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
+    # One radius and one border thickness govern VGS surfaces and app windows together.
+    # The separate compositor-only values and the target that chose between them are gone:
+    # they let a window's own border differ from the border VGS draws on the same window,
+    # which is visible on every VGS window now the compositor draws its chrome.
+    radius = shell_radius
+    border = shell_border
+
+    gaps_mode = _hyprland_gap_override(settings)
+    general: Dict[str, Any] = {}
+    if _hyprland_manages_gaps(gaps_mode):
+        gaps_in = gaps_mode
+        gaps_out_override = _optional_nonnegative_int(settings.get("hyprlandLayoutGapsOutOverride"), 0, 50)
+        general["gaps_in"] = gaps_in
+        general["gaps_out"] = gaps_out_override if gaps_out_override is not None else gaps_in
+
+    general["border_size"] = border
+
+    resize_on_border = bool(settings.get("hyprlandResizeOnBorder", True))
+    if int(settings.get("configVersion") or 0) < 15 and settings.get("hyprlandResizeOnBorder") is False:
+        resize_on_border = True
+    general["resize_on_border"] = resize_on_border
+    general["extend_border_grab_area"] = 20 if resize_on_border else 0
+
+    lines = [
+        "-- Generated by VGS. Do not edit.",
+        "-- Surface geometry is stored in VGS settings; themes only own colors and wallpapers.",
+        "",
+    ]
+    lines.append("hl.config({")
+    family = settings.get("hyprlandFontFamily") or (settings.get("systemFontInterfaceFamily") if settings.get("systemFontsManaged", True) else "")
+    if family:
+        lines.append("  misc = { font_family = " + _lua_string(family) + " },")
+    if general:
+        lines.append("  general = {")
+        lines.extend(_lua_table(general, "    "))
+        lines.append("  },")
+    # Hyprland rounds a group tab's indicator strip from rounding and its filled
+    # tab from gradient_rounding, so both carry the value; round_only_edges,
+    # gradient_round_only_edges, gradients and the part heights stay with the
+    # user's config. Hyprland scales window rounding per monitor but not tab
+    # rounding, and takes one tab value for all monitors, so the value is the
+    # radius times the highest scale, bounded to the 0 to 20 Hyprland accepts.
+    groupbar_radius = _coerce_int(radius * scale, radius, 0, 20)
+    lines.append(f"  -- Tabs take the window radius times the highest monitor scale ({_lua_number(scale)}), up to 20: Hyprland scales window corners, not tabs.")
+    lines.append("  -- gradient_rounding changes the filled tab only where your Hyprland config turns group:groupbar:gradients on.")
+    lines.append("  -- A tab radius above half a part's height times a monitor's scale tapers its rounded ends to a point there.")
+    lines.append("  -- The filled tab is group:groupbar:height tall and the strip group:groupbar:indicator_height; both are yours to set.")
+    lines.append("  group = {")
+    lines.append("    groupbar = {")
+    lines.append(f"      rounding = {groupbar_radius},")
+    lines.append(f"      gradient_rounding = {groupbar_radius},")
+    lines.append("    },")
+    lines.append("  },")
+    lines.append("  decoration = {")
+    lines.append(f"    rounding = {radius},")
+    lines.append("  },")
+    lines.append("})")
+    lines.append("")
+
+    meta = {
+        "manageHyprlandShape": True,
+        "radius": radius,
+        "groupbarRadius": groupbar_radius,
+        "border": border,
+        "gaps": {k: general[k] for k in ("gaps_in", "gaps_out") if k in general},
+        "resizeOnBorder": resize_on_border,
+    }
+    return "\n".join(lines), meta
+
+
+def hyprland_layout_path() -> Path:
+    return home() / ".config" / "hypr" / "vgs" / "layout.lua"
+
+
+def apply_hyprland_layout() -> Dict[str, Any]:
+    settings = load_settings()
+    # The highest monitor scale sets the tab radius; with no session to ask, it is 1.
+    scale = max(filter(None, (_sane_monitor_scale(m.get("scale")) for m in _hyprctl_json("monitors") or [])), default=1.0)
+    content, meta = _hyprland_layout_payload(settings, scale)
+    path = hyprland_layout_path()
+    # Reloads regenerate this file too, so leaving it and Hyprland alone when nothing changed ends that loop.
+    changed = _read_text(path) != content.strip()
+    if changed:
+        write_file(path, content)
+
+    reload_result: Dict[str, Any] = {"attempted": False}
+    if changed and shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        proc = run(["hyprctl", "reload"])
+        reload_result = {
+            "attempted": True,
+            "ok": proc.returncode == 0,
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+    return {
+        "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
+        "path": str(path),
+        "changed": changed,
+        "layout": meta,
+        "reload": reload_result,
+    }
+
+
+# Hyprland applies workspace and geometry rules when a window maps.
+# Apps can set their final class or title later, so the toggle reapplies
+# placement on reveal. See docs/architecture/helper.md.
+
+SCRATCHPAD_ANCHORS = {
+    "top-left": ("left", "top"),
+    "top-center": ("center", "top"),
+    "top-right": ("right", "top"),
+    "center-left": ("left", "center"),
+    "center": ("center", "center"),
+    "center-right": ("right", "center"),
+    "bottom-left": ("left", "bottom"),
+    "bottom-center": ("center", "bottom"),
+    "bottom-right": ("right", "bottom"),
+}
+
+SCRATCHPAD_PRESENTATIONS = ("float", "tile", "fullscreen")
+
+# Use a per-window entry animation. specialWorkspace animation is global;
+# setting it per pad would overwrite other pads and user workspace animation.
+SCRATCHPAD_ANIMATIONS = {
+    "slide-top": "slide top",
+    "slide-bottom": "slide bottom",
+    "slide-left": "slide left",
+    "slide-right": "slide right",
+    "fade": "fade",
+    "scale": "popin 80%",
+}
+
+# A pad id becomes a Hyprland special-workspace name and a Lua identifier in the
+# generated config, so it is restricted rather than escaped. Rejecting is safer
+# than quoting here: an id that needs escaping to be safe is also an id nobody
+# can type into `hyprctl dispatch togglespecialworkspace`.
+SCRATCHPAD_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+# Floor on a resolved pad so a mistyped 1% cannot produce a window nobody can
+# see or grab. Not a ceiling — a pad legitimately fills a monitor.
+SCRATCHPAD_MIN_WIDTH = 160
+SCRATCHPAD_MIN_HEIGHT = 120
+
+# Used only when the compositor cannot be asked for real monitors (no session,
+# CI, `--dry-run` from a worktree). Recorded in the payload and written into the
+# generated file's header so a config produced this way is never mistaken for
+# one resolved against the real display.
+SCRATCHPAD_FALLBACK_MONITOR = {"name": "", "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0}
+
+
+def scratchpad_config_path() -> Path:
+    """VGS-named, alongside vgs/layout.lua, and included the same way:
+    `pcall(require, "vgs.scratchpads")` in hyprland.lua."""
+    return home() / ".config" / "hypr" / "vgs" / "scratchpads.lua"
+
+
+def scratchpad_include_line() -> str:
+    return 'pcall(require, "vgs.scratchpads")'
+
+
+def normalize_scratchpad(raw: Any, problems: List[Dict[str, str]] | None = None) -> Dict[str, Any] | None:
+    """Normalize a pad record for rendering and toggling.
+    Return None for an unusable record and append rejection reasons to
+    problems, so callers can identify pads omitted from generated config."""
+    def reject(reason: str, pad_name: str = "") -> None:
+        if problems is not None:
+            problems.append({"id": pad_name, "reason": reason})
+        return None
+
+    if not isinstance(raw, dict):
+        return reject("not a scratchpad record")
+    pad_id = str(raw.get("id") or "").strip().lower()
+    label = str(raw.get("name") or raw.get("id") or "?")
+    if not SCRATCHPAD_ID_RE.match(pad_id):
+        return reject("id must be 1-32 characters of a-z, 0-9, '-' or '_', starting alphanumeric", label)
+    class_regex = str(raw.get("classRegex") or "").strip()
+    command = str(raw.get("command") or "").strip()
+    if not class_regex:
+        return reject("no window class pattern", label)
+    if not command:
+        return reject("no launch command", label)
+    try:
+        re.compile(class_regex)
+    except re.error as exc:
+        return reject(f"window class pattern does not compile: {exc}", label)
+
+    # Same treatment as classRegex, and for the same reason: an exclusion that
+    # does not compile is not "no exclusion", it is an exclusion the user asked
+    # for that silently stops applying. The runtime finder would fall back to
+    # matching everything with the class, so the pad would select, focus and
+    # move the very windows the exclusion existed to keep out.
+    title_exclude = str(raw.get("titleExclude") or "").strip()
+    if title_exclude:
+        try:
+            re.compile(title_exclude)
+        except re.error as exc:
+            return reject(f"title exclusion does not compile: {exc}", label)
+
+    size_mode = str(raw.get("sizeMode") or "percent").strip().lower()
+    if size_mode not in {"percent", "pixels"}:
+        size_mode = "percent"
+    anchor = str(raw.get("anchor") or "top-center").strip().lower()
+    if anchor not in SCRATCHPAD_ANCHORS:
+        anchor = "top-center"
+    animation = str(raw.get("animation") or "slide-top").strip().lower()
+    if animation not in SCRATCHPAD_ANIMATIONS:
+        animation = "slide-top"
+    presentation = str(raw.get("presentation") or "float").strip().lower()
+    if presentation not in SCRATCHPAD_PRESENTATIONS:
+        presentation = "float"
+    monitor = str(raw.get("monitor") or "").strip()
+    if monitor and not re.fullmatch(r"[A-Za-z0-9._:-]+", monitor):
+        monitor = ""
+
+    return {
+        "id": pad_id,
+        "name": str(raw.get("name") or pad_id),
+        "enabled": raw.get("enabled") is not False,
+        "command": command,
+        "appId": str(raw.get("appId") or ""),
+        "classRegex": class_regex,
+        "titleExclude": title_exclude,
+        "keybind": str(raw.get("keybind") or "").strip(),
+        "sizeMode": size_mode,
+        "widthPercent": _coerce_int(raw.get("widthPercent", 60), 60, 5, 100),
+        "heightPercent": _coerce_int(raw.get("heightPercent", 70), 70, 5, 100),
+        "widthPixels": _coerce_int(raw.get("widthPixels", 1200), 1200, SCRATCHPAD_MIN_WIDTH, 16384),
+        "heightPixels": _coerce_int(raw.get("heightPixels", 800), 800, SCRATCHPAD_MIN_HEIGHT, 16384),
+        "anchor": anchor,
+        "offsetX": _coerce_int(raw.get("offsetX", 0), 0, -8192, 8192),
+        "offsetY": _coerce_int(raw.get("offsetY", 0), 0, -8192, 8192),
+        "animation": animation,
+        "presentation": presentation,
+        "monitor": monitor,
+        "preload": bool(raw.get("preload")),
+        "dismissOnFocusLoss": bool(raw.get("dismissOnFocusLoss")),
+    }
+
+
+def load_scratchpads(problems: List[Dict[str, str]] | None = None) -> List[Dict[str, Any]]:
+    pads: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in (load_settings().get("scratchpads") or []):
+        pad = normalize_scratchpad(raw, problems)
+        if pad is None:
+            continue
+        # Duplicate IDs would share a special workspace. Keep the first definition
+        # and report each rejected duplicate.
+        if pad["id"] in seen:
+            if problems is not None:
+                problems.append({"id": pad["name"],
+                                 "reason": f"duplicate id '{pad['id']}'; the first definition wins"})
+            continue
+        seen.add(pad["id"])
+        pads.append(pad)
+    return pads
+
+
+def monitor_logical_size(monitor: Dict[str, Any]) -> Tuple[int, int]:
+    """Hyprland reports `width`/`height` as the physical mode and a separate
+    `scale`; every coordinate a window rule or a dispatch uses is logical. A pad
+    sized as a percentage of a 3840x2160 monitor at scale 2 must be a percentage
+    of 1920x1080, not of the mode."""
+    # NaN and infinity pass float() but cannot produce integer geometry.
+    # Reject non-finite scales before calculating the logical display size.
+    scale = 1.0
+    raw_scale = monitor.get("scale")
+    if raw_scale is not None:
+        try:
+            candidate = float(raw_scale)
+        except (TypeError, ValueError):
+            candidate = 0.0
+        if math.isfinite(candidate) and candidate > 0:
+            scale = candidate
+        elif raw_scale not in (0, 0.0, "", None):
+            eprint(f"monitor {monitor.get('name') or '?'}: unusable scale {raw_scale!r}; assuming 1")
+
+    try:
+        width = int(monitor.get("width") or 0)
+        height = int(monitor.get("height") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return (0, 0)
+    # Hyprland rotates the logical box with the transform; odd transforms
+    # (90/270 and their flipped forms) swap width and height.
+    try:
+        transform = int(monitor.get("transform") or 0)
+    except (TypeError, ValueError):
+        transform = 0
+    if transform % 2 == 1:
+        width, height = height, width
+    return (int(round(width / scale)), int(round(height / scale)))
+
+
+def resolve_scratchpad_geometry(pad: Dict[str, Any], monitor: Dict[str, Any]) -> Dict[str, int]:
+    """Resolve a pad's size and position against one monitor.
+
+    This is the whole point of storing a percentage rather than pixels: the same
+    pad record produces correct geometry on a 1080p laptop panel and a 4K
+    desktop monitor. Returns both monitor-local coordinates (what a window rule
+    `move` wants) and global ones (what `movewindowpixel` wants)."""
+    mon_w, mon_h = monitor_logical_size(monitor)
+    if mon_w <= 0 or mon_h <= 0:
+        mon_w, mon_h = monitor_logical_size(SCRATCHPAD_FALLBACK_MONITOR)
+
+    if pad["sizeMode"] == "pixels":
+        width, height = pad["widthPixels"], pad["heightPixels"]
+    else:
+        width = int(round(mon_w * pad["widthPercent"] / 100.0))
+        height = int(round(mon_h * pad["heightPercent"] / 100.0))
+
+    # Clamp to the monitor before positioning, so the anchor arithmetic below is
+    # never handed a window larger than the space it is anchoring within.
+    width = max(SCRATCHPAD_MIN_WIDTH, min(width, mon_w))
+    height = max(SCRATCHPAD_MIN_HEIGHT, min(height, mon_h))
+
+    horizontal, vertical = SCRATCHPAD_ANCHORS[pad["anchor"]]
+    if horizontal == "left":
+        x = pad["offsetX"]
+    elif horizontal == "right":
+        x = mon_w - width - pad["offsetX"]
+    else:
+        x = (mon_w - width) // 2 + pad["offsetX"]
+    if vertical == "top":
+        y = pad["offsetY"]
+    elif vertical == "bottom":
+        y = mon_h - height - pad["offsetY"]
+    else:
+        y = (mon_h - height) // 2 + pad["offsetY"]
+
+    # An offset that would push the pad off the monitor is clamped rather than
+    # honoured: a scratchpad you cannot see reads as a broken keybind.
+    x = max(0, min(x, mon_w - width))
+    y = max(0, min(y, mon_h - height))
+
+    try:
+        mon_x, mon_y = int(monitor.get("x") or 0), int(monitor.get("y") or 0)
+    except (TypeError, ValueError):
+        mon_x, mon_y = 0, 0
+
+    return {
+        "width": width, "height": height,
+        "x": x, "y": y,
+        "globalX": mon_x + x, "globalY": mon_y + y,
+        "monitorWidth": mon_w, "monitorHeight": mon_h,
+    }
+
+
+def _scratchpad_session_ready() -> bool:
+    """Return whether the environment and command lookup identify a Hyprland session.
+    Tests patch this seam to run the scratchpad paths without a compositor."""
+    return bool(shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
+
+
+def _hyprctl_json(*args: str) -> Any:
+    """Read-only Hyprland IPC. Returns None when there is no session to ask, so
+    every caller has to decide what "unknown" means rather than being handed a
+    plausible-looking empty answer."""
+    if not _scratchpad_session_ready():
+        return None
+    proc = run(["hyprctl", "-j", *args])
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        return None
+
+
+def scratchpad_monitors() -> Tuple[List[Dict[str, Any]], bool]:
+    """(monitors, resolved). `resolved` is False when the compositor could not
+    be asked — the caller then works against SCRATCHPAD_FALLBACK_MONITOR and
+    must say so, because pixel geometry derived from a guessed display is the
+    one output that looks authoritative and is not."""
+    monitors = _hyprctl_json("monitors")
+    if isinstance(monitors, list) and monitors:
+        return (monitors, True)
+    return ([dict(SCRATCHPAD_FALLBACK_MONITOR)], False)
+
+
+def pick_scratchpad_monitor(monitors: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
+    """The monitor a pad is generated against. An explicitly configured output
+    that is not currently connected falls back to the focused one rather than
+    failing: unplugging a dock should not stop a scratchpad from opening."""
+    if name:
+        for monitor in monitors:
+            if str(monitor.get("name") or "") == name:
+                return monitor
+    for monitor in monitors:
+        if monitor.get("focused") is True:
+            return monitor
+    return monitors[0] if monitors else dict(SCRATCHPAD_FALLBACK_MONITOR)
+
+
+def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, Any]],
+                           monitors_resolved: bool = True) -> Tuple[str, Dict[str, Any]]:
+    """Pure renderer: pads + monitors in, Lua text + metadata out. Kept free of
+    IPC so the generated config can be diffed in a test without a compositor."""
+    lines = [
+        "-- Generated by VGS (Settings -> Scratchpads). Do not edit.",
+        "-- Rules here are best-effort INITIAL placement only. Hyprland applies",
+        "-- workspace/float/size/move once, at map time, so an app that renames",
+        "-- itself after mapping loses that race; `vshell scratchpad toggle`",
+        "-- re-asserts the intended presentation on every reveal.",
+    ]
+    if not monitors_resolved:
+        lines.append(
+            f"-- WARNING: generated without a live compositor, against a nominal "
+            f"{SCRATCHPAD_FALLBACK_MONITOR['width']}x{SCRATCHPAD_FALLBACK_MONITOR['height']} "
+            f"display. Re-run `vshell scratchpad apply` inside the session."
+        )
+    lines.append("")
+
+    cli = shutil.which("vshell") or "vshell"
+    rendered: List[Dict[str, Any]] = []
+    enabled = [pad for pad in pads if pad["enabled"]]
+    if not enabled:
+        lines.append("-- No scratchpads are defined.")
+        lines.append("")
+
+    for pad in enabled:
+        monitor = pick_scratchpad_monitor(monitors, pad["monitor"])
+        geometry = resolve_scratchpad_geometry(pad, monitor)
+        special = "special:" + pad["id"]
+        monitor_name = str(monitor.get("name") or "")
+
+        lines.append(f"-- {pad['name']} ({pad['id']})")
+
+        # Workspace rule. `on_created_empty` is deliberately NOT set: it spawns
+        # the app when the empty workspace is first shown, which is exactly the
+        # flash-then-populate behaviour that makes the keybind feel broken. The
+        # toggle launches and waits instead.
+        workspace_rule: List[str] = [f"  workspace = {_lua_string(special)},"]
+        if monitor_name and pad["monitor"]:
+            workspace_rule.append(f"  monitor = {_lua_string(monitor_name)},")
+        lines.append("hl.workspace_rule({")
+        lines.extend(workspace_rule)
+        lines.append("})")
+
+        # One match, used by EVERY rule this pad emits. A window the user
+        # excluded by title must be excluded from all of them: excluding it from
+        # placement but not from event suppression leaves it half-owned — not in
+        # the pad, but still stripped of its activation and focus requests,
+        # which is worse than either owning it or leaving it alone.
+        #
+        # Dynamic `title`, not `initial_title`: an app that maps with a
+        # placeholder title and renames itself later would be frozen on the
+        # placeholder by an initial_title snapshot and never reclassified.
+        match_lines = [f"    class = {_lua_string(pad['classRegex'])},"]
+        if pad["titleExclude"]:
+            match_lines.append(f"    title = {_lua_string('negative:' + pad['titleExclude'])},")
+
+        lines.append("hl.window_rule({")
+        lines.append("  match = {")
+        lines.extend(match_lines)
+        lines.append("  },")
+        if monitor_name and pad["monitor"]:
+            lines.append(f"  monitor = {_lua_string(monitor_name)},")
+        lines.append(f"  workspace = {_lua_string(special + ' silent')},")
+        lines.append("  no_initial_focus = true,")
+        if pad["presentation"] == "fullscreen":
+            lines.append("  fullscreen = true,")
+        elif pad["presentation"] == "tile":
+            lines.append("  tile = true,")
+        else:
+            size = "{} {}".format(geometry["width"], geometry["height"])
+            move = "{} {}".format(geometry["x"], geometry["y"])
+            lines.append("  float = true,")
+            lines.append(f"  size = {_lua_string(size)},")
+            lines.append(f"  move = {_lua_string(move)},")
+        lines.append(f"  animation = {_lua_string(SCRATCHPAD_ANIMATIONS[pad['animation']])},")
+        lines.append("})")
+
+        # An app that requests activation after mapping (Spotify's XWayland
+        # client is the reference case) would otherwise reveal its own hidden
+        # special workspace. The toggle focuses it deliberately instead.
+        lines.append("hl.window_rule({")
+        lines.append("  match = {")
+        lines.extend(match_lines)
+        lines.append("  },")
+        lines.append('  suppress_event = "activate activatefocus",')
+        lines.append("})")
+
+        if pad["keybind"]:
+            toggle = f"{cli} scratchpad toggle {pad['id']}"
+            lines.append(
+                f"hl.bind({_lua_string(pad['keybind'])}, hl.dsp.exec_cmd({_lua_string(toggle)}), "
+                f"{{ description = {_lua_string('Scratchpad: ' + pad['name'])} }})"
+            )
+        lines.append("")
+
+        rendered.append({
+            "id": pad["id"], "monitor": monitor_name, "keybind": pad["keybind"],
+            "presentation": pad["presentation"], "geometry": geometry,
+        })
+
+    preload = [pad["id"] for pad in enabled if pad["preload"]]
+    if preload:
+        # Preload runs the same toggle path in a mode that launches and parks
+        # without revealing, so a preloaded pad and a cold one converge on
+        # identical placement instead of two code paths drifting apart.
+        lines.append("-- Preload at login: launch into the hidden workspace, never reveal.")
+        for pad_id in preload:
+            lines.append(f"hl.exec_cmd({_lua_string(f'{cli} scratchpad preload {pad_id}')})")
+        lines.append("")
+
+    meta = {
+        "count": len(rendered),
+        "defined": len(pads),
+        "monitorsResolved": monitors_resolved,
+        "preload": preload,
+        "scratchpads": rendered,
+    }
+    return ("\n".join(lines), meta)
+
+
+def scratchpad_matching_windows(class_regex: str, title_exclude: str = "") -> Dict[str, Any]:
+    """Return live matches using the toggle's class and title-exclusion rules.
+    Settings uses these matches to show how broadly a pad claims app windows."""
+    try:
+        pattern = re.compile(class_regex)
+    except re.error as exc:
+        return {"ok": False, "error": f"pattern does not compile: {exc}", "count": 0, "windows": []}
+    exclude = None
+    if title_exclude:
+        try:
+            exclude = re.compile(title_exclude)
+        except re.error as exc:
+            return {"ok": False, "error": f"title exclusion does not compile: {exc}",
+                    "count": 0, "windows": []}
+
+    clients = _hyprctl_json("clients")
+    if not isinstance(clients, list):
+        # No session to ask. Distinct from "nothing matched": the caller must
+        # not render "0 windows match" on the strength of a query that never ran.
+        return {"ok": True, "known": False, "count": 0, "windows": []}
+
+    windows = []
+    for client in clients:
+        if not isinstance(client, dict):
+            continue
+        if not pattern.search(str(client.get("class") or "")):
+            continue
+        if exclude is not None and exclude.search(str(client.get("title") or "")):
+            continue
+        windows.append({"class": client.get("class") or "",
+                        "title": client.get("title") or "",
+                        "address": client.get("address") or ""})
+    return {"ok": True, "known": True, "count": len(windows), "windows": windows}
+
+
+def scratchpad_include_status() -> Dict[str, Any]:
+    """Report whether hyprland.lua contains an include of the generated fragment.
+    VGS reports the include to add; it does not edit this user-owned file."""
+    conf = home() / ".config" / "hypr" / "hyprland.lua"
+    line = scratchpad_include_line()
+    included = False
+    if conf.exists():
+        try:
+            text = conf.read_text(errors="replace")
+        except OSError:
+            text = ""
+        # Match any require of the module, not the exact pcall spelling: a user
+        # who wrote `require("vgs.scratchpads")` has included it just as well,
+        # and telling them otherwise would send them to add a duplicate.
+        included = re.search(r'require\s*\(\s*["\']vgs\.scratchpads["\']', text) is not None \
+            or re.search(r'pcall\s*\(\s*require\s*,\s*["\']vgs\.scratchpads["\']', text) is not None
+
+    return {
+        "path": str(conf),
+        "exists": conf.exists(),
+        "included": included,
+        "includeLine": line,
+        "readOnly": True,
+        "statusMessage": (
+            "VGS scratchpad rules are active."
+            if included else
+            f"Add {line} to {conf} for VGS scratchpads to take effect. "
+            "VGS never edits your Hyprland config."
+        ),
+    }
+
+
+def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
+    problems: List[Dict[str, str]] = []
+    pads = load_scratchpads(problems)
+    monitors, resolved = scratchpad_monitors()
+    content, meta = render_scratchpads_lua(pads, monitors, resolved)
+    path = scratchpad_config_path()
+    write_file(path, content)
+
+    reload_result: Dict[str, Any] = {"attempted": False}
+    if reload and _scratchpad_session_ready():
+        proc = run(["hyprctl", "reload"])
+        reload_result = {
+            "attempted": True,
+            "ok": proc.returncode == 0,
+            "stderr": proc.stderr.strip(),
+        }
+    return {
+        "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
+        "path": str(path),
+        "scratchpads": meta,
+        # Pads that could not be used, each with the reason. A rejected pad
+        # generates no rules, so without this the user's scratchpad would stop
+        # working while Settings still showed it as configured.
+        "problems": problems,
+        "include": scratchpad_include_status(),
+        "reload": reload_result,
+    }
+
+
+
+def _scratchpad_state_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    path = Path(base) / "vshell-scratchpad"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@contextlib.contextmanager
+def _scratchpad_lock(pad_id: str) -> Iterable[None]:
+    """Keybind execs are asynchronous, so a double-press can start two toggles
+    that both observe the pad as hidden, both save an origin, and race. One
+    complete show/hide transition per pad at a time."""
+    lock_path = _scratchpad_state_dir() / (pad_id + ".lock")
+    handle = open(lock_path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _scratchpad_dispatch(*args: str) -> bool:
+    if not _scratchpad_session_ready():
+        return False
+    return run(["hyprctl", "dispatch", *args]).returncode == 0
+
+
+def _scratchpad_restore_target(keep_focus: bool, origin: str, current: str) -> str:
+    """Choose the window to focus after a pad hides.
+    Keybind dismissal returns to the reveal origin. Focus-loss dismissal
+    keeps the user's current focus unless it is unknown or still on the pad.
+    Both compositor backends use this decision after gathering their own state."""
+    if keep_focus and current:
+        return current
+    return origin
+
+
+def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
+                             owns: Callable[[Dict[str, Any]], bool]) -> Dict[str, Any] | None:
+    """Select an owned window from all class/title matches.
+    Filter by ownership before selection so an unrelated earlier match
+    cannot hide the pad's window from release."""
+    for window in candidates:
+        if owns(window):
+            return window
+    return None
+
+
+def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]] | None:
+    """Return all class/title matches in compositor order, or None if unknown.
+    Callers can filter ownership across the full list. Release must distinguish
+    None from an empty list because a successful release allows pad deletion."""
+    clients = _hyprctl_json("clients")
+    if not isinstance(clients, list):
+        return None
+    try:
+        pattern = re.compile(pad["classRegex"])
+    except re.error:
+        # The matcher cannot be evaluated, so nothing can be said about what is
+        # or is not the pad's — also an unknown, not an empty answer.
+        return None
+    exclude = None
+    if pad["titleExclude"]:
+        try:
+            exclude = re.compile(pad["titleExclude"])
+        except re.error:
+            exclude = None
+    matches: List[Dict[str, Any]] = []
+    for client in clients:
+        if not isinstance(client, dict):
+            continue
+        if not pattern.search(str(client.get("class") or "")):
+            continue
+        # The live title, never initialTitle: an app that maps with a
+        # placeholder and renames itself later would be excluded forever by a
+        # frozen snapshot instead of being picked up once its real title lands.
+        if exclude is not None and exclude.search(str(client.get("title") or "")):
+            continue
+        matches.append(client)
+    return matches
+
+
+def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    """The first class/title match. Right for the toggle, which is looking for
+    "the pad's app" before it has been placed anywhere; release wants the
+    ownership-filtered selection instead.
+
+    Unknown and empty both come back as None here, which is what the toggle
+    wants — it launches the app either way, and launching one that is already
+    running is recoverable. Release must not use this."""
+    matches = _scratchpad_find_windows(pad)
+    return matches[0] if matches else None
+
+
+def _scratchpad_visibility(pad_id: str) -> Tuple[str, str]:
+    """Return (visibility, monitor), where visibility is visible, hidden or unknown.
+    Settings removes a pad's keybind only after confirmed hiding. A failed
+    monitor query must not count as hidden."""
+    monitors = _hyprctl_json("monitors")
+    if not isinstance(monitors, list):
+        return ("unknown", "")
+    special = "special:" + pad_id
+    for monitor in monitors:
+        if isinstance(monitor, dict) and str((monitor.get("specialWorkspace") or {}).get("name") or "") == special:
+            return ("visible", str(monitor.get("name") or ""))
+    return ("hidden", "")
+
+
+def _scratchpad_visible_monitor(pad_id: str) -> str:
+    """Return the visible monitor, or an empty string for hidden or unknown.
+    Use _scratchpad_visibility when the caller must distinguish those states."""
+    return _scratchpad_visibility(pad_id)[1]
+
+
+def _scratchpad_workspace_monitor(pad_id: str) -> str:
+    workspaces = _hyprctl_json("workspaces")
+    if not isinstance(workspaces, list):
+        return ""
+    special = "special:" + pad_id
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and str(workspace.get("name") or "") == special:
+            return str(workspace.get("monitor") or "")
+    return ""
+
+
+def _scratchpad_place_workspace(pad_id: str, monitor_name: str, attempts: int = 6) -> bool:
+    """A cold-mapped window can create its special workspace on whichever
+    monitor had focus when it mapped, even with a monitor rule set — the rule
+    describes intent, not an invariant. Check, do not assume."""
+    if not monitor_name:
+        return True
+    for _ in range(attempts):
+        if _scratchpad_workspace_monitor(pad_id) == monitor_name:
+            return True
+        _scratchpad_dispatch("moveworkspacetomonitor", f"special:{pad_id} {monitor_name}")
+        time.sleep(0.05)
+    return _scratchpad_workspace_monitor(pad_id) == monitor_name
+
+
+def _scratchpad_ensure_membership(pad_id: str, client: Dict[str, Any]) -> Dict[str, Any]:
+    """Move a window onto the pad workspace without changing focus.
+    An app can set its final class after map-time rules run. Reapply workspace
+    membership before geometry or reveal. The caller handles focus separately."""
+    special = "special:" + pad_id
+    current = str(((client or {}).get("workspace") or {}).get("name") or "")
+    address = str((client or {}).get("address") or "")
+    if not address or current == special:
+        return {"moved": False, "workspace": current}
+    moved = _scratchpad_dispatch("movetoworkspacesilent", f"{special},address:{address}")
+    return {"moved": moved, "from": current, "workspace": special if moved else current}
+
+
+def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
+    """Reapply presentation to a mapped window using its current monitor.
+    Apps can set their final class or title after Hyprland's map-time rules
+    run, so reveal must reapply floating state, size and position."""
+    if not address:
+        return {"applied": False, "reason": "no window"}
+
+    monitor_name = _scratchpad_visible_monitor(pad["id"]) or _scratchpad_workspace_monitor(pad["id"])
+    monitors, resolved = scratchpad_monitors()
+    monitor = pick_scratchpad_monitor(monitors, monitor_name or pad["monitor"])
+    geometry = resolve_scratchpad_geometry(pad, monitor)
+    selector = "address:" + address
+
+    if pad["presentation"] == "fullscreen":
+        _scratchpad_dispatch("fullscreenstate", f"2 -1,{selector}")
+        return {"applied": True, "mode": "fullscreen", "monitor": monitor_name}
+
+    # Clear fullscreen before applying float or tile geometry; fullscreen would
+    # otherwise override the requested size. The dispatch is idempotent.
+    _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
+
+    if pad["presentation"] == "tile":
+        _scratchpad_dispatch("settiled", selector)
+        return {"applied": True, "mode": "tile", "monitor": monitor_name}
+
+    _scratchpad_dispatch("setfloating", selector)
+    # Skip the dispatch when the window is already where it belongs, so an
+    # ordinary reveal does not animate the window on every single press.
+    client = _scratchpad_find_window(pad) or {}
+    size = client.get("size") or [0, 0]
+    at = client.get("at") or [0, 0]
+    if list(size) != [geometry["width"], geometry["height"]]:
+        _scratchpad_dispatch("resizewindowpixel",
+                             f"exact {geometry['width']} {geometry['height']},{selector}")
+    if list(at) != [geometry["globalX"], geometry["globalY"]]:
+        _scratchpad_dispatch("movewindowpixel",
+                             f"exact {geometry['globalX']} {geometry['globalY']},{selector}")
+    return {"applied": True, "mode": "float", "monitor": monitor_name, "geometry": geometry}
+
+
+def _scratchpad_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
+    """Launch the app and wait for its window before revealing the workspace.
+    Revealing first would show an empty pad."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        client = _scratchpad_find_window(pad)
+        if client:
+            return client
+        time.sleep(0.1)
+    return None
+
+
+def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                      hide_only: bool = False, keep_focus: bool = False,
+                      timeout: float = 20.0) -> Dict[str, Any]:
+    pads = {pad["id"]: pad for pad in load_scratchpads()}
+    pad = pads.get(pad_id)
+    if pad is None:
+        return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+    if not _scratchpad_session_ready():
+        return {"ok": False, "error": "no Hyprland session"}
+
+    state_file = _scratchpad_state_dir() / (pad_id + ".focus")
+    with _scratchpad_lock(pad_id):
+        visible_state, visible_on = _scratchpad_visibility(pad_id)
+
+        # An already-hidden pad needs no action, even when disabled.
+        # A failed visibility query must not count as hidden: Settings may remove
+        # the keybind after this command reports success.
+        if hide_only and visible_state == "unknown":
+            return {"ok": False, "id": pad_id, "action": "hide-unknown",
+                    "error": f"{pad['name']}: could not determine whether the pad is visible"}
+        if hide_only and visible_state == "hidden":
+            return {"ok": True, "action": "already-hidden", "id": pad_id}
+
+        hiding = bool(visible_on) and not reveal_only and not launch_only
+
+        # Disabled pads cannot be revealed. Allow hide so disabling a visible pad
+        # does not leave it on screen without a keybind.
+        if not pad["enabled"] and not hiding:
+            return {"ok": False, "id": pad_id, "action": "disabled",
+                    "error": f"{pad['name']} is disabled"}
+
+        if visible_on and not reveal_only and not launch_only:
+            # Capture the hide focus target before focusmonitor changes the active window.
+            keep_target = ""
+            if keep_focus:
+                active = _hyprctl_json("activewindow")
+                if isinstance(active, dict):
+                    # ...unless focus is somehow still on the pad's own window.
+                    # Restoring to a window we are about to hide would leave
+                    # focus on nothing, or reveal the pad again.
+                    on_pad = str((active.get("workspace") or {}).get("name") or "") == "special:" + pad_id
+                    if not on_pad:
+                        keep_target = str(active.get("address") or "")
+
+            # Keep the reveal origin until hiding is confirmed so a retry can restore focus.
+            origin = ""
+            if state_file.exists():
+                origin = state_file.read_text().strip()
+            restore_to = _scratchpad_restore_target(keep_focus, origin, keep_target)
+
+            # Check hide dispatches before restoring focus. Settings can remove the
+            # keybind after success, so an unconfirmed hide must fail.
+            hide_failures: List[str] = []
+            if not _scratchpad_dispatch("focusmonitor", visible_on):
+                hide_failures.append(f"could not focus monitor {visible_on}")
+            if not _scratchpad_dispatch("togglespecialworkspace", pad_id):
+                hide_failures.append("could not toggle the special workspace")
+
+            # The dispatches can each report success and leave the pad on
+            # screen, so the outcome is read back — and an unanswerable read-back
+            # is not a confirmation. Only "hidden" counts as success.
+            still_state, still_monitor = _scratchpad_visibility(pad_id)
+            if still_state == "visible":
+                hide_failures.append(f"special:{pad_id} is still visible on {still_monitor}")
+            elif still_state == "unknown":
+                hide_failures.append("could not confirm the pad came down; the compositor did not answer")
+
+            if hide_failures:
+                # The origin is deliberately NOT consumed and focus is NOT moved:
+                # the pad is still up, so moving focus away now would strand the
+                # user beside a window they asked to dismiss.
+                return {"ok": False, "id": pad_id, "action": "hide-failed",
+                        "error": f"{pad['name']}: " + "; ".join(hide_failures)}
+
+            state_file.unlink(missing_ok=True)
+            if restore_to:
+                clients = _hyprctl_json("clients")
+                live = isinstance(clients, list) and any(
+                    isinstance(c, dict) and c.get("address") == restore_to for c in clients)
+                if live:
+                    _scratchpad_dispatch("focuswindow", "address:" + restore_to)
+            return {"ok": True, "action": "hidden", "id": pad_id, "focusedBack": restore_to}
+
+        client = _scratchpad_find_window(pad)
+        launched = False
+        if client is None:
+            launched = True
+            spawn_error = _scratchpad_spawn(pad)
+            if spawn_error:
+                return {"ok": False, "id": pad_id, "action": "launch-refused",
+                        "error": spawn_error}
+            client = _scratchpad_wait_for_window(pad, timeout)
+            if client is None:
+                # Nothing to show. Reveal anyway and the user gets an empty
+                # workspace and no idea why, so say what happened instead.
+                return {"ok": False, "id": pad_id, "action": "launch-timeout",
+                        "error": f"{pad['name']}: no window matched {pad['classRegex']} "
+                                 f"within {timeout:g}s"}
+
+        address = str(client.get("address") or "")
+        target_monitor = _scratchpad_target_monitor(pad)
+
+        # Before anything else: a window whose class settled after mapping never
+        # matched the workspace rule and is sitting on whatever workspace was
+        # active then. Moving it must come first, because the special workspace
+        # may not exist at all until something is on it -- and everything below
+        # (placing that workspace on a monitor, revealing it) assumes it does.
+        membership = _scratchpad_ensure_membership(pad_id, client)
+
+        if launch_only:
+            # Preload must confirm workspace membership before reporting success.
+            # A late app class can leave the window visible on the active workspace.
+            placed = _scratchpad_place_workspace(pad_id, target_monitor)
+            reassert = _scratchpad_reassert(pad, address)
+            preload_failures: List[str] = []
+            if membership.get("from") is not None and not membership.get("moved"):
+                preload_failures.append(f"could not move the window onto special:{pad_id}")
+            if not placed:
+                preload_failures.append(f"could not place special:{pad_id} on {target_monitor}")
+            if preload_failures:
+                return {"ok": False, "action": "preload-failed", "id": pad_id,
+                        "launched": launched, "membership": membership,
+                        "reassert": reassert,
+                        "error": f"{pad['name']}: " + "; ".join(preload_failures)}
+            return {"ok": True, "action": "preloaded", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert}
+
+        # Save the reveal origin only when visibility changes. Showing an already
+        # visible pad must not replace its origin with the pad's own window.
+        if not visible_on:
+            active = _hyprctl_json("activewindow")
+            if isinstance(active, dict) and active.get("address"):
+                state_file.write_text(str(active["address"]))
+
+        # Stop on a failed dispatch so the caller cannot report an unrevealed pad as visible.
+        failures: List[str] = []
+        if membership.get("from") is not None and not membership.get("moved"):
+            failures.append(f"could not move the window onto special:{pad_id}")
+        if not _scratchpad_place_workspace(pad_id, target_monitor):
+            failures.append(f"could not place special:{pad_id} on {target_monitor}")
+        if target_monitor and not _scratchpad_dispatch("focusmonitor", target_monitor):
+            failures.append(f"could not focus monitor {target_monitor}")
+        if not _scratchpad_visible_monitor(pad_id):
+            if not _scratchpad_dispatch("togglespecialworkspace", pad_id):
+                failures.append("could not toggle the special workspace")
+        if not _scratchpad_dispatch("focuswindow", "address:" + address):
+            failures.append("could not focus the window")
+        reassert = _scratchpad_reassert(pad, address)
+
+        # The dispatches can each report success and still leave the pad hidden
+        # (a workspace that would not move, a compositor that ignored the
+        # toggle), so the outcome is confirmed by reading the state back rather
+        # than inferred from the calls.
+        if not _scratchpad_visible_monitor(pad_id):
+            failures.append("the special workspace is still not visible")
+
+        if failures:
+            return {"ok": False, "action": "reveal-failed", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "reassert": reassert,
+                    "error": f"{pad['name']}: " + "; ".join(failures)}
+
+        return {"ok": True, "action": "revealed", "id": pad_id,
+                "launched": launched, "membership": membership,
+                "reassert": reassert}
+
+
+def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
+    """Move an owned pad window to the active workspace before removing its config.
+    Closing it could discard unsaved work; leaving it on the special workspace
+    would remove its keybind access. Keep class and title exclusion together,
+    and require workspace ownership to avoid moving unrelated app windows."""
+    if not _scratchpad_session_ready():
+        return {"ok": True, "released": False, "reason": "no Hyprland session"}
+
+    pattern = class_regex
+    exclude = title_exclude
+    if not pattern:
+        pad = {p["id"]: p for p in load_scratchpads()}.get(pad_id)
+        if pad is None:
+            return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+        pattern = pad["classRegex"]
+        # Only fall back for the exclusion when the class came from the same
+        # lookup; mixing a passed-in class with a looked-up exclusion would pair
+        # two pads' criteria.
+        exclude = title_exclude or pad["titleExclude"]
+
+    # Ownership first, then selection — the same rule the Niri backend uses, via
+    # the same selector. A pad's window is the one parked on its special
+    # workspace; a same-class window elsewhere is one the pad never owned, and
+    # moving that to the active workspace is a surprise, not a rescue. A window
+    # that is already on a normal workspace needs no release either: it is
+    # reachable exactly where it is.
+    special = "special:" + pad_id
+
+    def owns(candidate: Dict[str, Any]) -> bool:
+        return str((candidate.get("workspace") or {}).get("name") or "") == special
+
+    candidates = _scratchpad_find_windows({"classRegex": pattern, "titleExclude": exclude})
+    if candidates is None:
+        # The window list could not be read. Reporting a successful no-op here
+        # tells Settings the release is done, and Settings then DELETES the pad
+        # record — so a failed IPC call would cost the user their scratchpad
+        # configuration. A release that could not look has not succeeded.
+        return {"ok": False, "released": False,
+                "error": "could not read the window list, so nothing can be said about "
+                         "this pad's window; the scratchpad was kept"}
+    client = _scratchpad_select_owned(candidates, owns)
+    if client is None:
+        return {"ok": True, "released": False, "reason": "no window mapped"}
+
+    address = str(client.get("address") or "")
+    selector = "address:" + address
+
+    active = _hyprctl_json("activeworkspace")
+    workspace_id = (active or {}).get("id") if isinstance(active, dict) else None
+    if workspace_id is None:
+        return {"ok": False, "error": "could not read the active workspace"}
+
+    # Clear fullscreen before moving the window so it does not cover its destination.
+    _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
+    moved = _scratchpad_dispatch("movetoworkspace", f"{workspace_id},{selector}")
+    return {"ok": moved, "released": moved, "address": address, "workspace": workspace_id}
+
+
+def _scratchpad_target_monitor(pad: Dict[str, Any]) -> str:
+    """Resolve the requested output against connected outputs.
+    If the configured monitor is disconnected, use the focused output.
+    If the monitor query fails, retain the configured name."""
+    configured = str(pad.get("monitor") or "")
+    if configured:
+        monitors = _hyprctl_json("monitors")
+        if isinstance(monitors, list):
+            for monitor in monitors:
+                if isinstance(monitor, dict) and str(monitor.get("name") or "") == configured:
+                    return configured
+            # Connected outputs were readable and the configured one is not
+            # among them.
+            eprint(f"scratchpad {pad.get('id')}: monitor {configured} is not connected; "
+                   f"falling back to the focused output")
+        else:
+            # The monitor list could not be read at all. The configured name is
+            # the best information available, so keep it rather than silently
+            # relocating the pad on the strength of a failed query.
+            return configured
+    return _scratchpad_focused_monitor()
+
+
+def _scratchpad_focused_monitor() -> str:
+    monitors = _hyprctl_json("monitors")
+    if not isinstance(monitors, list):
+        return ""
+    for monitor in monitors:
+        if isinstance(monitor, dict) and monitor.get("focused") is True:
+            return str(monitor.get("name") or "")
+    return ""
+
+
+# Niri scratchpads use persistent named workspaces because Niri has no
+# special workspaces. Toggling focuses the named workspace and returns focus.
+# Niri resolves percentage sizes and anchors at map time, so generation
+# does not need a monitor query.
+
+# VGS anchor -> niri `relative-to`. Niri's coordinates already run INWARD from
+# the named corner or edge (its own docs: with `bottom-left`, y counts upward),
+# which is exactly what offsetX/offsetY mean in the Hyprland resolver, so the
+# offsets carry over unchanged.
+#
+# "center" maps to nothing: niri has no centre `relative-to`. It does centre new
+# floating windows by default, so an unoffset centre pad is emitted by OMITTING
+# the position rule; a centre pad with an offset cannot be expressed and is
+# reported rather than approximated.
+SCRATCHPAD_NIRI_ANCHORS = {
+    "top-left": "top-left",
+    "top-center": "top",
+    "top-right": "top-right",
+    "center-left": "left",
+    "center": "",
+    "center-right": "right",
+    "bottom-left": "bottom-left",
+    "bottom-center": "bottom",
+    "bottom-right": "bottom-right",
+}
+
+
+# Preloaded Niri scratchpads run at login. Reject shell operators rather than
+# interpreting a configured command through a shell.
+_SCRATCHPAD_SHELL_OPERATORS = re.compile(r"(?:\|\||&&|>>|[;|&<>()$])")
+# Substitutions and expansions. Unlike an operator these survive shlex as part
+# of a token, and as argv they are passed through LITERALLY — safe, but not what
+# the user wrote.
+_SCRATCHPAD_SHELL_EXPANSION = re.compile(r"(?:\$\(|`|\$\{|\$[A-Za-z_])")
+
+
+def scratchpad_launch_argv(command: str) -> Tuple[List[str], str]:
+    """Return (argv, error) for a pad launch command.
+    Use shlex quoting and direct execution. Reject shell operators and
+    expansions rather than passing them as unexpected literal arguments.
+    An explicit shell command remains the caller's opt-in to interpretation."""
+    text = str(command or "").strip()
+    if not text:
+        return ([], "the launch command is empty")
+    try:
+        # Tokenize punctuation so unquoted shell operators are visible even when
+        # they touch command text. Quoted argument contents stay together.
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        argv = list(lexer)
+    except ValueError as exc:
+        return ([], f"the launch command could not be parsed ({exc})")
+    if not argv:
+        return ([], "the launch command is empty")
+    # Inspect tokens after splitting. In sh -c commands, shell operators
+    # inside the command argument belong to the explicitly requested shell.
+    for token in argv:
+        if _SCRATCHPAD_SHELL_OPERATORS.fullmatch(token):
+            return ([], f"the launch command uses shell syntax ({token!r}). VGS runs pad "
+                        "commands directly rather than through a shell, so ask for one "
+                        f"explicitly: sh -c {shlex.quote(text)}")
+        if _SCRATCHPAD_SHELL_EXPANSION.search(token):
+            # As argv this would be passed through literally rather than
+            # expanded, which is silently not what was written.
+            return ([], f"the launch command uses a shell expansion ({token!r}). VGS runs pad "
+                        "commands directly, so it would be passed through literally; ask for "
+                        f"a shell explicitly: sh -c {shlex.quote(text)}")
+    return (argv, "")
+
+
+def _scratchpad_spawn(pad: Dict[str, Any]) -> str:
+    """Launch a pad's app detached, or return why it could not be launched.
+
+    Detached and in its own session: the pad outlives this toggle process and
+    must not inherit the flock fd and hold the pad's lock for its whole life."""
+    argv, error = scratchpad_launch_argv(pad.get("command", ""))
+    if error:
+        return f"{pad.get('name') or pad.get('id')}: {error}"
+    try:
+        subprocess.Popen(argv,
+                         start_new_session=True,
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         close_fds=True)
+    except OSError as exc:
+        return f"{pad.get('name') or pad.get('id')}: could not launch {argv[0]!r} ({exc})"
+    return ""
+
+
+def scratchpad_niri_workspace(pad_id: str) -> str:
+    """Return the pad workspace name with the VGS prefix."""
+    return "vgs-" + pad_id
+
+
+def scratchpad_niri_config_path() -> Path:
+    return _niri().niri_config_dir() / "scratchpads.kdl"
+
+
+def _kdl_comment_text(value: str) -> str:
+    """User text flattened onto one line, for a `//` comment.
+
+    Collapsing beats escaping here: a comment has no escape syntax, so a
+    newline does not corrupt the comment, it ENDS it — and the remainder of the
+    name becomes config the compositor tries to parse."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _kdl_raw_string(value: str) -> str:
+    """A KDL raw string, so a regex full of backslashes needs no escaping.
+
+    Returns "" for a value that would terminate the literal early — the caller
+    must reject that pad rather than emit a rule that silently means something
+    else."""
+    return "" if '"#' in value else 'r#"' + value + '"#'
+
+
+# Reject known Python regex constructs that Niri's Rust regex engine does
+# not support. An unsupported pattern can make Niri reject the whole config.
+_NIRI_REGEX_UNSUPPORTED = (
+    (re.compile(r"\(\?(?:=|!|<=|<!)"), "lookahead or lookbehind"),
+    # Backreferences, numeric and named. `\1`-`\9`, but not `\10`+ (which Python
+    # also reads as a backreference only when that many groups exist) and never
+    # an escaped backslash before a digit.
+    (re.compile(r"(?<!\\)\\[1-9]"), "a backreference"),
+    (re.compile(r"\(\?P=", ), "a named backreference"),
+    (re.compile(r"\(\?\("), "a conditional group"),
+    (re.compile(r"\(\?>"), "an atomic group"),
+    # Possessive quantifiers (Python 3.11+): `a*+`, `a++`, `a?+`, `a{2,3}+`.
+    (re.compile(r"(?<!\\)[*+?}]\+"), "a possessive quantifier"),
+    (re.compile(r"\(\?#"), "an inline comment group"),
+    # Rust spells end-of-text `\z`; `\Z` is not accepted at all.
+    (re.compile(r"(?<!\\)\\Z"), r"\Z (Rust spells end-of-text \z)"),
+)
+
+
+def _niri_regex_problem(pattern: str, what: str) -> str:
+    """Report known constructs that Niri's regex engine rejects, or an empty string.
+    This check is not a Rust regex parser and cannot establish validity."""
+    if not pattern:
+        return ""
+    for probe, name in _NIRI_REGEX_UNSUPPORTED:
+        if probe.search(pattern):
+            return (f"{what} uses {name}, which Niri's regex engine does not support; "
+                    "a rule containing it would make Niri reject the whole config file")
+    return ""
+
+
+SCRATCHPAD_NIRI_MODIFIERS = {
+    "SUPER": "Mod", "MOD": "Mod", "META": "Mod", "WIN": "Mod", "LOGO": "Mod",
+    "CTRL": "Ctrl", "CONTROL": "Ctrl",
+    "ALT": "Alt", "SHIFT": "Shift",
+}
+
+# Translate captured punctuation and hand-written named keys to xkb keysyms.
+SCRATCHPAD_NIRI_KEYSYMS = {
+    "RETURN": "Return", "ENTER": "Return", "KP_ENTER": "KP_Enter",
+    "SPACE": "space", "TAB": "Tab", "ESCAPE": "Escape", "ESC": "Escape",
+    "BACKSPACE": "BackSpace", "DELETE": "Delete", "DEL": "Delete",
+    "INSERT": "Insert", "HOME": "Home", "END": "End",
+    "PAGE_UP": "Page_Up", "PAGEUP": "Page_Up", "PRIOR": "Page_Up",
+    "PAGE_DOWN": "Page_Down", "PAGEDOWN": "Page_Down", "NEXT": "Page_Down",
+    "UP": "Up", "DOWN": "Down", "LEFT": "Left", "RIGHT": "Right",
+    "PRINT": "Print", "MENU": "Menu",
+    ",": "comma", ".": "period", "/": "slash", "\\": "backslash",
+    ";": "semicolon", "'": "apostrophe", "[": "bracketleft", "]": "bracketright",
+    "-": "minus", "=": "equal", "`": "grave",
+}
+
+
+def scratchpad_niri_keybind(keybind: str) -> str:
+    """Convert a VGS keybind to Niri modifier and keysym syntax.
+    Return an empty string when conversion fails. Callers omit and report
+    that bind; the pad remains available through the CLI toggle."""
+    raw = str(keybind or "").strip()
+    if not raw:
+        return ""
+    # Split at the last modifier separator so a comma can itself be the key.
+    if ", " in raw:
+        head, key = raw.rsplit(", ", 1)
+    elif "," in raw:
+        head, key = raw.rsplit(",", 1)
+    elif "+" in raw:
+        # No comma: either a plain key, or a bind already written the way niri
+        # spells it (`Mod+T`) by someone editing settings.json. Accept both
+        # rather than reporting a bind that is already correct as unconvertible.
+        head, key = raw.rsplit("+", 1)
+    else:
+        head, key = "", raw
+    mods: List[str] = []
+    for part in (piece.strip() for piece in head.split("+")):
+        if not part:
+            continue
+        folded = part.upper()
+        if folded not in SCRATCHPAD_NIRI_MODIFIERS:
+            # Anything before the separator that is not a modifier means this is
+            # not a shape we understand — do not guess at what was intended.
+            return ""
+        mod = SCRATCHPAD_NIRI_MODIFIERS[folded]
+        if mod not in mods:
+            mods.append(mod)
+    key = key.strip()
+    if not key or key.upper() in SCRATCHPAD_NIRI_MODIFIERS:
+        return ""
+    folded = key.upper()
+    if folded in SCRATCHPAD_NIRI_KEYSYMS:
+        resolved = SCRATCHPAD_NIRI_KEYSYMS[folded]
+    elif key in SCRATCHPAD_NIRI_KEYSYMS:
+        resolved = SCRATCHPAD_NIRI_KEYSYMS[key]
+    elif re.fullmatch(r"F([1-9]|1[0-9]|2[0-4])", folded):
+        resolved = folded
+    elif re.fullmatch(r"[A-Za-z0-9]", key):
+        resolved = key.upper()
+    elif re.fullmatch(r"XF86[A-Za-z0-9_]+", key):
+        # Media keys are already xkb keysyms; pass them through as written.
+        resolved = key
+    else:
+        return ""
+    order = ["Mod", "Ctrl", "Alt", "Shift"]
+    mods.sort(key=lambda name: order.index(name) if name in order else len(order))
+    return "+".join(mods + [resolved])
+
+
+def scratchpad_niri_unsupported() -> List[Dict[str, str]]:
+    """List scratchpad settings Niri cannot express.
+    Report backend limits separately from individual rejected pads."""
+    return [
+        {
+            "field": "animation",
+            "reason": "Niri's window-open animation is global config (`animations { window-open ... }`), "
+                      "not a per-window-rule property, so a per-pad entry animation cannot be expressed. "
+                      "VGS does not overwrite your global animation to fake one.",
+        },
+        {
+            "field": "dismissOnFocusLoss",
+            "reason": "Not implemented on Niri. The focus owner VGS uses reads the Hyprland event "
+                      "socket; Niri's equivalent is a different mechanism and is not wired up yet.",
+        },
+    ]
+
+
+def render_scratchpads_kdl(pads: List[Dict[str, Any]],
+                           problems: List[Dict[str, str]] | None = None) -> Tuple[str, Dict[str, Any]]:
+    """Render pad records as Niri KDL text and metadata without compositor IPC."""
+    cli = shutil.which("vshell") or "vshell"
+    lines = [
+        "// Generated by VGS (Settings -> Scratchpads). Do not edit.",
+        "//",
+        "// Niri has no special workspaces, so each pad is a persistent NAMED",
+        "// workspace plus window rules; the keybind focuses that workspace and",
+        "// focuses back. A pad therefore takes a real slot in your workspace",
+        "// list rather than overlaying the current view, which is the one",
+        "// visible difference from the Hyprland backend.",
+        "",
+    ]
+
+    rendered: List[Dict[str, Any]] = []
+    unsupported: List[Dict[str, str]] = []
+    enabled = [pad for pad in pads if pad["enabled"]]
+    binds: List[Tuple[str, str, str]] = []
+
+    if not enabled:
+        lines.append("// No scratchpads are defined.")
+        lines.append("")
+
+    for pad in enabled:
+        regex_problem = (_niri_regex_problem(pad["classRegex"], "window class pattern")
+                         or _niri_regex_problem(pad["titleExclude"], "title exclusion"))
+        if regex_problem:
+            if problems is not None:
+                problems.append({"id": pad["name"], "reason": regex_problem})
+            continue
+        match_value = _kdl_raw_string(pad["classRegex"])
+        if not match_value:
+            # Reject rather than half-emit: a rule whose match string cannot be
+            # written correctly would either fail to parse or, worse, parse as
+            # something narrower and quietly stop capturing the window.
+            if problems is not None:
+                problems.append({"id": pad["name"],
+                                 "reason": 'window class pattern contains \'"#\' and cannot be '
+                                           "written as a Niri raw string"})
+            continue
+        exclude_value = ""
+        if pad["titleExclude"]:
+            exclude_value = _kdl_raw_string(pad["titleExclude"])
+            if not exclude_value:
+                if problems is not None:
+                    problems.append({"id": pad["name"],
+                                     "reason": 'title exclusion contains \'"#\' and cannot be '
+                                               "written as a Niri raw string"})
+                continue
+
+        workspace = scratchpad_niri_workspace(pad["id"])
+        # Flatten the user-supplied name before adding it to a KDL comment.
+        # A newline would end the comment and expose the remaining name as config.
+        lines.append(f"// {_kdl_comment_text(pad['name'])} ({pad['id']})")
+
+        # The workspace. Declared, so it exists before any window is moved onto
+        # it and survives the pad being empty.
+        if pad["monitor"]:
+            # An output that is not connected is left to niri to resolve: it
+            # places the workspace somewhere real, which beats VGS guessing on
+            # the strength of a monitor list it cannot read at generation time.
+            lines.append(f'workspace {json.dumps(workspace)} {{')
+            lines.append(f'    open-on-output {json.dumps(pad["monitor"])}')
+            lines.append("}")
+        else:
+            lines.append(f"workspace {json.dumps(workspace)}")
+
+        # The window rule. `match` and `exclude` are both emitted from the same
+        # pair of patterns, so a window the user excluded by title is excluded
+        # from every property below rather than half-owned.
+        lines.append("window-rule {")
+        lines.append(f"    match app-id={match_value}")
+        if exclude_value:
+            lines.append(f"    exclude title={exclude_value}")
+        lines.append(f"    open-on-workspace {json.dumps(workspace)}")
+        # The pad must not steal focus when it maps: preload opens it without
+        # revealing, and the toggle focuses it deliberately a moment later.
+        lines.append("    open-focused false")
+
+        if pad["presentation"] == "fullscreen":
+            lines.append("    open-fullscreen true")
+        elif pad["presentation"] == "tile":
+            lines.append("    open-floating false")
+            lines.append(_niri_scratchpad_size_line("default-column-width", pad, "width"))
+            lines.append(_niri_scratchpad_size_line("default-window-height", pad, "height"))
+        else:
+            lines.append("    open-floating true")
+            lines.append(_niri_scratchpad_size_line("default-column-width", pad, "width"))
+            lines.append(_niri_scratchpad_size_line("default-window-height", pad, "height"))
+            relative_to = SCRATCHPAD_NIRI_ANCHORS[pad["anchor"]]
+            if relative_to:
+                lines.append(f'    default-floating-position x={pad["offsetX"]} y={pad["offsetY"]} '
+                             f'relative-to={json.dumps(relative_to)}')
+            elif pad["offsetX"] or pad["offsetY"]:
+                # Centre + offset. Niri centres by default when no position rule
+                # is given, so the pad still lands centred — but the offset the
+                # user asked for is dropped, and that is said out loud.
+                unsupported.append({
+                    "id": pad["name"],
+                    "field": "anchor offset",
+                    "reason": f"anchor 'center' with an offset cannot be expressed on Niri "
+                              f"(it has no centre `relative-to`); {pad['name']} is centred and the "
+                              f"{pad['offsetX']},{pad['offsetY']} offset is not applied",
+                })
+        lines.append("}")
+
+        niri_keybind = ""
+        if pad["keybind"]:
+            niri_keybind = scratchpad_niri_keybind(pad["keybind"])
+            if niri_keybind:
+                binds.append((niri_keybind, pad["id"], pad["name"]))
+            else:
+                # The pad is fine and still works through `vshell scratchpad
+                # toggle`; only the bind could not be spelled. Emitting the
+                # Hyprland form verbatim would leave a bind that never fires,
+                # and guessing a spelling could shadow one the user already has.
+                unsupported.append({
+                    "id": pad["name"],
+                    "field": "keybind",
+                    "reason": f"the keybind {pad['keybind']!r} could not be converted to Niri's "
+                              f"syntax, so no bind was written for {pad['name']}; set it by hand "
+                              f"in your Niri config, or re-record it",
+                })
+        lines.append("")
+
+        rendered.append({
+            "id": pad["id"], "workspace": workspace, "monitor": pad["monitor"],
+            "keybind": niri_keybind, "presentation": pad["presentation"],
+        })
+
+    if binds:
+        lines.append("binds {")
+        for keybind, pad_id, name in binds:
+            action = " ".join(json.dumps(part) for part in (cli, "scratchpad", "toggle", pad_id))
+            lines.append(f'    {json.dumps(keybind)} hotkey-overlay-title='
+                         f'{json.dumps("Scratchpad: " + name)} {{ spawn {action}; }}')
+        lines.append("}")
+        lines.append("")
+
+    # Preload only rendered pads. Rejected pads have no workspace or rules,
+    # so launching them at login would leave an unmanaged app on screen.
+    rendered_ids = {entry["id"] for entry in rendered}
+    preload = [pad["id"] for pad in enabled if pad["preload"] and pad["id"] in rendered_ids]
+    if preload:
+        # Same path as a cold toggle, in a mode that launches and parks without
+        # focusing, so a preloaded pad and a cold one converge on one placement.
+        lines.append("// Preload at login: launch onto the pad's workspace, never focus it.")
+        for pad_id in preload:
+            action = " ".join(json.dumps(part) for part in (cli, "scratchpad", "preload", pad_id))
+            lines.append(f"spawn-at-startup {action}")
+        lines.append("")
+
+    meta = {
+        "count": len(rendered),
+        "defined": len(pads),
+        "preload": preload,
+        "scratchpads": rendered,
+        # Report unsupported properties separately from rejected pads: these pads
+        # were rendered, but some requested behavior is unavailable.
+        "unsupported": unsupported + scratchpad_niri_unsupported(),
+    }
+    return ("\n".join(lines), meta)
+
+
+def _niri_scratchpad_size_line(rule: str, pad: Dict[str, Any], axis: str) -> str:
+    """`proportion` for a percentage pad, `fixed` for a pixel one.
+
+    Niri resolves the proportion against the real output, so the percentage
+    stays a percentage all the way into the compositor instead of being frozen
+    into pixels at generation time the way the Hyprland backend must."""
+    if pad["sizeMode"] == "pixels":
+        value = pad["widthPixels"] if axis == "width" else pad["heightPixels"]
+        return f"    {rule} {{ fixed {int(value)}; }}"
+    percent = pad["widthPercent"] if axis == "width" else pad["heightPercent"]
+    return f"    {rule} {{ proportion {round(percent / 100.0, 4)}; }}"
+
+
+def scratchpad_niri_include_status() -> Dict[str, Any]:
+    """Report whether config.kdl directly includes the managed scratchpad fragment."""
+    status = _niri().niri_include_status("scratchpads.kdl")
+    if not status.get("ok"):
+        return {
+            "path": str(runtime_niri_config()),
+            "exists": False,
+            "included": False,
+            "includeLine": 'include "vgs/scratchpads.kdl"',
+            "readOnly": False,
+            "statusMessage": str(status.get("error") or "Niri include state is unknown"),
+        }
+    return {
+        "path": status.get("path", ""),
+        "exists": bool(status.get("exists")),
+        "included": bool(status.get("included")),
+        "includeLine": 'include "vgs/scratchpads.kdl"',
+        "readOnly": False,
+        "statusMessage": ("VGS scratchpad rules are active."
+                          if status.get("included") else
+                          str(status.get("statusMessage") or "")),
+    }
+
+
+def runtime_niri_config() -> Path:
+    return home() / ".config" / "niri" / "config.kdl"
+
+
+def apply_scratchpads_niri(reload: bool = True) -> Dict[str, Any]:
+    problems: List[Dict[str, str]] = []
+    pads = load_scratchpads(problems)
+    content, meta = render_scratchpads_kdl(pads, problems)
+    path = scratchpad_niri_config_path()
+    write_file(path, content)
+    include = _niri().ensure_niri_include("scratchpads.kdl")
+
+    reload_result: Dict[str, Any] = {"attempted": False}
+    if reload and _niri_session_ready():
+        result = _niri().niri_reload_config()
+        reload_result = {
+            "attempted": True,
+            "ok": bool(result.get("ok")),
+            "stderr": str(result.get("error") or ""),
+        }
+    return {
+        "ok": (not reload_result.get("attempted") or bool(reload_result.get("ok")))
+              and bool(include.get("ok", True)),
+        "path": str(path),
+        "compositor": "niri",
+        "scratchpads": meta,
+        "problems": problems,
+        "include": scratchpad_niri_include_status(),
+        "reload": reload_result,
+    }
+
+
+
+def _niri_session_ready() -> bool:
+    """Return whether the environment and command lookup identify a Niri session.
+    Tests patch this seam to run the Niri paths without a compositor."""
+    return bool(shutil.which("niri") and os.environ.get("NIRI_SOCKET"))
+
+
+def _niri_msg_json(*args: str) -> Any:
+    """Read-only Niri IPC. Returns None when there is nothing to ask, so every
+    caller has to decide what "unknown" means instead of being handed a
+    plausible-looking empty answer."""
+    if not _niri_session_ready():
+        return None
+    proc = run(["niri", "msg", "-j", *args])
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        return None
+
+
+def _niri_scratchpad_action(*args: str) -> bool:
+    if not _niri_session_ready():
+        return False
+    return run(["niri", "msg", "action", *args]).returncode == 0
+
+
+def _scratchpad_niri_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]] | None:
+    """Every window matching a pad's class/title, or None when the session could
+    not be asked. See the Hyprland twin for why the distinction matters."""
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return None
+    try:
+        pattern = re.compile(pad["classRegex"])
+    except re.error:
+        return None
+    exclude = None
+    if pad["titleExclude"]:
+        try:
+            exclude = re.compile(pad["titleExclude"])
+        except re.error:
+            exclude = None
+    matches: List[Dict[str, Any]] = []
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        if not pattern.search(str(window.get("app_id") or "")):
+            continue
+        if exclude is not None and exclude.search(str(window.get("title") or "")):
+            continue
+        matches.append(window)
+    return matches
+
+
+def _scratchpad_niri_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
+    """The first match; unknown and empty both read as None. See the Hyprland
+    twin — release must not use this."""
+    matches = _scratchpad_niri_find_windows(pad)
+    return matches[0] if matches else None
+
+
+def _scratchpad_niri_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        window = _scratchpad_niri_find_window(pad)
+        if window is not None:
+            return window
+        time.sleep(0.15)
+    return None
+
+
+def _scratchpad_niri_workspace(pad_id: str) -> Dict[str, Any] | None:
+    """The pad's workspace record, or None when it cannot be read.
+
+    None means "unknown", never "not there": the callers below refuse to act on
+    it rather than treating a failed query as a negative answer."""
+    workspaces = _niri_msg_json("workspaces")
+    if not isinstance(workspaces, list):
+        return None
+    name = scratchpad_niri_workspace(pad_id)
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and str(workspace.get("name") or "") == name:
+            return workspace
+    return {}
+
+
+def _scratchpad_niri_visible_output(pad_id: str) -> str:
+    """The output showing the pad's workspace, or "" when it is not shown.
+
+    Mirrors what `_scratchpad_visible_monitor` means on Hyprland: a workspace
+    that is active on its output is on screen, whether or not it holds focus."""
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return ""
+    return str(workspace.get("output") or "") if workspace.get("is_active") else ""
+
+
+def _scratchpad_niri_focused_window_id() -> int:
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return 0
+    for window in windows:
+        if isinstance(window, dict) and window.get("is_focused"):
+            try:
+                return int(window.get("id") or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _scratchpad_niri_window_on_pad(pad_id: str, window_id: int) -> bool:
+    """Whether a window is on the pad's workspace. Unknown answers False: this
+    only guards "do not restore focus to the pad we are hiding", and a failed
+    query there costs a fallback to the reveal origin, not a wrong move."""
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return False
+    try:
+        pad_workspace_id = int(workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not pad_workspace_id:
+        return False
+    windows = _niri_msg_json("windows")
+    if not isinstance(windows, list):
+        return False
+    for entry in windows:
+        if not isinstance(entry, dict) or entry.get("id") != window_id:
+            continue
+        held = entry.get("workspace_id")
+        try:
+            return held is not None and int(held) == pad_workspace_id
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _scratchpad_niri_ensure_membership(pad_id: str, window: Dict[str, Any]) -> Dict[str, Any]:
+    """Move a window onto the pad's workspace if it is not already there.
+
+    Same map-time race as Hyprland: `open-on-workspace` is applied once, when
+    the window opens, so an app whose app-id settles afterwards never matched it
+    and is sitting on whatever workspace was focused then. Re-asserting the
+    membership is the half that matters — styling a window perfectly while
+    leaving it on the wrong workspace makes the reveal show an empty pad."""
+    try:
+        window_id = int(window.get("id") or 0)
+    except (TypeError, ValueError):
+        window_id = 0
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if workspace is None or not workspace:
+        return {"moved": False, "from": None}
+    try:
+        target_id = int(workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        target_id = 0
+    current = window.get("workspace_id")
+    if not window_id or (current is not None and target_id and int(current) == target_id):
+        return {"moved": False, "from": None}
+    # --focus false: the reveal focuses deliberately a moment later, and preload
+    # must not steal focus at all.
+    moved = _niri_scratchpad_action("move-window-to-workspace", "--window-id", str(window_id),
+                                    "--focus", "false", scratchpad_niri_workspace(pad_id))
+    return {"moved": moved, "from": current}
+
+
+def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: bool = False,
+                           hide_only: bool = False, keep_focus: bool = False,
+                           timeout: float = 20.0) -> Dict[str, Any]:
+    """Reveal/hide a pad on Niri by focusing its named workspace and back."""
+    pads = {pad["id"]: pad for pad in load_scratchpads()}
+    pad = pads.get(pad_id)
+    if pad is None:
+        return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+    if not _niri_session_ready():
+        return {"ok": False, "error": "no Niri session"}
+
+    state_file = _scratchpad_state_dir() / (pad_id + ".niri-focus")
+    with _scratchpad_lock(pad_id):
+        visible_on = _scratchpad_niri_visible_output(pad_id)
+
+        # `hide` asks for one direction only, and asking to hide something
+        # already hidden is a no-op, not a failure — the focus watcher fires on
+        # an event and may reach the lock after the user dismissed the pad
+        # themselves. Answered before the enabled check, because a disabled pad
+        # that is already hidden is equally nothing to do.
+        if hide_only and not visible_on:
+            return {"ok": True, "action": "already-hidden", "id": pad_id}
+
+        # Identical rule to the Hyprland backend: a disabled pad generates no
+        # rules and no keybind, so revealing one claims a mechanism the enable
+        # toggle does not have — but hiding one that is already on screen stays
+        # allowed, or disabling a visible pad would strand it.
+        if not pad["enabled"]:
+            hiding = bool(visible_on) and not reveal_only and not launch_only
+            if not hiding:
+                return {"ok": False, "id": pad_id, "action": "disabled",
+                        "error": f"{pad['name']} is disabled"}
+
+        if visible_on and not reveal_only and not launch_only:
+            # Where focus must land, read BEFORE anything moves it — the same
+            # decision the Hyprland backend makes, through the same rule.
+            keep_target = ""
+            if keep_focus:
+                focused_id = _scratchpad_niri_focused_window_id()
+                if focused_id and not _scratchpad_niri_window_on_pad(pad_id, focused_id):
+                    keep_target = str(focused_id)
+
+            # Keep the reveal origin until hiding succeeds so a retry can restore focus.
+            origin = ""
+            if state_file.exists():
+                origin = state_file.read_text().strip()
+            previous = _scratchpad_restore_target(keep_focus, origin, keep_target)
+
+            restored = False
+            if previous.isdigit():
+                windows = _niri_msg_json("windows")
+                alive = isinstance(windows, list) and any(
+                    isinstance(w, dict) and str(w.get("id")) == previous for w in windows)
+                if alive:
+                    restored = _niri_scratchpad_action("focus-window", "--id", previous)
+            if not restored:
+                # Nothing to go back to, or it is gone. Niri's own "previous
+                # workspace" is the honest fallback; there is no window to
+                # restore focus to.
+                restored = _niri_scratchpad_action("focus-workspace-previous")
+            if not restored:
+                return {"ok": False, "id": pad_id, "action": "hide-failed",
+                        "error": f"{pad['name']}: could not focus away from the pad's workspace"}
+            # Confirmed by reading the state back, not inferred from the call:
+            # an action can return zero and leave the pad exactly where it was.
+            # One snapshot answers both questions below, so they cannot disagree.
+            after = _niri_msg_json("workspaces")
+            if not isinstance(after, list):
+                # The hide cannot be confirmed. Not claimed as success — and the
+                # origin is not consumed, because a retry will need it.
+                return {"ok": False, "id": pad_id, "action": "hide-unconfirmed",
+                        "error": f"{pad['name']}: could not read the workspace list to "
+                                 f"confirm the pad was hidden"}
+            name = scratchpad_niri_workspace(pad_id)
+            pad_workspace = next((w for w in after if isinstance(w, dict)
+                                  and str(w.get("name") or "") == name), None)
+            still_on = ""
+            if pad_workspace and pad_workspace.get("is_active"):
+                still_on = str(pad_workspace.get("output") or "")
+            focused_output = next((str(w.get("output") or "") for w in after
+                                   if isinstance(w, dict) and w.get("is_focused")), "")
+
+            if still_on:
+                # Niri can keep the pad visible on its output after focus moves to another
+                # output. In that case, focus leaving the pad counts as a successful hide.
+                # On the same output, the pad must stop being the active workspace.
+                if not focused_output or focused_output == still_on:
+                    return {"ok": False, "id": pad_id, "action": "hide-failed",
+                            "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
+                state_file.unlink(missing_ok=True)
+                return {"ok": True, "action": "hidden", "id": pad_id,
+                        "focusedBack": previous, "stillDisplayedOn": still_on}
+
+            state_file.unlink(missing_ok=True)
+            return {"ok": True, "action": "hidden", "id": pad_id, "focusedBack": previous}
+
+        window = _scratchpad_niri_find_window(pad)
+        launched = False
+        if window is None:
+            launched = True
+            spawn_error = _scratchpad_spawn(pad)
+            if spawn_error:
+                return {"ok": False, "id": pad_id, "action": "launch-refused",
+                        "error": spawn_error}
+            # Wait for the window BEFORE focusing the workspace. Focusing first
+            # shows an empty workspace and reads as a dead keybind, which is the
+            # single-press-from-cold requirement.
+            window = _scratchpad_niri_wait_for_window(pad, timeout)
+            if window is None:
+                return {"ok": False, "id": pad_id, "action": "launch-timeout",
+                        "error": f"{pad['name']}: no window matched {pad['classRegex']} "
+                                 f"within {timeout:g}s"}
+
+        membership = _scratchpad_niri_ensure_membership(pad_id, window)
+
+        if launch_only:
+            # Confirm preload placement; a failed move can leave the app visible
+            # on the user's active workspace.
+            if membership.get("from") is not None and not membership.get("moved"):
+                return {"ok": False, "action": "preload-failed", "id": pad_id,
+                        "launched": launched, "membership": membership,
+                        "error": f"{pad['name']}: could not move the window onto "
+                                 f"{scratchpad_niri_workspace(pad_id)}"}
+            return {"ok": True, "action": "preloaded", "id": pad_id,
+                    "launched": launched, "membership": membership}
+
+        focused_before = _scratchpad_niri_focused_window_id()
+        if focused_before:
+            state_file.write_text(str(focused_before))
+
+        failures: List[str] = []
+        if membership.get("from") is not None and not membership.get("moved"):
+            failures.append(f"could not move the window onto {scratchpad_niri_workspace(pad_id)}")
+        if not _niri_scratchpad_action("focus-workspace", scratchpad_niri_workspace(pad_id)):
+            failures.append(f"could not focus {scratchpad_niri_workspace(pad_id)}")
+        try:
+            window_id = int(window.get("id") or 0)
+        except (TypeError, ValueError):
+            window_id = 0
+        if window_id and not _niri_scratchpad_action("focus-window", "--id", str(window_id)):
+            failures.append("could not focus the window")
+
+        # Read the outcome back rather than trusting the calls: each can report
+        # success and still leave the pad unfocused.
+        if not _scratchpad_niri_workspace_focused(pad_id):
+            failures.append("the pad's workspace is still not focused")
+
+        if failures:
+            return {"ok": False, "action": "reveal-failed", "id": pad_id,
+                    "launched": launched, "membership": membership,
+                    "error": f"{pad['name']}: " + "; ".join(failures)}
+        return {"ok": True, "action": "revealed", "id": pad_id,
+                "launched": launched, "membership": membership}
+
+
+def _scratchpad_niri_workspace_focused(pad_id: str) -> bool:
+    workspace = _scratchpad_niri_workspace(pad_id)
+    if not workspace:
+        return False
+    return bool(workspace.get("is_focused"))
+
+
+def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
+    """Hand a pad's window back to the focused workspace before the pad is
+    deleted, so it is not left on a named workspace whose declaration and
+    keybind are about to disappear."""
+    if not _niri_session_ready():
+        return {"ok": True, "released": False, "reason": "no Niri session"}
+    pad = {"classRegex": class_regex or "", "titleExclude": title_exclude or ""}
+    if not pad["classRegex"]:
+        pads = {item["id"]: item for item in load_scratchpads()}
+        record = pads.get(pad_id)
+        if record is None:
+            return {"ok": False, "error": f"unknown scratchpad: {pad_id}"}
+        pad = record
+    # Release must own exactly the window the pad owned — the one ON the pad's
+    # workspace. Matching on the class alone would pick up a same-class window
+    # that was never in the pad (a second terminal, say) and yank it onto the
+    # user's active workspace.
+    pad_workspace = _scratchpad_niri_workspace(pad_id)
+    if pad_workspace is None:
+        # The workspace list could not be read. Refusing beats moving a window
+        # chosen only by class: a failed query is not a negative answer.
+        return {"ok": False, "released": False,
+                "error": "could not read the workspace list to confirm which window belongs to the pad"}
+    if not pad_workspace:
+        return {"ok": True, "released": False, "reason": "the pad's workspace does not exist"}
+    try:
+        pad_workspace_id = int(pad_workspace.get("id") or 0)
+    except (TypeError, ValueError):
+        pad_workspace_id = 0
+    if not pad_workspace_id:
+        return {"ok": False, "released": False,
+                "error": "the pad's workspace has no usable id"}
+
+    def owns(candidate: Dict[str, Any]) -> bool:
+        held = candidate.get("workspace_id")
+        try:
+            return held is not None and int(held) == pad_workspace_id
+        except (TypeError, ValueError):
+            return False
+
+    # Filter all matches by workspace ownership before selecting a window.
+    candidates = _scratchpad_niri_find_windows(pad)
+    if candidates is None:
+        # Same rule as the Hyprland backend, and for the same reason: Settings
+        # deletes the pad record on a successful release, so a query that never
+        # ran must not report success.
+        return {"ok": False, "released": False,
+                "error": "could not read the window list, so nothing can be said about "
+                         "this pad's window; the scratchpad was kept"}
+    window = _scratchpad_select_owned(candidates, owns)
+    if window is None:
+        return {"ok": True, "released": False,
+                "reason": "no window of this pad is on its workspace"}
+
+    workspaces = _niri_msg_json("workspaces")
+    target = ""
+    if isinstance(workspaces, list):
+        for workspace in workspaces:
+            if not isinstance(workspace, dict) or not workspace.get("is_focused"):
+                continue
+            # `idx` ONLY. niri parses a numeric workspace reference as an
+            # INDEX, so falling back to the global `id` would name a different
+            # workspace entirely — a plausible-looking number that moves the
+            # window somewhere nobody asked for.
+            index = workspace.get("idx")
+            if isinstance(index, int) and index > 0:
+                target = str(index)
+            break
+    if not target:
+        # Without a destination the move would be a guess. Say so rather than
+        # reporting a release that did not happen.
+        return {"ok": False, "released": False,
+                "error": "could not determine the focused workspace to release onto"}
+    try:
+        window_id = int(window.get("id") or 0)
+    except (TypeError, ValueError):
+        window_id = 0
+    if not window_id:
+        return {"ok": False, "released": False, "error": "the pad's window has no id"}
+    moved = _niri_scratchpad_action("move-window-to-workspace", "--window-id", str(window_id),
+                                    "--focus", "false", target)
+    return {"ok": moved, "released": moved,
+            "error": "" if moved else "could not move the window off the pad's workspace"}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _clamp_float(value: Any, lo: float = 0.0, hi: float = 1.0) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        v = lo
+    return max(lo, min(hi, v))
+
+
+def _hyprctl_eval(script: str) -> subprocess.CompletedProcess[str]:
+    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return subprocess.CompletedProcess(["hyprctl", "eval"], 1, "", "hyprctl or Hyprland session not available")
+    return run(["hyprctl", "eval", script])
+
+
+def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
+    """Whether a `hyprctl eval`, `keyword` or `output create` request actually ran.
+
+    hyprctl answers an applied request with exactly "ok", and prefixes a failed Lua chunk
+    with "error:". Each spelling refuses on stdout with exit 0 on the config manager it
+    does not belong to: `eval` answers "eval is only supported with the lua config
+    manager" on a classic config, `keyword` answers "keyword can't work with non-legacy
+    parsers. Use eval." on a Lua config. `output create` answers "no backend replied to
+    the request" when no backend serves it. A return code alone reads any of those
+    refusals as applied, so the caller believes the compositor owns decoration, a window
+    rule or an output it never registered.
+    """
+    return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
+
+
+def _hyprland_blur_support() -> Dict[str, Any]:
+    if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return {"available": False, "reason": "hyprctl or Hyprland session not available"}
+    proc = _hyprctl_eval('if hl == nil or hl.layer_rule == nil then error("hl.layer_rule unavailable") end')
+    if not _hyprctl_eval_ok(proc):
+        return {"available": False, "reason": (proc.stderr or proc.stdout or "hyprctl eval failed").strip()}
+    return {"available": True, "reason": "hyprland layer rules available"}
+
+
+def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> str:
+    strength = _clamp_float(strength)
+    opacity = _clamp_float(opacity, 0.08, 1.0)
+    light = mode == "light"
+    # Hyprland's layer blur uses global decoration.blur parameters, so the shell
+    # slider maps to a conservative global blur profile, targeted by namespace.
+    # Strength only scales how much the backdrop is diffused; surface opacity is
+    # owned by the shell's opacity slider / glass material and must not be
+    # modulated here. Glass follows Apple's material recipe shape: strong
+    # saturation (~1.8x) plus a luminance pull toward the material tone — light
+    # glass lifts the backdrop, dark glass sinks it so a bright window can't
+    # bleed through the tint above — plus a fine grain. A tint alone can't floor
+    # a bright backdrop dark; the blur does the adaptation, the tint finishes it.
+    # Base blur lands near Apple's ~30px material radius.
+    size = int(round((4 if glass else 6) + strength * (12 if glass else 8)))
+    passes = 3 if (glass or strength >= 0.5) else 2
+    ignore_alpha = round(max(0.03, min(0.80, opacity * 0.42)), 3)
+    if glass:
+        # Symmetric luminance pull toward the material tone: light glass lifts
+        # the backdrop (dark wallpaper stays light enough for dark-on-light
+        # labels), dark glass sinks it (a bright window is dragged dark enough
+        # for light labels on the tint above). vibrancy_darkness deepens the
+        # sink so residual color reads without muddying legibility.
+        brightness = 1.18 if light else 0.50
+        contrast = 0.98
+        vibrancy = round((0.60 if light else 0.55) + strength * 0.15, 3)
+        vibrancy_darkness = 0.0 if light else 0.25
+        noise = round(0.010 + strength * 0.008, 4)
+    else:
+        brightness = 1.0 if light else 0.90
+        contrast = 0.92
+        vibrancy = round(0.15 + strength * 0.15, 3)
+        vibrancy_darkness = 0.0 if light else 0.10
+        noise = round(0.004 + strength * 0.005, 4)
+    rule_enabled = "true" if enabled else "false"
+    # Only include namespaces whose full surface rectangle can receive live blur.
+    # With xray=false the blur pass covers that rectangle; ignore_alpha masks
+    # the result without reducing the region. Exclude whole-output painters,
+    # dismiss backgrounds and menus without backdrops. See
+    # docs/architecture/design-language.md and test_hyprland_blur_script.
+    blurred_namespaces = [
+        "battery",
+        "bluetooth-pairing",
+        "clipboard",
+        "clipboard-popout",
+        "color-picker",
+        "confirm-modal",
+        "control-center",
+        "dash",
+        "filebrowser",
+        "input-modal",
+        "keybinds",
+        "layout",
+        "modal",
+        "mux",
+        "network-info",
+        "network-info-wired",
+        "network-usage-popout",
+        "notification-center-modal",
+        "notification-center-popout",
+        "notification-popup",
+        "polkit-auth-surface",
+        "popout",
+        "power-menu",
+        "power-profiles",
+        "process-list-popout",
+        "switch-user-modal",
+        "system-update",
+        "toast",
+        "tooltip",
+        "vgs-menu",
+        "vpn",
+        "wifi-password",
+        "wifi-qrcode",
+    ]
+    namespace_pattern = "^(vshell:(" + "|".join(blurred_namespaces) + ")|vshell:plugins:[^:]+)$"
+    window_radius = _coerce_int(radius, 15, 0, 20)
+    # The compositor owns the corners and border of every VGS window. Hyprland warps a
+    # dragged window's geometry per pointer event and draws the client's previous buffer
+    # in it, so chrome painted by the client always trails the edge by a frame (VGS-273).
+    # Rounding and a border drawn here track the true geometry. Every VGS window is
+    # resizable and shares the class, so the rule matches the class alone; layer surfaces
+    # cannot take part, because Hyprland's layer rules accept neither field.
+    window_border_size = _coerce_int(window_border, 2, 0, 10)
+    return f"""
+local rule_name = "vgs-shell-layer-blur"
+if _G.VGS_SETTINGS_WINDOW_RULE ~= nil then
+  _G.VGS_SETTINGS_WINDOW_RULE:set_enabled(false)
+end
+_G.VGS_SETTINGS_WINDOW_RULE = hl.window_rule({{
+  name = "vgs-window-chrome",
+  match = {{ class = "^(com[.]vanillagreen[.]vshell)$" }},
+  rounding = {window_radius},
+  rounding_power = 2.0,
+  border_size = {window_border_size},
+}})
+if _G.VGS_SHELL_LAYER_BLUR_RULE ~= nil then
+  _G.VGS_SHELL_LAYER_BLUR_RULE:set_enabled(false)
+  _G.VGS_SHELL_LAYER_BLUR_RULE = nil
+end
+if {rule_enabled} then
+  hl.config({{
+    decoration = {{
+      blur = {{
+        enabled = true,
+        size = {size},
+        passes = {passes},
+        ignore_opacity = true,
+        new_optimizations = true,
+        special = false,
+        brightness = {brightness},
+        contrast = {contrast},
+        vibrancy = {vibrancy},
+        vibrancy_darkness = {vibrancy_darkness},
+        noise = {noise},
+      }},
+    }},
+  }})
+  _G.VGS_SHELL_LAYER_BLUR_RULE = hl.layer_rule({{
+    name = rule_name,
+    match = {{ namespace = "{namespace_pattern}" }},
+    blur = true,
+    blur_popups = true,
+    ignore_alpha = {ignore_alpha},
+    xray = false,
+  }})
+end
+""".strip()
+
+
+def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> Dict[str, Any]:
+    support = _hyprland_blur_support()
+    if not support.get("available"):
+        return {"ok": False, "backend": "hyprland-layer", "error": support.get("reason", "not available")}
+    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, window_border))
+    ok = _hyprctl_eval_ok(proc)
+    return {
+        "ok": ok,
+        "backend": "hyprland-layer",
+        # True once the compositor rounds and borders VGS windows, so they can stop
+        # painting that chrome themselves.
+        "windowChrome": ok,
+        "enabled": enabled,
+        "strength": _clamp_float(strength),
+        "glass": glass,
+        "opacity": _clamp_float(opacity, 0.08, 1.0),
+        "mode": "light" if mode == "light" else "dark",
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+    }
+
+
+def cmd_battery(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell battery")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_limit = sub.add_parser("set-charge-limit")
+    p_limit.add_argument("limit", type=int)
+    p_limit.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "set-charge-limit":
+        limit = args.limit
+        if not (20 <= limit <= 100):
+            eprint("charge limit must be between 20 and 100")
+            return 2
+        # The limit reaches the privileged shell as a positional argument, never
+        # via string interpolation.
+        script = (
+            'for bat in /sys/class/power_supply/BAT*; do\n'
+            '  if [ -f "$bat/charge_control_limit_max" ]; then\n'
+            '    echo "$1" > "$bat/charge_control_limit_max"\n'
+            '  elif [ -f "$bat/charge_stop_threshold" ]; then\n'
+            '    echo "$1" > "$bat/charge_stop_threshold"\n'
+            '  elif [ -f "$bat/charge_control_end_threshold" ]; then\n'
+            '    echo "$1" > "$bat/charge_control_end_threshold"\n'
+            '  fi\n'
+            'done\n'
+        )
+        proc = run(["pkexec", "sh", "-c", script, "sh", str(limit)])
+        payload = {"ok": proc.returncode == 0, "limit": limit, "stderr": proc.stderr.strip()}
+        if args.json:
+            print(json.dumps(payload))
+        else:
+            print("ok" if payload["ok"] else (payload["stderr"] or "failed"))
+        return 0 if payload["ok"] else 1
+    return 2
+
+
+def cmd_blur(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell blur")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_check = sub.add_parser("check")
+    p_check.add_argument("--json", action="store_true")
+    p_apply = sub.add_parser("apply")
+    p_apply.add_argument("--enabled", choices=["true", "false", "1", "0", "yes", "no"], default="true")
+    p_apply.add_argument("--strength", type=float, default=0.5)
+    p_apply.add_argument("--glass", choices=["true", "false", "1", "0", "yes", "no"], default="false")
+    p_apply.add_argument("--opacity", type=float, default=1.0)
+    p_apply.add_argument("--mode", choices=["dark", "light"], default="dark")
+    p_apply.add_argument("--radius", type=int, choices=range(21), default=15)
+    p_apply.add_argument("--window-border", type=int, choices=range(11), default=2)
+    p_apply.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "check":
+        hypr = _hyprland_blur_support()
+        payload = {
+            "available": bool(hypr.get("available")),
+            "backend": "hyprland-layer" if hypr.get("available") else "none",
+            "hyprlandLayerBlur": bool(hypr.get("available")),
+            # Hyprland's native layer blur is the supported VGS backend; the
+            # Quickshell ext-background-effect path is intentionally not treated
+            # as available on Hyprland because current Hyprland rejects it.
+            "backgroundEffect": False,
+            "reason": hypr.get("reason", ""),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print("supported" if payload["available"] else "unsupported")
+        return 0 if payload["available"] else 1
+
+    if args.cmd == "apply":
+        enabled = args.enabled in ("true", "1", "yes")
+        glass = args.glass in ("true", "1", "yes")
+        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.window_border)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print("ok" if result.get("ok") else (result.get("error") or "failed"))
+        return 0 if result.get("ok") else 1
+    return 2
+
+
+GREETER_CACHE_DEFAULT = Path("/var/cache/vshell-greeter")
+GREETD_CONFIG = Path("/etc/greetd/config.toml")
+
+
+def validate_greeter_cache_dir(path: Path, privileged: bool) -> Path:
+    raw = Path(os.path.expanduser(str(path)))
+    if raw.exists() and raw.is_symlink():
+        raise RuntimeError(f"Refusing symlink greeter cache path: {raw}")
+    expanded = raw.resolve(strict=False)
+    default = GREETER_CACHE_DEFAULT.resolve(strict=False)
+    if not privileged:
+        return expanded
+    if os.environ.get("VSHELL_ALLOW_UNSAFE_GREETER_CACHE") == "1":
+        return expanded
+    if expanded != default:
+        raise RuntimeError(f"Refusing privileged greeter sync outside {default}. Set VSHELL_ALLOW_UNSAFE_GREETER_CACHE=1 only for controlled tests.")
+    return expanded
+
+
+def current_login_user() -> str:
+    for key in ("SUDO_USER", "USER", "LOGNAME"):
+        value = os.environ.get(key, "").strip()
+        if value and value != "root":
+            return value
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:
+        return "root"
+
+
+def user_home_dir(username: str) -> Path:
+    try:
+        return Path(pwd.getpwnam(username).pw_dir)
+    except Exception:
+        return home()
+
+
+def greeter_identity(allow_root: bool = False) -> Tuple[str, int, str, int]:
+    user = ""
+    uid = -1
+    group = ""
+    gid = -1
+    for candidate in ("greeter", "greetd", "_greeter"):
+        try:
+            pw = pwd.getpwnam(candidate)
+            user, uid = candidate, pw.pw_uid
+            group, gid = candidate, pw.pw_gid
+            break
+        except KeyError:
+            pass
+    for candidate in ("greeter", "greetd", "_greeter"):
+        try:
+            gr = grp.getgrnam(candidate)
+            group, gid = candidate, gr.gr_gid
+            break
+        except KeyError:
+            pass
+    if not user:
+        if allow_root:
+            return "root", 0, "root", 0
+        raise RuntimeError("No dedicated greeter user found. Install/configure greetd with a greeter/greetd/_greeter account before running `vshell greeter sync`.")
+    if gid < 0:
+        gid = pwd.getpwnam(user).pw_gid
+        group = user
+    return user, uid, group, gid
+
+
+def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
+    """Return process exit when re-execed, or None when already root."""
+    if os.geteuid() == 0:
+        return None
+    helper_path = str(helper_entrypoint())
+    cleaned = [a for a in argv if a != "--terminal"]
+    cmd = [sys.executable, helper_path, *cleaned]
+    if terminal:
+        return launch_terminal(["sudo", *cmd])
+    proc = subprocess.run(["sudo", "-n", *cmd], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    return proc.returncode
+
+
+# Terminal selection and launch contracts are defined in
+# docs/architecture/helper.md. Callers use vshell terminal.
+TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "konsole", "gnome-terminal", "xterm")
+
+# Per-terminal argv shape.
+#   subcommand - tokens that must follow the executable before any option.
+#                WezTerm is the one that needs this: its launcher is
+#                `wezterm start [options] -- cmd`, and plain `wezterm -e` is not
+#                a valid invocation.
+#   app_id_flag- how the terminal is told which app-id/class to use. A flag
+#                ending in "=" is joined to the value, anything else is passed
+#                as its own argv entry, and None means the terminal has no
+#                equivalent so the requested app-id is dropped rather than
+#                handed over as an option the terminal will reject.
+#   exec_flags - what separates the terminal's own options from the command to
+#                run in it.
+TERMINAL_SPECS: Dict[str, Dict[str, Any]] = {
+    "xdg-terminal-exec": {"subcommand": [], "app_id_flag": "--app-id=", "exec_flags": ["--"]},
+    "ghostty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "kitty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "alacritty": {"subcommand": [], "app_id_flag": "--class=", "exec_flags": ["-e"]},
+    "foot": {"subcommand": [], "app_id_flag": "--app-id=", "exec_flags": ["-e"]},
+    "wezterm": {"subcommand": ["start"], "app_id_flag": "--class=", "exec_flags": ["--"]},
+    "konsole": {"subcommand": [], "app_id_flag": None, "exec_flags": ["-e"]},
+    "gnome-terminal": {"subcommand": [], "app_id_flag": None, "exec_flags": ["--"]},
+    "xterm": {"subcommand": [], "app_id_flag": "-class", "exec_flags": ["-e"]},
+}
+
+TERMINAL_DEFAULT_SPEC: Dict[str, Any] = {"subcommand": [], "app_id_flag": None, "exec_flags": ["-e"]}
+
+# The app-id VGS asks for when it opens a TUI, which compositor rules float.
+TERMINAL_TUI_APP_ID = "TUI.float"
+
+# Watch for an immediate terminal exit before reporting launch success.
+# The timeout cannot establish whether a window is visible.
+TERMINAL_SETTLE_SECONDS = 0.75
+
+# Exit status for a terminal that died immediately after spawning.
+# Keep it distinct from a missing terminal and a stale sudo-toggle state.
+TERMINAL_EXIT_FAILED = 4
+
+
+def xdg_config_dirs() -> List[Path]:
+    config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    dirs = [Path(config_home).expanduser() if config_home else home() / ".config"]
+    extra = os.environ.get("XDG_CONFIG_DIRS", "").strip() or "/etc/xdg"
+    dirs.extend(Path(part) for part in extra.split(":") if part)
+    return dirs
+
+
+def xdg_data_dirs() -> List[Path]:
+    data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+    dirs = [Path(data_home).expanduser() if data_home else home() / ".local" / "share"]
+    extra = os.environ.get("XDG_DATA_DIRS", "").strip() or "/usr/local/share:/usr/share"
+    dirs.extend(Path(part) for part in extra.split(":") if part)
+    return dirs
+
+
+def desktop_entry_path(entry_id: str) -> Path | None:
+    """Locate a .desktop file by id, including `vendor-name.desktop` subdirs."""
+    name = entry_id if entry_id.endswith(".desktop") else entry_id + ".desktop"
+    for base in xdg_data_dirs():
+        candidate = base / "applications" / name
+        if candidate.is_file():
+            return candidate
+        # Entry ids may encode a subdirectory as "vendor-app.desktop".
+        if "-" in name:
+            vendor, _, rest = name.partition("-")
+            nested = base / "applications" / vendor / rest
+            if nested.is_file():
+                return nested
+    return None
+
+
+def desktop_entry_fields(path: Path) -> Dict[str, str]:
+    """Key/value pairs of a .desktop file's [Desktop Entry] group."""
+    fields: Dict[str, str] = {}
+    in_group = False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return fields
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_group = stripped == "[Desktop Entry]"
+            continue
+        if not in_group or not stripped or stripped.startswith("#"):
+            continue
+        key, sep, value = stripped.partition("=")
+        if sep:
+            fields.setdefault(key.strip(), value.strip())
+    return fields
+
+
+def desktop_entry_command(entry_id: str) -> List[str]:
+    """Executable argv for a desktop entry id, or [] when it cannot be run.
+
+    Field codes (%f, %U, …) are dropped: callers append their own target.
+    """
+    path = desktop_entry_path(entry_id)
+    if not path:
+        return []
+    fields = desktop_entry_fields(path)
+    try_exec = fields.get("TryExec", "").strip()
+    if try_exec and not (shutil.which(try_exec) or Path(try_exec).exists()):
+        return []
+    try:
+        parts = shlex.split(fields.get("Exec", ""))
+    except ValueError:
+        return []
+    argv = [part for part in parts if not re.fullmatch(r"%[a-zA-Z]", part)]
+    if not argv or not (shutil.which(argv[0]) or Path(argv[0]).exists()):
+        return []
+    return argv
+
+
+def xdg_terminals_list() -> List[str]:
+    """Desktop entry ids from xdg-terminals.list, most preferred first.
+
+    This is the file Settings -> Default Apps -> Terminal writes, and the same
+    file `xdg-terminal-exec` reads. VGS parses it directly so the user's choice
+    is still honoured when that AUR-only binary is not installed.
+    """
+    entries: List[str] = []
+    for base in xdg_config_dirs():
+        try:
+            text = (base / "xdg-terminals.list").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            value = line.strip()
+            if value and not value.startswith("#") and value not in entries:
+                entries.append(value)
+    return entries
+
+
+def session_terminal_override() -> List[str]:
+    """`terminalOverride` from session.json: the Settings terminal picker."""
+    try:
+        data = json.loads((state_dir() / "session.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    value = str((data or {}).get("terminalOverride", "") or "").strip()
+    if not value:
+        return []
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return []
+
+
+def terminal_candidates(prefer: List[str] | None = None) -> List[List[str]]:
+    """Terminal argv prefixes to try, most preferred first.
+
+    Order, and why:
+      0. prefer              - a terminal the caller resolved itself and must
+                               not have silently discarded (the backend's
+                               `upgradeParams.terminal`).
+      1. terminalOverride    - the VGS setting, an explicit choice the user made
+                               in Settings, so it outranks everything inherited.
+      2. $TERMINAL           - a per-session override.
+      3. xdg-terminal-exec   - implements the whole XDG terminal spec when the
+                               user has it; AUR-only, so never required.
+      4. xdg-terminals.list  - the same user choice, read directly, so Settings
+                               -> Default Apps -> Terminal works without (3).
+      5. installed terminals - so a default install with none of the above
+                               still opens a window instead of failing.
+    """
+    candidates: List[List[str]] = []
+    if prefer:
+        candidates.append(list(prefer))
+    override = session_terminal_override()
+    if override:
+        candidates.append(override)
+    configured = os.environ.get("TERMINAL", "").strip()
+    if configured:
+        try:
+            parsed = shlex.split(configured)
+        except ValueError:
+            parsed = []
+        if parsed:
+            candidates.append(parsed)
+    if shutil.which("xdg-terminal-exec"):
+        candidates.append(["xdg-terminal-exec"])
+    for entry_id in xdg_terminals_list():
+        argv = desktop_entry_command(entry_id)
+        if argv:
+            candidates.append(argv)
+    for term in TERMINAL_CANDIDATES:
+        if shutil.which(term):
+            candidates.append([term])
+    resolved: List[List[str]] = []
+    for base in candidates:
+        if not base or not (shutil.which(base[0]) or Path(base[0]).exists()):
+            continue
+        if base not in resolved:
+            resolved.append(base)
+    return resolved
+
+
+def have_terminal() -> bool:
+    return bool(terminal_candidates())
+
+
+def terminal_spec(executable: str) -> Dict[str, Any]:
+    return TERMINAL_SPECS.get(Path(executable).name, TERMINAL_DEFAULT_SPEC)
+
+
+APP_SCOPE_PROBE_SECONDS = 5
+
+_app_scope_usable: bool | None = None
+
+
+def app_scope_prefix() -> List[str]:
+    """Return the optional uwsm app prefix when a no-op probe succeeds.
+    Installed uwsm may lack a usable user manager. Probe before launching
+    the payload so a failed scope cannot cause the command to run twice."""
+    global _app_scope_usable
+    if os.environ.get("VSHELL_NO_APP_SCOPE"):
+        return []
+    if not Path("/run/systemd/system").exists():
+        return []
+    uwsm = shutil.which("uwsm")
+    if not uwsm:
+        return []
+    if _app_scope_usable is None:
+        try:
+            probe = run([uwsm, "app", "--", "true"], timeout=APP_SCOPE_PROBE_SECONDS)
+            _app_scope_usable = probe.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _app_scope_usable = False
+    return [uwsm, "app", "--"] if _app_scope_usable else []
+
+
+def notify_user(title: str, details: str = "") -> None:
+    """Notify the user of a failure when the caller cannot see process output.
+    Detached QML callers need toast IPC; notify-send provides a fallback."""
+    eprint(f"{title}: {details}" if details else title)
+    cli = shutil.which("vshell") or str(repo_root() / "bin" / "vshell")
+    try:
+        proc = run([cli, "ipc", "call", "toast", "errorWith", title, details, "", "terminal"],
+                   timeout=5)
+        if proc.returncode == 0 and "SUCCESS" in (proc.stdout or ""):
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass
+    notify = shutil.which("notify-send")
+    if not notify:
+        return
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        run([notify, "--app-name", "VGS", "-u", "critical", title, details], timeout=5)
+
+
+def terminal_argv(base: List[str], cmd: List[str], app_id: str = "") -> List[str]:
+    """Full argv for running `cmd` in the terminal described by `base`."""
+    spec = terminal_spec(base[0])
+    argv = [base[0], *spec.get("subcommand", []), *base[1:]]
+    flag = spec.get("app_id_flag")
+    if app_id and flag:
+        if flag.endswith("="):
+            argv.append(flag + app_id)
+        else:
+            argv.extend([flag, app_id])
+    if cmd:
+        argv.extend(spec.get("exec_flags") or ["-e"])
+        argv.extend(cmd)
+    return argv
+
+
+def terminal_hold_script(cmd: List[str]) -> List[str]:
+    quoted = " ".join(shlex.quote(part) for part in cmd)
+    script = f"{quoted}; code=$?; echo; echo 'VGS command exited with status '$code'. Press Enter to close.'; read _; exit $code"
+    return ["sh", "-lc", script]
+
+
+def spawn_terminal(
+    cmd: List[str],
+    app_id: str = "",
+    hold: bool = False,
+    detach: bool = False,
+    wait: bool = False,
+    prefer: List[str] | None = None,
+    notify: bool = False,
+    what: str = "VGS command",
+) -> int:
+    """Run a command, or an interactive shell, in the resolved terminal.
+    wait keeps this process attached until the terminal exits; supervisors
+    use it to track command lifetime. notify reports failures to detached
+    callers that cannot read stderr."""
+    payload = terminal_hold_script(cmd) if (cmd and hold) else list(cmd)
+    scope = app_scope_prefix()
+    # A fast non-zero exit only means "the terminal failed" when the payload
+    # cannot itself exit fast, which is exactly what the hold wrapper
+    # guarantees. Without it the status is ambiguous, and trying the next
+    # candidate would re-run the user's command once per installed terminal.
+    retry_next_candidate = hold or not cmd
+    tried: List[str] = []
+    for base in terminal_candidates(prefer):
+        full = [*scope, *terminal_argv(base, payload, app_id)]
+        try:
+            proc = subprocess.Popen(full, start_new_session=detach)
+        except Exception:
+            # The exec itself failed, which is unambiguously this candidate's
+            # fault and cannot have run the payload. Always move on.
+            continue
+        tried.append(base[0])
+        try:
+            # Watch for immediate launch errors. A process that stays alive past the
+            # timeout is treated as launched without a window-visibility check.
+            proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+        except subprocess.TimeoutExpired:
+            if not wait:
+                return 0  # still running after the launch timeout
+            return proc.wait()  # caller needs the command's whole lifetime
+        if proc.returncode == 0:
+            return 0  # exited cleanly and fast; nothing to distrust
+        if not retry_next_candidate:
+            # The exit may belong to the payload; retrying could run the command twice.
+            return proc.returncode
+    if tried:
+        message = f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")"
+        if notify:
+            notify_user("VGS could not open a terminal", message)
+        else:
+            eprint(message)
+        return TERMINAL_EXIT_FAILED
+    detail = ("Install a terminal, set $TERMINAL, or pick one in "
+              "Settings -> Default Apps -> Terminal. VGS looks for: "
+              + ", ".join(TERMINAL_CANDIDATES))
+    if notify:
+        notify_user("No terminal found", detail)
+    else:
+        eprint(f"No terminal found for {what}. " + detail)
+    return 1
+
+
+def spawn_app(cmd: List[str], notify: bool = False, what: str = "application") -> int:
+    """Start a windowed application detached, under the app scope when one is
+    usable, with no terminal around it. A launch that fails fast is reported:
+    the caller has already returned to the shell and cannot read stderr."""
+    full = [*app_scope_prefix(), *cmd]
+    try:
+        proc = subprocess.Popen(full, start_new_session=True)
+    except OSError as exc:
+        message = f"{what} could not be started: {exc}"
+        notify_user("VGS could not start an application", message) if notify else eprint(message)
+        return 1
+    try:
+        proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return 0  # still running past the launch timeout
+    if proc.returncode == 0:
+        return 0
+    message = f"{what} exited immediately with status {proc.returncode}"
+    notify_user("VGS could not start an application", message) if notify else eprint(message)
+    return proc.returncode
+
+
+def launch_terminal(cmd: List[str]) -> int:
+    return spawn_terminal(cmd, hold=True, what="privileged VGS command")
+
+
+# Same rule as terminals: one file-manager resolver, and it asks the XDG
+# default-apps layer (the one Settings -> Default Apps -> File Manager writes
+# through `xdg-mime`) before falling back to whatever is installed.
+FILE_MANAGER_CANDIDATES = ("nautilus", "dolphin", "thunar")
+
+FILE_MANAGER_MIME = "inode/directory"
+
+
+def file_manager() -> Dict[str, Any]:
+    """The user's file manager: {"argv", "source", "name"}, or {} when none."""
+    if shutil.which("xdg-mime"):
+        try:
+            proc = run(["xdg-mime", "query", "default", FILE_MANAGER_MIME], timeout=5)
+            entry_id = (proc.stdout or "").strip().splitlines()
+        except (OSError, subprocess.SubprocessError):
+            entry_id = []
+        for candidate in entry_id:
+            entry = candidate.strip()
+            argv = desktop_entry_command(entry)
+            if not argv:
+                continue
+            path = desktop_entry_path(entry)
+            fields = desktop_entry_fields(path) if path else {}
+            return {
+                "argv": argv,
+                "source": "xdg-mime",
+                "entry": entry,
+                "name": fields.get("Name", "") or Path(argv[0]).name,
+                # A TUI file manager (yazi, ranger, lf) is a legitimate default
+                # here, and launching it without a terminal opens nothing.
+                "terminal": fields.get("Terminal", "").strip().lower() == "true",
+            }
+    for name in FILE_MANAGER_CANDIDATES:
+        if shutil.which(name):
+            return {"argv": [name], "source": "installed", "entry": "", "name": name,
+                    "terminal": False}
+    return {}
+
+
+def safe_toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def backup_path(path: Path) -> Path:
+    return path.with_name(path.name + f".bak-{int(time.time())}")
+
+
+def write_root_file(path: Path, content: str, mode: int = 0o644, gid: int | None = None) -> None:
+    if path.exists() and path.is_symlink():
+        raise RuntimeError(f"Refusing to overwrite symlink: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        old = path.read_text(errors="ignore")
+        if old == content:
+            os.chmod(path, mode)
+            if gid is not None:
+                os.chown(path, 0, gid)
+            return
+        shutil.copy2(path, backup_path(path))
+    tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+    tmp.write_text(content)
+    os.chmod(tmp, mode)
+    if gid is not None:
+        os.chown(tmp, 0, gid)
+    tmp.replace(path)
+
+
+def ensure_cache_dir(path: Path, gid: int, run_uid: int | None = None) -> None:
+    if path.exists() and path.is_symlink():
+        raise RuntimeError(f"Refusing symlink cache directory: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+    os.chown(path, 0, gid)
+    os.chmod(path, 0o2770)
+    local_state = path / ".local" / "state"
+    local_share = path / ".local" / "share"
+    local_cache = path / ".cache"
+    run_dir = path / "run"
+    for sub in (local_state, local_share, local_cache, run_dir, path / "users"):
+        if sub.exists() and sub.is_symlink():
+            raise RuntimeError(f"Refusing symlink cache directory: {sub}")
+        sub.mkdir(parents=True, exist_ok=True)
+        os.chown(sub, run_uid if sub == run_dir and run_uid is not None else 0, gid)
+        os.chmod(sub, 0o2770 if sub != run_dir else 0o700)
+
+
+def write_json_file(path: Path, data: Dict[str, Any], gid: int | None, mode: int = 0o660) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    write_root_file(path, content, mode=mode, gid=gid)
+
+
+def load_json_file(path: Path, fallback: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return dict(fallback or {})
+
+
+def load_required_json_file(path: Path) -> Dict[str, Any]:
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        raise RuntimeError(f"required JSON file not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON in {path}: {exc}")
+    except OSError as exc:
+        raise RuntimeError(f"cannot read {path}: {exc}")
+
+
+def current_theme_json() -> Dict[str, Any]:
+    """The applied theme's shell state for the greeter's copy of it, resolved.
+
+    A reference resolves against the greeter's staged runtime, which holds no
+    packages; `docs/architecture/wallpaper.md` states why the copy carries paths.
+    """
+    path = cfg_dir() / "theme.json"
+    if path.exists():
+        return resolved_shell_theme(load_required_json_file(path))
+    return current_theme()
+
+
+def current_session_json(theme: Dict[str, Any]) -> Dict[str, Any]:
+    """The desktop session's wallpaper state for the greeter's copy of it, resolved
+    for the reason `current_theme_json` states."""
+    path = state_dir() / "session.json"
+    data = load_json_file(path)
+    if not data:
+        data = {"wallpaperPath": theme.get("wallpaper", "")}
+    elif "wallpaperPath" not in data and theme.get("wallpaper"):
+        data["wallpaperPath"] = theme.get("wallpaper")
+    for key in SESSION_WALLPAPER_KEYS:
+        value = data.get(key)
+        if isinstance(value, str):
+            data[key] = resolved_wallpaper(value)
+        elif isinstance(value, dict):
+            data[key] = {screen: resolved_wallpaper(str(path_value)) for screen, path_value in value.items()}
+    return data
+
+
+def strip_desktop_exec(exec_line: str) -> str:
+    parts = shlex.split(exec_line, posix=True) if exec_line else []
+    clean = [p for p in parts if not (p.startswith("%") and len(p) <= 3)]
+    return " ".join(shlex.quote(p) for p in clean)
+
+
+def parse_desktop_file(path: Path) -> Dict[str, str] | None:
+    try:
+        lines = path.read_text(errors="ignore").splitlines()
+    except Exception:
+        return None
+    name = ""
+    exec_line = ""
+    in_entry = False
+    for line in lines:
+        line = line.strip()
+        if line == "[Desktop Entry]":
+            in_entry = True
+            continue
+        if line.startswith("[") and in_entry:
+            break
+        if not in_entry:
+            continue
+        if not name and line.startswith("Name="):
+            name = line[5:].strip()
+        elif not exec_line and line.startswith("Exec="):
+            exec_line = strip_desktop_exec(line[5:].strip())
+    if not name or not exec_line:
+        return None
+    return {"name": name, "exec": exec_line, "path": str(path), "desktopId": path.name}
+
+
+def discover_sessions(user: str) -> List[Dict[str, str]]:
+    user_home = user_home_dir(user)
+    dirs = [
+        user_home / ".local/share/wayland-sessions",
+        user_home / ".local/share/xsessions",
+        Path("/usr/local/share/wayland-sessions"),
+        Path("/usr/local/share/xsessions"),
+        Path("/usr/share/wayland-sessions"),
+        Path("/usr/share/xsessions"),
+    ]
+    xdg_dirs = os.environ.get("XDG_DATA_DIRS", "")
+    for raw in xdg_dirs.split(":"):
+        if raw:
+            dirs.append(Path(raw) / "wayland-sessions")
+            dirs.append(Path(raw) / "xsessions")
+    seen: set[str] = set()
+    sessions: List[Dict[str, str]] = []
+    for directory in dirs:
+        if not directory.is_dir():
+            continue
+        for desktop in sorted(directory.glob("*.desktop")):
+            item = parse_desktop_file(desktop)
+            if not item or item["name"] in seen:
+                continue
+            seen.add(item["name"])
+            sessions.append(item)
+    return sessions
+
+
+def preferred_session(user: str, cache_dir_path: Path) -> Dict[str, str] | None:
+    memory = load_json_file(cache_dir_path / ".local/state/memory.json")
+    sessions = discover_sessions(user)
+    if not sessions:
+        return None
+    last_path = memory.get("lastSessionId", "")
+    last_desktop = memory.get("lastSessionDesktopId", "")
+    for item in sessions:
+        if (last_path and item["path"] == last_path) or (last_desktop and item["desktopId"] == last_desktop):
+            return item
+    for item in sessions:
+        hay = (item["name"] + " " + item["desktopId"] + " " + item["exec"]).lower()
+        if "hyprland" in hay:
+            return item
+    return sessions[0]
+
+
+def copy_if_readable(src: Path, dst: Path, gid: int, mode: int = 0o660) -> bool:
+    try:
+        if not src.is_file():
+            return False
+        if dst.exists() and dst.is_symlink():
+            raise RuntimeError(f"Refusing to overwrite symlink: {dst}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        os.chown(dst, 0, gid)
+        os.chmod(dst, mode)
+        return True
+    except Exception:
+        return False
+
+
+def publish_greeter_wallpaper(wallpaper: str, override: Path,
+                              publish: Callable[[Path], None]) -> str:
+    """Put the configured greeter wallpaper in place, or say why it is not there.
+
+    Returns the configured path when it is missing, empty otherwise. A missing
+    image removes the override and leaves the greeter its built-in background:
+    a greeter that refuses to sync over one is a lock-out. The reason is printed
+    as well as recorded, because the settings tab folds stderr into its toast and
+    the manifest key alone reaches nobody.
+
+    Both sync paths, privileged and unprivileged, share this one decision.
+    """
+    if not wallpaper:
+        if override.exists():
+            override.unlink()
+        return ""
+    src = Path(os.path.expanduser(wallpaper))
+    if not src.is_absolute():
+        src = Path.cwd() / src
+    if src.is_file():
+        publish(src)
+        return ""
+    if override.exists():
+        override.unlink()
+    eprint(f"configured greeter wallpaper not found: {src}; "
+           f"the greeter falls back to its built-in background")
+    return str(src)
+
+
+def greeter_sync_manifest(username: str, missing_wallpaper: str) -> Dict[str, Any]:
+    """The greeter cache manifest, naming a configured wallpaper that was not there.
+
+    A missing image removes the override and leaves the greeter its built-in
+    background; `greeterWallpaperMissing` is how the reason reaches the user.
+    """
+    manifest: Dict[str, Any] = {"version": 1, "syncedAt": int(time.time()), "user": username}
+    if missing_wallpaper:
+        manifest["greeterWallpaperMissing"] = missing_wallpaper
+    return manifest
+
+
+def copy_wallpaper_override(src: Path, dst: Path, gid: int, mode: int = 0o660) -> None:
+    """Publish the greeter wallpaper override. The caller decides what a missing source means."""
+    if dst.exists() and dst.is_symlink():
+        raise RuntimeError(f"Refusing to overwrite symlink: {dst}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    os.chown(dst, 0, gid)
+    os.chmod(dst, mode)
+
+
+def chown_tree(path: Path, uid: int, gid: int, dir_mode: int = 0o2750, file_mode: int = 0o640) -> None:
+    if not path.exists():
+        return
+    if path.is_symlink():
+        try:
+            os.lchown(path, uid, gid)
+        except FileNotFoundError:
+            pass
+        return
+    if path.is_dir():
+        os.chown(path, uid, gid)
+        os.chmod(path, dir_mode)
+        for child in path.iterdir():
+            chown_tree(child, uid, gid, dir_mode, file_mode)
+        return
+    try:
+        os.chown(path, uid, gid)
+        mode = file_mode | (0o110 if os.access(path, os.X_OK) else 0)
+        os.chmod(path, mode)
+    except FileNotFoundError:
+        pass
+
+
+def sync_greeter_runtime_bin(runtime_bin: Path) -> None:
+    if runtime_bin.exists() and runtime_bin.is_symlink():
+        raise RuntimeError(f"Refusing symlink runtime bin directory: {runtime_bin}")
+    runtime_bin.mkdir(parents=True, exist_ok=True)
+    for name, mode in GREETER_RUNTIME_BIN_FILES.items():
+        src = repo_root() / "bin" / name
+        if not src.is_file():
+            raise RuntimeError(f"required greeter runtime file not found: {src}")
+        shutil.copy2(src, runtime_bin / name)
+        os.chmod(runtime_bin / name, mode)
+
+
+def sync_greeter_runtime(cache_dir_path: Path, gid: int) -> None:
+    runtime_root = cache_dir_path / "runtime"
+    runtime_qs = runtime_root / "quickshell" / "vshell"
+    src_qs = repo_root() / "quickshell" / "vshell"
+    if runtime_root.exists() and runtime_root.is_symlink():
+        raise RuntimeError(f"Refusing symlink runtime directory: {runtime_root}")
+    if runtime_qs.exists() and runtime_qs.is_symlink():
+        raise RuntimeError(f"Refusing symlink runtime directory: {runtime_qs}")
+    if runtime_qs.exists():
+        shutil.rmtree(runtime_qs)
+    runtime_qs.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_qs, runtime_qs, symlinks=True)
+    sync_greeter_runtime_bin(runtime_root / "bin")
+    chown_tree(runtime_root, 0, gid)
+
+
+def greeter_runtime_cli(cache_dir_path: Path) -> str:
+    cached = cache_dir_path / "runtime" / "bin" / "vshell"
+    if cached.exists():
+        return str(cached)
+    return resolve_vshell_cli()
+
+
+def sync_profile_cache(cache_dir_path: Path, username: str, settings: Dict[str, Any], theme: Dict[str, Any], session: Dict[str, Any], gid: int, root_profile: bool = False, run_uid: int | None = None) -> None:
+    target = cache_dir_path if root_profile else cache_dir_path / "users" / username
+    ensure_cache_dir(target, gid, run_uid=run_uid if root_profile else None)
+    write_json_file(target / "settings.json", settings, gid)
+    write_json_file(target / "theme.json", theme, gid)
+    write_json_file(target / "session.json", session, gid)
+    wallpaper = str(settings.get("greeterWallpaperPath") or "").strip()
+    override = target / "greeter_wallpaper_override"
+    missing_wallpaper = publish_greeter_wallpaper(
+        wallpaper, override, lambda src: copy_wallpaper_override(src, override, gid))
+
+    user_home = user_home_dir(username)
+    icon_candidates = [
+        Path("/var/lib/AccountsService/icons") / username,
+        user_home / ".face",
+        user_home / ".face.icon",
+    ]
+    for candidate in icon_candidates:
+        if copy_if_readable(candidate, target / ("profile" + candidate.suffix), gid):
+            break
+    write_json_file(target / "sync-manifest.json",
+                    greeter_sync_manifest(username, missing_wallpaper), gid)
+
+
+def sync_profile_cache_unprivileged(cache_dir_path: Path, username: str) -> None:
+    settings = load_settings()
+    theme = current_theme_json()
+    session = current_session_json(theme)
+    target = cache_dir_path / "users" / username
+    target.mkdir(parents=True, exist_ok=True)
+    for name, data in (("settings.json", settings), ("theme.json", theme), ("session.json", session)):
+        write_json_file(target / name, data, None)
+    wallpaper = str(settings.get("greeterWallpaperPath") or "").strip()
+    override = target / "greeter_wallpaper_override"
+    def publish(src: Path) -> None:
+        shutil.copy2(src, override)
+        os.chmod(override, 0o660)
+
+    missing_wallpaper = publish_greeter_wallpaper(wallpaper, override, publish)
+    write_json_file(target / "sync-manifest.json", greeter_sync_manifest(username, missing_wallpaper), None)
+
+
+def write_greetd_config(cache_dir_path: Path, autologin: bool, target_user: str, initial_session_cmd: str = "") -> None:
+    cli = greeter_runtime_cli(cache_dir_path)
+    compositor = choose_greeter_compositor(os.environ.get("VSHELL_GREETER_COMPOSITOR", ""))
+    greeter_cmd = f"{shlex.quote(cli)} greeter run --compositor {compositor} --cache-dir {shlex.quote(str(cache_dir_path))}"
+    content = [
+        "[terminal]",
+        "vt = 1",
+        "",
+        "[default_session]",
+        f"user = {safe_toml_string(greeter_identity()[0])}",
+        f"command = {safe_toml_string(greeter_cmd)}",
+        "",
+    ]
+    if autologin:
+        if not initial_session_cmd:
+            raise RuntimeError(f"No session command found for auto-login user {target_user}")
+        launch_cmd = f"env XDG_SESSION_TYPE=wayland {initial_session_cmd}"
+        content.extend([
+            "[initial_session]",
+            f"user = {safe_toml_string(target_user)}",
+            f"command = {safe_toml_string(launch_cmd)}",
+            "",
+        ])
+    write_root_file(GREETD_CONFIG, "\n".join(content), mode=0o644)
+
+
+def render_greetd_pam(settings: Dict[str, Any]) -> str:
+    lines = [
+        "#%PAM-1.0",
+        "",
+        "auth       required     pam_securetty.so",
+        "auth       requisite    pam_nologin.so",
+    ]
+    if settings.get("greeterEnableFprint"):
+        lines.append("auth       sufficient   pam_fprintd.so max-tries=5")
+    if settings.get("greeterEnableU2f"):
+        lines.append("auth       sufficient   pam_u2f.so cue timeout=10")
+    lines.extend([
+        "auth       include      system-local-login",
+        "auth       optional     pam_gnome_keyring.so",
+        "account    include      system-local-login",
+        "session    include      system-local-login",
+        "session    optional     pam_gnome_keyring.so auto_start",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def render_vshell_pam() -> str:
+    return """#%PAM-1.0
+auth      required     pam_env.so
+auth      sufficient   pam_unix.so       try_first_pass nullok
+auth      required     pam_deny.so
+account   required     pam_unix.so
+password  required     pam_deny.so
+session   required     pam_permit.so
+"""
+
+
+def render_vshell_u2f_pam() -> str:
+    return """#%PAM-1.0
+
+auth    required    pam_u2f.so  cue timeout=10
+account required    pam_permit.so
+password required   pam_deny.so
+session required    pam_permit.so
+"""
+
+
+def cmd_auth(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell auth")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_sync = sub.add_parser("sync")
+    p_sync.add_argument("--yes", action="store_true")
+    p_sync.add_argument("--terminal", action="store_true")
+    args = parser.parse_args(argv)
+    if args.cmd != "sync":
+        return 2
+    root_exit = ensure_root_for(["auth", *argv], terminal=args.terminal)
+    if root_exit is not None:
+        return root_exit
+    settings = load_settings()
+    write_root_file(Path("/etc/pam.d/vshell"), render_vshell_pam(), mode=0o644)
+    write_root_file(Path("/etc/pam.d/vshell-u2f"), render_vshell_u2f_pam(), mode=0o644)
+    write_root_file(Path("/etc/pam.d/greetd"), render_greetd_pam(settings), mode=0o644)
+    print("VGS auth synced: /etc/pam.d/vshell, /etc/pam.d/vshell-u2f, /etc/pam.d/greetd")
+    return 0
+
+
+def provision_empty_login_keyring(username: str, force: bool = False) -> Tuple[bool, str]:
+    if not shutil.which("gnome-keyring-daemon"):
+        return False, "gnome-keyring-daemon not found; keyring empty-password provisioning skipped"
+    try:
+        pw = pwd.getpwnam(username)
+    except KeyError:
+        return False, f"user {username!r} not found; keyring provisioning skipped"
+
+    keyring_dir = Path(pw.pw_dir) / ".local/share/keyrings"
+    login_keyring = keyring_dir / "login.keyring"
+    marker = keyring_dir / "login.keyring.vshell-empty"
+    backup = ""
+    keyring_dir.mkdir(parents=True, exist_ok=True)
+    os.chown(keyring_dir, pw.pw_uid, pw.pw_gid)
+    os.chmod(keyring_dir, 0o700)
+
+    if login_keyring.exists() and marker.exists():
+        return True, "login keyring already marked as VGS empty-password keyring"
+    if login_keyring.exists() and not force:
+        return False, "existing login.keyring kept; run `vshell greeter keyring empty --force` to back it up and convert it to an empty-password login keyring"
+
+    temp_home = Path(tempfile.mkdtemp(prefix="vshell-keyring-"))
+    try:
+        temp_keyring_dir = temp_home / ".local/share/keyrings"
+        temp_keyring_dir.mkdir(parents=True, exist_ok=True)
+        chown_tree(temp_home, pw.pw_uid, pw.pw_gid, dir_mode=0o700, file_mode=0o600)
+        script = r"""
+set -euo pipefail
+mkdir -p "$HOME/.local/share/keyrings"
+systemctl --user stop gnome-keyring-daemon.service >/dev/null 2>&1 || true
+pkill -u "$(id -u)" -f '(^|/)gnome-keyring-daemon( |$)' >/dev/null 2>&1 || true
+if command -v dbus-run-session >/dev/null 2>&1; then
+  timeout 10s dbus-run-session -- bash -lc 'set -euo pipefail; eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets,pkcs11)"; if command -v secret-tool >/dev/null 2>&1; then printf init | secret-tool store --label="VGS keyring init" vshell keyring-init >/dev/null; secret-tool clear vshell keyring-init >/dev/null 2>&1 || true; fi'
+else
+  printf "\n" | timeout 8s gnome-keyring-daemon --unlock --components=secrets,pkcs11 >/dev/null
+fi
+pkill -u "$(id -u)" -f '(^|/)gnome-keyring-daemon( |$)' >/dev/null 2>&1 || true
+test -f "$HOME/.local/share/keyrings/login.keyring"
+chmod 600 "$HOME/.local/share/keyrings/login.keyring"
+"""
+        env = os.environ.copy()
+        env["HOME"] = str(temp_home)
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{pw.pw_uid}")
+        proc = subprocess.run(["runuser", "-u", username, "--", "bash", "-lc", script], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=20)
+        new_keyring = temp_keyring_dir / "login.keyring"
+        if proc.returncode != 0 or not new_keyring.exists():
+            detail = (proc.stderr or proc.stdout or "").strip()
+            return False, "empty login keyring creation failed" + (f": {detail}" if detail else "")
+
+        if login_keyring.exists():
+            backup_path_value = login_keyring.with_name(f"login.keyring.vshell-backup-{int(time.time())}")
+            shutil.copy2(login_keyring, backup_path_value)
+            os.chown(backup_path_value, pw.pw_uid, pw.pw_gid)
+            os.chmod(backup_path_value, 0o600)
+            backup = str(backup_path_value)
+
+        tmp_dest = login_keyring.with_name(f"login.keyring.tmp-{os.getpid()}")
+        shutil.copy2(new_keyring, tmp_dest)
+        os.chown(tmp_dest, pw.pw_uid, pw.pw_gid)
+        os.chmod(tmp_dest, 0o600)
+        tmp_dest.replace(login_keyring)
+        marker.write_text(json.dumps({"createdBy": "vshell", "createdAt": int(time.time())}) + "\n")
+        os.chown(marker, pw.pw_uid, pw.pw_gid)
+        os.chmod(marker, 0o600)
+        return True, "login keyring set to empty password" + (f" (backup: {backup})" if backup else "")
+    finally:
+        shutil.rmtree(temp_home, ignore_errors=True)
+
+
+def cmd_greeter(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell greeter")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_run = sub.add_parser("run")
+    p_run.add_argument("--compositor", "--command", default="", choices=["hyprland", "niri"])
+    p_run.add_argument("--cache-dir", default=str(GREETER_CACHE_DEFAULT))
+    p_run.add_argument("--debug", action="store_true")
+    p_sync = sub.add_parser("sync")
+    p_sync.add_argument("--yes", action="store_true")
+    p_sync.add_argument("--terminal", action="store_true")
+    p_sync.add_argument("--autologin", action="store_true")
+    p_sync.add_argument("--profile", action="store_true")
+    p_sync.add_argument("--cache-dir", default=str(GREETER_CACHE_DEFAULT))
+    p_sync.add_argument("--user", default="")
+    p_sync.add_argument("--force-keyring", action="store_true")
+    p_launch = sub.add_parser("launch-session")
+    p_launch.add_argument("--from-memory", action="store_true")
+    p_launch.add_argument("--cache-dir", default=str(GREETER_CACHE_DEFAULT))
+    p_launch.add_argument("--session", default="")
+    p_keyring = sub.add_parser("keyring")
+    p_keyring.add_argument("action", choices=["empty"])
+    p_keyring.add_argument("--user", default="")
+    p_keyring.add_argument("--force", action="store_true")
+    p_keyring.add_argument("--terminal", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "run":
+        return greeter_run(args.cache_dir, debug=args.debug, requested_compositor=args.compositor)
+    if args.cmd == "launch-session":
+        return greeter_launch_session(Path(args.cache_dir), args.session)
+    if args.cmd == "keyring":
+        root_exit = ensure_root_for(["greeter", *argv], terminal=args.terminal)
+        if root_exit is not None:
+            return root_exit
+        user = args.user or current_login_user()
+        ok, msg = provision_empty_login_keyring(user, force=args.force)
+        print(msg)
+        return 0 if ok else 1
+    if args.cmd != "sync":
+        return 2
+
+    if args.profile and os.geteuid() != 0 and not args.terminal:
+        target_user = args.user or current_login_user()
+        sync_profile_cache_unprivileged(Path(args.cache_dir), target_user)
+        print(f"VGS greeter profile synced for {target_user}: {Path(args.cache_dir) / 'users' / target_user}")
+        return 0
+
+    root_exit = ensure_root_for(["greeter", *argv], terminal=args.terminal)
+    if root_exit is not None:
+        return root_exit
+    cache_dir_path = validate_greeter_cache_dir(Path(args.cache_dir), privileged=True)
+    target_user = args.user or current_login_user()
+    _guser, guid, _ggroup, gid = greeter_identity()
+    settings = load_settings()
+    keyring_msg = ""
+    if settings.get("greeterAutoLogin") and settings.get("greeterAutoLoginKeyringMode", "keep") == "empty":
+        keyring_ok, keyring_msg = provision_empty_login_keyring(target_user, force=args.force_keyring)
+        if not keyring_ok:
+            eprint(keyring_msg)
+            return 1
+    ensure_cache_dir(cache_dir_path, gid, run_uid=guid)
+    sync_greeter_runtime(cache_dir_path, gid)
+    monitor_layout = capture_user_monitor_layout(target_user)
+    monitors_path = cache_dir_path / GREETER_MONITORS_FILENAME
+    if monitor_layout:
+        write_json_file(monitors_path, {"monitors": monitor_layout}, gid)
+    elif monitors_path.exists():
+        # Deliberately keep the previous snapshot: sync is a root command that is
+        # legitimately run from a TTY or over ssh, where the user's compositor is
+        # simply not reachable, and the last known orientation beats none at all.
+        # Say so, though — a silently stale layout would rotate the greeter wrong
+        # after a monitor change with no indication why.
+        eprint(f"Could not read the current monitor layout; greeter keeps the previous {monitors_path}")
+    theme = current_theme_json()
+    session = current_session_json(theme)
+    sync_profile_cache(cache_dir_path, target_user, settings, theme, session, gid, root_profile=True, run_uid=guid)
+    sync_profile_cache(cache_dir_path, target_user, settings, theme, session, gid, root_profile=False)
+    sess = preferred_session(target_user, cache_dir_path)
+    memory_path = cache_dir_path / ".local/state/memory.json"
+    memory = load_json_file(memory_path)
+    if sess:
+        memory.setdefault("lastSessionId", sess["path"])
+        memory.setdefault("lastSessionDesktopId", sess["desktopId"])
+    memory.setdefault("lastSuccessfulUser", target_user)
+    write_json_file(memory_path, memory, gid)
+    write_root_file(Path("/etc/pam.d/greetd"), render_greetd_pam(settings), mode=0o644)
+    write_greetd_config(cache_dir_path, bool(settings.get("greeterAutoLogin")), target_user, sess["exec"] if sess else "")
+    print(f"VGS greeter synced for {target_user}: {cache_dir_path}")
+    print(f"greetd default_session -> vshell greeter ({'auto-login enabled' if settings.get('greeterAutoLogin') else 'auto-login disabled'})")
+    if keyring_msg:
+        print(keyring_msg)
+    return 0
+
+
+def greeter_cursor_environment(cache_path: Path, base_env: Dict[str, str]) -> Dict[str, str]:
+    settings_path = cache_path / "settings.json"
+    if not settings_path.exists():
+        return {}
+    try:
+        settings = load_json_file(settings_path)
+    except Exception:
+        return {}
+    cursor = settings.get("cursorSettings") or {}
+    if not isinstance(cursor, dict):
+        return {}
+    theme = str(cursor.get("theme") or "").strip()
+    if not theme or theme == "System Default":
+        return {}
+    size = str(cursor.get("size") or "").strip()
+
+    icon_roots: List[Path] = []
+    for data_dir in base_env.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"):
+        if data_dir:
+            icon_roots.append(Path(data_dir) / "icons")
+    icon_roots.extend([Path("/run/current-system/sw/share/icons"), Path("/usr/share/icons"), Path("/usr/local/share/icons")])
+
+    seen: set[str] = set()
+    for icon_root in icon_roots:
+        root_str = str(icon_root)
+        if root_str in seen:
+            continue
+        seen.add(root_str)
+        if not (icon_root / theme / "cursors").is_dir():
+            continue
+        out = {
+            "XCURSOR_THEME": theme,
+            "XCURSOR_PATH": root_str + ((":" + base_env["XCURSOR_PATH"]) if base_env.get("XCURSOR_PATH") else ""),
+        }
+        if size:
+            out["XCURSOR_SIZE"] = size
+        return out
+    return {}
+
+
+def greeter_primary_monitor(cache_path: Path) -> str:
+    settings_path = cache_path / "settings.json"
+    if not settings_path.exists():
+        return ""
+    try:
+        settings = load_json_file(settings_path)
+    except Exception:
+        return ""
+    monitor = str(settings.get("greeterPrimaryMonitor") or "").strip()
+    # Keep connector selection to real compositor-style identifiers even
+    # though the generated native-Lua config also quotes this value.
+    if monitor and not re.fullmatch(r"[A-Za-z0-9._:-]+", monitor):
+        eprint(f"Ignoring invalid greeter primary monitor: {monitor!r}")
+        return ""
+    return monitor
+
+
+GREETER_MONITORS_FILENAME = "monitors.json"
+
+
+def _lua_number(value: float) -> str:
+    """Render a whole scale as `2`, not `2.0` — matching how monitor scales are
+    written by hand elsewhere and keeping the generated config diff-friendly."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _sane_monitor_scale(value: Any) -> float | None:
+    """Validate a monitor scale for the greeter's Lua config and the layout.lua tab radius.
+
+    `nan`/`inf` would reach the config as bare `nan`/`inf` literals and a zero or
+    negative scale is not a mode Hyprland can bring up — either way the greeter
+    fails to start, which on a login screen means locked out.
+    """
+    try:
+        scale = float(value if value is not None else 1)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(scale) or not (0 < scale <= 10):
+        return None
+    return scale
+
+
+def _sane_monitor_transform(value: Any) -> int | None:
+    """wl_output transforms are 0-7; anything else is not a rotation."""
+    try:
+        transform = int(value if value is not None else 0)
+    except (TypeError, ValueError):
+        return None
+    return transform if 0 <= transform <= 7 else None
+
+
+def capture_user_monitor_layout(target_user: str) -> List[Dict[str, Any]]:
+    """Snapshot the user's live Hyprland outputs for the greeter to reproduce.
+
+    The greeter compositor otherwise starts every output untransformed, so a
+    physically rotated panel renders the login UI sideways. `transform` is the
+    field that actually matters here; scale keeps the UI the size the user
+    already tuned for.
+
+    `greeter sync` re-execs itself as root, so the invoking session's Hyprland
+    environment is gone by the time this runs. Locate the instance socket under
+    the target user's runtime dir rather than trusting an inherited
+    HYPRLAND_INSTANCE_SIGNATURE.
+    """
+    try:
+        uid = pwd.getpwnam(target_user).pw_uid
+    except KeyError:
+        return []
+    hypr_dir = Path(f"/run/user/{uid}/hypr")
+    if not hypr_dir.is_dir():
+        return []
+    try:
+        instances = sorted(
+            (p for p in hypr_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+
+    for instance in instances:
+        env = {
+            **os.environ,
+            "HYPRLAND_INSTANCE_SIGNATURE": instance.name,
+            "XDG_RUNTIME_DIR": f"/run/user/{uid}",
+        }
+        try:
+            monitors = json.loads(run(["hyprctl", "monitors", "-j"], env=env).stdout or "[]")
+        except Exception:
+            continue
+        captured: List[Dict[str, Any]] = []
+        for monitor in monitors:
+            name = str(monitor.get("name") or "").strip()
+            if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
+                continue
+            # Virtual outputs (e.g. the Sunshine headless sink) do not exist at
+            # greetd time; a rule for an absent output is inert, but there is no
+            # reason to carry them.
+            if name.startswith("HEADLESS-"):
+                continue
+            scale = _sane_monitor_scale(monitor.get("scale"))
+            transform = _sane_monitor_transform(monitor.get("transform"))
+            if scale is None or transform is None:
+                eprint(f"Ignoring monitor {name} with unusable scale/transform for the greeter")
+                continue
+            captured.append({"name": name, "scale": scale, "transform": transform})
+        if captured:
+            return captured
+    return []
+
+
+def greeter_monitor_layout(cache_path: Path) -> List[Dict[str, Any]]:
+    data = load_json_file(cache_path / GREETER_MONITORS_FILENAME)
+    monitors = data.get("monitors")
+    return monitors if isinstance(monitors, list) else []
+
+
+def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Dict[str, str]) -> str:
+    lines = [
+        "-- Generated transiently by VGS for greetd.",
+        f'hl.env("VSHELL_RUN_GREETER", {_lua_string("1")})',
+        f'hl.env("VSHELL_GREET_CFG_DIR", {_lua_string(cache_path)})',
+        f'hl.env("XDG_SESSION_TYPE", {_lua_string("wayland")})',
+    ]
+    for key in ("XCURSOR_PATH", "XCURSOR_THEME", "XCURSOR_SIZE"):
+        if cursor_env.get(key):
+            lines.append(f"hl.env({_lua_string(key)}, {_lua_string(cursor_env[key])})")
+    lines.append("")
+    # Reproduce the user's output orientation. `mode`/`position` stay at
+    # preferred/auto on purpose: the greeter only needs each panel upright and
+    # legibly scaled, and a captured mode string that no longer matches (cable
+    # swap, different EDID at greetd time) would be a way to lose the login
+    # screen entirely.
+    for monitor in greeter_monitor_layout(cache_path):
+        name = str(monitor.get("name") or "").strip()
+        if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
+            continue
+        # Validate disk-loaded monitor values again before generating Lua.
+        # Hand edits or invalid saved values could prevent the greeter from starting.
+        scale = _sane_monitor_scale(monitor.get("scale"))
+        transform = _sane_monitor_transform(monitor.get("transform"))
+        if scale is None or transform is None:
+            eprint(f"Skipping greeter monitor rule for {name}: unusable scale/transform")
+            continue
+        lines.extend([
+            "hl.monitor({",
+            f"  output = {_lua_string(name)},",
+            '  mode = "preferred",',
+            '  position = "auto",',
+            f"  scale = {_lua_number(scale)},",
+            f"  transform = {transform},",
+            "})",
+        ])
+
+    lines.extend([
+        "",
+        "hl.config({",
+        "  misc = {",
+        "    disable_hyprland_logo = true,",
+        "    disable_splash_rendering = true,",
+        "  },",
+    ])
+    primary_monitor = greeter_primary_monitor(cache_path)
+    if primary_monitor:
+        # Hyprland documents cursor.default_monitor as the startup output
+        # selector. GreeterContent independently uses the same connector as the
+        # sole visible owner of greetd state and input focus.
+        lines.extend([
+            "  cursor = {",
+            f"    default_monitor = {_lua_string(primary_monitor)},",
+            "  },",
+        ])
+    lines.extend([
+        "})",
+        "",
+    ])
+    exit_cmd = "hyprctl dispatch 'hl.dsp.exit()' || hyprctl dispatch exit"
+    lines.extend([
+        'hl.on("hyprland.start", function()',
+        f"  hl.exec_cmd({_lua_string(qs_cmd + '; ' + exit_cmd)})",
+        "end)",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def choose_greeter_compositor(requested: str = "") -> str:
+    requested = requested.strip().lower()
+    if requested not in {"", "hyprland", "niri"}:
+        raise ValueError(f"Unsupported greeter compositor: {requested}")
+    if requested:
+        return requested
+    # Prefer Hyprland when installed; use Niri when it is the available compositor.
+    return "hyprland" if (shutil.which("start-hyprland") or shutil.which("Hyprland")) else "niri"
+
+
+
+
+def greeter_run(cache_dir_value: str, debug: bool = False, requested_compositor: str = "") -> int:
+    cache_path = Path(cache_dir_value)
+    if not cache_path.is_dir():
+        eprint(f"Greeter cache directory does not exist: {cache_path}. Run `vshell greeter sync`.")
+        return 1
+    qs_bin = shutil.which("qs") or shutil.which("quickshell")
+    if not qs_bin:
+        eprint("qs/quickshell not found")
+        return 1
+    requested_compositor = requested_compositor or os.environ.get("VSHELL_GREETER_COMPOSITOR", "")
+    have_hyprland = bool(shutil.which("start-hyprland") or shutil.which("Hyprland"))
+    have_niri = bool(shutil.which("niri"))
+    try:
+        compositor = choose_greeter_compositor(requested_compositor)
+    except ValueError as exc:
+        eprint(str(exc))
+        return 1
+    if compositor == "hyprland" and not have_hyprland:
+        eprint("Hyprland not found")
+        return 1
+    if compositor == "niri" and not have_niri:
+        eprint("Niri not found")
+        return 1
+    qs_config = cache_path / "runtime" / "quickshell" / "vshell"
+    if not qs_config.exists():
+        qs_config = repo_root() / "quickshell" / "vshell"
+    qs_cmd = f"{shlex.quote(qs_bin)} -p {shlex.quote(str(qs_config))}"
+    env = os.environ.copy()
+    cursor_env = greeter_cursor_environment(cache_path, env)
+    suffix = ".lua" if compositor == "hyprland" else ".kdl"
+    with tempfile.NamedTemporaryFile("w", prefix=f"vshell-greeter-{compositor}-", suffix=suffix, delete=False) as tmp:
+        if compositor == "hyprland":
+            tmp.write(render_hyprland_greeter_config(qs_cmd, cache_path, cursor_env))
+        else:
+            tmp.write(_niri().niri_greeter_config(qs_cmd))
+        config_path = tmp.name
+    env.update({
+        "VSHELL_RUN_GREETER": "1",
+        "VSHELL_GREET_CFG_DIR": str(cache_path),
+        "HOME": str(cache_path),
+        "XDG_STATE_HOME": str(cache_path / ".local/state"),
+        "XDG_DATA_HOME": str(cache_path / ".local/share"),
+        "XDG_CACHE_HOME": str(cache_path / ".cache"),
+        "QT_QPA_PLATFORM": "wayland",
+        "QT_WAYLAND_DISABLE_WINDOWDECORATION": "1",
+        "XDG_SESSION_TYPE": "wayland",
+    })
+    env.update(cursor_env)
+    env.setdefault("XDG_RUNTIME_DIR", str(cache_path / "run"))
+    Path(env["XDG_RUNTIME_DIR"]).mkdir(parents=True, exist_ok=True)
+    os.chmod(env["XDG_RUNTIME_DIR"], 0o700)
+    if compositor == "niri":
+        cmd = ["niri", "--config", config_path]
+        env["XDG_CURRENT_DESKTOP"] = "niri"
+    else:
+        cmd = ["start-hyprland", "--", "--config", config_path] if shutil.which("start-hyprland") else ["Hyprland", "-c", config_path]
+        env["XDG_CURRENT_DESKTOP"] = "Hyprland"
+    if debug:
+        eprint("Running", " ".join(shlex.quote(x) for x in cmd))
+    os.execvpe(cmd[0], cmd, env)
+    return 1
+
+
+def greeter_launch_session(cache_dir_path: Path, explicit_session: str = "") -> int:
+    user = current_login_user()
+    session_cmd = explicit_session.strip()
+    if not session_cmd:
+        sess = preferred_session(user, cache_dir_path)
+        if sess:
+            session_cmd = sess["exec"]
+    if not session_cmd:
+        eprint("No greeter session command found")
+        return 1
+    args = shlex.split(session_cmd)
+    if not args:
+        eprint("Empty greeter session command")
+        return 1
+    env = os.environ.copy()
+    env.setdefault("XDG_SESSION_TYPE", "wayland")
+    desktop = "niri" if "niri" in Path(args[0]).name.lower() or any("niri" in arg.lower() for arg in args[:2]) else "Hyprland"
+    env.setdefault("XDG_CURRENT_DESKTOP", desktop)
+    os.execvpe(args[0], args, env)
+    return 1
+
+
+def _launcher_search_score(name: str, query: str) -> float:
+    """Small, deterministic fuzzy score used after fd narrows the candidate set."""
+    haystack = name.casefold()
+    needle = query.casefold()
+    if not needle:
+        return 0.0
+    exact = haystack.find(needle)
+    if exact >= 0:
+        return 1000.0 - exact * 2.0 - max(0, len(haystack) - len(needle)) * 0.15
+    pos = -1
+    gap = 0
+    for char in needle:
+        next_pos = haystack.find(char, pos + 1)
+        if next_pos < 0:
+            return -1.0
+        if pos >= 0:
+            gap += next_pos - pos - 1
+        pos = next_pos
+    return 650.0 - gap * 4.0 - max(0, len(haystack) - len(needle)) * 0.1
+
+
+def _utf16_offset(value: str, codepoint_offset: int) -> int:
+    """Return the UTF-16 code-unit offset QML uses for String.slice()."""
+    return len(value[:max(0, codepoint_offset)].encode("utf-16-le")) // 2
+
+
+def _utf8_byte_offset_to_utf16(value: str, byte_offset: int) -> int:
+    """Translate ripgrep JSON byte offsets to QML's UTF-16 string offsets."""
+    prefix = value.encode("utf-8")[:max(0, byte_offset)].decode("utf-8", errors="ignore")
+    return len(prefix.encode("utf-16-le")) // 2
+
+
+def _launcher_literal_match_ranges(value: str, query: str, limit: int = 400) -> List[Dict[str, int]]:
+    if not value or not query:
+        return []
+    flags = 0 if any(char.isupper() for char in query) else re.IGNORECASE
+    try:
+        pattern = re.compile(query, flags)
+    except re.error:
+        pattern = re.compile(re.escape(query), flags)
+    ranges: List[Dict[str, int]] = []
+    for match in pattern.finditer(value):
+        start, end = match.span()
+        if end <= start:
+            continue
+        ranges.append({
+            "start": _utf16_offset(value, start),
+            "end": _utf16_offset(value, end),
+        })
+        if len(ranges) >= limit:
+            break
+    return ranges
+
+
+def _launcher_search_ignored(path: Path, ignores: List[str], roots: List[Path]) -> bool:
+    expanded = path.expanduser()
+    for raw in ignores:
+        value = os.path.expandvars(os.path.expanduser(raw.strip()))
+        if not value:
+            continue
+        if os.path.isabs(value):
+            try:
+                expanded.relative_to(Path(value))
+                return True
+            except ValueError:
+                continue
+        parts = expanded.parts
+        if value in parts or expanded.name == value:
+            return True
+        for root in roots:
+            candidate = root / value
+            try:
+                expanded.relative_to(candidate)
+                return True
+            except ValueError:
+                pass
+    return False
+
+
+def _launcher_folder_path_hits(
+    query: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    raw = query.strip()
+    expanded = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not expanded.is_absolute():
+        return []
+    exact = expanded.resolve(strict=False)
+    parent = exact if raw.endswith(os.sep) else exact.parent
+    partial = "" if raw.endswith(os.sep) else exact.name
+    raw_parent = raw if raw.endswith(os.sep) else raw[:raw.rfind(os.sep) + 1]
+    hits: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(path: Path, completion: str, score: float) -> None:
+        path_text = str(path)
+        if path_text in seen or not path.is_dir() or _launcher_search_ignored(path, ignores, roots):
+            return
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        seen.add(path_text)
+        hits.append({
+            "path": path_text,
+            "name": path.name or path_text,
+            "parent": str(path.parent),
+            "is_dir": True,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": score,
+            "completion": completion,
+        })
+
+    if exact.is_dir():
+        exact_completion = raw if raw.endswith(os.sep) else raw + os.sep
+        add(exact, exact_completion, 2000.0)
+
+    try:
+        children = sorted(parent.iterdir(), key=lambda path: path.name.casefold())
+    except OSError:
+        children = []
+    folded_partial = partial.casefold()
+    for child in children:
+        if not child.is_dir() or not child.name.casefold().startswith(folded_partial):
+            continue
+        completion = raw_parent + child.name + os.sep
+        add(child, completion, 1800.0 - max(0, len(child.name) - len(partial)))
+        if len(hits) >= limit:
+            break
+    hits.sort(key=lambda hit: (-float(hit["score"]), str(hit["path"]).casefold()))
+    return hits[:limit]
+
+
+def _launcher_search_name_hits(
+    query: str,
+    kind: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+    ignore_mounts: bool,
+) -> List[Dict[str, Any]]:
+    """Rank file and folder names matching `query` under `roots`.
+
+    A folder query that starts at a path is answered below by
+    `_launcher_folder_path_hits`, before fd is consulted at all.
+
+    Otherwise this walks the roots on every call: fd when it is installed, and
+    the os.walk branch for a caller that accepts a full walk without it, which
+    only the `vshell launcher-search` CLI does. The launcher and the overview
+    search names through the backend's `launcher.search` index, which walks
+    once and follows changes, and come here only while no backend advertises
+    it. Even then they dispatch a name search only once fd is positively
+    detected, one at a time, killing the previous run, because a full walk per
+    query, with nothing cached between them, cannot answer at typing speed.
+    """
+    if kind == "folders" and query.strip().startswith(("~", "/")):
+        return _launcher_folder_path_hits(query, roots, ignores, limit)
+
+    fd_bin = shutil.which("fd") or shutil.which("fdfind")
+    candidates: List[str] = []
+    if fd_bin:
+        fuzzy_pattern = ".*".join(re.escape(char) for char in query)
+        command = [
+            fd_bin, "--absolute-path", "--hidden", "--color", "never", "--print0",
+            "--ignore-case",
+        ]
+        if kind == "all":
+            command.extend(["--type", "f", "--type", "d"])
+        else:
+            command.extend(["--type", "d" if kind == "folders" else "f"])
+        if ignore_mounts:
+            command.append("--one-file-system")
+        for ignored in ignores:
+            value = ignored.strip()
+            if value and not os.path.isabs(os.path.expanduser(value)):
+                # Joined, like every other user-derived value on this path: an
+                # ignore entry starting with "-" is an option name to fd in the
+                # separated form, and fd rejects the whole invocation for it.
+                command.append("--exclude=" + value)
+        command.append(fuzzy_pattern)
+        command.extend(str(root) for root in roots)
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8, check=False)
+        # A non-zero fd exit means the search failed. Report the failure instead
+        # of returning an empty set of matches.
+        if completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+            raise RuntimeError(
+                "fd exited {} for this search: {}".format(
+                    completed.returncode, detail[0] if detail else "no diagnostic"))
+        candidates = [os.fsdecode(value) for value in completed.stdout.split(b"\0") if value]
+    else:
+        for root in roots:
+            root_device = root.stat().st_dev if ignore_mounts else None
+            for current, dirs, files in os.walk(root):
+                current_path = Path(current)
+                dirs[:] = [
+                    entry for entry in dirs
+                    if not _launcher_search_ignored(current_path / entry, ignores, roots)
+                    and (root_device is None or (current_path / entry).stat().st_dev == root_device)
+                ]
+                names = dirs if kind == "folders" else files if kind == "files" else dirs + files
+                for name in names:
+                    if _launcher_search_score(name, query) >= 0:
+                        candidates.append(str(current_path / name))
+                if len(candidates) >= max(limit * 40, 1000):
+                    break
+
+    hits: List[Dict[str, Any]] = []
+    for raw_path in candidates:
+        path = Path(raw_path)
+        if _launcher_search_ignored(path, ignores, roots):
+            continue
+        score = _launcher_search_score(path.name, query)
+        if score < 0:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        hits.append({
+            "path": str(path),
+            "name": path.name,
+            "parent": str(path.parent),
+            "is_dir": path.is_dir(),
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": score,
+        })
+    hits.sort(key=lambda hit: (-float(hit["score"]), -int(hit["mtime"]), str(hit["path"]).casefold()))
+    return hits[:limit]
+
+
+def _launcher_zoxide_hits(query: str, limit: int) -> List[Dict[str, Any]]:
+    zoxide_bin = shutil.which("zoxide")
+    if not zoxide_bin:
+        raise RuntimeError("zoxide is required for recent-directory search")
+    command = [zoxide_bin, "query", "-ls"]
+    command.extend(query.split())
+    completed = subprocess.run(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        timeout=3, check=False,
+    )
+    hits: List[Dict[str, Any]] = []
+    for raw_line in completed.stdout.splitlines():
+        match = re.match(r"^\s*([0-9.]+)\s+(.+)$", raw_line)
+        if not match:
+            continue
+        path = Path(match.group(2))
+        if not path.is_dir():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        score = float(match.group(1))
+        hits.append({
+            "path": str(path),
+            "name": path.name or str(path),
+            "parent": str(path.parent),
+            "is_dir": True,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "score": 2000.0 + score,
+            "zoxide_score": score,
+            "completion": str(path) + os.sep,
+        })
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def _launcher_folder_openers() -> List[Dict[str, str]]:
+    # A wrapper script that exists only in someone's dotfiles must not be probed
+    # for by name here — configure it through the launcherFolderOpenCommand
+    # setting, which the "Preferred app" opener passes through as --command. See
+    # docs/architecture/plugins.md § Invariants (the probing rules).
+    #
+    openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
+    # Yazi is a TUI, so it is only openable with a terminal spawner. Advertise it
+    # on the same condition _launcher_open_folder() runs it on, or the QML opener
+    # list (populated from `vshell launcher-search openers`) offers a choice that
+    # can only answer "unavailable".
+    if shutil.which("yazi") and have_terminal():
+        openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
+    manager = file_manager()
+    if manager and (have_terminal() or not manager.get("terminal")):
+        openers.append({"id": "filemanager", "label": manager.get("name") or "File manager",
+                        "icon": "folder"})
+    return openers
+
+
+def _launcher_open_folder(path: str, command_text: str = "", opener: str = "default") -> Dict[str, Any]:
+    target = str(Path(path).expanduser().resolve(strict=False))
+    if not Path(target).is_dir():
+        return {"ok": False, "error": f"Folder not found: {target}"}
+    if opener == "yazi":
+        yazi = shutil.which("yazi")
+        if not yazi or not have_terminal():
+            return {"ok": False, "error": "Yazi folder opener is unavailable"}
+        code = spawn_terminal([yazi, target], detach=True, what="the Yazi folder opener")
+        if code != 0:
+            return {"ok": False, "error": "Yazi folder opener could not start a terminal"}
+        return {"ok": True, "command": [yazi, target], "opener": "yazi"}
+    if opener in {"filemanager", "nautilus"}:
+        manager = file_manager()
+        if not manager:
+            return {"ok": False, "error": "No file manager is configured or installed"}
+        command = [*manager["argv"], target]
+        if manager.get("terminal"):
+            if not have_terminal():
+                return {"ok": False, "error": f"{manager['name']} needs a terminal, and none was found"}
+            code = spawn_terminal(command, detach=True, what="the folder opener")
+            if code != 0:
+                return {"ok": False, "error": f"{manager['name']} could not start a terminal"}
+            return {"ok": True, "command": command, "opener": "filemanager"}
+    elif command_text.strip():
+        command = shlex.split(command_text)
+        command = [part.replace("{path}", target) for part in command]
+        if not any(target in part for part in command):
+            command.append(target)
+    else:
+        command = ["gio", "open", target]
+    if not command or not shutil.which(command[0]):
+        return {"ok": False, "error": f"Folder opener not found: {command[0] if command else ''}"}
+    subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ok": True, "command": command}
+
+
+def _launcher_search_text_hits(
+    query: str,
+    roots: List[Path],
+    ignores: List[str],
+    limit: int,
+    ignore_mounts: bool,
+) -> List[Dict[str, Any]]:
+    rg_bin = shutil.which("rg")
+    if not rg_bin:
+        raise RuntimeError("ripgrep is required for text search")
+    command = [
+        rg_bin, "--json", "--hidden", "--smart-case", "--max-columns", "240",
+        "--max-columns-preview", "--max-count", "4", "--no-messages",
+    ]
+    if ignore_mounts:
+        command.append("--one-file-system")
+    for ignored in ignores:
+        value = ignored.strip()
+        if not value:
+            continue
+        if os.path.isabs(os.path.expanduser(value)):
+            command.extend(["--glob", "!" + os.path.expanduser(value).rstrip("/") + "/**"])
+        else:
+            command.extend(["--glob", "!" + value.rstrip("/") + "/**"])
+    command.extend(["--", query])
+    command.extend(str(root) for root in roots)
+    hits: List[Dict[str, Any]] = []
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            try:
+                event = json.loads(raw_line)
+                if event.get("type") != "match":
+                    continue
+                data = event["data"]
+                path = Path(data["path"]["text"])
+                if _launcher_search_ignored(path, ignores, roots):
+                    continue
+                line_number = int(data.get("line_number") or 0)
+                text = (data.get("lines", {}).get("text") or "").rstrip()
+                excerpt = text[:500]
+                excerpt_utf16_length = _utf16_offset(excerpt, len(excerpt))
+                submatches = data.get("submatches") or []
+                match_ranges = []
+                for match in submatches[:8]:
+                    start = _utf8_byte_offset_to_utf16(text, int(match["start"]))
+                    end = _utf8_byte_offset_to_utf16(text, int(match["end"]))
+                    if start >= excerpt_utf16_length:
+                        continue
+                    match_ranges.append({
+                        "start": start,
+                        "end": min(end, excerpt_utf16_length),
+                    })
+                hits.append({
+                    "path": str(path),
+                    "name": path.name,
+                    "parent": str(path.parent),
+                    "is_dir": False,
+                    "line": line_number,
+                    "excerpt": excerpt,
+                    "submatches": match_ranges,
+                    "score": 1000.0 - len(hits),
+                })
+                if len(hits) >= limit:
+                    process.terminate()
+                    break
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+    finally:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=0.5)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return hits
+
+
+def _launcher_preview(path: Path, lines: int, focus_line: int = 0, query: str = "") -> Dict[str, Any]:
+    if not path.exists():
+        return {"ok": False, "error": "Path no longer exists", "path": str(path)}
+    mime, _ = mimetypes.guess_type(str(path))
+    if path.is_dir():
+        entries: List[str] = []
+        def add_directory(directory: Path, prefix: str, depth: int) -> None:
+            if len(entries) >= 200 or depth > 2:
+                return
+            children = sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold()))
+            for child in children:
+                if len(entries) >= 200:
+                    return
+                entries.append(prefix + ("▸ " if child.is_dir() else "  ") + child.name)
+                if child.is_dir() and depth < 2:
+                    with contextlib.suppress(OSError):
+                        add_directory(child, prefix + "  ", depth + 1)
+        try:
+            add_directory(path, "", 0)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc), "path": str(path)}
+        return {"ok": True, "kind": "directory", "path": str(path), "mime": "inode/directory", "text": "\n".join(entries)}
+    if mime and mime.startswith("image/"):
+        return {"ok": True, "kind": "image", "path": str(path), "mime": mime}
+    if mime and (mime.startswith("audio/") or mime.startswith("video/")):
+        return {"ok": True, "kind": "media", "path": str(path), "mime": mime}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            maximum = max(20, min(lines, 1200))
+            first_line = max(1, focus_line - 18) if focus_line > 0 else 1
+            last_line = first_line + maximum - 1
+            selected = []
+            for line_number, value in enumerate(stream, 1):
+                if line_number < first_line:
+                    continue
+                if line_number > last_line:
+                    break
+                selected.append(value)
+            content = "".join(selected)
+        if "\0" in content:
+            return {"ok": True, "kind": "binary", "path": str(path), "mime": mime or "application/octet-stream", "text": "Binary file"}
+        return {
+            "ok": True,
+            "kind": "text",
+            "path": str(path),
+            "mime": mime or "text/plain",
+            "text": content,
+            "submatches": _launcher_literal_match_ranges(content, query),
+            "start_line": first_line,
+            "focus_line": focus_line,
+        }
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "path": str(path)}
+
+
+# Passwordless sudo state uses a privileged drop-in and an unprivileged mirror:
+# /etc/sudoers.d/50-<user>-nopasswd-toggle
+# ~/.local/state/vshell/sudo-passwordless-toggle
+# The shell cannot read sudoers.d directly. Update the mirror with the drop-in.
+# The mirror can become stale after external changes. Callers must pass the
+# displayed set on/off direction; the privileged operation checks it again.
+
+SUDO_TOGGLE_FLAG_NAME = "sudo-passwordless-toggle"
+# Mirror path read only to migrate state into the VGS directory.
+SUDO_TOGGLE_LEGACY_FLAG = ".local/state/sudo-passwordless-toggle"
+
+# `set` exit codes. Keep these distinct: the widget reports a stale-state
+# refusal as an informational warning and a terminal failure as an error, so
+# one code cannot mean both.
+#   0 changed or already correct
+#   1 error
+#   3 displayed state was stale: nothing changed, mirror re-synced, re-read
+#   4 the terminal for the password prompt never came up (TERMINAL_EXIT_FAILED)
+SUDO_TOGGLE_EXIT_STALE = 3
+
+
+def sudo_toggle_dropin(user: str) -> Path:
+    return Path("/etc/sudoers.d") / f"50-{user}-nopasswd-toggle"
+
+
+def sudo_toggle_flag_path() -> Path:
+    return state_dir() / SUDO_TOGGLE_FLAG_NAME
+
+
+def sudo_toggle_legacy_flag_path() -> Path:
+    return home() / SUDO_TOGGLE_LEGACY_FLAG
+
+
+def sudo_toggle_mirror_state() -> bool:
+    """What the unprivileged side believes. Never used to pick a direction."""
+    return sudo_toggle_flag_path().is_file() or sudo_toggle_legacy_flag_path().is_file()
+
+
+def sudo_noninteractive_ok(runner: Any = None) -> bool:
+    """Does sudo currently run without prompting?
+
+    True means either a NOPASSWD rule (VGS's or someone else's) or a live
+    credential cache — sudo cannot distinguish those without invalidating the
+    cache, which would be a side effect on the user's session. Callers must
+    treat this as "does not prompt right now", not "has a NOPASSWD rule".
+    """
+    if runner is None:
+        def runner() -> int:
+            return subprocess.run(
+                ["sudo", "-n", "true"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode
+    try:
+        return runner() == 0
+    except Exception:
+        return False
+
+
+def sudo_toggle_availability() -> Tuple[bool, str]:
+    """Check unprivileged requirements for the sudo toggle.
+    Granting needs a terminal for confirmation. Revocation can use sudo -n
+    while the drop-in supplies passwordless access."""
+    if not shutil.which("sudo"):
+        return False, "sudo is not installed"
+    if not shutil.which("visudo"):
+        return False, "visudo is not installed (usually shipped with sudo)"
+    if not Path("/etc/sudoers.d").is_dir():
+        return False, "/etc/sudoers.d does not exist; sudo has no drop-in include directory"
+    return True, ""
+
+
+def sudo_toggle_enable_availability() -> Tuple[bool, str]:
+    """Extra requirement for the enable direction only: somewhere to prompt."""
+    if not have_terminal():
+        return False, ("no terminal emulator found for the password prompt; set $TERMINAL or install one of: "
+                       + ", ".join(TERMINAL_CANDIDATES))
+    return True, ""
+
+
+def sudo_toggle_apply(dropin: Path, user: str, enable: bool, visudo_bin: str | None) -> Tuple[bool, str]:
+    """Create or remove the NOPASSWD drop-in. Runs privileged.
+
+    The candidate file is validated before it is put in place, and the staging
+    name deliberately contains a dot: sudo ignores files in sudoers.d whose name
+    contains a '.', so a half-written or invalid candidate is never in effect.
+    """
+    if not enable:
+        try:
+            dropin.unlink()
+        except FileNotFoundError:
+            pass
+        return True, "Passwordless sudo disabled"
+    if dropin.is_symlink():
+        return False, f"Refusing to write through a symlink: {dropin}"
+    staging = dropin.with_name(dropin.name + f".vgs-tmp-{os.getpid()}")
+    try:
+        staging.write_text(f"{user} ALL=(ALL) NOPASSWD: ALL\n")
+        os.chmod(staging, 0o440)
+        if visudo_bin:
+            check = subprocess.run(
+                [visudo_bin, "-cf", str(staging)],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            if check.returncode != 0:
+                detail = (check.stdout or "").strip()
+                return False, "sudoers validation failed, no change made" + (f": {detail}" if detail else "")
+        else:
+            return False, "visudo is unavailable; refusing to install an unvalidated sudoers drop-in"
+        staging.replace(dropin)
+    finally:
+        try:
+            staging.unlink()
+        except FileNotFoundError:
+            pass
+    return True, "Passwordless sudo enabled (persistent, no expiry)"
+
+
+def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
+    """Mirror the privileged state where the shell can read it.
+
+    Usually runs as root after the sudo re-exec, writing into a directory the
+    unprivileged user controls, so every component is checked for symlinks and
+    nothing here ever follows one: a planted link would otherwise have root
+    create and chown an arbitrary path.
+    """
+    flag = sudo_toggle_flag_path()
+    owner_uid, owner_gid = os.getuid(), os.getgid()
+    if os.geteuid() == 0:
+        try:
+            pw = pwd.getpwnam(current_login_user())
+            owner_uid, owner_gid = pw.pw_uid, pw.pw_gid
+        except KeyError:
+            pass
+
+    # Everything below walks the tree with directory file descriptors and
+    # O_NOFOLLOW, never by path. Re-resolving a path per component leaves a
+    # window where a symlink planted between the check and the use is followed,
+    # which would have root create and chown an attacker-named directory.
+    relative = flag.relative_to(home()).parts  # (".local", "state", "vshell", "<flag>")
+    dirs, name = list(relative[:-1]), relative[-1]
+
+    open_fds: List[int] = []
+
+    def close_all() -> None:
+        for fd in reversed(open_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    try:
+        try:
+            open_fds.append(os.open(home(), os.O_RDONLY | os.O_DIRECTORY))
+        except OSError as exc:
+            return False, f"could not open the home directory: {exc}"
+
+        def retire_legacy(state_fd: int) -> None:
+            """Remove the mirror outside the VGS directory.
+            Run when its parent opens: revocation can return early if the VGS
+            subdirectory is absent, and must not leave an enabled mirror behind."""
+            try:
+                os.unlink(SUDO_TOGGLE_FLAG_NAME, dir_fd=state_fd)
+            except (FileNotFoundError, OSError):
+                pass
+
+        legacy_parent_index = len(dirs) - 2  # ".local/state" holds the old flag
+
+        for index, part in enumerate(dirs):
+            parent = open_fds[-1]
+            try:
+                open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
+                if index == legacy_parent_index:
+                    retire_legacy(open_fds[-1])
+                continue
+            except FileNotFoundError:
+                pass
+            except NotADirectoryError:
+                return False, f"state mirror path component is not a directory: {'/'.join(dirs[:index + 1])}"
+            except OSError as exc:
+                # ELOOP is what O_NOFOLLOW raises on a symlinked component.
+                if exc.errno == errno.ELOOP:
+                    return False, ("refusing to write the state mirror through a symlinked directory: "
+                                   + "/".join(dirs[:index + 1]))
+                return False, f"could not open {'/'.join(dirs[:index + 1])}: {exc}"
+
+            if not enable:
+                return True, ""  # nothing to clear if the tree does not exist
+            try:
+                os.mkdir(part, 0o700, dir_fd=parent)
+            except FileExistsError:
+                pass  # lost a benign race with ourselves; reopen below
+            except OSError as exc:
+                return False, f"could not create {'/'.join(dirs[:index + 1])}: {exc}"
+            try:
+                open_fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent))
+            except OSError as exc:
+                return False, f"could not open {'/'.join(dirs[:index + 1])}: {exc}"
+            if index == legacy_parent_index:
+                retire_legacy(open_fds[-1])
+            try:
+                os.chown(part, owner_uid, owner_gid, dir_fd=parent, follow_symlinks=False)
+            except (PermissionError, FileNotFoundError, OSError):
+                pass
+
+        leaf = open_fds[-1]
+
+        if not enable:
+            try:
+                os.unlink(name, dir_fd=leaf)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                return False, f"could not clear the state mirror {flag}: {exc}"
+            return True, ""
+
+        try:
+            fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=leaf)
+        except FileExistsError:
+            try:
+                info = os.lstat(name, dir_fd=leaf)
+            except OSError as exc:
+                return False, f"could not inspect the state mirror {flag}: {exc}"
+            if stat.S_ISLNK(info.st_mode):
+                return False, f"refusing to write the state mirror through a symlink: {flag}"
+            return True, ""  # already present and a real file: nothing to do
+        except OSError as exc:
+            return False, f"could not write the state mirror {flag}: {exc}"
+        try:
+            os.fchown(fd, owner_uid, owner_gid)
+        except (PermissionError, OSError):
+            pass
+        finally:
+            os.close(fd)
+        return True, ""
+    finally:
+        close_all()
+
+
+def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = True) -> Dict[str, Any]:
+    available, reason = sudo_toggle_availability()
+    dropin_installed = sudo_toggle_mirror_state()
+    if os.geteuid() == 0:
+        # Privileged callers can see the truth; the mirror may have drifted.
+        dropin_installed = sudo_toggle_dropin(user).is_file()
+    if dropin_installed:
+        # NOPASSWD: ALL is in force by definition; no need to ask sudo (and no
+        # need to put a line in the auth log).
+        non_interactive = True
+    elif probe_sudo:
+        # The widget defers sudo probes until user interaction. Do not filter by
+        # group membership: a direct sudoers rule can grant access independently.
+        non_interactive = sudo_noninteractive_ok(sudo_probe)
+    else:
+        non_interactive = False
+    can_enable, enable_reason = sudo_toggle_enable_availability()
+    return {
+        "ok": True,
+        "available": available,
+        "reason": reason,
+        "enabled": dropin_installed,
+        "dropinInstalled": dropin_installed,
+        # Whether sudo prompts right now, from any rule or a cached credential.
+        # Lets the widget avoid claiming "disabled" on a machine that is
+        # passwordless for other reasons.
+        "sudoNonInteractive": non_interactive,
+        # Granting additionally needs a terminal to prompt in. Revoking never
+        # does, so this must not gate the control as a whole.
+        "canEnable": can_enable,
+        "enableReason": enable_reason,
+        "user": user,
+        "dropin": str(sudo_toggle_dropin(user)),
+        "flag": str(sudo_toggle_flag_path()),
+    }
+
+
+def sudo_toggle_set(user: str, want: bool) -> int:
+    """Privileged half of `set`. Applies only the direction that was asked for."""
+    dropin = sudo_toggle_dropin(user)
+    actual = dropin.is_file()
+    mirror_before = sudo_toggle_mirror_state()
+
+    if want == actual:
+        # Nothing to do. If the mirror disagreed, the caller acted on a state
+        # the machine was not in, so re-sync and say so instead of pretending
+        # the click did what it looked like it would do.
+        ok, message = sudo_toggle_write_flag(actual)
+        if not ok:
+            eprint(f"vshell sudo-toggle: {message}")
+            return 1
+        if mirror_before != actual:
+            eprint("vshell sudo-toggle: passwordless sudo is already "
+                   + ("enabled" if actual else "disabled")
+                   + "; the shell was showing stale state. Nothing changed; state refreshed.")
+            return SUDO_TOGGLE_EXIT_STALE
+        print("passwordless sudo already " + ("enabled" if actual else "disabled"))
+        return 0
+
+    ok, message = sudo_toggle_apply(dropin, user, want, shutil.which("visudo"))
+    if not ok:
+        eprint(f"vshell sudo-toggle: {message}")
+        return 1
+    ok, flag_message = sudo_toggle_write_flag(want)
+    if not ok:
+        # The privileged change landed; a mirror we could not write would leave
+        # the widget lying, so report it rather than exiting 0.
+        eprint(f"vshell sudo-toggle: {message}, but {flag_message}")
+        return 1
+    print(message)
+    return 0
+
+
+def cmd_sudo_toggle(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell sudo-toggle")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_status = sub.add_parser("status", help="report availability and current state")
+    p_status.add_argument("--json", action="store_true")
+    p_status.add_argument("--no-sudo-probe", action="store_true",
+                          help="skip the `sudo -n true` check for passwordless sudo from other rules")
+    p_set = sub.add_parser("set", help="set passwordless sudo to an explicit state")
+    p_set.add_argument("state", choices=["on", "off"])
+    p_set.add_argument("--terminal", action="store_true",
+                       help="re-exec under sudo in a terminal so it can prompt for a password")
+    p_toggle = sub.add_parser("toggle", help="flip passwordless sudo (CLI convenience; UIs must use `set`)")
+    p_toggle.add_argument("--terminal", action="store_true",
+                          help="re-exec under sudo in a terminal so it can prompt for a password")
+    args = parser.parse_args(argv)
+
+    user = current_login_user()
+    if args.cmd == "status":
+        status = sudo_toggle_status(user, probe_sudo=not args.no_sudo_probe)
+        if args.json:
+            print(json.dumps(status))
+        else:
+            state = "enabled" if status["enabled"] else "disabled"
+            print(f"passwordless sudo: {state}" if status["available"]
+                  else f"passwordless sudo: unavailable ({status['reason']})")
+        return 0 if status["available"] else 1
+
+    available, reason = sudo_toggle_availability()
+    if not available:
+        eprint(f"vshell sudo-toggle: {reason}")
+        return 1
+
+    if args.cmd == "toggle":
+        # Pass the direction derived from the displayed state through guarded set.
+        # The privileged operation must not infer a different direction.
+        if os.geteuid() == 0:
+            want = not sudo_toggle_dropin(user).is_file()
+        else:
+            want = not sudo_toggle_mirror_state()
+        return cmd_sudo_toggle(["set", "on" if want else "off",
+                                *(["--terminal"] if args.terminal else [])])
+
+    want = args.state == "on"
+
+    if os.geteuid() != 0:
+        if want:
+            # Require a terminal only for grants that still need privilege escalation.
+            can_enable, enable_reason = sudo_toggle_enable_availability()
+            if not can_enable:
+                eprint(f"vshell sudo-toggle: {enable_reason}")
+                return 1
+            # Never take the quiet `sudo -n` route to ENABLE. Where sudo already
+            # runs without prompting (an admin wheel NOPASSWD rule, a live
+            # credential cache), that would install a permanent
+            # `NOPASSWD: ALL` from a single bar click with no prompt, no
+            # window and no confirmation. Enabling always goes through a
+            # terminal so the user sees what is happening and sudo can
+            # authenticate.
+            return ensure_root_for(["sudo-toggle", "set", "on", "--terminal"], terminal=True) or 0
+        # Disabling only ever removes privilege, and while the drop-in is in
+        # place sudo needs no password, so the quiet path is safe here and
+        # keeps the common "switch it back off" case silent.
+        if not args.terminal:
+            quiet = ensure_root_for(["sudo-toggle", "set", "off"])
+            if quiet is not None and quiet in (0, SUDO_TOGGLE_EXIT_STALE):
+                return quiet
+        return ensure_root_for(["sudo-toggle", "set", "off", "--terminal"], terminal=True) or 0
+
+    return sudo_toggle_set(user, want)
+
+
+def cmd_launcher_search(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell launcher-search")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    search = sub.add_parser("search")
+    search.add_argument("query")
+    search.add_argument("--kind", choices=("all", "files", "folders", "text", "zoxide"), default="files")
+    search.add_argument("--root", action="append", default=[])
+    search.add_argument("--ignore", action="append", default=[])
+    search.add_argument("--ignore-mounts", action="store_true")
+    search.add_argument("--limit", type=int, default=80)
+    preview = sub.add_parser("preview")
+    preview.add_argument("path")
+    preview.add_argument("--lines", type=int, default=500)
+    preview.add_argument("--line", type=int, default=0)
+    preview.add_argument("--query", default="")
+    opener = sub.add_parser("open-folder")
+    opener.add_argument("path")
+    opener.add_argument("--command", default="")
+    # Accept nautilus as a file-manager action alias for menus open during an upgrade.
+    opener.add_argument("--opener", choices=("default", "yazi", "filemanager", "nautilus"), default="default")
+    sub.add_parser("openers")
+    sub.add_parser("status")
+    args = parser.parse_args(argv)
+    if args.cmd == "status":
+        print(json.dumps({
+            "ok": True,
+            "fd": shutil.which("fd") or shutil.which("fdfind") or "",
+            "ripgrep": shutil.which("rg") or "",
+            "backend": "fd+ripgrep",
+        }))
+        return 0
+    if args.cmd == "preview":
+        print(json.dumps(_launcher_preview(
+            Path(args.path).expanduser(), args.lines, args.line, args.query
+        ), ensure_ascii=False))
+        return 0
+    if args.cmd == "openers":
+        print(json.dumps({"ok": True, "openers": _launcher_folder_openers()}, ensure_ascii=False))
+        return 0
+    if args.cmd == "open-folder":
+        result = _launcher_open_folder(args.path, args.command, args.opener)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+    roots = [Path(value).expanduser().resolve() for value in args.root] if args.root else [home()]
+    roots = [root for root in roots if root.is_dir()]
+    if not roots:
+        print(json.dumps({"ok": False, "error": "No searchable roots"}))
+        return 1
+    limit = max(1, min(args.limit, 300))
+    # The shell ends a search that a newer keystroke replaced with SIGTERM. Its
+    # default action would end this process and leave fd or ripgrep walking the
+    # roots; as SystemExit it unwinds through the subprocess calls below, which
+    # kill their child on the way out.
+    signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
+    if args.kind == "text":
+        hits = _launcher_search_text_hits(args.query, roots, args.ignore, limit, args.ignore_mounts)
+    elif args.kind == "zoxide":
+        hits = _launcher_zoxide_hits(args.query, limit)
+    else:
+        hits = _launcher_search_name_hits(args.query, args.kind, roots, args.ignore, limit, args.ignore_mounts)
+    print(json.dumps({"ok": True, "kind": args.kind, "query": args.query, "hits": hits}, ensure_ascii=False))
+    return 0
+
+
+# --- notification daemon ownership -----------------------------------------
+#
+# org.freedesktop.Notifications is a first-come, first-served session bus name.
+# VGS registers it from Services/NotificationService.qml, but any notification
+# daemon already installed on the system can take it first -- usually without
+# the user ever starting it, because a D-Bus activation file makes the *first
+# notification sent after login* start the daemon. The loser gets a journal
+# warning and nothing else, so the shell looks like it simply has no
+# notifications. These helpers let VGS name the winner, and take the name back.
+
+NOTIFICATION_BUS_NAME = "org.freedesktop.Notifications"
+NOTIFICATION_SHADOW_MARKER = "# vshell notifications takeover"
+# Who asked for a takeover. Recorded in the undo state, not in settings: the
+# provenance belongs with the changes it describes, so it cannot outlive them
+# or be contradicted by a restore run from the CLI.
+NOTIFICATION_INITIATORS = ("first-run", "manual")
+
+# Process name -> label, for readable output only. Detection never consults
+# this list: it works from who owns the bus name and from which activation
+# files claim it, so a daemon nobody has heard of is still found.
+KNOWN_NOTIFICATION_DAEMONS: Dict[str, str] = {
+    "mako": "mako",
+    "dunst": "dunst",
+    "swaync": "swaync",
+    "swaync-notification-center": "swaync",
+    "xfce4-notifyd": "xfce4-notifyd",
+    "notification-daemon": "notification-daemon",
+    "notify-osd": "notify-osd",
+    "deadd-notification-center": "deadd-notification-center",
+}
+
+
+def notification_state_file() -> Path:
+    return state_dir() / "notification-takeover.json"
+
+
+def _xdg_data_home() -> Path:
+    value = os.environ.get("XDG_DATA_HOME", "").strip()
+    return Path(value) if value.startswith("/") else home() / ".local" / "share"
+
+
+def _xdg_data_dirs() -> List[Path]:
+    """Data directories in D-Bus activation precedence order, home first."""
+    dirs = [_xdg_data_home()]
+    raw = os.environ.get("XDG_DATA_DIRS", "").strip() or "/usr/local/share:/usr/share"
+    for entry in raw.split(":"):
+        entry = entry.strip()
+        if entry.startswith("/") and Path(entry) not in dirs:
+            dirs.append(Path(entry))
+    return dirs
+
+
+# The bus answers "nobody owns that name" with an error, so a failed call has
+# to be classified. Reporting a broken probe as an unowned bus would be the
+# same silent failure this subsystem exists to remove.
+# Phrasing differs by bus implementation and busctl version: dbus-daemon says
+# "no such name", the systemd/dbus-broker path says "The name does not have an
+# owner", and the wire error is NameHasNoOwner. All three mean unowned.
+_BUS_NO_SUCH_NAME = re.compile(r"no such name|does not have an owner|NameHasNoOwner", re.IGNORECASE)
+
+
+def _session_bus_call(member: str, signature: str, *args: str) -> Dict[str, Any]:
+    """Call a session bus driver method.
+
+    Returns ``{"value": <reply>, "error": ""}`` on success, ``{"value": None,
+    "error": ""}`` when the bus says the name has no owner, and a non-empty
+    ``error`` for everything else -- busctl missing, a timeout, an unparseable
+    reply. Callers must keep those three apart: "no owner" is a fact about the
+    session, the rest are facts about the probe.
+    """
+    try:
+        proc = run([
+            "busctl", "--user", "--json=short", "call",
+            "org.freedesktop.DBus", "/org/freedesktop/DBus",
+            "org.freedesktop.DBus", member, signature, *args,
+        ], timeout=5)
+    except FileNotFoundError:
+        return {"value": None, "error": "busctl is not installed"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"value": None, "error": f"busctl {member} failed: {exc}"}
+    if proc.returncode != 0:
+        message = (proc.stderr or "").strip() or f"busctl {member} exited {proc.returncode}"
+        if _BUS_NO_SUCH_NAME.search(message):
+            return {"value": None, "error": ""}
+        return {"value": None, "error": message}
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except ValueError:
+        return {"value": None, "error": f"busctl {member} returned unparseable output"}
+    data = payload.get("data")
+    return {"value": data[0] if isinstance(data, list) and data else None, "error": ""}
+
+
+def _systemctl_user(argv: List[str], timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return run(["systemctl", "--user", *argv], timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(argv, 1, "", str(exc))
+
+
+def _proc_text(pid: int, name: str) -> str:
+    try:
+        return (_proc_root() / str(pid) / name).read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _proc_cmdline(pid: int) -> str:
+    raw = _proc_text(pid, "cmdline")
+    return " ".join(part for part in raw.split("\0") if part)
+
+
+def _proc_exe(pid: int) -> str:
+    try:
+        return os.readlink(_proc_root() / str(pid) / "exe")
+    except OSError:
+        return ""
+
+
+def _proc_unit(pid: int) -> str:
+    """The systemd unit a pid runs under, or "" when it runs under none.
+
+    busctl's own Unit= field reports the *session* unit (user@N.service) for
+    everything on the user bus, which cannot be stopped, so the unit is read
+    from the cgroup leaf instead.
+    """
+    for line in reversed(_proc_text(pid, "cgroup").splitlines()):
+        leaf = line.rpartition(":")[2].rstrip("/").rpartition("/")[2]
+        if leaf.endswith(".service") or leaf.endswith(".scope"):
+            return leaf
+    return ""
+
+
+def _unit_is_transient(unit: str) -> bool:
+    """True for the throwaway units D-Bus activation creates per connection.
+
+    dbus-broker names them `dbus-:1.42-fr.emersion.mako@0.service`. They can be
+    stopped, but masking one is pointless: the next activation gets a new name.
+    """
+    return unit.startswith("dbus-") and "@" in unit
+
+
+def _user_unit_state(unit: str) -> Dict[str, Any]:
+    empty = {
+        "exists": False, "running": False, "masked": False, "transient": False,
+        "mainPid": 0, "execStart": "",
+    }
+    if not unit:
+        return empty
+    proc = _systemctl_user([
+        "show", unit, "--property=LoadState", "--property=ActiveState",
+        "--property=UnitFileState", "--property=MainPID", "--property=ExecStart",
+    ])
+    values: Dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() not in values:
+            # ExecStart's own value contains "=", so only the first assignment
+            # of each property name is the property.
+            values[key.strip()] = value.strip()
+    load = values.get("LoadState", "")
+    try:
+        main_pid = int(values.get("MainPID", "0"))
+    except ValueError:
+        main_pid = 0
+    return {
+        "exists": load in {"loaded", "masked"},
+        "running": values.get("ActiveState", "") in {"active", "activating", "reloading"},
+        "masked": load == "masked" or values.get("UnitFileState", "") in {"masked", "masked-runtime"},
+        "transient": _unit_is_transient(unit),
+        "mainPid": main_pid,
+        "execStart": values.get("ExecStart", ""),
+    }
+
+
+_EXEC_PATH_RE = re.compile(r"path=([^\s;]+)")
+
+
+def _unit_runs_this_daemon(unit_state: Dict[str, Any], pid: int, exe: str, process: str) -> bool:
+    """Whether a unit is the daemon's own, rather than one it merely sits in.
+
+    A cgroup leaf answers "which unit is this process inside", never "which
+    unit is this process". A notification daemon started from a compositor rule
+    (`exec-once = mako`) has no unit of its own and inherits the compositor's:
+    on Hyprland + uwsm that leaf is `wayland-wm@hyprland.desktop.service`.
+    Masking and stopping that would end the graphical session and block the
+    next login, so a unit is only ever acted on when it demonstrably runs this
+    daemon -- its MainPID is the owner, or its ExecStart names the owner's
+    binary. Everything else is reported for the user to handle.
+    """
+    if not unit_state["exists"]:
+        return False
+    if pid and unit_state["mainPid"] == pid:
+        return True
+    exec_start = unit_state["execStart"]
+    if not exec_start:
+        return False
+    names = {name for name in (Path(exe).name if exe else "", process) if name}
+    if not names:
+        return False
+    return any(
+        Path(path).name in names or path == exe
+        for path in _EXEC_PATH_RE.findall(exec_start)
+    )
+
+
+def _parse_dbus_service_file(path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return values
+    section = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "D-BUS Service":
+            continue
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip()] = value.strip()
+    return values
+
+
+def notification_activation_files() -> List[Dict[str, Any]]:
+    """Activation files claiming the notification bus name, in bus precedence.
+
+    Only the first file of a given name is effective; the same name in a later
+    data directory is shadowed by it. That is exactly the mechanism `takeover`
+    uses, by writing its own file into the user's data home.
+    """
+    out: List[Dict[str, Any]] = []
+    seen: Dict[str, bool] = {}
+    shadow_dir = _xdg_data_home() / "dbus-1" / "services"
+    for directory in _xdg_data_dirs():
+        services = directory / "dbus-1" / "services"
+        try:
+            entries = sorted(services.glob("*.service"))
+        except OSError:
+            continue
+        for path in entries:
+            values = _parse_dbus_service_file(path)
+            if values.get("Name") != NOTIFICATION_BUS_NAME:
+                continue
+            is_shadow = False
+            if path.parent == shadow_dir:
+                try:
+                    is_shadow = NOTIFICATION_SHADOW_MARKER in path.read_text(errors="replace")
+                except OSError:
+                    is_shadow = False
+            out.append({
+                "path": str(path),
+                "file": path.name,
+                "exec": values.get("Exec", ""),
+                "systemdService": values.get("SystemdService", ""),
+                "shadow": is_shadow,
+                "effective": path.name not in seen,
+            })
+            seen[path.name] = True
+    return out
+
+
+def _owner_is_vgs(unit: str, process: str, cmdline: str) -> bool:
+    if unit == "vshell.service":
+        return True
+    return process in QS_BINARIES and "vshell" in cmdline
+
+
+def notification_owner() -> Dict[str, Any]:
+    """Who currently holds org.freedesktop.Notifications on the session bus.
+
+    ``error`` non-empty means the question could not be answered -- which is
+    never the same as "nobody owns it", and never the same as "someone else
+    owns it" either.
+    """
+    empty = {
+        "present": False, "unique": "", "pid": 0, "process": "",
+        "exe": "", "cmdline": "", "unit": "", "isVgs": False, "error": "",
+    }
+    call = _session_bus_call("GetNameOwner", "s", NOTIFICATION_BUS_NAME)
+    if call["error"]:
+        return {**empty, "error": call["error"]}
+    unique = call["value"]
+    if not isinstance(unique, str) or not unique:
+        return empty
+    pid_call = _session_bus_call("GetConnectionUnixProcessID", "s", unique)
+    try:
+        pid = int(pid_call["value"])
+    except (TypeError, ValueError):
+        pid = 0
+    if not pid:
+        # The name is held, but by whom cannot be established -- so neither
+        # "VGS owns it" nor "something else owns it" may be asserted.
+        return {
+            **empty, "present": True, "unique": unique,
+            "error": pid_call["error"] or f"could not identify the process behind {unique}",
+        }
+    process = _proc_text(pid, "comm") if pid else ""
+    cmdline = _proc_cmdline(pid) if pid else ""
+    unit = _proc_unit(pid) if pid else ""
+    return {
+        "present": True,
+        "unique": unique,
+        "pid": pid,
+        "process": process,
+        "exe": _proc_exe(pid) if pid else "",
+        "cmdline": cmdline,
+        "unit": unit,
+        "isVgs": _owner_is_vgs(unit, process, cmdline),
+        "error": "",
+    }
+
+
+def _unit_stem(unit: str) -> str:
+    """`mako.service` / `mako.scope` -> `mako`. _proc_unit returns either."""
+    for suffix in (".service", ".scope"):
+        if unit.endswith(suffix):
+            return unit[: -len(suffix)]
+    return unit
+
+
+def _daemon_label(process: str, exec_line: str, unit: str) -> str:
+    for candidate in (process, Path(exec_line.split(" ")[0]).name if exec_line else "", _unit_stem(unit)):
+        if candidate and candidate in KNOWN_NOTIFICATION_DAEMONS:
+            return KNOWN_NOTIFICATION_DAEMONS[candidate]
+    return process or (Path(exec_line.split(" ")[0]).name if exec_line else "") or unit or "unknown"
+
+
+def _manual_reason(conflict: Dict[str, Any]) -> str:
+    """Why VGS will not stop this daemon itself."""
+    unit = conflict["unit"]
+    if unit and conflict["unitExists"]:
+        return (f"it runs inside {unit}, which is not its own unit -- stopping that would take "
+                "the rest of the session with it; quit the daemon the way it was started")
+    if unit:
+        return f"its unit {unit} is not loaded; quit the daemon the way it was started"
+    return "it was not started by a user unit; quit it the way it was started"
+
+
+def vgs_notification_server_enabled() -> bool:
+    """Whether the user asked VGS to be the notification daemon at all.
+
+    Turning the shell's server off is a supported choice, so the CLI must not
+    then describe another daemon owning the bus name as a fault to fix.
+    """
+    try:
+        value = load_settings().get("notificationServerEnabled", True)
+    except Exception:
+        return True
+    return bool(value) if isinstance(value, bool) else True
+
+
+def vgs_first_run_takeover_done() -> bool:
+    """Whether settings.json records the automatic takeover as spent.
+
+    An in-memory setting does not establish that FileView saved it, so a read
+    error reports the one-shot as unspent: a failed save must not permit
+    repeated takeover. No caller may read an unspent answer as a promise that
+    the shell will act, because whether it does is decided in
+    NotificationService.qml from state this function cannot see.
+    """
+    try:
+        value = load_settings().get("notificationFirstRunTakeoverDone", False)
+    except Exception:
+        return False
+    return value is True
+
+
+def notification_status() -> Dict[str, Any]:
+    """Bus ownership, every foreign claimant found, and what can be done."""
+    owner = notification_owner()
+    activations = notification_activation_files()
+    conflicts: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+
+    def record(key: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+        existing = by_key.get(key)
+        if existing is not None:
+            for name, value in entry.items():
+                if value not in ("", 0, False, None) or name not in existing:
+                    existing[name] = value
+            return existing
+        by_key[key] = entry
+        conflicts.append(entry)
+        return entry
+
+    if owner["present"] and not owner["isVgs"]:
+        unit = owner["unit"]
+        unit_state = _user_unit_state(unit)
+        # The cgroup leaf is where the daemon runs, not necessarily its own
+        # unit; see _unit_runs_this_daemon. An inherited unit is reported and
+        # never acted on.
+        unit_owned = _unit_runs_this_daemon(unit_state, owner["pid"], owner["exe"], owner["process"])
+        record(unit or owner["exe"] or owner["unique"], {
+            "daemon": _daemon_label(owner["process"], owner["exe"], unit),
+            "holdsName": True,
+            "pid": owner["pid"],
+            "process": owner["process"],
+            "exe": owner["exe"],
+            "unit": unit,
+            "unitExists": unit_state["exists"],
+            "unitControls": unit_owned,
+            "unitRunning": unit_state["running"],
+            "unitMasked": unit_state["masked"],
+            "unitTransient": unit_state["transient"],
+            "activationFile": "",
+            "shadowed": False,
+        })
+
+    shadow_names = {entry["file"] for entry in activations if entry["shadow"]}
+    for entry in activations:
+        if entry["shadow"]:
+            continue
+        shadowed = entry["file"] in shadow_names
+        # A file behind VGS's own shadow is still worth reporting -- its unit
+        # may be running -- but a plain duplicate in a later data directory is
+        # unreachable and says nothing.
+        if not entry["effective"] and not shadowed:
+            continue
+        unit = entry["systemdService"]
+        exec_name = Path(entry["exec"].split(" ")[0]).name if entry["exec"] else ""
+        if unit == "vshell.service" or exec_name in QS_BINARIES:
+            continue  # VGS's own activation file, if one is ever shipped
+        unit_state = _user_unit_state(unit)
+        record(unit or exec_name or entry["file"], {
+            "daemon": _daemon_label(exec_name, entry["exec"], unit),
+            "holdsName": False,
+            "pid": 0,
+            "process": exec_name,
+            "exe": entry["exec"],
+            "unit": unit,
+            "unitExists": unit_state["exists"],
+            # SystemdService in the daemon's own activation file is a
+            # declaration by the daemon that this unit is its own.
+            "unitControls": unit_state["exists"],
+            "unitRunning": unit_state["running"],
+            "unitMasked": unit_state["masked"],
+            "unitTransient": unit_state["transient"],
+            "activationFile": entry["path"],
+            "shadowed": shadowed,
+        })
+
+    if owner["error"]:
+        # Neither "VGS owns it" nor "something else does" may be claimed from a
+        # probe that did not answer. The shell keeps retrying on this state.
+        state = "unknown"
+    elif owner["present"]:
+        state = "vgs" if owner["isVgs"] else "foreign"
+    else:
+        state = "unowned"
+
+    actionable = [
+        conflict for conflict in conflicts
+        if (conflict["activationFile"] and not conflict["shadowed"])
+        or (conflict["unitControls"] and (conflict["unitRunning"] or not conflict["unitMasked"]))
+    ]
+    manual = [
+        conflict for conflict in conflicts
+        if conflict["holdsName"] and not conflict["unitControls"]
+    ]
+    if actionable:
+        reason = ""
+    elif manual:
+        reason = _manual_reason(manual[0])
+    elif conflicts:
+        reason = "every conflicting daemon is already masked and shadowed"
+    else:
+        reason = "no conflicting notification daemon found"
+
+    record_state = _load_takeover_record()
+    return {
+        "busName": NOTIFICATION_BUS_NAME,
+        "state": state,
+        "error": owner["error"],
+        "vgsServerEnabled": vgs_notification_server_enabled(),
+        "vgsFirstRunTakeoverDone": vgs_first_run_takeover_done(),
+        # VGS holds the name now, but something else would still be activated
+        # into it on a session where VGS starts a moment later.
+        "atRisk": state == "vgs" and bool(conflicts),
+        "owner": owner,
+        "conflicts": conflicts,
+        "takeover": {"available": bool(actionable), "reason": reason},
+        "restore": {
+            "available": bool(record_state["shadows"] or record_state["masked"]
+                              or record_state["stopped"] or record_state["backups"]),
+            # Whether the changes waiting to be undone are ones VGS made on its
+            # own initiative. The shell reads this instead of a runtime flag,
+            # so an opt-out after a restart still reverses a first-run takeover.
+            "initiator": record_state["initiator"],
+            "automatic": record_state["initiator"] == "first-run",
+            "shadows": record_state["shadows"],
+            "masked": record_state["masked"],
+            "stopped": record_state["stopped"],
+            "backups": record_state["backups"],
+        },
+    }
+
+
+def _load_takeover_record() -> Dict[str, Any]:
+    """What a previous takeover changed: shadows written, units masked, the
+    user files those shadows displaced (shadow path -> saved original), and who
+    asked for it.
+
+    `initiator` is "first-run" when the shell took the name on its own
+    initiative and "manual" when a person did. The shell reverses only what it
+    did unasked, and it cannot remember across a restart -- but the record can,
+    because it lives beside the very changes it describes. An unrecognised or
+    absent value reads as "manual": a record VGS did not label is not one VGS
+    can claim to have made.
+    """
+    try:
+        data = json.loads(notification_state_file().read_text())
+    except (OSError, ValueError):
+        data = {}
+    shadows = [str(item) for item in data.get("shadows", []) if isinstance(item, str)]
+    masked = [str(item) for item in data.get("masked", []) if isinstance(item, str)]
+    stopped = [str(item) for item in data.get("stopped", []) if isinstance(item, str)]
+    raw_backups = data.get("backups")
+    backups = {
+        str(key): str(value)
+        for key, value in (raw_backups.items() if isinstance(raw_backups, dict) else [])
+        if isinstance(key, str) and isinstance(value, str)
+    }
+    initiator = data.get("initiator")
+    if initiator not in NOTIFICATION_INITIATORS:
+        initiator = "manual"
+    return {"shadows": shadows, "masked": masked, "stopped": stopped,
+            "backups": backups, "initiator": initiator}
+
+
+def _takeover_record_has_changes(record: Dict[str, Any]) -> bool:
+    """Whether the record describes anything a restore would have to undo.
+
+    An empty record is not a takeover; it is the absence of one, which is why
+    _save_takeover_record() deletes the file rather than writing it, and why an
+    automatic takeover may stamp its initiator only when this is False.
+    """
+    return bool(record["shadows"] or record["masked"]
+                or record.get("stopped") or record.get("backups"))
+
+
+def _save_takeover_record(record: Dict[str, Any]) -> str:
+    """Persist the undo record; returns "" on success or the failure message.
+
+    The caller must surface a non-empty return: a takeover that masked units
+    and wrote shadows but could not record them is not reversible, and
+    reporting it as success strands the user with changes restore cannot find.
+    """
+    path = notification_state_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Keep the undo record while saved originals still need restoration,
+        # even if their replacement shadows are gone.
+        if not _takeover_record_has_changes(record):
+            path.unlink(missing_ok=True)
+            return ""
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record, indent=2) + "\n")
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        message = f"could not record takeover state in {path}: {exc}"
+        eprint(f"vshell notifications: {message}")
+        return message
+    return ""
+
+
+def _write_activation_shadow(source: Path) -> Dict[str, Any]:
+    """Shadow a system activation file with an inert one in the data home.
+
+    D-Bus resolves an activation file name from the data directories in order
+    and stops at the first hit, so a same-named file in XDG_DATA_HOME wins.
+    Exec is deliberately a no-op: VGS owns the name whenever it runs, and when
+    it does not, failing the activation is honest -- silently starting the
+    daemon VGS was asked to displace is what this exists to prevent.
+
+    The file being shadowed can itself live in the data home, i.e. one the user
+    installed by hand. Writing over it would destroy it and leave restore with
+    nothing to put back, so it is moved aside first and recorded.
+
+    Returns {"path": Path|None, "backup": str, "error": str}.
+    """
+    target_dir = _xdg_data_home() / "dbus-1" / "services"
+    target = target_dir / source.name
+    backup = ""
+    body = (
+        f"{NOTIFICATION_SHADOW_MARKER}\n"
+        f"# Shadows {source} so the session bus does not activate a second\n"
+        f"# notification daemon into {NOTIFICATION_BUS_NAME} ahead of VGS.\n"
+        "# Undo with: vshell notifications restore\n"
+        "[D-BUS Service]\n"
+        f"Name={NOTIFICATION_BUS_NAME}\n"
+        f"Exec={shutil.which('false') or '/bin/false'}\n"
+    )
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(target):
+            try:
+                existing = target.read_text(errors="replace")
+            except OSError:
+                existing = ""
+            if NOTIFICATION_SHADOW_MARKER not in existing:
+                keep = target.with_name(target.name + ".vgs-orig")
+                index = 1
+                while os.path.lexists(keep):
+                    index += 1
+                    keep = target.with_name(f"{target.name}.vgs-orig{index}")
+                os.replace(target, keep)
+                backup = str(keep)
+        tmp = target.with_suffix(".service.tmp")
+        tmp.write_text(body)
+        tmp.chmod(0o644)
+        os.replace(tmp, target)
+    except OSError as exc:
+        eprint(f"vshell notifications: could not shadow {source}: {exc}")
+        return {"path": None, "backup": backup, "error": str(exc)}
+    return {"path": target, "backup": backup, "error": ""}
+
+
+def notification_takeover(automatic: bool = False) -> Dict[str, Any]:
+    """Mask and stop conflicting user units so VGS can claim the notification bus.
+    Report daemons that cannot be managed through a suitable user unit.
+    The undo record preserves who initiated the changes. A first-run record
+    allows an opt-out to restore them after a shell restart."""
+    status = notification_status()
+    record = _load_takeover_record()
+    # Set the initiator only when creating the undo record. Relabelling a manual
+    # takeover would let automatic restore reverse a deliberate user choice.
+    if automatic and not _takeover_record_has_changes(record):
+        record["initiator"] = "first-run"
+    actions: List[str] = []
+    manual: List[str] = []
+    failures: List[str] = []
+
+    for conflict in status["conflicts"]:
+        source = conflict["activationFile"]
+        if source and not conflict["shadowed"]:
+            written = _write_activation_shadow(Path(source))
+            if written["backup"]:
+                # Recorded before anything else can fail: restore must be able
+                # to find a displaced user file even if the rest goes wrong.
+                record["backups"][str(written["path"] or source)] = written["backup"]
+                actions.append(f"saved the existing {source} as {written['backup']}")
+            if written["path"] is None:
+                failures.append(f"could not shadow {source}: {written['error']}")
+            else:
+                if str(written["path"]) not in record["shadows"]:
+                    record["shadows"].append(str(written["path"]))
+                actions.append(f"shadowed D-Bus activation of {conflict['daemon']} ({source})")
+
+        unit = conflict["unit"]
+        if conflict["unitControls"] and not conflict["unitMasked"] and not conflict["unitTransient"]:
+            proc = _systemctl_user(["mask", unit])
+            if proc.returncode == 0:
+                if unit not in record["masked"]:
+                    record["masked"].append(unit)
+                actions.append(f"masked {unit}")
+            else:
+                failures.append(f"could not mask {unit}: {(proc.stderr or '').strip()}")
+        if conflict["unitControls"] and conflict["unitRunning"]:
+            proc = _systemctl_user(["stop", unit])
+            if proc.returncode == 0:
+                if unit not in record["stopped"]:
+                    record["stopped"].append(unit)
+                actions.append(f"stopped {unit}")
+            else:
+                failures.append(f"could not stop {unit}: {(proc.stderr or '').strip()}")
+        if conflict["holdsName"] and not conflict["unitControls"]:
+            manual.append(
+                f"{conflict['daemon']} (pid {conflict['pid']}) holds {NOTIFICATION_BUS_NAME}: "
+                + _manual_reason(conflict)
+            )
+
+    save_error = _save_takeover_record(record)
+    if save_error:
+        failures.append(save_error + " -- undo the changes above by hand")
+
+    result = notification_status()
+    result["actions"] = actions
+    result["manual"] = manual
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
+def notification_restore() -> Dict[str, Any]:
+    """Undo a previous takeover: drop the shadows, put back anything they
+    displaced, and unmask what was masked."""
+    record = _load_takeover_record()
+    actions: List[str] = []
+    failures: List[str] = []
+
+    kept_shadows: List[str] = []
+    kept_backups: Dict[str, str] = dict(record["backups"])
+    for entry in record["shadows"]:
+        path = Path(entry)
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            text = None  # already gone; a saved original may still be owed
+        if text is not None and NOTIFICATION_SHADOW_MARKER not in text:
+            kept_shadows.append(entry)
+            failures.append(f"{entry} was replaced by something else; left alone")
+            continue
+        if text is not None:
+            try:
+                path.unlink()
+                actions.append(f"removed {entry}")
+            except OSError as exc:
+                kept_shadows.append(entry)
+                failures.append(f"could not remove {entry}: {exc}")
+                continue
+
+        backup = kept_backups.get(entry, "")
+        if backup and os.path.lexists(backup):
+            try:
+                os.replace(backup, path)
+                actions.append(f"restored {entry} from {backup}")
+                kept_backups.pop(entry, None)
+            except OSError as exc:
+                failures.append(f"could not restore {entry} from {backup}: {exc}")
+        elif backup:
+            kept_backups.pop(entry, None)
+            failures.append(f"the saved original {backup} is gone; {entry} was not restored")
+
+    kept_masks: List[str] = []
+    for unit in record["masked"]:
+        proc = _systemctl_user(["unmask", unit])
+        if proc.returncode == 0:
+            actions.append(f"unmasked {unit}")
+        else:
+            kept_masks.append(unit)
+            failures.append(f"could not unmask {unit}: {(proc.stderr or '').strip()}")
+
+    # Start units after unmasking so restore can take effect in this session.
+    kept_stops: List[str] = []
+    for unit in record["stopped"]:
+        proc = _systemctl_user(["start", unit])
+        if proc.returncode == 0:
+            actions.append(f"started {unit}")
+        else:
+            kept_stops.append(unit)
+            failures.append(f"could not start {unit}: {(proc.stderr or '').strip()}")
+
+    # Preserve the initiator for incomplete restores so opt-out can retry them.
+    save_error = _save_takeover_record({
+        "shadows": kept_shadows, "masked": kept_masks,
+        "stopped": kept_stops, "backups": kept_backups,
+        "initiator": record["initiator"],
+    })
+    if save_error:
+        failures.append(save_error)
+
+    result = notification_status()
+    result["actions"] = actions
+    result["manual"] = []
+    result["failures"] = failures
+    result["ok"] = not failures
+    return result
+
+
+def _print_notification_status(status: Dict[str, Any]) -> None:
+    owner = status["owner"]
+    vgs_wants_it = status["vgsServerEnabled"]
+    if status["state"] == "unknown":
+        print(f"{NOTIFICATION_BUS_NAME}: could not be determined: {status['error']}")
+    elif status["state"] == "vgs":
+        print(f"{NOTIFICATION_BUS_NAME}: VGS (pid {owner['pid']})")
+    elif status["state"] == "foreign":
+        where = owner["unit"] or owner["exe"] or "unknown"
+        label = _daemon_label(owner["process"], owner["exe"], owner["unit"])
+        # Another daemon owning the name is only a fault when VGS was asked to
+        # be the notification daemon in the first place.
+        suffix = " -- VGS notifications are inert" if vgs_wants_it else " (VGS notification server turned off in settings)"
+        print(f"{NOTIFICATION_BUS_NAME}: {label} (pid {owner['pid']}, {where}){suffix}")
+    else:
+        print(f"{NOTIFICATION_BUS_NAME}: unowned")
+    for conflict in status["conflicts"]:
+        detail = []
+        if conflict["unit"]:
+            detail.append(conflict["unit"] + (" (masked)" if conflict["unitMasked"] else ""))
+        if conflict["activationFile"]:
+            detail.append("activation " + conflict["activationFile"] + (" (shadowed)" if conflict["shadowed"] else ""))
+        print(f"  conflict: {conflict['daemon']}" + (": " + ", ".join(detail) if detail else ""))
+    if vgs_wants_it and (status["state"] != "vgs" or status["atRisk"]):
+        # The actionable command is never withheld. Whether the shell's own
+        # first-run takeover fires is decided in NotificationService.qml, and
+        # rebuilding that decision here got it wrong a different way each time
+        # it was tried: an unreadable settings.json, a readable but unwritable
+        # one, a conflict no takeover can free, a name VGS already holds beside
+        # a live activation file. A manual takeover reads and writes only the
+        # undo record in the state directory and never settings.json, so it is
+        # valid in every one of those states. The one-shot therefore decides
+        # whether a further note is added, never what the user is told to run.
+        if status["takeover"]["available"]:
+            print("  fix: vshell notifications takeover")
+        elif status["takeover"]["reason"]:
+            print(f"  note: {status['takeover']['reason']}")
+        if not status["vgsFirstRunTakeoverDone"]:
+            print("  note: VGS may also claim this name itself the first time it starts")
+
+
+# Start Sunshine only after verifying the capture output. Without that output,
+# Sunshine can fall back to a physical monitor. Keep output creation and unit
+# startup in this lifecycle operation, with ownership checked before cleanup.
+# No VGS surface may start this unit directly; vshell remote-desktop start is
+# the only supported path. The unit ships disabled.
+
+RD_UNIT = "app-dev.lizardbyte.app.Sunshine.service"
+RD_OUTPUT = "HEADLESS-1"
+RD_WEB_PORT = 47990
+
+_RD_ENCODER_RE = re.compile(r"Creating encoder \[([A-Za-z0-9_.+-]+)\]")
+_RD_BITRATE_RE = re.compile(r"Streaming bitrate is (\d+)")
+_RD_DEPTH_RE = re.compile(r"Color depth: (\S+)")
+_RD_SESSIONS_RE = re.compile(r"active sessions: (\d+)")
+_RD_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+_RD_SYSTEMD_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _rd_hypr_env() -> Dict[str, str]:
+    """hyprctl needs an instance signature, and an ssh shell inherits none."""
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return env
+    try:
+        instances = sorted(
+            (p for p in (Path(env["XDG_RUNTIME_DIR"]) / "hypr").iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return env
+    if instances:
+        env["HYPRLAND_INSTANCE_SIGNATURE"] = instances[0].name
+    return env
+
+
+def _rd_output_present() -> Any:
+    """True/False when hyprctl answers, None when it cannot be asked.
+
+    None is a first-class answer, not a variant of False. "The output is
+    missing" and "nobody could say" lead to opposite decisions in
+    remote_desktop_start(), and collapsing them is what would start the host
+    onto a real monitor.
+    """
+    if not command_exists("hyprctl"):
+        return None
+    try:
+        proc = run(["hyprctl", "monitors", "-j"], timeout=3, env=_rd_hypr_env())
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        monitors = json.loads(proc.stdout or "[]")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(monitors, list):
+        return None
+    return any(isinstance(m, dict) and m.get("name") == RD_OUTPUT for m in monitors)
+
+
+def _rd_manages_output() -> Dict[str, Any]:
+    """Return whether VGS can manage a Hyprland virtual output and why.
+    SSH can lack compositor environment variables, so inspect the runtime
+    directory for an instance. An instance that cannot be queried causes
+    refusal: startup could otherwise capture a physical monitor.
+    Without hyprctl or an instance, report output management as unavailable."""
+    compositor = detect_compositor()["compositor"]
+    if compositor == "hyprland":
+        return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
+    if compositor != "unknown":
+        return {"manages": False, "compositor": compositor, "blocked": False, "reason": ""}
+
+    if not command_exists("hyprctl"):
+        return {"manages": False, "compositor": "unknown", "blocked": False,
+                "reason": "no compositor was detected and hyprctl is not installed"}
+    env = _rd_hypr_env()
+    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return {"manages": False, "compositor": "unknown", "blocked": False,
+                "reason": "no compositor was detected and no Hyprland instance is running"}
+    try:
+        proc = run(["hyprctl", "-j", "version"], timeout=3, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"manages": False, "compositor": "unknown", "blocked": True,
+                "reason": f"a Hyprland instance is running but hyprctl could not be reached: {exc}"}
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"hyprctl exited {proc.returncode}"
+        return {"manages": False, "compositor": "unknown", "blocked": True,
+                "reason": f"a Hyprland instance is running but hyprctl could not be reached: {detail}"}
+    return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
+
+
+def _rd_web_host() -> str:
+    """Prefer the tailnet address when available."""
+    if command_exists("tailscale"):
+        try:
+            proc = run(["tailscale", "ip", "-4"], timeout=3)
+            if proc.returncode == 0:
+                for line in (proc.stdout or "").splitlines():
+                    if line.strip():
+                        return line.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "localhost"
+
+
+def _rd_journal_window() -> Any:
+    """Return the active unit's journal start time, or None if unknown.
+    Reading older runs could report an unmatched connection as a live session.
+    Without a valid timestamp, callers must report unknown session state.
+    Do not fall back to a --boot window."""
+    proc = _systemctl_user(["show", RD_UNIT, "--property=ActiveEnterTimestamp", "--value"])
+    if proc.returncode != 0:
+        return None
+    parts = (proc.stdout or "").strip().split()
+    if len(parts) >= 3 and _RD_SYSTEMD_DATE_RE.match(parts[1]):
+        return ["--since", f"{parts[1]} {parts[2]}"]
+    return None
+
+
+def _rd_session_state() -> Dict[str, Any]:
+    """Live session facts, read from the unit's own journal.
+
+    Deliberately NOT the Sunshine Web API. That API is HTTP-Basic-gated behind
+    the credentials in Sunshine's own state file, so using it would mean
+    reading and holding a second credential inside the shell just to answer
+    "is somebody watching my screen". The journal already carries the events.
+
+    What the API would add and this cannot: the connected client's NAME and its
+    requested resolution. Neither is logged at Sunshine's `info` level -- see
+    `pairedClients` in the status payload, which is the paired list rather than
+    a pretend answer.
+    """
+    state: Dict[str, Any] = {
+        "active": False,
+        "count": 0,
+        "since": "",
+        "codec": "",
+        "bitrateBps": 0,
+        "colorDepth": "",
+        "readable": False,
+        "error": "",
+    }
+    window = _rd_journal_window()
+    if window is None:
+        # Unknown, and specifically NOT idle: `readable` stays false, so the
+        # shell renders "could not tell" rather than "nobody is watching".
+        state["error"] = (
+            "the host's start time could not be established, so the journal "
+            "could not be bounded to the current run"
+        )
+        return state
+
+    argv = ["journalctl", "--user", "-u", RD_UNIT, "--no-pager", "-o", "short-iso", *window]
+    try:
+        proc = run(argv, timeout=8)
+    except (OSError, subprocess.SubprocessError) as exc:
+        state["error"] = f"the journal could not be read: {exc}"
+        return state
+    if proc.returncode != 0:
+        state["error"] = (proc.stderr or "").strip() or f"journalctl exited {proc.returncode}"
+        return state
+
+    state["readable"] = True
+    announced = 0
+    for line in (proc.stdout or "").splitlines():
+        sessions = _RD_SESSIONS_RE.search(line)
+        if sessions:
+            try:
+                announced = int(sessions.group(1))
+            except ValueError:
+                announced = 0
+            continue
+        encoder = _RD_ENCODER_RE.search(line)
+        if encoder:
+            state["codec"] = encoder.group(1)
+            continue
+        bitrate = _RD_BITRATE_RE.search(line)
+        if bitrate:
+            try:
+                state["bitrateBps"] = int(bitrate.group(1))
+            except ValueError:
+                state["bitrateBps"] = 0
+            continue
+        depth = _RD_DEPTH_RE.search(line)
+        if depth:
+            state["colorDepth"] = depth.group(1)
+            continue
+        if "CLIENT CONNECTED" in line:
+            state["count"] = announced or (state["count"] + 1)
+            state["active"] = True
+            stamp = _RD_ISO_RE.match(line)
+            state["since"] = stamp.group(1) if stamp else ""
+            announced = 0
+            continue
+        if "CLIENT DISCONNECTED" in line:
+            state["count"] = max(0, state["count"] - 1)
+            state["active"] = state["count"] > 0
+            if not state["active"]:
+                state["since"] = ""
+            continue
+
+    if not state["active"]:
+        # Encoder and bitrate belong to the session that ended. Reporting them
+        # beside "listening" would read as a live stream's settings.
+        state["codec"] = ""
+        state["bitrateBps"] = 0
+        state["colorDepth"] = ""
+    return state
+
+
+# Choose a private-use marker absent from the raw bytes before decoding.
+_RD_DECODE_MARKERS = ("\ue000", "\ue001", "\uf8ff")
+
+# U+FFFD written literally, and the JSON escape a writer may use instead. Both
+# are what a device GENUINELY named with a replacement character looks like on
+# disk; neither can be produced by decoding an invalid byte.
+_RD_FFFD_ESCAPE_RE = re.compile(rb"\\u fffd".replace(b" ", b""), re.IGNORECASE)
+
+
+def _rd_decode_marking_real_fffd(raw_bytes: bytes) -> Any:
+    """Mark literal and JSON-escaped U+FFFD before decoding invalid bytes.
+    Remaining U+FFFD then identifies decode substitutions, while the marker
+    identifies original replacement characters. Return (text, marker), or
+    (None, "") if no unused marker is available."""
+    for marker in _RD_DECODE_MARKERS:
+        encoded = marker.encode("utf-8")
+        escaped_marker = marker.encode("unicode_escape")
+        if encoded in raw_bytes or escaped_marker in raw_bytes:
+            continue
+        marked = raw_bytes.replace("\ufffd".encode("utf-8"), encoded)
+        # A function, not a literal: re.sub processes backslash escapes in a
+        # replacement string, and the marker's escaped form starts with one.
+        marked = _RD_FFFD_ESCAPE_RE.sub(lambda _match: escaped_marker, marked)
+        return marked.decode("utf-8", errors="replace"), marker
+    return None, ""
+
+
+def _rd_paired_clients() -> Dict[str, Any]:
+    """Return paired device names from Sunshine's state file.
+    Paired devices are allowed to connect; they are not the current viewers.
+    Do not return the file's credential hash or salt. Missing state means
+    no paired devices; invalid structure produces an error for this field."""
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    path = Path(config_home) / "sunshine" / "sunshine_state.json"
+    try:
+        raw_bytes = path.read_bytes()
+    except FileNotFoundError:
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
+    except OSError as exc:
+        return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}", "undecodable": 0}
+
+    # Mark genuine replacement characters before decoding so invalid bytes in
+    # one name do not require discarding every paired device.
+    raw, marker = _rd_decode_marking_real_fffd(raw_bytes)
+    if raw is None:
+        # No usable marker. Nothing here can tell a real replacement character
+        # from a substituted one, so the safe direction is to say so.
+        raw = raw_bytes.decode("utf-8", errors="replace")
+        marker = ""
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        return {"names": [], "known": False, "error": f"the Sunshine state file is not valid JSON: {exc}", "undecodable": 0}
+
+    if not isinstance(data, dict):
+        return {"names": [], "known": False, "error": "the Sunshine state file is not an object", "undecodable": 0}
+    root = data.get("root")
+    if root is None:
+        # A state file with no paired devices yet legitimately has no `root`.
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
+    if not isinstance(root, dict):
+        return {"names": [], "known": False, "error": "the Sunshine state file's `root` is not an object", "undecodable": 0}
+    devices = root.get("named_devices")
+    if devices is None:
+        return {"names": [], "known": True, "error": "", "undecodable": 0}
+    if not isinstance(devices, list):
+        return {"names": [], "known": False, "error": "the Sunshine state file's device list is not a list", "undecodable": 0}
+
+    names: List[str] = []
+    undecodable = 0
+    for device in devices:
+        name = device.get("name") if isinstance(device, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Exact, per name. A U+FFFD surviving the marking above can only be a
+        # byte this process could not decode, so the name is withheld rather
+        # than shown mangled; a marker can only be a replacement character the
+        # file really contained, so it is restored and the name kept.
+        if "\ufffd" in name:
+            undecodable += 1
+            continue
+        if marker:
+            name = name.replace(marker, "\ufffd")
+        names.append(name.strip())
+    return {"names": names, "known": True, "error": "", "undecodable": undecodable}
+
+
+# --- Who created HEADLESS-1 --------------------------------------------------
+#
+# `start` and `stop` are separate process invocations, so "did VGS create this
+# output, or was it already there?" cannot live in memory. It goes in the state
+# dir beside the notification-takeover undo record, and for the same reason:
+# without provenance, undoing a change means guessing, and the wrong guess here
+# deletes a virtual output the user set up for something else. That is not
+# recoverable from the shell.
+#
+# The record is keyed on the Hyprland instance signature. Headless outputs do
+# not survive a compositor restart and the signature changes with every start,
+# so a record from a previous instance cannot possibly describe the output
+# present now -- it is discarded rather than trusted.
+
+
+def _rd_output_record_file() -> Path:
+    return state_dir() / "remote-desktop-output.json"
+
+
+def _rd_hypr_instance() -> str:
+    return _rd_hypr_env().get("HYPRLAND_INSTANCE_SIGNATURE", "")
+
+
+@contextlib.contextmanager
+def _rd_lifecycle_lock():
+    """Serialise start/stop/toggle across helper invocations.
+
+    Two concurrent starts could each see "no output", each create one, and
+    leave a monitor behind that no record owns. Two concurrent toggles could
+    read the same unit state and both act on it.
+    """
+    ensure_dirs()
+    lock_path = state_dir() / "remote-desktop.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _rd_record_output_created() -> str:
+    """Record that THIS call created the output. Returns "" or a failure reason."""
+    try:
+        ensure_dirs()
+        _rd_output_record_file().write_text(json.dumps({
+            "output": RD_OUTPUT,
+            "createdByVgs": True,
+            "instance": _rd_hypr_instance(),
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }, indent=2))
+        return ""
+    except OSError as exc:
+        return str(exc)
+
+
+def _rd_clear_output_record() -> None:
+    with contextlib.suppress(OSError):
+        _rd_output_record_file().unlink()
+
+
+def _rd_output_is_ours() -> bool:
+    """Return True only when the ownership record names this output and the running compositor instance."""
+    try:
+        data = json.loads(_rd_output_record_file().read_text(errors="replace"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    if data.get("createdByVgs") is not True or data.get("output") != RD_OUTPUT:
+        return False
+    instance = _rd_hypr_instance()
+    # No signature to compare against is not a match. Trusting a record we
+    # cannot place would authorise removing an output from a session VGS never
+    # touched.
+    return bool(instance) and data.get("instance") == instance
+
+
+def _rd_remove_output() -> str:
+    """Remove the virtual output. Returns "" on success, else a reason."""
+    try:
+        proc = run(["hyprctl", "output", "remove", RD_OUTPUT], timeout=5, env=_rd_hypr_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if proc.returncode != 0:
+        return (proc.stderr or proc.stdout or "").strip() or f"hyprctl exited {proc.returncode}"
+    return ""
+
+
+def _rd_unit_state() -> Dict[str, Any]:
+    """Return unit state with a separate flag for a successful query.
+    Require non-empty LoadState and ActiveState before treating the reply
+    as known. Failed or partial queries must not report the host as stopped
+    or uninstalled."""
+    required = ("LoadState", "ActiveState")
+    proc = _systemctl_user(["show", RD_UNIT, *(f"--property={name}" for name in required)])
+    values: Dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() not in values:
+            values[key.strip()] = value.strip()
+
+    if proc.returncode != 0:
+        return {
+            "known": False,
+            "error": (proc.stderr or "").strip() or f"systemctl exited {proc.returncode}",
+            "exists": False,
+            "running": False,
+        }
+    missing = [name for name in required if not values.get(name)]
+    if missing:
+        return {
+            "known": False,
+            "error": "systemctl's reply was incomplete: " + ", ".join(missing) + " missing",
+            "exists": False,
+            "running": False,
+        }
+    return {
+        "known": True,
+        "error": "",
+        "exists": values["LoadState"] in {"loaded", "masked"},
+        "running": values["ActiveState"] in {"active", "activating", "reloading"},
+    }
+
+
+def remote_desktop_status() -> Dict[str, Any]:
+    unit = _rd_unit_state()
+    running = unit["running"]
+    managed = _rd_manages_output()
+    compositor = managed["compositor"]
+    output_present = _rd_output_present() if managed["manages"] else None
+    session = _rd_session_state() if (unit["known"] and running) else {
+        "active": False, "count": 0, "since": "", "codec": "",
+        "bitrateBps": 0, "colorDepth": "",
+        # A unit whose state is unknown has an unknown session too; a stopped
+        # one genuinely has none.
+        "readable": unit["known"], "error": "" if unit["known"] else unit["error"],
+    }
+
+    if not unit["known"]:
+        # The question failed. Neither "installed" nor "not installed" is an
+        # answer this can give, so it gives neither.
+        state = "unknown"
+        reason = unit["error"]
+    elif unit["exists"]:
+        state = "running" if running else "stopped"
+        reason = ""
+    else:
+        state = "unavailable"
+        reason = f"{RD_UNIT} is not installed"
+
+    paired = _rd_paired_clients()
+
+    return {
+        "unit": RD_UNIT,
+        "unitKnown": unit["known"],
+        "installed": unit["exists"],
+        "running": running,
+        "state": state,
+        "reason": reason,
+        "compositor": compositor,
+        "output": {
+            "name": RD_OUTPUT,
+            # Only Hyprland can create a virtual output from here. On anything
+            # else the host still runs; it just captures a real monitor, and
+            # saying so is better than implying VGS manages an output it cannot.
+            "supported": managed["manages"],
+            "known": output_present is not None,
+            "present": output_present is True,
+        },
+        # A running Hyprland host without the capture output may expose a physical
+        # monitor. Report the missing output in the status.
+        "captureFallback": bool(running and managed["manages"] and output_present is False),
+        "webUi": f"https://{_rd_web_host()}:{RD_WEB_PORT}",
+        "session": session,
+        "pairedClients": paired["names"],
+        "pairedClientsKnown": paired["known"],
+        "pairedClientsError": paired["error"],
+        # Names dropped because the file held bytes that are not valid UTF-8.
+        # Reported rather than silently substituted: a mangled name is
+        # indistinguishable from a real one.
+        "pairedClientsUndecodable": paired.get("undecodable", 0),
+    }
+
+
+def _rd_result(actions: List[str], failures: List[str], manual: List[str]) -> Dict[str, Any]:
+    return {
+        "ok": not failures,
+        "actions": actions,
+        "failures": failures,
+        "manual": manual,
+        "status": remote_desktop_status(),
+    }
+
+
+def remote_desktop_start() -> Dict[str, Any]:
+    actions: List[str] = []
+    failures: List[str] = []
+    manual: List[str] = []
+
+    unit = _rd_unit_state()
+    if not unit["known"]:
+        return _rd_result(actions, [
+            f"could not determine whether {RD_UNIT} is installed: {unit['error']}"
+        ], manual)
+    if not unit["exists"]:
+        return _rd_result(actions, [f"{RD_UNIT} is not installed"], manual)
+
+    # A running host has already selected its capture target. Return without
+    # creating an output if the unit started between toggle's read and this call.
+    if unit["running"]:
+        manual.append(f"{RD_UNIT} was already running; nothing to do")
+        return _rd_result(actions, failures, manual)
+
+    managed = _rd_manages_output()
+    if managed["blocked"]:
+        # A Hyprland session is present and unreachable. Proceeding would create
+        # no output and let the capture fall back to a real monitor -- the same
+        # silent failure the unverifiable-presence refusal guards.
+        return _rd_result(actions, [
+            f"{managed['reason']}; not starting, because {RD_UNIT} would capture "
+            f"a real monitor instead"
+        ], manual)
+
+    created = False
+    if managed["manages"]:
+        present = _rd_output_present()
+        if present is None:
+            # Refusing is the point. Starting anyway would capture a real
+            # monitor and report success, which is the failure this command
+            # exists to prevent.
+            return _rd_result(actions, [
+                f"hyprctl could not say whether {RD_OUTPUT} exists; not starting, "
+                f"because {RD_UNIT} would capture a real monitor instead"
+            ], manual)
+        if present:
+            # It was already there, so it is NOT ours to remove later. Clearing
+            # any older record is part of that: a stale one would authorise
+            # deleting an output VGS did not create.
+            _rd_clear_output_record()
+            manual.append(f"{RD_OUTPUT} already existed; it will be left in place on stop")
+        else:
+            try:
+                proc = run(["hyprctl", "output", "create", "headless"], timeout=5, env=_rd_hypr_env())
+            except (OSError, subprocess.SubprocessError) as exc:
+                return _rd_result(actions, [f"could not create {RD_OUTPUT}: {exc}"], manual)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                return _rd_result(actions, [f"could not create {RD_OUTPUT}: {detail or f'hyprctl exited {proc.returncode}'}"], manual)
+            # Verify output presence after creation before recording ownership or starting
+            # Sunshine. A missing output can cause physical-monitor capture.
+            # If presence is unknown, do not remove an output whose state is unverified.
+            verified = _rd_output_present()
+            if verified is not True:
+                detail = (
+                    "hyprctl reported success but the output is not present"
+                    if verified is False
+                    else "hyprctl reported success but the output could not be verified"
+                )
+                return _rd_result(actions, [
+                    f"could not create {RD_OUTPUT}: {detail}; not starting, because "
+                    f"{RD_UNIT} would capture a real monitor instead"
+                ], manual)
+            created = True
+            actions.append(f"created {RD_OUTPUT}")
+            record_error = _rd_record_output_created()
+            if record_error:
+                # Leave an output without an ownership record intact. Removing it without
+                # confirmed ownership could delete a user-created monitor.
+                manual.append(
+                    f"created {RD_OUTPUT} but could not record that VGS created it "
+                    f"({record_error}); stop will leave it in place"
+                )
+    else:
+        manual.append(
+            (managed["reason"] or f"{managed['compositor']}: no virtual output is managed here")
+            + ", so the host will capture an existing monitor"
+        )
+
+    proc = _systemctl_user(["start", RD_UNIT])
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()
+        failures.append(f"could not start {RD_UNIT}: {detail or f'systemctl exited {proc.returncode}'}")
+        # If host startup fails, remove only the output created for this attempt.
+        if created:
+            reason = _rd_remove_output()
+            if reason:
+                manual.append(f"{RD_OUTPUT} is still present after the failed start: {reason}")
+            else:
+                actions.append(f"removed {RD_OUTPUT} again after the failed start")
+                _rd_clear_output_record()
+        return _rd_result(actions, failures, manual)
+
+    actions.append(f"started {RD_UNIT}")
+    return _rd_result(actions, failures, manual)
+
+
+def remote_desktop_stop() -> Dict[str, Any]:
+    actions: List[str] = []
+    failures: List[str] = []
+    manual: List[str] = []
+
+    # `systemctl stop` on an already-stopped unit exits 0, so this half is
+    # idempotent without a guard -- losing a toggle race here is harmless.
+    proc = _systemctl_user(["stop", RD_UNIT])
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()
+        failures.append(f"could not stop {RD_UNIT}: {detail or f'systemctl exited {proc.returncode}'}")
+    else:
+        actions.append(f"stopped {RD_UNIT}")
+
+    # Only tear down the output this subsystem created, and only once the host
+    # is actually down -- removing it from under a live capture is worse than
+    # leaving it.
+    if not _rd_manages_output()["manages"] or failures:
+        return _rd_result(actions, failures, manual)
+
+    present = _rd_output_present()
+    if present is None:
+        manual.append(f"could not check whether {RD_OUTPUT} is present; leaving it alone")
+        return _rd_result(actions, failures, manual)
+    if not present:
+        # Removed by hand between start and stop. Nothing to do -- and the
+        # record has to go, or it would authorise removing a LATER output that
+        # happens to carry the same name.
+        _rd_clear_output_record()
+        return _rd_result(actions, failures, manual)
+    if not _rd_output_is_ours():
+        # Leave outputs intact when the ownership record is absent or belongs to
+        # another compositor instance.
+        manual.append(f"{RD_OUTPUT} was not created by VGS, so it is left in place")
+        return _rd_result(actions, failures, manual)
+
+    reason = _rd_remove_output()
+    if reason:
+        manual.append(f"{RD_OUTPUT} is still present: {reason}")
+    else:
+        actions.append(f"removed {RD_OUTPUT}")
+        _rd_clear_output_record()
+    return _rd_result(actions, failures, manual)
+
+
+def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
+    print(f"host:    {status['state']}" + (f" ({status['reason']})" if status["reason"] else ""))
+    output = status["output"]
+    if not output["supported"]:
+        print(f"output:  not managed on {status['compositor']}")
+    elif not output["known"]:
+        print(f"output:  unknown ({output['name']} could not be checked)")
+    elif output["present"]:
+        print(f"output:  {output['name']} present")
+    else:
+        print(f"output:  {output['name']} MISSING" + (" — capture is falling back to a real monitor" if status["captureFallback"] else ""))
+    session = status["session"]
+    if session["error"]:
+        print(f"session: unknown ({session['error']})")
+    elif session["active"]:
+        detail = ", ".join(part for part in (
+            session["codec"],
+            f"{session['bitrateBps'] // 1000} kbps" if session["bitrateBps"] else "",
+            session["colorDepth"],
+        ) if part)
+        print(f"session: STREAMING — {session['count']} client(s)" + (f" [{detail}]" if detail else ""))
+    elif status["running"]:
+        print("session: listening, nobody connected")
+    else:
+        print("session: none")
+    print(f"web ui:  {status['webUi']}")
+    if not status.get("pairedClientsKnown", True):
+        print(f"paired:  unknown ({status.get('pairedClientsError', '')})")
+    else:
+        paired = status["pairedClients"]
+        undecodable = status.get("pairedClientsUndecodable", 0)
+        suffix = f" (+{undecodable} name(s) not valid UTF-8)" if undecodable else ""
+        print(f"paired:  {(', '.join(paired) if paired else 'none')}{suffix}")
+
+
+def _rd_watch_token(line: str) -> str:
+    """Classify a journal line as a watch token, or an empty string to ignore it.
+    Tests patch this seam to run the watch loop without Sunshine."""
+    if "CLIENT CONNECTED" in line:
+        return "connected"
+    if "CLIENT DISCONNECTED" in line:
+        return "disconnected"
+    if any(marker in line for marker in ("Started ", "Stopped ", "Starting ", "Stopping ")):
+        return "lifecycle"
+    if "Creating encoder [" in line or "Streaming bitrate is" in line:
+        return "session"
+    return ""
+
+
+def remote_desktop_watch() -> int:
+    """Stream normalised host events, one token per line, until killed.
+
+    This exists so Sunshine's log format is parsed in exactly ONE place. The
+    shell needs to know *that* something happened, not what Sunshine phrased it
+    as, and a widget string-matching `CLIENT CONNECTED` would be a second copy
+    of that knowledge drifting against this one.
+
+    Tokens: `connected`, `disconnected`, `lifecycle`, `session`. Every one of
+    them means "re-read `remote-desktop status`"; they are distinguished only so
+    the caller can flip the streaming indicator without waiting for the read.
+    """
+    argv = [
+        "journalctl", "--user", "-u", RD_UNIT,
+        "--follow", "-n", "0", "-o", "cat",
+    ]
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    except (OSError, subprocess.SubprocessError) as exc:
+        eprint(f"vshell remote-desktop: could not follow the journal: {exc}")
+        return 1
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            token = _rd_watch_token(line)
+            if token:
+                print(token, flush=True)
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:
+        return 0
+    finally:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+            proc.wait(timeout=3)
+    return proc.returncode or 0
+
+
+def cmd_remote_desktop(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell remote-desktop")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "start", "stop", "toggle", "ui"):
+        sub.add_parser(name).add_argument("--json", action="store_true")
+    sub.add_parser("watch", help="stream normalised host events until killed")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "watch":
+        return remote_desktop_watch()
+
+    if args.cmd == "ui":
+        url = remote_desktop_status()["webUi"]
+        try:
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            eprint(f"vshell remote-desktop: could not open {url}: {exc}")
+            return 1
+        if args.json:
+            print(json.dumps({"ok": True, "url": url}, indent=2))
+        else:
+            print(url)
+        return 0
+
+    if args.cmd == "status":
+        status = remote_desktop_status()
+        if status["state"] == "unknown":
+            if args.json:
+                print(json.dumps(status, indent=2))
+            else:
+                _print_remote_desktop_status(status)
+            return 3
+        if args.json:
+            print(json.dumps(status, indent=2))
+        else:
+            _print_remote_desktop_status(status)
+        if not status["installed"]:
+            return 2
+        return 0 if status["running"] else 1
+
+    # Hold the lifecycle lock across toggle's state read and action. The unit
+    # can still change independently, so start and stop must handle that race.
+    with _rd_lifecycle_lock():
+        if args.cmd == "toggle":
+            # A failed query must not be read as "stopped" -- that would start a
+            # host that may already be running, and create an output for it.
+            toggle_unit = _rd_unit_state()
+            if not toggle_unit["known"]:
+                result = _rd_result([], [
+                    f"could not determine whether {RD_UNIT} is running: {toggle_unit['error']}"
+                ], [])
+            elif toggle_unit["running"]:
+                result = remote_desktop_stop()
+            else:
+                result = remote_desktop_start()
+        elif args.cmd == "start":
+            result = remote_desktop_start()
+        else:
+            result = remote_desktop_stop()
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    for action in result["actions"]:
+        print(action)
+    for note in result["manual"]:
+        print(f"manual: {note}")
+    for failure in result["failures"]:
+        eprint(f"vshell remote-desktop: {failure}")
+    _print_remote_desktop_status(result["status"])
+    return 0 if result["ok"] else 1
+
+
+def cmd_notifications(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell notifications")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "takeover", "restore"):
+        cmd = sub.add_parser(name)
+        cmd.add_argument("--json", action="store_true")
+        if name == "takeover":
+            # Only the shell's own first-run takeover passes this. It records
+            # the change as VGS's doing so a later opt-out can reverse it --
+            # including from a shell that has restarted since.
+            cmd.add_argument("--automatic", action="store_true",
+                             help="record this takeover as VGS's own first-run action")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "status":
+        status = notification_status()
+        if args.json:
+            print(json.dumps(status, indent=2))
+        else:
+            _print_notification_status(status)
+        if not status["vgsServerEnabled"]:
+            return 0  # a foreign owner is the configured outcome, not a fault
+        return 0 if status["state"] == "vgs" else 1
+
+    result = (notification_takeover(automatic=args.automatic)
+              if args.cmd == "takeover" else notification_restore())
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    for action in result["actions"]:
+        print(action)
+    for note in result["manual"]:
+        print(f"manual: {note}")
+    for failure in result["failures"]:
+        eprint(f"vshell notifications: {failure}")
+    if not result["actions"] and not result["manual"] and not result["failures"]:
+        print("nothing to do")
+    _print_notification_status(result)
+    return 0 if result["ok"] else 1
+
+
+def cmd_terminal(argv: List[str]) -> int:
+    """Dispatch terminal CLI arguments to the shared terminal launcher."""
+    usage = (
+        "Usage:\n"
+        "  vshell terminal resolve [--json] [--prefer TERMINAL]\n"
+        "  vshell terminal open [--app-id ID] [--prefer TERMINAL]\n"
+        "  vshell terminal exec [--app-id ID|--tui] [--hold] [--wait]\n"
+        "                       [--prefer TERMINAL] -- <command> [args...]\n"
+        "\n"
+        "  --wait    stay alive until the terminal exits, so the caller can treat\n"
+        "            this process's exit as the command having finished.\n"
+        "  --prefer  try TERMINAL first; the normal chain still follows it."
+    )
+    if not argv:
+        eprint(usage)
+        return 2
+    sub, rest = argv[0], argv[1:]
+    if sub not in {"resolve", "open", "exec"}:
+        eprint(usage)
+        return 2
+
+    def _prefer_of(options: List[str]) -> List[str]:
+        for position, option in enumerate(options):
+            value = ""
+            if option == "--prefer" and position + 1 < len(options):
+                value = options[position + 1]
+            elif option.startswith("--prefer="):
+                value = option.split("=", 1)[1]
+            if value.strip():
+                try:
+                    return shlex.split(value)
+                except ValueError:
+                    return [value.strip()]
+        return []
+
+    if sub == "resolve":
+        as_json = "--json" in rest
+        candidates = terminal_candidates(_prefer_of(rest))
+        payload = {
+            "ok": bool(candidates),
+            "terminal": candidates[0] if candidates else [],
+            "candidates": candidates,
+            "scope": app_scope_prefix(),
+            "xdgTerminalsList": xdg_terminals_list(),
+        }
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False))
+        elif candidates:
+            print(" ".join(candidates[0]))
+        else:
+            eprint("No terminal found. Install one of: " + ", ".join(TERMINAL_CANDIDATES))
+        return 0 if candidates else 1
+
+    app_id = ""
+    hold = False
+    wait = False
+    prefer: List[str] = []
+    cmd: List[str] = []
+    index = 0
+    while index < len(rest):
+        arg = rest[index]
+        if arg == "--":
+            cmd = rest[index + 1:]
+            break
+        if arg == "--hold":
+            hold = True
+        elif arg == "--wait":
+            wait = True
+        elif arg == "--app-id":
+            index += 1
+            app_id = rest[index] if index < len(rest) else ""
+        elif arg.startswith("--app-id="):
+            app_id = arg.split("=", 1)[1]
+        elif arg == "--tui":
+            app_id = TERMINAL_TUI_APP_ID
+        elif arg == "--prefer":
+            index += 1
+            prefer = _prefer_of(["--prefer", rest[index]]) if index < len(rest) else []
+        elif arg.startswith("--prefer="):
+            prefer = _prefer_of([arg])
+        else:
+            eprint(f"vshell terminal {sub}: unknown option: {arg}")
+            eprint(usage)
+            return 2
+        index += 1
+    if sub == "exec" and not cmd:
+        eprint("vshell terminal exec: a command is required after --")
+        return 2
+    # CLI callers may be detached, so request a visible error notification.
+    return spawn_terminal(cmd, app_id=app_id, hold=hold, wait=wait, prefer=prefer, notify=True,
+                          # Waiting callers supervise the command. Keep the terminal in this process
+                          # group so the supervisor can terminate it with the command.
+                          detach=not wait,
+                          what="the requested terminal command" if cmd else "a terminal")
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|app|ai-usage|mercury|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
+        return 2
+    cmd, argv = sys.argv[1], sys.argv[2:]
+    try:
+        if cmd == "theme": return cmd_theme(argv)
+        if cmd == "fonts": return cmd_fonts(argv)
+        if cmd == "deps": return cmd_deps(argv)
+        if cmd == "update": return _update().cmd_update(argv)
+        if cmd == "mise": return _devtools().vshell_mise.cmd_mise(argv)
+        if cmd == "agent": return _devtools().cmd_agent(argv)
+        if cmd == "dev-env": return _devtools().cmd_dev_env(argv)
+        if cmd == "app": return _apps().cmd_app(argv)
+        if cmd in {"ai-usage", "ai"}: return cmd_ai_usage(argv)
+        if cmd == "capture": return cmd_capture(argv)
+        if cmd in {"screenshot"}: return cmd_capture(["screenshot", *argv])
+        if cmd in {"screenrecording", "recording"}: return cmd_capture(["screenrecording", *argv])
+        if cmd in {"ocr"}: return cmd_capture(["text", *argv])
+        if cmd in {"cl", "clipboard"}: return cmd_clipboard(argv)
+        if cmd in {"dl", "download"}: return cmd_download(argv)
+        if cmd in {"mercury"}: return cmd_mercury(argv)
+        if cmd == "trash": return cmd_trash(argv)
+        if cmd == "color": return cmd_color(argv)
+        if cmd == "keybinds": return cmd_keybinds(argv)
+        if cmd == "config": return cmd_config(argv)
+        if cmd == "scratchpad": return cmd_scratchpad(argv)
+        if cmd == "compositor": return cmd_compositor(argv)
+        if cmd == "instances": return cmd_instances(argv)
+        if cmd == "battery": return cmd_battery(argv)
+        if cmd == "blur": return cmd_blur(argv)
+        if cmd == "brightness": return cmd_brightness(argv)
+        if cmd == "auth": return cmd_auth(argv)
+        if cmd == "greeter": return cmd_greeter(argv)
+        if cmd == "sudo-toggle": return cmd_sudo_toggle(argv)
+        if cmd == "notifications": return cmd_notifications(argv)
+        if cmd == "remote-desktop": return cmd_remote_desktop(argv)
+        if cmd == "launcher-search": return cmd_launcher_search(argv)
+        if cmd == "terminal": return cmd_terminal(argv)
+        if cmd == "icons": return cmd_icons(argv)
+        if cmd == "cache": return cmd_cache(argv)
+        eprint(f"Unknown VGS helper command: {cmd}")
+        return 2
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:
+        eprint(f"vshell-helper error: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

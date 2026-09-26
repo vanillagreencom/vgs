@@ -1,0 +1,11 @@
+{
+  "app": "alacritty",
+  "template": "alacritty.toml",
+  "destination": "~/.config/alacritty/vgs.toml",
+  "curatedFile": "alacritty.toml",
+  "detect": {
+    "commands": [
+      "alacritty"
+    ]
+  }
+}

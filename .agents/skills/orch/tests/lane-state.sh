@@ -13,8 +13,6 @@
 #                to hand it, over both forms of recorded window
 #   § composer    whether the lane's live input line is empty, the one question
 #                a caller about to TYPE into the pane must ask
-#   § process ownership
-#                the host process table, zombie states and unreadable processes
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
@@ -70,6 +68,17 @@ screen_for() {
     blank) printf '\n   \n' ;;
     capacity) cat "$CODEX_PANES/codex-model-capacity.txt" ;;
     codex_idle) cat "$CODEX_PANES/codex-idle-after-turn.txt" ;;
+    codex_composer) cat "$CODEX_PANES/codex-composer-idle.txt" ;;
+    # The same two screens as tmux hands them back once it has padded the row
+    # it drew: `capture-pane -J` keeps those trailing blanks, and nobody typed
+    # them. The Codex one is the measured capture with blanks appended to its
+    # marker line, so the placeholder text is still the fixture's and not a
+    # second spelling of it here.
+    claude_padded) printf '%s\n%s\n' '⏺ Done: the PR is merged.' "$COMPOSER   " ;;
+    codex_padded) sed $'s/^\xe2\x80\xba.*$/&   /' "$CODEX_PANES/codex-composer-idle.txt" ;;
+    codex_draft) cat "$CODEX_PANES/codex-composer-draft.txt" ;;
+    draft) printf '%s\n%s\n' '⏺ Done: the PR is merged.' "${COMPOSER}and one more thing" ;;
+    bare_marker) printf '%s\n%s\n' '⏺ Done: the PR is merged.' '❯ typed by hand' ;;
     codex_working) cat "$CODEX_PANES/codex-working.txt" ;;
     claude_dialog) cat "$CODEX_PANES/claude-dialog-permission.txt" ;;
     *) printf 'screen_for: no such screen: %s\n' "$1" >&2; return 1 ;;
@@ -259,105 +268,28 @@ unset PANE_LIST_FAIL
 assert_eq "rc=$resolve_rc count=$LANE_PANE_COUNT" "rc=2 count=0" \
   "a failed pane list is exit 2, never a window this server does not hold"
 
-echo "=== lane-state § process ownership: host process reads ==="
+echo "=== lane-state § composer: what may be typed into ==="
 
-if proc_table_readable; then
-  new_case process-ownership
-  PROCESS_ROOT="$TMP_ROOT/process-root"
-  PROCESS_HARNESS="$PROCESS_ROOT/kz)harness"
-  PROCESS_ZOMBIE_FILE="$PROCESS_ROOT/zombie-pid"
-  PROCESS_FIXTURE_PIDS=""
-  mkdir -p "$PROCESS_ROOT"
-  PROCESS_REAL_BASH="$(command -v bash)" || exit 1
-  cp "$PROCESS_REAL_BASH" "$PROCESS_HARNESS"
-
-  python3 - "$PROCESS_HARNESS" "$PROCESS_ZOMBIE_FILE" <<'PY' &
-import os
-import sys
-import time
-child = os.fork()
-if child == 0:
-    os.execl(sys.argv[1], sys.argv[1], "-c", "exit 0")
-with open(sys.argv[2], "w", encoding="utf-8") as output:
-    output.write(f"{child}\n")
-time.sleep(30)
-PY
-  PROCESS_ZOMBIE_PARENT=$!
-  PROCESS_FIXTURE_PIDS="$PROCESS_ZOMBIE_PARENT"
-  (cd "$PROCESS_ROOT" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 1; done') &
-  PROCESS_LIVE_ONE=$!
-  (cd "$PROCESS_ROOT" && exec "$PROCESS_HARNESS" -c 'trap "exit 0" TERM; while :; do sleep 1; done') &
-  PROCESS_LIVE_TWO=$!
-  python3 -c 'import os,time; open("/proc/self/comm","w").write("kz ) state\n"); time.sleep(30)' &
-  PROCESS_WEIRD=$!
-  PROCESS_FIXTURE_PIDS+=" $PROCESS_LIVE_ONE $PROCESS_LIVE_TWO $PROCESS_WEIRD"
-  process_fixture_cleanup() {
-    local fixture_pid
-    for fixture_pid in $PROCESS_FIXTURE_PIDS; do kill "$fixture_pid" 2>/dev/null || true; done
-    for fixture_pid in $PROCESS_FIXTURE_PIDS; do wait "$fixture_pid" 2>/dev/null || true; done
-  }
-  trap 'process_fixture_cleanup; rm -rf "$TMP_ROOT"' EXIT
-
-  PROCESS_ZOMBIE_PID=""
-  PROCESS_ZOMBIE_STATE=""
-  for _process_try in {1..100}; do
-    if [[ -s "$PROCESS_ZOMBIE_FILE" ]]; then
-      PROCESS_ZOMBIE_PID="$(<"$PROCESS_ZOMBIE_FILE")"
-      PROCESS_ZOMBIE_STATE="$(lane_process_state "$PROCESS_ZOMBIE_PID")" || PROCESS_ZOMBIE_STATE=error
-      [[ "$PROCESS_ZOMBIE_STATE" != Z ]] || break
-    fi
-    sleep 0.02
-  done
-  assert_eq "$PROCESS_ZOMBIE_STATE" Z "the state reader finds a zombie after the command name's last parenthesis"
-  assert_eq "$(lane_process_state "$PROCESS_WEIRD")" S \
-    "the state reader handles spaces and a closing parenthesis in the command name"
-
-  PROCESS_OWNED_RC=0
-  lane_owned_processes "$PROCESS_ROOT" 'kz)harness' || PROCESS_OWNED_RC=$?
-  if [[ "$PROCESS_LIVE_ONE" -lt "$PROCESS_LIVE_TWO" ]]; then
-    PROCESS_EXPECTED="$PROCESS_LIVE_ONE $PROCESS_LIVE_TWO"
-  else
-    PROCESS_EXPECTED="$PROCESS_LIVE_TWO $PROCESS_LIVE_ONE"
-  fi
-  assert_eq "$LANE_OWNED_PROCESS_PIDS rc=$PROCESS_OWNED_RC" "$PROCESS_EXPECTED rc=0" \
-    "a zombie is passed over while both live owned harnesses are returned"
-
-  PROCESS_ZOMBIE_CONTROL_RC=0
-  (
-    lane_process_state() { printf 'S\n'; }
-    lane_owned_processes "$PROCESS_ROOT" 'kz)harness'
-  ) || PROCESS_ZOMBIE_CONTROL_RC=$?
-  assert_eq "$PROCESS_ZOMBIE_CONTROL_RC" 2 \
-    "control: reading the zombie as live makes the ownership read fail"
-
-  PROCESS_FAIL_PS="$PROCESS_ROOT/fail-ps"
-  mkdir -p "$PROCESS_FAIL_PS"
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 19' > "$PROCESS_FAIL_PS/ps"
-  chmod +x "$PROCESS_FAIL_PS/ps"
-  PROCESS_FAIL_PS_RC=0
-  (set +o pipefail; PATH="$PROCESS_FAIL_PS:$PATH"; lane_owned_processes "$PROCESS_ROOT" 'kz)harness') \
-    || PROCESS_FAIL_PS_RC=$?
-  assert_eq "$PROCESS_FAIL_PS_RC" 2 \
-    "a failed process-table read returns status 2 without caller pipefail"
-
-  PROCESS_MUTANT="$PROCESS_ROOT/mutant-lane-state.sh"
-  assert_eq "$(grep -cF -- '  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2' "$SCRIPTS_DIR/lib/lane-state.sh")" 1 \
-    "control: the separate process-table read has one mutation point"
-  sed '/^  raw="$(ps -A -o pid= -o ppid= -o comm=)" || return 2$/,+2c\
-  table="$(ps -A -o pid= -o ppid= -o comm= | awk '"'"'{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\\//, "", name); print pid, ppid, name }'"'"')" || return 2' \
-    "$SCRIPTS_DIR/lib/lane-state.sh" > "$PROCESS_MUTANT"
-  PROCESS_PS_CONTROL_RC=0
-  (source "$PROCESS_MUTANT"; set +o pipefail; PATH="$PROCESS_FAIL_PS:$PATH"; lane_owned_processes "$PROCESS_ROOT" 'kz)harness') \
-    || PROCESS_PS_CONTROL_RC=$?
-  assert_eq "$PROCESS_PS_CONTROL_RC" 0 \
-    "control: the pipeline hides a failed process-table read without pipefail"
-
-  process_fixture_cleanup
-  PROCESS_FIXTURE_PIDS=""
-  trap 'rm -rf "$TMP_ROOT"' EXIT
-else
-  printf '  skip  process ownership requires procfs\n'
-fi
+# One row per live input line a close-out can meet. Every screen here is one the
+# judge calls idle, which is what a lane sitting at its composer is; the
+# question this answers is the narrower one a caller about to paste into the
+# pane has to ask. SCREEN|WANT, where WANT is the status: 0 empty, 1 a draft,
+# 2 nothing measured.
+while IFS='|' read -r name screen want; do
+  [[ -n "$name" ]] || continue
+  composer_rc=0
+  lane_composer_empty "$(screen_for "$screen")" || composer_rc=$?
+  assert_eq "rc=$composer_rc" "rc=$want" "$name"
+done <<'COMPOSER_ROWS'
+an empty Claude composer may be typed into|idle|0
+a Claude composer holding a draft may not|draft|1
+Codex's placeholder is its empty composer|codex_composer|0
+a Codex composer holding a draft may not|codex_draft|1
+a composer row tmux padded with blanks is still empty|claude_padded|0
+the padded Codex placeholder is still empty too|codex_padded|0
+a marker line matching neither composer measures nothing|bare_marker|2
+a screen with no marker at all measures nothing|blank|2
+COMPOSER_ROWS
 
 echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 
@@ -508,13 +440,11 @@ git -C "$VERB_REPO" init -q
 # The provider, reduced to the one answer the probe reads: `touch` exits with
 # LANE_HOST_TOUCH_RC, which is how a reachable host and an unreachable one
 # differ to the caller, and writes the message a real provider writes when it
-# cannot reach the host, so the forwarding can be asserted. It records the item
-# it was asked about in LANE_HOST_TOUCH_LOG.
+# cannot reach the host, so the forwarding can be asserted.
 PROBE_STDERR='lane-host: ssh: connect to host build-7 port 22: Connection refused'
 cat > "$VERB_REPO/scripts/lane-host" <<EOF
 #!/usr/bin/env bash
 [[ "\${1:-}" == touch ]] || exit 0
-[[ "\${2:-}" != --item || -z "\${LANE_HOST_TOUCH_LOG:-}" ]] || printf '%s\n' "\${3:-}" > "\$LANE_HOST_TOUCH_LOG"
 [[ "\${LANE_HOST_TOUCH_RC:-0}" -eq 0 ]] || printf '%s\n' '$PROBE_STDERR' >&2
 exit "\${LANE_HOST_TOUCH_RC:-0}"
 EOF
@@ -525,7 +455,6 @@ export STUB_DIR
 printf '4242\n' > "$STUB_DIR/kids-100.txt"
 
 VERB_ERR="$TMP_ROOT/verb.err"
-VERB_TOUCH_LOG="$TMP_ROOT/verb.touch"
 
 # verb_state ITEM SCREEN HOST TOUCH_RC [EXTRA_PATH] — what `lanes state` printed
 # for ITEM, as `<word> rc=<status> note=<stderr key>`. The state comes off
@@ -534,23 +463,20 @@ VERB_TOUCH_LOG="$TMP_ROOT/verb.touch"
 # folded them could not tell a note from a verdict. A refusal prints no state,
 # and its key stands in the state slot. SCREEN `none` stages no pane for the
 # item at all, which is the observation a closed window and a duplicated name
-# both leave. The pane is staged in session kendex under ITEM's window part,
-# so a session-qualified ITEM names it the way a lane record does. VERB_RUN_REPO
-# names the checkout whose `lanes` runs, the fixture's unless a control swaps it.
-VERB_RUN_REPO="$VERB_REPO"
+# both leave.
 verb_state() {
   local item="$1" screen="$2" host="$3" touch_rc="$4" extra="${5:-}" out note word rc=0
   if [[ "$screen" == none ]]; then
     : > "$PANE_FIELDS"
   else
     screen_for "$screen" > "$STUB_DIR/pane-%3.txt"
-    printf 'kendex\t%s\t%%3\t100\tclaude\n' "${item#*:}" > "$PANE_FIELDS"
+    printf 'kendex\t%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
   fi
   : > "$VERB_ERR"
-  out="$(cd "$VERB_RUN_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
+  out="$(cd "$VERB_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
     env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" \
         ORCH_LANE_HOST="$host" LANE_HOST_TOUCH_RC="$touch_rc" \
-        LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" LANE_HOST_TOUCH_LOG="$VERB_TOUCH_LOG" \
+        LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" \
         ./scripts/lanes state "$item" 2>"$VERB_ERR")" || rc=$?
   # The first keyed line only, read from the file: a pipe into an early-closing
   # reader is what the shell rules forbid here.
@@ -569,10 +495,8 @@ verb_state() {
 # non-zero `touch` is a probe that failed — schemas/lane-host.md gives the verb
 # no "no such lane" reply — so exits 1 and 2 answer alike and neither says
 # `gone`, which would send an overseer down the window-gone path onto an item
-# whose remote session is still running. The `CC-1|idle|ssh` row is the
-# inverse: a pane that answered leaves the provider unasked. The
-# `kendex:` rows are the SESSION:WINDOW form a lane record carries, which
-# selects the pane under that session and answers as the bare name does.
+# whose remote session is still running. The last row is the inverse: a pane
+# that answered leaves the provider unasked.
 while IFS='|' read -r item screen host touch_rc want; do
   [[ -n "$item" ]] || continue
   assert_eq "$(verb_state "$item" "$screen" "$host" "$touch_rc")" "$want" \
@@ -588,22 +512,7 @@ CC-404|none|ssh|0|unjudged rc=0 note=none
 CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 CC-404|none|ssh|2|unjudged rc=0 note=host-unreachable
 CC-1|idle|ssh|1|idle rc=0 note=none
-kendex:CC-1|idle|local|0|idle rc=0 note=none
-fleet:CC-1|idle|local|0|unjudged rc=0 note=none
-kendex:CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
 ROWS
-
-# The hosted probe names the item, which is the window part of a
-# session-qualified name: the provider knows items and never tmux sessions.
-# probed NAME [REPO] — the item the provider was asked about for NAME.
-probed() {
-  : > "$VERB_TOUCH_LOG"
-  VERB_RUN_REPO="${2:-$VERB_REPO}" verb_state "$1" none ssh 1 >/dev/null
-  cat "$VERB_TOUCH_LOG"
-}
-for name in kendex:CC-404 CC-404; do
-  assert_eq "$(probed "$name")" "CC-404" "lanes state $name probes the provider with the bare item"
-done
 
 # The provider's own bytes reach the operator: a note naming only the key would
 # leave the reason for the failed probe on the far side of the dispatcher.
@@ -650,21 +559,6 @@ no_item_out="$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" ./scripts/lanes state 2>
 assert_eq "$(head -1 <<<"$no_item_out") rc=$no_item_rc" \
   "lanes: missing-value arg1=state rc=1" \
   "lanes state with no item refuses before it reads a pane"
-
-# Control: the probe handed the whole argument again asks the provider about
-# an item named after a tmux session.
-PROBE_MUTANT_REPO="$TMP_ROOT/verb-probe-mutant"
-cp -a "$VERB_REPO" "$PROBE_MUTANT_REPO"
-python3 - "$PROBE_MUTANT_REPO/scripts/lanes" <<'PY2'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = 'touch --item "${LANE_ARG#*:}"'
-assert s.count(old) == 1
-open(p, "w").write(s.replace(old, 'touch --item "$LANE_ARG"'))
-PY2
-assert_eq "$(probed kendex:CC-404 "$PROBE_MUTANT_REPO")" "kendex:CC-404" \
-  "control: probing with the whole argument names the session to the provider"
 
 echo "=== lane-state § control: the judge that reads the process and not the pane ==="
 

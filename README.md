@@ -1,39 +1,115 @@
-# VGS v2
+# VGS — VanillaGreen Shell
 
-A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the widgets you add to it, every panel, every background service. A small fixed core starts the shell, hosts the surfaces and loads plugins, and each plugin ships with the check that proves it is built and handed what it asked for.
+VGS is a desktop shell for the Hyprland and Niri compositors, built on Quickshell 0.3.1. It provides the bar, launcher, control centre, dock, notifications, lock screen and greeter, and a theme engine that recolours the shell and the applications you already run. Hyprland is the reference compositor; Niri is supported with native equivalents for its scrolling layout.
+
+![VGS demo](docs/media/vgs-demo-poster.jpg)
+
+<details>
+<summary>Play the demo (83 seconds, animated)</summary>
+
+![VGS demo, animated](docs/media/vgs-demo.webp)
+
+</details>
+
+[Download the full-resolution clip](docs/media/vgs-demo.mp4) (83 seconds): tiling and the scrolling layout, the theme browser and wallpapers, per-application theming, the control centre and network panel, notifications, power modes, AI usage, and the VGS menu.
+
+## Requirements
+
+- Hyprland or Niri.
+- Quickshell 0.3.1 or newer.
+- systemd user services.
+- Optional tools unlock optional features. A missing tool greys out its widget and leaves the rest of the shell running.
 
 ## Install
 
-There is no install command. From a checkout, `bin/vgsh run` starts the shell.
+Native packages are the recommended method. They install VGS system-wide and provide normal upgrades and removal.
+
+| Distribution | Channel | Install |
+| --- | --- | --- |
+| Arch | AUR | `yay -S vgs-shell`, or `vgs-shell-git` for the development version |
+| Fedora 43, 44 | COPR | `sudo dnf copr enable vanillagreen/vgs-shell && sudo dnf install vgs-shell` |
+| openSUSE Tumbleweed, Slowroll | OBS | [`packaging/README.md` § Channels](packaging/README.md#channels) |
+| Debian 13 | OBS | [`packaging/README.md` § Channels](packaging/README.md#channels) |
+| Ubuntu 26.04 | Launchpad PPA | [`packaging/README.md` § Channels](packaging/README.md#channels) |
+| Gentoo | VanillaGreen overlay | [`packaging/README.md` § Channels](packaging/README.md#channels) |
+| Void | maintainer recipe, no packaged Quickshell at the 0.3.1 baseline | [`packaging/`](packaging/) |
+| NixOS, Home Manager | flake | [`flake.nix`](flake.nix) |
+| Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.5.0/install.sh \| bash` |
+
+On Arch, `vgs-shell` ships every theme with a full-size screenshot, the `bauhaus` wallpapers, and the vendored icon themes. Every other theme's wallpapers download on demand from its own release archive.
+
+For Home Manager, add the flake input and import the module:
+
+```nix
+inputs.vgs.url = "github:vanillagreencom/vgs";
+```
+
+```nix
+{
+  imports = [ inputs.vgs.homeManagerModules.default ];
+  programs.vgs-shell.enable = true;
+}
+```
+
+### After installing
+
+A native package cannot enable a user service for you. Finish the setup once per account:
+
+```bash
+vshell setup
+```
+
+It reports which optional features your system can run and which app owns `org.freedesktop.Notifications`, then enables and starts `vshell.service`. Each feature group that reports `missing` names the commands it needs. `vshell deps status` repeats that report at any time. [packaging/README.md § Activation](packaging/README.md#activation) gives the first start for each channel, including Void, which runs runit and starts VGS from the compositor instead.
+
+The enabled unit starts with `graphical-session.target`, which your session manager brings up: uwsm does, Hyprland does from the release that ships its own `hyprland-session.target`, and Niri does from its own `niri.service`. A compositor launched straight from a TTY without one of those starts neither, so the unit never runs at your next login, and `vshell setup` says so when it sees that session. Launch Hyprland through uwsm, from the `hyprland-uwsm.desktop` session entry or with `uwsm start hyprland`. Launch Niri through its own session entry (Niri's `niri.desktop`, which runs `niri-session`) or with `niri-session`. Or start VGS from your compositor config instead: `exec-once = vshell run` on Hyprland, `spawn-at-startup "vshell" "run"` on Niri. `vshell.service` stays enabled either way, so disable it first with `systemctl --user disable vshell.service` before switching from the compositor-config route to a session manager.
+
+The Arch, Debian, Ubuntu, Fedora, openSUSE and Gentoo packages also declare those tools as optional dependencies, so your package manager can show them. The Void recipe cannot: xbps has no weak-dependency mechanism, so `vshell deps status` is the only list there.
+
+The release bundle supports x86-64 and ARM64 and starts the user service itself unless you pass `install.sh --no-start`. It carries every theme with a full-size screenshot, the `bauhaus` wallpapers, and the vendored icon themes. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything, and `install.sh --force` replaces those externally managed symlinks. It refuses a plain file or directory at the two symlink paths, and it does overwrite a regular file at the service path, which is the file VGS owns.
+
+Checksum-verified bundles and source archives are published on [GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
 
 ## Features
 
-- Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
-- One manifest format, judged once, with every field in [docs/architecture/plugins.md](docs/architecture/plugins.md).
-- A plugin manager in the bar: a panel that switches plugins on and off and edits their settings.
-- A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
-- Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
-- A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
+- A bar you build from widgets placed left, centre and right, each usable more than once. They cover workspaces and windows, the clock and weather, media and clipboard, system monitors, the system tray, connectivity, power, capture state and quick toggles. The settings window lists every widget it can place.
+- A clock and a system monitor that sit on the desktop itself.
+- The VGS menu: one searchable command menu with categories, fuzzy search, optional file search, and entries and web applications you add yourself. It is also the application launcher.
+- A theme engine that writes matching themes for terminals, editors, browsers, GTK, Qt, KDE colours and icon themes. `vshell theme apps` lists the targets and their state, and each one can be switched off.
+- Palette extraction from any wallpaper, per-role colour editing, whole-theme restyling by brightness, vibrancy, contrast, hue and temperature, and a light theme paired with a dark one so they swap together.
+- Claude Code gets a light and a dark theme written from the theme you apply, covering its own colours for body text, diffs, message bands and accents, and the applied theme's mode is selected without a restart.
+- Screenshots and screen recording by region, window or display, with a delay timer, an editor handoff, and text extraction from the screen.
+- Idle handling: lock after idle, fade to black while locked without powering monitors off, separate monitor-off and suspend timers on AC and battery, a video screensaver on the lock screen, an ASCII screensaver on the desktop, and an inhibitor that suppresses the chain.
+- Display management: arrangement, resolution, refresh rate, scale, rotation, saved profiles and gamma. Brightness works per display for laptop panels, external monitors over DDC/CI, and the Apple Pro Display XDR and Studio Display over USB.
+- Per-monitor wallpapers, scheduled rotation, and a local AI upscaler that turns smaller images into 6K wallpapers.
+- Plan limits for Claude and Codex in the bar, for every account you are signed into, with per-model quotas and reset countdowns.
+- Repository, AUR and development-tool update counts in the bar, with the update run handed to a terminal.
+- Tailscale and Bluetooth status and controls, and a themed greeter with optional auto-login.
+- An optional glass material for popouts and menus: translucent tinted surfaces over a blurred backdrop.
 
-## Shipped plugins
+`themes/catalog.json` lists every theme VGS offers: ports of the widely used palettes plus VGS originals. Every theme ships with the package, screenshot included, so applying one needs no download, and its wallpapers download on demand.
 
-| Plugin | What it does |
-|---|---|
-| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces, clock and plugin manager, and three sections for plugin widgets. |
+### Compositor support
+
+| Tier | Features |
+| --- | --- |
+| Both compositors | Bar and widgets, launcher, dash, control centre, dock, notifications, lock screen, greeter, themes, wallpapers, capture, brightness, idle and lock handling, and the backend services |
+| Niri equivalents | Dynamic per-output workspaces, the Niri overview, and KDL display, layout, keybind and window-rule configuration |
+| Hyprland only | Compositor blur. Niri has no blur API, so VGS disables that setting and explains why. |
 
 ## How it works
 
-- `bin/vgsh run` takes the instance lock and starts one shell for the session.
-- The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
-- Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
-- `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.
+- `vshell.service`, a systemd user service, runs the Quickshell configuration that draws every surface.
+- The QML shell asks the `vshell` CLI for anything privileged or generated. `bin/vshell_helper.py` does the heavy theme generation and template rendering.
+- Applying a theme writes a colour file for each enabled target application and reloads the ones that support it.
+- `vshell ipc call <target> <function>` drives the shell from a keybind or a script. `vshell ipc call vshell-menu open` opens the menu.
+- VGS writes its generated compositor configuration under its own directory: `~/.config/niri/vgs/` on Niri, `~/.config/hypr/vgs/` on Hyprland. A generated file takes effect only once your top-level config includes it. On Niri, VGS adds that include itself and backs the file up first. On Hyprland, display setup adds its own include, and the layout and scratchpad pages show you the line to add.
 
 ## Settings
 
-- `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
-- `~/.config/vgs/theme.json`: the five palette colours every plugin reads.
-- A widget's settings sit inline on its layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; every other plugin's sit on its row in `plugins`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`. A change reaches the running plugin without a restart.
+- `~/.config/vshell` holds your settings, your own themes, and plugin overrides. Keep it a real directory.
+- `~/.config/vshell/keybind-labels.json` names keys the compositor reports only as a raw keycode, which is what a remapper such as `input-remapper` or a QMK layer produces. Key it by the code or the resolved key: `{ "F13": "Right Alt" }`.
+- The settings window covers everything else. `vshell --help` lists the commands that scripts and keybinds can call; not every setting has one.
 
-## Writing a plugin
+---
 
-Read [docs/architecture/plugins.md](docs/architecture/plugins.md). An agent loads the `vgs-plugin` skill, which scaffolds a plugin from templates and checks it.
+MIT licensed. Built on [Quickshell](https://quickshell.org), [Hyprland](https://hypr.land) and [Niri](https://github.com/YaLTeR/niri), and forked from [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell). Lineage is recorded in [`docs/ATTRIBUTION.md`](docs/ATTRIBUTION.md).

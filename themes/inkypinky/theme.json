@@ -1,0 +1,10 @@
+{
+  "name": "inkypinky",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-bg2.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.9, "floor": 3}
+  ]
+}

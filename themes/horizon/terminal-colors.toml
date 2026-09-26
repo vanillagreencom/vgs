@@ -1,0 +1,3 @@
+# Dark ANSI mode draws body text on the slot 8 band, which the editor's comment
+# tone cannot carry; the band takes Horizon's line-highlight tone instead.
+color8 = "#2e303e"

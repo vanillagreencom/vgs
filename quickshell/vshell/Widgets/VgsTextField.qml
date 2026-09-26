@@ -1,0 +1,296 @@
+import QtQuick
+import qs.Common
+import qs.Widgets
+
+StyledRect {
+    id: root
+
+    LayoutMirroring.enabled: I18n.isRtl
+    LayoutMirroring.childrenInherit: true
+
+    KeyNavigation.tab: keyNavigationTab
+    KeyNavigation.backtab: keyNavigationBacktab
+
+    function checkParentDisablesTransparency() {
+        let p = parent;
+        while (p) {
+            if (p.disablePopupTransparency === true)
+                return true;
+            p = p.parent;
+        }
+        return false;
+    }
+
+    property alias text: textInput.text
+    property string placeholderText: ""
+    property string labelText: ""
+    property alias font: textInput.font
+    property alias textColor: textInput.color
+    property alias echoMode: textInput.echoMode
+    property alias validator: textInput.validator
+    property alias maximumLength: textInput.maximumLength
+    property string leftIconName: ""
+    property int leftIconSize: Theme.iconSize
+    property color leftIconColor: Theme.surfaceVariantText
+    property color leftIconFocusedColor: Theme.primary
+    property bool showClearButton: false
+    property bool showPasswordToggle: false
+    property real rightAccessoryWidth: 0
+    property real leftInset: 0
+    property real rightInset: 0
+    property bool passwordVisible: false
+    property bool usePopupTransparency: !checkParentDisablesTransparency()
+    // Surface beneath the transparent field, used to derive readable hint text.
+    property color backgroundColor: usePopupTransparency ? Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency) : Theme.surfaceContainerHigh
+    property color focusedBorderColor: Theme.primary
+    property color normalBorderColor: Theme.borderColor
+    property color placeholderColor: Theme.inputHintFor(backgroundColor)
+    property real borderWidth: 1
+    property real focusedBorderWidth: 1
+    property real cornerRadius: Theme.controlRadius
+    property real topPadding: Theme.spacingS
+    property real bottomPadding: Theme.spacingS
+    property bool ignoreLeftRightKeys: false
+    property bool ignoreUpDownKeys: false
+    property bool ignoreTabKeys: false
+    property var keyForwardTargets: []
+    property Item keyNavigationTab: null
+    property Item keyNavigationBacktab: null
+
+    signal textEdited
+    signal editingFinished
+    signal accepted
+    signal focusStateChanged(bool hasFocus)
+
+    function getActiveFocus() {
+        return textInput.activeFocus;
+    }
+    function setFocus(value) {
+        textInput.focus = value;
+    }
+    function forceActiveFocus() {
+        textInput.forceActiveFocus();
+    }
+    function selectAll() {
+        textInput.selectAll();
+    }
+    function clear() {
+        textInput.clear();
+    }
+    function insertText(str) {
+        textInput.insert(textInput.cursorPosition, str);
+    }
+
+    readonly property real labelBandHeight: Math.round(Theme.fontSizeSmall * 1.4) + Theme.spacingXS * 2
+
+    width: 200
+    height: labelText !== "" ? Math.round(Theme.fontSizeMedium * 3) + labelBandHeight : Math.round(Theme.fontSizeMedium * 3)
+    radius: 0
+    color: "transparent"
+    border.width: 0
+
+    Rectangle {
+        id: underline
+
+        anchors.left: parent.left
+        anchors.leftMargin: root.leftInset
+        anchors.right: parent.right
+        anchors.rightMargin: root.rightInset
+        anchors.bottom: parent.bottom
+        height: textInput.activeFocus ? root.focusedBorderWidth : root.borderWidth
+        radius: Math.min(root.cornerRadius, height / 2)
+        color: textInput.activeFocus ? root.focusedBorderColor : root.normalBorderColor
+
+        Behavior on color {
+            ColorAnimation {
+                duration: Theme.shortDuration
+                easing.type: Theme.standardEasing
+            }
+        }
+
+        Behavior on height {
+            NumberAnimation {
+                duration: Theme.shortDuration
+                easing.type: Theme.standardEasing
+            }
+        }
+    }
+
+    VgsIcon {
+        id: leftIcon
+
+        anchors.left: parent.left
+        anchors.leftMargin: root.leftInset
+        anchors.verticalCenter: textInput.verticalCenter
+        name: leftIconName
+        size: leftIconSize
+        color: textInput.activeFocus ? leftIconFocusedColor : leftIconColor
+        visible: leftIconName !== ""
+    }
+
+    StyledText {
+        id: fieldLabel
+
+        anchors.left: textInput.left
+        anchors.right: textInput.right
+        anchors.top: parent.top
+        anchors.topMargin: Theme.spacingXS
+        text: root.labelText
+        visible: root.labelText !== ""
+        font.pixelSize: Theme.fontSizeSmall
+        color: textInput.activeFocus ? Theme.primary : Theme.surfaceVariantText
+        elide: Text.ElideRight
+    }
+
+    TextInput {
+        id: textInput
+
+        anchors.left: leftIcon.visible ? leftIcon.right : parent.left
+        anchors.leftMargin: leftIcon.visible ? Theme.spacingS : root.leftInset
+        anchors.right: rightButtonsRow.left
+        anchors.rightMargin: rightButtonsRow.visible ? Theme.spacingS : 0
+        anchors.top: parent.top
+        anchors.topMargin: root.labelText !== "" ? root.labelBandHeight : root.topPadding
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root.bottomPadding
+        font.pixelSize: Theme.fontSizeMedium
+        font.family: Theme.fontFamily
+        color: activeFocus ? Theme.surfaceText : Theme.surfaceVariantText
+        selectionColor: Theme.primaryContainer
+        selectedTextColor: Theme.primary
+        horizontalAlignment: TextInput.AlignLeft
+        verticalAlignment: TextInput.AlignVCenter
+        selectByMouse: !root.ignoreLeftRightKeys
+        clip: true
+        activeFocusOnTab: true
+        KeyNavigation.tab: root.keyNavigationTab
+        KeyNavigation.backtab: root.keyNavigationBacktab
+        onTextChanged: root.textEdited()
+        onEditingFinished: root.editingFinished()
+        onAccepted: root.accepted()
+        onActiveFocusChanged: root.focusStateChanged(activeFocus)
+        Keys.forwardTo: root.keyForwardTargets
+        Keys.onLeftPressed: event => {
+            if (root.ignoreLeftRightKeys) {
+                event.accepted = true;
+            } else {
+
+                event.accepted = false;
+            }
+        }
+        Keys.onRightPressed: event => {
+            if (root.ignoreLeftRightKeys) {
+                event.accepted = true;
+            } else {
+                event.accepted = false;
+            }
+        }
+        Keys.onPressed: event => {
+            if (root.ignoreTabKeys && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+                event.accepted = false;
+                for (var i = 0; i < root.keyForwardTargets.length; i++) {
+                    if (root.keyForwardTargets[i])
+                        root.keyForwardTargets[i].Keys.pressed(event);
+                }
+                return;
+            }
+            if (root.ignoreUpDownKeys && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+                event.accepted = false;
+                for (var i = 0; i < root.keyForwardTargets.length; i++) {
+                    if (root.keyForwardTargets[i])
+                        root.keyForwardTargets[i].Keys.pressed(event);
+                }
+                return;
+            }
+            if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && root.keyForwardTargets.length > 0) {
+                for (var i = 0; i < root.keyForwardTargets.length; i++) {
+                    if (root.keyForwardTargets[i])
+                        root.keyForwardTargets[i].Keys.pressed(event);
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.IBeamCursor
+            acceptedButtons: Qt.NoButton
+        }
+    }
+
+    Row {
+        id: rightButtonsRow
+
+        anchors.right: parent.right
+        anchors.rightMargin: root.rightAccessoryWidth + root.rightInset
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Theme.spacingXS
+        visible: showPasswordToggle || (showClearButton && text.length > 0)
+
+        StyledRect {
+            id: passwordToggleButton
+
+            width: 20
+            height: 20
+            radius: 10
+            color: passwordToggleArea.containsMouse ? Theme.outlineStrong : Theme.withAlpha(Theme.outlineStrong, 0)
+            visible: showPasswordToggle
+
+            VgsIcon {
+                anchors.centerIn: parent
+                name: passwordVisible ? "visibility_off" : "visibility"
+                size: 14
+                color: passwordToggleArea.containsMouse ? Theme.outline : Theme.surfaceVariantText
+            }
+
+            MouseArea {
+                id: passwordToggleArea
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: passwordVisible = !passwordVisible
+            }
+        }
+
+        StyledRect {
+            id: clearButton
+
+            width: 20
+            height: 20
+            radius: 10
+            color: clearArea.containsMouse ? Theme.outlineStrong : Theme.withAlpha(Theme.outlineStrong, 0)
+            visible: showClearButton && text.length > 0
+
+            VgsIcon {
+                anchors.centerIn: parent
+                name: "close"
+                size: 14
+                color: clearArea.containsMouse ? Theme.outline : Theme.surfaceVariantText
+            }
+
+            MouseArea {
+                id: clearArea
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: textInput.text = ""
+            }
+        }
+    }
+
+    StyledText {
+        id: placeholderLabel
+
+        anchors.fill: textInput
+        text: root.placeholderText
+        font: textInput.font
+        color: placeholderColor
+        horizontalAlignment: Text.AlignLeft
+        verticalAlignment: textInput.verticalAlignment
+        visible: textInput.text.length === 0
+        elide: I18n.isRtl ? Text.ElideLeft : Text.ElideRight
+    }
+
+}

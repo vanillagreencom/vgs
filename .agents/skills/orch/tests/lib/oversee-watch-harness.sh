@@ -1,12 +1,11 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion helpers, and one `run_watch` entry point.
 #
-# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, the tmux
-# panes of the lane windows, and the accounts through `lanes list`.
-# oversee_watch.sh covers GitHub and process-wide failures;
-# oversee_watch_triage.sh covers the tracker; the three lane suites cover pane
-# behavior, prompt state, and spent-account banners; oversee_watch_accounts.sh
-# covers account events and the heartbeat roster. They share this sandbox.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, and the tmux
+# panes of the lane windows. oversee_watch.sh covers GitHub and process-wide
+# failures; oversee_watch_triage.sh covers the tracker; the three lane suites
+# cover pane behavior, prompt state, and spent-account banners. They share this
+# sandbox.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
@@ -99,7 +98,6 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
 #   noisy         present → every successful `pr list` also writes to stderr
-# Every `auth status` and `pr list` call is logged to gh.calls.
 # `api user` (env-token preflight) succeeds for any token except one
 # starting with ghp_stale.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
@@ -107,7 +105,6 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -uo pipefail
 case "${1:-} ${2:-}" in
   "auth status")
-    printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/auth-fail" ]] && { echo "You are not logged into any GitHub hosts." >&2; exit 1; }
     echo "Logged in"; exit 0 ;;
   "api user")
@@ -153,15 +150,7 @@ EOF
 
 # tmux stub: windows.txt lists the caller's window names and
 # windows-<session>.txt another session's (`list-windows -t <session>`, absent
-# meaning no such session). The caller's session is session.txt, default main:
-# `display-message -p '#S'` answers it, session-fail making that read fail, and
-# a target `=<that session>:<lane>` reads the same files as a bare <lane>, so
-# a lane's fixtures are named for the lane whichever way the watch spells it.
-# session-fail is the calling pane gone, and there a `list-windows` naming no
-# session answers the session tmux falls back to, windows-fallback.txt, empty
-# when absent, and a bare lane target reads that session's fixtures, named
-# fallback-<lane>, never the recorded lane's;
-# pane-<lane>.txt is a lane's screen;
+# meaning no such session); pane-<lane>.txt is a lane's screen;
 # cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}) and
 # panepid-<lane>.txt its #{pane_pid} (default 9000), returned together as the
 # lane's one liveness read; panes.txt is `list-panes -a` (`<server pid> <pane
@@ -177,33 +166,16 @@ set -uo pipefail
 # The pane or lane a call names, read from its own argv: every format arm below
 # asks the same question, and a scan each arm kept for itself shared one cursor
 # and so depended on the order the arms were written in.
-current_session() { if [[ -f "$STUB_DIR/session.txt" ]]; then cat "$STUB_DIR/session.txt"; else echo main; fi; }
-# A target in the caller's own session, spelled exactly, names the same lane as
-# its bare window name.
-lane_name() {
-  local t="${1#=}" cur
-  cur="$(current_session)"
-  if [[ -f "$STUB_DIR/session-fail" && "$1" != *:* && "$1" != %* ]]; then
-    printf 'fallback-%s\n' "$1"
-    return 0
-  fi
-  [[ "$t" != "$cur:"* ]] || t="${t#"$cur":}"
-  printf '%s\n' "$t"
-}
 dash_t() {
   local prev="" out="" x
   for x in "$@"; do [[ "$prev" == "-t" ]] && out="$x"; prev="$x"; done
-  lane_name "$out"
+  printf '%s\n' "$out"
 }
 case "${1:-}" in
   list-windows)
     s=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && s="${2#=}"; shift; done
-    if [[ -z "$s" && -f "$STUB_DIR/session-fail" ]]; then
-      [[ ! -f "$STUB_DIR/windows-fallback.txt" ]] || cat "$STUB_DIR/windows-fallback.txt"
-      exit 0
-    fi
-    [[ -n "$s" && "$s" != "$(current_session)" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
+    [[ -n "$s" ]] || { cat "$STUB_DIR/windows.txt"; exit 0; }
     [[ -f "$STUB_DIR/windows-$s.txt" ]] || { echo "can't find session: $s" >&2; exit 1; }
     cat "$STUB_DIR/windows-$s.txt"; exit 0 ;;
   list-panes)
@@ -211,7 +183,7 @@ case "${1:-}" in
     exit 0 ;;
   capture-pane)
     lane=""; join=0
-    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$(lane_name "$2")"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/pane-$lane.calls"
     [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { printf 'E_CAPTURE lane=%s\n' "$lane" >&2; exit 1; }
@@ -225,13 +197,6 @@ case "${1:-}" in
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
     exit 0 ;;
   display-message)
-    # `-p [-t <pane>] '#S'` asks which session the caller is in.
-    for a in "$@"; do
-      [[ "$a" == '#S' ]] || continue
-      [[ ! -f "$STUB_DIR/session-fail" ]] || { echo "can't find pane: ${TMUX_PANE:-none}" >&2; exit 1; }
-      current_session
-      exit 0
-    done
     # `-p -t <pane> '#{pid}'` asks which tmux server a pane belongs to, the
     # first half of the key lib/lane-context.sh builds a session's own row on.
     # Answered from the same pane-key file the pair above is answered from, so
@@ -275,7 +240,8 @@ case "${1:-}" in
       if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
       exit 0
     done
-    lane="$(dash_t "$@")"
+    lane=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
     n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
     src="$STUB_DIR/cmd-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/cmd-$lane.txt"
@@ -474,30 +440,9 @@ rc=0
 [[ "$rc" -eq 0 ]] || exit "$rc"
 EOF
 
-# Account reader: `lanes list --json`, answered from lanes.<N>.json on the Nth
-# call of the case and lanes.json otherwise, `[]` with neither, so no case
-# reads the accounts of the machine running it. lanes.rc is the exit status,
-# lanes.sleep the seconds to wait before answering, every call's argv lands in
-# lanes.args and the usage age it was handed in lanes.max-age.
-cat > "$TMP_ROOT/bin/lanes-stub.sh" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-printf '%s\n' "$*" >> "$STUB_DIR/lanes.args"
-printf '%s\n' "${ORCH_LANES_USAGE_MAX_AGE:-unset}" >> "$STUB_DIR/lanes.max-age"
-[[ ! -f "$STUB_DIR/lanes.sleep" ]] || sleep "$(cat "$STUB_DIR/lanes.sleep")"
-n=0; [[ -f "$STUB_DIR/lanes.calls" ]] && n="$(cat "$STUB_DIR/lanes.calls")"
-n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/lanes.calls"
-rc=0; [[ -f "$STUB_DIR/lanes.rc" ]] && rc="$(cat "$STUB_DIR/lanes.rc")"
-[[ "$rc" -eq 0 ]] || { printf 'lanes: stub-refused rc=%s\n' "$rc" >&2; exit "$rc"; }
-if [[ -f "$STUB_DIR/lanes.$n.json" ]]; then cat "$STUB_DIR/lanes.$n.json"
-elif [[ -f "$STUB_DIR/lanes.json" ]]; then cat "$STUB_DIR/lanes.json"
-else printf '[]\n'; fi
-EOF
-
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh" \
-  "$TMP_ROOT/bin/lanes-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -522,29 +467,7 @@ new_case() {
   printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 }
 
-# shortened_ceiling_watch — a copy of the scripts whose oversee-watch gives
-# each account read a one-second ceiling, so a row can overrun it without
-# waiting out the real one. Sets CEILING_WATCH to that copy, and asserts the
-# copy really differs, so a ceiling line that stopped matching reddens here
-# rather than leaving a row that waits the full ceiling. It sets a variable
-# rather than printing the path because the assertion must count in the suite.
-CEILING_WATCH=""
-shortened_ceiling_watch() {
-  local dir="$TMP_ROOT/ceiling"
-  mkdir -p "$dir/orch"
-  cp -R "$REPO_ROOT/skills/orch/scripts" "$dir/orch/scripts"
-  ln -s "$REPO_ROOT/skills/github" "$dir/github"
-  sed 's/^READ_CEILING=60$/READ_CEILING=1/' \
-    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$dir/orch/scripts/oversee-watch"
-  chmod +x "$dir/orch/scripts/oversee-watch"
-  assert_eq "$(cmp -s "$dir/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-    "differs" "the shortened-ceiling copy really differs from the watch"
-  CEILING_WATCH="$dir/orch/scripts/oversee-watch"
-}
-
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
-# The mail cadence is 0 unless a case names one: a mail pass on every turn,
-# and a long pass waited for rather than polled once a second.
 # WATCH_BIN names the script under test; a suite points it at a mutant copy
 # for a must-fail control and leaves it unset otherwise. WATCH_CWD names the
 # checkout the watch runs in, for a case whose fleet is more than one
@@ -552,13 +475,7 @@ shortened_ceiling_watch() {
 # any checkout it names carries the same .agents/skills/orch symlink.
 # Every kendex [env] setting the watch reads is unset here as well: a settings
 # file exports them into the agent shell, and one inherited from the caller
-# would decide a case's outcome instead of the case. ORCH_REPORT is set off
-# rather than unset: its default is on, and a fleet state whose lanes launched
-# more than an interval ago would put report-due into every case's block. The
-# report cases pass ORCH_REPORT=on, which the later assignment makes win.
-# The report's helper paths, OVERSEE_WATCH_REPORT and every OVERSEE_REPORT_*
-# override oversee-report reads, are unset for the same reason; a case that
-# names one sets it after the clear.
+# would decide a case's outcome instead of the case.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -588,19 +505,13 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
-           -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS \
-           -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
-           -u ORCH_REPORT_COLUMNS -u ORCH_PROGRESS_REPORT_DIR -u OVERSEE_WATCH_REPORT \
-           -u OVERSEE_REPORT_WORKFLOW_STATE -u OVERSEE_REPORT_TRACKER -u OVERSEE_REPORT_GITHUB \
-           -u OVERSEE_REPORT_LANE_MAIL -u OVERSEE_REPORT_LANE_HOST ORCH_REPORT=off \
+           -u ORCH_WATCH_TAIL_LINES -u LINEAR_TEAM \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
-           ORCH_WATCH_MAIL_INTERVAL=0 \
            ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/lane-close-stub.sh" \
-           OVERSEE_WATCH_LANES="$TMP_ROOT/bin/lanes-stub.sh" \
            REAL_LANE_HOST="$REPO_ROOT/skills/orch/scripts/lane-host" \
            REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \

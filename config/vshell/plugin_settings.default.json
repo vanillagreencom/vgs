@@ -1,0 +1,18 @@
+{
+  "aiUsage": {
+    "providerFilter": [],
+    "refreshSeconds": "300"
+  },
+  "tailscale": {
+    "pillMode": "count"
+  },
+  "remoteDesktop": {
+    "pillMode": "status"
+  },
+  "sysUpdate": {
+    "systemUpdateCommand": "{vshell} update run system",
+    "aurUpdateCommand": "{vshell} update run aur",
+    "toolsUpdateCommand": "{vshell} update run tools",
+    "allUpdateCommand": "{vshell} update run all"
+  }
+}

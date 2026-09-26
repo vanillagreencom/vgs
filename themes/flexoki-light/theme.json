@@ -1,0 +1,15 @@
+{
+  "name": "flexoki-light",
+  "mode": "light",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-orb.png",
+  "contrastShortfalls": [
+    {"slot": "color3", "ratio": 2.31, "floor": 3},
+    {"slot": "color6", "ratio": 2.78, "floor": 3},
+    {"slot": "color7", "ratio": 2.0, "floor": 3},
+    {"slot": "color11", "ratio": 2.31, "floor": 3},
+    {"slot": "color14", "ratio": 2.78, "floor": 3},
+    {"slot": "color15", "ratio": 1.55, "floor": 3}
+  ]
+}
