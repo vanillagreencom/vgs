@@ -26,3 +26,40 @@ expect "disable destroyed the polkit agent" false lent polkitAgent
 expect_poll "the compositor dropped the fixture's shortcut" 0 hypr_shortcuts
 expect "qs lists no IPC target for the disabled fixture" 0 ipc_targets
 expect "disabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare false
+
+# Both backgrounds become eligible in one configuration update, before the
+# registry's deferred lending snapshot sees the first holder.
+python3 - "$repo/scripts/smoke/fixtures/plugins/acme.contention" "$home/.config/vgs/plugins" <<'PY'
+import json, pathlib, shutil, sys
+for suffix in ("a", "b"):
+    plugin_id = "acme.contend-" + suffix
+    target = pathlib.Path(sys.argv[2]) / plugin_id
+    shutil.copytree(sys.argv[1], target)
+    manifest = target / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data["id"] = plugin_id
+    manifest.write_text(json.dumps(data))
+PY
+expect "rescan discovers the contending backgrounds" ok ipc shell rescanPlugins
+expect_poll "both contending backgrounds are known" True plugin_known acme.contend-b
+expected_errors+=('plugins: acme\.contend-[ab] refused: capability=lock held-by=acme\.contend-[ab]')
+python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+data = json.load(open(p))
+data.setdefault("plugins", []).extend({"id": "acme.contend-" + suffix} for suffix in ("a", "b"))
+json.dump(data, open(p + ".tmp", "w"))
+os.replace(p + ".tmp", p)
+PY
+expect_log "a live hold refuses the other background before lending settles" 1 'plugins: acme\.contend-[ab] refused: capability=lock held-by=acme\.contend-[ab]'
+holder="$(lent holders.lock | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')"
+case "$holder" in
+  acme.contend-a) contender=acme.contend-b ;;
+  acme.contend-b) contender=acme.contend-a ;;
+  *) fail "unexpected contention holder: $holder"; exit 1 ;;
+esac
+expect "the refused background has no instance" False record_exists "$contender"
+expect "the first background releases the exclusive capability" ok ipc shell setPluginEnabled "$holder" false
+expect_poll "the refused background builds after the holder leaves" True record_exists "$contender"
+expect "the remaining background is disabled" ok ipc shell setPluginEnabled "$contender" false
+expect_poll "contention cleanup releases the lock" null lent holders.lock

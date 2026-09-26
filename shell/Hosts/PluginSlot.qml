@@ -26,8 +26,8 @@ Item {
     // host sets it, so a plugin closed by hide or by being disabled hears it.
     property bool closeOnUnload: false
 
-    // Emitted with the key whose build produced no instance, so a host can
-    // take the surface down instead of showing an empty one.
+    // Only code failures suppress a host until its source changes. A
+    // temporary enablement or lending refusal must remain eligible to retry.
     signal buildFailed(string key)
     // Emitted with every instance the slot builds.
     signal built(var instance)
@@ -58,10 +58,13 @@ Item {
         if (key === loadedKey) return;
         unload();
         if (key === "") return;
-        // Remember failed attempts too; settings changes cannot repair code.
+        // Lending changes take a refused key away, then restore it when the
+        // capability becomes available. Settings alone do not trigger retries.
         loadedKey = key;
-        instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context, screen);
-        if (instance === null) { buildFailed(key); return; }
+        const result = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context, screen);
+        if (result.state === "failed") { buildFailed(key); return; }
+        if (result.state === "refused") return;
+        instance = result.instance;
         instance.anchors.fill = slot;
         loadedHostKey = hostKey;
         built(instance);

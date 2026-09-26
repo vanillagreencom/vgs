@@ -101,17 +101,17 @@ Singleton {
     // on, which its `screens` capability reports, null for a kind with no
     // screen. Properties are assigned after creation, never as initial
     // properties, which cross a QVariant conversion that drops functions and
-    // turns nested lists into non-Array sequences. Returns null after
-    // logging when the plugin cannot be built. A failure in the plugin's
+    // turns nested lists into non-Array sequences. Returns the attempt's
+    // built, refused or failed state. A failure in the plugin's
     // own code is remembered for this host, kind and id; a refusal on
     // enablement or lending is not, since either can change independently.
     function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
         const manifest = Registry.manifests[id];
-        if (manifest === undefined) { console.error("plugins: unknown: " + id); return null; }
-        if (failedRevision(hostKey, kind, id) === manifest.__revision) return null;
+        if (manifest === undefined) { console.error("plugins: unknown: " + id); return { state: "refused" }; }
+        if (failedRevision(hostKey, kind, id) === manifest.__revision) return { state: "failed" };
         const result = attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator);
         if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision, screen);
-        return result.state === "built" ? result.instance : null;
+        return result;
     }
 
     function failedRevision(hostKey, kind, id) {
@@ -182,8 +182,9 @@ Singleton {
     // which layout entry with this id the widget reads, for its configure
     // capability. A widget that does not declare them is destroyed.
     function createWidget(id, parent, barRow, entry, hostKey, locator) {
-        const instance = createInstance(id, "bar-widget", parent, hostKey, entry, null, barRow.screen, locator);
-        if (instance === null) return null;
+        const result = createInstance(id, "bar-widget", parent, hostKey, entry, null, barRow.screen, locator);
+        if (result.state !== "built") return null;
+        const instance = result.instance;
         try {
             instance.bar = barRow.instance;
             instance.moduleName = id;

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "acme.contention",
+  "name": "Contending background",
+  "version": "0.1.0",
+  "author": "acme",
+  "description": "Background that holds an exclusive capability",
+  "kinds": ["background"],
+  "entryPoints": { "background": "Background.qml" },
+  "capabilities": ["lock"]
+}
