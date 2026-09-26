@@ -16,6 +16,7 @@ DECISIONS_BASE_REF = "origin/v2"
 GH_ISSUE_PATTERN = "vgs-[0-9]+"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
+ORCH_USER_MODE = "ceo"
 
 # Extra test-path globs branch-size-check adds to its built-in test rule, which
 # names none of them. The controls `scripts/validate` runs are validation code;
@@ -84,7 +85,7 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # are rejected; legacy statuses use REVIEW_GATE_STATUS_PUBLISHER_REJECT.
 # Skip-pattern filtering and newest-row selection prevent skipped or stale
 # successes from supplying evidence.
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "copilot-pull-request-reviewer"
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 
 # Reject a trusted pass whose output contains any listed skip substring.
 # Empty disables this filter.
@@ -93,7 +94,7 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 # Comment reviewers use login:binding-prefix entries. The author login
 # authenticates the reviewer; the literal prefix binds its comment to a commit.
 # The owner's clean-review comment is evidence on the commit it names.
-REVIEW_GATE_COMMENT_REVIEWERS = "bmethod:REVIEWED-CLEAN"
+REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
 
 # Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
@@ -108,7 +109,7 @@ REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 # satisfy missing evidence on a public repository. The PR author never qualifies.
 # Every active reviewer must be listed: an unlisted one supplies no evidence
 # yet its engagement holds off the timeout fallback.
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "copilot-pull-request-reviewer[bot];chatgpt-codex-connector[bot];bmethod"
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
 
 # Accept non-dismissed review objects from trusted logins. COMMENTED can
 # represent a clean review; requiring APPROVED would discard that evidence.
@@ -128,7 +129,7 @@ REVIEW_GATE_MODE = "enforce"
 # Require fresh evidence for policy instructions and the checks. Harness trees
 # are excluded whole so a new rendered skill inherits the rule; scripts/ is
 # excluded so the validation code never carries stale evidence.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;.agents/skills/bot-instructions/*"
 
 # Which change classes need review evidence and from whom. Docs-only changes
 # need none. Values as kendex sets them.
@@ -159,22 +160,26 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
+ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
 # every merge gate is green; "ask" presents the merge decision.
 # MERGE_READY = false never auto-merges.
 ORCH_MERGE_AUTONOMY = "auto"
+ORCH_LANE_OUTPUT = "quiet"
 
 # ORCH_LANE_ALIASES (optional) maps config-directory names to lane names.
 # Discovery owns the lane inventory; ORCH_LANE_DIRS covers other layouts.
 
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
 # flight.
-ORCH_OVERSEER_LANES = "6"
+ORCH_OVERSEER_LANES = "12"
 
 # Successor overseer order for oversee-succeed, as harness:rank:effort on the
 # tier ladder: top Claude tier, top Codex tier, then the second tier of each.
 ORCH_OVERSEER_PREFERENCE = "claude:1:high,codex:1:high,claude:2:high,codex:2:high"
+ORCH_HANDOFF_HEADROOM_PCT = "3"
+ORCH_LANE_MAX_PCT = "95"
 
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
