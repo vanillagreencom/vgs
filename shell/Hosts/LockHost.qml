@@ -12,8 +12,8 @@ import qs.Commons
 // holder was unloaded stays locked.
 Scope {
     WlSessionLock {
-        locked: Capabilities.lockRequested
-        onSecureChanged: Capabilities.lockSecure = secure
+        locked: Capabilities.sessionLock.lockRequested
+        onSecureChanged: Capabilities.sessionLock.lockSecure = secure
 
         WlSessionLockSurface {
             id: surface
@@ -21,7 +21,7 @@ Scope {
 
             Loader {
                 anchors.fill: parent
-                sourceComponent: Capabilities.lockContent
+                sourceComponent: Capabilities.sessionLock.lockContent
                 onLoaded: {
                     if (!("screen" in item)) {
                         console.error("lock host: lock content declares no screen property");

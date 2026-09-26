@@ -1,21 +1,12 @@
 pragma Singleton
 import QtQuick
 import Quickshell
-import Quickshell.Io
-import Quickshell.Hyprland
-import Quickshell.Services.Notifications
 import Quickshell.Services.Polkit
 import "PluginLogic.js" as Logic
 import "Dispatch.js" as Dispatch
 
-// The provider behind every capability name in PluginLogic.CAPABILITIES.
-// Plugins.qml asks for one plugin instance's providers when it builds the
-// instance; each provider is made for that instance, and every object it
-// registers (a shortcut, an IPC target, a notification subscriber, a hold
-// on the lock or the polkit agent) is released by a disposer the instance's
-// build record runs when the instance is destroyed. The notification
-// server and the polkit agent exist only while some plugin holds their
-// capability, so a shell with no such plugin claims neither D-Bus role.
+// Maps declared capabilities to per-instance providers and accounts for
+// their holds. Resource owners implement registration and teardown.
 Singleton {
     id: root
 
@@ -23,20 +14,11 @@ Singleton {
     // it }, replaced whole on every change so bindings re-evaluate once.
     property var held: ({})
 
-    // Registered shortcuts, "<plugin id>:<name>" -> GlobalShortcut.
-    property var shortcuts: ({})
-    // IPC targets, plugin id -> { handler: IpcHandler, functions: { name -> fn } }.
-    property var ipcTargets: ({})
-    // Notification subscribers, in subscription order: { id, fn }.
-    property var subscribers: []
-
-    // The session lock the plugin holding `lock` asked for, the component
-    // it draws on every screen, and whether the compositor confirmed it.
-    property bool lockRequested: false
-    property var lockContent: null
-    property bool lockSecure: false
-    // The instance context that handed over lockContent.
-    property var lockContentOwner: null
+    ShortcutRegistry { id: shortcuts }
+    IpcRegistry { id: commands }
+    NotificationHub { id: notifications; active: root.notificationsHeld }
+    SessionLock { id: sessionLock }
+    readonly property alias sessionLock: sessionLock
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
     readonly property bool polkitHeld: holderIds("polkit").length > 0
@@ -104,23 +86,9 @@ Singleton {
         configure: ctx => ({
             set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [Logic.settingTargetOf(ctx.kind)], ctx.locator)
         }),
-        ipc: ctx => ({
-            handle: (name, fn) => root.handleIpc(ctx, name, fn)
-        }),
-        lock: ctx => {
-            ctx.onDispose(() => root.dropLock(ctx));
-            return {
-                lock: content => root.lock(ctx, content),
-                unlock: () => root.unlock(),
-                get locked() { return root.lockRequested; },
-                get hasContent() { return root.lockContent !== null; },
-                get secure() { return root.lockSecure; }
-            };
-        },
-        notifications: ctx => ({
-            subscribe: fn => root.subscribe(ctx, fn),
-            get tracked() { return notificationLoader.item ? notificationLoader.item.trackedNotifications : null; }
-        }),
+        ipc: commands.provider,
+        lock: sessionLock.provider,
+        notifications: notifications.provider,
         polkit: ctx => ({
             get agent() { return polkitLoader.item; },
             get registered() { return polkitLoader.item !== null && polkitLoader.item.isRegistered; }
@@ -132,9 +100,7 @@ Singleton {
             get all() { return Quickshell.screens; },
             current: ctx.screen
         }),
-        shortcut: ctx => ({
-            register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
-        }),
+        shortcut: shortcuts.provider,
         manager: ctx => ({
             get plugins() { return Registry.managerRows; },
             setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
@@ -157,92 +123,6 @@ Singleton {
         return { anchor: anchor, screen: ctx.screen };
     }
 
-    // shortcut: one GlobalShortcut per name under the plugin id, bound in
-    // Hyprland as `global, <plugin id>:<name>`. A second registration of
-    // the same name throws.
-    function registerShortcut(ctx, name, description, onPressed) {
-        checkName("shortcut", name);
-        if (typeof onPressed !== "function")
-            throw new Error("refused: shortcut=" + name + " handler=not-a-function");
-        const key = ctx.id + ":" + name;
-        if (Logic.hasOwn(shortcuts, key))
-            throw new Error("refused: shortcut=" + key + " held");
-        const shortcut = shortcutComponent.createObject(root, { appid: ctx.id, name: name, description: String(description || "") });
-        shortcut.handler = onPressed;
-        const next = Object.assign({}, shortcuts);
-        next[key] = shortcut;
-        shortcuts = next;
-        return ctx.onDispose(() => {
-            const rest = Object.assign({}, root.shortcuts);
-            delete rest[key];
-            root.shortcuts = rest;
-            shortcut.destroy();
-        });
-    }
-
-    // The `pressed` property shadows the `pressed` signal from script, so
-    // the handler runs from the signal handler instead of a connect().
-    Component {
-        id: shortcutComponent
-        GlobalShortcut {
-            property var handler: null
-            onPressed: handler()
-        }
-    }
-
-    // ipc: one IpcHandler per plugin, target named for the plugin id, with
-    // one function: `invoke <name> <arg>` calls the handler the plugin
-    // registered under that name and answers its return value as text.
-    function handleIpc(ctx, name, fn) {
-        checkName("ipc", name);
-        if (typeof fn !== "function")
-            throw new Error("refused: ipc=" + name + " handler=not-a-function");
-        let target = ipcTargets[ctx.id];
-        if (target !== undefined && Logic.hasOwn(target.functions, name))
-            throw new Error("refused: ipc=" + ctx.id + ":" + name + " held");
-        const next = Object.assign({}, ipcTargets);
-        if (target === undefined)
-            target = { handler: ipcComponent.createObject(root, { target: ctx.id }), functions: {} };
-        target = { handler: target.handler, functions: Object.assign({}, target.functions) };
-        target.functions[name] = fn;
-        next[ctx.id] = target;
-        ipcTargets = next;
-        return ctx.onDispose(() => {
-            const rest = Object.assign({}, root.ipcTargets);
-            const t = { handler: rest[ctx.id].handler, functions: Object.assign({}, rest[ctx.id].functions) };
-            delete t.functions[name];
-            if (Object.keys(t.functions).length === 0) {
-                // destroy() is deferred; clearing the target unregisters it
-                // now, so a rebuilt plugin's new handler takes the target.
-                t.handler.target = "";
-                t.handler.destroy();
-                delete rest[ctx.id];
-            } else {
-                rest[ctx.id] = t;
-            }
-            root.ipcTargets = rest;
-        });
-    }
-
-    function invokeIpc(id, name, arg) {
-        const target = ipcTargets[id];
-        if (target === undefined || !Logic.hasOwn(target.functions, name)) return "unknown: " + name;
-        try {
-            const result = target.functions[name](arg);
-            return result === undefined ? "" : String(result);
-        } catch (e) {
-            console.error("capabilities: ipc " + id + ":" + name + " threw: " + e.message);
-            return "error: " + e.message;
-        }
-    }
-
-    Component {
-        id: ipcComponent
-        IpcHandler {
-            function invoke(name: string, arg: string): string { return root.invokeIpc(target, name, arg); }
-        }
-    }
-
     // run: a detached process from an argument list. No shell parses it.
     // `ok` means the list was handed to Quickshell; a program that fails to
     // start is not reported back.
@@ -253,80 +133,10 @@ Singleton {
         return "ok";
     }
 
-    // notifications: the one server, fanned out to every subscriber in
-    // subscription order. A subscriber sets `tracked` on a notification it
-    // keeps; one nobody tracks is discarded by the server.
-    function subscribe(ctx, fn) {
-        if (typeof fn !== "function")
-            throw new Error("refused: notifications=subscribe handler=not-a-function");
-        const entry = { id: ctx.id, fn: fn };
-        subscribers = subscribers.concat([entry]);
-        return ctx.onDispose(() => {
-            root.subscribers = root.subscribers.filter(s => s !== entry);
-        });
-    }
-
-    function fanOut(notification) {
-        for (const s of subscribers) {
-            try {
-                s.fn(notification);
-            } catch (e) {
-                console.error("capabilities: notification subscriber of " + s.id + " threw: " + e.message);
-            }
-        }
-    }
-
-    LazyLoader {
-        id: notificationLoader
-        active: root.notificationsHeld
-        NotificationServer {
-            keepOnReload: false
-            bodySupported: true
-            actionsSupported: true
-            imageSupported: true
-            onNotification: n => root.fanOut(n)
-        }
-    }
-
     LazyLoader {
         id: polkitLoader
         active: root.polkitHeld
         PolkitAgent {}
-    }
-
-    // lock: the one session lock, drawn by LockHost. `content` is a
-    // Component the holder owns; LockHost builds it once per screen and
-    // assigns its `screen`.
-    function lock(ctx, content) {
-        if (content === null || content === undefined || typeof content.createObject !== "function")
-            return "refused: lock-content=not-a-component";
-        lockContentOwner = ctx;
-        lockContent = content;
-        lockRequested = true;
-        return "ok";
-    }
-
-    function unlock() {
-        lockRequested = false;
-        return "ok";
-    }
-
-    // A lock request the compositor has not confirmed by the time this
-    // timer fires leaves the session unlocked while the holder asked for a
-    // lock; the log says so.
-    Timer {
-        interval: 5000
-        running: root.lockRequested && !root.lockSecure
-        onTriggered: console.error("capabilities: lock requested but the compositor has not confirmed it")
-    }
-
-    // An instance of the holder is gone. The content it handed over goes
-    // with it, but a locked session stays locked: unloading the lock screen
-    // never unlocks the desktop.
-    function dropLock(ctx) {
-        if (lockContentOwner !== ctx) return;
-        lockContentOwner = null;
-        lockContent = null;
     }
 
     // Every capability's live state, for the validation rows and for
@@ -336,13 +146,13 @@ Singleton {
         for (const name of Object.keys(held)) holders[name] = holderIds(name);
         return JSON.stringify({
             holders: holders,
-            shortcuts: Object.keys(shortcuts).sort(),
-            ipcTargets: Object.keys(ipcTargets).sort(),
-            subscribers: subscribers.map(s => s.id),
-            notificationServer: notificationLoader.item !== null,
+            shortcuts: Object.keys(shortcuts.shortcuts).sort(),
+            ipcTargets: Object.keys(commands.ipcTargets).sort(),
+            subscribers: notifications.subscribers.map(s => s.id),
+            notificationServer: notifications.server !== null,
             polkitAgent: polkitLoader.item !== null,
             polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
-            lock: { requested: lockRequested, secure: lockSecure, content: lockContent !== null }
+            lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null }
         });
     }
 }

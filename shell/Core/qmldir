@@ -5,3 +5,7 @@ singleton Compositor 1.0 Compositor.qml
 PluginLogic 1.0 PluginLogic.js
 singleton Capabilities 1.0 Capabilities.qml
 singleton Registry 1.0 Registry.qml
+ShortcutRegistry 1.0 ShortcutRegistry.qml
+IpcRegistry 1.0 IpcRegistry.qml
+NotificationHub 1.0 NotificationHub.qml
+SessionLock 1.0 SessionLock.qml
