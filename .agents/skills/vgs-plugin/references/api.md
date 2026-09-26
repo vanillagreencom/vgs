@@ -14,7 +14,7 @@ What a plugin receives and may call. The core owns every table here; a value not
 | `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen, on the overlay layer | enabled and summoned, until hidden |
 | `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host, on the overlay layer | enabled and summoned, until hidden |
 
-Enabled is defined in [`docs/architecture/plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds); `PluginLogic.isEnabled` is the judge, and a first-party id (prefix `vgs.`) of a kind other than `bar` and `bar-widget` is enabled without a `plugins` row.
+Enabled is defined in [`docs/architecture/plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds); `PluginLogic.isEnabled` is the judge.
 
 A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` that throws refuses the summon with `refused: open-failed=<id>`, so a payload that does not parse is left to throw. Summoning an open one calls `open` again with the new payload. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
 
@@ -142,7 +142,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
-| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: no-host=<kind>`, `refused: kind=<kind> id=<id>`, `refused: scan=pending`, `refused: config=pending`, `refused: disabled=<id>`, `refused: capability=<name> held-by=<id>`, `refused: screen=none`, `refused: build-failed=<id>`, `refused: open-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
+| `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: no-host=<kind>`, `refused: kind=<kind> id=<id>`, `refused: scan=pending`, `refused: config=<state>` (the state `Config.notReady` names, [`plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds)), `refused: disabled=<id>`, `refused: capability=<name> held-by=<id>`, `refused: screen=none`, `refused: build-failed=<id>`, `refused: open-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
 | `invokeInstance <hostKey> <id> <function> <arg>` | yes | calls that function of the built instance with one text argument and answers its result; `absent` with no such instance, `no-function` with no such function |
 
 ## Manifest

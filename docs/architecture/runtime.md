@@ -1,6 +1,6 @@
 # Runtime
 
-Covers: scripts/validate, scripts/qml-smoke.sh, scripts/qml-library.js, scripts/test-qml-library.js, scripts/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-dispatch.js, scripts/test-plugin-logic.js, scripts/test-vgsh-scan.py, scripts/test-vgsh.sh, scripts/test-vgs-plugin.py, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, .github/workflows/**
+Covers: scripts/validate, scripts/qml-smoke.sh, scripts/qml-library.js, scripts/test-qml-library.js, scripts/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-dispatch.js, scripts/test-plugin-logic.js, scripts/test-vgsh-scan.py, scripts/test-vgsh.sh, scripts/test-vgs-plugin.py, scripts/test-validate.sh, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, .github/workflows/**
 
 Requirements for the shell process, the runner and the measurement tools, and the Quickshell facts the implementation rests on.
 

@@ -3,14 +3,16 @@
 # once, and CI runs this file, not a second list.
 #
 # Usage: scripts/validate [AREA]
-#   AREA is one of: logic, manifests, boundary, cli, tools, offline, qml, all
-#   (default: all). One area per call; a second argument is refused.
-#   offline runs every row but the nested smoke, plus the whitespace row and
-#   the self-check that every scripts/test-* file has a row; CI runs it.
+#   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
+#   qml, all (default: all). One area per call; a second argument is
+#   refused. repo holds the checks this file makes itself, the whitespace
+#   row and the self-check that every scripts/test-* file has a row;
+#   scripts/test-validate.sh, under tools, is their control. offline runs
+#   every row but the nested smoke; CI runs it.
 #
 # VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
-#   CI sets it to the change's base. Unset, the row takes the newest commit
-#   HEAD shares with a remote branch other than this branch's own.
+#   CI sets it to the change's base. Unset, whitespace_base below says where
+#   the base comes from, and a base it cannot resolve exits 77.
 #
 # Exit 0: every selected check passed. Exit 77: every check that ran passed
 # but at least one could not run and is named; that is not a pass. Exit 1: a
@@ -55,52 +57,89 @@ rows=(
   "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
-  "offline|whitespace errors against the base|whitespace_check"
-  "offline|every test file has a row|rows_cover_tests"
+  "repo|whitespace errors against the base|whitespace_check"
+  "repo|every test file has a row|rows_cover_tests"
+  "tools|validate self-check controls|scripts/test-validate.sh"
   "qml|nested smoke|scripts/qml-smoke.sh"
 )
 
-# The commit the whitespace row compares against. Without VGS_VALIDATE_BASE,
-# the newest commit HEAD shares with any remote branch other than this
-# branch's own copy: the point this branch left its base. Prints nothing
-# and returns 1 when no such commit exists.
+# The commit the whitespace row compares against, printed on stdout. On
+# failure it prints what is missing as key=value and returns 1.
+# VGS_VALIDATE_BASE wins when set. Otherwise the base is the merge base of
+# HEAD with the remote-tracking copy of the project's base branch,
+# WORKTREE_DEFAULT_BRANCH from the environment or from kendex.settings.toml
+# (read by the kendex settings loader, so the file has one reader). Exactly
+# one remote may carry that branch; none or several is missing, never a
+# guess, so no ref that merely contains HEAD is taken for its base.
 whitespace_base() {
   if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
-    git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"
-    return
+    if ! git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"; then
+      echo "missing=commit VGS_VALIDATE_BASE=$VGS_VALIDATE_BASE"
+      return 1
+    fi
+    return 0
   fi
-  local current ref merge_base when best="" best_when=0
-  # Empty on a detached HEAD, which then skips no remote ref.
-  current="$(git branch --show-current)" || current=""
+  local branch="${WORKTREE_DEFAULT_BRANCH:-}" loader="$repo/.agents/skills/orch/scripts/lib/kendex-env.sh" ref refs=()
+  if [[ -z $branch && -f $repo/kendex.settings.toml ]]; then
+    # shellcheck source=/dev/null
+    branch="$(source "$loader" && kendex_load_settings_file "$repo/kendex.settings.toml" && printf '%s' "${WORKTREE_DEFAULT_BRANCH:-}")" || branch=""
+  fi
+  if [[ -z $branch ]]; then
+    echo "missing=base-branch source=WORKTREE_DEFAULT_BRANCH"
+    return 1
+  fi
   while IFS= read -r ref; do
-    [[ -n $current && $ref == */"$current" ]] && continue
-    merge_base="$(git merge-base HEAD "$ref" 2>/dev/null)" || continue
-    when="$(git show -s --format=%ct "$merge_base")"
-    if (( when > best_when )); then best="$merge_base"; best_when="$when"; fi
+    [[ $ref =~ ^refs/remotes/[^/]+/(.*)$ && ${BASH_REMATCH[1]} == "$branch" ]] && refs+=("$ref")
   done < <(git for-each-ref --format='%(refname)' refs/remotes/)
-  [[ -n $best ]] || return 1
-  printf '%s\n' "$best"
+  if [[ ${#refs[@]} -ne 1 ]]; then
+    echo "missing=base-ref branch=$branch remote-refs=${#refs[@]}"
+    return 1
+  fi
+  if ! git merge-base HEAD "${refs[0]}"; then
+    echo "missing=merge-base ref=${refs[0]}"
+    return 1
+  fi
 }
 
 # Whitespace errors the tree adds over the base: tracked files against the
 # base commit, and every untracked file whole, since a new file has no base.
+# Names are read NUL-delimited, so a name git would quote reaches git as the
+# file's own name. git diff --check exits 2 for findings; with --no-index it
+# exits 1 for a clean difference and 3 for findings. Any other status, or a
+# clean status with output, is a read error and fails the row with git's
+# message. First lines:
+#   whitespace: base=<commit>
+#   whitespace: findings scope=tracked | scope=untracked path=<file>
+#   whitespace: unreadable scope=tracked status=<n> | scope=untracked path=<file> status=<n>
+#   whitespace: failed base=<commit>
+#   whitespace: status=not-measured reason=no-base <missing key=value>
 whitespace_check() {
   local base file out file_status status=0
   if ! base="$(whitespace_base)"; then
-    echo "whitespace: status=not-measured reason=no-base"
+    echo "whitespace: status=not-measured reason=no-base ${base##*$'\n'}"
     echo "set VGS_VALIDATE_BASE to the commit to compare against"
     return 77
   fi
   echo "whitespace: base=$base"
-  git diff --check "$base" -- || status=1
-  # --no-index exits 1 for any difference from /dev/null, which every file
-  # with content has; a higher status is a whitespace error or a read error,
-  # either one a failure, with git's own lines as the reason.
-  while IFS= read -r file; do
+  file_status=0
+  out="$(git diff --check "$base" -- 2>&1)" || file_status=$?
+  case "$file_status" in
+    0) ;;
+    2) echo "whitespace: findings scope=tracked"; printf '%s\n' "$out"; status=1 ;;
+    *) echo "whitespace: unreadable scope=tracked status=$file_status"; printf '%s\n' "$out"; status=1 ;;
+  esac
+  while IFS= read -r -d '' file; do
     file_status=0
     out="$(git diff --no-index --check -- /dev/null "$file" 2>&1)" || file_status=$?
-    if [[ $file_status -gt 1 ]]; then printf '%s\n' "$out"; status=1; fi
-  done < <(git ls-files --others --exclude-standard)
+    case "$file_status" in
+      0|1) [[ -z $out ]] && continue
+           echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
+      3) echo "whitespace: findings scope=untracked path=$file" ;;
+      *) echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
+    esac
+    printf '%s\n' "$out"
+    status=1
+  done < <(git ls-files -z --others --exclude-standard)
   [[ $status -eq 0 ]] || echo "whitespace: failed base=$base"
   return "$status"
 }
@@ -110,6 +149,7 @@ whitespace_check() {
 rows_cover_tests() {
   local file missing=() all="${rows[*]}"
   for file in scripts/test-*; do
+    [[ -e $file ]] || continue
     [[ $all == *"$file"* ]] || missing+=("$file")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
@@ -135,7 +175,7 @@ for row in "${rows[@]}"; do
   fi
 done
 if [[ $matched != true ]]; then
-  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, offline, qml, all\n' "$area" >&2
+  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, repo, offline, qml, all\n' "$area" >&2
   exit 2
 fi
 

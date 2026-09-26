@@ -4,9 +4,10 @@
 Its template table covers exactly the kinds shell/Core/PluginLogic.js hosts
 (read under node through scripts/qml-library.js, never restated here); `new`
 then `check` round-trips a plugin of two kinds in a temporary directory, with
-the bar widget's label default landing in the manifest; and each refusal is
-pinned by its keyed first line and exit 2: a kind no template covers, an id
-the judge refuses (leaving no directory), an occupied target and a check on a
+the bar widget's label default landing in the manifest; a quoted description
+lands as a valid manifest; and each refusal is pinned by its keyed first line
+and exit 2: a kind no template covers, an id the judge refuses (leaving no
+directory), a judge that exits above 1, an occupied target and a check on a
 directory with no manifest. Every child runs under an explicit environment."""
 import importlib.machinery
 import importlib.util
@@ -33,8 +34,8 @@ def report(name, good, detail=""):
         failures += 1
 
 
-def scaffold(*args):
-    return subprocess.run([sys.executable, SCAFFOLD, *args], capture_output=True, text=True, check=False, env=ENV)
+def scaffold(*args, env=ENV):
+    return subprocess.run([sys.executable, SCAFFOLD, *args], capture_output=True, text=True, check=False, env=env)
 
 
 def first_line(text):
@@ -79,6 +80,19 @@ def main():
         wrong_kind = scaffold("new", "acme.x", "--kinds", "widget", "--dir", tmp)
         report("new refuses a kind no template covers", wrong_kind.returncode == 2 and first_line(wrong_kind.stdout) == "vgs-plugin: refused: kind=widget known=" + ",".join(table), f"exit={wrong_kind.returncode}\n{wrong_kind.stdout}{wrong_kind.stderr}")
         report("a refused kind leaves no directory", not os.path.exists(os.path.join(tmp, "acme.x")), str(os.listdir(tmp)))
+        quoted = scaffold("new", "acme.quoted", "--kinds", "service", "--dir", tmp, "--description", 'A "quick" probe')
+        quoted_manifest = os.path.join(tmp, "acme.quoted", "manifest.json")
+        report("new writes a quoted description as a valid manifest that passes check", quoted.returncode == 0 and quoted.stdout.rstrip().endswith("vgs-plugin: check ok") and os.path.isfile(quoted_manifest) and json.load(open(quoted_manifest)).get("description") == 'A "quick" probe', f"exit={quoted.returncode}\n{quoted.stdout}{quoted.stderr}")
+        # A judge that exits neither 0 nor 1: a node shim on PATH exits 3
+        # with a line on stderr, as a loader refusal or a node crash does.
+        fake_bin = os.path.join(tmp, "fake-bin")
+        os.makedirs(fake_bin)
+        with open(os.path.join(fake_bin, "node"), "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\necho judge-stderr-line >&2\nexit 3\n")
+        os.chmod(os.path.join(fake_bin, "node"), 0o755)
+        crashed = scaffold("new", "acme.crashed", "--kinds", "service", "--dir", tmp, env=dict(ENV, PATH=fake_bin + os.pathsep + ENV["PATH"]))
+        report("new refuses a judge that exits above 1 under judge= with its stderr", crashed.returncode == 2 and first_line(crashed.stdout) == "vgs-plugin: refused: judge=exit-3" and "judge-stderr-line" in crashed.stdout, f"exit={crashed.returncode}\n{crashed.stdout}{crashed.stderr}")
+        report("a judge failure leaves no directory", not os.path.exists(os.path.join(tmp, "acme.crashed")), str(os.listdir(tmp)))
         empty = os.path.join(tmp, "empty")
         os.makedirs(empty)
         unchecked = scaffold("check", empty)

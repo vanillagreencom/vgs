@@ -10,7 +10,7 @@ The shell's configuration files: two layers of `shell.json` merged by entry id, 
 
 ## shell.json keys
 
-Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands, the log names the defect, and every write is refused until the file passes again. A key outside this table is carried untouched.
+Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. A key outside this table is carried untouched.
 
 | Key | Shape |
 |---|---|
@@ -29,7 +29,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 
 ## Theme
 
-`~/.config/vgs/theme.json` holds the palette: `foreground`, `background`, `accent`, `urgent` and `muted`, each a colour string. `Color.qml` reads it the way `Config.qml` reads `shell.json`: an absent file is the expected case, and a file that does not parse or holds a non-string value is logged and leaves the last good palette. The bar's font is the `Style.font.family` token, not a theme value.
+`~/.config/vgs/theme.json` holds the palette: `foreground`, `background`, `accent`, `urgent` and `muted`, each a colour string. `Color.qml` reads it the way `Config.qml` reads `shell.json`, and its `judge` function is the one judge of the theme file's shape: an absent file is the expected case, and a file that does not parse, is not an object, or holds a role value that is not a colour Qt can parse is logged and leaves the last good palette. The bar's font is the `Style.font.family` token, not a theme value.
 
 ## Decisions
 

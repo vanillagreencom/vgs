@@ -247,6 +247,10 @@ fi
 cfg="$tmp/cfg-unparseable"; mkdir -p "$cfg/vgs"; printf '{ nope\n' >"$cfg/vgs/shell.json"
 inst "add refuses while the user file does not parse" "$cfg" "$rt_empty" 1 "" "vgsh: refused: user-config=unparseable path=$cfg/vgs/shell.json" plugin add "$tmp/src/probe.git"
 check "a refused user file leaves no plugin and no staging directory" no_residue "$cfg"
+cfg="$tmp/cfg-malformed"; mkdir -p "$cfg/vgs"; printf '{ "version": 1, "plugins": [ { "id": "acme.probe" }, "junk" ] }\n' >"$cfg/vgs/shell.json"
+inst "add refuses a user file the config judge refuses" "$cfg" "$rt_empty" 1 "" "vgsh: refused: user-config=malformed path=$cfg/vgs/shell.json error=plugins.1 must be an object with a string id" plugin add "$tmp/src/probe.git"
+check "a malformed user file leaves no plugin and no staging directory" no_residue "$cfg"
+check "a malformed user file is left as it was" grep -q '"junk"' "$cfg/vgs/shell.json"
 
 # Update against the plugin the first add row installed.
 cfg="$tmp/cfg-add"

@@ -251,6 +251,7 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # literal path text ("*", "*/*").
 REVIEW_GATE_VENDORED_PATHS = ""
 
-# The kendex command-safety hook refuses a systemd-run that caps memory below
-# what an agent needs.
+# The kendex command-safety hook refuses a systemd-run command whose MemoryMax
+# or MemoryHigh value is a number followed by K or M; a value in G, a bare
+# byte count or a percentage passes.
 COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^;|&]*Memory(Max|High)=[0-9]+[KkMm]([^[:alnum:]]|$)"

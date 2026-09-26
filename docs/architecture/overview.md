@@ -36,7 +36,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/qml-smoke.sh`, which read the compositor's layer list and reserved geometry. That no object of it remains is not checked.
 4. A plugin receives exactly the capabilities its own manifest names, a disabled plugin holds none of them, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/qml-smoke.sh`, which read the fixture instances and the core's lending record back.
 5. The plugin manager runs no plugin code and asks for no privilege. Enforced by the install rows in `scripts/test-vgsh.sh`, which run every git call with hooks off and install from local repositories.
-6. Every decision about a manifest, the configuration files' shape, the merged configuration, enablement, the settings entry a kind reads and placement is made once in `shell/Core/PluginLogic.js`. Enforced by `scripts/test-plugin-logic.js` and by `scripts/check-manifests.js`, which loads the same file.
+6. Every decision about a manifest, the shape of `shell.json`, the merged configuration, enablement, the settings entry a kind reads and placement is made once in `shell/Core/PluginLogic.js`. Enforced by `scripts/test-plugin-logic.js` and by `scripts/check-manifests.js`, which loads the same file.
 7. A figure in a document names the tool and the run that produced it. Enforced by review; `docs/architecture/memory.md` names its provenance in its first paragraph.
 
 ## Decisions

@@ -10,9 +10,10 @@ beside this script, one entry point per kind, then runs `check` on it.
 plugin directory. Exit 0 when clean, 1 on findings, 2 on a refusal, whose
 first line is keyed: `vgs-plugin: refused: <key>=<value>`, with `kind=` for
 a kind no template covers, `manifest=` for a manifest the judge refuses
-(its verdict follows), `exists=` for an occupied target and `no-manifest=`
-for a check on a directory without one. scripts/test-vgs-plugin.py pins
-each.
+(its verdict follows), `judge=exit-<status>` for a judge that exited with
+any status other than 0 or 1 (both of its streams follow), `exists=` for an
+occupied target and `no-manifest=` for a check on a directory without one.
+scripts/test-vgs-plugin.py pins each.
 """
 import argparse
 import json
@@ -53,6 +54,13 @@ def fill(text, values):
     return text
 
 
+def escaped(value):
+    """`value` as the inside of a JSON string literal, which is also a valid
+    QML string literal: every placeholder sits inside quotes or a comment, so
+    a quote or a backslash in a name or description cannot end the string."""
+    return json.dumps(value, ensure_ascii=False)[1:-1]
+
+
 def cmd_new(args):
     kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
     unknown = [k for k in kinds if k not in TEMPLATE_FOR]
@@ -69,10 +77,10 @@ def cmd_new(args):
     author, _, rest = args.id.partition(".")
     name = args.name or (rest or args.id).replace("-", " ").title()
     values = {
-        "ID": args.id,
-        "NAME": name,
-        "AUTHOR": args.author or author,
-        "DESCRIPTION": args.description or f"{name} plugin.",
+        "ID": escaped(args.id),
+        "NAME": escaped(name),
+        "AUTHOR": escaped(args.author or author),
+        "DESCRIPTION": escaped(args.description or f"{name} plugin."),
         "KINDS": json.dumps(kinds),
         "ENTRY_POINTS": json.dumps({k: TEMPLATE_FOR[k][1] for k in kinds}),
     }
@@ -95,9 +103,16 @@ def cmd_new(args):
             with open(os.path.join(probe_dir, TEMPLATE_FOR[kind][1]), "w", encoding="utf-8") as fh:
                 fh.write("")
         judged = subprocess.run(["node", MANIFEST_CHECK, "--", probe_dir], capture_output=True, text=True, check=False, env=ENV)
-        if judged.returncode != 0:
+        if judged.returncode == 1:
             print(f"vgs-plugin: refused: manifest={args.id}")
             print(judged.stdout.rstrip())
+            if judged.stderr.strip():
+                print(judged.stderr.rstrip())
+            return 2
+        if judged.returncode != 0:
+            print(f"vgs-plugin: refused: judge=exit-{judged.returncode}")
+            print(judged.stdout.rstrip())
+            print(judged.stderr.rstrip())
             return 2
     os.makedirs(target)
     with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:

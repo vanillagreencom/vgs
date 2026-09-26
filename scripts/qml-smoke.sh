@@ -15,8 +15,9 @@
 # workspaces and clock and mounts a placed plugin widget; a widget
 # can be disabled and re-enabled with its placement and settings kept;
 # disabling the bar names the widgets it hides, unloads it and unmaps its
-# surface; an unrelated write and a rescan that adds a disabled plugin
-# build nothing; a user
+# surface; an unrelated write and a rescan that changes nothing build
+# nothing, and a rescan that adds a disabled plugin rebuilds each screen's
+# bar and its placed widget and builds nothing for the new plugin; a user
 # plugin installed with `vgsh plugin add` from a local repository is
 # discovered, built as a service and a widget, receives exactly the
 # capabilities it named, and takes a settings change without a rebuild;
@@ -27,12 +28,14 @@
 # and a menu open on summon, take their placement and close on hide, and a
 # background is drawn on the bottom layer of every screen; the bar's
 # manager button opens a panel that lists, toggles and configures plugins,
-# and the bar's settings hide it on every screen; a plugin refused an
+# and the bar's settings hide it on every screen; a built-in listed twice
+# in one section is drawn once; a plugin refused an
 # exclusive capability builds once the holder lets go; a plugin that cannot
 # take what the core assigns keeps nothing; a removed monitor takes its bar
 # and its build records with it; an unreadable user file keeps the bar and
-# refuses writes; a theme file recolours the bar and one that does not parse
-# is logged and keeps the last good palette;
+# refuses writes; a theme file recolours the bar and one that does not parse,
+# is not an object or holds a role that is not a colour is logged and keeps
+# the last good palette;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
 # error; resident memory stays under the ceiling.
@@ -306,11 +309,13 @@ done
 if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; exit 1; fi
 # Lines of the instance log matching an extended regex, counted. grep exits
 # 1 for a count of zero, which is an answer; anything above is a read or
-# pattern failure and returns 1 after a failure line.
+# pattern failure: grep's message goes to stderr and the function returns 1.
+# It runs inside a command substitution, so it never calls fail: the caller
+# does, in the shell that holds the counters.
 log_lines() {
   local count status=0
   count="$(grep -c -E -e "$1" -- "$instance_log")" || status=$?
-  if [[ $status -gt 1 ]]; then fail "instance log unreadable or pattern refused: $instance_log ($1)"; return 1; fi
+  if [[ $status -gt 1 ]]; then return 1; fi
   printf '%s\n' "$count"
 }
 # expect_log LABEL COUNT PATTERN: the log holds at least COUNT matching
@@ -319,7 +324,10 @@ log_lines() {
 expect_log() {
   local label="$1" want="$2" pattern="$3" got=0
   for _ in $(seq 1 25); do
-    got="$(log_lines "$pattern")" || return
+    if ! got="$(log_lines "$pattern")"; then
+      fail "$label: instance log unreadable or pattern refused: $instance_log ($pattern)"
+      return 0
+    fi
     if [[ $got -ge $want ]]; then ok "$label"; return; fi
     sleep 0.2
   done
@@ -417,7 +425,8 @@ expect_builtins() { # LABEL EXPECTED_JSON_LIST
 expect_builtins "every bar registered its built-in workspaces, clock and plugin manager" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
 
 # A rebuild counter: the core counts every instance it builds. Rows below
-# assert that an unrelated write and a no-op rescan build nothing.
+# assert that an unrelated write and a rescan that changes nothing build
+# nothing, and what a rescan that adds a disabled plugin builds.
 builds() { ipc shell buildCount; }
 expect "the core built the bar and its placed widget per screen, and no built-in" "$((2 * monitors))" builds
 
@@ -493,8 +502,19 @@ os.replace(p + ".tmp", p)
 PY
   expect_poll "the shell read the unrelated key" 1 unrelated_key
   expect "an unrelated configuration write rebuilds nothing" "$before" builds
-  # A rescan that changes the plugin set bumps the generation every slot
-  # keys on; one that adds a plugin nothing enables builds nothing. The
+  # Every completed scan logs whether the plugin set changed. A rescan
+  # that changes nothing leaves the generation alone, so it builds
+  # nothing; the logged line is the scan's completion.
+  if unchanged_scans="$(log_lines 'plugins: scan complete changed=false ')"; then
+    expect "a rescan that changes nothing answers ok" ok ipc shell rescanPlugins
+    expect_log "the rescan that changes nothing completed" "$((unchanged_scans + 1))" 'plugins: scan complete changed=false '
+    expect "a rescan that changes nothing rebuilds nothing" "$before" builds
+  else
+    fail "instance log unreadable: $instance_log"
+  fi
+  # A rescan that adds a plugin nothing enables changes the set: it bumps
+  # the generation every slot keys on, so each screen's bar and its placed
+  # widget are built again, and nothing is built for the new plugin. The
   # new plugin's appearance in the listing is the scan's completion.
   idle="$home/.config/vgs/plugins/acme.idle"
   mkdir -p "$idle"
@@ -506,8 +526,6 @@ JSON
   expect "a rescan after adding a plugin answers ok" ok ipc shell rescanPlugins
   idle_state() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.idle"][0])' 2>/dev/null || echo absent; }
   expect_poll "the rescan discovered the plugin, disabled" False idle_state
-  # A changed plugin set bumps the generation every slot keys on, so each
-  # screen's bar and its placed widget are built again, and nothing else is.
   idle_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.idle" for rows in json.load(sys.stdin).values() for r in rows))'; }
   expect_poll "a rescan that adds a plugin rebuilds each screen's bar and widget" "$((before + 2 * monitors))" builds
   expect "a rescan that adds a disabled plugin does not build it" False idle_built
@@ -826,9 +844,12 @@ geometry expect_poll "the manager panel sits under the bar" "[$((bar_reserved + 
 manager_rows() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(json.dumps({r["id"]: r["enabled"] for r in rows if r["id"] in ("acme.probe", "acme.bare", "vgs.bar")}, sort_keys=True))'; }
 expect "the manager panel lists every plugin with its state" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
 # The panel draws one field per key of each row's schema; the rows it holds
-# carry the schema keys the fields come from.
+# carry the schema keys the fields come from, and drawnFields counts the
+# fields each form's Repeater drew.
 manager_fields() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; by={r["id"]: sorted(r["schema"]) for r in json.load(sys.stdin)}; print(json.dumps([by["acme.probe"], by["vgs.bar"], by["acme.bare"]]))'; }
 expect "the manager panel holds the schema keys its form draws" '[["label"], ["clockFormat"], []]' manager_fields
+manager_drawn() { ipc shell readInstance panel vgs.bar drawnFields | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.probe"), d.get("vgs.bar"), d.get("acme.bare")]))'; }
+expect_poll "the manager panel draws one field per schema key" '[1, 1, 0]' manager_drawn
 probe_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.probe"][0])'; }
 expect "the manager toggles the fixture off" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
 expect_poll "listPlugins reads the fixture disabled" False probe_enabled
@@ -843,6 +864,11 @@ expect "the manager form writes the fixture's setting" ok ipc shell invokeInstan
 expect "a successful write clears the row's refusal" '{}' ipc shell readInstance panel vgs.bar replies
 expect_poll "the running service received the manager's setting" '"via-manager"' read_service label
 expect_poll "the running widget received the manager's setting" '"via-manager"' read_widget label
+# A drawn field's apply, as an edit in the form emits it, writes through
+# writeSetting; the manager's rows read the setting back.
+manager_label() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; print(json.dumps([r["settings"]["label"] for r in json.load(sys.stdin) if r["id"]=="acme.probe"][0]))'; }
+expect "the fixture's drawn label field applies an edit" applied ipc shell invokeInstance panel vgs.bar applyField '{"id":"acme.probe","key":"label","value":"via-field"}'
+expect_poll "the manager reads back the setting the field wrote" '"via-field"' manager_label
 expect "the manager refuses a setting outside the schema" "refused: setting=tags undeclared" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"tags","value":"x"}'
 expect "the manager button closes the manager panel" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
 expect_poll "the manager panel is gone" 0 layer_count vgs:panel
@@ -876,6 +902,13 @@ expect "the moved clock is the registered one" '"HH:mm:ss"' read_moved_clock
 bar_row left '["workspaces"]'
 bar_row center '["clock"]'
 expect_builtins "the built-ins return to their sections" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+# A name listed twice in one section is drawn once and the repeat logged by
+# every bar; the logged line proves the bar read the setting.
+expected_errors+=('vgs\.bar: setting left lists a built-in twice, drawn once: ')
+bar_row left '["workspaces","workspaces"]'
+expect_log "a built-in listed twice in one section is logged by every bar" "$monitors" 'vgs\.bar: setting left lists a built-in twice, drawn once: '
+expect_builtins "a built-in listed twice in one section registers once" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+bar_row left '["workspaces"]'
 
 locker="$home/.config/vgs/plugins/acme.locker"
 mkdir -p "$locker"
@@ -1136,8 +1169,9 @@ printf '%s\n' "$user_good" >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$hom
 expect_poll "the user file reads as loaded once the row is fixed" loaded config_user_state
 
 # theme.json recolours every surface through Color; the bar's foreground is
-# read back from a built bar instance. A file that does not parse is logged
-# and the last good palette stays.
+# read back from a built bar instance. A file that does not parse, is not
+# an object, or holds a role that is not a colour is logged and the last
+# good palette stays.
 theme="$home/.config/vgs/theme.json"
 # A QML color reads back as its channel object; the row compares its hex.
 bar_foreground() { ipc shell readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
@@ -1148,6 +1182,13 @@ expected_errors+=('theme: .*/theme\.json does not parse: ')
 printf '{ nope\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
 expect_log "a theme file that does not parse is logged" 1 'theme: .*/theme\.json does not parse: '
 expect "an unparseable theme file keeps the last good palette" '#123456' bar_foreground
+expected_errors+=('theme: .*/theme\.json malformed: theme must be an object' 'theme: .*/theme\.json malformed: foreground is not a colour: "#12345"')
+printf '[ "#654321" ]\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
+expect_log "a theme file that is not an object is logged" 1 'theme: .*/theme\.json malformed: theme must be an object'
+expect "a theme file that is not an object keeps the last good palette" '#123456' bar_foreground
+printf '{ "foreground": "#12345" }\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
+expect_log "a theme role that is not a colour is logged" 1 'theme: .*/theme\.json malformed: foreground is not a colour: "#12345"'
+expect "a theme role that is not a colour keeps the last good palette" '#123456' bar_foreground
 
 # Control: a bare qs beside the runner must refuse to draw and to write,
 # and the runner's CLI must keep addressing the guarded instance.

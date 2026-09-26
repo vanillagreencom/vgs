@@ -4,8 +4,15 @@
 Prints one JSON array. Each element names a directory and carries either the
 manifest text or the read error. Validation is not done here: the shell's
 PluginLogic.js is the one judge of a manifest, and this script only reads
-bytes. A base directory that does not exist is skipped, because the user
-plugin directory is absent on a fresh install. Every other failure to list,
+bytes.
+
+  vgsh-scan [--require-base] BASE...
+
+A base directory that does not exist is skipped, because the user plugin
+directory is absent on a fresh install. Under --require-base it is an error
+element like any other listing failure: the offline checks list the bundled
+directory, where an absent base would certify nothing as everything. Every
+other failure to list,
 stat or open is an error element `{"dir": <path>, "error": "<what>: <strerror>"}`,
 never a silent skip: a base that cannot be listed, an entry that cannot be
 stat'ed, and a manifest that cannot be opened. An entry that is not a
@@ -17,10 +24,12 @@ import stat
 import sys
 
 
-def scan_base(base, out):
+def scan_base(base, out, require_base):
     try:
         names = sorted(os.listdir(base))
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if require_base:
+            out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
         return
     except OSError as exc:
         out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
@@ -45,9 +54,13 @@ def scan_base(base, out):
 
 
 def main(argv):
+    bases = argv[1:]
+    require_base = bases[:1] == ["--require-base"]
+    if require_base:
+        bases = bases[1:]
     out = []
-    for base in argv[1:]:
-        scan_base(base, out)
+    for base in bases:
+        scan_base(base, out, require_base)
     json.dump(out, sys.stdout)
     return 0
 

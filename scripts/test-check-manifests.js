@@ -51,7 +51,7 @@ row("a missing directory exits 2", tmp => ["--", path.join(tmp, "missing")], 2, 
 row("a directory named like an option after -- is a plugin directory", tmp => { const d = path.join(tmp, "--base"); plugin(d, good, true); return ["--", d]; }, 0, "ok       acme.one");
 row("a base lists every plugin under it", tmp => { plugin(path.join(tmp, "a"), good, true); plugin(path.join(tmp, "b"), Object.assign({}, good, { id: "acme.two" }), true); return ["--base", tmp]; }, 0, "ok       acme.two");
 row("a directory without a manifest under the base is not a plugin", tmp => { plugin(path.join(tmp, "a"), good, true); fs.mkdirSync(path.join(tmp, "notes")); return ["--base", tmp]; }, 0, "check-manifests: ok", "notes");
-row("an absent base exits 2", tmp => ["--base", path.join(tmp, "missing")], 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "missing") + ": ENOENT");
+row("an absent base exits 2", tmp => ["--base", path.join(tmp, "missing")], 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "missing") + ": cannot list: ");
 row("an unknown option exits 2", tmp => ["--frob"], 2, "check-manifests: refused: option=--frob");
 // Permission bits bind only a non-root uid.
 if (process.getuid() !== 0) {

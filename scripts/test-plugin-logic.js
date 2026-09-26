@@ -77,7 +77,7 @@ check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").mani
 // the error text.
 const configRows = [
     ["an empty object passes", {}, ""],
-    ["the shipped shape passes", { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "a.b" }], center: [], right: [] } }, plugins: [{ id: "a.c", x: 1 }], disabledPlugins: ["a.d"] }, ""],
+    ["every key of the table, well formed, passes", { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "a.b" }], center: [], right: [] } }, plugins: [{ id: "a.c", x: 1 }], disabledPlugins: ["a.d"] }, ""],
     ["a key outside the table is carried", { unrelated: { any: 1 } }, ""],
     ["a list is not a config", [], "config must be an object"],
     ["null is not a config", null, "config must be an object"],
@@ -98,6 +98,9 @@ for (const [name, config, want] of configRows) {
     const got = ctx.configError(config);
     check("configError: " + name, got.slice(0, want === "" ? got.length : want.length), want);
 }
+// The shipped file itself: Config.ready waits for a shipped file this judge
+// passes, so a refused config/shell.json leaves every screen without a bar.
+check("configError: the repository's config/shell.json passes", ctx.configError(JSON.parse(require("fs").readFileSync(path.join(__dirname, "..", "config", "shell.json"), "utf8"))), "");
 
 const shipped = { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "vgs.workspaces" }], center: [{ id: "vgs.clock" }], right: [] } }, plugins: [{ id: "acme.svc", x: 1 }], disabledPlugins: [] };
 
@@ -183,15 +186,16 @@ check("effectiveLayout does not alias the configuration", (() => { const c = ctx
 for (const kind of ctx.KINDS)
     check("settingTargetOf: " + kind, ctx.settingTargetOf(kind), kind === "bar-widget" ? "layout" : "plugins");
 
-// settingsFor: manifest defaults under the entry settingTargetOf(kind) names.
-check("settingsFor merges the layout entry over defaults", ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", { id: "acme.widget", size: 9 }), { size: 9, tags: ["a"] });
-check("settingsFor drops the id key", ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", { id: "acme.widget" }).id, undefined);
-check("settingsFor reads the plugins entry for a non-widget", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"], "service", null), { x: 2 });
-check("settingsFor is empty with no entry and no defaults", ctx.settingsFor(shipped, manifests["vgs.svc"], "service", null), {});
-check("settingsFor gives a service the manifest defaults under its plugins row", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "changed" }] }), manifests["acme.both"], "service", null), { label: "changed" });
-check("settingsFor gives a widget the manifest defaults with no row", ctx.settingsFor(shipped, manifests["acme.both"], "bar-widget", { id: "acme.both" }), { label: "probe" });
-check("settingsFor ignores a layout entry for a non-widget kind", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"], "service", { id: "acme.both", label: "entry" }), { label: "row" });
-check("settingsFor does not alias the entry", (() => { const e = { id: "acme.widget", tags: ["z"] }; const s2 = ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", e); s2.tags.push("y"); return e.tags; })(), ["z"]);
+// settingsFor: manifest defaults under the entry a setting target names.
+check("settingsFor merges the layout entry over defaults", ctx.settingsFor(shipped, manifests["acme.widget"], "layout", { id: "acme.widget", size: 9 }), { size: 9, tags: ["a"] });
+check("settingsFor drops the id key", ctx.settingsFor(shipped, manifests["acme.widget"], "layout", { id: "acme.widget" }).id, undefined);
+check("settingsFor reads the plugins entry for a non-widget", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"], "plugins", null), { x: 2 });
+check("settingsFor is empty with no entry and no defaults", ctx.settingsFor(shipped, manifests["vgs.svc"], "plugins", null), {});
+check("settingsFor gives a service the manifest defaults under its plugins row", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "changed" }] }), manifests["acme.both"], "plugins", null), { label: "changed" });
+check("settingsFor gives a widget the manifest defaults with no row", ctx.settingsFor(shipped, manifests["acme.both"], "layout", { id: "acme.both" }), { label: "probe" });
+check("settingsFor ignores a layout entry for the plugins target", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"], "plugins", { id: "acme.both", label: "entry" }), { label: "row" });
+check("settingsFor does not alias the entry", (() => { const e = { id: "acme.widget", tags: ["z"] }; const s2 = ctx.settingsFor(shipped, manifests["acme.widget"], "layout", e); s2.tags.push("y"); return e.tags; })(), ["z"]);
+check("settingsFor refuses a kind passed where a target belongs", (() => { try { ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", { id: "acme.widget" }); return "returned"; } catch (e) { return e.message.split(":")[0]; } })(), "settingsFor");
 check("managerSettings shows a placed widget its first layout entry", ctx.managerSettings(ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [{ id: "acme.both", label: "entry" }], right: [] } }, plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"]), { label: "entry" });
 check("managerSettings shows an unplaced widget-plus-service its plugins row", ctx.managerSettings(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"]), { label: "row" });
 check("managerSettings shows a service its plugins row", ctx.managerSettings(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"]), { x: 2 });

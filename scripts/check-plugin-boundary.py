@@ -193,13 +193,7 @@ def check_core(shell_dir, findings):
 
 
 def plugin_directories(base):
-    # The scan skips an absent base, which is right for a user directory and
-    # wrong here: a missing base would certify nothing as everything.
-    try:
-        os.listdir(base)
-    except OSError as exc:
-        raise Unreadable(base, exc.strerror) from exc
-    scan = subprocess.run([SCAN, base], capture_output=True, text=True, check=False, env=SCAN_ENV)
+    scan = subprocess.run([SCAN, "--require-base", base], capture_output=True, text=True, check=False, env=SCAN_ENV)
     if scan.returncode != 0:
         raise Unreadable(base, f"vgsh-scan exited {scan.returncode}")
     entries = json.loads(scan.stdout)

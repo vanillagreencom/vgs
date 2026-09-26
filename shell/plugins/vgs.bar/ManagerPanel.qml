@@ -54,6 +54,39 @@ Item {
         return writeSetting(a.id, a.key, a.value);
     }
 
+    // plugin id -> the number of settings fields its form has drawn, read
+    // from each form's Repeater, so a row tells a drawn form from the
+    // schema handed to the panel.
+    readonly property var drawnFields: {
+        const out = {};
+        for (let i = 0; i < rows.count; i++) {
+            const item = rows.itemAt(i);
+            if (item !== null) out[item.modelData.id] = item.fieldCount;
+        }
+        return out;
+    }
+
+    // The drawn field for setting `key` of plugin `id`, or null.
+    function fieldOf(id, key) {
+        for (let i = 0; i < rows.count; i++) {
+            const item = rows.itemAt(i);
+            if (item !== null && item.modelData.id === id) return item.field(key);
+        }
+        return null;
+    }
+
+    // Emit one drawn field's `apply`, as an edit in the form does, for the
+    // validation rows: `arg` is JSON {"id", "key", "value"}. Answers
+    // `applied` or `absent` when the form drew no such field; the write's
+    // own reply is kept as a refusal on the plugin's row.
+    function applyField(arg) {
+        const a = JSON.parse(arg);
+        const field = fieldOf(a.id, a.key);
+        if (field === null) return "absent";
+        field.apply(a.value);
+        return "applied";
+    }
+
     implicitWidth: Style.space(90)
     implicitHeight: Math.min(list.implicitHeight + 2 * Style.spacing.xl, Style.space(150))
 
@@ -77,11 +110,20 @@ Item {
             spacing: Style.spacing.lg
 
             Repeater {
+                id: rows
                 model: root.plugins
 
                 ColumnLayout {
                     id: entry
                     required property var modelData
+                    readonly property int fieldCount: fields.count
+                    function field(key) {
+                        for (let i = 0; i < fields.count; i++) {
+                            const item = fields.itemAt(i);
+                            if (item !== null && item.key === key) return item;
+                        }
+                        return null;
+                    }
                     Layout.fillWidth: true
                     spacing: Style.spacing.sm
 
@@ -127,6 +169,7 @@ Item {
                     }
 
                     Repeater {
+                        id: fields
                         model: Object.keys(entry.modelData.schema)
 
                         SettingField {

@@ -8,7 +8,8 @@ import Quickshell.Io
 // from the user's theme file when it holds them; the defaults below stand
 // otherwise. The file is read the way Config reads shell.json: an absent
 // file is the expected case, and every other load or parse failure, and a
-// value that is not a string, is logged and leaves the last good palette.
+// role value that is not a colour Qt can parse, is logged and leaves the
+// last good palette.
 Singleton {
     id: root
 
@@ -18,8 +19,11 @@ Singleton {
     // The theme file's values for the keys in `defaults`, replaced whole.
     property var theme: ({})
 
-    // Judge one theme file: every key in `defaults` it carries is a string.
-    // Returns { ok, value } or { ok: false } after logging.
+    // Judge one theme file, the one judge of its shape: an object whose
+    // every key in `defaults` it carries is a string Qt.color parses.
+    // Qt.color throws for a string it cannot parse; a color binding would
+    // take the same string as black with nothing logged. Returns
+    // { ok, value } or { ok: false } after logging.
     function judge(label, text) {
         let raw;
         try {
@@ -35,8 +39,16 @@ Singleton {
         const out = {};
         for (const key of Object.keys(defaults)) {
             if (raw[key] === undefined) continue;
-            if (typeof raw[key] !== "string") {
-                console.error("theme: " + label + " malformed: " + key + " must be a string, got " + JSON.stringify(raw[key]));
+            let colour = typeof raw[key] === "string";
+            if (colour) {
+                try {
+                    Qt.color(raw[key]);
+                } catch (e) {
+                    colour = false;
+                }
+            }
+            if (!colour) {
+                console.error("theme: " + label + " malformed: " + key + " is not a colour: " + JSON.stringify(raw[key]));
                 return { ok: false };
             }
             out[key] = raw[key];

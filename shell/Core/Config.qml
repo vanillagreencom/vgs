@@ -8,11 +8,12 @@ import "PluginLogic.js" as Logic
 // Shell configuration: the shipped defaults under config/ merged with the
 // user's file. Both files are watched; a change re-derives `effective`
 // once. Each file's state is one tagged value. A file that does not parse
-// or fails PluginLogic.configError keeps the last good value, logs the
-// error and blocks writes until it passes again, so a typo never blanks
-// the desktop and a manager edit never overwrites unread edits. Nothing is
-// built before `ready`: the shipped file has loaded once and the user file
-// has settled, so a bar never draws from the user file alone.
+// or fails PluginLogic.configError keeps the last good value and logs the
+// error, so a typo never blanks the desktop; a user file in that state
+// blocks writes until it passes again, so a manager edit never overwrites
+// unread edits. Nothing is built before `ready`: the shipped file has
+// loaded once and the user file has settled, so a bar never draws from the
+// user file alone.
 Singleton {
     id: root
 
@@ -30,7 +31,12 @@ Singleton {
     // good value through a later failure.
     property string shippedState: "pending"
     property string userState: "pending"
-    readonly property bool ready: shipped !== null && userState !== "pending"
+    // What holds the configuration back, or "" once it is ready: the
+    // shipped file's state while it has never loaded ("pending" until its
+    // first answer, then the failure that stays until the file is fixed),
+    // "pending" while the user file has not settled.
+    readonly property string notReady: shipped === null ? shippedState : (userState === "pending" ? "pending" : "")
+    readonly property bool ready: notReady === ""
     readonly property var effective: shipped === null ? ({}) : Logic.effectiveConfig(shipped, user)
 
     // Judge one file's text: { state, value } with `value` only when loaded.

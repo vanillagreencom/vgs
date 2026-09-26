@@ -67,6 +67,8 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
+# The owner's local preview assets.
+assets/
 
 # Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md

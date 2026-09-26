@@ -53,14 +53,7 @@ function manifests() {
             }
         });
     }
-    // vgsh-scan skips an absent base, which is right for a user directory
-    // and wrong here: a missing base would certify nothing as everything.
-    try {
-        fs.readdirSync(base);
-    } catch (e) {
-        return unreadable(base, e.code);
-    }
-    const scan = spawnSync(path.join(repo, "bin", "vgsh-scan"), [base], { encoding: "utf8", env: { PATH: process.env.PATH, LC_ALL: "C" } });
+    const scan = spawnSync(path.join(repo, "bin", "vgsh-scan"), ["--require-base", base], { encoding: "utf8", env: { PATH: process.env.PATH, LC_ALL: "C" } });
     if (scan.status !== 0) return unreadable(base, "vgsh-scan exited " + scan.status);
     const entries = JSON.parse(scan.stdout);
     for (const entry of entries)

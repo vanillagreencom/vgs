@@ -320,21 +320,26 @@ var SETTING_TARGETS = ["layout", "plugins"];
 // The configuration entry an instance of `kind` reads its settings from
 // and writes them to: "layout", its layout entry, for a bar widget;
 // "plugins", the plugins[] row with its id, for every other kind. The one
-// place this is decided; settingsFor, settingTargets and the configure
-// capability all call it.
+// place this is decided; settingTargets, the configure capability and every
+// core caller of settingsFor call it.
 function settingTargetOf(kind) {
     return kind === "bar-widget" ? "layout" : "plugins";
 }
 
-// The settings an instance of `kind` receives: its manifest's `settings`
-// under the entry settingTargetOf(kind) names. `layoutEntry` is the
-// widget's own layout entry, passed by the core when it mounts the widget,
-// and is read only for a bar widget. Keys the entry sets win. The result is
-// a fresh object with no `id` key.
-function settingsFor(config, manifest, kind, layoutEntry) {
+// The settings a plugin receives from setting target `target`, one of
+// SETTING_TARGETS: its manifest's `settings` under that entry. For
+// "layout" the entry is `layoutEntry`, the widget's own layout entry the
+// caller passes; for "plugins" it is the plugins[] row with the plugin's
+// id, and `layoutEntry` is not read. A caller holding an instance's kind
+// passes settingTargetOf(kind). Keys the entry sets win. The result is a
+// fresh object with no `id` key.
+function settingsFor(config, manifest, target, layoutEntry) {
     var out = {};
     Object.keys(manifest.settings).forEach(function (k) { out[k] = manifest.settings[k]; });
-    var entry = settingTargetOf(kind) === "layout" ? layoutEntry : pluginRow(config, manifest.id);
+    var entry;
+    if (target === "layout") entry = layoutEntry;
+    else if (target === "plugins") entry = pluginRow(config, manifest.id);
+    else throw new Error("settingsFor: target " + JSON.stringify(target) + " is not one of " + SETTING_TARGETS.join(", "));
     if (isPlainObject(entry))
         Object.keys(entry).forEach(function (k) { if (k !== "id") out[k] = entry[k]; });
     return clone(out);
@@ -345,7 +350,7 @@ function settingsFor(config, manifest, kind, layoutEntry) {
 // placed widget, the ones every other kind reads from its plugins[] row.
 function managerSettings(config, manifest) {
     var entry = manifest.kinds.indexOf("bar-widget") !== -1 ? layoutEntryOf(config, manifest.id) : null;
-    return entry !== null ? settingsFor(config, manifest, "bar-widget", entry) : settingsFor(config, manifest, "plugins", null);
+    return entry !== null ? settingsFor(config, manifest, "layout", entry) : settingsFor(config, manifest, "plugins", null);
 }
 
 // Whether a plugin is enabled under this configuration.

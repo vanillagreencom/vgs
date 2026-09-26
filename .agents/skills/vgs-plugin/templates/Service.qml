@@ -16,13 +16,14 @@ Item {
         id: probe
         command: ["true"]
         // `exited` precedes `running` turning false, and a command that
-        // fails to start emits no `exited`: a run that ends without one did
-        // not start, and is logged instead of retried in silence.
+        // fails to start emits neither `started` nor `exited`. The timer
+        // clears the flag when it requests a run, so a run requested and
+        // never started ends with the flag still clear and is logged
+        // instead of retried in silence.
         property bool exitedThisRun: false
         stdout: SplitParser {
             onRead: data => root.lastLine = data
         }
-        onStarted: exitedThisRun = false
         onExited: (code, status) => {
             exitedThisRun = true;
             if (code !== 0)
@@ -39,6 +40,10 @@ Item {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!probe.running) probe.running = true
+        onTriggered: {
+            if (probe.running) return;
+            probe.exitedThisRun = false;
+            probe.running = true;
+        }
     }
 }

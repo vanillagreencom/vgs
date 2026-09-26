@@ -10,7 +10,8 @@
 //       the shell's registry would hold under it
 //   vgsh-plugin-judge land-disabled <shipped-config> <user-config> <plugin-dir>
 //       when the configuration would enable the plugin, list it in the user
-//       file's disabledPlugins; print `written` or `unchanged`
+//       file's disabledPlugins; print `written` or `unchanged`. Either file
+//       that PluginLogic.configError refuses is refused as `malformed`.
 //
 // Every refusal is one line on stderr, `vgsh: refused: <key>=<value>`, and
 // exits 1. A scan element carrying an error exits 1 too: a directory that
@@ -39,6 +40,16 @@ function readJson(file, key) {
     } catch (e) {
         refuse(key + "=unparseable path=" + file);
     }
+}
+
+// A configuration file read and judged by PluginLogic.configError, the
+// judge Config.qml runs on every parse, so this reader and the shell's agree
+// on which files hold a configuration and which are malformed.
+function readConfig(file, key) {
+    const config = readJson(file, key);
+    const error = logic.configError(config);
+    if (error !== "") refuse(key + "=malformed path=" + file + " error=" + error);
+    return config;
 }
 
 function manifestOf(dir) {
@@ -95,8 +106,8 @@ case "owners": {
 }
 case "land-disabled": {
     const [shippedPath, userPath, dir] = args;
-    const shipped = readJson(shippedPath, "shipped-config");
-    const user = fs.existsSync(userPath) ? readJson(userPath, "user-config") : null;
+    const shipped = readConfig(shippedPath, "shipped-config");
+    const user = fs.existsSync(userPath) ? readConfig(userPath, "user-config") : null;
     const manifest = validated(dir);
     const effective = logic.effectiveConfig(shipped, user);
     const defaultBarId = logic.activeBarId(shipped, "");

@@ -104,6 +104,9 @@ Singleton {
         // `scanned` gates every host key, so it moves last and the hosts
         // see the registry and the generation together.
         root.scanned = true;
+        // One line per completed scan, the smoke's readback for a scan that
+        // changed nothing and so leaves no other trace.
+        console.info("plugins: scan complete changed=" + changed + " generation=" + root.generation);
     }
 
     Process {
@@ -145,7 +148,8 @@ Singleton {
     }
 
     // Why plugin `id` cannot be built now, or "": the scan is pending, the
-    // configuration files have not settled, the plugin is unknown or
+    // configuration is not ready (Config.notReady names why: pending, or
+    // the shipped file's failure), the plugin is unknown or
     // disabled, or another plugin holds an exclusive capability it names
     // (from the settled copy of the holders, so a refused plugin builds once
     // the holder lets go). Every input is read on every path so a binding on
@@ -153,10 +157,10 @@ Singleton {
     function buildRefusal(id) {
         const holders = lendSnapshot;
         const isScanned = scanned;
-        const ready = Config.ready;
+        const notReady = Config.notReady;
         const enable = enableRefusal(id);
         if (!isScanned) return "refused: scan=pending";
-        if (!ready) return "refused: config=pending";
+        if (notReady !== "") return "refused: config=" + notReady;
         if (enable !== "") return enable;
         return Logic.lendRefusal(holders, manifests[id]);
     }
@@ -241,7 +245,7 @@ Singleton {
         if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return null; }
         const instance = component.createObject(parent);
         if (instance === null) { console.error("plugins: " + id + " created no object"); return null; }
-        const settings = Logic.settingsFor(Config.effective, manifest, kind, layoutEntry);
+        const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(kind), layoutEntry);
         const onScreen = screen !== undefined && screen !== null ? screen : null;
         const row = { id: id, kind: kind, origin: "core", instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
         try {
@@ -433,7 +437,7 @@ Singleton {
     // entry; every other kind's from its plugins[] row.
     function refreshRow(row, layoutEntry) {
         const manifest = manifests[row.id];
-        const settings = Logic.settingsFor(Config.effective, manifest, row.kind, layoutEntry);
+        const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(row.kind), layoutEntry);
         const key = JSON.stringify(settings);
         row.entry = layoutEntry;
         if (key === row.settingsKey) return;
@@ -512,7 +516,7 @@ Singleton {
     // The settings an instance of `kind` of plugin `id` receives from its
     // plugins[] row, for a host that reads a plugin's settings for itself.
     function settingsOf(id, kind) {
-        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], kind, null) : {};
+        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], Logic.settingTargetOf(kind), null) : {};
     }
 
     // Call one function of one built instance with one text argument and
