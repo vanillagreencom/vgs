@@ -15,12 +15,22 @@ Item {
     Process {
         id: probe
         command: ["true"]
+        // `exited` precedes `running` turning false, and a command that
+        // fails to start emits no `exited`: a run that ends without one did
+        // not start, and is logged instead of retried in silence.
+        property bool exitedThisRun: false
         stdout: SplitParser {
             onRead: data => root.lastLine = data
         }
+        onStarted: exitedThisRun = false
         onExited: (code, status) => {
+            exitedThisRun = true;
             if (code !== 0)
                 console.error("__ID__: probe exited " + code);
+        }
+        onRunningChanged: {
+            if (!running && !exitedThisRun)
+                console.error("__ID__: probe did not start: " + JSON.stringify(command));
         }
     }
 

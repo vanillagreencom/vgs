@@ -2,7 +2,6 @@
   "version": 1,
   "bar": {
     "id": "vgs.bar",
-    "position": "top",
     "layout": {
       "left": [],
       "center": [],

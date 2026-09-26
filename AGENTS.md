@@ -1,30 +1,27 @@
 # v2
 
-A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Every visible surface and every service is a plugin with its own manifest, and each plugin ships with the check that proves it is built and handed what it asked for.
+A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core starts the shell, talks to Hyprland, hosts surfaces and loads plugins. Everything outside the core is a plugin: one directory with a `manifest.json`, shown on the surfaces the core hosts, landed with the validation row that proves it is built and handed what it asked for. `docs/architecture/overview.md` holds the idea, the vocabulary and the invariants.
 
 ## Commands
 
-- `scripts/validate [AREA]`: the validation manifest. Exit 77 means a check could not run and is not a pass.
-- `scripts/qml-smoke.sh`: the nested sandbox row alone. Needs a Wayland session; never touches the live shell.
-- `bin/vgsh run | ipc | log | plugin`: the runner and plugin manager. `run` takes no arguments; `vgsh plugin validate <dir>` checks a manifest offline.
+- `scripts/validate [AREA]`: the validation manifest, one area per call. Exit 77 means a check could not run and is not a pass.
+- `scripts/qml-smoke.sh`: the nested sandbox row alone. It needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment.
+- `bin/vgsh`: the runner and plugin manager. Run it with no arguments for the command list.
 
 ## Conventions
 
-- Hyprland is the only compositor. No compositor abstraction and no second compositor.
-- Everything outside the core is a plugin with its own directory and `manifest.json`; `docs/architecture/plugins.md` is the contract and `scripts/check-plugin-boundary.py` the line between core and plugin.
-- A change that adds a surface, a service or a plugin adds its row to `scripts/qml-smoke.sh` in the same PR.
-- Never start a second shell against the live session. Validation runs in the nested sandbox only.
+- Hyprland is the only compositor. No compositor abstraction and no second compositor: `docs/decisions/D001-hyprland-only.md`.
+- Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
+- A change that adds a surface, a service or a plugin adds its validation row to `scripts/qml-smoke.sh` in the same PR.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
-- Rules local to a directory live in that directory's `AGENTS.md`. Claude Code reads them through the `CLAUDE.md` shim beside each; Pi reads only the root-to-cwd chain at launch, so a Pi agent reads the nested file itself before working under a directory.
 
 ## Read next
 
 - `docs/architecture/overview.md`: before structural work.
 - `docs/architecture/plugins.md`: before writing a plugin, a host or the manager.
-- `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell.
-- `shell/AGENTS.md`: when working under `shell/`.
-- `shell/plugins/AGENTS.md`: when working under `shell/plugins/`.
-- `scripts/AGENTS.md`: when working under `scripts/`.
+- `docs/architecture/configuration.md`: before touching the configuration files, their judge or the theme.
+- `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell and Hyprland fact the code rests on.
+- `shell/AGENTS.md`, `shell/plugins/AGENTS.md`, `scripts/AGENTS.md`: when working under that directory. Claude Code loads each through the `CLAUDE.md` shim beside it. Pi and Codex load only the root-to-cwd chain at launch, so an agent on those harnesses reads the nested file before working under the directory.
 
 ## Code Review Rules
 

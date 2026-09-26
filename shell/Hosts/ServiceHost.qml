@@ -8,7 +8,7 @@ import qs.Core
 // the list, so enabling or disabling one service rebuilds no other.
 Scope {
     Variants {
-        model: Plugins.scanned ? Plugins.enabledOfKind("service") : []
+        model: Plugins.enabledOfKind("service")
 
         PluginSlot {
             required property string modelData

@@ -13,12 +13,15 @@ Rectangle {
     radius: height / 2
     color: on ? Color.accent : Color.muted
 
+    // The knob sits `inset` inside the track on every side.
+    readonly property int inset: Style.space(0.5)
+
     Rectangle {
-        width: parent.height - 4
+        width: parent.height - 2 * root.inset
         height: width
         radius: width / 2
-        y: 2
-        x: root.on ? parent.width - width - 2 : 2
+        y: root.inset
+        x: root.on ? parent.width - width - root.inset : root.inset
         color: Color.background
     }
 

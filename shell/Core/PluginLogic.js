@@ -55,6 +55,61 @@ function clone(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+// The version a configuration file declares. `withEnabled` and `withSetting`
+// write it into a user file that has none.
+var CONFIG_VERSION = 1;
+
+// The first defect of a configuration file (shipped or user), or "". The
+// file is an object; `version`, when present, is CONFIG_VERSION; `plugins`
+// is a list of objects each with a string `id`; `disabledPlugins` is a list
+// of strings; `bar` is an object whose `id` is a string and whose `layout`
+// holds, per section in SECTIONS, a list of objects each with a string `id`.
+// A key outside that set is carried untouched. Config.qml runs this judge
+// on every parsed file and reports a defect as the file's state, so no
+// malformed row is dropped on the way to the screen.
+function configError(config) {
+    if (!isPlainObject(config))
+        return "config must be an object";
+    if (config.version !== undefined && config.version !== CONFIG_VERSION)
+        return "version must be " + CONFIG_VERSION + ", got " + JSON.stringify(config.version);
+    var rows = function (list, at) {
+        if (!Array.isArray(list))
+            return at + " must be a list";
+        for (var i = 0; i < list.length; i++) {
+            if (!isPlainObject(list[i]) || typeof list[i].id !== "string")
+                return at + "." + i + " must be an object with a string id";
+        }
+        return "";
+    };
+    var bad;
+    if (config.plugins !== undefined && (bad = rows(config.plugins, "plugins")) !== "")
+        return bad;
+    if (config.disabledPlugins !== undefined) {
+        if (!Array.isArray(config.disabledPlugins))
+            return "disabledPlugins must be a list";
+        for (var d = 0; d < config.disabledPlugins.length; d++) {
+            if (typeof config.disabledPlugins[d] !== "string")
+                return "disabledPlugins." + d + " must be a string";
+        }
+    }
+    if (config.bar !== undefined) {
+        if (!isPlainObject(config.bar))
+            return "bar must be an object";
+        if (config.bar.id !== undefined && typeof config.bar.id !== "string")
+            return "bar.id must be a string";
+        if (config.bar.layout !== undefined) {
+            if (!isPlainObject(config.bar.layout))
+                return "bar.layout must be an object";
+            for (var s = 0; s < SECTIONS.length; s++) {
+                var section = SECTIONS[s];
+                if (config.bar.layout[section] !== undefined && (bad = rows(config.bar.layout[section], "bar.layout." + section)) !== "")
+                    return bad;
+            }
+        }
+    }
+    return "";
+}
+
 // Why `value` does not fit a schema entry, or "" when it does.
 function settingError(entry, value) {
     if (entry.type === "string") return typeof value === "string" ? "" : "want=string";
@@ -169,6 +224,8 @@ function validateManifest(raw, sourceDir) {
         return { ok: false, error: "settings must be an object" };
     if (hasOwn(settings, "id"))
         return { ok: false, error: "settings must not carry an id key" };
+    if (hasOwn(settings, "placement") && PLACEMENTS.indexOf(settings.placement) === -1)
+        return { ok: false, error: "settings.placement must be one of " + PLACEMENTS.join(", ") + ", got " + JSON.stringify(settings.placement) };
     var schema = raw.schema === undefined ? {} : raw.schema;
     var badSchema = schemaError(schema, settings);
     if (badSchema !== "")
@@ -181,10 +238,10 @@ function validateManifest(raw, sourceDir) {
         if (SECTIONS.indexOf(raw.defaultSection) === -1)
             return { ok: false, error: "defaultSection must be one of " + SECTIONS.join(", ") + ", got " + JSON.stringify(raw.defaultSection) };
     }
-    var manifest = JSON.parse(JSON.stringify(raw));
+    var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();
-    manifest.settings = JSON.parse(JSON.stringify(settings));
-    manifest.schema = JSON.parse(JSON.stringify(schema));
+    manifest.settings = clone(settings);
+    manifest.schema = clone(schema);
     manifest.__sourceDir = sourceDir;
     return { ok: true, manifest: manifest };
 }
@@ -195,7 +252,7 @@ function validateManifest(raw, sourceDir) {
 // the user list when present. A shipped plugin entry the user file does not
 // name still applies, which is the point of keeping two layers.
 function effectiveConfig(shipped, user) {
-    var out = JSON.parse(JSON.stringify(shipped));
+    var out = clone(shipped);
     if (!isPlainObject(user))
         return out;
     Object.keys(user).forEach(function (key) {
@@ -203,27 +260,27 @@ function effectiveConfig(shipped, user) {
             var byId = {};
             var order = [];
             (Array.isArray(out.plugins) ? out.plugins : []).forEach(function (entry) {
-                if (isPlainObject(entry) && typeof entry.id === "string") { byId[entry.id] = entry; order.push(entry.id); }
+                byId[entry.id] = entry;
+                order.push(entry.id);
             });
-            (Array.isArray(user.plugins) ? user.plugins : []).forEach(function (entry) {
-                if (!isPlainObject(entry) || typeof entry.id !== "string") return;
-                if (!(entry.id in byId)) order.push(entry.id);
+            user.plugins.forEach(function (entry) {
+                if (!hasOwn(byId, entry.id)) order.push(entry.id);
                 byId[entry.id] = entry;
             });
             out.plugins = order.map(function (id) { return byId[id]; });
         } else {
-            out[key] = JSON.parse(JSON.stringify(user[key]));
+            out[key] = clone(user[key]);
         }
     });
     return out;
 }
 
-// The raw layout entries of one section: objects with a string id, in order.
+// The layout entries of one section, in order; [] when the section or the
+// layout is absent. Both files passed configError, so every entry is an
+// object with a string id.
 function sectionEntries(config, section) {
     var layout = config && config.bar && isPlainObject(config.bar.layout) ? config.bar.layout : {};
-    return (Array.isArray(layout[section]) ? layout[section] : []).filter(function (entry) {
-        return isPlainObject(entry) && typeof entry.id === "string";
-    });
+    return Array.isArray(layout[section]) ? layout[section] : [];
 }
 
 // Ids placed in the bar layout, in section order.
@@ -252,22 +309,43 @@ function layoutEntryOf(config, id) {
 // The plugins[] row with `id`, or undefined.
 function pluginRow(config, id) {
     return (config && Array.isArray(config.plugins) ? config.plugins : []).filter(function (entry) {
-        return isPlainObject(entry) && entry.id === id;
+        return entry.id === id;
     })[0];
 }
 
-// The settings a plugin receives: its manifest's `settings` under the entry
-// the configuration holds for it. A bar widget's entry is its layout entry
-// (`layoutEntry`, passed by the core when it mounts the widget); every
-// other kind's entry is the `plugins[]` row with its id. Keys the entry
-// sets win. The result is a fresh object with no `id` key.
-function settingsFor(config, manifest, layoutEntry) {
+// The configuration entries a plugin's settings live in, in the order a
+// plugin's target list reports them.
+var SETTING_TARGETS = ["layout", "plugins"];
+
+// The configuration entry an instance of `kind` reads its settings from
+// and writes them to: "layout", its layout entry, for a bar widget;
+// "plugins", the plugins[] row with its id, for every other kind. The one
+// place this is decided; settingsFor, settingTargets and the configure
+// capability all call it.
+function settingTargetOf(kind) {
+    return kind === "bar-widget" ? "layout" : "plugins";
+}
+
+// The settings an instance of `kind` receives: its manifest's `settings`
+// under the entry settingTargetOf(kind) names. `layoutEntry` is the
+// widget's own layout entry, passed by the core when it mounts the widget,
+// and is read only for a bar widget. Keys the entry sets win. The result is
+// a fresh object with no `id` key.
+function settingsFor(config, manifest, kind, layoutEntry) {
     var out = {};
     Object.keys(manifest.settings).forEach(function (k) { out[k] = manifest.settings[k]; });
-    var entry = isPlainObject(layoutEntry) ? layoutEntry : pluginRow(config, manifest.id);
+    var entry = settingTargetOf(kind) === "layout" ? layoutEntry : pluginRow(config, manifest.id);
     if (isPlainObject(entry))
         Object.keys(entry).forEach(function (k) { if (k !== "id") out[k] = entry[k]; });
-    return JSON.parse(JSON.stringify(out));
+    return clone(out);
+}
+
+// The settings the plugin manager shows for a plugin: the ones its placed
+// bar widget reads, from its first layout entry, or, for a plugin with no
+// placed widget, the ones every other kind reads from its plugins[] row.
+function managerSettings(config, manifest) {
+    var entry = manifest.kinds.indexOf("bar-widget") !== -1 ? layoutEntryOf(config, manifest.id) : null;
+    return entry !== null ? settingsFor(config, manifest, "bar-widget", entry) : settingsFor(config, manifest, "plugins", null);
 }
 
 // Whether a plugin is enabled under this configuration.
@@ -302,7 +380,7 @@ function effectiveLayout(config, manifests, defaultBarId) {
         out[section] = sectionEntries(config, section).filter(function (entry) {
             var m = hasOwn(manifests, entry.id) ? manifests[entry.id] : undefined;
             return m !== undefined && m.kinds.indexOf("bar-widget") !== -1 && isEnabled(config, m, defaultBarId);
-        }).map(function (entry) { return JSON.parse(JSON.stringify(entry)); });
+        }).map(clone);
     });
     return out;
 }
@@ -335,8 +413,8 @@ function hiddenByDisabling(manifests, config, id, defaultBarId) {
 // widget in place. Enabling a plugin that already has its presence changes
 // nothing but the disabled list.
 function withEnabled(user, manifest, enabled, effective) {
-    var out = isPlainObject(user) ? JSON.parse(JSON.stringify(user)) : {};
-    if (out.version === undefined) out.version = 1;
+    var out = isPlainObject(user) ? clone(user) : {};
+    if (out.version === undefined) out.version = CONFIG_VERSION;
     var disabled = Array.isArray(out.disabledPlugins) ? out.disabledPlugins.slice() : [];
     if (!enabled) {
         if (disabled.indexOf(manifest.id) === -1) disabled.push(manifest.id);
@@ -348,7 +426,7 @@ function withEnabled(user, manifest, enabled, effective) {
     var isWidget = manifest.kinds.indexOf("bar-widget") !== -1;
     var seedBar = function () {
         if (!isPlainObject(out.bar))
-            out.bar = effective && isPlainObject(effective.bar) ? JSON.parse(JSON.stringify(effective.bar)) : {};
+            out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
     };
     if (isBar && activeBarId(effective, "") !== manifest.id) {
         seedBar();
@@ -362,8 +440,7 @@ function withEnabled(user, manifest, enabled, effective) {
         out.bar.layout[section].push({ id: manifest.id });
     }
     if (!isBar && !isWidget && manifest.id.indexOf(FIRST_PARTY_PREFIX) !== 0) {
-        var listed = (Array.isArray(effective.plugins) ? effective.plugins : []).some(function (e) { return isPlainObject(e) && e.id === manifest.id; });
-        if (!listed) {
+        if (pluginRow(effective, manifest.id) === undefined) {
             var plugins = Array.isArray(out.plugins) ? out.plugins : [];
             plugins.push({ id: manifest.id });
             out.plugins = plugins;
@@ -382,17 +459,16 @@ function settingRefusal(manifest, key, value) {
     return bad === "" ? "" : "refused: setting=" + key + " " + bad;
 }
 
-// The configuration entries a plugin's instances read their settings from:
-// "layout" when it is a bar widget placed in the bar, "plugins" when it
-// declares any other kind. A running instance writes only the entry it
+// The configuration entries a plugin's instances read their settings from,
+// one per settingTargetOf(kind) over its kinds, "layout" only while a
+// widget is placed in the bar. A running instance writes only the entry it
 // reads; the plugin manager writes every entry the plugin reads.
 function settingTargets(config, manifest) {
-    var out = [];
-    if (manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1)
-        out.push("layout");
-    if (manifest.kinds.some(function (k) { return k !== "bar-widget"; }))
-        out.push("plugins");
-    return out;
+    var wanted = manifest.kinds.map(settingTargetOf);
+    return SETTING_TARGETS.filter(function (target) {
+        if (wanted.indexOf(target) === -1) return false;
+        return target !== "layout" || layoutIds(config).indexOf(manifest.id) !== -1;
+    });
 }
 
 // The user-file change that sets one setting of one plugin in each of
@@ -405,7 +481,7 @@ function settingTargets(config, manifest) {
 // caller checks the value with settingRefusal first.
 function withSetting(user, manifest, key, value, effective, targets, locator) {
     var out = isPlainObject(user) ? clone(user) : {};
-    if (out.version === undefined) out.version = 1;
+    if (out.version === undefined) out.version = CONFIG_VERSION;
     if (targets.indexOf("layout") !== -1) {
         if (!isPlainObject(out.bar))
             out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
@@ -414,7 +490,7 @@ function withSetting(user, manifest, key, value, effective, targets, locator) {
             if (isPlainObject(locator) && locator.section !== section) return;
             var seen = 0;
             (Array.isArray(layout[section]) ? layout[section] : []).forEach(function (entry) {
-                if (!isPlainObject(entry) || entry.id !== manifest.id) return;
+                if (entry.id !== manifest.id) return;
                 if (!isPlainObject(locator) || seen === locator.nth) entry[key] = clone(value);
                 seen += 1;
             });
@@ -456,23 +532,27 @@ function lendRefusal(held, manifest) {
 // or an anchor.
 //
 // Returns { anchors: { top, bottom, left, right }, margins: { top, bottom,
-// left, right }, exclusion: "normal" | "ignore", placement, error }. An overlay
-// fills its screen. An anchored surface sits under its anchor, centred on
+// left, right }, exclusion: "normal" | "ignore", layer: "top" | "overlay",
+// placement, error }. A panel sits on the top layer, a menu and an overlay
+// on the overlay layer above it. An overlay fills its screen. An anchored surface sits under its anchor, centred on
 // it and clamped to the screen, or above it when there is no room below,
 // positioned from the screen's top-left corner so the bar's reserved space
 // does not move it. An unanchored surface takes its `placement` setting and
-// keeps clear of reserved space. An unknown placement centres the surface
-// and names the setting in `error`, which is "" otherwise.
+// keeps clear of reserved space. The manifest judge refuses an unknown
+// placement default, so an unknown value here came from the user's
+// configuration entry: the surface is centred and `error` names the
+// setting, "" otherwise.
 function surfacePlacement(kind, settings, anchor, size, screen, gap) {
     var zero = { top: 0, bottom: 0, left: 0, right: 0 };
+    var layer = kind === "panel" ? "top" : "overlay";
     if (kind === "overlay")
-        return { anchors: { top: true, bottom: true, left: true, right: true }, margins: zero, exclusion: "ignore", placement: "fill", error: "" };
+        return { anchors: { top: true, bottom: true, left: true, right: true }, margins: zero, exclusion: "ignore", layer: layer, placement: "fill", error: "" };
     if (isPlainObject(anchor)) {
         var left = Math.round(anchor.x + anchor.width / 2 - size.width / 2);
         left = Math.max(0, Math.min(left, screen.width - size.width));
         var below = anchor.y + anchor.height + gap;
         var top = below + size.height <= screen.height ? below : Math.max(0, anchor.y - gap - size.height);
-        return { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: top, bottom: 0, left: left, right: 0 }, exclusion: "ignore", placement: "anchor", error: "" };
+        return { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: top, bottom: 0, left: left, right: 0 }, exclusion: "ignore", layer: layer, placement: "anchor", error: "" };
     }
     var asked = isPlainObject(settings) ? settings.placement : undefined;
     var known = asked === undefined || PLACEMENTS.indexOf(asked) !== -1;
@@ -485,5 +565,5 @@ function surfacePlacement(kind, settings, anchor, size, screen, gap) {
         anchors[edge] = true;
         margins[edge] = gap;
     });
-    return { anchors: anchors, margins: margins, exclusion: "normal", placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
+    return { anchors: anchors, margins: margins, exclusion: "normal", layer: layer, placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
 }

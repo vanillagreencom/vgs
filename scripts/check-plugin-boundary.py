@@ -18,7 +18,9 @@ are blanked before matching, with line numbers kept. String literals stay, so a
 window type inside a string handed to Qt.createQmlObject is still a finding.
 
 Usage: check-plugin-boundary.py [--shell DIR] [PLUGIN_DIR...]
-With no plugin directories, every directory under DIR/plugins is checked.
+With no plugin directories, every plugin under DIR/plugins is checked, listed
+the way the shell lists them: by bin/vgsh-scan, so a directory with no
+manifest.json is not a plugin and a directory the scan cannot read ends the run.
 
 Every finding is one line: `<rule> <file>:<line> <detail>`. Exit 0 when clean,
 1 on any finding, 2 when any directory or source file cannot be read, printed as
@@ -26,9 +28,15 @@ Every finding is one line: `<rule> <file>:<line> <detail>`. Exit 0 when clean,
 never certifies a tree: the first read failure ends the run before any verdict.
 """
 import argparse
+import json
 import os
 import re
+import subprocess
 import sys
+
+SCAN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "vgsh-scan")
+# The scan runs under this environment and nothing inherited beyond it.
+SCAN_ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 ALLOWED_PREFIXES = ("QtQuick", "QtQml", "Qt.labs.", "Quickshell", "qs.Commons", "qs.Ui")
 REFUSED_MODULES = ("Quickshell.Wayland", "QtQuick.Window")
@@ -185,11 +193,20 @@ def check_core(shell_dir, findings):
 
 
 def plugin_directories(base):
+    # The scan skips an absent base, which is right for a user directory and
+    # wrong here: a missing base would certify nothing as everything.
     try:
-        with os.scandir(base) as entries:
-            return sorted(e.path for e in entries if e.is_dir())
+        os.listdir(base)
     except OSError as exc:
         raise Unreadable(base, exc.strerror) from exc
+    scan = subprocess.run([SCAN, base], capture_output=True, text=True, check=False, env=SCAN_ENV)
+    if scan.returncode != 0:
+        raise Unreadable(base, f"vgsh-scan exited {scan.returncode}")
+    entries = json.loads(scan.stdout)
+    for entry in entries:
+        if "error" in entry:
+            raise Unreadable(entry["dir"], entry["error"])
+    return sorted(entry["dir"] for entry in entries)
 
 
 def main(argv):

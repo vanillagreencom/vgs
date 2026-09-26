@@ -15,7 +15,8 @@
 # workspaces and clock and mounts a placed plugin widget; a widget
 # can be disabled and re-enabled with its placement and settings kept;
 # disabling the bar names the widgets it hides, unloads it and unmaps its
-# surface; an unrelated write and a no-op rescan build nothing; a user
+# surface; an unrelated write and a rescan that adds a disabled plugin
+# build nothing; a user
 # plugin installed with `vgsh plugin add` from a local repository is
 # discovered, built as a service and a widget, receives exactly the
 # capabilities it named, and takes a settings change without a rebuild;
@@ -30,7 +31,8 @@
 # exclusive capability builds once the holder lets go; a plugin that cannot
 # take what the core assigns keeps nothing; a removed monitor takes its bar
 # and its build records with it; an unreadable user file keeps the bar and
-# refuses writes;
+# refuses writes; a theme file recolours the bar and one that does not parse
+# is logged and keeps the last good palette;
 # a bare `qs` started beside the runner refuses to draw and to write, and
 # the runner's CLI still reaches the guarded instance; the log holds no QML
 # error; resident memory stays under the ceiling.
@@ -45,8 +47,9 @@
 # the end of the run. It catches a startup allocation blow-up and nothing
 # else: a run this short cannot see the slow growth docs/architecture/memory.md
 # describes, and the reading carries the machine's graphics stack. The
-# default is twice the rss_kib this script printed on the owner's machine on
-# 2026-09-21 with the three bundled plugins on one nested monitor. The
+# default is twice the rss_kib this script printed on the owner's machine
+# (host cachy, AMD Ryzen 9 9950X) on 2026-09-25 with the one bundled plugin,
+# the bar, plus the fixtures this run installs, on one nested monitor. The
 # high-water mark is printed beside it as the reproducible reading.
 #
 # VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
@@ -72,7 +75,7 @@ done
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
-rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-576968}"
+rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-254}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
 
@@ -93,13 +96,8 @@ if [[ ! -S $host_socket ]]; then
   exit 77
 fi
 
-sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
-# The runtime dir holds Unix sockets, whose paths are limited to 107 bytes,
-# and Hyprland's socket path adds a 63-character signature under hypr/. A
-# sandbox under a long TMPDIR made Hyprland refuse IPC, so the runtime dir
-# is a short name beside the host's own runtime files.
-rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
-home="$sandbox/home"; mkdir -p "$home/.config/hypr"
+sandbox=""
+rt_dir=""
 pgids=()
 failures=0
 # A row that reads positions, sizes or reserved space from the compositor
@@ -118,6 +116,8 @@ geometry() { local previous="$row_class"; row_class=geometry; "$@"; row_class="$
 expected_errors=()
 ok() { printf '  ok    %s\n' "$*"; }
 
+# Runs on every exit, so it is armed before either directory exists and
+# removes only what was made.
 cleanup() {
   local pg
   for pg in "${pgids[@]}"; do kill -TERM -- "-$pg" 2>/dev/null || true; done
@@ -126,10 +126,19 @@ cleanup() {
   if [[ $keep == true ]]; then
     echo "qml-smoke: sandbox kept at $sandbox (runtime dir $rt_dir)"
   else
-    rm -rf -- "${sandbox:?}" "${rt_dir:?}"
+    [[ -z $sandbox ]] || rm -rf -- "$sandbox"
+    [[ -z $rt_dir ]] || rm -rf -- "$rt_dir"
   fi
 }
 trap cleanup EXIT
+
+sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
+# The runtime dir holds Unix sockets, whose paths are limited to 107 bytes,
+# and Hyprland's socket path adds a 63-character signature under hypr/. A
+# sandbox under a long TMPDIR made Hyprland refuse IPC, so the runtime dir
+# is a short name beside the host's own runtime files.
+rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
+home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -238,7 +247,6 @@ cat >"$tick/Widget.qml" <<'QML'
 import QtQuick
 import qs.Ui
 BarWidget {
-    moduleName: "acme.tick"
     readonly property string format: String(setting("format", ""))
     implicitWidth: 20
     implicitHeight: barSize
@@ -282,6 +290,42 @@ if [[ $up != true ]]; then
 fi
 ok "shell answers ping"
 
+# qs buffers stdout when redirected, so the shell's own per-instance log
+# file is the record: it is line-flushed and holds every QML warning. The
+# runner execs qs, so the shell's pid is the runner's unless setsid forked.
+shell_qs_pid="$shell_pid"
+if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
+instance_log=""
+for _ in $(seq 1 50); do
+  if instance_id="$("${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
+    instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
+    break
+  fi
+  sleep 0.2
+done
+if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; exit 1; fi
+# Lines of the instance log matching an extended regex, counted. grep exits
+# 1 for a count of zero, which is an answer; anything above is a read or
+# pattern failure and returns 1 after a failure line.
+log_lines() {
+  local count status=0
+  count="$(grep -c -E -e "$1" -- "$instance_log")" || status=$?
+  if [[ $status -gt 1 ]]; then fail "instance log unreadable or pattern refused: $instance_log ($1)"; return 1; fi
+  printf '%s\n' "$count"
+}
+# expect_log LABEL COUNT PATTERN: the log holds at least COUNT matching
+# lines within 5 s. A row that asserts something did not happen waits for
+# the line the shell writes when it decides not to, then looks.
+expect_log() {
+  local label="$1" want="$2" pattern="$3" got=0
+  for _ in $(seq 1 25); do
+    got="$(log_lines "$pattern")" || return
+    if [[ $got -ge $want ]]; then ok "$label"; return; fi
+    sleep 0.2
+  done
+  fail "$label: log lines matching $pattern: $got want at least $want"
+}
+
 # expect LABEL WANT CMD...: the command's last stdout line must equal WANT.
 # A command that fails is a failure, never an empty string that happens to
 # compare unequal.
@@ -290,6 +334,17 @@ expect() {
   shift 2
   if ! got="$("$@")"; then fail "$label: command failed: $*"; return; fi
   if [[ $got == "$want" ]]; then ok "$label"; else fail "$label: got $got"; fi
+}
+# expect_poll LABEL WANT CMD...: as expect, retried for up to 5 s, for a
+# state that follows a write through the watcher, the merge and a rebuild.
+expect_poll() { # LABEL WANT CMD...
+  local label="$1" want="$2" got=""
+  shift 2
+  for _ in $(seq 1 25); do
+    if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
+    sleep 0.2
+  done
+  fail "$label: got $got want $want"
 }
 
 expect "instance guard accepts the runner's shell" true ipc shell guarded
@@ -345,9 +400,10 @@ expect_widgets() { # LABEL EXPECTED_JSON_LIST
   fail "$1: got $got want $want"
 }
 expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
-# Built-in widget ids every bar registered, sorted.
+# Built-in widget ids every bar registered, sorted: the records of origin
+# `plugin` under each bar host key.
 bar_builtins() {
-  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:sorted(r["id"] for r in v if r["kind"]=="builtin") for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
+  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars={k:sorted(r["id"] for r in v if r["origin"]=="plugin") for k,v in d.items() if k.startswith("bar:")}; out=sorted(bars.values()); out+= [[]]*(int(sys.argv[1])-len(out)); print(json.dumps(out))' "$monitors"
 }
 expect_builtins() { # LABEL EXPECTED_JSON_LIST
   local want got=""
@@ -421,9 +477,11 @@ done
 if [[ $reserved -gt 0 ]]; then ok "the re-enabled bar reserves screen space again"; else geometry fail "reserved space after re-enable: $reserved"; fi
 if [[ -f "$home/.config/vgs/shell.json" ]]; then ok "manager wrote the user file"; else fail "user file missing"; fi
 
-# An unrelated key in the user file and a no-op rescan build nothing. Every
-# write the smoke makes to the user file is a rename, so the watching shell
-# never reads half a file.
+# An unrelated key in the user file builds nothing: the shell is seen to
+# have read the write (the key is in the effective configuration) before
+# the build count is compared. Every write the smoke makes to the user file
+# is a rename, so the watching shell never reads half a file.
+unrelated_key() { ipc shell listShellConfig | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unrelated"))'; }
 if before="$(builds)"; then
   python3 - "$home/.config/vgs/shell.json" <<'PY'
 import json, os, sys
@@ -433,11 +491,27 @@ d["unrelated"] = 1
 json.dump(d, open(p + ".tmp", "w"), indent=2)
 os.replace(p + ".tmp", p)
 PY
-  sleep 1
+  expect_poll "the shell read the unrelated key" 1 unrelated_key
   expect "an unrelated configuration write rebuilds nothing" "$before" builds
-  expect "a no-op rescan answers ok" ok ipc shell rescanPlugins
-  sleep 1
-  expect "a no-op rescan rebuilds nothing" "$before" builds
+  # A rescan that changes the plugin set bumps the generation every slot
+  # keys on; one that adds a plugin nothing enables builds nothing. The
+  # new plugin's appearance in the listing is the scan's completion.
+  idle="$home/.config/vgs/plugins/acme.idle"
+  mkdir -p "$idle"
+  cat >"$idle/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.idle", "name": "Idle", "version": "0.1.0", "author": "acme", "description": "smoke fixture nothing enables",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }
+JSON
+  printf 'import QtQuick\nItem { property var shell: null }\n' >"$idle/Service.qml"
+  expect "a rescan after adding a plugin answers ok" ok ipc shell rescanPlugins
+  idle_state() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.idle"][0])' 2>/dev/null || echo absent; }
+  expect_poll "the rescan discovered the plugin, disabled" False idle_state
+  # A changed plugin set bumps the generation every slot keys on, so each
+  # screen's bar and its placed widget are built again, and nothing else is.
+  idle_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.idle" for rows in json.load(sys.stdin).values() for r in rows))'; }
+  expect_poll "a rescan that adds a plugin rebuilds each screen's bar and widget" "$((before + 2 * monitors))" builds
+  expect "a rescan that adds a disabled plugin does not build it" False idle_built
+  expect "a rescan that adds a disabled plugin builds nothing else" "$((before + 2 * monitors))" builds
 else
   fail "buildCount unreadable"
 fi
@@ -560,15 +634,6 @@ expect "the fixture widget's settings array stayed an array" true read_widget ta
 all_caps='"compositor,configure,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut"'
 expect "the fixture widget's shell holds exactly what it named" "$all_caps" read_widget shellKeys
 expect "the fixture service's shell holds exactly what it named" "$all_caps" read_service shellKeys
-expect_poll() { # LABEL WANT CMD...
-  local label="$1" want="$2" got=""
-  shift 2
-  for _ in $(seq 1 25); do
-    if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
-    sleep 0.2
-  done
-  fail "$label: got $got want $want"
-}
 expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc shell readInstance service acme.bare shellKeys
 expect "the fixture service reads the manifest default" '"probe"' read_service label
 expect "a placed widget reads its layout entry" '"ddd d MMM  HH:mm"' read_tick format
@@ -616,8 +681,7 @@ os.replace(p + ".tmp", p)
 PY
   expect_poll "the built-in clock received the bar's changed setting" '"HH:mm:ss"' read_clock format
   # The shared clock ticks seconds only while a format shows them: three
-  # readings across 2.2 s change at least twice at second precision and at
-  # most once at minute precision.
+  # readings across 2.2 s change at least twice at second precision.
   clock_changes=0; clock_last=""
   for _ in 1 2 3; do
     if clock_now="$(read_clock displayed)"; then
@@ -761,12 +825,16 @@ panel_top() { layers_of vgs:panel | python3 -c 'import json,sys; print([l[1] for
 geometry expect_poll "the manager panel sits under the bar" "[$((bar_reserved + 8))]" panel_top
 manager_rows() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(json.dumps({r["id"]: r["enabled"] for r in rows if r["id"] in ("acme.probe", "acme.bare", "vgs.bar")}, sort_keys=True))'; }
 expect "the manager panel lists every plugin with its state" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
-manager_fields() { ipc shell readInstance panel vgs.bar renderedFields | python3 -c 'import json,sys; f=json.load(sys.stdin); print("acme.probe:label" in f and "vgs.bar:clockFormat" in f and not any(x.startswith("acme.bare:") for x in f))'; }
-expect "the manager panel draws a settings form for each schema" True manager_fields
+# The panel draws one field per key of each row's schema; the rows it holds
+# carry the schema keys the fields come from.
+manager_fields() { ipc shell readInstance panel vgs.bar plugins | python3 -c 'import json,sys; by={r["id"]: sorted(r["schema"]) for r in json.load(sys.stdin)}; print(json.dumps([by["acme.probe"], by["vgs.bar"], by["acme.bare"]]))'; }
+expect "the manager panel holds the schema keys its form draws" '[["label"], ["clockFormat"], []]' manager_fields
 probe_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.probe"][0])'; }
 expect "the manager toggles the fixture off" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
 expect_poll "listPlugins reads the fixture disabled" False probe_enabled
 expect_poll "the manager panel shows the fixture disabled" '{"acme.bare": true, "acme.probe": false, "vgs.bar": true}' manager_rows
+# The panel logs each refusal it shows on a row.
+expected_errors+=('manager panel: acme\.probe refused: disabled=acme\.probe' 'manager panel: acme\.probe refused: setting=tags undeclared')
 expect "the manager refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"x"}'
 expect "the manager panel shows the refusal on the plugin's row" '{"acme.probe":"refused: disabled=acme.probe"}' ipc shell readInstance panel vgs.bar replies
 expect "the manager toggles the fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.probe
@@ -978,11 +1046,54 @@ broken_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(
 expect_poll "the broken fixture is discovered" True broken_known
 expect "enabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken true
 broken_built() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]=="acme.broken" for rows in json.load(sys.stdin).values() for r in rows))'; }
-sleep 1
+expect_log "the core logged both refused builds of the broken fixture" 2 'plugins: acme\.broken (service|background) not built: '
 expect "the broken fixture has no build record" False broken_built
 expect "the broken fixture keeps no capability hold" null lent holders.lock
 expect_poll "the background host shows no surface for a failed build" 0 layer_count vgs:background
 expect "disabling the broken fixture is allowed" ok ipc shell setPluginEnabled acme.broken false
+
+# A bar widget that cannot take what the core assigns is not built, and the
+# section's entries stay aligned with the layout: an edit to the entry after
+# it reaches that entry's own widget, never a neighbour's settings.
+nowidget="$home/.config/vgs/plugins/acme.nowidget"
+mkdir -p "$nowidget"
+cat >"$nowidget/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.nowidget", "name": "No Widget", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget declaring no BarWidget properties",
+  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Item.qml" } }
+JSON
+printf 'import QtQuick\nItem { property var shell: null }\n' >"$nowidget/Item.qml"
+expected_errors+=('plugins: acme\.nowidget bar-widget not built: ')
+expect "rescan after adding the widget that cannot be built answers ok" ok ipc shell rescanPlugins
+nowidget_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]=="acme.nowidget" for p in json.load(sys.stdin)["plugins"]))'; }
+expect_poll "the widget that cannot be built is discovered" True nowidget_known
+python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["bar"]["layout"]["center"].insert(0, {"id": "acme.nowidget"})
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+expect_log "the core logged the refused widget build on every bar" "$monitors" 'plugins: acme\.nowidget bar-widget not built: '
+expect_widgets "the section shows the widget after the one that failed" '["acme.tick"]'
+python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+[e for e in d["bar"]["layout"]["center"] if e["id"] == "acme.tick"][0]["format"] = "aligned"
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+expect_poll "an edit after a failed entry reaches its own widget" '"aligned"' read_tick format
+python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["bar"]["layout"]["center"] = [e for e in d["bar"]["layout"]["center"] if e["id"] != "acme.nowidget"]
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+expect_widgets "removing the failed entry leaves the widget in place" '["acme.tick"]'
 
 # A monitor that goes away takes its bar with it, under the key the bar
 # was built under, and leaves no build record behind.
@@ -1010,6 +1121,34 @@ chmod 644 "$home/.config/vgs/shell.json"
 expect "reloading the readable user file answers ok" ok ipc shell reloadConfig
 expect_poll "the user file reads as loaded again" loaded config_user_state
 
+# A user file that parses but fails PluginLogic.configError is malformed: the
+# defect is logged, the last good value keeps the bar, and writes are refused
+# until the file passes again.
+user_good="$(cat "$home/.config/vgs/shell.json")"
+expected_errors+=('config: .*/shell\.json malformed: plugins\.0 must be an object with a string id')
+printf '{ "version": 1, "plugins": ["acme.tick"] }\n' >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
+expect_poll "a user file with a malformed plugins row reads as malformed" malformed config_user_state
+expect_log "the malformed row is logged with its path in the file" 1 'config: .*/shell\.json malformed: plugins\.0 must be an object with a string id'
+expect "a write to a malformed user file is refused" "refused: user-config=malformed path=$home/.config/vgs/shell.json" ipc shell setPluginEnabled acme.tick false
+expect "the bar stays with a malformed user file" "$monitors" bar_count
+expect_widgets "the placed widget stays with a malformed user file" '["acme.tick"]'
+printf '%s\n' "$user_good" >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
+expect_poll "the user file reads as loaded once the row is fixed" loaded config_user_state
+
+# theme.json recolours every surface through Color; the bar's foreground is
+# read back from a built bar instance. A file that does not parse is logged
+# and the last good palette stays.
+theme="$home/.config/vgs/theme.json"
+# A QML color reads back as its channel object; the row compares its hex.
+bar_foreground() { ipc shell readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
+expect "the bar draws the default foreground with no theme file" '#cacccc' bar_foreground
+printf '{ "foreground": "#123456" }\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
+expect_poll "a theme file recolours the bar's foreground" '#123456' bar_foreground
+expected_errors+=('theme: .*/theme\.json does not parse: ')
+printf '{ nope\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
+expect_log "a theme file that does not parse is logged" 1 'theme: .*/theme\.json does not parse: '
+expect "an unparseable theme file keeps the last good palette" '#123456' bar_foreground
+
 # Control: a bare qs beside the runner must refuse to draw and to write,
 # and the runner's CLI must keep addressing the guarded instance.
 spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
@@ -1034,16 +1173,9 @@ if [[ "$(cat "$home/.config/vgs/shell.json")" == "$user_before" ]]; then ok "the
 expect "the runner's CLI still reaches the guarded instance beside a bare one" true ipc shell guarded
 kill -TERM "$bare_pid" 2>/dev/null || true
 
-# qs buffers stdout when redirected, so the shell's own per-instance log
-# file is the record: it is line-flushed and holds every QML warning.
-# The runner execs qs, so the shell's pid is the runner's unless setsid forked.
-shell_qs_pid="$shell_pid"
-if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
-instance_log=""
-if instance_id="$("${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid")"; then
-  instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
-fi
-error_pattern=' ERROR |WARN scene:|WARN quickshell\.hyprland|TypeError|ReferenceError|is not defined|Cannot read|Cannot assign|qml: (config|compositor|plugins|capabilities|bar host|lock host|bar|shell): '
+# Every QML warning and error the shell logged, minus the lines rows
+# provoked on purpose, plus the engine's own error classes.
+error_pattern=' ERROR |WARN qml: |WARN scene:|WARN quickshell\.hyprland|TypeError|ReferenceError|is not defined|Cannot read|Cannot assign'
 unexpected_errors() {
   python3 - "$instance_log" "$error_pattern" "${expected_errors[@]}" <<'PY'
 import re, sys
@@ -1053,9 +1185,7 @@ for line in open(path, errors="replace"):
         print(line.rstrip())
 PY
 }
-if [[ -z $instance_log || ! -f $instance_log ]]; then
-  fail "instance log not found for pid $shell_qs_pid"
-elif ! log_errors="$(unexpected_errors)"; then
+if ! log_errors="$(unexpected_errors)"; then
   fail "shell log unreadable: $instance_log"
 elif [[ -n $log_errors ]]; then
   fail "shell log holds errors:"

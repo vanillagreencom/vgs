@@ -1,6 +1,6 @@
 # Runtime
 
-Covers: scripts/**, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, .github/workflows/**
+Covers: scripts/validate, scripts/qml-smoke.sh, scripts/qml-library.js, scripts/test-qml-library.js, scripts/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-dispatch.js, scripts/test-plugin-logic.js, scripts/test-vgsh-scan.py, scripts/test-vgsh.sh, scripts/test-vgs-plugin.py, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, .github/workflows/**
 
 Requirements for the shell process, the runner and the measurement tools, and the Quickshell facts the implementation rests on.
 
@@ -10,14 +10,11 @@ Requirements for the shell process, the runner and the measurement tools, and th
 - Never kill Quickshell processes by name. Other Quickshell applications share the seat.
 - Never start a second shell against the live session for a test. Validation runs inside the nested sandbox.
 - `Qt.quit()` and `Qt.exit()` do nothing inside this Quickshell build: the log records `Signal QQmlEngine::quit() emitted, but no receivers connected`. A shell exit goes through the runner.
-- `qs` buffers stdout when it is redirected, so a log captured by redirection stops after the first lines. The record is the per-instance file `$XDG_RUNTIME_DIR/quickshell/by-id/<id>/log.log`, line-flushed, found through `qs list -p shell -j`. `console.error` lands there as `ERROR qml:` and a QML exception as `WARN scene:`.
+- `qs` buffers stdout when it is redirected, so a log captured by redirection stops after the first lines. The record is the per-instance file `$XDG_RUNTIME_DIR/quickshell/by-id/<id>/log.log`, line-flushed, found through `qs list -p <checkout>/shell -j`. `console.error` lands there as `ERROR qml:` and a QML exception as `WARN scene:`.
 
 ## Memory
 
-- Growth lives in anonymous memory. A QML object count or a JavaScript heap snapshot measures none of it.
-- A growth rate needs a window of at least 600 seconds. Shorter windows report sampling noise.
-- Wayland events arrive as libwayland closures placed on the event queue of the target object and freed only when that queue is dispatched. In the previous shell an undispatched queue grew at 120 MiB per hour and a QML reload released it. A surface or object the shell creates is dispatched or destroyed; a plugin creates no surface of its own.
-- Caches are bounded. A cache keyed by data other applications supply has an open key set and needs a ceiling.
+Where the shell's memory sits, how to measure it and the growth invariants are in [memory.md](memory.md). The cache rule is in [plugins.md § Budgets](plugins.md#budgets).
 
 ## Performance
 
@@ -25,12 +22,11 @@ Requirements for the shell process, the runner and the measurement tools, and th
 - A lookup that costs a process runs once per set, never once per item. `bin/vgsh-scan` reads every manifest in one process and the registry replaces its map whole.
 - No disk walk per keystroke. A search keeps one long-lived index and cancels a stale query.
 - No unconditional sleep on an apply path. Read the current value and skip the write and the wait when nothing changes.
-- The scene-graph render threads are the frame cost. Memory growth is not on them, so a repaint change does not address a leak.
 
 ## Hyprland
 
 - Every dispatch goes through `shell/Core/Compositor.qml`, which runs `hyprctl dispatch` and judges the reply by its text: anything but `ok` is logged with the request. Exit status alone says nothing; a refused dispatcher exits 0 with an error sentence.
-- `shell/Core/Dispatch.js` builds every request. Each argument must match a pattern that admits no quote, backslash, space or comma, so no argument ends the Lua string or the classic argument list it is spliced into. `scripts/test-dispatch.js` pins both syntaxes of every dispatcher and one refusal per argument class.
+- `shell/Core/Dispatch.js` builds every request and speaks both dialects. Each argument must match a pattern that admits no quote, backslash, space or comma, so no argument ends the Lua string or the classic argument list it is spliced into. Every dispatcher it holds is one a plugin may call through its `compositor` capability; `Dispatch.PLUGIN_DISPATCHERS` is that list. `scripts/test-dispatch.js` pins both syntaxes of every dispatcher and one refusal per argument class.
 - A dispatch while one is in flight is refused and logged, never queued.
 - A Lua session and a classic session take different dispatcher syntax. `Hyprland.usingLua` selects it; a new dispatcher carries both forms. The Lua window dispatchers accept unknown table keys without complaint and `hl.dsp.window.move` answers `ok` for an address that names no window, so only a read of the compositor's state after the reply proves a dispatcher acted.
 
@@ -52,6 +48,6 @@ Requirements for the shell process, the runner and the measurement tools, and th
 - A nested compositor that fails to allocate its output buffers stops laying out surfaces, and every geometry row after it reads zeros. A row that reads positions, sizes or reserved space runs under `geometry`; when every failed row is a geometry row and the nested compositor's own log holds the allocation failure, the smoke exits 77 with `nested-compositor=buffer-allocation-failed`. Any other failure exits 1. Re-run it; 77 is not a pass.
 - The smoke's log check fails on every error line except those a row provokes on purpose and names in `expected_errors`.
 - The sandbox runtime dir is a short name under the host's `XDG_RUNTIME_DIR`. A Unix socket path is limited to 107 bytes and Hyprland adds a 63-character signature under `hypr/`; a runtime dir under a long temporary path made Hyprland refuse IPC.
-- Every check that spawns a process passes its environment explicitly, from `env -i`.
+- Every check that spawns a process passes that process an explicit environment, never the developer's live one.
 - A budget in a script names the machine and date it was measured on. Each latency reading in the smoke carries its poll interval: 10 ms for the first bar, one `qs ipc` round trip for the build records.
 - The compositor keeps a destroyed layer surface in `hyprctl layers` with pid -1 until it drops it. A row that counts surfaces counts only layers with a client, and reads reserved geometry from `hyprctl monitors` for what the user feels.

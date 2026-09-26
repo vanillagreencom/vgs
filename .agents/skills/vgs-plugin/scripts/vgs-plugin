@@ -7,7 +7,12 @@
 `new` writes <DIR>/<id>/ (default DIR: shell/plugins) from the templates
 beside this script, one entry point per kind, then runs `check` on it.
 `check` runs the repository's manifest judge and boundary check on one
-plugin directory. Exit 0 when clean, 1 on findings, 2 on a bad invocation.
+plugin directory. Exit 0 when clean, 1 on findings, 2 on a refusal, whose
+first line is keyed: `vgs-plugin: refused: <key>=<value>`, with `kind=` for
+a kind no template covers, `manifest=` for a manifest the judge refuses
+(its verdict follows), `exists=` for an occupied target and `no-manifest=`
+for a check on a directory without one. scripts/test-vgs-plugin.py pins
+each.
 """
 import argparse
 import json
@@ -20,11 +25,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 REPO = os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
 TEMPLATES = os.path.join(SKILL, "templates")
+MANIFEST_CHECK = os.path.join(REPO, "scripts", "check-manifests.js")
+BOUNDARY_CHECK = os.path.join(REPO, "scripts", "check-plugin-boundary.py")
+# Every child runs under this environment and nothing inherited beyond it;
+# HOME stays because a version-managed node reads its configuration there.
+ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "LC_ALL": "C"}
 
 # kind -> (template file, entry file name). Which kinds exist, and every
 # other manifest rule, is the repository's one judge, shell/Core/PluginLogic.js,
 # run through scripts/check-manifests.js before anything is written; this
-# table only selects a template.
+# table only selects a template, and scripts/test-vgs-plugin.py holds it to
+# PluginLogic.KINDS.
 TEMPLATE_FOR = {
     "bar-widget": ("BarWidget.qml", "Widget.qml"),
     "bar": ("Bar.qml", "Bar.qml"),
@@ -44,28 +55,37 @@ def fill(text, values):
 
 def cmd_new(args):
     kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-    untemplated = [k for k in kinds if k not in TEMPLATE_FOR]
-    if untemplated:
-        print(f"vgs-plugin: refused: no-template={','.join(untemplated)} templated={','.join(TEMPLATE_FOR)}")
+    unknown = [k for k in kinds if k not in TEMPLATE_FOR]
+    if unknown:
+        print(f"vgs-plugin: refused: kind={','.join(unknown)} known={','.join(TEMPLATE_FOR)}")
         return 2
     base = os.path.join(REPO, args.dir) if not os.path.isabs(args.dir) else args.dir
     target = os.path.join(base, args.id)
     if os.path.exists(target):
         print(f"vgs-plugin: refused: exists={target}")
         return 2
-    name = args.name or args.id.split(".", 1)[1].replace("-", " ").title()
+    # The id's shape is the judge's decision below; the name and author are
+    # derived from what the id holds either side of its first dot.
+    author, _, rest = args.id.partition(".")
+    name = args.name or (rest or args.id).replace("-", " ").title()
     values = {
         "ID": args.id,
         "NAME": name,
-        "AUTHOR": args.author or args.id.split(".", 1)[0],
+        "AUTHOR": args.author or author,
         "DESCRIPTION": args.description or f"{name} plugin.",
         "KINDS": json.dumps(kinds),
         "ENTRY_POINTS": json.dumps({k: TEMPLATE_FOR[k][1] for k in kinds}),
     }
     with open(os.path.join(TEMPLATES, "manifest.json.tmpl"), encoding="utf-8") as fh:
-        manifest = fill(fh.read(), values)
+        data = json.loads(fill(fh.read(), values))
+    if "bar-widget" in kinds:
+        # The widget template reads settings.label; its default lives here.
+        data["defaultSection"] = "right"
+        data["settings"] = {"label": name}
+    manifest = json.dumps(data, indent=2) + "\n"
     # The repository's one manifest judge decides the id and the shape before
-    # anything is written, so a refused id leaves no directory behind.
+    # anything is written, on the manifest text that will be written, so a
+    # refused id leaves no directory behind.
     with tempfile.TemporaryDirectory() as probe:
         probe_dir = os.path.join(probe, "probe")
         os.makedirs(probe_dir)
@@ -74,10 +94,10 @@ def cmd_new(args):
         for kind in kinds:
             with open(os.path.join(probe_dir, TEMPLATE_FOR[kind][1]), "w", encoding="utf-8") as fh:
                 fh.write("")
-        judged = subprocess.run(["node", os.path.join(REPO, "scripts", "check-manifests.js"), "--", probe_dir], capture_output=True, text=True, check=False)
+        judged = subprocess.run(["node", MANIFEST_CHECK, "--", probe_dir], capture_output=True, text=True, check=False, env=ENV)
         if judged.returncode != 0:
-            print(judged.stdout.rstrip())
             print(f"vgs-plugin: refused: manifest={args.id}")
+            print(judged.stdout.rstrip())
             return 2
     os.makedirs(target)
     with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
@@ -88,13 +108,6 @@ def cmd_new(args):
             body = fill(fh.read(), values)
         with open(os.path.join(target, entry), "w", encoding="utf-8") as fh:
             fh.write(body)
-    if "bar-widget" in kinds:
-        data = json.loads(manifest)
-        data["defaultSection"] = "right"
-        data["settings"] = {"label": name}
-        with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-            fh.write("\n")
     print(f"vgs-plugin: wrote {target}")
     return cmd_check(argparse.Namespace(dir=target))
 
@@ -102,14 +115,14 @@ def cmd_new(args):
 def cmd_check(args):
     target = os.path.abspath(args.dir)
     if not os.path.isfile(os.path.join(target, "manifest.json")):
-        print(f"vgs-plugin: refused: no manifest.json in {target}")
+        print(f"vgs-plugin: refused: no-manifest={target}")
         return 2
     status = 0
     for command in (
-        ["node", os.path.join(REPO, "scripts", "check-manifests.js"), "--", target],
-        [sys.executable, os.path.join(REPO, "scripts", "check-plugin-boundary.py"), "--shell", os.path.join(REPO, "shell"), target],
+        ["node", MANIFEST_CHECK, "--", target],
+        [sys.executable, BOUNDARY_CHECK, "--shell", os.path.join(REPO, "shell"), target],
     ):
-        proc = subprocess.run(command, check=False)
+        proc = subprocess.run(command, check=False, env=ENV)
         if proc.returncode != 0:
             status = 1 if proc.returncode == 1 and status != 2 else max(status, proc.returncode)
     print("vgs-plugin: check " + ("ok" if status == 0 else f"failed={status}"))

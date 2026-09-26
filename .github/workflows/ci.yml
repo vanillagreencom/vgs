@@ -1,8 +1,12 @@
 name: CI
 
-# One job, ci-ok, because branch protection requires that context. The
-# steps that need a Wayland session run locally through scripts/validate;
-# the runner has none, so `scripts/validate qml` is not here.
+# One job, ci-ok, because branch protection requires that context. CI runs
+# `scripts/validate offline`, every check but the nested smoke, plus the
+# kendex guards; `scripts/validate qml` needs a Wayland session the runner
+# has none of and runs locally. A step that runs a script the tree does not
+# hold is a defect. Every check that compares against a base takes the
+# change's own base: the pull request's base branch, the merge group's base
+# commit, or the ref a push moved from; never a fixed branch name.
 
 on:
   pull_request:
@@ -39,35 +43,28 @@ jobs:
       - name: Document limits
         run: .agents/skills/doc-limits/scripts/doc-limits
 
-      - name: Commit guards
-        run: .agents/skills/commit-guards/scripts/commit-guards all --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
-
-      - name: Whitespace errors introduced by this change
+      - name: Change base
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) base="$PR_BASE_SHA" ;;
-            merge_group) base="HEAD^1" ;;
+            pull_request) base="origin/$PR_BASE_REF" ;;
+            merge_group) base="$MERGE_GROUP_BASE_SHA" ;;
             push) base="$PUSH_BEFORE" ;;
-            *) echo "::error::no whitespace base for event $EVENT_NAME"; exit 1 ;;
+            *) echo "::error::no change base for event $EVENT_NAME"; exit 1 ;;
           esac
           if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-            echo "::error::cannot resolve the whitespace base '$base' for event $EVENT_NAME; nothing was checked"
+            echo "::error::cannot resolve the change base '$base' for event $EVENT_NAME; nothing was checked"
             exit 1
           fi
-          git diff --check "$base...HEAD"
+          echo "VGS_VALIDATE_BASE=$base" >>"$GITHUB_ENV"
 
-      - name: Plugin logic
-        run: scripts/validate logic
-      - name: Manifests
-        run: scripts/validate manifests
-      - name: Plugin boundary
-        run: scripts/validate boundary
-      - name: Runner CLI
-        run: scripts/validate cli
-      - name: Measurement tools
-        run: scripts/validate tools
+      - name: Commit guards
+        run: .agents/skills/commit-guards/scripts/commit-guards all --base "$VGS_VALIDATE_BASE"
+
+      - name: Validation manifest, offline rows
+        run: scripts/validate offline

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One planted violation per rule of check-plugin-boundary.py, one clean
-fixture, one row per exemption, one row per JS rule, and one row per unreadable path class. Each
-row builds a throwaway shell tree, runs the check on it and asserts the rule
+fixture, one row per exemption, one row per JS rule, one row per unreadable path
+class, and the plugin listing: a directory without a manifest is not a plugin.
+Each row builds a throwaway shell tree, runs the check on it and asserts the rule
 key and the exit status. Unreadable rows need a uid that permissions bind;
 under euid 0 the script reports status=not-measured and exits 77."""
 import os
@@ -14,6 +15,9 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 CLEAN_WIDGET = 'import QtQuick\nimport QtQuick.Layouts\nimport Quickshell.Hyprland\nimport qs.Commons\nimport qs.Ui\nimport "./lib"\nBarWidget { }\n'
 CLEAN_CORE = 'import QtQuick\nimport Quickshell\nimport qs.Core\nQtObject { property string prefix: "vgs." }\n'
+# The check lists plugins through bin/vgsh-scan, which reads manifest bytes and
+# judges nothing, so a manifest naming the id is what makes a directory a plugin.
+MANIFEST = '{"id": "acme.widget"}\n'
 
 # rows: name, plugin file text, core file text, expected rule key or None
 ROWS = [
@@ -67,11 +71,14 @@ UNREADABLE_ROWS = [
 ]
 
 
-def build_shell(tmp, widget, core, js=None):
+def build_shell(tmp, widget, core, js=None, manifest=MANIFEST):
     shell = os.path.join(tmp, "shell")
     plugin = os.path.join(shell, "plugins", "acme.widget")
     os.makedirs(os.path.join(plugin, "lib"))
     os.makedirs(os.path.join(shell, "Core"))
+    if manifest is not None:
+        with open(os.path.join(plugin, "manifest.json"), "w", encoding="utf-8") as fh:
+            fh.write(manifest)
     with open(os.path.join(plugin, "Widget.qml"), "w", encoding="utf-8") as fh:
         fh.write(widget)
     with open(os.path.join(plugin, "lib", "Helper.qml"), "w", encoding="utf-8") as fh:
@@ -84,15 +91,16 @@ def build_shell(tmp, widget, core, js=None):
     return shell
 
 
-def run_row(name, widget, core, want, js=None):
+def run_row(name, widget, core, want, js=None, manifest=MANIFEST, plugins=1):
     with tempfile.TemporaryDirectory() as tmp:
         if core is None:
             core, widget = widget, CLEAN_WIDGET
-        shell = build_shell(tmp, widget, core, js)
+        shell = build_shell(tmp, widget, core, js, manifest)
         proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False, env=ENV)
-        keys = {line.split(" ", 1)[0] for line in proc.stdout.splitlines() if ":" in line and not line.startswith("check-plugin-boundary:")}
+        lines = proc.stdout.splitlines()
+        keys = {line.split(" ", 1)[0] for line in lines if ":" in line and not line.startswith("check-plugin-boundary:")}
         if want is None:
-            good = proc.returncode == 0 and not keys
+            good = proc.returncode == 0 and not keys and lines[-1:] == [f"check-plugin-boundary: ok plugins={plugins}"]
         else:
             good = proc.returncode == 1 and keys == {want}
         print(("  ok    " if good else "  FAIL  ") + name + ("" if good else f" (exit={proc.returncode} keys={sorted(keys)})\n{proc.stdout}"))
@@ -120,6 +128,9 @@ def main():
         return 77
     results = [run_row(*row) for row in ROWS]
     results += [run_row(name, CLEAN_WIDGET, CLEAN_CORE, want, js) for name, js, want in JS_ROWS]
+    # The listing: a directory under plugins with no manifest is not a plugin,
+    # so a violation inside it is not a finding and the count says so.
+    results.append(run_row("a directory without a manifest is not a plugin", CLEAN_WIDGET.replace("BarWidget { }", "PanelWindow { }"), CLEAN_CORE, None, manifest=None, plugins=0))
     for label, args in (("unreadable shell dir exits 2", ["--shell", "/nonexistent/shell"]), ("unreadable plugin dir exits 2", ["/nonexistent/plugin"])):
         proc = subprocess.run([sys.executable, CHECK] + args, capture_output=True, text=True, check=False, env=ENV)
         good = proc.returncode == 2

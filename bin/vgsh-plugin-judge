@@ -18,11 +18,9 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const vm = require("vm");
 
 const repo = path.join(__dirname, "..");
-const logic = {};
-vm.runInNewContext(fs.readFileSync(path.join(repo, "shell", "Core", "PluginLogic.js"), "utf8").replace(/^\.pragma library\n/, ""), logic);
+const logic = require(path.join(repo, "scripts", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 
 function refuse(first) {
     process.stderr.write("vgsh: refused: " + first + "\n");

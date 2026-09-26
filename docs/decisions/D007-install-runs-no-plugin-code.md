@@ -10,7 +10,7 @@
 
 **Context**: A plugin repository can ship an install script. Running it at install would give any repository the user's privileges.
 
-**Decision**: `vgsh plugin add` clones into staging, validates the manifest, refuses an id another plugin owns, moves the directory into place and leaves the plugin disabled. `update` fetches, shows the diff and fast-forwards only; it refuses a locally modified checkout and rolls back a version the manifest judge refuses. `remove` deletes only a directory `add` installed. None of them runs a script or a git hook from the plugin, and none asks for privilege. A plugin's external dependencies are declared, not installed by the plugin.
+**Decision**: `vgsh plugin add` clones into staging, validates the manifest, refuses an id another plugin owns, moves the directory into place and leaves the plugin disabled. `update` fetches, shows the diff and fast-forwards only; it refuses a locally modified checkout and rolls back a version the manifest judge refuses. `remove` deletes only a directory `add` installed. None of them runs a script or a git hook from the plugin, and none asks for privilege. The manager installs nothing for a plugin: a system package a plugin needs is the user's to install, and the manifest has no key for it.
 
 **Rationale**:
 

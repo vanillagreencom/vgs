@@ -4,13 +4,13 @@
 
 **Date**: 2026-09-21
 
-**Status**: Active
+**Status**: Revisited
 
 **Research**: —
 
 **Context**: A first design let a plugin require another by id and had the manager refuse to disable a required plugin. The owner rejected that as a flat structure was simpler and a plugin should keep working when part of it has nowhere to draw.
 
-**Decision**: A plugin declares the kinds it can fill: `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`. The core owns the list; a new kind is a core change with its own host. A kind whose host is absent is not shown and the plugin's other kinds keep working. A manifest `requires` key is refused. Disabling the active bar answers with the widgets it hides; they stay enabled.
+**Decision**: A plugin declares the kinds it can fill, from the list `PluginLogic.KINDS` holds and `docs/architecture/overview.md` § Vocabulary states: `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`. The core owns the list; a new kind is a core change with its own host. A kind whose host is absent is not shown and the plugin's other kinds keep working. A manifest `requires` key is refused. Disabling the active bar answers with the widgets it hides; they stay enabled.
 
 **Rationale**:
 
@@ -21,4 +21,8 @@
 
 **Verification**: `scripts/test-plugin-logic.js` pins the `requires` refusal and `hiddenByDisabling`; `scripts/qml-smoke.sh` asserts the hidden-widgets reply.
 
-**References**: [D003](D003-everything-is-a-plugin.md), [D011](D011-native-manifest-no-cross-shell-compatibility.md)
+**References**: [D003](D003-everything-is-a-plugin.md), [D011](D011-native-manifest-no-cross-shell-compatibility.md), [D013](D013-built-in-widgets-are-the-bar-plugins.md)
+
+## Revisit Outcome (2026-09-25)
+
+The decision holds. The kind list gained `background` when its host landed; the list is `PluginLogic.KINDS`, and the overview's vocabulary entry is the one prose copy. A built-in widget a plugin draws itself is not a kind: [D013](D013-built-in-widgets-are-the-bar-plugins.md).

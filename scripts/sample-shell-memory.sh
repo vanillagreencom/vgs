@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sample the live shell's memory read-only and report growth per class.
 #
-# Resolving which process is the shell reads the runner's lock file and the
-# Quickshell instance list once. Every sample after that is /proc alone. Nothing
+# Resolving which process is the shell asks the runner (`bin/vgsh pid`) and reads
+# the Quickshell instance list once. Every sample after that is /proc alone. Nothing
 # here signals, restarts or drives the shell, so it is safe to leave running
 # across a whole session. It is a diagnostic tool, not a validation check:
 # scripts/validate drives it through scripts/test-sample-shell-memory.sh, whose
@@ -22,8 +22,9 @@
 # line. Refusals exit 2 for a bad invocation, an unusable header or a shell that
 # cannot be resolved, and 1 for a log that cannot be read as one session or a
 # run that ended before the samples --samples asked for (samples-short=).
-# Resolution refuses shell=not-running when $XDG_RUNTIME_DIR/vgsh.lock is
-# missing, holds no pid on its first line or names a pid with no process, and
+# Resolution refuses with the runner's own key (shell=not-running when
+# $XDG_RUNTIME_DIR/vgsh.lock is missing, holds no pid on its first line or names
+# a pid with no process), runner=missing when this checkout has no bin/vgsh, and
 # shell=unlisted when `qs list` does not list that pid under this checkout's
 # shell. --report reports the newest session in
 # the log alone and emits, for that session: one mark= line for each of 1 h, 8 h,
@@ -40,7 +41,7 @@ SAMPLES=0
 LOG=""
 REPORT=""
 SHELL_DIR="$repo_root/shell"
-LOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/vgsh.lock"
+RUNNER="$repo_root/bin/vgsh"
 
 # The shortest span that can carry a rate. Per-minute deltas swing between
 # negative and several megabytes, so anything shorter reports sampling noise.
@@ -268,26 +269,25 @@ stat_fields() {
   printf '%s\n' "$@"
 }
 
-# Resolve the live shell from the runner's lock file. bin/vgsh run holds the
-# lock for the life of the shell and writes its own pid as the file's only line;
-# it execs qs, so that pid is the shell's. The pid must then appear in the
-# Quickshell instance list for this checkout's shell: a stale lock whose pid the
-# kernel reused, or a shell started from another checkout, would otherwise yield
-# a plausible log that describes nothing. The instance list is stdout JSON; when
-# no instance runs, qs prints a sentence there instead, which reads as an empty
-# list and refuses the same way.
+# Resolve the live shell: the runner reads its own lock file (`bin/vgsh pid`
+# is the one reader of it; bin/vgsh run writes its pid there and execs qs, so
+# that pid is the shell's) and its refusal is passed on under its own key. The
+# pid must then appear in the Quickshell instance list for this checkout's
+# shell: a stale lock whose pid the kernel reused, or a shell started from
+# another checkout, would otherwise yield a plausible log that describes
+# nothing. The instance list is stdout JSON; when no instance runs, qs prints a
+# sentence there instead, which reads as an empty list and refuses the same way.
 resolve_pid() {
-  local first="" listing rc=0 verdict
-  [[ -f "$LOCK" ]] ||
-    refuse 2 "shell=not-running lock=$LOCK" "No runner lock file. Start the shell with bin/vgsh run."
-  [[ -r "$LOCK" ]] ||
-    refuse 2 "lock-unreadable=$LOCK" "The runner lock file cannot be read."
-  # read returns non-zero on an empty file; the pattern test is what judges the line.
-  IFS= read -r first <"$LOCK" || true
-  [[ "$first" =~ ^[0-9]+$ ]] ||
-    refuse 2 "shell=not-running lock=$LOCK" "The lock file's first line is not a pid."
-  [[ -d "/proc/$first" ]] ||
-    refuse 2 "shell=not-running lock=$LOCK" "Pid $first from the lock file has no process."
+  local first="" listing rc=0 verdict runner_key=""
+  [[ -x "$RUNNER" ]] ||
+    refuse 2 "runner=missing path=$RUNNER" "This checkout has no runner to ask for the shell's pid."
+  # The runner prints the pid alone on success and its keyed refusal alone on
+  # failure, so one capture holds whichever it answered.
+  if ! first="$("$RUNNER" pid 2>&1)"; then
+    runner_key="${first%%$'\n'*}"
+    runner_key="${runner_key#vgsh: refused: }"
+    refuse 2 "$runner_key" "The runner could not name the shell's pid; its message was:" "$first"
+  fi
   command -v qs >/dev/null 2>&1 ||
     refuse 2 "qs=missing" "Quickshell is not installed, so no instance list can confirm the pid."
   listing="$(qs list -p "$SHELL_DIR" -j)" || rc=$?

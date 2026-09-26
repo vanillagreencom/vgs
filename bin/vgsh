@@ -2,6 +2,7 @@
 # vgsh: the v2 shell runner and plugin manager CLI.
 #
 #   vgsh run                       start the shell in the foreground; holds the instance lock
+#   vgsh pid                       print the running shell's pid from the instance lock
 #   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
 #   vgsh log <qs log args...>      read the running shell's log
 #   vgsh plugin list               every discovered plugin with its enabled state
@@ -27,7 +28,8 @@
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when another
-# shell holds the lock, 69 when the shell is not running.
+# shell holds the lock, 69 when the shell is not running. The usage text is
+# this header; `vgsh --help` prints it and exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -176,12 +178,12 @@ rollback() { # DIR COMMIT
 plugin_update() { # ID
   local id="$1" dir top dirty old upstream err verdict new_id rc=0
   dir="$(installed_dir "$id")" || exit $?
-  top="$(git_plain -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || refuse 1 "not-a-checkout=$dir"
+  top="$(git_or_refuse "not-a-checkout=$dir" -C "$dir" rev-parse --show-toplevel)" || exit 1
   [[ $top == "$dir" ]] || refuse 1 "not-a-checkout=$dir toplevel=$top"
   dirty="$(git_or_refuse "git=status path=$dir" -C "$dir" status --porcelain --untracked-files=all)" || exit 1
   [[ -z $dirty ]] || refuse 1 "modified=$dir" "commit or discard the local changes first"
   git_or_refuse "fetch=$id" -C "$dir" fetch --quiet --no-recurse-submodules
-  upstream="$(git_plain -C "$dir" rev-parse --verify --quiet '@{upstream}' 2>/dev/null)" || refuse 1 "upstream=missing path=$dir"
+  upstream="$(git_or_refuse "upstream=missing path=$dir" -C "$dir" rev-parse --verify '@{upstream}')" || exit 1
   old="$(git_or_refuse "git=rev-parse path=$dir" -C "$dir" rev-parse --verify HEAD)" || exit 1
   if [[ $old == "$upstream" ]]; then
     echo "ok up-to-date=$id"
@@ -239,6 +241,10 @@ case "$cmd" in
     # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
     VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"
     ;;
+  pid)
+    pid="$(shell_pid)" || exit $?
+    printf '%s\n' "$pid"
+    ;;
   ipc)
     pid="$(shell_pid)" || exit $?
     exec qs ipc --pid "$pid" "$@"
@@ -293,7 +299,7 @@ PY
       validate)
         dir="${1:-}"
         if [[ -z $dir ]]; then printf 'vgsh: refused: dir=missing\n' >&2; usage; exit 2; fi
-        exec node "$root/scripts/check-manifests.js" -- "$dir"
+        exec node "$manifest_check" -- "$dir"
         ;;
       *)
         printf 'vgsh: refused: plugin-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2

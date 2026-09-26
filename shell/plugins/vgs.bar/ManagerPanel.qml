@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import "Reply.js" as Reply
 
 // The plugin manager: every discovered plugin with its enabled state, and a
 // settings form for each plugin whose manifest declares a schema. Toggling
@@ -12,8 +13,6 @@ Item {
 
     property var shell: null
     readonly property var plugins: shell === null ? [] : shell.manager.plugins
-    // "<plugin id>:<setting>" for every settings field drawn now.
-    property var renderedFields: []
     // plugin id -> the last refusal the manager answered for it, shown on
     // its row until a later call for that plugin succeeds.
     property var replies: ({})
@@ -21,7 +20,7 @@ Item {
     // Keep one manager reply for plugin `id` and answer it.
     function keep(id, reply) {
         const next = Object.assign({}, replies);
-        if (reply === "ok" || reply.indexOf("ok ") === 0) delete next[id];
+        if (Reply.isOk(reply)) delete next[id];
         else {
             next[id] = reply;
             console.warn("manager panel: " + id + " " + reply);
@@ -30,6 +29,7 @@ Item {
         return reply;
     }
 
+    // The panel takes no payload; what a summoner passes is ignored.
     function open(payloadJson) {}
     function close() {}
 
@@ -41,17 +41,17 @@ Item {
         return keep(id, shell.manager.setEnabled(id, !row.enabled));
     }
 
-    // Write one setting as a form field does. `arg` is JSON
-    // {"id", "key", "value"}; answers the manager's reply.
-    function applySetting(arg) {
-        const a = JSON.parse(arg);
-        return keep(a.id, shell.manager.setSetting(a.id, a.key, a.value));
+    // Write one setting of plugin `id` through the manager; answers its
+    // reply. Every form field and the validation rows write through here.
+    function writeSetting(id, key, value) {
+        return keep(id, shell.manager.setSetting(id, key, value));
     }
 
-    function fieldShown(name, shown) {
-        const at = renderedFields.indexOf(name);
-        if (shown && at === -1) renderedFields = renderedFields.concat([name]);
-        else if (!shown && at !== -1) renderedFields = renderedFields.filter(f => f !== name);
+    // writeSetting from one text argument, for the validation rows: `arg`
+    // is JSON {"id", "key", "value"}.
+    function applySetting(arg) {
+        const a = JSON.parse(arg);
+        return writeSetting(a.id, a.key, a.value);
     }
 
     implicitWidth: Style.space(90)
@@ -137,9 +137,7 @@ Item {
                             spec: entry.modelData.schema[modelData]
                             value: entry.modelData.settings[modelData]
                             editable: entry.modelData.enabled
-                            onApply: v => root.keep(pluginId, root.shell.manager.setSetting(pluginId, key, v))
-                            Component.onCompleted: root.fieldShown(pluginId + ":" + key, true)
-                            Component.onDestruction: root.fieldShown(pluginId + ":" + key, false)
+                            onApply: v => root.writeSetting(pluginId, key, v)
                         }
                     }
                 }

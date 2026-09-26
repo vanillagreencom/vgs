@@ -6,6 +6,12 @@ set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+# One row removes a directory's permission bits, which bind only a non-root
+# uid; a run that could not measure it is not a pass.
+if [[ $(id -u) == 0 ]]; then
+  echo "test-vgsh: status=not-measured reason=euid-0"
+  exit 77
+fi
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "${tmp:?}"' EXIT
 
@@ -45,43 +51,49 @@ failures=0
 ok() { printf '  ok    %s\n' "$*"; }
 fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 
-# rows: name | runtime dir | env | args | want stdout (last line) | want exit
-run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT
-  local name="$1" rt="$2" envstr="$3" args="$4" want_out="$5" want_exit="$6" out status
+# rows: name | runtime dir | env | args | want stdout (last line) | want exit | want stderr (first line)
+# A refusal row pins its keyed first line; a success row pins an empty stderr.
+run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT WANT_ERR
+  local name="$1" rt="$2" envstr="$3" args="$4" want_out="$5" want_exit="$6" want_err="$7" out status err=""
   set +e
   # shellcheck disable=SC2086
   out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" $envstr "$repo/bin/vgsh" $args 2>"$tmp/err")"
   status=$?
   set -e
+  [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
   local last="${out##*$'\n'}"
-  if [[ $status == "$want_exit" && $last == "$want_out" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=$(head -n 1 "$tmp/err")"; fi
+  if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
 }
 
 list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"scanError":"","scanned":true}'
+dead_pid="$(( $(cat /proc/sys/kernel/pid_max) + 1 ))"
 
-run_row "enable prints ok" "$rt_live" "STUB_REPLY=ok" "plugin enable vgs.clock" "ok" 0
-run_row "reply is the last stdout line, log noise ahead of it is ignored" "$rt_live" "STUB_REPLY=ok STUB_NOISE=INFO:something" "plugin enable vgs.clock" "ok" 0
-run_row "stderr after the reply does not become the reply" "$rt_live" "STUB_REPLY=ok STUB_STDERR=WARN:late" "plugin enable vgs.clock" "ok" 0
-run_row "an unexpected reply is a refusal" "$rt_live" "STUB_REPLY=ok_hidden" "plugin disable vgs.bar" "" 1
-run_row "a guard refusal from the shell is a refusal with exit 1" "$rt_live" "STUB_REPLY=refused:_guard=unowned" "plugin enable vgs.clock" "" 1
-run_row "unknown id is a refusal with exit 1" "$rt_live" "STUB_REPLY=unknown:_x" "plugin enable x" "" 1
-run_row "an ipc failure exits 69 on enable" "$rt_live" "STUB_STATUS=1 STUB_REPLY=none" "plugin enable vgs.clock" "" 69
-run_row "an ipc failure exits 69 on list" "$rt_live" "STUB_STATUS=1 STUB_REPLY=none" "plugin list" "" 69
-run_row "no lock file exits 69 without calling qs" "$rt_empty" "STUB_REPLY=ok" "plugin enable vgs.clock" "" 69
-run_row "no lock file exits 69 on ipc" "$rt_empty" "STUB_REPLY=ok" "ipc call shell ping" "" 69
-run_row "list formats one row per plugin" "$rt_live" "STUB_REPLY=$list_json" "plugin list" "vgs.bar                      0.1.0    enabled   kinds=bar" 0
-run_row "missing id is exit 2" "$rt_live" "" "plugin enable" "" 2
-run_row "unknown subcommand is exit 2" "$rt_live" "" "plugin frobnicate" "" 2
-run_row "unknown command is exit 2" "$rt_live" "" "frobnicate" "" 2
-run_row "run refuses an argument" "$rt_live" "STUB_RECORD=$tmp/never" "run --daemonize" "" 2
+run_row "enable prints ok" "$rt_live" "STUB_REPLY=ok" "plugin enable vgs.clock" "ok" 0 ""
+run_row "reply is the last stdout line, log noise ahead of it is ignored" "$rt_live" "STUB_REPLY=ok STUB_NOISE=INFO:something" "plugin enable vgs.clock" "ok" 0 ""
+run_row "stderr after the reply does not become the reply" "$rt_live" "STUB_REPLY=ok STUB_STDERR=WARN:late" "plugin enable vgs.clock" "ok" 0 "WARN:late"
+run_row "an unexpected reply is a refusal" "$rt_live" "STUB_REPLY=ok_hidden" "plugin disable vgs.bar" "" 1 "vgsh: refused: ok_hidden"
+run_row "a guard refusal from the shell is a refusal with exit 1" "$rt_live" "STUB_REPLY=refused:_guard=unowned" "plugin enable vgs.clock" "" 1 "vgsh: refused: refused:_guard=unowned"
+run_row "unknown id is a refusal with exit 1" "$rt_live" "STUB_REPLY=unknown:_x" "plugin enable x" "" 1 "vgsh: refused: unknown:_x"
+run_row "an ipc failure exits 69 on enable" "$rt_live" "STUB_STATUS=1 STUB_REPLY=none" "plugin enable vgs.clock" "" 69 "vgsh: refused: shell=not-running pid=$$"
+run_row "an ipc failure exits 69 on list" "$rt_live" "STUB_STATUS=1 STUB_REPLY=none" "plugin list" "" 69 "vgsh: refused: shell=not-running pid=$$"
+run_row "no lock file exits 69 without calling qs" "$rt_empty" "STUB_REPLY=ok" "plugin enable vgs.clock" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
+run_row "no lock file exits 69 on ipc" "$rt_empty" "STUB_REPLY=ok" "ipc call shell ping" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
+run_row "pid prints the pid the lock file records" "$rt_live" "" "pid" "$$" 0 ""
+run_row "pid with no lock file exits 69" "$rt_empty" "" "pid" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
+run_row "list formats one row per plugin" "$rt_live" "STUB_REPLY=$list_json" "plugin list" "vgs.bar                      0.1.0    enabled   kinds=bar" 0 ""
+run_row "missing id is exit 2" "$rt_live" "" "plugin enable" "" 2 "vgsh: refused: id=missing"
+run_row "unknown subcommand is exit 2" "$rt_live" "" "plugin frobnicate" "" 2 "vgsh: refused: plugin-subcommand=frobnicate"
+run_row "unknown command is exit 2" "$rt_live" "" "frobnicate" "" 2 "vgsh: refused: command=frobnicate"
+run_row "run refuses an argument" "$rt_live" "STUB_RECORD=$tmp/never" "run --daemonize" "" 2 "vgsh: refused: argument=--daemonize"
 if [[ ! -e $tmp/never ]]; then ok "a refused run never started the shell"; else fail "a refused run started the shell"; fi
 
 # The recorded pid must be a dead process for the not-running refusal, and
 # a pid nothing can own is the one past the kernel's maximum.
-rt_dead="$tmp/rt-dead"; mkdir -p "$rt_dead"; printf '%s\n' "$(( $(cat /proc/sys/kernel/pid_max) + 1 ))" >"$rt_dead/vgsh.lock"
-run_row "a lock file naming a dead pid exits 69" "$rt_dead" "STUB_REPLY=ok" "plugin list" "" 69
+rt_dead="$tmp/rt-dead"; mkdir -p "$rt_dead"; printf '%s\n' "$dead_pid" >"$rt_dead/vgsh.lock"
+run_row "a lock file naming a dead pid exits 69" "$rt_dead" "STUB_REPLY=ok" "plugin list" "" 69 "vgsh: refused: shell=not-running pid=$dead_pid"
+run_row "pid with a lock file naming a dead pid exits 69" "$rt_dead" "" "pid" "" 69 "vgsh: refused: shell=not-running pid=$dead_pid"
 rt_junk="$tmp/rt-junk"; mkdir -p "$rt_junk"; printf 'x\n' >"$rt_junk/vgsh.lock"
-run_row "a lock file holding no pid exits 69" "$rt_junk" "STUB_REPLY=ok" "plugin list" "" 69
+run_row "a lock file holding no pid exits 69" "$rt_junk" "STUB_REPLY=ok" "plugin list" "" 69 "vgsh: refused: shell=not-running lock=$rt_junk/vgsh.lock"
 
 # Every call addresses the recorded pid, never whichever instance qs picks.
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_ARGS="$tmp/args" STUB_REPLY=ok "$repo/bin/vgsh" plugin enable vgs.clock >/dev/null
@@ -207,6 +219,10 @@ check "add lands a listed plugin disabled and keeps its settings row" json_is "$
 cfg="$tmp/cfg-live"
 inst "add rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin add "$tmp/src/probe.git"
 check "the rescan names the runner's pid" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell rescanPlugins"
+# The plugin landed before the rescan was asked for; a reply the runner does
+# not know is a refusal that names it, after the landing line.
+cfg="$tmp/cfg-weird"
+INST_REPLY=weird inst "add refuses an unknown rescan reply after landing the plugin" "$cfg" "$rt_live" 1 "ok added=acme.probe path=$cfg/vgs/plugins/acme.probe config=unchanged" "vgsh: refused: rescan=weird" plugin add "$tmp/src/probe.git"
 
 cfg="$tmp/cfg-refused"
 inst "add refuses a manifest the judge refuses" "$cfg" "$rt_empty" 1 "" "vgsh: refused: manifest=$tmp/src/broken.git" plugin add "$tmp/src/broken.git"
@@ -269,6 +285,19 @@ cfg="$tmp/cfg-live"
 source_commit probe "$(manifest acme.probe 0.4.0)"
 inst "update rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin update acme.probe
 
+# A checkout add did not make: no .git, or a branch with no upstream. Each
+# refusal names git's own cause after its key.
+cfg="$tmp/cfg-nogit"
+inst "add installs a plugin to break" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
+rm -rf -- "${cfg:?}/vgs/plugins/acme.probe/.git"
+inst "update refuses a plugin directory that is not a checkout" "$cfg" "$rt_empty" 1 "" "vgsh: refused: not-a-checkout=$cfg/vgs/plugins/acme.probe" plugin update acme.probe
+check "the not-a-checkout refusal carries git's cause" grep -q '^fatal: not a git repository' "$tmp/err"
+cfg="$tmp/cfg-noupstream"
+inst "add installs a plugin to detach" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
+g -C "$cfg/vgs/plugins/acme.probe" branch --unset-upstream
+inst "update refuses a checkout with no upstream" "$cfg" "$rt_empty" 1 "" "vgsh: refused: upstream=missing path=$cfg/vgs/plugins/acme.probe" plugin update acme.probe
+check "the upstream refusal carries git's cause" grep -q '^fatal: no upstream configured' "$tmp/err"
+
 # Remove.
 cfg="$tmp/cfg-add"
 inst "remove refuses a bundled id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: bundled=vgs.bar" plugin remove vgs.bar
@@ -282,12 +311,29 @@ manifest acme.probe 0.1.0 >"$tmp/elsewhere/acme.probe/manifest.json"
 ln -s "$tmp/elsewhere/acme.probe" "$cfg/vgs/plugins/acme.probe"
 inst "remove refuses a symlinked plugin directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: symlink=$cfg/vgs/plugins/acme.probe" plugin remove acme.probe
 check "a refused symlink leaves its target" test -f "$tmp/elsewhere/acme.probe/manifest.json"
+# A plugin present under the user directory but not the way add lands one: a
+# directory named differently from its id owns the id and is not installed;
+# a directory named for the id whose manifest names another id is refused.
+cfg="$tmp/cfg-misnamed"; mkdir -p "$cfg/vgs/plugins/elsewhere"
+manifest acme.probe 0.1.0 >"$cfg/vgs/plugins/elsewhere/manifest.json"
+inst "remove refuses a plugin whose directory is not named for its id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: not-installed=acme.probe owner=$cfg/vgs/plugins/elsewhere" plugin remove acme.probe
+cfg="$tmp/cfg-renamed"; mkdir -p "$cfg/vgs/plugins/acme.probe"
+manifest acme.other 0.1.0 >"$cfg/vgs/plugins/acme.probe/manifest.json"
+inst "remove refuses a directory whose manifest names another id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: manifest-id=acme.other path=$cfg/vgs/plugins/acme.probe" plugin remove acme.probe
+check "a refused id mismatch leaves the directory" test -f "$cfg/vgs/plugins/acme.probe/manifest.json"
 cfg="$tmp/cfg-live"
 inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin remove acme.probe
 INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$rt_live" 0 "shell=rescan-queued" "" plugin add "$tmp/src/probe.git"
 
-help_last="$("$repo/bin/vgsh" --help 2>&1 | tail -n 1)"
-if [[ $help_last == *"69 when the shell is not running."* ]]; then ok "help ends with the exit-code line"; else fail "help last line: $help_last"; fi
+# --help prints the header comment of the script itself on stderr and exits
+# 0; the expected first line is read from the script, not restated here.
+set +e
+help_out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt_empty" "$repo/bin/vgsh" --help 2>"$tmp/err")"
+status=$?
+set -e
+help_first=""; IFS= read -r help_first <"$tmp/err" || true
+want_first="$(sed -n '2{s/^# \{0,1\}//;p}' "$repo/bin/vgsh")"
+if [[ $status == 0 && -z $help_out && -n $want_first && $help_first == "$want_first" ]]; then ok "help prints the script header on stderr and exits 0"; else fail "help: exit=$status stdout=[$help_out] first=[$help_first] want=[$want_first]"; fi
 
 if [[ $failures -gt 0 ]]; then echo "test-vgsh: failed=$failures"; exit 1; fi
 echo "test-vgsh: ok"

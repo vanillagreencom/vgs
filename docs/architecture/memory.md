@@ -1,8 +1,8 @@
 # Runtime memory
 
-Covers: docs/architecture/memory.md
+Covers: scripts/sample-shell-memory.sh, scripts/test-sample-shell-memory.sh, scripts/attribute-heap-profile.py, scripts/test-attribute-heap-profile.py
 
-Two tools address v2: `scripts/sample-shell-memory.sh` samples the shell that `bin/vgsh run` started, and `scripts/attribute-heap-profile.py` reads jemalloc heap dumps from any profiled Quickshell process. Every figure in this file was measured on the previous shell, on the same Quickshell 0.3.1 runtime, and none has been measured on v2 yet. § Measured state came from the sampler's `/proc` rows and from per-thread fault and CPU counts read from `/proc`; § Heap profile came from jemalloc dumps of one profiled session, attributed by the heap-profile tool. The file paths under § Candidates are the previous shell's and this tree does not hold them.
+Two tools address v2: `scripts/sample-shell-memory.sh` samples the shell that `bin/vgsh run` started, and `scripts/attribute-heap-profile.py` reads jemalloc heap dumps from any profiled Quickshell process. Every figure in this file was measured on the previous shell, on the same Quickshell 0.3.1 runtime, and none has been measured on v2. § Measured state came from the sampler's `/proc` rows and from per-thread fault and CPU counts read from `/proc`; § Heap profile came from jemalloc dumps of one profiled session, attributed by the heap-profile tool. The file paths under § Candidates are the previous shell's and this tree does not hold them.
 
 The shell's resident size grows for the life of a session. This file records where that memory sits, how to measure it, and what a measurement can and cannot attribute. `scripts/sample-shell-memory.sh` is the sampler; it reads `/proc` and never signals, restarts or drives the shell.
 
@@ -109,7 +109,7 @@ scripts/sample-shell-memory.sh --hours 26        # log a session
 scripts/sample-shell-memory.sh --report FILE     # print the baseline
 ```
 
-`--samples N` stops after N samples. `scripts/qml-smoke.sh` runs the sampler for two samples against the shell `vgsh run` started in the sandbox and checks both rows name that shell. The sampler reads the shell's pid from the first line of `$XDG_RUNTIME_DIR/vgsh.lock`, which `bin/vgsh run` writes while it holds the lock, and confirms that `qs list -p <checkout>/shell -j` lists that pid. A missing or empty lock file, a pid with no process, or a pid the instance list does not name under this checkout's shell is a keyed refusal, so a stale lock or a shell started from another checkout never produces a log. The default log is `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/memory-samples.tsv`.
+`--samples N` stops after N samples. `scripts/qml-smoke.sh` runs the sampler for two samples against the shell `vgsh run` started in the sandbox and checks both rows name that shell. The sampler asks `bin/vgsh pid` for the shell's pid, the one reader of the lock file `bin/vgsh run` writes while it holds the lock, and confirms that `qs list -p <checkout>/shell -j` lists that pid. A missing or empty lock file, a pid with no process, or a pid the instance list does not name under this checkout's shell is a keyed refusal, so a stale lock or a shell started from another checkout never produces a log. The default log is `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/memory-samples.tsv`.
 
 Every sample row carries the sampled process and its start time, so one session is told from the next that reuses its process id. Sampling refuses to append to a log whose last row names a different session, rather than extending someone else's series. `--report` reads only the newest session in a log and says how many rows and sessions it left out, and it refuses every mark and rate for a session whose uptime does not run forward.
 
@@ -117,7 +117,7 @@ Every sample row carries the sampled process and its start time, so one session 
 
 ## Attribution limits
 
-`/proc` says which memory class grows. It does not say which C++ type allocated it. That needs jemalloc's heap profiler, which only runs in a shell started with profiling in its environment. On the live desktop that start is a restart, so no read-only method reaches it. The previous shell's smoke could start a profiled sandbox shell; v2's `scripts/qml-smoke.sh` has no option to pass the shell an environment yet.
+`/proc` says which memory class grows. It does not say which C++ type allocated it. That needs jemalloc's heap profiler, which only runs in a shell started with profiling in its environment. On the live desktop that start is a restart, so no read-only method reaches it. `scripts/qml-smoke.sh` has no option to pass the shell an environment, so no sandbox run is profiled.
 
 `scripts/attribute-heap-profile.py BASE HEAD` reads two dumps from one profiled session. It prints each thread's net growth and share, then breaks one thread's growth down by call stack and by the library that made the allocation. `--thread` selects the thread by name, `WaylandEventThr` by default. It symbolizes through `eu-addr2line` against the dump's own mappings, so the packages on disk must be the ones that ran. The installed libraries are stripped: set `DEBUGINFOD_URLS` so local functions resolve, or they take the name of the nearest exported symbol and the frame row carries `resolution=symbol-table-only`.
 

@@ -3,8 +3,14 @@
 # once, and CI runs this file, not a second list.
 #
 # Usage: scripts/validate [AREA]
-#   AREA is one of: logic, manifests, boundary, cli, tools, qml, all (default: all)
-#   One area per call; a second argument is refused.
+#   AREA is one of: logic, manifests, boundary, cli, tools, offline, qml, all
+#   (default: all). One area per call; a second argument is refused.
+#   offline runs every row but the nested smoke, plus the whitespace row and
+#   the self-check that every scripts/test-* file has a row; CI runs it.
+#
+# VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
+#   CI sets it to the change's base. Unset, the row takes the newest commit
+#   HEAD shares with a remote branch other than this branch's own.
 #
 # Exit 0: every selected check passed. Exit 77: every check that ran passed
 # but at least one could not run and is named; that is not a pass. Exit 1: a
@@ -39,28 +45,97 @@ run() { # LABEL CMD...
 rows=(
   "logic|plugin logic table|node scripts/test-plugin-logic.js"
   "logic|dispatch table|node scripts/test-dispatch.js"
+  "logic|library loader controls|node scripts/test-qml-library.js"
   "manifests|bundled manifests|node scripts/check-manifests.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js"
   "cli|runner CLI controls|scripts/test-vgsh.sh"
   "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py"
+  "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py"
   "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py"
   "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py"
+  "offline|whitespace errors against the base|whitespace_check"
+  "offline|every test file has a row|rows_cover_tests"
   "qml|nested smoke|scripts/qml-smoke.sh"
 )
+
+# The commit the whitespace row compares against. Without VGS_VALIDATE_BASE,
+# the newest commit HEAD shares with any remote branch other than this
+# branch's own copy: the point this branch left its base. Prints nothing
+# and returns 1 when no such commit exists.
+whitespace_base() {
+  if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
+    git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"
+    return
+  fi
+  local current ref merge_base when best="" best_when=0
+  # Empty on a detached HEAD, which then skips no remote ref.
+  current="$(git branch --show-current)" || current=""
+  while IFS= read -r ref; do
+    [[ -n $current && $ref == */"$current" ]] && continue
+    merge_base="$(git merge-base HEAD "$ref" 2>/dev/null)" || continue
+    when="$(git show -s --format=%ct "$merge_base")"
+    if (( when > best_when )); then best="$merge_base"; best_when="$when"; fi
+  done < <(git for-each-ref --format='%(refname)' refs/remotes/)
+  [[ -n $best ]] || return 1
+  printf '%s\n' "$best"
+}
+
+# Whitespace errors the tree adds over the base: tracked files against the
+# base commit, and every untracked file whole, since a new file has no base.
+whitespace_check() {
+  local base file out file_status status=0
+  if ! base="$(whitespace_base)"; then
+    echo "whitespace: status=not-measured reason=no-base"
+    echo "set VGS_VALIDATE_BASE to the commit to compare against"
+    return 77
+  fi
+  echo "whitespace: base=$base"
+  git diff --check "$base" -- || status=1
+  # --no-index exits 1 for any difference from /dev/null, which every file
+  # with content has; a higher status is a whitespace error or a read error,
+  # either one a failure, with git's own lines as the reason.
+  while IFS= read -r file; do
+    file_status=0
+    out="$(git diff --no-index --check -- /dev/null "$file" 2>&1)" || file_status=$?
+    if [[ $file_status -gt 1 ]]; then printf '%s\n' "$out"; status=1; fi
+  done < <(git ls-files --others --exclude-standard)
+  [[ $status -eq 0 ]] || echo "whitespace: failed base=$base"
+  return "$status"
+}
+
+# Every scripts/test-* file is named by a row, so a check cannot exist
+# without running here.
+rows_cover_tests() {
+  local file missing=() all="${rows[*]}"
+  for file in scripts/test-*; do
+    [[ $all == *"$file"* ]] || missing+=("$file")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf 'validate: refused: test-without-row=%s\n' "$(IFS=,; echo "${missing[*]}")"
+    return 1
+  fi
+  echo "validate: every test file has a row"
+}
 
 matched=false
 for row in "${rows[@]}"; do
   IFS='|' read -r row_area label command <<<"$row"
-  if [[ $area == all || $area == "$row_area" ]]; then
+  selected=false
+  case "$area" in
+    all) selected=true ;;
+    offline) [[ $row_area == qml ]] || selected=true ;;
+    *) [[ $area == "$row_area" ]] && selected=true ;;
+  esac
+  if [[ $selected == true ]]; then
     matched=true
     # shellcheck disable=SC2086
     run "$label" $command
   fi
 done
 if [[ $matched != true ]]; then
-  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, qml, all\n' "$area" >&2
+  printf 'validate: refused: area=%s\nareas: logic, manifests, boundary, cli, tools, offline, qml, all\n' "$area" >&2
   exit 2
 fi
 

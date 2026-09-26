@@ -15,7 +15,7 @@ Singleton {
     id: root
 
     // The shipped configuration names the default bar; the core never does.
-    readonly property string defaultBarId: Config.shipped.bar && typeof Config.shipped.bar.id === "string" ? Config.shipped.bar.id : ""
+    readonly property string defaultBarId: Logic.activeBarId(Config.shipped, "")
     readonly property string bundledDir: Quickshell.shellDir + "/plugins"
     readonly property string userDir: Config.userDir + "/plugins"
 
@@ -36,18 +36,24 @@ Singleton {
     // Hosts by kind, registered on completion. summon/hide/toggle route here.
     property var hosts: Object.create(null)
 
-    // Every instance the core built, keyed by a host-supplied key, for the
-    // IPC introspection the smoke reads. A row is { id, kind, instance,
-    // capabilities, entry, settingsKey, providers, disposers, screen }:
-    // `entry` is a bar widget's layout entry, `settingsKey` the JSON of the
-    // settings the instance holds, `providers` the capability providers
-    // made for it, and `disposers` what destroying it releases.
+    // Every instance on a surface, keyed by a host-supplied key, for the
+    // IPC introspection the smoke reads. A row is { id, kind, origin,
+    // instance, capabilities, entry, settingsKey, providers, disposers,
+    // screen }: `origin` is "core" for an instance the core built and
+    // "plugin" for an item a plugin drew itself and registered through its
+    // `builtins` capability; `kind` is the built instance's kind, or the
+    // registering instance's kind for a registered item; `entry` is a bar
+    // widget's layout entry, `settingsKey` the JSON of the settings the
+    // instance holds, `providers` the capability providers made for it, and
+    // `disposers` what destroying it releases.
     property var built: Object.create(null)
     property int buildCount: 0
 
     // Per bar instance, the widgets the core mounted in each of its
     // sections, keyed by the bar's host key: { row, sections: { <section>:
-    // { idsKey, entryKeys, widgets } } }. Not a binding input; read and
+    // { idsKey, entries } } }, `entries` one { key, widget } per wanted
+    // layout entry, in order, `widget` null where the build failed, so a
+    // later entry keeps its own settings. Not a binding input; read and
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
 
@@ -131,16 +137,35 @@ Singleton {
 
     readonly property string activeBarId: Logic.activeBarId(Config.effective, defaultBarId)
 
-    // The key a slot loads plugin `id` under: the id plus the registry
-    // generation while the plugin can be built, "" otherwise: before the
-    // first scan, before both configuration files settled, while the plugin
-    // is disabled, or while another plugin holds an exclusive capability it
-    // names. The last term makes a refused plugin build once the holder lets
-    // go. Every slot and every host reads this one derivation.
-    function slotKey(id) {
+    // Why plugin `id` is not an enabled plugin, or "": `unknown: <id>` or
+    // `refused: disabled=<id>`.
+    function enableRefusal(id) {
+        if (!has(id)) return "unknown: " + id;
+        return isEnabled(id) ? "" : "refused: disabled=" + id;
+    }
+
+    // Why plugin `id` cannot be built now, or "": the scan is pending, the
+    // configuration files have not settled, the plugin is unknown or
+    // disabled, or another plugin holds an exclusive capability it names
+    // (from the settled copy of the holders, so a refused plugin builds once
+    // the holder lets go). Every input is read on every path so a binding on
+    // the result re-evaluates on any of them. slotKey and route consume it.
+    function buildRefusal(id) {
         const holders = lendSnapshot;
-        if (!scanned || !Config.ready || id === "" || !isEnabled(id)) return "";
-        return Logic.lendRefusal(holders, manifests[id]) === "" ? id + "@" + generation : "";
+        const isScanned = scanned;
+        const ready = Config.ready;
+        const enable = enableRefusal(id);
+        if (!isScanned) return "refused: scan=pending";
+        if (!ready) return "refused: config=pending";
+        if (enable !== "") return enable;
+        return Logic.lendRefusal(holders, manifests[id]);
+    }
+
+    // The key a slot loads plugin `id` under: the id plus the registry
+    // generation while buildRefusal is empty, "" otherwise. Every slot and
+    // every host reads this one derivation.
+    function slotKey(id) {
+        return buildRefusal(id) === "" ? id + "@" + generation : "";
     }
 
     // Who holds each exclusive capability, copied once the change that moved
@@ -185,7 +210,6 @@ Singleton {
         return "file://" + manifests[id].__sourceDir + "/" + entry;
     }
 
-    // REVISIT(D010): a process or engine per plugin would replace this scope.
     // The scoped object a plugin receives as `shell`: its manifest, its
     // settings, and the providers made for this instance, one per capability
     // its manifest names. Nothing else on it. A settings change hands over a
@@ -200,15 +224,16 @@ Singleton {
     // Build one plugin entry point under `parent` and hand it its own
     // facade. `context` holds host-owned properties the instance receives
     // by name (a bar's `screen`); `screen` is the screen the instance draws
-    // on, which its `screens` capability reports, taken from the context
-    // when absent. Properties are assigned after creation, never as initial
+    // on, which its `screens` capability reports, null for a kind with no
+    // screen. Properties are assigned after creation, never as initial
     // properties, which cross a QVariant conversion that drops functions and
     // turns nested lists into non-Array sequences. Returns null after
     // logging when the plugin cannot be built.
     function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
-        if (!has(id) || !isEnabled(id)) { console.warn("plugins: " + id + " is not an enabled plugin"); return null; }
+        const enable = enableRefusal(id);
+        if (enable !== "") { console.error("plugins: " + enable); return null; }
         const url = entryUrl(id, kind);
-        if (url === "") { console.warn("plugins: " + id + " declares no " + kind + " entry point"); return null; }
+        if (url === "") { console.error("plugins: " + id + " declares no " + kind + " entry point"); return null; }
         const manifest = manifests[id];
         const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifest);
         if (lent !== "") { console.error("plugins: " + id + " " + lent); return null; }
@@ -216,9 +241,9 @@ Singleton {
         if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return null; }
         const instance = component.createObject(parent);
         if (instance === null) { console.error("plugins: " + id + " created no object"); return null; }
-        const settings = Logic.settingsFor(Config.effective, manifest, layoutEntry);
-        const onScreen = screen !== undefined && screen !== null ? screen : (context && context.screen ? context.screen : null);
-        const row = { id: id, kind: kind, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
+        const settings = Logic.settingsFor(Config.effective, manifest, kind, layoutEntry);
+        const onScreen = screen !== undefined && screen !== null ? screen : null;
+        const row = { id: id, kind: kind, origin: "core", instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
         try {
             row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: fn => row.disposers.push(fn) });
         } catch (e) {
@@ -294,21 +319,21 @@ Singleton {
         const next = Object.assign(Object.create(null), built);
         next[hostKey] = (next[hostKey] || []).concat([row]);
         built = next;
-        if (row.kind !== "builtin") buildCount += 1;
+        if (row.origin === "core") buildCount += 1;
     }
 
     // Record a widget a plugin draws itself (a bar's clock) under the
-    // plugin's host key as `<plugin id>/<name>`, kind `builtin`, so the
-    // build records list everything on the surface. The core built none of
-    // it, so the build counter does not move. Returns the disposer, which
-    // the plugin calls when the widget goes and the core calls when the
-    // plugin's instance goes.
+    // plugin's host key as `<plugin id>/<name>`, origin `plugin` and the
+    // registering instance's kind, so the build records list everything on
+    // the surface. The core built none of it, so the build counter does not
+    // move. Returns the disposer, which the plugin calls when the widget
+    // goes and the core calls when the plugin's instance goes.
     function recordBuiltin(ctx, name, item) {
         Capabilities.checkName("builtin", name);
         const id = ctx.id + "/" + name;
         if (Logic.hasOwn(built, ctx.hostKey) && built[ctx.hostKey].some(r => r.id === id))
             throw new Error("refused: builtin=" + id + " held host=" + ctx.hostKey);
-        record(ctx.hostKey, { id: id, kind: "builtin", instance: item, capabilities: [], entry: null, settingsKey: "", providers: {}, disposers: [], screen: ctx.screen });
+        record(ctx.hostKey, { id: id, kind: ctx.kind, origin: "plugin", instance: item, capabilities: [], entry: null, settingsKey: "", providers: {}, disposers: [], screen: ctx.screen });
         let live = true;
         const dispose = () => {
             if (!live) return;
@@ -341,7 +366,7 @@ Singleton {
 
     function mountBar(hostKey, row) {
         const sections = {};
-        for (const section of Logic.SECTIONS) sections[section] = { idsKey: "", entryKeys: [], widgets: [] };
+        for (const section of Logic.SECTIONS) sections[section] = { idsKey: "", entries: [] };
         const next = Object.assign(Object.create(null), mounts);
         next[hostKey] = { row: row, sections: sections };
         mounts = next;
@@ -351,7 +376,8 @@ Singleton {
     function unmountBar(hostKey) {
         const mount = mounts[hostKey];
         for (const section of Logic.SECTIONS)
-            for (const widget of mount.sections[section].widgets) destroyBuilt(hostKey, widget);
+            for (const entry of mount.sections[section].entries)
+                if (entry.widget !== null) destroyBuilt(hostKey, entry.widget);
         const next = Object.assign(Object.create(null), mounts);
         delete next[hostKey];
         mounts = next;
@@ -362,6 +388,8 @@ Singleton {
     // whose id sequence changed is rebuilt whole, in order; a section whose
     // ids are unchanged keeps its widgets and only the entries that changed
     // are handed their new settings, so an unrelated write builds nothing.
+    // The section's entries stay aligned with `wanted`, a failed build
+    // included, so an edit to one entry reaches that entry's widget alone.
     function reconcileBar(hostKey, layout) {
         const mount = mounts[hostKey];
         const holders = Capabilities.exclusiveHolders();
@@ -371,30 +399,27 @@ Singleton {
             const idsKey = JSON.stringify(wanted.map(e => e.id));
             const entryKeys = wanted.map(e => JSON.stringify(e));
             if (idsKey !== state.idsKey) {
-                for (const widget of state.widgets) destroyBuilt(hostKey, widget);
-                state.widgets = [];
-                state.entryKeys = [];
+                for (const entry of state.entries)
+                    if (entry.widget !== null) destroyBuilt(hostKey, entry.widget);
+                state.entries = [];
                 state.idsKey = "";
                 const container = sectionContainer(mount.row, section);
                 if (container === null) continue;
-                const widgets = [];
-                const keys = [];
+                const entries = [];
                 for (let i = 0; i < wanted.length; i++) {
                     const nth = wanted.slice(0, i).filter(e => e.id === wanted[i].id).length;
                     const widget = createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey, { section: section, nth: nth });
-                    if (widget === null) continue;
-                    widgets.push(widget);
-                    keys.push(entryKeys[i]);
+                    entries.push({ key: entryKeys[i], widget: widget });
                 }
-                state.widgets = widgets;
-                state.entryKeys = keys;
+                state.entries = entries;
                 state.idsKey = idsKey;
                 continue;
             }
-            for (let i = 0; i < state.widgets.length; i++) {
-                if (entryKeys[i] === state.entryKeys[i]) continue;
-                refreshRow(rowFor(hostKey, state.widgets[i]), wanted[i]);
-                state.entryKeys[i] = entryKeys[i];
+            for (let i = 0; i < state.entries.length; i++) {
+                const entry = state.entries[i];
+                if (entryKeys[i] === entry.key) continue;
+                entry.key = entryKeys[i];
+                if (entry.widget !== null) refreshRow(rowFor(hostKey, entry.widget), wanted[i]);
             }
         }
     }
@@ -408,7 +433,7 @@ Singleton {
     // entry; every other kind's from its plugins[] row.
     function refreshRow(row, layoutEntry) {
         const manifest = manifests[row.id];
-        const settings = Logic.settingsFor(Config.effective, manifest, layoutEntry);
+        const settings = Logic.settingsFor(Config.effective, manifest, row.kind, layoutEntry);
         const key = JSON.stringify(settings);
         row.entry = layoutEntry;
         if (key === row.settingsKey) return;
@@ -434,7 +459,7 @@ Singleton {
         }
         for (const hostKey of Object.keys(built)) {
             for (const row of built[hostKey]) {
-                if (row.kind === "bar-widget" || row.kind === "builtin" || !has(row.id)) continue;
+                if (row.kind === "bar-widget" || row.origin === "plugin" || !has(row.id)) continue;
                 try {
                     refreshRow(row, null);
                 } catch (e) {
@@ -447,7 +472,7 @@ Singleton {
     function builtJson() {
         const out = {};
         for (const key of Object.keys(built))
-            out[key] = built[key].map(row => ({ id: row.id, kind: row.kind, capabilities: row.capabilities }));
+            out[key] = built[key].map(row => ({ id: row.id, kind: row.kind, origin: row.origin, capabilities: row.capabilities }));
         return JSON.stringify(out);
     }
 
@@ -478,19 +503,16 @@ Singleton {
         if (!Logic.hasOwn(hosts, kind)) return "refused: no-host=" + kind;
         if (!has(id)) return "unknown: " + id;
         if (manifests[id].kinds.indexOf(kind) === -1) return "refused: kind=" + kind + " id=" + id;
-        if (verb !== "hide" && !isEnabled(id)) return "refused: disabled=" + id;
-        if (verb !== "hide" && slotKey(id) === "") {
-            const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifests[id]);
-            return lent !== "" ? lent : "refused: not-ready=" + id;
-        }
         if (verb === "hide") return hosts[kind].hide(id);
+        const refusal = buildRefusal(id);
+        if (refusal !== "") return refusal;
         return hosts[kind][verb](id, payloadJson, origin || null);
     }
 
-    // The settings plugin `id` receives from its plugins[] row, for a host
-    // that reads a plugin's settings for itself.
-    function settingsOf(id) {
-        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], null) : {};
+    // The settings an instance of `kind` of plugin `id` receives from its
+    // plugins[] row, for a host that reads a plugin's settings for itself.
+    function settingsOf(id, kind) {
+        return has(id) ? Logic.settingsFor(Config.effective, manifests[id], kind, null) : {};
     }
 
     // Call one function of one built instance with one text argument and
@@ -546,7 +568,7 @@ Singleton {
             kinds: m.kinds,
             enabled: isEnabled(id),
             schema: m.schema,
-            settings: Logic.settingsFor(Config.effective, m, Logic.layoutEntryOf(Config.effective, id))
+            settings: Logic.managerSettings(Config.effective, m)
         };
     })
 

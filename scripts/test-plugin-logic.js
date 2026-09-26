@@ -1,18 +1,10 @@
 #!/usr/bin/env node
-// Table-driven checks for shell/Core/PluginLogic.js, run under node with the
-// `.pragma library` line stripped. Exit 1 on the first failing row.
+// Table-driven checks for shell/Core/PluginLogic.js, loaded under node through
+// scripts/qml-library.js. Exit 1 when any row fails.
 "use strict";
-const fs = require("fs");
 const path = require("path");
-const vm = require("vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "shell", "Core", "PluginLogic.js"), "utf8");
-if (!source.startsWith(".pragma library\n")) {
-    console.error("test-plugin-logic: PluginLogic.js must start with `.pragma library`");
-    process.exit(1);
-}
-const ctx = {};
-vm.runInNewContext(source.slice(".pragma library\n".length), ctx);
+const ctx = require("./qml-library.js").load(path.join(__dirname, "..", "shell", "Core", "PluginLogic.js"));
 
 let failures = 0;
 function check(name, got, want) {
@@ -50,11 +42,12 @@ const manifestRows = [
     ["unknown capability", { capabilities: ["network"] }, "unknown capability"],
     ["settings not an object", { settings: [] }, "settings must be an object"],
     ["settings carrying an id", { settings: { id: "x" } }, "settings must not carry an id key"],
+    ["settings placement outside PLACEMENTS", { settings: { placement: "middle" } }, "settings.placement must be one of"],
+    ["settings placement in PLACEMENTS", { settings: { placement: "top-right" } }, null],
     ["defaultSection without the widget kind", { defaultSection: "left" }, "defaultSection needs kind bar-widget"],
     ["defaultSection unknown", { kinds: ["bar-widget"], entryPoints: { "bar-widget": "W.qml" }, defaultSection: "top" }, "defaultSection must be one of"],
     ["known capability", { capabilities: ["compositor"] }, null],
     ["schema not an object", { schema: [] }, "schema must be an object"],
-    ["schema carrying an id", { settings: { id: 1 } , schema: { id: { type: "string", label: "x" } } }, "settings must not carry an id key"],
     ["schema entry carrying the id key", { schema: { id: { type: "string", label: "x" } } }, "schema must not carry an id key"],
     ["schema entry not an object", { settings: { a: "x" }, schema: { a: "string" } }, "schema.a must be an object"],
     ["schema entry with an unknown key", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", min: 1 } } }, "schema.a has unknown key"],
@@ -79,6 +72,32 @@ check("validateManifest does not alias its input", (() => { const raw = JSON.par
 check("validateManifest normalizes capabilities and settings", (() => { const m = ctx.validateManifest(bar, "/p").manifest; return [m.capabilities, m.settings, m.defaultSection]; })(), [[], {}, undefined]);
 check("validateManifest normalizes an absent schema to an object", ctx.validateManifest(bar, "/p").manifest.schema, {});
 check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").manifest.__sourceDir, "/p");
+
+// configError rows: [name, config, want]. A refusal row pins the start of
+// the error text.
+const configRows = [
+    ["an empty object passes", {}, ""],
+    ["the shipped shape passes", { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "a.b" }], center: [], right: [] } }, plugins: [{ id: "a.c", x: 1 }], disabledPlugins: ["a.d"] }, ""],
+    ["a key outside the table is carried", { unrelated: { any: 1 } }, ""],
+    ["a list is not a config", [], "config must be an object"],
+    ["null is not a config", null, "config must be an object"],
+    ["version 2", { version: 2 }, "version must be 1"],
+    ["plugins not a list", { plugins: {} }, "plugins must be a list"],
+    ["a plugins row without an id", { plugins: [{ id: "a.b" }, { x: 1 }] }, "plugins.1 must be an object with a string id"],
+    ["a plugins row that is a string", { plugins: ["a.b"] }, "plugins.0 must be an object with a string id"],
+    ["disabledPlugins not a list", { disabledPlugins: "a.b" }, "disabledPlugins must be a list"],
+    ["a disabledPlugins entry that is not a string", { disabledPlugins: ["a.b", 1] }, "disabledPlugins.1 must be a string"],
+    ["bar not an object", { bar: "vgs.bar" }, "bar must be an object"],
+    ["bar.id not a string", { bar: { id: 1 } }, "bar.id must be a string"],
+    ["bar.layout not an object", { bar: { layout: [] } }, "bar.layout must be an object"],
+    ["a section not a list", { bar: { layout: { left: { id: "a.b" } } } }, "bar.layout.left must be a list"],
+    ["a layout row without an id", { bar: { layout: { center: [{ format: "x" }] } } }, "bar.layout.center.0 must be an object with a string id"],
+    ["a layout row with a numeric id", { bar: { layout: { right: [{ id: 3 }] } } }, "bar.layout.right.0 must be an object with a string id"],
+];
+for (const [name, config, want] of configRows) {
+    const got = ctx.configError(config);
+    check("configError: " + name, got.slice(0, want === "" ? got.length : want.length), want);
+}
 
 const shipped = { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "vgs.workspaces" }], center: [{ id: "vgs.clock" }], right: [] } }, plugins: [{ id: "acme.svc", x: 1 }], disabledPlugins: [] };
 
@@ -160,14 +179,22 @@ for (const [name, config, want] of layoutRows) {
 }
 check("effectiveLayout does not alias the configuration", (() => { const c = ctx.effectiveConfig(shipped, null); ctx.effectiveLayout(c, manifests, "vgs.bar").left[0].x = 1; return c.bar.layout.left[0].x; })(), undefined);
 
-// settingsFor: manifest defaults under the configuration entry.
-check("settingsFor merges the layout entry over defaults", ctx.settingsFor(shipped, manifests["acme.widget"], { id: "acme.widget", size: 9 }), { size: 9, tags: ["a"] });
-check("settingsFor drops the id key", ctx.settingsFor(shipped, manifests["acme.widget"], { id: "acme.widget" }).id, undefined);
-check("settingsFor reads the plugins entry for a non-widget", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"], null), { x: 2 });
-check("settingsFor is empty with no entry and no defaults", ctx.settingsFor(shipped, manifests["vgs.svc"], null), {});
-check("settingsFor gives a service the manifest defaults under its plugins row", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "changed" }] }), manifests["acme.both"], null), { label: "changed" });
-check("settingsFor gives a widget the manifest defaults with no row", ctx.settingsFor(shipped, manifests["acme.both"], { id: "acme.both" }), { label: "probe" });
-check("settingsFor does not alias the entry", (() => { const e = { id: "acme.widget", tags: ["z"] }; const s2 = ctx.settingsFor(shipped, manifests["acme.widget"], e); s2.tags.push("y"); return e.tags; })(), ["z"]);
+// settingTargetOf rows: [kind, want]. Every kind has one target.
+for (const kind of ctx.KINDS)
+    check("settingTargetOf: " + kind, ctx.settingTargetOf(kind), kind === "bar-widget" ? "layout" : "plugins");
+
+// settingsFor: manifest defaults under the entry settingTargetOf(kind) names.
+check("settingsFor merges the layout entry over defaults", ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", { id: "acme.widget", size: 9 }), { size: 9, tags: ["a"] });
+check("settingsFor drops the id key", ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", { id: "acme.widget" }).id, undefined);
+check("settingsFor reads the plugins entry for a non-widget", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"], "service", null), { x: 2 });
+check("settingsFor is empty with no entry and no defaults", ctx.settingsFor(shipped, manifests["vgs.svc"], "service", null), {});
+check("settingsFor gives a service the manifest defaults under its plugins row", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "changed" }] }), manifests["acme.both"], "service", null), { label: "changed" });
+check("settingsFor gives a widget the manifest defaults with no row", ctx.settingsFor(shipped, manifests["acme.both"], "bar-widget", { id: "acme.both" }), { label: "probe" });
+check("settingsFor ignores a layout entry for a non-widget kind", ctx.settingsFor(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"], "service", { id: "acme.both", label: "entry" }), { label: "row" });
+check("settingsFor does not alias the entry", (() => { const e = { id: "acme.widget", tags: ["z"] }; const s2 = ctx.settingsFor(shipped, manifests["acme.widget"], "bar-widget", e); s2.tags.push("y"); return e.tags; })(), ["z"]);
+check("managerSettings shows a placed widget its first layout entry", ctx.managerSettings(ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [{ id: "acme.both", label: "entry" }], right: [] } }, plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"]), { label: "entry" });
+check("managerSettings shows an unplaced widget-plus-service its plugins row", ctx.managerSettings(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row" }] }), manifests["acme.both"]), { label: "row" });
+check("managerSettings shows a service its plugins row", ctx.managerSettings(ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.svc", x: 2 }] }), manifests["acme.svc"]), { x: 2 });
 
 // withEnabled rows: [name, user, effective, id, enabled, path, want].
 // `effective` is the merged configuration the manager reads presence from.
@@ -279,15 +306,15 @@ for (const [name, held, capabilities, want] of lendRows) {
 const size = { width: 200, height: 100 };
 const screenArea = { width: 1000, height: 600 };
 const placementRows = [
-    ["an overlay fills its screen", "overlay", {}, null, { anchors: { top: true, bottom: true, left: true, right: true }, exclusion: "ignore", placement: "fill" }],
+    ["an overlay fills its screen on the overlay layer", "overlay", {}, null, { anchors: { top: true, bottom: true, left: true, right: true }, exclusion: "ignore", layer: "overlay", placement: "fill" }],
     ["an overlay ignores an anchor", "overlay", {}, { x: 10, y: 0, width: 20, height: 26 }, { placement: "fill" }],
-    ["an anchored panel sits under its anchor, centred", "panel", {}, { x: 400, y: 0, width: 100, height: 26 }, { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: 34, bottom: 0, left: 350, right: 0 }, exclusion: "ignore", placement: "anchor" }],
+    ["an anchored panel sits under its anchor, centred, on the top layer", "panel", {}, { x: 400, y: 0, width: 100, height: 26 }, { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: 34, bottom: 0, left: 350, right: 0 }, exclusion: "ignore", layer: "top", placement: "anchor" }],
     ["an anchored panel is clamped to the left edge", "panel", {}, { x: 0, y: 0, width: 20, height: 26 }, { margins: { top: 34, bottom: 0, left: 0, right: 0 } }],
     ["an anchored panel is clamped to the right edge", "panel", {}, { x: 980, y: 0, width: 20, height: 26 }, { margins: { top: 34, bottom: 0, left: 800, right: 0 } }],
-    ["an anchored menu with no room below sits above", "menu", {}, { x: 400, y: 574, width: 100, height: 26 }, { margins: { top: 466, bottom: 0, left: 350, right: 0 } }],
-    ["no placement setting centres", "panel", {}, null, { anchors: { top: false, bottom: false, left: false, right: false }, exclusion: "normal", placement: "center" }],
+    ["an anchored menu with no room below sits above, on the overlay layer", "menu", {}, { x: 400, y: 574, width: 100, height: 26 }, { margins: { top: 466, bottom: 0, left: 350, right: 0 }, layer: "overlay" }],
+    ["no placement setting centres", "panel", {}, null, { anchors: { top: false, bottom: false, left: false, right: false }, exclusion: "normal", layer: "top", placement: "center" }],
     ["top-right keeps a gap from both edges", "panel", { placement: "top-right" }, null, { anchors: { top: true, bottom: false, left: false, right: true }, margins: { top: 8, bottom: 0, left: 0, right: 8 }, placement: "top-right" }],
-    ["bottom anchors one edge", "menu", { placement: "bottom" }, null, { anchors: { top: false, bottom: true, left: false, right: false }, placement: "bottom" }],
+    ["bottom anchors one edge", "menu", { placement: "bottom" }, null, { anchors: { top: false, bottom: true, left: false, right: false }, layer: "overlay", placement: "bottom" }],
     ["an unknown placement is reported and centres", "panel", { placement: "middle" }, null, { placement: "center", error: "placement=\"middle\" unknown" }],
 ];
 for (const [name, kind, settings, anchor, want] of placementRows) {
