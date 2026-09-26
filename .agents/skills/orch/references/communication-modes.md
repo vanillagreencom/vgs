@@ -76,11 +76,12 @@ The template carries outcomes only. A question in the set names no mechanism the
 ```text
 Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
 Running: [WHAT IS IN FLIGHT AND WHEN IT LANDS]
+Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND]
 Next: [WHAT STARTS AFTER THAT]
 Waiting on you: [EACH OPEN QUESTION, OR none]
 ```
 
-Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows.
+Under `engineer` a report is the same shape with the session's own vocabulary. A report the overseer writes to the user takes this shape whatever produced its rows. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which [`dev-start.md` § Store Validation Time](../workflows/dev-start.md#store-validation-time) writes, so the owner sees what each round's validation cost.
 
 ## Handoff
 
@@ -89,6 +90,7 @@ Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
 In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
 Open questions: [EACH QUESTION SENT AND NOT ANSWERED]
 Traps: [WHAT WOULD BREAK IF THE NEXT SESSION MISSED IT]
+Watch: [REPEAT MODE: THE WAKE MECHANISM IN FORCE, ITS RE-ARM RULE, THE WATCH RUN DIRECTORY AND THE NEXT LOG LINE; AFTER A STOP, `stopped` AND THE WATCH RUN DIRECTORY. SINGLE PASSES: `single passes` ALONE]
 ```
 
 The overseer handoff file [oversee.md](../workflows/oversee.md) § 5 rewrites carries this shape. The stance itself is this file and is never copied into a handoff.
