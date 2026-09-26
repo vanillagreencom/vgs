@@ -56,7 +56,7 @@ PY
 probe_widgets() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d[sys.argv[1]] if r["id"]=="acme.probe"))' "$(bar_key)"; }
 right_entries add
 expect_poll "the fixture widget is placed twice" 2 probe_widgets
-expect "a widget's configure writes only its own layout entry" ok ipc shell invokeInstance "$(bar_key)" acme.probe setLabel only-first
+expect "a widget's configure writes only its own layout entry" ok ipc smoke invokeInstance "$(bar_key)" acme.probe setLabel only-first
 labels_now() { right_entries show; }
 expect_poll "the other entry keeps its setting" '["only-first", "second"]' labels_now
 right_entries drop
@@ -80,8 +80,8 @@ expect "the lending record reports the registration" false lent polkitRegistered
 expect "the fixture locks the session" ok probe lock
 expect_poll "the compositor confirms the lock" true read_service lockSecure
 # A rebuild while locked keeps the session locked, and the rebuilt holder
-# hands its screen over again. A changed manifest makes every slot rebuild.
-python3 - "$bare/manifest.json" <<'PY'
+# hands its screen over again. Change the holder's own source revision.
+python3 - "$home/.config/vgs/plugins/acme.probe/manifest.json" <<'PY'
 import json, os, sys
 p = sys.argv[1]
 d = json.load(open(p))
@@ -93,7 +93,9 @@ lock_content() { lent lock.content; }
 if before="$(builds)"; then
   expect "a rescan while locked answers ok" ok ipc shell rescanPlugins
   rebuilt() { local now; now="$(builds)" && [[ $now -gt $before ]] && echo rebuilt || echo same; }
-  expect_poll "the changed manifest rebuilt the plugins" rebuilt rebuilt
+  expect_poll "the changed manifest rebuilt the holder" rebuilt rebuilt
+  expect "only the holder service and its widgets rebuilt" "$((before + monitors + 1))" builds
+  expect "the replacement service starts with no shortcut presses" 0 read_service presses
   expect_poll "the rebuilt holder handed its screen over again" true lock_content
   expect "the session stayed locked through the rebuild" true read_service lockSecure
   expect "the rebuilt fixture answers on its IPC target" hello probe echo hello

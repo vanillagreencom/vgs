@@ -41,10 +41,10 @@ geometry() { local previous="$row_class"; row_class=geometry; "$@"; row_class="$
 # the sandbox, not the shell.
 render() {
   local previous="$row_class" before after failed_before="$failures"
-  before="$(ipc shell frames)" || before=""
+  before="$(ipc smoke frames)" || before=""
   row_class=render; "$@"; row_class="$previous"
   [[ $failures -eq $failed_before ]] && return
-  after="$(ipc shell frames)" || after=""
+  after="$(ipc smoke frames)" || after=""
   if [[ -z $before || -z $after || $before == "$after" ]]; then
     stalled_render=true
     printf '        no frame was drawn during the row (frames=%s)\n' "${after:-unreadable}"
@@ -241,7 +241,7 @@ shell_pid="$spawn_pid"
 click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
 click_centre() {
   local rect
-  rect="$(ipc shell instanceGeometry "$1" "$2")" || return
+  rect="$(ipc smoke instanceGeometry "$1" "$2")" || return
   read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
   click "$cx" "$cy"
 }
@@ -261,13 +261,7 @@ done
 
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
 ipc() {
-  local target="$1"; shift
-  if [[ $target == shell ]]; then
-    case "$1" in
-      buildCount|frames|configChanges|configUserLoads|configSettled|readInstance|instanceGeometry|invokeInstance) target=smoke ;;
-    esac
-  fi
-  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$target" "$@" 2>>"$sandbox/ipc.log" | tail -n 1
+  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
 
 up=false
@@ -391,7 +385,7 @@ expect_builtins() { # LABEL EXPECTED_JSON_LIST
 # A rebuild counter: the core counts every instance it builds. Rows below
 # assert that an unrelated write and a rescan that changes nothing build
 # nothing, and what a rescan that adds a disabled plugin builds.
-builds() { ipc shell buildCount; }
+builds() { ipc smoke buildCount; }
 
 # One plugin's row in the registry listing: `plugin_known ID` prints True or
 # False, `plugin_enabled ID` its enabled flag or `absent`. `record_exists ID`

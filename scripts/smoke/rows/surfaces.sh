@@ -16,15 +16,15 @@ screen_name="$(bar_key | sed 's/^bar://')"
 
 expect_poll "the background host draws one surface per screen" "$monitors" layer_count vgs:background
 expect "the background sits on the bottom layer" True python3 -c 'import json,subprocess,sys; print(any(l["namespace"]=="vgs:background" and l["pid"]!=-1 for m in json.loads(sys.stdin.read()).values() for l in m["levels"]["0"]))' < <(hypr -j layers)
-expect "the background receives its screen" "\"$screen_name\"" ipc shell readInstance "background:$screen_name" acme.surfaces screenName
+expect "the background receives its screen" "\"$screen_name\"" ipc smoke readInstance "background:$screen_name" acme.surfaces screenName
 
 expect "a panel summons over IPC" ok ipc shell summon panel acme.surfaces '{"n":1}'
-expect "the panel received its payload" '"{\"n\":1}"' ipc shell readInstance panel acme.surfaces lastPayload
+expect "the panel received its payload" '"{\"n\":1}"' ipc smoke readInstance panel acme.surfaces lastPayload
 expect_poll "the panel host maps one surface" 1 layer_count vgs:panel
 geometry expect_poll "the panel takes its top-right placement below the bar" "[[$((mon_w - 8 - 200)), $((bar_reserved + 8)), 200, 120]]" layers_of vgs:panel
 if before="$(builds)"; then
   expect "summoning an open panel is allowed" ok ipc shell summon panel acme.surfaces '{"n":2}'
-  expect "the open panel received the new payload" 2 ipc shell readInstance panel acme.surfaces opened
+  expect "the open panel received the new payload" 2 ipc smoke readInstance panel acme.surfaces opened
   expect "summoning an open panel builds nothing" "$before" builds
 else
   fail "buildCount unreadable before the summon rows"
@@ -33,7 +33,7 @@ expect "summoning with a close marker is allowed" ok ipc shell summon panel acme
 expect "hiding the panel is allowed" ok ipc shell hide panel acme.surfaces
 marker() { [[ -f $1 ]] && echo yes || echo no; }
 expect_poll "hide called the panel's close()" yes marker "$sandbox/closed-by-hide"
-expect "the hidden panel leaves the build records" absent ipc shell readInstance panel acme.surfaces opened
+expect "the hidden panel leaves the build records" absent ipc smoke readInstance panel acme.surfaces opened
 expect_poll "the panel host destroyed its surface" 0 layer_count vgs:panel
 expect "toggle opens a closed panel" ok ipc shell toggle panel acme.surfaces '{}'
 expect_poll "the toggled panel is mapped" 1 layer_count vgs:panel
@@ -60,11 +60,11 @@ expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
 # sits flush under its anchor, centred on it when that fits the screen;
 # one that would not fit is the compositor's to slide, and the row asserts
 # only that it stays on the screen and under its anchor.
-popup_geometry() { ipc shell invokeInstance "$1" acme.surfaces geometry ''; }
+popup_geometry() { ipc smoke invokeInstance "$1" acme.surfaces geometry ''; }
 placed_below() { # POPUP_KIND ANCHOR_HOST ANCHOR_FUNCTION [WINDOW_X WINDOW_Y]
   local actual anchor
   actual="$(popup_geometry "$1")" || return
-  anchor="$(ipc shell invokeInstance "$2" acme.surfaces "$3" '')" || return
+  anchor="$(ipc smoke invokeInstance "$2" acme.surfaces "$3" '')" || return
   # Answers `placed`, or the geometry read, so a failure names it.
   python3 - "$actual" "$anchor" "$mon_w" "${4:-0}" "${5:-0}" <<'PY'
 import json, sys
@@ -78,26 +78,26 @@ print("placed" if placed else "popup=%s anchor=%s centred=%s fits=%s" % (sys.arg
 PY
 }
 panel_origin() { layers_of vgs:panel | python3 -c 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])'; }
-expect "the widget summons its panel under itself" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
+expect "the widget summons its panel under itself" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 geometry expect_poll "the popup panel sits under its widget" placed placed_below panel "bar:$screen_name" geometry
-expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc shell readInstance panel acme.surfaces lastPayload
+expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc smoke readInstance panel acme.surfaces lastPayload
 expect "the anchored panel uses no layer surface" 0 layer_count vgs:panel
 expect "hiding the anchored panel is allowed" ok ipc shell hide panel acme.surfaces
 
 expect "the unanchored panel opens for a nested menu" ok ipc shell summon panel acme.surfaces '{}'
 expect_poll "the parent panel is mapped" 1 layer_count vgs:panel
 read -r panel_x panel_y < <(panel_origin)
-expect "the panel summons a menu from its own item" ok ipc shell invokeInstance panel acme.surfaces menuHere '{}'
+expect "the panel summons a menu from its own item" ok ipc smoke invokeInstance panel acme.surfaces menuHere '{}'
 geometry expect_poll "the nested menu uses its parent's window coordinates" placed placed_below menu panel anchorGeometry "$panel_x" "$panel_y"
 anchor_updates="$(log_lines 'summon popup: anchor updated for acme\.surfaces')" || fail "instance log unreadable: $instance_log"
-expect "moving an anchor ancestor is allowed" ok ipc shell invokeInstance panel acme.surfaces moveAnchor ''
+expect "moving an anchor ancestor is allowed" ok ipc smoke invokeInstance panel acme.surfaces moveAnchor ''
 expect_log "the host updates the popup's anchor for the moved ancestor" "$((anchor_updates + 1))" 'summon popup: anchor updated for acme\.surfaces'
 render expect_poll "the popup follows its moving anchor ancestor" placed placed_below menu panel anchorGeometry "$panel_x" "$panel_y"
-expect "hiding an anchor ancestor is allowed" ok ipc shell invokeInstance panel acme.surfaces hideAnchor ''
-expect_poll "hiding an anchor closes its popup" absent ipc shell readInstance menu acme.surfaces opened
+expect "hiding an anchor ancestor is allowed" ok ipc smoke invokeInstance panel acme.surfaces hideAnchor ''
+expect_poll "hiding an anchor closes its popup" absent ipc smoke readInstance menu acme.surfaces opened
 expect "hiding the parent panel is allowed" ok ipc shell hide panel acme.surfaces
 
-expect "the rightmost widget opens a menu" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces menuHere '{}'
+expect "the rightmost widget opens a menu" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces menuHere '{}'
 geometry expect_poll "the menu at the screen edge stays fully on screen" placed placed_below menu "bar:$screen_name" geometry
 expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 
@@ -106,15 +106,15 @@ expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 # compositor's virtual pointer. The first click lands on the widget itself,
 # as a user's would before its menu opens.
 click_centre "bar:$screen_name" acme.surfaces || fail "the click on the widget failed"
-expect "the widget opens a menu with a close marker" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces menuHere "{\"closeMarker\":\"$sandbox/closed-by-click\"}"
-expect_poll "the menu is open before the outside click" 1 ipc shell readInstance menu acme.surfaces opened
+expect "the widget opens a menu with a close marker" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces menuHere "{\"closeMarker\":\"$sandbox/closed-by-click\"}"
+expect_poll "the menu is open before the outside click" 1 ipc smoke readInstance menu acme.surfaces opened
 click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the menu failed"
 expect_poll "the outside click called the menu's close()" yes marker "$sandbox/closed-by-click"
-expect_poll "the outside click removed the menu from the build records" absent ipc shell readInstance menu acme.surfaces opened
-expect "the widget opens an anchored panel" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
-expect_poll "the panel is open before the outside click" 1 ipc shell readInstance panel acme.surfaces opened
+expect_poll "the outside click removed the menu from the build records" absent ipc smoke readInstance menu acme.surfaces opened
+expect "the widget opens an anchored panel" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
+expect_poll "the panel is open before the outside click" 1 ipc smoke readInstance panel acme.surfaces opened
 click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the panel failed"
-expect_poll "the outside click closes an anchored panel too" absent ipc shell readInstance panel acme.surfaces opened
+expect_poll "the outside click closes an anchored panel too" absent ipc smoke readInstance panel acme.surfaces opened
 
 # Replacing an open plugin runs open() on the replacement. A refusal must
 # remove its surface just as a refusal during the first summon does.
@@ -129,14 +129,14 @@ assert s.count(old) == 1
 p.write_text(s.replace(old, 'if (true)'))
 PYEDIT
 expect "the changed open plugin is rescanned" ok ipc shell rescanPlugins
-expect_poll "a replacement whose open throws is removed" absent ipc shell readInstance panel acme.surfaces opened
+expect_poll "a replacement whose open throws is removed" absent ipc smoke readInstance panel acme.surfaces opened
 expect_poll "the refused replacement leaves no panel surface" 0 layer_count vgs:panel
 mv -T -- "$sandbox/Summoned.good" "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml"
 scans_before_repair="$(scans_done)"
 expect "the repaired surface plugin is rescanned" ok ipc shell rescanPlugins
 expect_log "the repaired surface revision is available" "$((scans_before_repair + 1))" 'plugins: scan complete '
 
-expect "the panel opens again for the disable check" ok ipc shell invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
+expect "the panel opens again for the disable check" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 
 expect "a background is not summonable" "refused: not-summonable=background" ipc shell summon background acme.surfaces '{}'
 expect "a plugin without the kind is refused" "refused: kind=panel id=acme.tick" ipc shell summon panel acme.tick '{}'

@@ -14,12 +14,6 @@ Item {
     implicitWidth: row.implicitWidth
     implicitHeight: Style.bar.sizeHorizontal
 
-    // Focus workspace `id`; answers the capability's reply. Not `focus`,
-    // which every Item already has as a property.
-    function focusWorkspace(id) {
-        return root.bar.shell.compositor.focusWorkspace(Number(id));
-    }
-
     RowLayout {
         id: row
         anchors.fill: parent
@@ -47,7 +41,7 @@ Item {
 
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: root.focusWorkspace(parent.modelData)
+                    onClicked: root.bar.shell.compositor.focusWorkspace(parent.modelData)
                 }
             }
         }

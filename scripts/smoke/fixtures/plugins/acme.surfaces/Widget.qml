@@ -2,7 +2,6 @@ import QtQuick
 import qs.Ui
 BarWidget {
     id: root
-    moduleName: "acme.surfaces"
     implicitWidth: 30
     implicitHeight: barSize
     function summonHere() { return shell.surfaces.summon("panel", "{\"from\":\"widget\"}", root); }

@@ -16,7 +16,7 @@ var VALUE = \"$1\";
 }
 # The build records list a rebuilt widget last; the drawn order is the
 # order of the section's children, read from each widget's own index.
-widget_index() { ipc shell readInstance "$(bar_key)" "$1" layoutIndex; }
+widget_index() { ipc smoke childIndex "$(bar_key)" "$1"; }
 tick_before_probe() { python3 -c 'import sys; a, b = int(sys.argv[1]), int(sys.argv[2]); print(a >= 0 and b >= 0 and a < b)' "$(widget_index acme.tick)" "$(widget_index acme.probe)"; }
 scans_done() { log_lines 'plugins: scan complete '; }
 
@@ -110,7 +110,7 @@ if scans_before="$(scans_done)"; then
 else
   fail "instance log unreadable: $instance_log"
 fi
-expect "an unchanged plugin's files stay readable after the rescans" lazy ipc shell invokeInstance "$(bar_key)" acme.tick lazy ''
+expect "an unchanged plugin's files stay readable after the rescans" lazy ipc smoke invokeInstance "$(bar_key)" acme.tick lazy ''
 # The rescans above changed only the placed widget, so the fixture
 # service's in-memory state stayed: its shortcut counter, pressed once here.
 expect "the compositor triggers the fixture's shortcut before the state check" ok hypr dispatch 'hl.dsp.global("acme.probe:ping")'

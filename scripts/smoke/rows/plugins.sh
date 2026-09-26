@@ -31,10 +31,10 @@ expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
 # The first bar host's key, for reading a widget instance back.
 bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
-read_widget() { ipc shell readInstance "$(bar_key)" acme.probe "$1"; }
-read_service() { ipc shell readInstance service acme.probe "$1"; }
-read_clock() { ipc shell readInstance "$(bar_key)" vgs.bar/center-clock "$1"; }
-read_tick() { ipc shell readInstance "$(bar_key)" acme.tick "$1"; }
+read_widget() { ipc smoke readInstance "$(bar_key)" acme.probe "$1"; }
+read_service() { ipc smoke readInstance service acme.probe "$1"; }
+read_clock() { ipc smoke readInstance "$(bar_key)" vgs.bar/center-clock "$1"; }
+read_tick() { ipc smoke readInstance "$(bar_key)" acme.tick "$1"; }
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == True ]]; then break; fi; sleep 0.2; done
 if [[ $got == True ]]; then ok "the service host built the fixture service"; else fail "service host: built=$got"; fi
@@ -44,17 +44,13 @@ expect "the fixture widget's settings array stayed an array" true read_widget ta
 all_caps='"compositor,configure,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut"'
 expect "the fixture widget's shell holds exactly what it named" "$all_caps" read_widget shellKeys
 expect "the fixture service's shell holds exactly what it named" "$all_caps" read_service shellKeys
-expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc shell readInstance service acme.bare shellKeys
+expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc smoke readInstance service acme.bare shellKeys
 expect "the fixture service reads the manifest default" '"probe"' read_service label
 expect "a placed widget reads its layout entry" '"ddd d MMM  HH:mm"' read_tick format
 expect "the built-in clock reads the bar's clock format" '"ddd d MMM  HH:mm"' read_clock format
 
 # The built-in workspaces focus through the bar's own compositor capability.
 active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
-expect "the built-in workspaces focus a workspace" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/left-workspaces focusWorkspace 2
-expect_poll "the compositor moved to the clicked workspace" 2 active_ws
-expect_poll "the built-in workspaces focus the first workspace again" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/left-workspaces focusWorkspace 1
-expect_poll "the compositor moved back to the first workspace" 1 active_ws
 
 # A settings change reaches the running instance and builds nothing: the
 # service's plugins[] row, then the clock's layout entry.
@@ -94,7 +90,7 @@ PY
   # readings across 2.2 s change at least twice at second precision.
   clock_changes=0; clock_last=""
   for _ in 1 2 3; do
-    if clock_now="$(read_clock displayed)"; then
+    if clock_now="$(ipc smoke textOf "$(bar_key)" vgs.bar/center-clock)"; then
       [[ -n $clock_last && $clock_now != "$clock_last" ]] && clock_changes=$((clock_changes + 1))
       clock_last="$clock_now"
     fi

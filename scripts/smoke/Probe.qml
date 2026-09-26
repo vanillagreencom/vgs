@@ -14,6 +14,7 @@ Scope {
     property int userLoads: 0
     property var previousRows: []
     property var heldField: null
+    property var heldEditor: null
 
     Connections {
         target: Plugins
@@ -77,16 +78,7 @@ Scope {
     function read(hostKey, id, property) {
         const item = instance(hostKey, id);
         if (item === null) return "absent";
-        let value;
-        if (property === "drawnFields") {
-            value = {};
-            for (const row of item.plugins) value[row.id] = 0;
-            for (const field of descendants(item))
-                if (typeof field.apply === "function" && field.pluginId !== undefined) value[field.pluginId] += 1;
-        } else if (property === "displayed") {
-            const label = descendants(item).find(child => child instanceof Text);
-            value = label === undefined ? undefined : label.text;
-        } else value = item[property];
+        const value = item[property];
         const json = JSON.stringify(value);
         return json === undefined ? "undefined" : json;
     }
@@ -108,14 +100,15 @@ Scope {
             editor.forceActiveFocus();
             editor.text = a.text;
             editor.cursorPosition = 1;
-            heldField = { id: a.id, key: a.key, field: field, editor: editor };
+            heldField = { id: a.id, key: a.key, field: field };
+            heldEditor = editor;
             return geometry(editor);
         }
         if (name === "heldFieldState") {
-            if (heldField === null || heldField.editor === null) return "absent";
+            if (heldField === null || heldEditor === null) return "absent";
             return JSON.stringify({ same: fieldOf(item, heldField.id, heldField.key) === heldField.field,
-                focus: heldField.editor.focus, activeFocus: heldField.editor.activeFocus,
-                text: heldField.editor.text, cursor: heldField.editor.cursorPosition });
+                focus: heldEditor.focus, activeFocus: heldEditor.activeFocus,
+                text: heldEditor.text, cursor: heldEditor.cursorPosition });
         }
         if (typeof item[name] !== "function") return "no-function";
         const result = item[name](arg);
@@ -131,6 +124,27 @@ Scope {
         function configSettled(): bool { return Config.activeSave === null && !Config.reloading && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
+        function textOf(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            const label = item === null ? undefined : root.descendants(item).find(child => child instanceof Text);
+            return label === undefined ? "absent" : JSON.stringify(label.text);
+        }
+        function drawnFields(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const counts = {};
+            for (const row of item.plugins) counts[row.id] = 0;
+            for (const field of root.descendants(item))
+                if (typeof field.apply === "function" && field.pluginId !== undefined) counts[field.pluginId] += 1;
+            return JSON.stringify(counts);
+        }
+        function childIndex(hostKey: string, id: string): int {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.parent === null) return -1;
+            for (let i = 0; i < item.parent.children.length; i++)
+                if (item.parent.children[i] === item) return i;
+            return -1;
+        }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.invoke(hostKey, id, name, arg); }
     }
 }

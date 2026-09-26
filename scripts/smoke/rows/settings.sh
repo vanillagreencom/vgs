@@ -7,33 +7,33 @@
 # asked for back to back run in order behind one process, the queue has a
 # bound, and a process that cannot start does not stop the queue.
 set -euo pipefail
-manager_open() { [[ $(ipc shell instanceGeometry panel vgs.bar) != absent ]] && echo open || echo closed; }
+manager_open() { [[ $(ipc smoke instanceGeometry panel vgs.bar) != absent ]] && echo open || echo closed; }
 click_centre "$(bar_key)" vgs.bar/right-manager || fail "the click on the manager button failed"
 expect_poll "the manager button's click opens the manager panel" open manager_open
 expect_poll "the manager panel draws the fixture's label field again" '[1, 1, 0]' manager_drawn
-held_rect="$(ipc shell invokeInstance panel vgs.bar holdField '{"id":"acme.probe","key":"label","text":"draft"}')" || fail "holdField failed"
+held_rect="$(ipc smoke invokeInstance panel vgs.bar holdField '{"id":"acme.probe","key":"label","text":"draft"}')" || fail "holdField failed"
 if [[ $held_rect == \[* ]]; then ok "an edit begins in the fixture's label field"; else fail "an edit begins in the fixture's label field: got $held_rect"; fi
 read -r field_x field_y field_w field_h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$held_rect")
 click "$((field_x + field_w / 2))" "$((field_y + field_h / 2))" || fail "the click on the held field failed"
-held_state() { ipc shell invokeInstance panel vgs.bar heldFieldState ''; }
+held_state() { ipc smoke invokeInstance panel vgs.bar heldFieldState ''; }
 # The click also puts the cursor where it landed; the state read after it
 # is what the unrelated changes must preserve.
 held_focused() { held_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["same"] and d["focus"] and d["activeFocus"] and d["text"] == "draft")'; }
 expect_poll "the clicked field holds keyboard focus with its draft" True held_focused
 held_before="$(held_state)" || fail "held field state unreadable"
-expect "the manager toggles the bare fixture off around the edit" ok ipc shell invokeInstance panel vgs.bar toggle acme.bare
+expect "the manager toggles the bare fixture off around the edit" ok ipc smoke invokeInstance panel vgs.bar toggle acme.bare
 expect_poll "the manager panel shows the bare fixture disabled" '{"acme.bare": false, "acme.probe": true, "vgs.bar": true}' manager_rows
 expect "the edit in progress survives the unrelated change" "$held_before" held_state
-expect "the manager toggles the bare fixture back on" ok ipc shell invokeInstance panel vgs.bar toggle acme.bare
+expect "the manager toggles the bare fixture back on" ok ipc smoke invokeInstance panel vgs.bar toggle acme.bare
 expect_poll "the manager panel shows the bare fixture enabled" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
 expect "the edit in progress survives the second unrelated change" "$held_before" held_state
 
-config_changes() { ipc shell configChanges; }
-user_loads() { ipc shell configUserLoads; }
-config_settled() { ipc shell configSettled; }
+config_changes() { ipc smoke configChanges; }
+user_loads() { ipc smoke configUserLoads; }
+config_settled() { ipc smoke configSettled; }
 user_label() { python3 -c 'import json,sys; print([e.get("label") for e in json.load(open(sys.argv[1])).get("plugins", []) if e["id"]=="acme.probe"][0])' "$home/.config/vgs/shell.json"; }
 if changes_before="$(config_changes)" && loads_before="$(user_loads)"; then
-  expect "the manager form writes the fixture's setting" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"published-once"}'
+  expect "the manager form writes the fixture's setting" ok ipc smoke invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"published-once"}'
   expect_poll "the write's own file notification was read" "$((loads_before + 1))" user_loads
   expect_poll "the save settled" true config_settled
   expect "the user file holds the written setting" published-once user_label
@@ -44,8 +44,8 @@ else
 fi
 # Two writes back to back: the second waits for the first save and wins.
 if changes_before="$(config_changes)"; then
-  expect "the first of two rapid writes is accepted" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"rapid-first"}'
-  expect "the second of two rapid writes is accepted" ok ipc shell invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"rapid-second"}'
+  expect "the first of two rapid writes is accepted" ok ipc smoke invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"rapid-first"}'
+  expect "the second of two rapid writes is accepted" ok ipc smoke invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"rapid-second"}'
   expect_poll "the user file holds the later of two rapid writes" rapid-second user_label
   expect_poll "the rapid writes settled" true config_settled
   expect "each rapid write is published once" "$((changes_before + 2))" config_changes
@@ -53,7 +53,7 @@ if changes_before="$(config_changes)"; then
 else
   fail "configuration counters unreadable before the rapid write rows"
 fi
-expect "the manager button closes the manager panel after the edit rows" ok ipc shell invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+expect "the manager button closes the manager panel after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
 expect_poll "the manager panel is gone after the edit rows" 0 layer_count vgs:panel
 
 # The dispatch queue, driven through the fixture's compositor capability.

@@ -405,7 +405,7 @@ Singleton {
     function setEnabled(id, enabled) {
         if (!Registry.has(id)) return "unknown: " + id;
         const m = Registry.manifests[id];
-        const hidden = enabled ? [] : Registry.hiddenByDisabling(id);
+        const hidden = enabled ? [] : Logic.hiddenByDisabling(Registry.manifests, Config.effective, id, Registry.defaultBarId);
         const written = Config.writeUser(Logic.withEnabled(Config.user, m, enabled, Config.effective));
         if (written !== "ok") return written;
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";

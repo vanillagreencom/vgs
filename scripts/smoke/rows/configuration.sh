@@ -32,7 +32,7 @@ expect_poll "the user file reads as loaded once the row is fixed" loaded config_
 # good palette stays.
 theme="$home/.config/vgs/theme.json"
 # A QML color reads back as its channel object; the row compares its hex.
-bar_foreground() { ipc shell readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
+bar_foreground() { ipc smoke readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
 expect "the bar draws the default foreground with no theme file" '#cacccc' bar_foreground
 printf '{ "foreground": "#123456" }\n' >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"
 expect_poll "a theme file recolours the bar's foreground" '#123456' bar_foreground

@@ -181,10 +181,6 @@ Singleton {
         lendingChanged();
     }
 
-    function hiddenByDisabling(id) {
-        return Logic.hiddenByDisabling(manifests, Config.effective, id, defaultBarId);
-    }
-
     // Ids of enabled plugins declaring `kind`, sorted.
     function enabledOfKind(kind) {
         return Object.keys(manifests).filter(id => manifests[id].kinds.indexOf(kind) !== -1 && isEnabled(id)).sort();

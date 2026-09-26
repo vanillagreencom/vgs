@@ -94,17 +94,13 @@ Singleton {
             throw new Error("refused: " + kind + "=" + JSON.stringify(name) + " malformed");
     }
 
-    // compositor: one function per dispatcher in Dispatch.PLUGIN_DISPATCHERS,
-    // taking that dispatcher's arguments in order; Compositor checks them.
-    function compositorProvider() {
-        const out = {};
-        for (const name of Dispatch.PLUGIN_DISPATCHERS)
-            out[name] = (...args) => Compositor.send(name, args);
-        return out;
-    }
-
     readonly property var factories: ({
-        compositor: ctx => root.compositorProvider(),
+        compositor: ctx => {
+            const out = {};
+            for (const name of Dispatch.PLUGIN_DISPATCHERS)
+                out[name] = (...args) => Compositor.send(name, args);
+            return out;
+        },
         configure: ctx => ({
             set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [Logic.settingTargetOf(ctx.kind)], ctx.locator)
         }),
