@@ -94,6 +94,13 @@ d="$tmp/orphan"; fresh "$d"; printf 'true\n' >"$d/scripts/test-orphan.sh"
 row "a scripts/test-* file named by no row is refused" "$d" 1 "" \
   "validate: refused: test-without-row=scripts/test-orphan.sh"
 
+# A suite whose name is a proper prefix of a listed one: the fixture's
+# validate lists scripts/test-validate.sh, and scripts/test-validate is
+# covered by no row.
+d="$tmp/prefix"; fresh "$d"; printf 'true\n' >"$d/scripts/test-validate"
+row "a scripts/test-* file whose name prefixes a listed suite is refused" "$d" 1 "" \
+  "validate: refused: test-without-row=scripts/test-validate"
+
 if [[ $failures -gt 0 ]]; then
   echo "test-validate: failed=$failures"
   exit 1

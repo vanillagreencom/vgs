@@ -147,10 +147,19 @@ whitespace_check() {
 # Every scripts/test-* file is named by a row, so a check cannot exist
 # without running here.
 rows_cover_tests() {
-  local file missing=() all="${rows[*]}"
+  local row file command word words=" " missing=() split=()
+  # Every whole word of every row's command, space-delimited, so a test
+  # file's path matches only a word equal to it, never a longer name that
+  # starts with it.
+  for row in "${rows[@]}"; do
+    command="${row#*|}"
+    command="${command#*|}"
+    read -r -a split <<<"$command"
+    for word in "${split[@]}"; do words+="$word "; done
+  done
   for file in scripts/test-*; do
     [[ -e $file ]] || continue
-    [[ $all == *"$file"* ]] || missing+=("$file")
+    [[ $words == *" $file "* ]] || missing+=("$file")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     printf 'validate: refused: test-without-row=%s\n' "$(IFS=,; echo "${missing[*]}")"

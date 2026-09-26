@@ -5,7 +5,7 @@ name: CI
 # kendex guards; `scripts/validate qml` needs a Wayland session the runner
 # has none of and runs locally. A step that runs a script the tree does not
 # hold is a defect. Every check that compares against a base takes the
-# change's own base: the pull request's base branch, the merge group's base
+# change's own base: the pull request's base commit, the merge group's base
 # commit, or the ref a push moved from; never a fixed branch name. The
 # commit guards' py-names lane needs ruff, which the runner lacks, so a step
 # installs a pinned ruff and checks its version: a ruff release cannot
@@ -49,13 +49,13 @@ jobs:
       - name: Change base
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_REF: ${{ github.base_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) base="origin/$PR_BASE_REF" ;;
+            pull_request) base="$PR_BASE_SHA" ;;
             merge_group) base="$MERGE_GROUP_BASE_SHA" ;;
             push) base="$PUSH_BEFORE" ;;
             *) echo "::error::no change base for event $EVENT_NAME"; exit 1 ;;

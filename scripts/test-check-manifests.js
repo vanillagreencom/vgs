@@ -6,6 +6,8 @@
 // base listing: a directory without a manifest is not a plugin, an absent or
 // unreadable base exits 2. Each row asserts the printed verdict line and the
 // exit status. The check runs in a child node with an explicit environment.
+// The permission rows need a uid that permissions bind; under euid 0 the
+// suite reports status=not-measured and exits 77 instead of passing.
 "use strict";
 const fs = require("fs");
 const os = require("os");
@@ -60,4 +62,6 @@ if (process.getuid() !== 0) {
 }
 
 if (failures > 0) { console.log("test-check-manifests: failed=" + failures); process.exit(1); }
+// Under euid 0 the permission rows did not run: an unmeasured suite, not a pass.
+if (process.getuid() === 0) { console.log("test-check-manifests: status=not-measured reason=euid-0"); process.exit(77); }
 console.log("test-check-manifests: ok");
