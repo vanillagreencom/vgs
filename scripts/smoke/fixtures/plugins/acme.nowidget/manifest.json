@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "acme.nowidget", "name": "No Widget", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget declaring no BarWidget properties",
+  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Item.qml" } }

@@ -1,64 +1,195 @@
 #!/usr/bin/env python3
-"""Read every plugin manifest under the given directories.
+"""Read every plugin manifest and source tree under the given directories.
 
-Prints one JSON array. Each element names a directory and carries either the
-manifest text or the read error. Validation is not done here: the shell's
-PluginLogic.js is the one judge of a manifest, and this script only reads
-bytes.
+Prints one JSON array. Each element names a plugin directory and carries
+either the manifest text with the source revision, or the read error.
+Validation is not done here: the shell's PluginLogic.js is the one judge of
+a manifest, and this script only reads bytes.
 
-  vgsh-scan [--require-base] BASE...
+  vgsh-scan [--require-base] [--snapshot-dir ROOT [--retain REVISION]...] BASE...
+
+A plugin element is `{"dir", "text", "revision"}`, plus `"loadUrl"` under
+--snapshot-dir. The revision is a SHA-256 over every regular file under the
+plugin directory except `.git`: its relative path, its executable bit and
+its bytes, so an edit to any QML, JS or asset file, and nothing else, gives
+a new revision. Symbolic links are followed; a directory cycle or an entry
+that is neither a regular file nor a directory is an error.
+
+--snapshot-dir publishes each plugin's files under ROOT/<revision>/, written
+once and never changed, and `loadUrl` is that directory's file:// URL. The
+shell loads entry points from there: QML caches every imported file by URL,
+so a new revision at a new URL is the only way an edited sibling file is
+read again. After a scan with no error the tool removes every other
+directory under ROOT except the revisions named by --retain; a scan with an
+error prunes nothing, since it cannot say which sources are still needed.
 
 A base directory that does not exist is skipped, because the user plugin
 directory is absent on a fresh install. Under --require-base it is an error
 element like any other listing failure: the offline checks list the bundled
 directory, where an absent base would certify nothing as everything. Every
-other failure to list,
-stat or open is an error element `{"dir": <path>, "error": "<what>: <strerror>"}`,
+other failure to list, stat, open or read is an error element
+`{"dir": <plugin dir>, "path": <what failed>, "error": "<what>: <strerror>"}`,
 never a silent skip: a base that cannot be listed, an entry that cannot be
-stat'ed, and a manifest that cannot be opened. An entry that is not a
-directory, or a directory with no manifest.json, is not a plugin and is skipped.
+stat'ed, a manifest that cannot be opened, a source file that cannot be
+read. An entry that is not a directory, or a directory with no
+manifest.json, is not a plugin and is skipped.
 """
+import argparse
+import hashlib
 import json
 import os
+import pathlib
+import shutil
 import stat
 import sys
+import tempfile
 
 
-def scan_base(base, out, require_base):
+def source_files(directory, relative="", ancestors=()):
+    """Yield (relative path, executable, bytes) in path order. Every OSError
+    raised here carries the failing path in `filename`."""
+    here = os.stat(os.path.join(directory, relative))
+    identity = (here.st_dev, here.st_ino)
+    if identity in ancestors:
+        raise OSError(0, "directory cycle", os.path.join(directory, relative))
+    for name in sorted(os.listdir(os.path.join(directory, relative))):
+        if name == ".git":
+            continue
+        path = os.path.join(relative, name)
+        full = os.path.join(directory, path)
+        mode = os.stat(full).st_mode
+        if stat.S_ISDIR(mode):
+            yield from source_files(directory, path, ancestors + (identity,))
+        elif stat.S_ISREG(mode):
+            with open(full, "rb") as source:
+                yield path, bool(mode & stat.S_IXUSR), source.read()
+        else:
+            raise OSError(0, "not a regular file or a directory", full)
+
+
+def source_revision(files):
+    """Hash paths, executable bits and bytes with lengths, so two file
+    splits of the same bytes cannot collide."""
+    digest = hashlib.sha256()
+    for path, executable, data in files:
+        name = os.fsencode(path)
+        digest.update(len(name).to_bytes(8, "big"))
+        digest.update(name)
+        digest.update(b"x" if executable else b"-")
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def publish_source(root, revision, files):
+    """Publish one tree under ROOT/<revision>, whole or not at all: a
+    directory that exists holds this revision's bytes already."""
+    destination = os.path.join(root, revision)
+    if not os.path.isdir(destination):
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        temporary = tempfile.mkdtemp(prefix=".writing-", dir=root)
+        try:
+            for relative, executable, data in files:
+                path = os.path.join(temporary, relative)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as output:
+                    output.write(data)
+                os.chmod(path, 0o755 if executable else 0o644)
+            os.rename(temporary, destination)
+        finally:
+            if os.path.isdir(temporary):
+                shutil.rmtree(temporary)
+    return pathlib.Path(destination).absolute().as_uri()
+
+
+def scan_base(base, out, require_base, snapshot_dir):
     try:
         names = sorted(os.listdir(base))
     except OSError as exc:
         if isinstance(exc, FileNotFoundError) and not require_base:
             return
-        out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
+        out.append({"dir": base, "path": base, "error": f"cannot list: {exc.strerror}"})
         return
     for name in names:
         plugin_dir = os.path.join(base, name)
         try:
             st = os.stat(plugin_dir)
         except OSError as exc:
-            out.append({"dir": plugin_dir, "error": f"cannot stat: {exc.strerror}"})
+            out.append({"dir": plugin_dir, "path": plugin_dir, "error": f"cannot stat: {exc.strerror}"})
             continue
         if not stat.S_ISDIR(st.st_mode):
             continue
         manifest = os.path.join(plugin_dir, "manifest.json")
+        # Opened first on its own, so a plugin directory that cannot be
+        # searched or a manifest that cannot be opened is named as such.
         try:
-            with open(manifest, encoding="utf-8") as fh:
-                out.append({"dir": plugin_dir, "text": fh.read()})
+            with open(manifest, "rb") as fh:
+                fh.read()
         except FileNotFoundError:
             continue
         except OSError as exc:
-            out.append({"dir": plugin_dir, "error": f"cannot read manifest: {exc.strerror}"})
+            out.append({"dir": plugin_dir, "path": manifest, "error": f"cannot read manifest: {exc.strerror}"})
+            continue
+        try:
+            files = list(source_files(plugin_dir))
+        except OSError as exc:
+            out.append({"dir": plugin_dir, "path": exc.filename, "error": f"cannot read source: {exc.strerror}"})
+            continue
+        # The manifest text comes from the same read as the revision, so
+        # the two describe one state of the directory.
+        manifest_bytes = [data for path, _, data in files if path == "manifest.json"]
+        if len(manifest_bytes) != 1:
+            out.append({"dir": plugin_dir, "path": manifest, "error": "cannot read manifest: changed during the scan"})
+            continue
+        try:
+            text = manifest_bytes[0].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            out.append({"dir": plugin_dir, "path": manifest, "error": f"manifest is not UTF-8: {exc.reason} at byte {exc.start}"})
+            continue
+        entry = {"dir": plugin_dir, "text": text, "revision": source_revision(files)}
+        if snapshot_dir:
+            try:
+                entry["loadUrl"] = publish_source(snapshot_dir, entry["revision"], files)
+            except OSError as exc:
+                out.append({"dir": plugin_dir, "path": exc.filename or snapshot_dir, "error": f"cannot publish source: {exc.strerror}"})
+                continue
+        out.append(entry)
+
+
+def prune_snapshots(root, keep, out):
+    """Remove every directory under ROOT not in `keep`. Half-written
+    trees a crashed scan left behind go the same way."""
+    try:
+        names = os.listdir(root)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        out.append({"dir": root, "path": root, "error": f"cannot prune sources: {exc.strerror}"})
+        return
+    for name in names:
+        if name in keep:
+            continue
+        path = os.path.join(root, name)
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            out.append({"dir": root, "path": exc.filename or path, "error": f"cannot prune sources: {exc.strerror}"})
 
 
 def main(argv):
-    bases = argv[1:]
-    require_base = bases[:1] == ["--require-base"]
-    if require_base:
-        bases = bases[1:]
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--require-base", action="store_true")
+    parser.add_argument("--snapshot-dir")
+    parser.add_argument("--retain", action="append", default=[])
+    parser.add_argument("bases", nargs="*")
+    args = parser.parse_args(argv[1:])
+    if args.retain and not args.snapshot_dir:
+        parser.error("--retain needs --snapshot-dir")
     out = []
-    for base in bases:
-        scan_base(base, out, require_base)
+    for base in args.bases:
+        scan_base(base, out, args.require_base, args.snapshot_dir)
+    if args.snapshot_dir and not any("error" in entry for entry in out):
+        prune_snapshots(args.snapshot_dir, set(args.retain) | {entry["revision"] for entry in out}, out)
     json.dump(out, sys.stdout)
     return 0
 

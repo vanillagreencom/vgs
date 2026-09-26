@@ -20,6 +20,6 @@
 
 **Revisit When**: Quickshell releases the notification D-Bus name when its server object is destroyed, or a plugin needs a lent object shared between two plugins at once.
 
-**Verification**: The capability rows in `scripts/qml-smoke.sh` read each delivery and each release back; `scripts/test-plugin-logic.js` pins the exclusive-lending refusal; `scripts/test-check-plugin-boundary.py` plants the `core-type` violation.
+**Verification**: The capability rows in `scripts/smoke/rows/capabilities.sh` and `scripts/smoke/rows/capability-release.sh` read each delivery and each release back; `scripts/test-plugin-logic.js` pins the exclusive-lending refusal; `scripts/test-check-plugin-boundary.py` plants the `core-type` violation.
 
 **References**: [D003](D003-everything-is-a-plugin.md), [D010](D010-facade-scope-not-sandbox.md)

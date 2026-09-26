@@ -12,13 +12,14 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 
 - Hyprland is the only compositor. No compositor abstraction and no second compositor: `docs/decisions/D001-hyprland-only.md`.
 - Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
-- A change that adds a surface, a service or a plugin adds its validation row to `scripts/qml-smoke.sh` in the same PR.
+- A change that adds a surface, a service or a plugin adds its validation row under `scripts/smoke/rows/` in the same PR.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
 
 ## Read next
 
 - `docs/architecture/overview.md`: before structural work.
-- `docs/architecture/plugins.md`: before writing a plugin, a host or the manager.
+- `docs/architecture/plugins.md`: before writing a plugin or a host.
+- `docs/architecture/manager.md`: before touching enablement, install, update, remove or the manager's panel.
 - `docs/architecture/configuration.md`: before touching the configuration files, their judge or the theme.
 - `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell and Hyprland fact the code rests on.
 - `shell/AGENTS.md`, `shell/plugins/AGENTS.md`, `scripts/AGENTS.md`: when working under that directory. Claude Code loads each through the `CLAUDE.md` shim beside it. Pi and Codex load only the root-to-cwd chain at launch, so an agent on those harnesses reads the nested file before working under the directory.

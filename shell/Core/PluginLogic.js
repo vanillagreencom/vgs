@@ -528,37 +528,14 @@ function lendRefusal(held, manifest) {
     return "";
 }
 
-// The layer-shell geometry of one summoned surface.
-//
-// `kind` is the summoned kind; `settings` the plugin's settings; `anchor`
-// null or { x, y, width, height }, the rectangle of the item it was
-// summoned from, relative to the screen; `size` { width, height } of the
-// surface; `screen` { width, height }; `gap` the distance kept from an edge
-// or an anchor.
-//
-// Returns { anchors: { top, bottom, left, right }, margins: { top, bottom,
-// left, right }, exclusion: "normal" | "ignore", layer: "top" | "overlay",
-// placement, error }. A panel sits on the top layer, a menu and an overlay
-// on the overlay layer above it. An overlay fills its screen. An anchored surface sits under its anchor, centred on
-// it and clamped to the screen, or above it when there is no room below,
-// positioned from the screen's top-left corner so the bar's reserved space
-// does not move it. An unanchored surface takes its `placement` setting and
-// keeps clear of reserved space. The manifest judge refuses an unknown
-// placement default, so an unknown value here came from the user's
-// configuration entry: the surface is centred and `error` names the
-// setting, "" otherwise.
-function surfacePlacement(kind, settings, anchor, size, screen, gap) {
+// Layer placement for a summon without an item anchor. Popups delegate
+// anchored placement to the compositor. Unknown user placement falls back
+// to center and returns an error for the host to report.
+function surfacePlacement(kind, settings, gap) {
     var zero = { top: 0, bottom: 0, left: 0, right: 0 };
     var layer = kind === "panel" ? "top" : "overlay";
     if (kind === "overlay")
         return { anchors: { top: true, bottom: true, left: true, right: true }, margins: zero, exclusion: "ignore", layer: layer, placement: "fill", error: "" };
-    if (isPlainObject(anchor)) {
-        var left = Math.round(anchor.x + anchor.width / 2 - size.width / 2);
-        left = Math.max(0, Math.min(left, screen.width - size.width));
-        var below = anchor.y + anchor.height + gap;
-        var top = below + size.height <= screen.height ? below : Math.max(0, anchor.y - gap - size.height);
-        return { anchors: { top: true, bottom: false, left: true, right: false }, margins: { top: top, bottom: 0, left: left, right: 0 }, exclusion: "ignore", layer: layer, placement: "anchor", error: "" };
-    }
     var asked = isPlainObject(settings) ? settings.placement : undefined;
     var known = asked === undefined || PLACEMENTS.indexOf(asked) !== -1;
     var placement = asked !== undefined && known ? asked : "center";

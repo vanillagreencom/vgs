@@ -111,7 +111,7 @@ if [[ $status == 0 && $out == $'ok hidden=vgs.clock,vgs.workspaces\nthose bar wi
 # The instance lock. With no holder, run takes the lock, records its pid
 # and execs the shell with that pid as its identity; with a holder it exits
 # 75 before any shell starts.
-rt_run="$tmp/rt-run"; mkdir -p "$rt_run"
+rt_run="$tmp/rt-run"; mkdir -p "$rt_run/vgsh-sources-1"; : >"$rt_run/vgsh-sources-1/x"
 set +e
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_run" STUB_RECORD="$tmp/record" "$repo/bin/vgsh" run 2>"$tmp/err"
 status=$?
@@ -124,11 +124,12 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   if [[ $pid == "$runner" ]]; then ok "run execs the shell with its own pid as the runner identity"; else fail "run identity: $record"; fi
   if [[ "$(cat "$rt_run/vgsh.lock")" == "$pid" ]]; then ok "run records the shell's pid in the lock file"; else fail "lock file holds [$(cat "$rt_run/vgsh.lock")] want $pid"; fi
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
+  if [[ ! -e $rt_run/vgsh-sources-1 ]]; then ok "run removes the source snapshot roots dead shells left"; else fail "run left $rt_run/vgsh-sources-1"; fi
 else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
 fi
 
-rt_held="$tmp/rt-held"; mkdir -p "$rt_held"; printf '%s\n' "$$" >"$rt_held/vgsh.lock"
+rt_held="$tmp/rt-held"; mkdir -p "$rt_held/vgsh-sources-2"; : >"$rt_held/vgsh-sources-2/x"; printf '%s\n' "$$" >"$rt_held/vgsh.lock"
 exec 8>>"$rt_held/vgsh.lock"
 flock 8
 set +e
@@ -139,10 +140,13 @@ exec 8>&-
 if [[ $status == 75 && ! -e $tmp/record-held ]]; then ok "a held lock makes run exit 75 without starting the shell"; else fail "held lock: exit=$status record=$([[ -e $tmp/record-held ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"; fi
 if [[ "$(head -n 1 "$tmp/err")" == "vgsh: refused: lock=$rt_held/vgsh.lock" ]]; then ok "the lock refusal names the lock file"; else fail "lock refusal line: $(head -n 1 "$tmp/err")"; fi
 if [[ "$(cat "$rt_held/vgsh.lock")" == "$$" ]]; then ok "a refused run leaves the holder's pid in the lock file"; else fail "lock file after refusal: $(cat "$rt_held/vgsh.lock")"; fi
+if [[ -e $rt_held/vgsh-sources-2/x ]]; then ok "a refused run leaves the holder's source snapshot root alone"; else fail "a refused run removed $rt_held/vgsh-sources-2"; fi
 
 # Install, update and remove, with local bare repositories as the source.
-# Every git call here and in vgsh runs with no system or user git
-# configuration, so the developer's hooks and settings never reach a row.
+# Every git call here and in vgsh reads only the fixture home's own git
+# configuration, never the developer's, so a row meets no hook or setting
+# it did not plant itself.
+mkdir -p "$tmp/home"
 git_env=(env -i PATH="$PATH" HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1
   GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid)
 g() { "${git_env[@]}" git -c init.defaultBranch=main "$@"; }
@@ -176,11 +180,12 @@ source_repo taken "$(manifest vgs.bar 0.1.0)"
 
 # inst NAME CONFIG_HOME RUNTIME_DIR WANT_EXIT WANT_LAST_STDOUT WANT_FIRST_STDERR ARGS...
 # Stdout lands in $tmp/out for rows that read more than its last line.
+# INST_BIN names the vgsh under test; the mutation control runs its copy.
 inst() {
   local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
   shift 6
   set +e
-  out="$("${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "$repo/bin/vgsh" "$@" 2>"$tmp/err")"
+  out="$("${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err")"
   status=$?
   set -e
   printf '%s\n' "$out" >"$tmp/out"
@@ -203,12 +208,45 @@ json_is() { # FILE PYTHON_EXPR_ON_d: the expression must be true
 }
 head_of() { g -C "$1" rev-parse HEAD; }
 
+# Git hooks are live for every git call from here on: the fixture home's
+# global configuration points core.hooksPath at hooks that leave a marker
+# beside themselves. A plain git call in the control checkout proves a hook
+# fires under this isolation; a vgsh row must leave the marker absent.
+hooks="$tmp/hooks"; mkdir -p "$hooks"
+for hook in post-checkout post-merge; do
+  printf '#!/bin/sh\nprintf "" >"$0.marker"\n' >"$hooks/$hook"
+  chmod +x "$hooks/$hook"
+done
+g config --global core.hooksPath "$hooks"
+control="$tmp/control"
+g clone -q "$tmp/src/probe.git" "$control"
+check "a plain clone under the fixture configuration runs the post-checkout hook" test -e "$hooks/post-checkout.marker"
+rm -f -- "${hooks:?}/post-checkout.marker"
+
 cfg="$tmp/cfg-add"; plugin="$cfg/vgs/plugins/acme.probe"
 inst "add installs the plugin and reports no running shell" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
+check "add runs no post-checkout hook" test ! -e "$hooks/post-checkout.marker"
 check "add names the plugin, its path and an unchanged configuration" test "$(head -n 1 "$tmp/out")" == "ok added=acme.probe path=$plugin config=unchanged"
 check "add lands the plugin under the user plugin directory" json_is "$plugin/manifest.json" 'd["id"] == "acme.probe"'
 check "add leaves no staging directory" test -z "$(find "$cfg/vgs" -maxdepth 1 -name '.vgsh-add.*' -print)"
 check "add writes no user file for a plugin the configuration does not enable" test ! -e "$cfg/vgs/shell.json"
+
+# The must-fail control: a copy of vgsh without the hook suppression lets
+# the post-checkout hook fire on add. The copy resolves shell, config,
+# scripts and its bin siblings from its own location, so each is linked in.
+mutant="$tmp/mutant"; mkdir -p "$mutant/bin"
+suppression='-c core.hooksPath=/dev/null '
+occurrences="$(grep -o -F -- "$suppression" "$repo/bin/vgsh" | wc -l)" || occurrences=0
+check "the hook suppression occurs once in bin/vgsh" test "$occurrences" == 1
+sed "s|$suppression||" "$repo/bin/vgsh" >"$mutant/bin/vgsh"
+chmod +x "$mutant/bin/vgsh"
+check "the mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
+for sibling in shell config scripts; do ln -s "$repo/$sibling" "$mutant/$sibling"; done
+for tool in vgsh-scan vgsh-plugin-judge; do ln -s "$repo/bin/$tool" "$mutant/bin/$tool"; done
+cfg="$tmp/cfg-mutant"
+INST_BIN="$mutant/bin/vgsh" inst "the mutant add installs the plugin" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
+check "the mutant add runs the post-checkout hook" test -e "$hooks/post-checkout.marker"
+rm -f -- "${hooks:?}/post-checkout.marker"
 
 cfg="$tmp/cfg-listed"; mkdir -p "$cfg/vgs"
 printf '{ "version": 1, "plugins": [ { "id": "acme.probe", "label": "kept" } ] }\n' >"$cfg/vgs/shell.json"
@@ -256,8 +294,13 @@ check "a malformed user file is left as it was" grep -q '"junk"' "$cfg/vgs/shell
 cfg="$tmp/cfg-add"
 inst "update with nothing new is up to date" "$cfg" "$rt_empty" 0 "ok up-to-date=acme.probe" "" plugin update acme.probe
 source_commit probe "$(manifest acme.probe 0.2.0)"
+g -C "$control" fetch -q
+g -C "$control" merge -q --ff-only '@{upstream}'
+check "a plain fast-forward under the fixture configuration runs the post-merge hook" test -e "$hooks/post-merge.marker"
+rm -f -- "${hooks:?}/post-merge.marker"
 before="$(head_of "$plugin")"
 inst "update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin update acme.probe
+check "update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
 after="$(head_of "$plugin")"
 check "update reports both commits" grep -qx "ok updated=acme.probe from=${before:0:12} to=${after:0:12}" "$tmp/out"
 check "update prints the incoming diff" grep -q '^+.*"version": "0.2.0"' "$tmp/out"

@@ -7,9 +7,10 @@ import Quickshell.Io
 // literal colours so one theme file restyles every surface. Values come
 // from the user's theme file when it holds them; the defaults below stand
 // otherwise. The file is read the way Config reads shell.json: an absent
-// file is the expected case, and every other load or parse failure, and a
-// role value that is not a colour Qt can parse, is logged and leaves the
-// last good palette.
+// file is the expected case and clears every override, so a file removed
+// while the shell runs draws the same defaults a fresh start would. Every
+// other load or parse failure, and a role value that is not a colour Qt
+// can parse, is logged and leaves the last good palette.
 Singleton {
     id: root
 
@@ -69,7 +70,10 @@ Singleton {
             if (r.ok) root.theme = r.value;
         }
         onLoadFailed: error => {
-            if (error === FileViewError.FileNotFound) return;
+            if (error === FileViewError.FileNotFound) {
+                root.theme = {};
+                return;
+            }
             console.error("theme: " + path + " unreadable: " + error);
         }
         onFileChanged: reload()

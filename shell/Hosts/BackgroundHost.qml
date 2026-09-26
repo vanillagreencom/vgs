@@ -18,12 +18,13 @@ Item {
     // The screen is null while its Variants entry is torn down.
     readonly property string hostKey: "background:" + (screen ? screen.name : "")
 
-    // Slot keys whose build failed; a registry or configuration change
-    // makes new keys, so a fixed plugin is tried again.
-    property var brokenKeys: []
+    // Plugin id -> the slot key whose build failed, one per plugin, so the
+    // record stays as small as the plugin set. A source revision change
+    // makes a new key, so a fixed plugin is tried again.
+    property var brokenKeys: ({})
     readonly property var ids: Plugins.enabledOfKind("background").filter(id => {
         const key = Plugins.slotKey(id);
-        return key !== "" && host.brokenKeys.indexOf(key) === -1;
+        return key !== "" && host.brokenKeys[id] !== key;
     })
 
     Loader {
@@ -51,7 +52,11 @@ Item {
                     hostKey: host.hostKey
                     screen: host.screen
                     context: ({ screen: host.screen })
-                    onBuildFailed: key => Qt.callLater(() => { host.brokenKeys = host.brokenKeys.concat([key]); })
+                    onBuildFailed: key => Qt.callLater(() => {
+                        const next = Object.assign({}, host.brokenKeys);
+                        next[modelData] = key;
+                        host.brokenKeys = next;
+                    })
                 }
             }
         }

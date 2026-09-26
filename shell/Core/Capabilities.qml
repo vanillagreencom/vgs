@@ -154,16 +154,11 @@ Singleton {
         })
     })
 
-    // Where a plugin summons its own surface from: this instance's screen,
-    // and the rectangle of `anchor`, an item of the plugin's, in its
-    // window's coordinates. A bar spans its screen from the top-left
-    // corner, so for an item in a bar those are screen coordinates too. An
-    // instance with no screen (a service) and no anchor returns null, so
-    // its summon lands on the focused monitor as an IPC summon does.
+    // The compositor places anchored surfaces relative to the item's own
+    // window. An instance without a screen uses the focused monitor.
     function origin(ctx, anchor) {
         if (anchor === undefined || anchor === null) return ctx.screen ? { anchor: null, screen: ctx.screen } : null;
-        const at = anchor.mapToItem(null, 0, 0);
-        return { anchor: { x: at.x, y: at.y, width: anchor.width, height: anchor.height }, screen: ctx.screen };
+        return { anchor: anchor, screen: ctx.screen };
     }
 
     // shortcut: one GlobalShortcut per name under the plugin id, bound in
@@ -181,17 +176,12 @@ Singleton {
         const next = Object.assign({}, shortcuts);
         next[key] = shortcut;
         shortcuts = next;
-        let live = true;
-        const dispose = () => {
-            if (!live) return;
-            live = false;
+        return ctx.onDispose(() => {
             const rest = Object.assign({}, root.shortcuts);
             delete rest[key];
             root.shortcuts = rest;
             shortcut.destroy();
-        };
-        ctx.onDispose(dispose);
-        return dispose;
+        });
     }
 
     // The `pressed` property shadows the `pressed` signal from script, so
@@ -221,10 +211,7 @@ Singleton {
         target.functions[name] = fn;
         next[ctx.id] = target;
         ipcTargets = next;
-        let live = true;
-        const dispose = () => {
-            if (!live) return;
-            live = false;
+        return ctx.onDispose(() => {
             const rest = Object.assign({}, root.ipcTargets);
             const t = { handler: rest[ctx.id].handler, functions: Object.assign({}, rest[ctx.id].functions) };
             delete t.functions[name];
@@ -238,9 +225,7 @@ Singleton {
                 rest[ctx.id] = t;
             }
             root.ipcTargets = rest;
-        };
-        ctx.onDispose(dispose);
-        return dispose;
+        });
     }
 
     function invokeIpc(id, name, arg) {
@@ -280,14 +265,9 @@ Singleton {
             throw new Error("refused: notifications=subscribe handler=not-a-function");
         const entry = { id: ctx.id, fn: fn };
         subscribers = subscribers.concat([entry]);
-        let live = true;
-        const dispose = () => {
-            if (!live) return;
-            live = false;
+        return ctx.onDispose(() => {
             root.subscribers = root.subscribers.filter(s => s !== entry);
-        };
-        ctx.onDispose(dispose);
-        return dispose;
+        });
     }
 
     function fanOut(notification) {

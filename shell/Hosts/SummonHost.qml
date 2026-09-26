@@ -7,7 +7,7 @@ import qs.Commons
 
 // The surfaces of one summonable kind: `panel`, `overlay` or `menu`. A
 // plugin of that kind is drawn only while summoned. `summon` creates a
-// layer surface on the screen it was summoned on, builds the plugin inside
+// surface on the screen it was summoned on, builds the plugin inside
 // it and calls its `open(payloadJson)`; `hide` destroys the surface, and
 // the slot calls `close()` first, so nothing of a hidden plugin stays
 // mapped. One surface per plugin id; summoning an open one hands it the new
@@ -41,10 +41,13 @@ Scope {
     }
 
     // Open `id`, or hand an open one the new payload. `origin` is null for
-    // an IPC summon, or { anchor, screen } for one from a plugin: the rect
-    // of the item it came from, relative to its screen, and that screen.
+    // an IPC summon, or { anchor, screen } for one from a plugin. The
+    // anchor is the item whose window owns the popup.
     function summon(id, payloadJson, origin) {
         if (PluginLogic.hasOwn(instances, id)) {
+            const next = Object.assign({}, requests);
+            next[id] = Object.assign({}, requests[id], { payloadJson: payloadJson });
+            requests = next;
             const error = callOpen(id, instances[id], payloadJson);
             if (error === "") return "ok";
             drop(id);
@@ -53,7 +56,7 @@ Scope {
         const screen = origin && origin.screen ? origin.screen : focusedScreen();
         if (screen === null) return "refused: screen=none";
         const next = Object.assign({}, requests);
-        next[id] = { payloadJson: payloadJson, anchor: origin ? origin.anchor : null, screen: screen };
+        next[id] = { payloadJson: payloadJson, anchor: origin ? origin.anchor : null, anchored: !!(origin && origin.anchor), screen: screen };
         requests = next;
         openIds = openIds.concat([id]);
         if (!PluginLogic.hasOwn(instances, id)) {
@@ -115,46 +118,67 @@ Scope {
     Variants {
         model: host.openIds
 
-        PanelWindow {
-            id: win
+        Scope {
+            id: entry
 
             required property string modelData
             readonly property var request: host.requests[modelData]
-            readonly property var place: {
-                const settings = Plugins.settingsOf(modelData, host.kind);
-                const size = { width: implicitWidth, height: implicitHeight };
-                const area = { width: screen ? screen.width : 0, height: screen ? screen.height : 0 };
-                return PluginLogic.surfacePlacement(host.kind, settings, request ? request.anchor : null, size, area, Style.spacing.lg);
+            readonly property bool live: Plugins.slotKey(modelData) !== ""
+            onLiveChanged: if (!live) Qt.callLater(() => host.drop(entry.modelData))
+
+            Loader {
+                active: entry.request !== undefined
+                sourceComponent: entry.request && entry.request.anchored ? popup : layer
             }
 
-            screen: request ? request.screen : null
-            anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
-            margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
-            exclusionMode: place.exclusion === "ignore" ? ExclusionMode.Ignore : ExclusionMode.Normal
-            exclusiveZone: 0
-            implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
-            implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
-            color: "transparent"
-            WlrLayershell.namespace: "vgs:" + host.kind
-            WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+            Component {
+                id: popup
+                SummonPopup {
+                    pluginId: entry.modelData
+                    kind: host.kind
+                    request: entry.request
+                    onBuilt: instance => host.built(entry.modelData, instance)
+                    onDismissed: Qt.callLater(() => host.drop(entry.modelData))
+                }
+            }
 
-            // Dropped after the current change settles, never from inside the
-            // Variants update that created this window.
-            readonly property bool live: Plugins.slotKey(modelData) !== ""
-            onLiveChanged: if (!live) Qt.callLater(() => host.drop(win.modelData))
-            Component.onCompleted: if (place.error !== "") console.error("summon host: " + modelData + " " + place.error)
+            Component {
+                id: layer
+                PanelWindow {
+                    id: win
 
-            PluginSlot {
-                id: slot
-                kind: host.kind
-                pluginId: win.modelData
-                hostKey: host.kind
-                screen: win.screen
-                closeOnUnload: true
-                anchors.fill: parent
-                onBuilt: instance => host.built(win.modelData, instance)
-                onBuildFailed: key => Qt.callLater(() => host.drop(win.modelData))
+                    readonly property var request: entry.request
+                    readonly property var place: {
+                        const settings = Plugins.settingsOf(entry.modelData, host.kind);
+                        return PluginLogic.surfacePlacement(host.kind, settings, Style.spacing.lg);
+                    }
+
+                    screen: request ? request.screen : null
+                    anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
+                    margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
+                    exclusionMode: place.exclusion === "ignore" ? ExclusionMode.Ignore : ExclusionMode.Normal
+                    exclusiveZone: 0
+                    implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
+                    implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
+                    color: "transparent"
+                    WlrLayershell.namespace: "vgs:" + host.kind
+                    WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
+                    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+                    Component.onCompleted: if (place.error !== "") console.error("summon host: " + entry.modelData + " " + place.error)
+
+                    PluginSlot {
+                        id: slot
+                        kind: host.kind
+                        pluginId: entry.modelData
+                        hostKey: host.kind
+                        screen: win.screen
+                        closeOnUnload: true
+                        anchors.fill: parent
+                        onBuilt: instance => host.built(entry.modelData, instance)
+                        onBuildFailed: key => Qt.callLater(() => host.drop(entry.modelData))
+                    }
+                }
             }
         }
     }

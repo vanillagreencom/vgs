@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import Quickshell
 import Quickshell.Wayland
 import qs.Core
@@ -20,7 +21,7 @@ Item {
 
     // The slot key the active bar would load under, or "" when no bar can
     // be built. A key whose build failed is remembered so the window is not
-    // re-created for it; a registry or configuration change makes a new key.
+    // re-created for it; a source revision change makes a new key.
     readonly property string wantedKey: Plugins.slotKey(Plugins.activeBarId)
     property string brokenKey: ""
 
@@ -36,6 +37,13 @@ Item {
             WlrLayershell.namespace: "vgs:bar"
             WlrLayershell.layer: WlrLayer.Top
 
+            // Every frame this window swaps is counted by the core, so a
+            // validation row that needs the shell to draw can tell a
+            // stalled sandbox from a defect.
+            Connections {
+                target: slot.Window.window
+                function onFrameSwapped() { Plugins.noteFrame(); }
+            }
             PluginSlot {
                 id: slot
                 kind: "bar"

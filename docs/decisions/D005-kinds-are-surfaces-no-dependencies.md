@@ -19,7 +19,7 @@
 
 **Revisit When**: A plugin genuinely cannot work without another plugin's service and no core capability can carry that contract.
 
-**Verification**: `scripts/test-plugin-logic.js` pins the `requires` refusal and `hiddenByDisabling`; `scripts/qml-smoke.sh` asserts the hidden-widgets reply.
+**Verification**: `scripts/test-plugin-logic.js` pins the `requires` refusal and `hiddenByDisabling`; `scripts/smoke/rows/bar.sh` asserts the hidden-widgets reply.
 
 **References**: [D003](D003-everything-is-a-plugin.md), [D011](D011-native-manifest-no-cross-shell-compatibility.md), [D013](D013-built-in-widgets-are-the-bar-plugins.md)
 

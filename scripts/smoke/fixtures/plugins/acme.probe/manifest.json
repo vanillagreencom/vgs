@@ -1,0 +1,5 @@
+{ "schemaVersion": 1, "id": "acme.probe", "name": "Probe", "version": "0.1.0", "author": "acme", "description": "smoke fixture",
+  "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml" },
+  "defaultSection": "right", "settings": { "label": "probe", "tags": ["a", "b"] },
+  "schema": { "label": { "type": "string", "label": "Label" } },
+  "capabilities": ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut"] }

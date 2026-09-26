@@ -5,7 +5,9 @@ import qs.Commons
 // The host calls open(payloadJson) and close(); the plugin never creates
 // a window. A payload that does not parse throws out of open(), and the
 // host answers the summon with `refused: open-failed=<id>`. Colours and
-// spacing come from Color and Style.
+// spacing come from Color and Style. To open another declared kind here,
+// pass its source Item to shell.surfaces.summon(kind, payloadJson, item);
+// the compositor places it relative to this window.
 Item {
     id: root
 

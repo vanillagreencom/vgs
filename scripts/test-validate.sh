@@ -21,7 +21,10 @@ trap 'chmod -R u+rwx -- "${tmp:?}" 2>/dev/null; rm -rf -- "${tmp:?}"' EXIT
 # Every git and validate call runs with this environment and nothing else.
 # Fixed identities and dates make every fixture's trunk the same commit, so
 # one trunk id names the base of every row.
-base_env=(env -i PATH="$PATH" HOME="$tmp/home" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+# Resolve node before replacing HOME: a version-manager shim may need the
+# developer's configuration, which does not belong in the test environment.
+node_bin="$(node -e 'process.stdout.write(process.execPath)')"
+base_env=(env -i PATH="$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z)
 
@@ -53,7 +56,7 @@ row() {
   local name="$1" dir="$2" want_exit="$3" extra="$4" out status=0 line missing=""
   shift 4
   # shellcheck disable=SC2086
-  out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate repo 2>&1)" || status=$?
+  out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" 2>&1)" || status=$?
   for line in "$@"; do
     grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
   done
@@ -100,6 +103,26 @@ row "a scripts/test-* file named by no row is refused" "$d" 1 "" \
 d="$tmp/prefix"; fresh "$d"; printf 'true\n' >"$d/scripts/test-validate"
 row "a scripts/test-* file whose name prefixes a listed suite is refused" "$d" 1 "" \
   "validate: refused: test-without-row=scripts/test-validate"
+
+# Exercise the real manifest rows, including the static smoke fixtures. The
+# checker controls run unchanged; this control proves validate includes the
+# fixture tree, so removing that row makes the planted defect pass wrongly.
+d="$tmp/smoke-fixtures"; fresh "$d"
+cp -R "$repo/scripts/." "$d/scripts/"
+cp -R "$repo/shell" "$repo/bin" "$d/"
+test_area=manifests
+row "the smoke fixtures pass the offline manifest area" "$d" 0 "" "validate: ok"
+python3 - "$d/scripts/smoke/fixtures/plugins/acme.tick/manifest.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as source:
+    manifest = json.load(source)
+manifest["schemaVersion"] = 0
+with open(path, "w") as target:
+    json.dump(manifest, target)
+PY
+row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" \
+  "validate: failed=smoke fixture manifests (exit 1)"
 
 if [[ $failures -gt 0 ]]; then
   echo "test-validate: failed=$failures"

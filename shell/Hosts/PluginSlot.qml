@@ -3,7 +3,7 @@ import qs.Core
 
 // One plugin instance of one kind inside a host. Owns the whole lifecycle:
 // builds through the core, rebuilds when the plugin id or the plugin
-// generation changes, destroys before every rebuild and on its own
+// source revision changes, destroys before every rebuild and on its own
 // destruction. Every host is a surface plus one of these per plugin.
 Item {
     id: slot
@@ -58,10 +58,11 @@ Item {
         if (key === loadedKey) return;
         unload();
         if (key === "") return;
+        // Remember failed attempts too; settings changes cannot repair code.
+        loadedKey = key;
         instance = Plugins.createInstance(pluginId, kind, slot, hostKey, null, context, screen);
         if (instance === null) { buildFailed(key); return; }
         instance.anchors.fill = slot;
-        loadedKey = key;
         loadedHostKey = hostKey;
         built(instance);
     }

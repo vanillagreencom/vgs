@@ -66,8 +66,13 @@ ShellRoot {
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
         function built(): string { return Plugins.builtJson(); }
         function buildCount(): int { return Plugins.buildCount; }
+        function frames(): int { return Plugins.frames; }
+        function configChanges(): int { return Config.changes; }
+        function configUserLoads(): int { return Config.userLoads; }
+        function configSettled(): bool { return Config.settled; }
         function lent(): string { return Capabilities.lentJson(); }
         function readInstance(hostKey: string, id: string, property: string): string { return Plugins.readInstance(hostKey, id, property); }
+        function instanceGeometry(hostKey: string, id: string): string { return Plugins.geometryOf(hostKey, id); }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.ifGuarded(() => Plugins.invokeInstance(hostKey, id, name, arg)); }
         function reloadConfig(): string { return root.ifGuarded(() => { Config.reload(); return "ok"; }); }
         function rescanPlugins(): string { return root.ifGuarded(() => Plugins.rescan()); }

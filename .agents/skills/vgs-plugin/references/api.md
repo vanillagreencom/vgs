@@ -10,13 +10,13 @@ What a plugin receives and may call. The core owns every table here; a value not
 | `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration |
 | `service` | `service` | `Item` | the service host | enabled |
 | `background` | `background` | `Item` declaring `property var screen: null` | the background host, one per screen, under every window | enabled |
-| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host, on the top layer | enabled and summoned, until hidden |
-| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen, on the overlay layer | enabled and summoned, until hidden |
-| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host, on the overlay layer | enabled and summoned, until hidden |
+| `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host: a popup under its anchor item, or a layer surface on the top layer without one | enabled and summoned, until hidden |
+| `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host, covering its screen on the overlay layer | enabled and summoned, until hidden |
+| `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host: a popup under its anchor item with a focus grab, or a layer surface on the overlay layer without one | enabled and summoned, until hidden |
 
 Enabled is defined in [`docs/architecture/plugins.md` § Kinds](../../../../docs/architecture/plugins.md#kinds); `PluginLogic.isEnabled` is the judge.
 
-A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` that throws refuses the summon with `refused: open-failed=<id>`, so a payload that does not parse is left to throw. Summoning an open one calls `open` again with the new payload. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
+A summoned kind is built on summon and destroyed on hide. `open(payloadJson)` that throws refuses the summon with `refused: open-failed=<id>`, so a payload that does not parse is left to throw. Summoning an open one calls `open` again with the new payload. Pass the item the surface belongs to as `anchor`. The compositor places an anchored surface beside that item in its own window and adjusts it at screen edges. Moving the item moves the popup. A menu closes on a click outside and receives `close()`. The popup also closes when its anchor is hidden or destroyed. A panel or menu summoned without an anchor sits at its `placement` setting: `top-left`, `top`, `top-right`, `left`, `center` (the default), `right`, `bottom-left`, `bottom` or `bottom-right`.
 
 ## Properties every instance receives
 
@@ -62,7 +62,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.shortcut.register(name, description, onPressed)` | capability `shortcut` | a global shortcut bound in Hyprland as `global, <plugin id>:<name>`; returns a disposer |
 | `shell.manager.plugins`, `.setEnabled(id, enabled)`, `.setSetting(id, key, value)` | capability `manager` | every discovered plugin as `{ id, name, version, description, kinds, enabled, schema, settings }`; enabling and disabling as `setPluginEnabled` does, with `refused: enabled=<value> want=boolean` for a non-boolean; a setting written to every entry the plugin reads, refused for a disabled plugin; each returns the IPC reply |
 | `shell.builtins.register(name, item)` | capability `builtins` | records an item the plugin draws itself under its host key as `<plugin id>/<name>`, origin `plugin`, with this instance's kind; returns a disposer |
-| `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu on this instance's screen, under `anchor` (an item of the plugin's) when given; returns the IPC reply |
+| `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu; pass its source item as `anchor` for a compositor-placed popup, or omit it for layer placement on this instance's screen; returns the IPC reply |
 
 A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
 

@@ -15,9 +15,10 @@
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
-# $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs, and every
-# other command addresses that instance alone, so a shell started any other
-# way is never reached.
+# $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
+# command that contacts the shell addresses that instance alone, so a shell
+# started any other way is never reached. `plugin validate`, `plugin add`,
+# `plugin update` and `plugin remove` work with no shell running.
 #
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
@@ -237,6 +238,12 @@ case "$cmd" in
     fi
     truncate -s 0 -- "$lock"
     printf '%s\n' "$$" >&9
+    # The lock proves no runner-started shell is alive, so every source
+    # snapshot root under the runtime dir belongs to a dead shell.
+    for stale in "$rt_dir"/vgsh-sources-*; do
+      [[ -e $stale || -L $stale ]] || continue
+      rm -rf -- "${stale:?}"
+    done
     # exec keeps this pid and the lock descriptor, so the shell can prove it
     # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
     VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"

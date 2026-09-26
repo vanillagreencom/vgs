@@ -25,11 +25,13 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 - Each file is in one state: `pending`, `loaded`, `absent` (the user file), `unparseable`, `unreadable` or `malformed`. `listPlugins` reports both.
 - The configuration is ready once the shipped file has loaded once and the user file has settled. Nothing is built before that, so a bar never draws from the user file alone.
 - A file that fails after one load keeps its last good value, so the shell draws from what it has and the log names the cause.
+- Each layer retains its accepted text. A reload of identical text keeps the value object, so a manager write and its file notification produce one configuration change.
 - Every write is refused unless the user file is `loaded` or `absent`, so a file the shell could not read is never overwritten unread. A write the disk refuses restores the value in memory and refuses the next write once with the error; `ok` from a write means the save was queued.
+- One asynchronous save owns the confirmed value. Edits during that save update the screen at once and coalesce into the next save. A failed save restores the confirmed value, discards unsaved edits and reloads the file before another write. File notifications wait until saves settle.
 
 ## Theme
 
-`~/.config/vgs/theme.json` holds the palette: `foreground`, `background`, `accent`, `urgent` and `muted`, each a colour string. `Color.qml` reads it the way `Config.qml` reads `shell.json`, and its `judge` function is the one judge of the theme file's shape: an absent file is the expected case, and a file that does not parse, is not an object, or holds a role value that is not a colour Qt can parse is logged and leaves the last good palette. The bar's font is the `Style.font.family` token, not a theme value.
+`~/.config/vgs/theme.json` holds the palette: `foreground`, `background`, `accent`, `urgent` and `muted`, each a colour string. `Color.qml` reads it the way `Config.qml` reads `shell.json`, and its `judge` function is the one judge of the theme file's shape. An absent file, including one deleted while the shell runs, clears every override so the defaults stand, the same palette a fresh start without the file draws. A file that becomes unreadable, does not parse, is not an object, or holds a role value that is not a colour Qt can parse is logged and leaves the last good palette. The bar's font is the `Style.font.family` token, not a theme value.
 
 ## Decisions
 

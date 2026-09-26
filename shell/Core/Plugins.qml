@@ -3,13 +3,14 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "PluginLogic.js" as Logic
+import "Lifetime.js" as Lifetime
 
 // The plugin registry and manager mechanism. Discovers plugin directories,
 // validates every manifest through PluginLogic.js, derives the enabled set
 // from Config.effective, builds every plugin instance the hosts ask for,
 // mounts bar widgets into the active bar's sections, keeps every live
 // instance's settings current, and owns enable and disable. Hosts read
-// `manifests`, `generation` and the slot API; they never scan the disk,
+// `manifests` and the slot API; they never scan the disk,
 // build a plugin or assign a plugin property themselves.
 Singleton {
     id: root
@@ -18,6 +19,7 @@ Singleton {
     readonly property string defaultBarId: Logic.activeBarId(Config.shipped, "")
     readonly property string bundledDir: Quickshell.shellDir + "/plugins"
     readonly property string userDir: Config.userDir + "/plugins"
+    readonly property string sourceDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgsh-sources-" + Quickshell.processId
 
     // id -> validated manifest, a prototype-free object replaced whole on
     // every scan whose result differs, so bindings re-evaluate once.
@@ -28,8 +30,6 @@ Singleton {
     property var collisions: []
     // Why the last scan produced no result, or "" when it did.
     property string scanError: ""
-    // Bumped when the manifest set changed. Hosts key their instances on it.
-    property int generation: 0
     property bool scanned: false
     property bool rescanPending: false
 
@@ -38,16 +38,23 @@ Singleton {
 
     // Every instance on a surface, keyed by a host-supplied key, for the
     // IPC introspection the smoke reads. A row is { id, kind, origin,
-    // instance, capabilities, entry, settingsKey, providers, disposers,
+    // instance, capabilities, entry, settingsKey, providers, lifetime,
     // screen }: `origin` is "core" for an instance the core built and
     // "plugin" for an item a plugin drew itself and registered through its
     // `builtins` capability; `kind` is the built instance's kind, or the
     // registering instance's kind for a registered item; `entry` is a bar
     // widget's layout entry, `settingsKey` the JSON of the settings the
     // instance holds, `providers` the capability providers made for it, and
-    // `disposers` what destroying it releases.
+    // `lifetime` owns its pending releases.
     property var built: Object.create(null)
     property int buildCount: 0
+    // Frames the bar windows swapped, for validation rows whose subject
+    // only shows once the shell draws again: a layout's arrangement, a
+    // popup's move. A nested compositor the host does not show sends no
+    // frame callback, and the shell then draws nothing after its first
+    // frame.
+    property int frames: 0
+    function noteFrame() { frames += 1; }
 
     // Per bar instance, the widgets the core mounted in each of its
     // sections, keyed by the bar's host key: { row, sections: { <section>:
@@ -56,12 +63,23 @@ Singleton {
     // later entry keeps its own settings. Not a binding input; read and
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
+    // JSON [hostKey, kind, id] -> { id, revision }: the source revision whose
+    // build failed at that address. A settings change cannot repair code, so
+    // the address is not tried again until its plugin's revision changes.
+    property var failedBuilds: Object.create(null)
 
     function has(id) { return Logic.hasOwn(manifests, id); }
 
     function rescan() {
         if (scanner.running) { rescanPending = true; return "busy"; }
-        scanner.command = [Quickshell.shellDir + "/../bin/vgsh-scan", root.userDir, root.bundledDir];
+        const command = [Quickshell.shellDir + "/../bin/vgsh-scan", "--snapshot-dir", sourceDir];
+        const keep = Object.create(null);
+        for (const id of Object.keys(manifests)) keep[manifests[id].__revision] = true;
+        for (const hostKey of Object.keys(built))
+            for (const row of built[hostKey])
+                if (row.origin === "core") keep[row.revision] = true;
+        for (const revision of Object.keys(keep)) command.push("--retain", revision);
+        scanner.command = command.concat([root.userDir, root.bundledDir]);
         scanner.running = true;
         return "ok";
     }
@@ -91,6 +109,8 @@ Singleton {
             const r = Logic.validateManifest(raw, entry.dir);
             if (!r.ok) { errs.push({ dir: entry.dir, error: r.error }); continue; }
             if (Logic.hasOwn(next, r.manifest.id)) { cols.push(r.manifest.id + " at " + entry.dir); continue; }
+            r.manifest.__revision = entry.revision;
+            r.manifest.__loadUrl = entry.loadUrl;
             next[r.manifest.id] = r.manifest;
         }
         for (const e of errs) console.error("plugins: " + e.dir + ": " + e.error);
@@ -100,13 +120,21 @@ Singleton {
         root.errors = errs;
         root.collisions = cols;
         root.scanError = "";
-        if (changed) { root.manifests = next; root.generation += 1; }
-        // `scanned` gates every host key, so it moves last and the hosts
-        // see the registry and the generation together.
+        if (changed) {
+            const failures = Object.create(null);
+            for (const key of Object.keys(failedBuilds)) {
+                const failure = failedBuilds[key];
+                if (Logic.hasOwn(next, failure.id) && next[failure.id].__revision === failure.revision)
+                    failures[key] = failure;
+            }
+            failedBuilds = failures;
+            root.manifests = next;
+        }
         root.scanned = true;
+        if (changed) Qt.callLater(root.reconcile);
         // One line per completed scan, the smoke's readback for a scan that
         // changed nothing and so leaves no other trace.
-        console.info("plugins: scan complete changed=" + changed + " generation=" + root.generation);
+        console.info("plugins: scan complete changed=" + changed);
     }
 
     Process {
@@ -118,7 +146,10 @@ Singleton {
                 console.error("plugins: " + root.scanError);
                 retry.start();
             }
-            if (root.rescanPending) { root.rescanPending = false; root.rescan(); }
+        }
+        onRunningChanged: if (!running && root.rescanPending) {
+            root.rescanPending = false;
+            root.rescan();
         }
     }
 
@@ -165,11 +196,11 @@ Singleton {
         return Logic.lendRefusal(holders, manifests[id]);
     }
 
-    // The key a slot loads plugin `id` under: the id plus the registry
-    // generation while buildRefusal is empty, "" otherwise. Every slot and
+    // The key a slot loads plugin `id` under: its id and source revision
+    // while buildRefusal is empty, "" otherwise. Every slot and
     // every host reads this one derivation.
     function slotKey(id) {
-        return buildRefusal(id) === "" ? id + "@" + generation : "";
+        return buildRefusal(id) === "" ? id + "@" + manifests[id].__revision : "";
     }
 
     // Who holds each exclusive capability, copied once the change that moved
@@ -190,8 +221,8 @@ Singleton {
     }
 
     // A configuration change reaches every live instance through one
-    // reconcile. A registry change rebuilds the slots keyed on the
-    // generation, and a bar rebuilt that way mounts its widgets afresh.
+    // reconcile. A source change moves that plugin's slot key, so only its
+    // slots rebuild; its bar widgets rebuild inside reconcileBar.
     Connections {
         target: Config
         function onEffectiveChanged() { root.reconcile(); }
@@ -211,7 +242,7 @@ Singleton {
         if (!has(id)) return "";
         const entry = manifests[id].entryPoints[kind];
         if (entry === undefined) return "";
-        return "file://" + manifests[id].__sourceDir + "/" + entry;
+        return manifests[id].__loadUrl + "/" + entry.split("/").map(encodeURIComponent).join("/");
     }
 
     // The scoped object a plugin receives as `shell`: its manifest, its
@@ -232,29 +263,57 @@ Singleton {
     // screen. Properties are assigned after creation, never as initial
     // properties, which cross a QVariant conversion that drops functions and
     // turns nested lists into non-Array sequences. Returns null after
-    // logging when the plugin cannot be built.
+    // logging when the plugin cannot be built. A failure in the plugin's
+    // own code is remembered for this host, kind and id until the plugin's
+    // source revision changes; a refusal on enablement or lending is not,
+    // since either changes without a source edit.
     function createInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
+        const manifest = manifests[id];
+        if (manifest === undefined) { console.error("plugins: unknown: " + id); return null; }
+        if (failedRevision(hostKey, kind, id) === manifest.__revision) return null;
+        const result = attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator);
+        if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision);
+        return result.state === "built" ? result.instance : null;
+    }
+
+    function failedRevision(hostKey, kind, id) {
+        const key = JSON.stringify([hostKey, kind, id]);
+        return Logic.hasOwn(failedBuilds, key) ? failedBuilds[key].revision : null;
+    }
+
+    function rememberFailure(hostKey, kind, id, revision) {
+        const failures = Object.assign(Object.create(null), failedBuilds);
+        failures[JSON.stringify([hostKey, kind, id])] = { id: id, revision: revision };
+        failedBuilds = failures;
+    }
+
+    // One build attempt: { state: "built", instance }, { state: "refused" }
+    // when enablement or exclusive lending stands in the way, or
+    // { state: "failed" } when the plugin's manifest or code does.
+    function attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
+        const refused = { state: "refused" };
+        const failed = { state: "failed" };
         const enable = enableRefusal(id);
-        if (enable !== "") { console.error("plugins: " + enable); return null; }
+        if (enable !== "") { console.error("plugins: " + enable); return refused; }
         const url = entryUrl(id, kind);
-        if (url === "") { console.error("plugins: " + id + " declares no " + kind + " entry point"); return null; }
+        if (url === "") { console.error("plugins: " + id + " declares no " + kind + " entry point"); return failed; }
         const manifest = manifests[id];
         const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifest);
-        if (lent !== "") { console.error("plugins: " + id + " " + lent); return null; }
+        if (lent !== "") { console.error("plugins: " + id + " " + lent); return refused; }
         const component = Qt.createComponent(url);
-        if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return null; }
+        if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return failed; }
         const instance = component.createObject(parent);
-        if (instance === null) { console.error("plugins: " + id + " created no object"); return null; }
+        if (instance === null) { console.error("plugins: " + id + " created no object"); return failed; }
         const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(kind), layoutEntry);
         const onScreen = screen !== undefined && screen !== null ? screen : null;
-        const row = { id: id, kind: kind, origin: "core", instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, disposers: [], screen: onScreen };
+        const row = { id: id, kind: kind, origin: "core", revision: manifest.__revision, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, lifetime: Lifetime.create(e => console.error("plugins: " + id + " disposer failed: " + e.message)), screen: onScreen };
         try {
-            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: fn => row.disposers.push(fn) });
+            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: row.lifetime.register });
         } catch (e) {
             console.error("plugins: " + id + " capabilities failed: " + e.message);
-            for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
+            row.lifetime.drain();
             instance.destroy();
-            return null;
+            return failed;
         }
         try {
             instance.shell = facadeFor(manifest, settings, row.providers);
@@ -267,12 +326,12 @@ Singleton {
             if (kind === "bar" && Logic.hasOwn(mounts, hostKey) && mounts[hostKey].row === row) unmountBar(hostKey);
             if (Logic.hasOwn(built, hostKey) && built[hostKey].indexOf(row) !== -1) destroyBuilt(hostKey, instance);
             else {
-                for (let i = row.disposers.length - 1; i >= 0; i--) row.disposers[i]();
+                row.lifetime.drain();
                 instance.destroy();
             }
-            return null;
+            return failed;
         }
-        return instance;
+        return { state: "built", instance: instance };
     }
 
     // A bar widget: built like any instance on its bar's screen, then given
@@ -289,6 +348,7 @@ Singleton {
         } catch (e) {
             console.error("plugins: " + id + " bar-widget not built: " + e.message);
             destroyBuilt(hostKey, instance);
+            rememberFailure(hostKey, "bar-widget", id, manifests[id].__revision);
             return null;
         }
         return instance;
@@ -307,14 +367,7 @@ Singleton {
     function destroyBuilt(hostKey, instance) {
         const row = Logic.hasOwn(built, hostKey) ? rowFor(hostKey, instance) : undefined;
         if (row === undefined) throw new Error("plugins: destroying an instance with no build record under " + hostKey);
-        for (let i = row.disposers.length - 1; i >= 0; i--) {
-            try {
-                row.disposers[i]();
-            } catch (e) {
-                console.error("plugins: " + row.id + " disposer failed: " + e.message);
-            }
-        }
-        row.disposers = [];
+        row.lifetime.drain();
         forget(hostKey, instance);
         instance.destroy();
     }
@@ -337,15 +390,8 @@ Singleton {
         const id = ctx.id + "/" + name;
         if (Logic.hasOwn(built, ctx.hostKey) && built[ctx.hostKey].some(r => r.id === id))
             throw new Error("refused: builtin=" + id + " held host=" + ctx.hostKey);
-        record(ctx.hostKey, { id: id, kind: ctx.kind, origin: "plugin", instance: item, capabilities: [], entry: null, settingsKey: "", providers: {}, disposers: [], screen: ctx.screen });
-        let live = true;
-        const dispose = () => {
-            if (!live) return;
-            live = false;
-            root.forget(ctx.hostKey, item);
-        };
-        ctx.onDispose(dispose);
-        return dispose;
+        record(ctx.hostKey, { id: id, kind: ctx.kind, origin: "plugin", instance: item, capabilities: [], entry: null, settingsKey: "", providers: {}, lifetime: null, screen: ctx.screen });
+        return ctx.onDispose(() => root.forget(ctx.hostKey, item));
     }
 
     function forget(hostKey, instance) {
@@ -413,7 +459,7 @@ Singleton {
                 for (let i = 0; i < wanted.length; i++) {
                     const nth = wanted.slice(0, i).filter(e => e.id === wanted[i].id).length;
                     const widget = createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey, { section: section, nth: nth });
-                    entries.push({ key: entryKeys[i], widget: widget });
+                    entries.push({ key: entryKeys[i], revision: manifests[wanted[i].id].__revision, widget: widget });
                 }
                 state.entries = entries;
                 state.idsKey = idsKey;
@@ -421,6 +467,24 @@ Singleton {
             }
             for (let i = 0; i < state.entries.length; i++) {
                 const entry = state.entries[i];
+                const revision = manifests[wanted[i].id].__revision;
+                if (revision !== entry.revision) {
+                    // This entry's source changed: rebuild it alone. A new
+                    // child lands last in its section, so the widgets that
+                    // follow it are re-parented behind it to keep the
+                    // layout's order; stackBefore is not callable from QML.
+                    if (entry.widget !== null) destroyBuilt(hostKey, entry.widget);
+                    const container = sectionContainer(mount.row, section);
+                    const nth = wanted.slice(0, i).filter(e => e.id === wanted[i].id).length;
+                    entry.widget = container === null ? null : createWidget(wanted[i].id, container, mount.row, wanted[i], hostKey, { section: section, nth: nth });
+                    entry.revision = revision;
+                    if (entry.widget !== null)
+                        for (const later of state.entries.slice(i + 1))
+                            if (later.widget !== null) {
+                                later.widget.parent = null;
+                                later.widget.parent = container;
+                            }
+                }
                 if (entryKeys[i] === entry.key) continue;
                 entry.key = entryKeys[i];
                 if (entry.widget !== null) refreshRow(rowFor(hostKey, entry.widget), wanted[i]);
@@ -476,8 +540,21 @@ Singleton {
     function builtJson() {
         const out = {};
         for (const key of Object.keys(built))
-            out[key] = built[key].map(row => ({ id: row.id, kind: row.kind, origin: row.origin, capabilities: row.capabilities }));
+            out[key] = built[key].map(row => ({ id: row.id, kind: row.kind, origin: row.origin, capabilities: row.capabilities, pendingCleanups: row.lifetime === null ? 0 : row.lifetime.count }));
         return JSON.stringify(out);
+    }
+
+    // The screen-relative rectangle of one built instance as JSON
+    // [x, y, width, height], from Item.mapToGlobal, for validation rows
+    // that read where a surface was placed. A popup's window position is
+    // relative to the window it was anchored in. `absent` when no such
+    // instance exists.
+    function geometryOf(hostKey, id) {
+        if (!Logic.hasOwn(built, hostKey)) return "absent";
+        const row = built[hostKey].filter(r => r.id === id)[0];
+        if (row === undefined) return "absent";
+        const at = row.instance.mapToGlobal(0, 0);
+        return JSON.stringify([at.x, at.y, row.instance.width, row.instance.height]);
     }
 
     // One property of one built instance as JSON, for validation rows that
@@ -591,7 +668,8 @@ Singleton {
             version: manifests[id].version,
             kinds: manifests[id].kinds,
             enabled: isEnabled(id),
-            dir: manifests[id].__sourceDir
+            dir: manifests[id].__sourceDir,
+            revision: manifests[id].__revision
         }));
         return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
     }

@@ -20,6 +20,6 @@
 
 **Revisit When**: A second plugin needs to draw items inside another plugin's surface, or a built-in needs its own settings schema or enablement.
 
-**Verification**: The `expect_builtins` rows in `scripts/qml-smoke.sh` read the registered built-ins back from the build records by origin.
+**Verification**: The `expect_builtins` rows in `scripts/smoke/rows/bar.sh` and `scripts/smoke/rows/manager.sh` read the registered built-ins back from the build records by origin.
 
 **References**: [D003](D003-everything-is-a-plugin.md), [D005](D005-kinds-are-surfaces-no-dependencies.md), [D012](D012-core-owns-lent-objects.md)

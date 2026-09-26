@@ -13,6 +13,9 @@ var WORKSPACE = /^[A-Za-z0-9_.:+-]+$/;
 var ADDRESS = /^0x[0-9a-fA-F]+$/;
 var SPECIAL = /^[A-Za-z0-9_-]+$/;
 
+// Bound pending input independently of how long the compositor takes.
+var QUEUE_LIMIT = 32;
+
 // name -> { args: [pattern per argument], lua(args), classic(args) }
 var DISPATCHERS = {
     focusWorkspace: {

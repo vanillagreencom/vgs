@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import qs.Commons
 import "Reply.js" as Reply
 
@@ -75,6 +76,48 @@ Item {
         return null;
     }
 
+    // The text editor inside one drawn field, or null for a field that
+    // draws none (a switch, an enum).
+    function editorOf(field) {
+        if (field === null) return null;
+        for (let i = 0; i < field.children.length; i++) {
+            const child = field.children[i];
+            if (child.item !== undefined && child.item !== null && child.item.children.length > 0
+                    && child.item.children[0].cursorPosition !== undefined)
+                return child.item.children[0];
+        }
+        return null;
+    }
+
+    // The field an edit is under way in, for the validation rows: `arg` is
+    // JSON {"id", "key", "text"}. Focuses the field's editor and types
+    // `text` into it, as a user who has not left the field yet. Answers
+    // `held`, or `absent` when no such editor is drawn.
+    property var heldField: null
+    function holdField(arg) {
+        const a = JSON.parse(arg);
+        const editor = editorOf(fieldOf(a.id, a.key));
+        if (editor === null) return "absent";
+        editor.forceActiveFocus();
+        editor.text = a.text;
+        editor.cursorPosition = 1;
+        heldField = { id: a.id, key: a.key, field: fieldOf(a.id, a.key), editor: editor };
+        return "held";
+    }
+
+    // What became of the held field: JSON { same, focus, text, cursor }
+    // where `same` says the drawn field is still the object held, and the
+    // rest is read from that editor. `absent` with nothing held.
+    function heldFieldState() {
+        if (heldField === null) return "absent";
+        return JSON.stringify({
+            same: fieldOf(heldField.id, heldField.key) === heldField.field,
+            focus: heldField.editor.focus,
+            text: heldField.editor.text,
+            cursor: heldField.editor.cursorPosition
+        });
+    }
+
     // Emit one drawn field's `apply`, as an edit in the form does, for the
     // validation rows: `arg` is JSON {"id", "key", "value"}. Answers
     // `applied` or `absent` when the form drew no such field; the write's
@@ -111,7 +154,10 @@ Item {
 
             Repeater {
                 id: rows
-                model: root.plugins
+                model: ScriptModel {
+                    values: root.plugins
+                    objectProp: "id"
+                }
 
                 ColumnLayout {
                     id: entry
@@ -170,7 +216,9 @@ Item {
 
                     Repeater {
                         id: fields
-                        model: Object.keys(entry.modelData.schema)
+                        model: ScriptModel {
+                            values: Object.keys(entry.modelData.schema)
+                        }
 
                         SettingField {
                             required property string modelData
@@ -180,7 +228,10 @@ Item {
                             spec: entry.modelData.schema[modelData]
                             value: entry.modelData.settings[modelData]
                             editable: entry.modelData.enabled
-                            onApply: v => root.writeSetting(pluginId, key, v)
+                            // An editor loses focus while the panel is
+                            // torn down and emits apply into a panel that
+                            // is gone; that edit was never committed.
+                            onApply: v => { if (root !== null) root.writeSetting(pluginId, key, v); }
                         }
                     }
                 }

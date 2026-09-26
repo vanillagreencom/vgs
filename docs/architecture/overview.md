@@ -19,7 +19,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the shipped bar's manager built-in, reached through the `manager` capability; its mechanism is core.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
-- Validation row: an assertion in `scripts/qml-smoke.sh` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
+- Validation row: an assertion under `scripts/smoke/rows/` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
 ## Boundaries
 
@@ -31,10 +31,10 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 
 ## Invariants
 
-1. One shell process per session. The runner holds the lock, records its pid, and the shell draws and accepts state changes only when its process is the runner's; the CLI addresses that pid alone. Enforced by `scripts/test-vgsh.sh` (lock contention, argument refusal, pid selection) and `scripts/qml-smoke.sh`, which starts a bare `qs` beside the runner and asserts it neither draws nor writes.
+1. One shell process per session. The runner holds the lock, records its pid, and the shell draws and accepts state changes only when its process is the runner's; the CLI addresses that pid alone. Enforced by `scripts/test-vgsh.sh` (lock contention, argument refusal, pid selection) and `scripts/smoke/rows/instance-guard.sh`, which starts a bare `qs` beside the runner and asserts it neither draws nor writes.
 2. Every Wayland object the shell creates is dispatched or destroyed. No check enforces it. A long sampled session with `scripts/sample-shell-memory.sh` is the instrument.
-3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/qml-smoke.sh`, which read the compositor's layer list and reserved geometry. That no object of it remains is not checked.
-4. A plugin receives exactly the capabilities its own manifest names, a disabled plugin holds none of them, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/qml-smoke.sh`, which read the fixture instances and the core's lending record back.
+3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/smoke/rows/bar.sh`, which read the compositor's layer list and reserved geometry. That no object of it remains is not checked.
+4. A plugin receives exactly the capabilities its own manifest names, a disabled plugin holds none of them, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/smoke/rows/plugins.sh` and `scripts/smoke/rows/capability-release.sh`, which read the fixture instances and the core's lending record back.
 5. The plugin manager runs no plugin code and asks for no privilege. Enforced by the install rows in `scripts/test-vgsh.sh`, which run every git call with hooks off and install from local repositories.
 6. Every decision about a manifest, the shape of `shell.json`, the merged configuration, enablement, the settings entry a kind reads and placement is made once in `shell/Core/PluginLogic.js`. Enforced by `scripts/test-plugin-logic.js` and by `scripts/check-manifests.js`, which loads the same file.
 7. A figure in a document names the tool and the run that produced it. Enforced by review; `docs/architecture/memory.md` names its provenance in its first paragraph.
@@ -54,10 +54,12 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D011](../decisions/D011-native-manifest-no-cross-shell-compatibility.md): the manifest and the plugin API are v2's own; no other shell's plugins are supported.
 - [D012](../decisions/D012-core-owns-lent-objects.md): the core owns every session-wide object and lends it per instance with disposers.
 - [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md): a built-in widget is part of the plugin that draws it, registered with origin `plugin`, never a kind.
+- [D014](../decisions/D014-source-revisions-are-published-snapshots.md): a plugin's source revision is a published snapshot; a rescan rebuilds only the plugins whose files changed.
 
 ## Topics
 
-- [plugins.md](plugins.md): read before writing a plugin, a host or the manager.
+- [plugins.md](plugins.md): read before writing a plugin or a host.
+- [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
 - [configuration.md](configuration.md): read before touching the configuration files, their judge or the theme.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

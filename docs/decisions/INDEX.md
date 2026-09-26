@@ -17,6 +17,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-21 | D011 | — | The manifest and plugin API are v2's own; no other shell's plugins are supported | Shared names had drifted in meaning and nothing tested the promise | A marketplace with a stable versioned schema is worth joining | Active | [Full](D011-native-manifest-no-cross-shell-compatibility.md) |
 | 2026-09-23 | D012 | — | The core owns every session-wide object and lends it per instance with disposers | One owner per object removes collisions and makes disable a complete release | Quickshell releases the notification name on destroy, or two plugins must share a lent object | Active | [Full](D012-core-owns-lent-objects.md) |
 | 2026-09-25 | D013 | — | A built-in widget is part of the plugin that draws it, recorded with origin plugin, never a kind | One closed kind set keeps every switch exhaustive; provenance is its own field | A plugin must draw inside another plugin's surface, or a built-in needs its own schema | Active | [Full](D013-built-in-widgets-are-the-bar-plugins.md) |
+| 2026-09-26 | D014 | — | A plugin's source revision is a published snapshot under the runtime dir; slots key on it; the engine keeps every revision it loaded | Only a new URL for every sibling file makes an edit load again without a new engine, and a new engine loses every service's state | A plugin tree is large enough to feel the copy, retained types matter in a session, or Quickshell evicts per URL | Active | [Full](D014-source-revisions-are-published-snapshots.md) |
 
 ---
 

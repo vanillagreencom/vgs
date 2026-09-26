@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "acme.idle", "name": "Idle", "version": "0.1.0", "author": "acme", "description": "smoke fixture nothing enables",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }
