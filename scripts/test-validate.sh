@@ -130,15 +130,20 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 repo_plan=$'whitespace_check\nrows_cover_tests'
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\n'"$repo_plan"
+fixture_plan=$'node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
+smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
 cases=(
-  "docs|docs/architecture/overview.md|$repo_plan"
-  "heap|scripts/attribute-heap-profile.py|$heap_plan"
-  "suite|scripts/test-attribute-heap-profile.py|$heap_plan"
-  "dispatch|shell/Core/Dispatch.js|$dispatch_plan"
+  "docs|docs/architecture/overview.md|offline|$repo_plan"
+  "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
+  "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
+  "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
+  "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
+  "smoke-row|scripts/smoke/rows/example.sh|all|$smoke_plan"
 )
 for spec in "${cases[@]}"; do
   name="${spec%%|*}"; rest="${spec#*|}"
-  file="${rest%%|*}"; wanted="${rest#*|}"
+  file="${rest%%|*}"; rest="${rest#*|}"
+  area="${rest%%|*}"; wanted="${rest#*|}"
   d="$tmp/plan-$name"; fresh "$d"
   mkdir -p -- "$d/$(dirname -- "$file")"
   printf 'changed\n' >"$d/$file"
@@ -152,7 +157,7 @@ for spec in "${cases[@]}"; do
         rm -- "${d:?}/$file" ;;
     esac
     status=0
-    out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed refs/remotes/origin/trunk --list 2>"$tmp/plan.err")" || status=$?
+    out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate "$area" --changed refs/remotes/origin/trunk --list 2>"$tmp/plan.err")" || status=$?
     if [[ $status == 0 && $out == "$wanted" ]]; then ok "$name selects its consumers when $state"; else fail "$name $state plan: $out"; fi
   done
 done
