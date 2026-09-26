@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One planted violation per rule of check-plugin-boundary.py, one clean
 fixture, one row per exemption, one row per JS rule, one row per unreadable path
-class, and the plugin listing: a directory without a manifest is not a plugin.
+class, and the plugin listing: a directory without a manifest is not a plugin,
+and a shell tree without a plugins directory is refused.
 Each row builds a throwaway shell tree, runs the check on it and asserts the rule
 key and the exit status. Unreadable rows need a uid that permissions bind;
 under euid 0 the script reports status=not-measured and exits 77."""
@@ -122,6 +123,22 @@ def run_unreadable_row(name, rel):
         return good
 
 
+def run_absent_plugins_row():
+    """A shell tree with a core and no plugins directory lists nothing, so
+    the check must refuse it rather than certify zero plugins."""
+    name = "a shell tree without a plugins directory exits 2"
+    with tempfile.TemporaryDirectory() as tmp:
+        shell = os.path.join(tmp, "shell")
+        os.makedirs(os.path.join(shell, "Core"))
+        with open(os.path.join(shell, "Core", "Thing.qml"), "w", encoding="utf-8") as fh:
+            fh.write(CLEAN_CORE)
+        proc = subprocess.run([sys.executable, CHECK, "--shell", shell], capture_output=True, text=True, check=False, env=ENV)
+        lines = proc.stdout.splitlines()
+        good = proc.returncode == 2 and len(lines) == 1 and lines[0].startswith(f"check-plugin-boundary: unreadable: {shell}/plugins: cannot list: ")
+        print(("  ok    " if good else "  FAIL  ") + name + ("" if good else f" (exit={proc.returncode})\n{proc.stdout}{proc.stderr}"))
+        return good
+
+
 def main():
     if os.geteuid() == 0:
         print("status=not-measured reason=euid-0")
@@ -137,6 +154,7 @@ def main():
         print(("  ok    " if good else "  FAIL  ") + label)
         results.append(good)
     results += [run_unreadable_row(*row) for row in UNREADABLE_ROWS]
+    results.append(run_absent_plugins_row())
     if all(results):
         print("test-check-plugin-boundary: ok")
         return 0

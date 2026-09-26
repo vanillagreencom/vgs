@@ -19,8 +19,11 @@ tmp="$(mktemp -d)"
 trap 'chmod -R u+rwx -- "${tmp:?}" 2>/dev/null; rm -rf -- "${tmp:?}"' EXIT
 
 # Every git and validate call runs with this environment and nothing else.
+# Fixed identities and dates make every fixture's trunk the same commit, so
+# one trunk id names the base of every row.
 base_env=(env -i PATH="$PATH" HOME="$tmp/home" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid)
+  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+  GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z)
 
 failures=0
 ok() { printf '  ok    %s\n' "$*"; }
@@ -64,6 +67,15 @@ row "a clean tree passes against the base the settings file names" "$d" 0 "" \
 
 d="$tmp/tracked"; fresh "$d"; printf 'clean \n' >"$d/clean.txt"
 row "trailing whitespace in a tracked change fails" "$d" 1 "" \
+  "whitespace: findings scope=tracked" "whitespace: failed base=$trunk"
+
+# A committed defect: the feature branch holds its own commit, so HEAD is
+# ahead of the merge base and only a diff from the merge base sees the line.
+d="$tmp/committed"; fresh "$d"; printf 'feature \n' >"$d/feature.txt"
+"${base_env[@]}" git -C "$d" add feature.txt
+"${base_env[@]}" git -C "$d" commit -q -m feature
+if [[ "$("${base_env[@]}" git -C "$d" rev-parse HEAD)" != "$trunk" ]]; then ok "the committed fixture's HEAD is ahead of trunk"; else fail "the committed fixture's HEAD is trunk"; fi
+row "trailing whitespace in a committed change on the branch fails" "$d" 1 "" \
   "whitespace: findings scope=tracked" "whitespace: failed base=$trunk"
 
 d="$tmp/quoted"; fresh "$d"; mkdir -p "$d/dé"; printf 'x \n' >"$d/dé/f.txt"

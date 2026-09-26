@@ -27,11 +27,9 @@ import sys
 def scan_base(base, out, require_base):
     try:
         names = sorted(os.listdir(base))
-    except FileNotFoundError as exc:
-        if require_base:
-            out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
-        return
     except OSError as exc:
+        if isinstance(exc, FileNotFoundError) and not require_base:
+            return
         out.append({"dir": base, "error": f"cannot list: {exc.strerror}"})
         return
     for name in names:
