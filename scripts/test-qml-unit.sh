@@ -47,7 +47,7 @@ mutations=(
   "the icon's path is not scaled|foundation/Icon.qml|transform: Scale { xScale: root.factor; yScale: root.factor }|transform: Scale { xScale: 1; yScale: 1 }|tst_icon.qml"
   "the icon keeps an unknown name's paths|foundation/Icon.qml|return [\"\", \"\"];|return Lucide.ICONS.circle;|tst_icon.qml"
   "the focus ring ignores a text input's focus|foundation/FocusRing.qml|visible: target.visualFocus === undefined ? target.activeFocus : target.visualFocus|visible: target.visualFocus === true|tst_textfield.qml"
-  "the progress fill stays displaced|feedback/ProgressBar.qml|onStopped: fill.x = 0|onStopped: {}|tst_feedback.qml"
+  "the progress fill stays displaced|feedback/ProgressBar.qml|onStopped: fill.x = Qt.binding(() => root.mirrored && !root.indeterminate ? fill.parent.width - fill.width : 0)|onStopped: {}|tst_feedback.qml"
   "the list row prefers no width of its own|layout/ListItem.qml|Math.max(title.implicitWidth, secondaryLabel.implicitWidth)|0|tst_layout.qml"
   "the icon button's icon sits at the top|controls/IconButton.qml|topPadding: leftPadding|topPadding: 0|tst_button.qml"
   "the button ignores hover|controls/Button.qml|hovered ? tokens.hover :|false ? tokens.hover :|tst_button.qml"
