@@ -57,6 +57,7 @@ mutations=(
   "the menu window stays at the minimum width|overlay/Menu.qml|implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding)|implicitWidth: Theme.menu.minWidth|tst_overlays.qml"
   "the select accepts an index past its end|controls/Select.qml|index >= count) return;|index >= count + 100) return;|tst_overlays.qml"
   "the select ignores its text role|controls/Select.qml|return String(entry[textRole]);|return String(entry);|tst_overlays.qml"
+  "the select breaks its index binding on the current choice|controls/Select.qml|if (index !== currentIndex) currentIndex = index;|currentIndex = index;|tst_overlays.qml"
   "the toast ignores its tone|feedback/Toast.qml|const found = Theme.badge.tone[name];|const found = undefined;|tst_overlays.qml"
   "a destroyed overlay keeps its count|overlay/Popover.qml|Component.onDestruction: share(false)|Component.onDestruction: {}|tst_overlays.qml"
   "the menu keys reach a disabled entry|overlay/Menu.qml|function reachable(item) { return item.enabled && item.visible; }|function reachable(item) { return true; }|tst_overlays.qml"

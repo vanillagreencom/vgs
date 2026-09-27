@@ -8,7 +8,7 @@ expect_poll "the gallery maps one panel surface" 1 layer_count vgs:panel
 # Every component the module's qmldir lists is drawn, read back by type
 # name; the headings have a size, so they show.
 expect_poll "the gallery draws every component of the module" '[]' ipc smoke galleryMissing panel vgs.gallery
-render expect_poll "the gallery's headings are drawn with a size" 6 ipc smoke galleryHeadings panel vgs.gallery
+render expect_poll "the gallery's headings are drawn with a size" 7 ipc smoke galleryHeadings panel vgs.gallery
 geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryOverflow panel vgs.gallery
 expect "the gallery shows a toast through its capability" ok ipc smoke invokeInstance panel vgs.gallery toast ''
 expect_poll "the gallery's toast is in the record under its plugin" '["Saved"]' toast_titles visible

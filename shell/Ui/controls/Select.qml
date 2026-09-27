@@ -37,10 +37,11 @@ T.AbstractButton {
         return String(entry);
     }
 
-    // Choose the entry at `index` and close the list.
+    // Choose the entry at `index` and close the list. Choosing the current
+    // entry assigns nothing, so a binding on `currentIndex` survives it.
     function choose(index) {
         if (index < 0 || index >= count) return;
-        currentIndex = index;
+        if (index !== currentIndex) currentIndex = index;
         list.visible = false;
     }
 

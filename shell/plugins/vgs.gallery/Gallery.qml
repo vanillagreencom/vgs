@@ -38,6 +38,22 @@ Item {
                 Label { role: "h1"; text: "Gallery" }
                 Label { role: "subheading"; text: "Every component in every variant and state, drawn from the " + Theme.name + " theme."; width: parent.width; wrapMode: Text.Wrap }
 
+                SectionHeader { text: "Surfaces"; description: "The three levels a panel draws at" }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.space.sm
+                    Repeater {
+                        model: ["base", "raised", "sunken"]
+                        Surface {
+                            required property string modelData
+                            level: modelData
+                            width: Theme.size.panel.sm / 2
+                            height: Theme.size.panel.sm / 4
+                            Label { role: "label"; text: parent.modelData; anchors.centerIn: parent }
+                        }
+                    }
+                }
+
                 SectionHeader { text: "Typography"; description: "One role per kind of text" }
                 Column {
                     spacing: Theme.space.xxs
@@ -81,9 +97,11 @@ Item {
                     spacing: Theme.space.lg
                     Checkbox { text: "Unchecked" }
                     Checkbox { text: "Checked"; checked: true }
+                    Checkbox { text: "Disabled"; checked: true; enabled: false }
                     Column {
                         Radio { text: "One"; checked: true }
                         Radio { text: "Two" }
+                        Radio { text: "Disabled"; enabled: false }
                     }
                 }
                 Flow {
@@ -91,6 +109,7 @@ Item {
                     spacing: Theme.space.lg
                     SegmentedControl { model: ["Day", "Week", "Month"]; currentIndex: 1 }
                     Select { model: ["Default", "Ocean", "Forest"] }
+                    Select { model: ["Disabled"]; enabled: false }
                 }
 
                 SectionHeader { text: "Inputs"; description: "Text fields with icons, actions and errors; a field with its hint" }
@@ -100,10 +119,12 @@ Item {
                     TextField { placeholderText: "Search plugins"; leadingIcon: "search" }
                     TextField { id: named; text: "acme.weather"; trailingIcon: "package"; actions: [ IconButton { iconName: "x"; label: "Clear"; size: "sm"; onClicked: named.clear() } ] }
                     TextField { text: "taken"; error: true }
+                    TextField { text: "read only"; readOnly: true; enabled: false }
                 }
                 Field { label: "Display name"; hint: "Shown in the bar"; width: parent.width; TextField { width: parent.width; placeholderText: "Weather" } }
                 Field { label: "Format"; error: "Not a Qt date format"; inline: true; width: parent.width; TextField { width: parent.width; text: "HH:mm:" } }
                 Slider { from: 0; to: 100; value: 40; width: parent.width }
+                Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
 
                 SectionHeader { text: "Feedback"; description: "Progress, spinner, badges and key caps" }
                 Flow {

@@ -7,7 +7,8 @@ import qs.Ui
 // entry's label in a Field. `apply` carries the new value; the field then
 // shows what the configuration holds again, so a refused write leaves the
 // old value in place. An empty or non-numeric number field sends NaN,
-// which the schema refuses.
+// which the schema refuses. The select assigns its index only on a
+// different choice, so choosing the current option keeps the binding.
 Field {
     id: root
 
