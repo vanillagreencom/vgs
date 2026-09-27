@@ -113,7 +113,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 
 | Member | Type |
 |---|---|
-| `Theme.<group>.<token>` | the design tokens: one read-only group per top-level group of `shell/Commons/Tokens.js`, each token as its QML value (a `color`, an `int` of pixels or milliseconds, a `string`, a `bool`, an `Easing` enumerator); `docs/architecture/design-system.md` states the tiers |
+| `Theme.<group>.<token>` | the design tokens: one read-only group per top-level group of `shell/Commons/Tokens.js`, each token a primitive: a colour as the string `#aarrggbb` a `color` property takes (call `Qt.color` on it for channels), an `int` of pixels or milliseconds, a `string`, a `bool`, an `Easing` enumerator; `docs/architecture/design-system.md` states the tiers |
 | `Theme.name`, `Theme.revision` | string, int: the accepted theme's name, and a counter that rises after every group holds a new theme |
 | `Paths.configDir` | string: the directory `shell.json` and `theme.json` are read from |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |

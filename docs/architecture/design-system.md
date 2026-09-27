@@ -30,7 +30,7 @@ The token list is `Tokens.js`; no document copies it. A theme that sets the seve
 | `color` | `#rrggbbaa`, alpha last; `Theme` publishes it as the string `#aarrggbb`, the order Qt reads, and a file that needs channels calls `Qt.color` on it | |
 | `length` | whole pixels | 0 to 4096 |
 | `number` | unitless | the range the token declares |
-| `duration` | whole milliseconds, multiplied by `motion.scale` after the token's own expression resolves | 0 to 10000 |
+| `duration` | whole milliseconds; every duration resolves unscaled, then the published value is multiplied by `motion.scale` once | 0 to 10000 before the scale |
 | `weight` | whole font weight | 100 to 900 |
 | `family` | a font family name | non-empty |
 | `flag` | `true` or `false` | |

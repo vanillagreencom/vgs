@@ -75,7 +75,12 @@ const ACCEPTED = [
     // states its own timing still goes still at 0 and doubles at 2.
     { tokens: { motion: { scale: 0, duration: { normal: 200 } } }, want: [["motion.duration.normal", 0]] },
     { tokens: { motion: { scale: 2, duration: { normal: 200 } } }, want: [["motion.duration.normal", 400], ["motion.duration.fast", 200]] },
-    { tokens: { motion: { scale: 0.5 } } , want: [["motion.duration.fast", 50], ["motion.duration.slow", 125]] },
+    { tokens: { motion: { scale: 0.5 } }, want: [["motion.duration.fast", 50], ["motion.duration.slow", 125]] },
+    // A duration that references another is scaled once: 100 * 2, not 100 * 2 * 2.
+    { tokens: { motion: { scale: 2, duration: { normal: "{motion.duration.fast}" } } }, want: [["motion.duration.fast", 200], ["motion.duration.normal", 200]] },
+    { tokens: { motion: { scale: 0.5, duration: { normal: "mul({motion.duration.fast}, 3)" } } }, want: [["motion.duration.fast", 50], ["motion.duration.normal", 150]] },
+    // The range applies before the scale: 3000 * 4 publishes as 12000.
+    { tokens: { motion: { scale: 4, duration: { slow: 3000 } } }, want: [["motion.duration.slow", 12000], ["motion.duration.fast", 400]] },
     { tokens: { radius: { md: 6.4 } }, want: [["radius.md", 6]] },
     { tokens: { radius: { md: "{radius.full}" } }, want: [["radius.md", 4096]] },
     { tokens: { radius: { md: "mul({space.unit}, 1.5)" } }, want: [["radius.md", 6]] },
@@ -234,7 +239,7 @@ const CONTROLS = [
     ["family", 'if (typeof value !== "string" || value.trim() === "")', "if (false)"],
     ["option", "if (options.indexOf(value) === -1)", "if (false)"],
     ["whole rounding", "value = Math.round(value);", ""],
-    ["duration scaling", "value *= scale;", ""],
+    ["duration scaling", "value = Math.round(value * scale);", ""],
     ["table motion scale", 'if (!isLeaf(scale) || scale.type !== "number")', "if (false)"],
     ["range", "if (value < range[0] || value > range[1])", "if (false)"],
     ["override wins", "hasOwn(overrides, path) ? overrides[path] : leaf.value", "leaf.value"],

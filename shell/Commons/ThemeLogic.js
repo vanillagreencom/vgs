@@ -29,8 +29,10 @@ var RANGES = { length: [0, 4096], duration: [0, 10000], weight: [100, 900] };
 // Types whose resolved value is rounded to a whole number.
 var WHOLE_TYPES = ["length", "duration", "weight"];
 
-// The number every `duration` is multiplied by after its own expression
-// resolves, so a theme that states its own timing still goes still at 0.
+// The number every published `duration` is multiplied by once, after every
+// expression resolved in unscaled milliseconds, so a theme that states its
+// own timing still goes still at 0 and a duration that references another
+// is not scaled twice. The range of a duration applies before the scale.
 // The table must hold it as a `number`.
 var MOTION_SCALE = "motion.scale";
 
@@ -411,12 +413,6 @@ function resolve(tokens, overrides) {
         // values. Anything else is a defect of this file.
         if (typeof value !== "number" || !isFinite(value))
             throw new Error("theme: settle: " + token + " evaluated to " + String(value));
-        if (leaf.type === "duration" && token !== MOTION_SCALE) {
-            var scale = valueOf(MOTION_SCALE);
-            if (scale === undefined)
-                return undefined;
-            value *= scale;
-        }
         if (WHOLE_TYPES.indexOf(leaf.type) !== -1)
             value = Math.round(value);
         var range = leaf.type === "number" ? [leaf.min, leaf.max] : RANGES[leaf.type];
@@ -427,10 +423,15 @@ function resolve(tokens, overrides) {
 
     var all = leaves(tokens);
     var values = {};
+    var scale = valueOf(MOTION_SCALE);
+    if (failure !== null)
+        return failure;
     for (var i = 0; i < all.length; i++) {
         var value = valueOf(all[i].path);
         if (failure !== null)
             return failure;
+        if (all[i].leaf.type === "duration")
+            value = Math.round(value * scale);
         var parts = all[i].path.split(".");
         var group = values;
         for (var p = 0; p < parts.length - 1; p++) {

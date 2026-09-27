@@ -33,7 +33,7 @@ ROWS = [
     ("a token path that names nothing", UI, "Item { color: Theme.colour.accent }\n", "token-unknown"),
     ("a token under the wrong group", UI, "Item { color: Theme.palette.textMuted }\n", "token-unknown"),
     ("a group where a token was named", UI, "Item { property var t: Theme.text.body.sizes }\n", "token-unknown"),
-    ("a property of a token's value is not a finding", UI, "Item { property real r: Theme.color.accent.r }\n", None),
+    ("a property of a token's value is not a finding", UI, "Item { property int n: Theme.color.accent.length }\n", None),
     ("a group reference is not a finding", UI, "Item { property var role: Theme.text.body }\n", None),
     ("a member Theme.qml declares is not a finding", UI, "Item { property string n: Theme.name + Theme.revision }\n", None),
     ("another object named Theme is not judged", UI, "Item { property var x: acme.Theme.nope }\n", None),
