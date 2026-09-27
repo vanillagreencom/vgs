@@ -127,7 +127,7 @@ These are live in the workspace and must never be assigned in VGS. The reason ma
 
 # Project Management
 
-Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker. The fleet [proposal sweep](workflows/proposal-sweep.md) runs in a TPM lane and writes its analyzed JSON for the overseer.
+Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker. The fleet [proposal sweep](workflows/proposal-sweep.md) runs in a subagent the overseer launches and returns its analyzed JSON to the overseer.
 
 ## Disposition
 
