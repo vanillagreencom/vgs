@@ -53,6 +53,16 @@ Item {
             compare(ring.visible, false);
         }
 
+        function test_click_gives_the_control_the_keys() {
+            after.forceActiveFocus();
+            mouseClick(segment(1));
+            compare(control.currentIndex, 1);
+            compare(control.activeFocus, true);
+            keyClick(Qt.Key_Right);
+            compare(control.currentIndex, 2);
+            control.focus = false;
+        }
+
         function test_tab_reaches_the_control_and_not_its_segments() {
             const ring = control.children[control.children.length - 1];
             control.focus = false;

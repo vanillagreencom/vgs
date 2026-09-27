@@ -3,7 +3,9 @@
 // icon name, one SVG path for the stroked outline and one for the filled
 // parts, with every circle, rect, line, ellipse, polyline and polygon of the
 // icon converted to path commands, so Icon draws one path per icon in a
-// 24 by 24 unit box. The package's version and licence go beside the data.
+// 24 by 24 unit box. A filled node keeps its stroke too, as Lucide draws
+// it, so it is in both paths. The package's version and licence go beside
+// the data.
 //
 // Usage: scripts/vendor-lucide <unpacked lucide-static package directory>
 // Run by hand when the pinned version changes; scripts/test-lucide-data.js
@@ -96,7 +98,8 @@ function main(argv) {
         const fill = [];
         for (const [tag, attrs] of nodes[name]) {
             const d = pathOf(tag, attrs);
-            (attrs.fill !== undefined && attrs.fill !== "none" ? fill : stroke).push(d);
+            stroke.push(d);
+            if (attrs.fill !== undefined && attrs.fill !== "none") fill.push(d);
         }
         icons[name] = [stroke.join(" "), fill.join(" ")];
     }

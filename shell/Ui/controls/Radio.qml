@@ -9,7 +9,8 @@ import qs.Ui
 T.RadioButton {
     id: root
 
-    implicitWidth: implicitIndicatorWidth + (text !== "" ? spacing + implicitContentWidth : 0)
+    // The content's left padding already holds the indicator and the gap.
+    implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
     implicitHeight: Math.max(implicitIndicatorHeight, implicitContentHeight)
     spacing: Theme.radio.gap
     hoverEnabled: true

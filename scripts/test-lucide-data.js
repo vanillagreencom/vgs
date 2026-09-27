@@ -91,6 +91,7 @@ function verify(data) {
         for (const d of data.ICONS[name])
             assert.ok(!/(^|\s)m/.test(d.replace(/^m/, "")), `${name}: a joined path starts with a relative move`);
     assert.ok(data.ICONS.palette[1].startsWith("M13 6.5a0.5 0.5 0 1 0 1 0"), "a filled circle lands in the fill path");
+    assert.ok(data.ICONS.palette[0].indexOf("M13 6.5a0.5 0.5 0 1 0 1 0") !== -1, "a filled circle keeps its stroke");
 }
 verify(load(dataFile));
 
@@ -104,7 +105,8 @@ const CONTROLS = [
     ["a move's implicit lines made absolute", '"x": ["M18 6 6 18 M6 6 l12 12",""]', '"x": ["M18 6 6 18 M6 6 12 12",""]'],
     ["compact decimals read as one number", "M7.88 16.36 l.8 4", "M7.88 16.36.8 l4"],
     ["a wrong circle conversion", '"circle": ["M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z",""]', '"circle": ["M2 12a10 10 0 1 0 20 0z",""]'],
-    ["a fill lost to the stroke path", '2.8z","M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z M17', '2.8z M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z","M17']
+    ["a fill dropped from the fill path", '","M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z M17', '","M17'],
+    ["a filled node without its stroke", '2.8z M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z M17', '2.8z M17']
 ];
 const source = fs.readFileSync(dataFile, "utf8");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "lucide-data-control-"));

@@ -54,7 +54,7 @@ Rectangle {
                 hoverEnabled: true
                 text: String(modelData)
                 Accessible.name: text
-                onClicked: root.choose(index)
+                onClicked: { root.forceActiveFocus(); root.choose(index); }
 
                 contentItem: Label {
                     role: "button"

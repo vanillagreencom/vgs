@@ -71,6 +71,18 @@ Item {
             verify(img.red(18, 18) > 128 || img.red(17, 17) > 128, "the second stroke reaches the bottom-right");
         }
 
+        function test_filled_node_keeps_its_stroke() {
+            wait(100);
+            const icon = Qt.createQmlObject("import qs.Ui\nIcon { name: \"palette\"; size: 48; color: \"white\" }", root, "palette");
+            icon.x = 150; icon.y = 40;
+            wait(100);
+            const img = grabImage(icon);
+            // The dot at (13, 6.5) in the box is a 0.5 unit circle: filled and
+            // stroked at 1.5 pixels it covers its centre pixel at twice the box.
+            verify(img.red(26, 13) > 128, "a filled dot is drawn");
+            icon.destroy();
+        }
+
         function test_theme_change_reaches_the_icon() {
             compare(UnitTheme.override({ icon: { stroke: 3, size: { md: 20 } }, palette: { foreground: "#00ff00" } }), "ok");
             compare(themed.stroke, 3);
