@@ -19,8 +19,18 @@ Item {
 
     visible: false
 
-    // The MenuItem children of the column, in order.
+    property bool counted: false
+    function share(open) {
+        if (open === counted) return;
+        counted = open;
+        if (open) OverlayState.opened(); else OverlayState.closed();
+    }
+    Component.onDestruction: share(false)
+
+    // The MenuItem children of the column, in order, and the ones the
+    // keyboard may reach: enabled and shown.
     function items() { return column.children.filter(child => child.triggered !== undefined); }
+    function reachable(item) { return item.enabled && item.visible; }
 
     function open() {
         currentIndex = -1;
@@ -30,15 +40,28 @@ Item {
     function close() { window.visible = false; }
     function toggle() { if (opened) close(); else open(); }
 
+    // Move the highlight by `step` over the reachable entries: from none,
+    // Down takes the first and Up the last.
     function move(step) {
         const all = items();
-        if (all.length === 0) return;
-        currentIndex = (currentIndex + step + all.length) % all.length;
+        const reach = all.map((item, index) => reachable(item) ? index : -1).filter(index => index !== -1);
+        if (reach.length === 0) return;
+        const at = reach.indexOf(currentIndex);
+        if (at === -1) { currentIndex = step > 0 ? reach[0] : reach[reach.length - 1]; return; }
+        currentIndex = reach[(at + step + reach.length) % reach.length];
     }
 
     function triggerCurrent() {
         const all = items();
-        if (currentIndex >= 0 && currentIndex < all.length) all[currentIndex].triggered();
+        if (currentIndex >= 0 && currentIndex < all.length && reachable(all[currentIndex])) all[currentIndex].triggered();
+    }
+
+    // The widest entry by its own content, before the column sets every
+    // entry's width.
+    readonly property real widest: {
+        let width = 0;
+        for (const item of items()) width = Math.max(width, item.implicitWidth);
+        return width;
     }
 
     onCurrentIndexChanged: items().forEach((item, index) => { item.highlighted = index === currentIndex; })
@@ -64,9 +87,9 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(Theme.menu.minWidth, column.childrenRect.width + 2 * Theme.menu.padding)
+        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding)
         implicitHeight: Math.max(1, column.implicitHeight + 2 * Theme.menu.padding)
-        onVisibleChanged: visible ? OverlayState.opened() : OverlayState.closed()
+        onVisibleChanged: root.share(visible)
 
         FocusScope {
             id: scope

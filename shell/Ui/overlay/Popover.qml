@@ -18,6 +18,16 @@ Item {
 
     visible: false
 
+    // The overlay's share of OverlayState, taken once while open and given
+    // back once on close or on destruction, whichever comes first.
+    property bool counted: false
+    function share(open) {
+        if (open === counted) return;
+        counted = open;
+        if (open) OverlayState.opened(); else OverlayState.closed();
+    }
+    Component.onDestruction: share(false)
+
     function open() {
         window.visible = true;
         scope.forceActiveFocus();
@@ -38,7 +48,7 @@ Item {
         color: "transparent"
         implicitWidth: Math.max(1, root.width > 0 ? root.width : body.childrenRect.width + 2 * Theme.popover.padding)
         implicitHeight: Math.max(1, body.childrenRect.height + 2 * Theme.popover.padding)
-        onVisibleChanged: visible ? OverlayState.opened() : OverlayState.closed()
+        onVisibleChanged: root.share(visible)
 
         FocusScope {
             id: scope

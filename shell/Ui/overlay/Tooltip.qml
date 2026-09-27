@@ -44,6 +44,12 @@ Item {
         onTriggered: if (root.resting && OverlayState.open === 0) window.visible = true
     }
 
+    // Another overlay opening closes a tooltip already shown.
+    Connections {
+        target: OverlayState
+        function onOpenChanged() { if (OverlayState.open > 0) window.visible = false; }
+    }
+
     PopupWindow {
         id: window
 

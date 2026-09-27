@@ -20,6 +20,14 @@ T.AbstractButton {
     readonly property int count: Array.isArray(model) ? model.length : 0
     readonly property string currentText: textAt(currentIndex)
     readonly property bool listOpen: list.visible
+    property bool counted: false
+
+    function share(open) {
+        if (open === counted) return;
+        counted = open;
+        if (open) OverlayState.opened(); else OverlayState.closed();
+    }
+    Component.onDestruction: share(false)
     readonly property color outline: activeFocus || list.visible ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
 
     function textAt(index) {
@@ -62,6 +70,8 @@ T.AbstractButton {
     onClicked: if (list.visible) list.visible = false; else openList()
     Keys.onUpPressed: choose(currentIndex - 1)
     Keys.onDownPressed: choose(currentIndex + 1)
+    Keys.onReturnPressed: openList()
+    Keys.onEnterPressed: openList()
 
     contentItem: Label {
         role: "body"
@@ -100,7 +110,7 @@ T.AbstractButton {
         color: "transparent"
         implicitWidth: Math.max(1, root.width)
         implicitHeight: Math.max(1, Math.min(Theme.select.maxHeight, entries.contentHeight + 2 * Theme.menu.padding))
-        onVisibleChanged: visible ? OverlayState.opened() : OverlayState.closed()
+        onVisibleChanged: root.share(visible)
 
         Rectangle {
             anchors.fill: parent

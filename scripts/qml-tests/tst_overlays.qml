@@ -20,6 +20,7 @@ Item {
         Menu { id: menu
             MenuItem { text: "First"; onTriggered: root.triggered = 0 }
             MenuItem { text: "Second"; onTriggered: root.triggered = 1 }
+            MenuItem { text: "Off"; enabled: false; onTriggered: root.triggered = 2 }
         }
         Tooltip { id: tip; text: "hint" }
     }
@@ -83,6 +84,32 @@ Item {
             tryCompare(menu, "opened", false);
         }
 
+        function test_menu_skips_disabled_entries_and_starts_at_the_ends() {
+            menu.open();
+            menu.move(-1);
+            compare(menu.currentIndex, 1, "Up from none takes the last reachable entry");
+            menu.move(1);
+            compare(menu.currentIndex, 0, "the highlight wraps over the reachable entries");
+            menu.currentIndex = 2;
+            menu.triggerCurrent();
+            compare(root.triggered, -1, "a disabled entry never triggers");
+            menu.close();
+        }
+
+        function test_menu_width_follows_its_widest_entry() {
+            verify(menu.widest > 0);
+            verify(menu.widest >= menu.items()[1].implicitWidth);
+        }
+
+        function test_destroyed_overlay_releases_its_count() {
+            const made = Qt.createQmlObject("import qs.Ui\nPopover { width: 80 }", host);
+            made.open();
+            compare(OverlayState.open, 1);
+            made.destroy();
+            wait(50);
+            compare(OverlayState.open, 0);
+        }
+
         function test_menu_click_triggers_and_closes() {
             menu.open();
             menu.items()[0].clicked();
@@ -109,6 +136,16 @@ Item {
             compare(OverlayState.open, 0);
         }
 
+        function test_enter_opens_the_closed_select() {
+            root.Window.window.requestActivate();
+            select.forceActiveFocus();
+            tryCompare(select, "activeFocus", true);
+            keyClick(Qt.Key_Return);
+            compare(select.listOpen, true);
+            select.choose(0);
+            compare(select.listOpen, false);
+        }
+
         function test_select_keys_move_the_choice_while_closed() {
             // A popup window shown by an earlier test may still hold the
             // window focus; the keys go to the test window.
@@ -130,6 +167,13 @@ Item {
             popover.open();
             mouseMove(host, host.width / 2, host.height / 2);
             wait(200);
+            compare(tip.opened, false);
+            popover.close();
+            mouseMove(root, root.width - 1, root.height - 1);
+            // The other order: a shown tooltip closes when an overlay opens.
+            mouseMove(host, host.width / 2, host.height / 2);
+            tryCompare(tip, "opened", true, 2000);
+            popover.open();
             compare(tip.opened, false);
             popover.close();
             mouseMove(root, root.width - 1, root.height - 1);
