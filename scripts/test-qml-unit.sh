@@ -54,6 +54,7 @@ mutations=(
   "the tooltip opens under an open overlay|overlay/Tooltip.qml|if (root.resting && OverlayState.open === 0) window.visible = true|if (root.resting) window.visible = true|tst_overlays.qml"
   "the menu stays open after a trigger|overlay/Menu.qml|function onTriggered() { root.close(); }|function onTriggered() {}|tst_overlays.qml"
   "the menu keys move no highlight|overlay/Menu.qml|item.highlighted = index === currentIndex;|item.highlighted = false;|tst_overlays.qml"
+  "the menu window stays at the minimum width|overlay/Menu.qml|implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding)|implicitWidth: Theme.menu.minWidth|tst_overlays.qml"
   "the select accepts an index past its end|controls/Select.qml|index >= count) return;|index >= count + 100) return;|tst_overlays.qml"
   "the select ignores its text role|controls/Select.qml|return String(entry[textRole]);|return String(entry);|tst_overlays.qml"
   "the toast ignores its tone|feedback/Toast.qml|const found = Theme.badge.tone[name];|const found = undefined;|tst_overlays.qml"

@@ -21,6 +21,7 @@ Item {
             MenuItem { text: "First"; onTriggered: root.triggered = 0 }
             MenuItem { text: "Second"; onTriggered: root.triggered = 1 }
             MenuItem { text: "Off"; enabled: false; onTriggered: root.triggered = 2 }
+            MenuItem { id: wide; text: "An entry far wider than the menu's minimum width, with a shortcut"; shortcut: "Ctrl+Shift+W" }
         }
         Tooltip { id: tip; text: "hint" }
     }
@@ -87,9 +88,13 @@ Item {
         function test_menu_skips_disabled_entries_and_starts_at_the_ends() {
             menu.open();
             menu.move(-1);
-            compare(menu.currentIndex, 1, "Up from none takes the last reachable entry");
+            compare(menu.currentIndex, 3, "Up from none takes the last reachable entry");
             menu.move(1);
             compare(menu.currentIndex, 0, "the highlight wraps over the reachable entries");
+            menu.move(-1);
+            compare(menu.currentIndex, 3);
+            menu.move(-1);
+            compare(menu.currentIndex, 1, "the highlight skips the disabled entry going up");
             menu.currentIndex = 2;
             menu.triggerCurrent();
             compare(root.triggered, -1, "a disabled entry never triggers");
@@ -97,8 +102,16 @@ Item {
         }
 
         function test_menu_width_follows_its_widest_entry() {
-            verify(menu.widest > 0);
-            verify(menu.widest >= menu.items()[1].implicitWidth);
+            let window = null;
+            for (let i = 0; i < menu.resources.length; i++)
+                if (menu.resources[i].anchor !== undefined) window = menu.resources[i];
+            verify(window !== null, "the menu holds a popup window");
+            verify(wide.implicitWidth > Theme.menu.minWidth, "the wide entry passes the minimum: " + wide.implicitWidth);
+            menu.open();
+            // The window's width is whole pixels.
+            verify(window.width + 1 >= wide.implicitWidth + 2 * Theme.menu.padding, "the window holds the widest entry: " + window.width + " for " + wide.implicitWidth);
+            compare(wide.width, window.width - 2 * Theme.menu.padding);
+            menu.close();
         }
 
         function test_destroyed_overlay_releases_its_count() {
