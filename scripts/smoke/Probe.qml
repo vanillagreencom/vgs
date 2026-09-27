@@ -54,6 +54,8 @@ Scope {
         }
     }
 
+    FileView { id: uiModule; path: Qt.resolvedUrl("Ui/qmldir"); blockLoading: true }
+
     function instance(hostKey, id) {
         const rows = Plugins.built[hostKey] || [];
         const row = rows.find(r => r.id === id);
@@ -146,6 +148,31 @@ Scope {
         }
         function themeValue(path: string): string { return root.themeValue(path); }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
+        // The components of qs.Ui, read from its qmldir, that the gallery
+        // draws no instance of; an empty list is the pass. A QML-defined
+        // type prints as `<Name>_QMLTYPE_<n>(...)`.
+        function galleryMissing(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.examples === undefined) return "absent";
+            const names = [];
+            for (const line of uiModule.text().split("\n")) {
+                const m = /^(\w+) 1\.0 \S+$/.exec(line);
+                if (m !== null && m[1] !== "BarWidget") names.push(m[1]);
+            }
+            if (names.length < 20) return "qmldir-read-broken=" + names.length;
+            const seen = {};
+            for (const child of root.descendants(item.examples)) {
+                const m = /^(\w+)_QMLTYPE_/.exec(String(child));
+                if (m !== null) seen[m[1]] = true;
+            }
+            return JSON.stringify(names.filter(name => !seen[name]));
+        }
+        function galleryHeadings(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.examples === undefined) return "absent";
+            const drawn = root.descendants(item.examples).filter(child => /^SectionHeader_QMLTYPE_/.test(String(child)) && child.width > 0 && child.height > 0);
+            return String(drawn.length);
+        }
         function themeWrite(path: string, value: string): string { return root.themeWrite(path, value); }
         function themeName(): string { return Theme.name; }
         function themeRevision(): int { return Theme.revision; }
