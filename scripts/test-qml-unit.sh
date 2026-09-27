@@ -72,7 +72,7 @@ mutations=(
   "the leading icon reserves no space|controls/TextField.qml|leftPadding: Theme.textField.paddingX + (leadingIcon !== \"\" ? Theme.icon.size.sm + Theme.textField.gap : 0)|leftPadding: Theme.textField.paddingX|tst_textfield.qml"
   "the field shows the hint over the error|controls/Field.qml|text: root.error !== \"\" ? root.error : root.hint|text: root.hint|tst_textfield.qml"
   "the inline field ignores the label width|controls/Field.qml|width: parent.width - (root.inline ? Theme.field.labelWidth + parent.spacing : 0)|width: parent.width|tst_textfield.qml"
-  "the segmented control ignores a click|controls/SegmentedControl.qml|onClicked: root.choose(index)|onClicked: {}|tst_segmented.qml"
+  "the segmented control ignores a click|controls/SegmentedControl.qml|onClicked: { root.forceActiveFocus(); root.choose(index); }|onClicked: {}|tst_segmented.qml"
   "the segmented control fires for the same segment|controls/SegmentedControl.qml|index === currentIndex) return;|false) return;|tst_segmented.qml"
   "the spinner turns under reduced motion|feedback/Spinner.qml|running: root.running && Theme.spinner.duration > 0|running: root.running|tst_feedback.qml"
   "the progress fill ignores the value|feedback/ProgressBar.qml|width: root.indeterminate ? span : root.position * parent.width|width: parent.width|tst_feedback.qml"
