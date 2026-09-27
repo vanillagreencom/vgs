@@ -38,7 +38,7 @@ fresh() {
 
 # Rows: label | file under shell/Ui | text to replace | replacement | the
 # test file that must go red. The replacement keeps the text around the
-# behaviour and removes the behaviour.
+# behaviour and removes the behaviour. A field holds no `|`, the separator.
 mutations=(
   "the label's role is not read|foundation/Label.qml|const found = Theme.text[name];|const found = undefined;|tst_label.qml"
   "the label's weight does not reach the axis|foundation/Label.qml|font.variableAxes: ({ wght: typography.weight })|font.variableAxes: ({ wght: 400 })|tst_label.qml"
@@ -57,7 +57,9 @@ mutations=(
   "the disabled button does not fade|controls/Button.qml|opacity: enabled ? 1 : Theme.opacity.disabled|opacity: 1|tst_button.qml"
   "the focus ring ignores focus|foundation/FocusRing.qml|visible: target.visualFocus === undefined ? target.activeFocus : target.visualFocus|visible: false|tst_button.qml"
   "the icon button is not square|controls/IconButton.qml|implicitWidth: controlHeight|implicitWidth: controlHeight * 2|tst_button.qml"
-  "the switch knob does not slide|controls/Switch.qml|x: root.checked ? parent.width - width - inset : inset|x: inset|tst_toggles.qml"
+  "the switch knob does not slide|controls/Switch.qml|x: inset + root.visualPosition * (parent.width - width - 2 * inset)|x: inset|tst_toggles.qml"
+  "the toggle width counts the gap twice|controls/Checkbox.qml|implicitWidth: text !== \"\" ? implicitContentWidth : implicitIndicatorWidth|implicitWidth: implicitIndicatorWidth + spacing + implicitContentWidth|tst_toggles.qml"
+  "a clicked segment leaves the keys elsewhere|controls/SegmentedControl.qml|onClicked: { root.forceActiveFocus(); root.choose(index); }|onClicked: root.choose(index)|tst_segmented.qml"
   "the switch track ignores checked|controls/Switch.qml|color: root.checked ? Theme.toggle.on : Theme.toggle.off|color: Theme.toggle.off|tst_toggles.qml"
   "the checkbox mark ignores checked|controls/Checkbox.qml|visible: root.checked|visible: false|tst_toggles.qml"
   "the radio dot ignores checked|controls/Radio.qml|visible: root.checked|visible: true|tst_toggles.qml"
