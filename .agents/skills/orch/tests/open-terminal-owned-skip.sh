@@ -167,7 +167,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTS_DIR/lane-marker" "$REPO/scripts/"
-cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
+cp -R "$SRC_LIB_DIR/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
@@ -332,7 +332,8 @@ cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents"
 printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
-printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
+PI_SESSION_ID=55555555-5555-5555-5555-555555555555
+printf '%s\n' "{\"type\":\"session\",\"id\":\"$PI_SESSION_ID\"}" '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
 #
 # The resumed command carries the continuation line itself on every harness, so
@@ -343,6 +344,10 @@ CMD_ARGS=()
 # that keeps Codex off its startup update prompt, quoted per token as start_cmd
 # quotes each flag.
 CODEX_SETTINGS="'-c' 'check_for_update_on_startup=false'"
+# And the words that turn codex's own compaction off, so a lane hands off at its
+# own mark first. A claude resume below names no model, so no window names its
+# mark and it keeps its compaction.
+CODEX_COMPACTION="'-c' 'model_auto_compact_token_limit=9223372036854775807' '-c' 'model_auto_compact_token_limit_scope=body_after_prefix' '-c' 'model_post_turn_compact_threshold_percent=0'"
 # Every command it builds also takes the harness question tool away, in the
 # same quoting: a lane asks its overseer through lane-mail ask.
 CLAUDE_QUESTION_OFF="'--disallowedTools=AskUserQuestion,EnterPlanMode'"
@@ -354,12 +359,36 @@ occurrences() { local rest="${1//"$2"/}"; printf '%s\n' "$(( (${#1} - ${#rest}) 
 # since Codex starts no turn for a monitor's output.
 RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints"
 REARM=", then re-arm your mailbox monitor on .agents/skills/orch/scripts/lane-mail watch --item CC-1 through your harness background wake"
-for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM" "codex|codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $CODEX444|" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM"; do
-  IFS='|' read -r harness expected rearm <<<"$row"
+CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
+mkdir -p "${CONTEXT_FILE%/*}"
+for row in "claude|claude -n CC-1 $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl|$REARM|$PI_SESSION_ID"; do
+  IFS='|' read -r harness expected rearm context_session <<<"$row"
+  context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
+  printf '%s\n' "$context_record" > "$CONTEXT_FILE"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
   for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE$rearm.'" "$harness relaunch resumes with the continuation line"
+  assert_eq "rc=$RC context=$(cat "$CONTEXT_FILE" 2>/dev/null || true)" "rc=0 context=$context_record" \
+    "$harness relaunch keeps the selected session's exact context reading"
+  for lifetime in different fresh; do
+    context_args=(--relaunch)
+    prior_session=other-session
+    if [[ "$lifetime" == fresh ]]; then context_args=(); prior_session="$context_session"; fi
+    jq -nc --arg h "$harness" --arg s "$prior_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+    LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "context-$harness-$lifetime" -- ${context_args[@]+"${context_args[@]}"} --harness "$harness" CC-1
+    assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
+      "$harness clears the predecessor reading for a $lifetime session"
+  done
 done
+# Without forwarding the selected identity, the marker clears a resumed
+# session's reading. Keep the real session lookup and marker in this control.
+CONTEXT_CONTROL="$REPO/scripts/open-terminal-context-control"
+cp "$OT" "$CONTEXT_CONTROL"
+mutate_file "$CONTEXT_CONTROL" '"$remote_path" "$HARNESS" "$context_session"' '"$remote_path" "$HARNESS" ""'
+jq -nc --arg s "$CLAUDE222" '{harness:"claude",session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+OT="$CONTEXT_CONTROL" LANES_HOME="$SESSION_HOME" run_case context-control -- --relaunch --harness claude CC-1
+assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
+  "control: dropping the selected identity loses the matching resumed reading"
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
@@ -385,13 +414,13 @@ OT_CAPTURE="$TMP_ROOT/launch-codex-cmd.cmd" LANES_HOME="$SESSION_HOME" run_case 
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/launch-codex-cmd.cmd" ]] && break; done
 LAUNCH_CODEX_CMD="$(cat "$TMP_ROOT/launch-codex-cmd.cmd")"
 assert_eq "${LAUNCH_CODEX_CMD##* && }" \
-  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11" \
+  "env CODEX_HOME='$(lane_codex_home_path "$SESSION_HOME/.codex" "$TMP_ROOT/wt/CC-11")' ORCH_COMPACTION_OVERRIDES='' codex -m gpt-6-astra -c model_reasoning_effort=high -c features.default_mode_request_user_input=false CC-11" \
   "a codex --cmd launch runs its substituted template exactly, with no update setting added"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
 CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $CROSS_CODEX" "codex relaunch finds a session in another account store"
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CROSS_CODEX" "codex relaunch finds a session in another account store"
 assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
 
 # A relaunch run from INSIDE a private launch home carries that home in
@@ -405,7 +434,7 @@ printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$LAUNCH_HOME_COD
 OT_CAPTURE="$TMP_ROOT/resume-codex-home.cmd" LANES_HOME="$SESSION_HOME" \
   CODEX_HOME_OVERRIDE="$(lane_codex_home_path "$SESSION_HOME/.selected-codex" "$TMP_ROOT/wt/CC-6")" \
   run_case resume-codex-home -- --relaunch --harness codex CC-6
-for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-home.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $CODEX_SETTINGS $CODEX_QUESTION_OFF $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-home.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
 
 PI_ABSOLUTE="$TMP_ROOT/pi-absolute"; mkdir -p "$PI_ABSOLUTE" "$SESSION_HOME/.pi/agent"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-3"}}' >"$PI_ABSOLUTE/session.jsonl"
@@ -441,13 +470,26 @@ exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
-for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
+for row in "claude|claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
   assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
+# A wake starts a new claude process, which takes none of the first launch's
+# settings. The session above names no model, so it keeps its compaction; one
+# whose transcript names a model the claude adapter holds a window for is woken
+# with its compaction off, as its own launch was.
+CLAUDE_TRANSCRIPT="$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+cp -p -- "$CLAUDE_TRANSCRIPT" "$TMP_ROOT/claude-transcript.keep"
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_read_input_tokens":500000,"output_tokens":7}}}' >>"$CLAUDE_TRANSCRIPT"
+touch -r "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
+OT_CAPTURE="$TMP_ROOT/wake-claude-opus.cmd" LANES_HOME="$SESSION_HOME" run_case wake-claude-opus -- --wake --harness claude CC-1
+assert_eq "$(cat "$TMP_ROOT/wake-claude-opus.cmd" 2>/dev/null)" \
+  "claude -n CC-1 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE" \
+  "a claude wake of a session on a model with a named window turns its compaction off"
+mv -- "$TMP_ROOT/claude-transcript.keep" "$CLAUDE_TRANSCRIPT"
 # A GitHub item is the issue number while its worktree id is issue-<n>, and the
 # mailbox is bound under the worktree id: write_lane_marker writes it there and
 # the overseer's `lane-mail send --item` writes the same id. A line built from
@@ -621,7 +663,7 @@ WT_CC1="$TMP_ROOT/wt/CC-1"; mkdir -p "$WT_CC1"
 # the row.
 WAKE_HOME="$TMP_ROOT/wake-home"; mkdir -p "$WAKE_HOME/.claude/sessions"
 LIVE_RESUME_claude="claude -n CC-1 --disallowedTools=AskUserQuestion,EnterPlanMode --resume $CLAUDE222 -p $WAKE_LINE"
-LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE"
+LIVE_RESUME_codex="codex exec resume -c check_for_update_on_startup=false -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false $CODEX444 $WAKE_LINE"
 
 # table_wake HARNESS [SCRIPT] — a HARNESS wake on CC-1 through SCRIPT, over the
 # table the caller staged. Nothing is started and nothing is waited for, so the

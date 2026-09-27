@@ -4,7 +4,11 @@
 # fleet state. Sourced by oversee-watch, and like the rest of its lib/ it
 # reads that script's globals (HANDOFF, OVERSEER_FLAGS, WORKFLOW_STATE,
 # WORKFLOW_STATE_ARGS, SUCCEED) and calls its `overseer_record_refuse` and
-# `lane_context_caller_key`.
+# `lane_context_caller_key`. Whether the record names this pane is
+# lib/overseer-launch.sh's `ol_names`, the test its launchers write and read
+# the record by.
+# shellcheck source=overseer-launch.sh
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
 
 # The tail every oversee-succeed call this watch makes carries: the handoff
 # path the successor's brief must name, and the overseer's own flags after the
@@ -19,11 +23,12 @@
 OVERSEER_LAUNCH_ARGS=()
 overseer_launch_args() {
   OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
+  [[ -z "$OVERSEER_HARNESS" ]] || OVERSEER_LAUNCH_ARGS+=(--harness "$OVERSEER_HARNESS")
   [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
 }
 
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail
+  local pane="${TMUX_PANE:-}" key server window line record detail errf rc=0
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   # The key is the orch library's, the same function the lane turn-end hook
   # and `oversee register` read a session's own key with: the hook compares its own
@@ -49,19 +54,31 @@ overseer_command_record() {
   [[ "$window" =~ ^@[0-9]+$ ]] \
     || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
   overseer_launch_args
-  if ! line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)"; then
-    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  fi
+  # The line is the print's stdout alone, so no notice on its stderr enters
+  # the command a relaunch types; that stderr is the refusal's detail or relayed.
+  errf="$(mktemp)" || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=mktemp"
+  line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>"$errf")" || rc=$?
+  detail="$(cat -- "$errf")" || detail=""
+  rm -f -- "${errf:?}"
+  (( rc == 0 )) || overseer_record_refuse "$detail" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   [[ -n "$line" ]] \
     || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   # The four fields this watch observes replace the prior's; the launcher's
-  # own, runtime, generation and account, stay only where the prior names
-  # THIS pane on THIS server: another pane's record is another session's.
+  # own, runtime, generation and the launch identity (harness, account, home,
+  # model, effort and cwd), stay only where the prior names THIS pane on THIS
+  # server: another pane's record is another session's, and a start there has
+  # no launch identity to record, which leaves its readers on the pane and the
+  # environment until a launcher or `oversee register` writes one. A `pending`
+  # successor goes either way: the line this start records is the current
+  # session's, as a start always replaced the pending line it met, so a
+  # succession that died before its launch leaves nothing a later death would
+  # replay.
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" '
-      .overseer = ((.overseer // {})
-        | if (.server // "") == $server and (.pane // "") == $pane then . else {} end)
-        + {server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
+    update oversee --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" "$OL_JQ_DEFS"'
+      .overseer = ((((.overseer // {})
+        | if ol_names($server; $pane) then . else {} end)
+        + {server: $server, pane: $pane, window: $window, launch_line: $line}) | del(.pending))' 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
 }
 

@@ -20,6 +20,12 @@ ot_message() { # REASON FIELD=VALUE...
     command-missing) text='Select a harness or a custom command.' ;;
     cmd-unbalanced-quote) text='Put the brief in a file and reference it, or escape the quote.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
+    unsupported-for-oversee) text='No harness adapter reads this fleet lane'"'"'s context window, so nothing would judge its handoff mark. Nothing was launched. harness=none is a launch naming no harness; reason=no-window-read is a Pi whose installed pi-hooks sends no context_window on its Stop payload, so install the current pi-hooks. Launch the lane on claude, codex or pi.' ;;
+    launch-window-unknown) text='The claude adapter names no context window for this model, so this fleet lane would run with compaction off and no capacity for the shared rule to judge. Nothing was launched. Launch it on a model the window table in scripts/lib/adapters/claude.sh names.' ;;
+    launch-compaction-missing) text='This fleet --cmd command lacks the required compaction policy settings, so the handoff rule cannot rely on the expected capacity. Nothing was launched. Add the words this line names, in that order, inside the command, each quoted so the shell passes it whole: the claude word as --settings='"'"'{"env":{"DISABLE_AUTO_COMPACT":"1"}}'"'"'.' ;;
+    compaction-on) text='Pi would compact this fleet lane on its own before its handoff mark. Nothing was launched. Set compaction.enabled to false in the settings file named, and leave no project .pi/settings.json setting it back to true; the shared context rule controls handoff.' ;;
+    pi-compaction-unverified) text='A hosted Pi lane loads the Pi settings of its host, which this machine cannot read, so whether Pi would compact it is unknown. Nothing was launched. Launch the Pi lane on this machine, or the lane on claude or codex.' ;;
+    pi-settings-unreadable) text='The Pi settings file named could not be read, so whether Pi would compact this fleet lane is unknown. Nothing was launched. jq'"'"'s words follow.' ;;
     mode-override) text='The explicit GUI option overrides the detected tmux mode.' ;;
     verify-seconds-invalid) text='The verification timeout must be a positive integer in seconds.' ;;
     verify-seconds-clamped) text='The verification timeout was limited to the maximum.' ;;
@@ -42,7 +48,7 @@ ot_message() { # REASON FIELD=VALUE...
     launch-trust-missing) text='The folder-trust entry for this launch directory could not be made in the config this codex launch would read. Nothing was launched: the harness would open on the folder-trust question and wait there for an answer nobody at the pane gives. Remedy by reason: trust-refused is an answer already recorded for this directory that is not trust, which this will not overwrite, so change it where it was written or launch somewhere else; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause, so relink it; account-store is the account transcript directory that could not be made; home-path, home-create, home-link and home-entry are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; config-write and config-install are that home config.toml, the same; entry-unreadable is the entry written and not read back. The lane host provider makes this entry for a sandboxed lane instead.' ;;
     lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
-    host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
+    host-credential-dead) text='The account read expired, and the lane host reports holding that same account. Nothing was launched. The expired copy is the credential this machine holds, which could not be renewed, or the copy the provider holds where its accounts row reports the account expired: lanes list names which in its THROUGH column. Remedy for THROUGH local: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. For THROUGH host, renew the credential the provider holds. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window read for the account walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
     host-accounts-unanswered) text='The lane host could not say which accounts it holds, so this launch is judged on the usage windows this machine reads, exactly as an unhosted one is. Where a keyed lanes: line sits above this one, it names the provider failure; where none does, the read of that answer failed here. A provider that does not implement the optional accounts verb is not reported at all.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
@@ -96,6 +102,10 @@ ot_message() { # REASON FIELD=VALUE...
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
+    host-start-failed) text='The item is recorded parked, its sandbox stopped with its disk kept, and the lane host could not bring that sandbox back: exit= is the start verb'"'"'s status, its own words above this line, and cause=answer-unparsed a start that succeeded without its sandbox-started item=ID line, so nothing confirms the sandbox is up. No create ran and the record still reads parked: fix what the provider names and relaunch the item again.' ;;
+    host-started) text='The parked item'"'"'s sandbox is up again on the disk the park kept, and its record now reads stopped with parked dropped, which is that sandbox'"'"'s state from here: up, no harness in it. create --relaunch now resumes the harness on it; a create that fails after this line leaves the stopped record, which a plain relaunch recovers with no start, going straight to create --relaunch.' ;;
+    parked-record-failed) text='The parked item'"'"'s sandbox is up again, but its record could not be rewritten from parked to stopped, so it still reads parked over a running sandbox and nothing was created. Fix what workflow-state names above and relaunch the item again: the start is answered again for a sandbox already up.' ;;
+    state-read-failed) text='The fleet state could not be read for this item'"'"'s record, so whether the item is parked is unknown. Nothing was launched: fix what workflow-state names above.' ;;
     lane-host-busy) text='lane-host refused the call step names at its per-home cap on provider calls, after waiting ORCH_LANE_HOST_BUSY_WAIT_SECS for a slot; its own line is above and the provider ran nothing. After a refused create nothing was made: launch the item again. After a refused wait or marker call the host holds the item: relaunch it with --relaunch.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line, or names a state other than preparing.' ;;
     host-prepare-failed) text='The lane host accepted this item and its wait reported the preparation failed; the provider says why above. No lane was started. The host keeps what it made until lane-host close or a --relaunch.' ;;
@@ -190,15 +200,22 @@ Options:
                     on the window for that model, claude and codex only:
                     refused when it is at or above --lane-max-pct, and
                     refused as unreadable when nothing measures it. A config
-                    dir no lane record covers is used as given, there being no
-                    record to judge it by. THE WALL BINDS
-                    EVERY LAUNCH SHAPE, a hosted --relaunch included: a usage
-                    window belongs to the account, so a window this machine
-                    reads at the threshold is the window the sandbox meets, and
-                    a refused relaunch costs nothing where a walled one spends
-                    the sandbox start and the resume to open on a usage banner.
-                    Only the UNREADABLE answer turns on the host: a relaunch
-                    onto an account the provider reports holding proceeds there,
+                    dir that neither a lane record nor a provider reading
+                    covers is used as given, there being nothing to judge it
+                    by. A HOSTED launch is judged on the copy it runs on: where
+                    the provider's accounts row for the account carries a
+                    status or a percentage, that row is judged in place of this
+                    machine's reading, `auto` chooses among those rows, and a
+                    dir the provider reports with a reading is judged even
+                    where lane discovery does not reach it (`lanes --help`,
+                    pick). THE WALL BINDS EVERY LAUNCH SHAPE, a hosted
+                    --relaunch included: a usage window belongs to the account,
+                    so a window read at the threshold is the window the
+                    sandbox meets, and a refused relaunch costs nothing where a
+                    walled one spends the sandbox start and the resume to open
+                    on a usage banner. Only the UNREADABLE answer turns on
+                    whether the provider holds the account: a relaunch onto an
+                    account the provider reports holding proceeds there,
                     reported as host-relaunch-credential — see --host. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
@@ -250,9 +267,16 @@ Options:
                     host is this machine's, sent again. The provider's
                     `accounts` answer is what says which accounts it holds, and
                     nothing here reads the secret itself.
-                    WHAT THE ANSWER DECIDES is the named lane's UNREADABLE case
-                    and nothing else. A window this machine reads walls every
-                    launch shape alike, hosted relaunch included — see --lane.
+                    WHAT THE ANSWER DECIDES. Where the provider's accounts row
+                    for an account carries a status or a percentage, both
+                    --lane forms judge the account on that row in place of this
+                    machine's reading; a row with neither, an absent verb and a
+                    failed one each leave this machine's reading. A window so
+                    read walls every launch shape alike, hosted relaunch
+                    included — see --lane. Whether the provider holds the
+                    account then decides the named lane's UNREADABLE case, and
+                    that is asked of the provider afresh, never through the
+                    usage cache the windows are read through.
                     Where nothing measured the account:
                       a --relaunch on an account the provider reports holding
                         proceeds, reported as host-relaunch-credential, because
@@ -260,13 +284,16 @@ Options:
                         harness's own banner after the resume is the gate
                         oversee-watch reads as usage-limit;
                       a FRESH launch on an account the provider reports holding,
-                        whose copy here expired and cannot be renewed, is refused
-                        as host-credential-dead, the remedy being to log in again
-                        on this machine for that config dir. That refusal reaches
-                        claude lanes: an unrenewable expiry is the one local
-                        state `lanes` names and only a claude credential carries
-                        it, so a codex lane whose own auth.json is dead reads as
-                        a window that could not be read;
+                        read expired, is refused as host-credential-dead. The
+                        expiry is this machine's copy that cannot be renewed,
+                        whose remedy is to log in again here for that config
+                        dir, or the provider's copy where its accounts row
+                        reports `expired`, renewed through the provider. On this
+                        machine's reading that refusal reaches claude lanes
+                        alone: an unrenewable expiry is the one local state
+                        `lanes` names and only a claude credential carries it,
+                        so a codex lane whose own auth.json is dead reads as a
+                        window that could not be read;
                       anything else is refused as lane-model-unreadable, an
                         unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
@@ -325,7 +352,8 @@ Options:
                     so Codex never opens its startup update prompt, where a
                     pasted line would install the update and end the session.
                     EVERY COMMAND BUILT HERE TAKES THE HARNESS QUESTION TOOL
-                    AWAY, ahead of these flags; a lane asks through lane-mail.
+                    AWAY WHERE A ROW BELOW NAMES WORDS, ahead of these flags;
+                    a lane asks through lane-mail.
                       claude    --disallowedTools=AskUserQuestion,EnterPlanMode
                       codex     -c features.default_mode_request_user_input=false
                       pi        --exclude-tools question
@@ -360,7 +388,23 @@ Options:
                     a lane the overseer has already judged dead, so the claim
                     it would assert is one nobody still holds. An item on the
                     reuse path is still skipped on a lease held under another
-                    owner.
+                    owner. A hosted item whose fleet record reads parked, its
+                    sandbox stopped by `lane-close --park` with its disk kept,
+                    is started first through `lane-host start`, whose
+                    sandbox-started item=ID line is required, then created
+                    with --relaunch as any hosted relaunch is, so the harness
+                    resumes on the disk the park kept and its transcript with
+                    it; a start that fails is host-start-failed, the record
+                    stays parked and no create runs. A confirmed start
+                    rewrites the record stopped with `parked` dropped before
+                    the create, since that is the sandbox's state from then
+                    on, so a create that fails after it leaves a stopped
+                    record, which a plain relaunch recovers with no start.
+                    A parked record is not a running or
+                    preparing one, so this relaunch is judged as adding a
+                    lane under --state-dir's caps: at the fleet cap it is
+                    refused as cap-reached until a lane closes, or admitted
+                    with --wait-slot or --over-cap.
   --wake            Wake an idle lane in its existing worktree: resume its
                     newest matching Claude or Codex session in print mode, or
                     send to its live Pi session through pi-bridge, with one

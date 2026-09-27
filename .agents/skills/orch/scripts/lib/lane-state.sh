@@ -526,14 +526,15 @@ lane_pane_observe() { # WINDOW
 # The judge.
 # ---------------------------------------------------------------------------
 
-# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] — assigns OUT_VAR
-# exactly one of:
+# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] [ACCOUNT] — assigns
+# OUT_VAR exactly one of:
 #
 #   gone      no window: there is no lane here to ask about
 #   exited    the window outlived its harness — a bare shell with nothing
 #             under it, the shape a session that quit, crashed or hit its
 #             limit leaves behind
-#   walled    the account is spent and said so below the lane's last turn
+#   walled    the account is spent and said so below the lane's last turn,
+#             and no ACCOUNT reading says the wall has lifted
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
@@ -548,6 +549,9 @@ lane_pane_observe() { # WINDOW
 #   SCREEN   the pane capture, whole
 #   SESSION  `busy`, `idle` or `unjudged` from the harness process read
 #            through /proc, and "" where the caller has no /proc to read
+#   ACCOUNT  `room` where the caller measured the lane's account and found
+#            the wall its banner reports lifted, `walled` where it found the
+#            wall standing, and "" where it measured nothing
 #
 # THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
 # supplied process read decides; the session rule below carries that half.
@@ -559,10 +563,13 @@ lane_pane_observe() { # WINDOW
 #
 # Rung order is load-bearing and is the order the watch has always used:
 # `walled` outranks `asking` because a limit banner can sit above a stale
-# prompt and the spent account is the news; `asking` outranks `working`
-# because a dialog is up whatever the transcript above it is doing; and
-# `idle` demands the absence of a turn in flight, so a working lane can never
-# take that rung.
+# prompt and the spent account is the news. A banner stays on the screen after
+# its window resets, since a lane parked by it takes no turn to scroll it
+# away, so an ACCOUNT of `room` passes the banner over and the rungs below
+# answer; `walled` and "" keep it, and any other value is `unjudged`.
+# `asking` outranks `working` because a dialog is up whatever the transcript
+# above it is doing; and `idle` demands the absence of a turn in flight, so a
+# working lane can never take that rung.
 #
 # THE WHOLE SESSION RULE, in one sentence: a SUPPLIED SESSION that is not
 # `idle` answers on its own and the pane's `idle` rung is never reached, so a
@@ -588,7 +595,7 @@ lane_pane_observe() { # WINDOW
 # Exit 2, with OUT_VAR set to `unjudged`, means a scan failed rather than
 # answered. The caller decides whether that ends its run.
 lane_state() {
-  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}"
+  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}" _ls_account="${7:-}"
   local _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
   if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
@@ -603,7 +610,13 @@ lane_state() {
   _ls_rc=0
   _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
   if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
-  if [[ -n "$_ls_banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
+  if [[ -n "$_ls_banner" ]]; then
+    case "$_ls_account" in
+      "" | walled) printf -v "$_ls_out" walled; return 0 ;;
+      room) ;;
+      *) printf -v "$_ls_out" unjudged; return 0 ;;
+    esac
+  fi
   if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
   # The supplied process read, whole, before any rung that could answer `idle`.

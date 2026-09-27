@@ -6,8 +6,8 @@
 
 | Capability | State | Evidence or remaining check |
 |---|---|---|
-| Codex | Enabled | The application summary on [PR 227](https://github.com/vanillagreencom/vgs/pull/227) records an automatic code review triggered by PR creation. Preserve the existing security-review scope; its separate setting is unverified. |
-| Copilot | Enabled | [Repository settings](https://github.com/vanillagreencom/vgs/settings/copilot/code_review) show custom review instructions On. [The active ruleset](https://github.com/vanillagreencom/vgs/rules/20341570) reviews new pushes and excludes drafts. The review effort uses the organization default. Organization policy disables approving reviews. |
+| Codex | Instructions enabled; reviews optional | Native instructions remain for requested reviews. No required review, review-gate workflow or branch rule blocks merging. External app automatic-review settings are not managed by this manifest. |
+| Copilot | Instructions enabled; automatic ruleset removed | Native instructions remain for requested reviews. No automatic-review ruleset or required review is configured; GitHub Actions is disabled. |
 | CodeRabbit | Disabled | The organization has disabled the bot. Vendor overrides, resolved configuration and integrations are unverified. |
 | Qodo and its optional files | Disabled | Retirement is requested. App removal, product type, wiki settings, organization overrides and the REVIEW.md portal toggle are unverified. |
 | Macroscope | Disabled | Installation, correctness mode, comment severity, automatic runs and spend limits are unverified. |

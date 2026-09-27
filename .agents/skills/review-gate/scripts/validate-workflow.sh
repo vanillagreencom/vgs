@@ -34,7 +34,7 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: validate-workflow.sh [--adopt | --help]
+Usage: validate-workflow.sh [--adopt] [--templates-dir DIR] [--adopted-path-file FILE] | --help
 
 Checks that THIS repository's adopted review-gate writer workflow is still
 the shipped template.
@@ -77,6 +77,13 @@ rather than in any file, so nothing here can read it: the note says the
 variable has to be set and cannot say whether it is. A run that is otherwise
 clean exits 0 with that prerequisite unverified.
 
+--templates-dir reads refreshed template data from DIR while validators and
+libraries stay with this script. Default: the templates beside this script.
+
+--adopted-path-file writes the selected repository-relative writer path to FILE
+only after all checks pass. The path has no added newline. Adoption consumes
+this file so workflow discovery has one owner.
+
 Output: one verdict line per check: STATUS check=KEY value=VALUE.
 STATUS is ok, FAIL or note. VALUE uses Bash printf %q escaping.
 Indented explanation follows each verdict; consumers do not parse it.
@@ -95,9 +102,19 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   exit 0
 fi
 ADOPT=0
-if [ "$#" -eq 1 ] && [ "$1" = "--adopt" ]; then
+if [ "$#" -ge 1 ] && [ "$1" = "--adopt" ]; then
   ADOPT=1
   shift
+fi
+TEMPLATES_DIR=""
+if [ "$#" -ge 2 ] && [ "$1" = --templates-dir ]; then
+  TEMPLATES_DIR="$2"
+  shift 2
+fi
+ADOPTED_PATH_FILE=""
+if [ "$#" -eq 2 ] && [ "$1" = --adopted-path-file ]; then
+  ADOPTED_PATH_FILE="$2"
+  shift 2
 fi
 if [ "$#" -gt 0 ]; then
   rg_message error unknown-arguments "$#" "validate-workflow.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
@@ -110,7 +127,8 @@ die() { # CODE VALUE MESSAGE
 }
 
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || die skill-directory "$SCRIPT_DIR" "could not resolve the skill directory"
-TEMPLATE="$SKILL_DIR/templates/review-gate-writer.yml"
+TEMPLATES_DIR="${TEMPLATES_DIR:-$SKILL_DIR/templates}"
+TEMPLATE="$TEMPLATES_DIR/review-gate-writer.yml"
 [ -f "$TEMPLATE" ] ||
   die template-missing "$TEMPLATE" "$TEMPLATE is missing — it is the thing the adopted copy is compared against; re-run \`kendex refresh\` and commit the result"
 
@@ -367,7 +385,7 @@ code_lines "$TMP/template.raw" >"$TMP/template.code"
 
 # Paths from the repository root: the pathspec the template's history is
 # read through, and the command a person runs from there.
-TEMPLATE_REL="$(cd "$SKILL_DIR/templates" && git rev-parse --show-prefix)review-gate-writer.yml" ||
+TEMPLATE_REL="$(cd "$TEMPLATES_DIR" && git rev-parse --show-prefix)review-gate-writer.yml" ||
   die template-path "$TEMPLATE" "could not place $TEMPLATE inside the repository"
 ADOPT_CMD="$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix)validate-workflow.sh --adopt" ||
   die script-path "$SCRIPT_DIR" "could not place $SCRIPT_DIR inside the repository"
@@ -455,5 +473,8 @@ fi
 printf '\n'
 if [ "$FAILED" -gt 0 ]; then
   exit 1
+fi
+if [ -n "$ADOPTED_PATH_FILE" ]; then
+  printf '%s' "$adopted" >"$ADOPTED_PATH_FILE" || die adopted-path-write "$ADOPTED_PATH_FILE" "could not write the selected workflow path"
 fi
 exit 0

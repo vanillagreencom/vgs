@@ -32,11 +32,7 @@ severity = """
 Review changes to the merge checks, scripts, review policy, the instance lock and the session lock, `vgsh plugin add` and the other plugin manager commands, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
 """
 declined = """
-The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence comes only from the reviewer REVIEW_GATE_COMMENT_REVIEWERS names in kendex.settings.toml.
-
-The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
-
-Documentation-only pushes can carry earlier review evidence. The configured policy and high-risk paths require fresh evidence. Read REVIEW_GATE_CARRY_FORWARD_EXCLUDE in kendex.settings.toml for the enforced path set.
+This personal project deliberately has no CI workflows, branch protection, merge queue, required review or commit/push guards. Reviews are optional. Direct pushes to main and immediate PR merges are supported. Do not request reinstating gates; local validation selects affected checks from the diff.
 """
 no-preferences = """
 The helper owns parsing and generation; a helper module split is separate work. Theme packages intentionally keep parallel per-theme app files. Agent instructions and architecture references do not require product README copies or release notes.
@@ -87,7 +83,7 @@ The agent-frontmatter and agent-skills tables contain kendex render configuratio
 name = "workflows"
 globs = [".github/workflows/**"]
 reviewer_only = true
-instructions = "Keep CI coverage consistent with scripts/validate; a step that runs a script the tree does not hold is a defect. The qml area needs a Wayland session and is not run on the runner. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. The ci-ok context name stays stable."
+instructions = "GitHub Actions is disabled for this personal project. Do not add automated workflows or merge gates unless the owner asks. Local validation is scripts/validate, with affected rows selected by the diff."
 
 
 [sources.kendex]
@@ -255,7 +251,7 @@ enabled = true
 
 [hooks.pre-commit-check]
 source = "kendex"
-enabled = true
+enabled = false
 
 [hooks.block-argv-kill]
 source = "kendex"
@@ -271,6 +267,7 @@ enabled = true
 
 [hooks.doc-drift-check]
 source = "kendex"
+enabled = false
 harnesses = [
     "claude",
     "codex",
@@ -287,6 +284,7 @@ harnesses = [
 
 [hooks.reviewer-stop-check]
 source = "kendex"
+enabled = false
 harnesses = [
     "claude",
     "codex",
@@ -363,7 +361,11 @@ scout = [
 ]
 
 [skill-instructions]
-all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+all = """
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+
+VGS delivery policy overrides the shared workflow's mandatory review, CI-wait, branch-size and commit-hook gates. Work targets main. Reviews and PRs are optional; push directly or merge a PR immediately with gh, without a review loop, queue or CI wait. Do not arm git guards. Run scripts/validate once on the final relevant diff; use --changed <last-validated-commit> for a fix round, and reuse passing results while those inputs are unchanged. Do not rerun a full battery at commit, push or submission. Use --full only for an explicit full sweep or an unmapped dependency. Keep the live-session safety rules.
+"""
 code-quality = """
 Quickshell rules for this shell. They add to the rules above.
 

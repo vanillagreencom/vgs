@@ -11,10 +11,6 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
-# Absolute consumer base checkouts, space-separated in refresh order. The train
-# also refreshes every other registered project that subscribes to the package.
-ORCH_CONSUMER_REPOS = ""
-
 # Overseer watcher baselines and lane claims. Empty uses
 # <project-root>/tmp/oversee-watch. The overseer's host owns persistence.
 OVERSEE_WATCH_STATE_DIR = ""
@@ -95,6 +91,23 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
+# --- Talking to you -----------------------------------------------------------
+# How a session asks you questions, reports to you and decides without you.
+
+# Whether a launched overseer may open a question dialog in its terminal.
+# "off": the overseer starts without the dialog, as every lane does, on each
+# harness that can turn the dialog off; every question for you is then mail,
+# which reaches Slack, the report and the chat. "overseer": the overseer keeps
+# the dialog, and lanes still start without it. The question-tools table in
+# the orch skill rules lists the harnesses that can turn the dialog off.
+# values: off | overseer
+ORCH_QUESTION_TOOL = "off"
+
+# How long a question for you waits, in minutes, before the watch takes the
+# recommendation every such question carries and reports it. An ask's own
+# --wait overrides it.
+ORCH_ASK_WAIT_MINUTES = "120"
+
 # Who the session is talking to. "ceo" asks only about outcomes, in plain
 # language, and runs the decision, merge and issue-creation gates below
 # unattended unless this file sets one of them. "engineer" keeps each of those
@@ -107,6 +120,32 @@ ORCH_DECISION_MODE = "auto-recommended"
 
 # Merge consent only: "auto" merges after every gate passes; "ask" prompts.
 ORCH_MERGE_AUTONOMY = "auto"
+
+# The overseer's status report: what landed, what is running, what is next
+# and what waits on you, pasted into its chat and saved as a progress report.
+# "on" writes one on the schedule below; "off" writes none on a schedule. A
+# live overseer's report at its own handover is written whatever this says; a
+# dead or walled overseer's handover writes none.
+# values: on | off
+ORCH_REPORT = "on"
+
+# Minutes between two status reports. 0 or empty turns the timed report off.
+ORCH_REPORT_EVERY_MINUTES = "120"
+
+# Finished items that bring the next status report forward, whatever the
+# minutes above say. 0 leaves the report on its minutes alone. Where the last
+# report is more than 7 days old, one item finished in the last 7 days is
+# enough.
+ORCH_REPORT_EVERY_ISSUES = "0"
+
+# How many queued items the report's Next list shows.
+ORCH_REPORT_UPCOMING = "5"
+
+# The columns of the report's lists, in order, separated by commas. The
+# choices are: issue, what it is, why it matters.
+ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
+
+# --- Fleet ---------------------------------------------------------------------
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
@@ -177,10 +216,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Context tokens at or past which a turn end is refused until that session's
-# handoff record stands: the lane-mail-check hook judges a lane on it, and
-# oversee-succeed judges the overseer on it for that hook and for the watch.
-# ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
+# Earlier context handoff percentage. Shared rule and boundary behavior:
+# references/oversee-events.md, Judgement rules.
+# ORCH_HANDOFF_CONTEXT_PCT = "90"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
 # the fleet log rows a successor overseer reads at takeover, the days before
@@ -205,42 +243,12 @@ ORCH_OVERSEER_LANES = "3"
 # three lanes wall an account in about 3.7 hours.
 ORCH_LANE_ACCOUNT_CLAIMS = "3"
 
-# The overseer's status report: what landed, what is running, what is next
-# and what waits on you, pasted into its chat and saved as a progress report.
-# "on" writes one on the schedule below; "off" writes none on a schedule. A
-# live overseer's report at its own handover is written whatever this says; a
-# dead or walled overseer's handover writes none.
-# values: on | off
-ORCH_REPORT = "on"
-
-# Minutes between two status reports. 0 or empty turns the timed report off.
-ORCH_REPORT_EVERY_MINUTES = "120"
-
-# Finished items that bring the next status report forward, whatever the
-# minutes above say. 0 leaves the report on its minutes alone. Where the last
-# report is more than 7 days old, one item finished in the last 7 days is
-# enough.
-ORCH_REPORT_EVERY_ISSUES = "0"
-
-# How many queued items the report's Next list shows.
-ORCH_REPORT_UPCOMING = "5"
-
-# The columns of the report's lists, in order, separated by commas. The
-# choices are: issue, what it is, why it matters.
-ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
-
 # "off" stops oversee-succeed from launching a successor overseer, and turns
 # off the turn-end refusal that names it. A live
 # overseer writes its handoff and asks the user to start the next session. A
 # dead or walled overseer cannot ask, so the watch reports the case and leaves
 # a notice for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
-
-# "on" keeps the harness question tool in a successor overseer, so the owner is
-# asked there; "off" launches successors without it. open-terminal launches
-# lanes without it; references/skill-rules.md, Coordination, names what it
-# does not judge.
-# ORCH_OVERSEER_QUESTION_TOOL = "on"
 
 # Minutes before the projected account wall that starts overseer succession.
 # Zero disables the rate trigger.

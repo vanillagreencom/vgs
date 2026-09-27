@@ -468,9 +468,9 @@ if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   [[ "$launch_choice_missing" != true ]] || exit 1
 fi
 
-# A lane never holds its harness question tool: every command start_cmd builds
-# carries the words that take it away, and a --cmd template, rendered verbatim,
-# has to carry them itself. Keyed on the same harness as the gate above and
+# Every command start_cmd builds carries the words its harness row names to
+# take the question tool away, and a --cmd template, rendered verbatim, has to
+# carry them itself; a harness whose row names none keeps its tool. Keyed on the same harness as the gate above and
 # asked whether or not a --lane is named, because an item launched here is a
 # lane on any account; a launch naming no harness has no row and is not asked.
 # A reading of the words that fails is refused as their absence, never skipped.
@@ -484,6 +484,56 @@ if ! LAUNCH_QUESTION_OFF="$(launch_choice_question_off "$LAUNCH_HARNESS")" \
   for question_word in ${question_words[@]+"${question_words[@]}"}; do question_fields+=("word=$question_word"); done
   ot_message launch-question-tool-missing "harness=$LAUNCH_HARNESS" ${question_fields[@]+"${question_fields[@]}"} >&2
   exit 1
+fi
+
+# A fleet lane hands off at a share of its own window, which a harness adapter
+# in lib/lane-context.sh reads, and runs with its harness's own compaction off,
+# so the handoff comes first. Judged on the harness the launch RUNS, as the
+# gates above are, and only where a fleet state is named: a launch outside any
+# fleet has no overseer to hand off to. A launch that turns compaction off on a
+# session whose window nothing can name would run it into its wall with neither
+# a handoff nor a compaction, so each harness is admitted only where both halves
+# hold:
+#   claude  its words from the launch-choice table, which a --cmd template has
+#           to carry itself as it carries the question-tool words, on a model
+#           whose window the claude adapter names
+#   codex   the same words; its rollout names its own window
+#   pi      its settings file turning compaction off, read on this machine, so
+#           a hosted Pi lane, whose host keeps its own, cannot be admitted, and
+#           an installed pi-hooks carrier that sends the window
+# Every other harness, and a launch naming none, has no adapter. A wake is not
+# judged: it re-enters a session its own launch was admitted with, and names no
+# model of its own.
+if [[ "$FLEET" == true && "$WAKE" != true ]]; then
+  case "$LAUNCH_HARNESS" in
+    claude | codex)
+      if ! LAUNCH_COMPACTION_OFF="$(launch_choice_compaction "$LAUNCH_HARNESS" "$LAUNCH_MODEL")"; then
+        ot_message launch-window-unknown "harness=$LAUNCH_HARNESS" "model=${LAUNCH_MODEL:-none}" >&2
+        exit 1
+      fi
+      if [[ -n "$CMD_TEMPLATE" ]] && ! launch_choice_words_present "$LAUNCH_COMPACTION_OFF" "$CMD_TEMPLATE"; then
+        compaction_fields=()
+        read -r -a compaction_words <<<"$LAUNCH_COMPACTION_OFF"
+        for compaction_word in "${compaction_words[@]}"; do compaction_fields+=("word=$compaction_word"); done
+        ot_message launch-compaction-missing "harness=$LAUNCH_HARNESS" "${compaction_fields[@]}" >&2
+        exit 1
+      fi
+      ;;
+    pi)
+      [[ "$LANE_HOST" == local ]] || { ot_message pi-compaction-unverified "host=$LANE_HOST" >&2; exit 1; }
+      pi_compaction_rc=0
+      lane_adapter_pi_compaction_on "$CLAIM_ROOT" || pi_compaction_rc=$?
+      case "$pi_compaction_rc" in
+        1) ;;
+        0) ot_message compaction-on "harness=pi" "file=$LANE_ADAPTER_PI_FILE" >&2; exit 1 ;;
+        *) ot_message pi-settings-unreadable "file=$LANE_ADAPTER_PI_FILE" >&2
+           printf '%s\n' "$LANE_ADAPTER_PI_CAUSE" >&2; exit 1 ;;
+      esac
+      lane_adapter_pi_window_read "$CLAIM_ROOT" \
+        || { ot_message unsupported-for-oversee "harness=pi" "reason=no-window-read" >&2; exit 1; }
+      ;;
+    *) ot_message unsupported-for-oversee "harness=${LAUNCH_HARNESS:-none}" >&2; exit 1 ;;
+  esac
 fi
 
 # Handoff is unattended. A harness whose row names a permission posture stalls
@@ -551,10 +601,15 @@ lane_check() {
 # binding bucket is the wall there. A harness the table names cannot reach that
 # state, the gate above refusing a launch of one that named no model, and an
 # `auto:<h>` launch is one of those: <h> is the harness that gate judged it by.
+#
+# Both pick forms run under ORCH_LANE_HOST set to the host this launch resolved,
+# --host included, so the account is judged on the reading of the copy the
+# launch runs on: `lanes` takes a provider row carrying a reading in place of
+# this machine's.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
-  "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
+  ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
     ${model_args[@]+"${model_args[@]}"}
 }
 # Sets HOST_ACCOUNT to what the lane host says about this account, for this
@@ -606,13 +661,14 @@ named_lane_judge() {
   HOST_ACCOUNT=""
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
   lane_rc=0
-  lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
+  lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
     --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
   case "$lane_rc" in
     0) ;;
     # 4 is `lanes` holding no record for this directory — a config dir outside
-    # the discovery glob, or outside ORCH_LANE_DIRS where that is set. There is
-    # nothing to judge and never was; --help says such a dir is used as given,
+    # the discovery glob, or outside ORCH_LANE_DIRS where that is set, that the
+    # provider reports no reading for either. There is nothing to judge and
+    # never was; --help says such a dir is used as given,
     # so the launch proceeds exactly as it did before this gate existed.
     4) ;;
     3)
@@ -632,31 +688,40 @@ named_lane_judge() {
     # which: a RELAUNCH onto an account it reports holding proceeds, because
     # the copy running that session is the provider's and the harness's own
     # banner after the resume is the gate oversee-watch reads as usage-limit;
-    # a FRESH launch on an account it reports holding names the login the
-    # owner can renew, since an account the provider names is one this
-    # machine's copy either seeded or shadows; anything else refuses on the
-    # unread window, which is not an empty one.
+    # a FRESH launch on an account it reports holding, read `expired`, names
+    # the login the owner can renew; anything else refuses on the unread
+    # window, which is not an empty one.
     #
-    # `expired` and no wider for the login remedy: that status is the only one
-    # `lanes` reports for a credential this machine holds and cannot renew, and
-    # it reaches claude lanes alone, since the expiry it reads is the claude
-    # token's. A codex account whose local auth.json is dead reads
-    # `unreachable`, which an offline read produces too, so widening to it
-    # would print a login remedy to an operator whose network is down. A
-    # rate-limited read is `rate_limited`: one the host still holds a figure
-    # for is judged on that figure, and one with none carries no window, which
-    # this arm refuses as lane-model-unreadable like any other unread window.
-    # --help and the message say the remedy is reported for claude lanes.
+    # WHOSE copy expired depends on which reading the judge took. A provider
+    # row carrying a reading stands in for this machine's, so an `expired`
+    # there is the provider's own copy, of either harness, and the message
+    # sends the operator to the provider for it. Otherwise it is this
+    # machine's reading: a copy that either seeded the provider's, where the
+    # provider re-seeds at every create, or that the provider's shadows.
+    #
+    # `expired` and no wider for the login remedy: on this machine's reading
+    # that status is the only one `lanes` reports for a credential it holds
+    # and cannot renew, and it reaches claude lanes alone, since the expiry it
+    # reads is the claude token's. A codex account whose local auth.json is
+    # dead reads `unreachable`, which an offline read produces too, so
+    # widening to it would print a login remedy to an operator whose network
+    # is down. A rate-limited read is `rate_limited`: one the host still holds
+    # a figure for is judged on that figure, and one with none carries no
+    # window, which this arm refuses as lane-model-unreadable like any other
+    # unread window. --help and the message name both copies.
     5)
       # A record this script cannot read names no status, which reads as the
       # unmeasured window it is rather than as any of the answers below.
       lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
-      # The provider is asked here and nowhere else: this refusal is the only
-      # one its answer changes, so a launch that never reaches this arm never
-      # reaches the provider. Asked for every hosted lane that gets here, with
-      # no second reading of the conditions the branches below judge on —
-      # asking only for the shapes that act on the answer would state each of
-      # those conditions twice, and a rule stated twice is a rule that can be
+      # Whether the provider holds the account is asked here and nowhere else,
+      # of host_account_read's uncached read, whatever the judge above read.
+      # The judge reads the provider's windows through the usage cache, as it
+      # reads this machine's, and a record it measured through the host can be
+      # a row the provider has dropped since; a stale `held` would skip a gate
+      # that now applies. Asked for every hosted lane that gets here, with no
+      # second reading of the conditions the branches below judge on — asking
+      # only for the shapes that act on the answer would state each of those
+      # conditions twice, and a rule stated twice is a rule that can be
       # changed in one place.
       [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
       if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
@@ -767,7 +832,10 @@ if [[ -n "$LANE" ]]; then
   # relaunch costs nothing; a walled one spends the sandbox start, the worktree
   # step and the continuation line to open on a usage banner.
   #
-  # What the provider's answer changes is the UNMEASURED case alone, below: a
+  # The judge reads the provider's own row for the account where it carries a
+  # reading, so a folder whose credential only the provider holds is judged on
+  # that row rather than read as no credentials. Beyond that reading, what the
+  # provider's answer changes is the UNMEASURED case alone, below: a
   # relaunch onto an account the provider reports holding proceeds where nothing
   # measured that account, since the copy running it is the provider's and the
   # post-resume banner is then the gate. An unread window is not a full one, and
@@ -879,7 +947,8 @@ launch_ambient_codex_home() {
 # null, never "": a reader tests presence, and a hosted lane is one whose host
 # is set. STATUS is running unless a launch handed to a background job names
 # preparing or stopped; that launch's LAUNCH_PREPARE is recorded as `prepare`,
-# and any other launch or relaunch drops an earlier one.
+# and any other launch or relaunch drops an earlier one, as it drops the
+# `parked` record a park left: the resumed lane is running again.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATUS]
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
@@ -909,10 +978,27 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     '(.lanes // []) as $l
      | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at, .over_cap) else . end) as $patch
      | if any($l[]; .item == $rec.item)
-       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare) end) + $patch else . end))), report: "rewritten"}
+       then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare, .parked) end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
        else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"unrecorded"' ]] || return 2
+}
+
+# Whether the fleet state records the item parked: its sandbox stopped by
+# lane-close --park with its disk kept. Status 0 for a parked record, 1 for any
+# other record or none, 2 for a state that could not be read, which is neither
+# answer and is reported: a launch that read it as "not parked" would create
+# onto a stopped sandbox. `get` takes a path and no binding, so the id is
+# interpolated; it passed the launcher's id validation above, whose grammar
+# admits no quote.
+lane_record_parked() { # WT_ID
+  local answer
+  if ! answer="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
+      '[.lanes[]? | objects | select(.item == "'"$1"'") | .status] | first // "absent"')"; then
+    ot_message state-read-failed "item=$1" >&2
+    return 2
+  fi
+  [[ "$answer" == parked ]]
 }
 
 # Ask the worktree tool whether the item's pull request landed, printing the
@@ -969,7 +1055,11 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
   # would expand the very brackets this quoting exists to protect.
   read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
-  launch_choice_lead_settings --question-off "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
+  # A wake names no model of its own: its compaction words are the ones the
+  # model its resumed session runs gets, which the caller read into WAKE_MODEL.
+  local -a model_arg=()
+  [[ -z "$wake_dir" ]] || model_arg=(--model "$WAKE_MODEL")
+  launch_choice_lead_settings --question-off ${model_arg[@]+"${model_arg[@]}"} "$HARNESS" ${flag_tokens[@]+"${flag_tokens[@]}"}
   for tok in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     flags+="'$tok' "
   done
@@ -1485,23 +1575,28 @@ host_lane_marker() { # ITEM ROOT
   LANE_MARKER_FIELDS=("path=$marker")
   printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || { host_marker_busy $?; return 1; }
   read_back="$(host_transport cat --item "$1" "$marker")" || { host_marker_busy $?; return 1; }
-  [[ "$read_back" == "$2" ]]
+  [[ "$read_back" == "$2" ]] || return 1
+  # The context reading a session before this launch recorded in the mailbox,
+  # emptied as lane-marker removes it locally: `lanes context` reads an empty
+  # record as none, and the host has no verb that deletes.
+  LANE_MARKER_FIELDS=("path=$2/tmp/lane-mail/$1/$LANE_CONTEXT_RECORD")
+  host_transport put --item "$1" "$2/tmp/lane-mail/$1/$LANE_CONTEXT_RECORD" </dev/null || { host_marker_busy $?; return 1; }
 }
 
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
-# the containment over them, which is lane-mail's own, so this hands it the
-# tree and the item and nothing else. Its own keyed line goes to the stderr
+# the containment over them, which is lane-mail's own. The selected resumed
+# identity lets it retain that session's context reading. Its keyed line goes to the stderr
 # this inherits and does not redirect; the call site adds the line the reason
 # set here names, which carries none of that script's text. A hosted lane's
 # record is on its provider's disk and out of that script's reach, so the
 # branch is here, in the one owner of the record, and not at the call site,
 # which records every lane the same way.
-write_lane_marker() { # WT ITEM REMOTE_ROOT
+write_lane_marker() { # WT ITEM REMOTE_ROOT HARNESS SESSION
   LANE_MARKER_REASON=marker-failed
   LANE_MARKER_FIELDS=("path=$1")
   [[ -z "${3:-}" ]] || { host_lane_marker "$2" "$3"; return; }
-  "$SCRIPT_DIR/lane-marker" "$1" "$2"
+  "$SCRIPT_DIR/lane-marker" "$1" "$2" "$4" "$5"
 }
 
 # The tmux session every lane window of this invocation opens in, resolved on
@@ -1837,8 +1932,7 @@ open_wake() { # DIR TITLE CMD
 # caller checks it, which suspends errexit for this whole body, so every
 # substitution here is checked explicitly.
 launch_finish() {
-  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
-  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; return 1; fi
+  local context_session
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
@@ -1855,6 +1949,28 @@ launch_finish() {
   if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
     ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
   fi
+  if [[ "$WAKE" != true && -d "$wt" ]]; then
+    context_session="$record_session"
+    # Pi resumes by file path, but its hook records the session header's id.
+    if [[ "$HARNESS" == pi && -n "$session_file" ]]; then
+      context_session="$(jq -Rrn 'first(inputs|fromjson?|select(.type=="session")|.id)//empty' "$session_file")" \
+        || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
+    fi
+    if ! write_lane_marker "$wt" "$wt_id" "$remote_path" "$HARNESS" "$context_session"; then
+      ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; return 1
+    fi
+  fi
+  # A wake starts a new process on that session, which takes none of the
+  # settings the first one was launched with. Its compaction follows the model
+  # the transcript's last reading names, so a session whose window is named
+  # stays uncompacted and one whose transcript names no model keeps it.
+  WAKE_MODEL="" wake_reading=""
+  if [[ "$WAKE" == true && -n "$session_file" ]]; then
+    if ! wake_reading="$(lane_context_reading "$HARNESS" < "$session_file")"; then
+      ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1
+    fi
+    [[ "$wake_reading" != *$'\t'* ]] || WAKE_MODEL="${wake_reading##*$'\t'}"
+  fi
   cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})" || return 1
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
@@ -1867,6 +1983,12 @@ launch_finish() {
   # worktree. A hosted lane's credential is already on its host; the claim alone
   # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
+    if [[ "$HARNESS" == codex ]]; then
+      local compaction_env compaction_verified=true
+      [[ -z "$CMD_TEMPLATE" ]] || compaction_verified=false
+      compaction_env=$(lane_launch_compaction_env "$cmd" "$HARNESS" "$compaction_verified") || return 1
+      cmd="env $compaction_env $cmd"
+    fi
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
@@ -2205,6 +2327,46 @@ for raw in "${ITEMS[@]}"; do
   # A hosted item's provider creates the host and its worktree, and its create
   # exit 75 is the same ownership claim.
   create_rc=0 ssh_target="" remote_path="" remote_prefix="" host_state=""
+  # A parked lane's sandbox is stopped, its disk kept: the resume brings it
+  # back through the provider's start before create --relaunch reconnects and
+  # resumes the harness on that disk. The record is read for the status alone,
+  # and only a hosted relaunch into a fleet can meet one; a start the provider
+  # refuses, or answers without its sandbox-started line, fails the item with
+  # the record still parked, which is what stands.
+  parked_rc=1
+  if [[ "$LANE_HOST" != local && "$RELAUNCH" == true && "$FLEET" == true ]]; then
+    parked_rc=0
+    lane_record_parked "$wt_id" || parked_rc=$?
+    [[ "$parked_rc" -ne 2 ]] || { failed=$((failed + 1)); continue; }
+  fi
+  if [[ "$parked_rc" -eq 0 ]]; then
+    start_rc=0 start_out=""
+    start_out="$(host_transport start --item "$wt_id")" || start_rc=$?
+    if [[ "$start_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
+      ot_message lane-host-busy "item=$item" step=start >&2
+      failed=$((failed + 1))
+      continue
+    elif [[ "$start_rc" -ne 0 ]]; then
+      ot_message host-start-failed "item=$item" "exit=$start_rc" >&2
+      failed=$((failed + 1))
+      continue
+    elif [[ "$start_out" != "sandbox-started item=$wt_id" ]]; then
+      ot_message host-start-failed "item=$item" "cause=answer-unparsed" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+    # The record now says what stands: the sandbox is up and no harness runs
+    # in it, which is what stopped means, so a create that fails from here
+    # leaves a record a plain relaunch recovers, never a parked one over a
+    # running sandbox. lane_record_write rewrites it running on success.
+    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update oversee --arg item "$wt_id" \
+        '(.lanes[] | select(.item == $item)) |= (del(.parked) | .status = "stopped")' >/dev/null; then
+      ot_message parked-record-failed "item=$item" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+    ot_message host-started "item=$item" "host=$LANE_HOST" status=stopped
+  fi
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
   if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?

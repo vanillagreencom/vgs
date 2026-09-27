@@ -118,7 +118,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" \
   "$SCRIPTS_DIR/lane-marker" "$SCRIPTS_DIR/orch-env" "$REPO/scripts/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
@@ -149,7 +149,7 @@ launch() {
     STUB_MARK="$ROW/reached" \
     STUB_WALL="$ROW/wall" STUB_PICK="$ROW/pick" TERMINAL=ghostty ORCH_TMUX_SESSION=fleet \
     ORCH_OVERSEER_LANES="$fleet_cap" ORCH_LANE_ACCOUNT_CLAIMS="$account_cap" \
-    "$OT" ${fleet[@]+"${fleet[@]}"} "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" "$@" \
+    "$OT" ${fleet[@]+"${fleet[@]}"} "${MODE:---tmux}" --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" "$@" \
     >"$ROW/$tag.out" 2>"$ROW/$tag.err") || rc=$?
   printf '%s\n' "$rc" > "$ROW/$tag.rc"
 }
@@ -468,6 +468,15 @@ launch two 1 0 --lane "$LANE_A" --relaunch CC-1
 assert_eq "rc=$(rc two) $(key two) running=$(running)" \
   "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
   "a relaunch of a stopped record adds a lane, and at the fleet cap it is refused"
+row relaunch-parked
+launch one 1 0 --lane "$LANE_A" CC-1
+"$WS" --state-dir "$STATE" update oversee '.lanes |= map(.status = "parked")' >/dev/null
+rm -f -- "${CLAIMS:?}/claims"/*.claim
+seed_running CC-9
+launch two 1 0 --lane "$LANE_A" --relaunch CC-1
+assert_eq "rc=$(rc two) $(key two) running=$(running)" \
+  "rc=1 open-terminal: cap-reached item=CC-1 cap=1 running=1 claims=0 running=CC-9" \
+  "a parked record holds no working-lane capacity: its relaunch adds a lane, and at the fleet cap it is refused"
 row relaunch-preparing
 seed_running CC-1 preparing
 launch one 1 0 --lane "$LANE_A" --relaunch CC-1
@@ -687,7 +696,7 @@ for spec in \
   if [[ "$mode" == no-fleet ]]; then
     rc=0
     err="$(cd "$REPO" && PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" TMUX=stub,1,0 \
-      "$OT" --tmux --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL" $words CC-1 2>&1 >/dev/null)" || rc=$?
+      "$OT" --tmux --harness claude --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" $words CC-1 2>&1 >/dev/null)" || rc=$?
   else
     launch opt 1 0 $words CC-1
     rc="$(rc opt)"; err="$(cat "$ROW/opt.err")"

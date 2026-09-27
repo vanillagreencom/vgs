@@ -1,5 +1,4 @@
-# Kendex renders are tracked. The install ledger is machine-local.
-/.kendex-lock.json
+# Kendex renders and their install ledger are tracked.
 /.claude/settings.local.json
 # Session-continuation state, never shared.
 /.claude/RESUME.md
@@ -67,9 +66,12 @@ Thumbs.db
 # Local planning and research artifacts
 docs/plans/
 docs/research/
+docs/handoff/
 # An archived copy of another project's Quickshell work, kept locally as a
 # reference only. Nothing in v2 reads, runs or links to it.
 /assets/
+# Ignored runtime leftovers when switching from the archived v1 checkout.
+/config/vshell/
 
 # Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md

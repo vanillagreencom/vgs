@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # pr-timeline: the stamps and CI wall times it reads from one GraphQL
-# response, and its refusal of a connection longer than the page it read.
+# response, the check-suite and check-run pages it reads past that
+# response's first, and its refusal of a connection longer than the page it
+# read or still open at its page cap.
 #
 # Each case stages one response through the shared gh fake and asserts the
 # output whole. The world is one merged PR:
@@ -90,12 +92,19 @@ status_history() { # PAIRS
 HISTORY_B1="10:05:success"
 HISTORY_H2="10:25:success"
 
+# The pages past the first, staged by the paging cases; every other case
+# stages none. The PR response is staged under a selector its query alone
+# carries, so a page the code asks for in such a case is refused rather than
+# answered with the PR.
+stage_pages() { :; }
+
 BIN="$PR_TIMELINE"
 run() { # EDIT [ARGS...]
   local edit="$1" rc=0
   shift
   gh_stub_reset
-  gh_stub_answer api-graphql "$(response "$edit")"
+  gh_stub_answer "api-graphql:pullRequest(number" "$(response "$edit")"
+  stage_pages
   gh_stub_answer "api-repos/owner/repo/commits/b1/statuses?per_page=100" "$(status_history "$HISTORY_B1")"
   gh_stub_answer "api-repos/owner/repo/commits/h2/statuses?per_page=100" "$(status_history "$HISTORY_H2")"
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u REVIEW_GATE_CONTEXT \
@@ -178,12 +187,164 @@ done <<'ROWS'
 commits|.data.repository.pullRequest.commits.totalCount = 101
 reviews|.data.repository.pullRequest.reviews.totalCount = 101
 timeline|.data.repository.pullRequest.timelineItems.pageInfo.hasNextPage = true
-check-suites|.data.repository.pullRequest.mergeCommit.checkSuites.pageInfo.hasNextPage = true
-check-runs|.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites.nodes[1].checkRuns.pageInfo.hasNextPage = true
 ROWS
 
 assert_eq "$(run '.data.repository.pullRequest |= (.commits.totalCount = 100 | .reviews.totalCount = 100)') $(jq -c .pr "$TMP_ROOT/stdout")" \
   "rc=0 42" "a hundred commits and reviews fit the page and print"
+
+echo "=== check suites and check runs are read through every page ==="
+# The first page of the head's suites filled to 50: the fixture's two plus
+# 48 app suites whose one run each sits inside the head's CI span, open at
+# cursor c50. The 51st suite, on the second page, ends the head's CI at
+# 10:50 in place of 10:45.
+FIFTY_SUITES='.data.repository.pullRequest.headCommit.nodes[0].commit.checkSuites |= (
+  .nodes += [range(48) | suite(null; [run("fill"; "10:30"; "10:31")])]
+  | .pageInfo = {hasNextPage: true, endCursor: "c50"})'
+# One page of suites, as a suitesPage query answers it: one app suite holding
+# RUNS, its runs open at RUNS_CURSOR when one is given, and its pageInfo.
+suites_page() { # RUNS HAS_NEXT CURSOR [RUNS_CURSOR]
+  jq -cn --argjson runs "$1" --argjson next "$2" --arg cursor "$3" --arg rcursor "${4:-}" '{data: {repository: {object: {checkSuites: {
+    pageInfo: {hasNextPage: $next, endCursor: $cursor},
+    nodes: [{id: "S\($cursor)", workflowRun: null,
+             checkRuns: {pageInfo: (if $rcursor == "" then {hasNextPage: false} else {hasNextPage: true, endCursor: $rcursor} end), nodes: $runs}}]}}}}}'
+}
+# One page of check runs, as a runsPage query answers it.
+runs_page() { # RUNS HAS_NEXT CURSOR
+  jq -cn --argjson runs "$1" --argjson next "$2" --arg cursor "$3" \
+    '{data: {node: {checkRuns: {pageInfo: {hasNextPage: $next, endCursor: $cursor}, nodes: $runs}}}}'
+}
+LATE_HEAD_RUN='[{name: "late", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-09-20T10:46:00Z", completedAt: "2026-09-20T10:50:00Z", detailsUrl: "x"}]'
+LATE_GROUP_RUN='[{name: "late", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-09-20T11:16:00Z", completedAt: "2026-09-20T11:30:00Z", detailsUrl: "x"}]'
+
+stage_pages() { gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"; }
+run "$FIFTY_SUITES" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:50:00Z",1800,900]' "a 51-suite head: the suite on the second page ends its CI"
+assert_eq "$(gh_stub_calls | grep -c 'query suitesPage') $(gh_stub_calls | grep -o -- '-f oid=h2 -f cursor=c50')" \
+  "1 -f oid=h2 -f cursor=c50" "the second page is asked for once, at the head and the first page's cursor"
+
+# The 51st suite, on the second page, arrives with its runs open at r1: the
+# run on its second runs page ends the head's CI at 10:50. The runs walk
+# reads the suite list after the suite walk, so a suite past page one is
+# walked too.
+FILL_RUN='[{name: "fill", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-09-20T10:30:00Z", completedAt: "2026-09-20T10:31:00Z", detailsUrl: "x"}]'
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$FILL_RUN")" false c51 r1)"
+  gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"
+}
+run "$FIFTY_SUITES" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:50:00Z",1800,900]' "a second-page suite with runs past its first page: the run on its second runs page ends the head's CI"
+assert_eq "$(gh_stub_calls | grep -c 'query runsPage') $(gh_stub_calls | grep -o -- '-f id=Sc51 -f cursor=r1')" \
+  "1 -f id=Sc51 -f cursor=r1" "the second-page suite's runs are asked for once, at its id and its first page's cursor"
+
+# The merge group's suite, its runs open at cursor r100 under the id the
+# runsPage query takes: the run on the second page ends the group's CI at
+# 11:30 in place of 11:15.
+OPEN_GROUP_RUNS='.data.repository.pullRequest.mergeCommit.checkSuites.nodes[0] |= (.id = "MG" | .checkRuns.pageInfo = {hasNextPage: true, endCursor: "r100"})'
+stage_pages() { gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_GROUP_RUN")" false null)"; }
+run "$OPEN_GROUP_RUNS" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:45:00Z",1500,1800]' "a suite with runs past its first page: the run on the second page ends its CI"
+assert_eq "$(gh_stub_calls | grep -c 'query runsPage') $(gh_stub_calls | grep -o -- '-f id=MG -f cursor=r100')" \
+  "1 -f id=MG -f cursor=r100" "the second page is asked for once, at the suite's id and the first page's cursor"
+
+# The merge commit's suites open at cursor c50: the merge_group suite on the
+# second page ends the group's CI at 11:30 in place of 11:15.
+OPEN_MERGE_SUITES='.data.repository.pullRequest.mergeCommit.checkSuites.pageInfo = {hasNextPage: true, endCursor: "c50"}'
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_GROUP_RUN")" false null \
+    | jq -c '.data.repository.object.checkSuites.nodes[0].workflowRun = {event: "merge_group", url: "https://github.com/owner/repo/actions/runs/1100", workflow: {name: "ci-merge_group"}}')"
+}
+run "$OPEN_MERGE_SUITES" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:45:00Z",1500,1800]' "a merge commit with suites past its first page: the merge_group suite on the second page ends its CI"
+assert_eq "$(gh_stub_calls | grep -c 'query suitesPage') $(gh_stub_calls | grep -o -- '-f oid=m1 -f cursor=c50')" \
+  "1 -f oid=m1 -f cursor=c50" "the second page is asked for once, at the merge commit and the first page's cursor"
+
+# Every query on the wire in one run that reads all three: each defines
+# exactly the fragments it spreads, which GitHub refuses otherwise and the
+# stub never judges.
+stage_pages() {
+  gh_stub_answer "api-graphql:query suitesPage" "$(suites_page "$(jq -cn "$LATE_HEAD_RUN")" false null)"
+  gh_stub_answer "api-graphql:query runsPage" "$(runs_page "$(jq -cn "$LATE_GROUP_RUN")" false null)"
+}
+run "$FIFTY_SUITES | $OPEN_GROUP_RUNS" >/dev/null
+assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs, .ci_merge_group_secs]' "$TMP_ROOT/stdout")" \
+  '["2026-09-20T10:50:00Z",1800,1800]' "the head's suites and the group's runs page in one run"
+# Each GraphQL call's operation name with the fragments it defines and the
+# ones it spreads, both as sorted sets.
+fragments_per_query() {
+  gh_stub_calls | awk '
+    function flush() { if (name != "") printf "%s defined:%s spread:%s\n", name, sorted(d), sorted(u) }
+    function sorted(set,   k, n, keys, i, j, t, out) {
+      n = 0; for (k in set) keys[++n] = k
+      for (i = 2; i <= n; i++) { t = keys[i]; for (j = i - 1; j >= 1 && keys[j] > t; j--) keys[j + 1] = keys[j]; keys[j + 1] = t }
+      out = ""; for (i = 1; i <= n; i++) out = out " " keys[i]
+      return out }
+    /^api graphql/ { flush(); name = ""; delete d; delete u
+      name = ($0 ~ /query [A-Za-z]+\(/) ? substr($0, match($0, /query [A-Za-z]+\(/) + 6, RLENGTH - 7) : "pullRequest" }
+    /^[^a]/ || /^api graphql/ { line = $0
+      while (match(line, /fragment [A-Za-z]+/)) { d[substr(line, RSTART + 9, RLENGTH - 9)] = 1; line = substr(line, RSTART + RLENGTH) }
+      line = $0
+      while (match(line, /\.\.\.[A-Za-z]+/)) { u[substr(line, RSTART + 3, RLENGTH - 3)] = 1; line = substr(line, RSTART + RLENGTH) } }
+    END { flush() }'
+}
+assert_eq "$(fragments_per_query | sort | tr '\n' ';')" \
+  "pullRequest defined: gate runPage suitePage suites spread: gate runPage suitePage suites;runsPage defined: runPage spread: runPage;suitesPage defined: runPage suitePage spread: runPage suitePage;" \
+  "each query defines the fragments it spreads and no other"
+
+echo "=== a page that cannot be followed refuses ==="
+stage_pages() { :; }
+assert_eq "$(run "$OPEN_MERGE_SUITES | .data.repository.pullRequest.mergeCommit.checkSuites.pageInfo.endCursor = null") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of m1 page past the first names no cursor"}' "an open connection with no cursor cannot be followed"
+stage_pages() { gh_stub_answer "api-graphql:query suitesPage" '{"data":{"repository":{"object":null}}}'; }
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 carries no connection"}' "a suites page answering no commit refuses"
+stage_pages() { gh_stub_answer "api-graphql:query runsPage" '{"data":{"node":null}}'; }
+assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-runs of suite MG page after r100 carries no connection"}' "a runs page answering no suite refuses"
+stage_pages() { gh_stub_fail "api-graphql:query suitesPage" 1 'HTTP 502'; }
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr")" \
+  'rc=1  {"error":"pr-timeline: check-suites of h2 page after c50 unreadable: GitHub API request failed"}' \
+  "a suites page that does not read is one error naming its walk, cursor and the API's text"
+stage_pages() { :; }
+
+echo "=== a connection still open at the page cap refuses ==="
+# Every page past the first is open at the next cursor, and the one page past
+# the cap, 20 pages of suites and 10 of runs, would close the connection: the
+# script never asks for it.
+open_suite_pages() { # PAGES
+  local n
+  for n in $(seq 1 "$1"); do
+    gh_stub_answer_seq "api-graphql:query suitesPage" "$(suites_page '[]' true "c$n")"
+  done
+  gh_stub_answer_seq "api-graphql:query suitesPage" "$(suites_page '[]' false null)"
+}
+open_run_pages() { # PAGES
+  local n
+  for n in $(seq 1 "$1"); do
+    gh_stub_answer_seq "api-graphql:query runsPage" "$(runs_page '[]' true "r$n")"
+  done
+  gh_stub_answer_seq "api-graphql:query runsPage" "$(runs_page '[]' false null)"
+}
+# The cursor each further page was asked at, in call order: the stub answers
+# by call ordinal, so the chain is what pins that each page carried the
+# cursor the page before ended on. The last open page's cursor is never
+# asked at: the cap refuses there.
+cursor_chain() { # PREFIX FIRST LAST
+  local n
+  printf 'cursor=%s ' "$2"
+  for n in $(seq 1 "$3"); do printf 'cursor=%s%s ' "$1" "$n"; done
+}
+cursors_asked() { gh_stub_calls | grep -o 'cursor=[^ ]*' | tr '\n' ' '; }
+stage_pages() { open_suite_pages 19; }
+assert_eq "$(run "$FIFTY_SUITES") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql') $(cursors_asked)" \
+  "rc=1  {\"error\":\"truncated: check-suites\"} pages=20 $(cursor_chain c c50 18)" "check suites open at the twentieth page, each asked at the cursor before it"
+stage_pages() { open_run_pages 9; }
+assert_eq "$(run "$OPEN_GROUP_RUNS") $(cat "$TMP_ROOT/stdout") $(cat "$TMP_ROOT/stderr") pages=$(gh_stub_calls | grep -c 'api graphql') $(cursors_asked)" \
+  "rc=1  {\"error\":\"truncated: check-runs\"} pages=10 $(cursor_chain r r100 8)" "check runs open at the tenth page, each asked at the cursor before it"
+stage_pages() { :; }
 
 echo "=== the repository and gate context reach the query ==="
 run . --repo other/place --gate-context "Custom gate" >/dev/null
@@ -196,22 +357,35 @@ assert_eq "$(grep -o 'owner=owner -f name=repo -F number=42 -f gate=Review gate'
   "owner=owner -f name=repo -F number=42 -f gate=Review gate" "the checkout's repository and the review gate's default context otherwise"
 assert_eq "$(run . --bogus) $(cat "$TMP_ROOT/stderr")" 'rc=1 {"error":"Unknown option: --bogus"}' "an unknown option is refused"
 
-echo "=== control ==="
-# The suite's one planted defect: the head checks read without
-# scope_current_run. It runs from a private copy of pr-timeline.sh beside a
-# link to the shipped lib, so the source tree is never written.
+echo "=== controls ==="
+# Each planted defect runs from a private copy of pr-timeline.sh beside a
+# link to the shipped lib, so the source tree is never written; mutate
+# writes that copy with ANCHOR, found once in the source, replaced by R.
 mkdir -p "$TMP_ROOT/scripts/commands"
 ln -s "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/scripts/lib"
 BIN="$TMP_ROOT/scripts/commands/pr-timeline.sh"
-ANCHOR="head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)"
-assert_eq "$(grep -Fc -- "$ANCHOR" "$PR_TIMELINE")" "1" "the control finds its one site"
-A="$ANCHOR" R="head_checks=\$(jq -c '._checks.head' <<<\"\$result\")" \
-  awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
-  "$PR_TIMELINE" > "$BIN"
-assert_eq "$(grep -Fc -- "$ANCHOR" "$BIN")" "0" "the control applied its mutation"
+mutate() { # ANCHOR REPLACEMENT
+  assert_eq "$(grep -Fc -- "$1" "$PR_TIMELINE")" "1" "the control finds its one site"
+  A="$1" R="$2" \
+    awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
+    "$PR_TIMELINE" > "$BIN"
+  assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
+}
+
+# The head checks read without scope_current_run.
+mutate "head_checks=\$(jq -c '._checks.head' <<<\"\$result\" | scope_current_run)" \
+  "head_checks=\$(jq -c '._checks.head' <<<\"\$result\")"
 run "$STALE_HEAD" >/dev/null
 assert_eq "$(jq -c '[.stamps.ci_green, .ci_head_secs]' "$TMP_ROOT/stdout")" '[null,2400]' \
   "control: without scope_current_run the superseded failed run is read and timed"
+
+# The page walk without its cap: the one page past the cap, which closes the
+# connection, is read, and the PR prints.
+mutate '[ "$pages" -lt "$cap" ] || break' '[ "$pages" -lt "$cap" ] || :'
+stage_pages() { open_suite_pages 19; }
+assert_eq "$(run "$FIFTY_SUITES") pages=$(gh_stub_calls | grep -c 'api graphql') $(jq -c .pr "$TMP_ROOT/stdout")" \
+  "rc=0 pages=21 42" "control: without the cap the walk reads the twenty-first page and prints"
+stage_pages() { :; }
 BIN="$PR_TIMELINE"
 
 echo

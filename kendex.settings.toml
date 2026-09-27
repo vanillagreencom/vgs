@@ -5,13 +5,10 @@
 
 [env]
 CI_FIX_MAX_CYCLES = "6"
-# Wait for reviewer evidence. PR_REVIEW_CHECK can provide a named-status
-# fallback when a reviewer submits no review object.
-PR_REVIEW_GATE = "review"
+# Reviews are optional; no reviewer wait or required evidence.
+PR_REVIEW_GATE = "off"
 DECISIONS_DIR = "docs/decisions"
-# The decision log the decider compares against: v2's, not main's, which holds
-# the previous shell's records under the same numbers.
-DECISIONS_BASE_REF = "origin/v2"
+DECISIONS_BASE_REF = "origin/main"
 # Issue branches use the vgs Linear identifier: vgs-<n>-<slug>.
 GH_ISSUE_PATTERN = "vgs-[0-9]+"
 LINEAR_FORMAT = "safe"
@@ -32,9 +29,8 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "1080"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vgs"
-WORKTREE_COPIES = ".kendex-lock.json"
-# Every worktree branches from v2 and every PR targets v2.
-WORKTREE_DEFAULT_BRANCH = "v2"
+WORKTREE_COPIES = ""
+WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = ""
 WORKTREE_SYMLINKS = ".env.local .cache"
@@ -43,10 +39,6 @@ WORKTREE_SYMLINKS = ".env.local .cache"
 # evidence on the current head. Empty accepts review objects only. Names
 # do not authenticate publishers; use only where all publishers are trusted.
 PR_REVIEW_CHECK = ""
-
-# Seconds ci-wait keeps polling before failing when no CI checks registered
-# yet; raise for approval-gated CI with slow dispatch.
-CI_WAIT_NO_CHECKS_GRACE = "600"
 
 # Total concurrent reviewer-session budget, including the primary session.
 # Zero allows all reviewers. A bounded budget runs sequential waves and
@@ -123,17 +115,14 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 # because its line classifier cannot recognize enclosing strings or heredocs.
 REVIEW_GATE_CARRY_FORWARD = "docs"
 
-# Enforce requires review evidence. Off posts a disabled-by-settings status
-# and skips the reviewer wait; CI remains required.
-REVIEW_GATE_MODE = "enforce"
+# No gate writer or required status exists; shared tools skip review waits.
+REVIEW_GATE_MODE = "off"
 # Require fresh evidence for policy instructions and the checks. Harness trees
 # are excluded whole so a new rendered skill inherits the rule; scripts/ is
 # excluded so the validation code never carries stale evidence.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;.agents/skills/bot-instructions/*"
 
-# Which change classes need review evidence and from whom. Docs-only changes
-# need none. Values as kendex sets them.
-REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:bot;standard:current"
+REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"
 REVIEW_GATE_DOCS_ONLY = "none"
 
 # The agent-routing labels the project-management taxonomy declares. A create
@@ -147,10 +136,8 @@ LINEAR_REQUIRE_REACH = "1"
 # an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# "enforce" fails closed on unresolved threads CI-side; "off" only where a
-# server-side zero-bypass ruleset already enforces thread hygiene. Evidence
-# and changes-requested still fail closed either way.
-REVIEW_GATE_THREADS = "enforce"
+# Review threads are advisory, not a merge condition.
+REVIEW_GATE_THREADS = "off"
 
 # Bounded attempts per predicate evidence read, and the pause between them.
 # A read failing every attempt is still exit 2 (no verdict).
@@ -214,8 +201,8 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # runs the staged bot-instructions check itself.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""
 
-# Markdown lanes judge every tracked file their globs name minus tools/md-excludes.
-COMMIT_GUARDS_MD_SCOPE = "all"
+# Optional manual guard runs use changed files; git hooks remain unarmed.
+COMMIT_GUARDS_MD_SCOPE = "touched"
 
 # md-refs judges every tracked markdown file, decision records and READMEs
 # included, not only the agent-loaded set.
@@ -225,9 +212,9 @@ COMMIT_GUARDS_MD_REFS_PATHS = "*.md"
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
 
-# Every validation row that runs without a Wayland session. The qml row needs
-# the desktop and runs from the checkout that has one.
-DEV_VALIDATE_CMD = "scripts/validate offline"
+# Diff-scoped local checks, including the isolated smoke only when affected.
+DEV_VALIDATE_CMD = "scripts/validate"
+DEV_VALIDATE_RANGE_CMD = "scripts/validate"
 
 # Optional extra verification command for GitHub-side checks; empty means
 # none beyond the guard chain.

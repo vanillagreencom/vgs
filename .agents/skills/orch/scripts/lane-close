@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Close one recorded tmux lane, its hosted sandbox, and its fleet record.
+# Close one recorded tmux lane, its hosted sandbox, and its fleet record, or
+# park a hosted lane's clean merge wait: end its harness and stop its sandbox
+# while the PR waits for the queue, its disk and record kept for the resume.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -8,8 +10,11 @@ LANE_HOST="$SCRIPT_DIR/lane-host"
 LANE_MAIL="$SCRIPT_DIR/lane-mail"
 DEV_VALIDATE_RUN="$SCRIPT_DIR/dev-validate-run"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+LANES="$SCRIPT_DIR/lanes"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
+source "$SCRIPT_DIR/lib/date-ladder.sh"
+source "$SCRIPT_DIR/lib/usage-reset.sh"
 
 message() { # REASON FIELD=VALUE...
   local reason="$1" field
@@ -25,7 +30,16 @@ message() { # REASON FIELD=VALUE...
     pane-missing) printf '%s\n' 'No tmux pane carries the recorded window name.' ;;
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
-    lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
+    lane-live)
+      printf '%s\n' 'The lane is not finished. Close-out changed nothing.' \
+        'state=walled is a limit banner below the lane'"'"'s last turn that its account reading did not lift. account= is that reading, taken for the model the record names, or over the whole account where it names none, and run under the record'"'"'s host, so a hosted lane'"'"'s reading is the provider'"'"'s where its accounts row carries one:' \
+        '  room            lanes pick --lane read room, and the banner names a reset still ahead in resets=,' \
+        '                  or resets=unresolved: a reset clause this host could not resolve, such as one in a zone it has no zoneinfo for.' \
+        '  walled          lanes pick --lane read the account at or above ORCH_LANE_MAX_PCT.' \
+        '  unmeasured      lanes pick --lane measured nothing for the account; its words are on the lines above.' \
+        '  unlisted        the recorded account is no configured lane of the harness.' \
+        '  read-failed     lanes pick --lane failed; its words are on the lines above.' \
+        '  none            the record names no account, or its harness is not one lanes measures.' ;;
     tracker-read-failed)
       printf '%s\n' \
         'The tracker state could not be read. Close-out changed nothing. cause names which read did not answer:' \
@@ -60,6 +74,28 @@ message() { # REASON FIELD=VALUE...
     item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host, window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
     item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. How long they stay is the prune's keep list, as workflow-state prune --help states." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
+    park-refused)
+      printf '%s\n' \
+        'The lane was not parked and nothing changed. reason names the condition it stopped on:' \
+        '  local             the record carries no host, so there is no sandbox to stop.' \
+        '  repo-unresolved   the record names no repository and gh repo view could not answer for this checkout; pass --repo OWNER/REPO.' \
+        '  pr-read-failed    gh pr view could not read the pull request; its own words are on the lines above this one.' \
+        '  pr-branch-mismatch  the pull request'"'"'s head branch is not the item'"'"'s branch, so --pr names another lane'"'"'s pull request.' \
+        '  pr-not-open       the pull request is merged or closed: a merged lane takes the full close, never a park.' \
+        '  provider-unsupported  the lane host answered stop-sandbox --check with the status or cause named, so the sandbox could not be brought back once stopped: exit=2 is the absent-verb status of a provider without the stop-sandbox and start pair, lane-host-ssh among them; cause=answer-unparsed a check that succeeded without its sandbox-stoppable item=ID line.' \
+        '  queue-read-failed the merge queue could not be asked whether it holds the pull request; gh api graphql'"'"'s own words are on the lines above this one.' \
+        '  not-armed         the pull request is neither in the merge queue nor auto-merge armed, so nothing will merge it while the lane is away.' \
+        '  merge-state       the pull request is armed and not queued, and GitHub reports the state named: only CLEAN, every required check green on the head and nothing else blocking, admits a park there. A push after the arm, a running check or a red one all read otherwise. A queued pull request is admitted on the queue'"'"'s own judgement and this state is not read for it.' \
+        '  reducer-missing   the review-gate reducer pr-watch.sh is not installed beside this skill, and the gate and thread reading is its alone.' \
+        '  attention         the reducer prints attention for this pull request, kinds= naming what: an open thread, a stale gate, a standing objection. The lane is still needed.' \
+        '  reducer-failed    the reducer could not evaluate the pull request; its own words are on the lines above this one.' ;;
+    park-failed)
+      printf '%s\n' \
+        'The harness was ended and its window closed, but the sandbox could not be stopped, so the record reads stopped, the kept sandbox still billing. cause names the step:' \
+        '  provider          the lane host stop-sandbox verb exited with status; its own words are on the lines above this one. A provider without the verb answers 2.' \
+        '  answer-unparsed   the verb succeeded without its sandbox-stopped item=ID line, so nothing here confirms the sandbox is down.' \
+        'A stopped record is what --keep-sandbox leaves: a relaunch recovers it, and lane-close --park --pr N on it retries the stop from the record alone.' ;;
+    parked) printf '%s\n' 'The lane window closed, its harness ended and its sandbox stopped with its disk kept. The record reads parked and names the pull request and head it was judged on; the watch keeps its merged check.' ;;
     stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
     closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
   esac
@@ -67,16 +103,23 @@ message() { # REASON FIELD=VALUE...
 
 usage() {
   cat <<'EOF'
-Usage: lane-close [--state-dir PATH] [--keep-sandbox]
+Usage: lane-close [--state-dir PATH] [--keep-sandbox | --park --pr N]
                   [--harness claude|codex|pi] [--tracker linear|github]
                   [--repo OWNER/REPO] ITEM
 
 Close one lane recorded in the oversee workflow state. The command refuses a
 live lane. It accepts an exited lane, or an idle lane whose tracker item is
-terminal. An idle lane's harness is ended by SIGTERM, never by typing into its
-pane: through lane-host stop for a record carrying host, and for a local lane
-by the same stop against the worktree the record's mail_root names. The close
-then waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
+terminal. A limit banner below the lane's last turn is passed over only where
+`lanes pick --lane`, run under the record's host, so a hosted lane is read
+through the provider's copy, reads the account the record names as room, for
+the model the record names or over the whole account where it names none, and
+the banner names no dated reset still ahead and no reset this host cannot
+resolve; the lane is then judged by the rest of its screen. Every other
+reading keeps the lane walled.
+An idle lane's harness is ended by SIGTERM, never by typing into its pane:
+through lane-host stop for a record carrying host, and for a local lane by the
+same stop against the worktree the record's mail_root names. The close then
+waits up to ORCH_LANE_CLOSE_SECS (default 15) for the pane to read exited.
 A hosted stop answering status 4 beside a stop-worktree-removed item=ITEM line
 on its stderr, the item's worktree already removed by its own close-out, prints
 stop-skipped cause=worktree-removed and goes straight to the host close and
@@ -104,6 +147,47 @@ the host, window and record unchanged. An exited, stopped or preparing lane's
 tracker is read for that alone: an item it holds open, or a read that does not
 answer, keeps the files and prints item-files-kept with the cause, and the
 close goes on.
+
+--park --pr N parks a hosted lane's clean merge wait: the lane sits in its
+queue wait doing nothing while its pull request N waits for the merge queue,
+and the sandbox bills for it. The park is admitted by one reading, made before
+anything is signalled and refused as park-refused with the condition it stopped
+on: the record's lane host answers stop-sandbox --check --item ID with its
+sandbox-stoppable line, so the sandbox it stops can be started again, which a
+provider without the stop-sandbox and start pair, lane-host-ssh among them,
+refuses with the absent-verb status 2; the pull request is open and is the
+item's own branch; the merge queue holds it, read through gh api graphql as
+isInMergeQueue or a mergeQueueEntry, or, outside the queue, auto-merge is
+armed on it and it reads mergeStateStatus CLEAN, which is GitHub reporting
+every required check green on the current head and nothing else blocking; and
+it gets no attention line from the review-gate reducer pr-watch.sh, whose
+silence is its healthy state: gate met, no unresolved thread, armed or queued.
+A queued pull request is admitted on the queue's own judgement, since GitHub
+admits nothing to the queue before every required check is green on its head,
+and its arm has converted to the queue entry by then, so autoMergeRequest is
+null for the whole wait; the merge state is read for the armed, unqueued case
+alone. A lane still inside a CI or gate wait after a push is neither queued
+nor CLEAN, or gets an attention line, and is never parked. The reducer is the
+one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
+review-gate skill beside this one otherwise. Admitted, the park ends the
+harness by signal as a close does,
+whatever the lane is doing, waits for its pane to read exited, closes the
+window, then stops the sandbox through lane-host stop-sandbox and requires its
+sandbox-stopped item=ID line. The record then reads parked and carries
+{pr, head, repo, at}, the pull request and head it was judged on. A stop the
+provider refuses, or answers without that line, leaves the record stopped,
+what --keep-sandbox leaves, and refuses as park-failed: the harness is gone
+and the sandbox still up, which that status says. --park on a stopped record
+judges the pull request again and stops the sandbox from the record alone; on
+a parked record it changes nothing. A local record has no sandbox and refuses.
+The record's worktree must stand: a removed-worktree answer to the stop
+refuses as stop-failed, as it does under --keep-sandbox.
+
+A parked record's full close runs the provider's close alone: the sandbox is
+stopped, so its mailbox cannot be read, and no session has run in it since the
+park read that mailbox, so no ask can have been added. --keep-sandbox on a
+parked record changes nothing. open-terminal --relaunch on a parked record
+starts the sandbox through lane-host start before its create --relaunch.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -151,6 +235,8 @@ need_value() {
 
 STATE_DIR=""
 KEEP_SANDBOX=false
+PARK=false
+PARK_PR=""
 OPT_HARNESS=""
 OPT_TRACKER=""
 OPT_REPO=""
@@ -166,6 +252,9 @@ while [[ $# -gt 0 ]]; do
     --repo) need_value "$@"; OPT_REPO="$2"; shift 2 ;;
     --repo=*) OPT_REPO="${1#--repo=}"; need_value --repo "$OPT_REPO"; shift ;;
     --keep-sandbox) KEEP_SANDBOX=true; shift ;;
+    --park) PARK=true; shift ;;
+    --pr) need_value "$@"; PARK_PR="$2"; shift 2 ;;
+    --pr=*) PARK_PR="${1#--pr=}"; need_value --pr "$PARK_PR"; shift ;;
     --help|-h) usage; exit 0 ;;
     --*) message argument-count "value=$1" >&2; usage >&2; exit 2 ;;
     *)
@@ -175,6 +264,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$ITEM" ]] || { message argument-count "count=0" >&2; usage >&2; exit 2; }
+# The two flags name two end states of one lane, so a call carrying both asks
+# for neither; a park with no pull request has nothing to judge, and a pull
+# request with no park is an option nothing reads.
+if [[ "$PARK" == true && "$KEEP_SANDBOX" == true ]]; then
+  message argument-count "value=--park" "conflict=--keep-sandbox" >&2; usage >&2; exit 2
+fi
+if [[ "$PARK" == true && -z "$PARK_PR" || "$PARK" == false && -n "$PARK_PR" ]]; then
+  message missing-value "option=--park" "requires=--pr" >&2; usage >&2; exit 2
+fi
+[[ -z "$PARK_PR" || "$PARK_PR" =~ ^[1-9][0-9]*$ ]] || { message missing-value "option=--pr" "value=$PARK_PR" >&2; exit 2; }
 
 STATE_ARGS=()
 [[ -z "$STATE_DIR" ]] || STATE_ARGS=(--state-dir "$STATE_DIR")
@@ -242,7 +341,7 @@ case "$status" in
   done)
     message closed "item=$ITEM" "status=done"
     exit 0 ;;
-  running|stopped|preparing) ;;
+  running|stopped|preparing|parked) ;;
   *) message record-invalid "item=$ITEM" "field=status" >&2; exit 1 ;;
 esac
 [[ -n "$mail_root" ]] || { message record-invalid "item=$ITEM" "field=mail_root" >&2; exit 1; }
@@ -356,6 +455,113 @@ tracker_terminal() {
   esac
 }
 
+# The park guard: the one reading that admits a merge-wait park, made before
+# anything is signalled. It delegates to the three judges that already own the
+# questions: the provider, asked without effect whether it can stop a sandbox
+# it will later be asked to start, which a provider without the pair refuses
+# with the protocol's absent-verb status; GitHub's merge queue and auto-merge,
+# which say whether anything will merge the pull request while the lane is
+# away, the queue's own membership standing for every required check green
+# since nothing enters it otherwise, and mergeStateStatus CLEAN saying the
+# same for an armed pull request outside the queue; and the review-gate
+# reducer, whose silence for a pull request is its healthy state: gate met, no
+# unresolved thread, armed or queued. Nothing here counts a check or a thread
+# itself. Each refusal names the condition it stopped on and changes nothing.
+# PARK_HEAD and PARK_REPO carry what the record will hold.
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SCRIPT_DIR/../../review-gate/scripts/pr-watch.sh}"
+PARK_QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }'
+# The queue answer as a word: a payload without the boolean is unparsed.
+PARK_QUEUE_JQ='.data.repository.pullRequest | if (.isInMergeQueue | type) != "boolean" then error("queue-field field=isInMergeQueue") elif .isInMergeQueue or .mergeQueueEntry != null then "yes" else "no" end'
+PARK_CHECK_LINE_RE='^sandbox-stoppable item=[^ ]+$'
+PARK_HEAD=""
+PARK_REPO=""
+park_judge() {
+  local err view fields pr_state pr_head pr_branch armed merge_state queue queued out rc=0 kinds
+  [[ -n "$host" ]] || { message park-refused "item=$ITEM" "reason=local" >&2; exit 1; }
+  [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; exit 1; }
+  err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=provider-unsupported" "cause=stderr-unsaved" >&2; exit 1; }
+  out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop-sandbox --check --item "$ITEM" 2>"$err")" || rc=$?
+  [[ "$rc" -eq 0 ]] || cat -- "$err" >&2
+  rm -f -- "${err:?}"
+  [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "item=$ITEM" "pr=$PARK_PR" step=stop-sandbox-check >&2; exit "$rc"; }
+  [[ "$rc" -eq 0 ]] || { message park-refused "item=$ITEM" "reason=provider-unsupported" "host=$host" "exit=$rc" >&2; exit 1; }
+  [[ "$out" =~ $PARK_CHECK_LINE_RE && "$out" == *"item=$ITEM" ]] \
+    || { message park-refused "item=$ITEM" "reason=provider-unsupported" "host=$host" "cause=answer-unparsed" >&2; exit 1; }
+  PARK_REPO="$repo"
+  if [[ -z "$PARK_REPO" ]]; then
+    tracker_read PARK_REPO env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner \
+      || { message park-refused "item=$ITEM" "reason=repo-unresolved" >&2; exit 1; }
+  fi
+  tracker_read view env -u GH_REPO -u GITHUB_REPOSITORY gh pr view "$PARK_PR" --repo "$PARK_REPO" \
+      --json state,headRefOid,headRefName,autoMergeRequest,mergeStateStatus \
+    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "repo=$PARK_REPO" >&2; exit 1; }
+  # One tab-separated line, the arm read as a word: a null autoMergeRequest is
+  # a pull request nothing will merge unless the queue holds it.
+  fields="$(jq -r '[.state, .headRefOid, .headRefName, (if .autoMergeRequest == null then "no" else "yes" end), .mergeStateStatus] | @tsv' <<<"$view" 2>/dev/null)" \
+    || { message park-refused "item=$ITEM" "reason=pr-read-failed" "pr=$PARK_PR" "cause=payload-unparsed" >&2; exit 1; }
+  IFS=$'\t' read -r pr_state pr_head pr_branch armed merge_state <<<"$fields"
+  [[ "$(printf '%s' "$pr_branch" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')" ]] \
+    || { message park-refused "item=$ITEM" "reason=pr-branch-mismatch" "pr=$PARK_PR" "branch=$pr_branch" >&2; exit 1; }
+  [[ "$pr_state" == OPEN ]] || { message park-refused "item=$ITEM" "reason=pr-not-open" "pr=$PARK_PR" "state=$pr_state" >&2; exit 1; }
+  # Queue membership is GraphQL's alone: gh pr view exposes no field for it,
+  # and on a queue base the arm converts to the entry once the checks are
+  # green, so the entry is the wait's whole evidence.
+  tracker_read queue env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query="$PARK_QUEUE_QUERY" \
+      -F owner="${PARK_REPO%%/*}" -F repo="${PARK_REPO#*/}" -F number="$PARK_PR" \
+    || { message park-refused "item=$ITEM" "reason=queue-read-failed" "pr=$PARK_PR" "repo=$PARK_REPO" >&2; exit 1; }
+  if ! queued="$(jq -r "$PARK_QUEUE_JQ" <<<"$queue" 2>/dev/null)"; then
+    message park-refused "item=$ITEM" "reason=queue-read-failed" "pr=$PARK_PR" "cause=payload-unparsed" >&2; exit 1
+  fi
+  if [[ "$queued" == no ]]; then
+    [[ "$armed" == yes ]] || { message park-refused "item=$ITEM" "reason=not-armed" "pr=$PARK_PR" "head=$pr_head" >&2; exit 1; }
+    [[ "$merge_state" == CLEAN ]] || { message park-refused "item=$ITEM" "reason=merge-state" "pr=$PARK_PR" "state=$merge_state" >&2; exit 1; }
+  fi
+  [[ -x "$PR_WATCH" ]] || { message park-refused "item=$ITEM" "reason=reducer-missing" "path=$PR_WATCH" >&2; exit 1; }
+  err="$(mktemp)" || { message park-refused "item=$ITEM" "reason=reducer-failed" "cause=stderr-unsaved" >&2; exit 1; }
+  out="$(GH_REPO="$PARK_REPO" "$PR_WATCH" "$PARK_PR" 2>"$err")" || rc=$?
+  [[ "$rc" -eq 0 ]] || cat -- "$err" >&2
+  rm -f -- "${err:?}"
+  case "$rc" in
+    0) ;;
+    1)
+      # The reducer's lines are pr, head, kind, detail; the kinds for this
+      # pull request are the refusal's reading.
+      kinds="$(awk -F'\t' -v pr="$PARK_PR" '$1 == pr { printf "%s%s", sep, $3; sep = "," }' <<<"$out")"
+      message park-refused "item=$ITEM" "reason=attention" "pr=$PARK_PR" "kinds=${kinds:-unlisted}" >&2
+      exit 1 ;;
+    *) message park-refused "item=$ITEM" "reason=reducer-failed" "pr=$PARK_PR" "exit=$rc" >&2; exit 1 ;;
+  esac
+  PARK_HEAD="$pr_head"
+}
+
+# The sandbox stop and the record it earns, from a lane whose harness is gone
+# and whose window is closed: the state a stopped record already names. So a
+# stop that fails, or answers without the protocol's line, records stopped,
+# which is true, and refuses; only the confirmed line records parked.
+PARK_LINE_RE='^sandbox-stopped item=[^ ]+$'
+park_sandbox() {
+  local out err rc=0 at fields=("item=$ITEM" "pr=$PARK_PR")
+  err="$(mktemp)" || { message park-failed "${fields[@]}" "cause=stderr-unsaved" >&2; exit 1; }
+  out="$(ORCH_LANE_HOST="$host" "$LANE_HOST" stop-sandbox --item "$ITEM" 2>"$err")" || rc=$?
+  cat -- "$err" >&2
+  rm -f -- "${err:?}"
+  if [[ "$rc" -ne 0 || ! "$out" =~ $PARK_LINE_RE || "$out" != *"item=$ITEM" ]]; then
+    [[ "$status" == stopped ]] || update_status stopped \
+      || { message state-write-failed "item=$ITEM" "status=stopped" >&2; exit 1; }
+    [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "${fields[@]}" step=stop-sandbox >&2; exit "$rc"; }
+    if [[ "$rc" -ne 0 ]]; then message park-failed "${fields[@]}" "cause=provider" "status=$rc" >&2
+    else message park-failed "${fields[@]}" "cause=answer-unparsed" >&2; fi
+    exit 1
+  fi
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
+    --arg item "$ITEM" --arg pr "$PARK_PR" --arg head "$PARK_HEAD" --arg repo "$PARK_REPO" --arg at "$at" \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = "parked" | .parked = {pr: ($pr | tonumber), head: $head, repo: $repo, at: $at}) else error("lane record disappeared") end' \
+    >/dev/null || { message state-write-failed "item=$ITEM" "status=parked" >&2; exit 1; }
+  message parked "${fields[@]}" "head=$PARK_HEAD" "status=parked"
+  exit 0
+}
+
 # A validation the lane started goes on after its session ends, and nothing
 # would ever read its verdict. A local lane's mail_root is its worktree, as
 # open-terminal records it; one that is no directory on this disk holds no run
@@ -430,10 +636,26 @@ finish_close() {
 # harness and removed its window. Only the kept sandbox and the record remain.
 if [[ "$status" == stopped ]]; then
   # The sandbox is kept, so this lane can still be relaunched into the session
-  # an answer would reach. Its ask is owed a reply before the record closes.
+  # an answer would reach. Its ask is owed a reply before the record closes,
+  # and before a park takes the mailbox out of reach.
   refuse_unanswered_ask
+  if [[ "$PARK" == true ]]; then
+    park_judge
+    park_sandbox
+  fi
   if [[ "$KEEP_SANDBOX" == true ]]; then
     message stopped "item=$ITEM" "status=stopped"
+    exit 0
+  fi
+  finish_close
+fi
+
+# A parked record's sandbox is stopped, so its mailbox cannot be read, and no
+# session has run in it since the park read that mailbox: the ask check was
+# made then. The provider's close completes on a stopped sandbox by protocol.
+if [[ "$status" == parked ]]; then
+  if [[ "$PARK" == true || "$KEEP_SANDBOX" == true ]]; then
+    message parked "item=$ITEM" "pr=$(jq -r '.parked.pr // empty' <<<"$record")" "head=$(jq -r '.parked.head // empty' <<<"$record")" "status=parked"
     exit 0
   fi
   finish_close
@@ -464,6 +686,7 @@ resolve_window() {
 # window it holds is closed with its claim; the host is closed or kept as for a
 # stopped record.
 if [[ "$status" == preparing ]]; then
+  [[ "$PARK" == false ]] || { message record-invalid "item=$ITEM" "field=status" "value=preparing" >&2; exit 1; }
   [[ -z "$window_name" ]] || resolve_window
   job="$(jq -r '.prepare.pid // empty' <<<"$record")"
   if [[ "$job" =~ ^[1-9][0-9]*$ ]] && job_cmd="$(ps -o command= -p "$job")" && [[ "$job_cmd" == *open-terminal* ]]; then
@@ -492,6 +715,89 @@ pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
 lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 
+# usage-reset.sh's one import: a reset clause the banner scan could not read.
+die() { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=$1" >&2; exit 1; }
+
+# A limit banner stays on a lane's screen after the window it reports resets,
+# since the lane it parked takes no turn to scroll it away. So a `walled`
+# screen is weighed against the account the record names, and it stops
+# answering only where that account reads room and the banner names no reset
+# still ahead. WALL_ACCOUNT is the lane-live message's account= word, and
+# WALL_RESETS a dated reset the banner names still ahead, or `unresolved` for a
+# reset clause that resolved to no time, empty otherwise. A clock or weekday
+# reset names no day, and with no sighting to pin one to it leaves the account
+# reading to answer alone.
+WALL_ACCOUNT=none
+WALL_RESETS=""
+read_wall() {
+  local rc=0 account model model_args=() slice banner key at now clause_rc=0
+  if ! account="$(record_field account)"; then message record-invalid "item=$ITEM" "field=account" >&2; exit 1; fi
+  if ! model="$(record_field model)"; then message record-invalid "item=$ITEM" "field=model" >&2; exit 1; fi
+  case "$harness" in claude|codex) ;; *) return 0 ;; esac
+  [[ -n "$account" ]] || return 0
+  [[ -x "$LANES" ]] || { message helper-missing "item=$ITEM" "path=$LANES" >&2; exit 1; }
+  # The model the launch gate judged this account on, so close reads the wall
+  # launch read. A record naming none, open-terminal's launch whose --cmd names
+  # no model, is read over the whole account: that binding bucket is the widest
+  # reading, so it lifts no wall the model's own would keep.
+  [[ -z "$model" ]] || model_args=(--model "$model")
+  # Under the record's own host, empty for a local lane, so a hosted lane's
+  # account is read through the copy it runs on, as open-terminal judged it.
+  ORCH_LANE_HOST="$host" "$LANES" pick --lane "$account" --harness "$harness" ${model_args[@]+"${model_args[@]}"} >/dev/null || rc=$?
+  case "$rc" in
+    0) WALL_ACCOUNT=room ;;
+    3) WALL_ACCOUNT=walled ;;
+    4) WALL_ACCOUNT=unlisted ;;
+    5) WALL_ACCOUNT=unmeasured ;;
+    *) WALL_ACCOUNT=read-failed ;;
+  esac
+  [[ "$WALL_ACCOUNT" == room ]] || return 0
+  # The reset is read from the banner because no record carries it: the lanes
+  # usage record holds resets only for the windows it measures, so a wall
+  # outside them is known from the banner alone.
+  slice="$(pane_below_last_turn "$pane_screen")" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  banner="$(lane_limit_banner "$slice")" \
+    || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  # die has already named the failed scan when this substitution fails.
+  key="$(usage_reset_key "$banner")" || exit 1
+  # No key is either a banner naming no reset, which the account answers
+  # alone, or a clause the grammar matched and could not key, such as a zone
+  # this host has no zoneinfo for, which keeps the wall.
+  if [[ -z "$key" ]]; then
+    grep -Eq -- "$USAGE_RESET_ANY_RE" <<<"$banner" || clause_rc=$?
+    case "$clause_rc" in
+      0) WALL_RESETS=unresolved ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=reset" >&2; exit 1 ;;
+    esac
+    return 0
+  fi
+  [[ "$key" == dated'|'* ]] || return 0
+  now="$(date -u +%s)" || { message pane-read-failed "item=$ITEM" "pane=$pane_id" "cause=clock" >&2; exit 1; }
+  # A dated clause date rejects, `resets Feb 30, 4pm` among them, resolves to
+  # no time, which is no evidence the reset is behind.
+  if ! at="$(usage_reset_epoch "$key" "$now")" || [[ -z "$at" ]]; then
+    WALL_RESETS=unresolved
+    return 0
+  fi
+  [[ "$at" -gt "$now" ]] || return 0
+  WALL_RESETS="$(from_epoch "$at" '%Y-%m-%dT%H:%M:%SZ')" || WALL_RESETS="$at"
+}
+# A park is admitted by the pull request alone, whatever the lane is doing: the
+# lane it ends is one sitting in its queue wait, which reads as working, and
+# its tracker item is open until the merge. Every other close keeps the guard.
+if [[ "$PARK" == true ]]; then
+  park_judge
+else
+if [[ "$state" == walled ]]; then
+  read_wall
+  if [[ "$WALL_ACCOUNT" == room && -z "$WALL_RESETS" ]]; then
+    lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" "" room \
+      || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+  fi
+fi
+
 case "$state" in
   exited) ;;
   idle)
@@ -502,8 +808,12 @@ case "$state" in
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;
+  walled)
+    message lane-live "item=$ITEM" "state=walled" "pane=$pane_id" "account=$WALL_ACCOUNT" ${WALL_RESETS:+"resets=$WALL_RESETS"} >&2
+    exit 1 ;;
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
 esac
+fi
 
 pane_now_exited() {
   local screen current_state rc=0
@@ -552,7 +862,7 @@ stop_harness() {
     # the provider's close ends the sandbox, otherwise the window kill, which
     # hangs up the lane's ssh session, as a static host's close ends no
     # process. Under --keep-sandbox no host close follows.
-    if [[ "$removed" == true && "$KEEP_SANDBOX" == false ]]; then
+    if [[ "$removed" == true && "$KEEP_SANDBOX" == false && "$PARK" == false ]]; then
       message stop-skipped "${fields[@]}" "cause=worktree-removed"
       STOP_SKIPPED=true
       return 0
@@ -574,7 +884,10 @@ stop_harness() {
   fi
 }
 
-if [[ "$state" == idle ]]; then
+# End the harness by signal and wait for its pane to read exited, for an idle
+# lane's close and for a park alike; a park's lane is working, and the
+# signal is the same. A stop the full close skipped ends the close-out.
+stop_and_await_exit() {
   case "$harness" in
     claude|codex|pi) ;;
     *) message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1 ;;
@@ -599,6 +912,23 @@ if [[ "$state" == idle ]]; then
       || { message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" "processes=$STOPPED_COUNT" >&2; exit 1; }
     sleep 0.2
   done
+}
+
+# The window is closed as a close closes it, then the sandbox is stopped; an
+# exited lane's harness is already gone and takes no signal.
+if [[ "$PARK" == true ]]; then
+  [[ "$state" == exited ]] || stop_and_await_exit
+  pane_rc=0
+  pane_still_exists || pane_rc=$?
+  case "$pane_rc" in
+    0) tmux kill-window -t "$pane_id" \
+         || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
+    1) ;;
+    *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+  esac
+  park_sandbox
 fi
+
+[[ "$state" != idle ]] || stop_and_await_exit
 
 finish_close

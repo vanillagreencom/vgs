@@ -92,7 +92,7 @@ row "an unreadable untracked file is an error, not a pass" "$d" 1 "" \
 
 d="$tmp/no-base"; fresh "$d"
 row "no resolvable base exits 77" "$d" 77 "WORKTREE_DEFAULT_BRANCH=absent" \
-  "whitespace: status=not-measured reason=no-base missing=base-ref branch=absent remote-refs=0"
+  "validate: status=not-measured reason=no-base missing=base-ref branch=absent remote-refs=0"
 
 d="$tmp/orphan"; fresh "$d"; printf 'true\n' >"$d/scripts/test-orphan.sh"
 row "a scripts/test-* file named by no row is refused" "$d" 1 "" \
@@ -142,6 +142,10 @@ cases=(
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
   "smoke-row|scripts/smoke/rows/example.sh|all|$smoke_plan"
+  "harness-render|.agents/skills/review-gate/scripts/review-policy|all|$repo_plan"
+  "harness-hook|.claude/hooks/example.sh|all|$repo_plan"
+  "harness-settings|kendex.local.toml|all|$repo_plan"
+  "workflow|.github/workflows/example.yml|all|$repo_plan"
 )
 for spec in "${cases[@]}"; do
   name="${spec%%|*}"; rest="${spec#*|}"
@@ -162,6 +166,11 @@ for spec in "${cases[@]}"; do
     status=0
     out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate "$area" --changed refs/remotes/origin/trunk --list 2>"$tmp/plan.err")" || status=$?
     if [[ $status == 0 && $out == "$wanted" ]]; then ok "$name selects its consumers when $state"; else fail "$name $state plan: $out"; fi
+    if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate "$area" --list 2>"$tmp/plan.err")" && [[ $out == "$wanted" ]]; then
+      ok "$name defaults to its consumers when $state"
+    else
+      fail "$name $state default plan: $out"
+    fi
   done
 done
 
@@ -182,16 +191,39 @@ done
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
 
 d="$tmp/plan-full"; fresh "$d"
-full_plan="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --list 2>"$tmp/plan.err")"
-for reason in unknown unreadable policy; do
+full_plan="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --full --list 2>"$tmp/plan.err")"
+for reason in unknown unreadable; do
   base=HEAD
   case "$reason" in
     unknown) printf 'new\n' >"$d/new-source.rs" ;;
     unreadable) rm -- "${d:?}/new-source.rs"; base=missing-ref ;;
-    policy) printf '\n' >>"$d/scripts/validate" ;;
   esac
   if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed "$base" --list 2>"$tmp/plan.err")" && [[ $out == "$full_plan" ]]; then ok "$reason input selects the full area"; else fail "$reason input omitted a suite: $out"; fi
 done
+
+d="$tmp/plan-selector"; fresh "$d"
+printf '\n' >>"$d/scripts/validate"
+selector_plan="$repo_plan"$'\nscripts/test-validate.sh'
+if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate --list 2>"$tmp/plan.err")" && [[ $out == "$selector_plan" ]]; then
+  ok "selector changes run their control without unrelated product suites"
+else
+  fail "selector change plan: $out"
+fi
+
+d="$tmp/range-whitespace"; fresh "$d"
+printf 'old defect \n' >"$d/clean.txt"
+"${base_env[@]}" git -C "$d" add clean.txt
+"${base_env[@]}" git -C "$d" commit -q -m previous-round
+test_area=repo
+test_args=(--changed HEAD)
+row "a fix round does not recheck whitespace outside its range" "$d" 0 "" "validate: ok"
+test_args=()
+row "Kendex supplies the fix-round base without shell interpolation" "$d" 0 "DEV_VALIDATE_BASE=HEAD" "validate: ok"
+test_args=(--changed HEAD)
+printf 'new defect \n' >"$d/clean.txt"
+row "a fix round still rejects new whitespace defects" "$d" 1 "" \
+  "whitespace: findings scope=tracked"
+test_args=()
 
 # Exercise the real selected guard, then remove only its dependency edge.
 # The policy mutation is committed into the fixture's base, so selection
@@ -228,6 +260,9 @@ argument_cases=(
   'empty|--changed|changed-base=missing-or-repeated'
   'dash-prefixed|--changed --list|changed-base=missing-or-repeated'
   'repeated|--changed HEAD --changed HEAD|changed-base=missing-or-repeated'
+  'full-and-changed|--full --changed HEAD|scope=conflicting-or-repeated'
+  'changed-and-full|--changed HEAD --full|scope=conflicting-or-repeated'
+  'repeated-full|--full --full|scope=conflicting-or-repeated'
   'second-area|logic|extra-argument=logic'
 )
 for spec in "${argument_cases[@]}"; do

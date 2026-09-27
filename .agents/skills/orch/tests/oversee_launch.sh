@@ -23,6 +23,10 @@ OVERSEE="$SRC_DIR/oversee"
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
 BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude permission word in the launch table" >&2; exit 1; }
+# The word that takes claude's question tool away, from the same table: an
+# unset ORCH_QUESTION_TOOL is off, so a first launch carries it.
+QUESTION_OFF="$(launch_choice_question_off claude)"
+[[ -n "$QUESTION_OFF" && "$QUESTION_OFF" != *" "* ]] || { echo "fixture: claude's question-tool words are not one word in the launch table" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)"
 TMUX_DIR="$TMP_ROOT/tmux"
@@ -53,6 +57,10 @@ case "$1:$2:$3" in
 esac
 STUB
 chmod +x "$BIN/claude" "$BIN/kendex"
+# A pane whose foreground process names claude, for `register` to read the
+# harness off: a copy of sleep, since a script or a shell named for the
+# harness can reset the process name tmux reads.
+cp "$(command -v sleep)" "$BIN/hclaude"
 
 new_home fleet
 make_lane "$H" claude
@@ -99,16 +107,21 @@ echo "=== oversee ==="
 
 # A first launch from outside tmux: the window at the end of the named
 # session, the harness on the picked lane with the entry's model and effort
-# and claude's full-bypass word, and the record written with generation 1.
+# and claude's full-bypass and question-tool words, and the record written
+# with generation 1.
 run_oversee -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
 assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|1 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$QUESTION_OFF;$BRIEF;" \
   "a first launch from outside tmux opens the overseer at the end of the named session and records it"
 assert_eq "$(recorded runtime)|$(recorded server)|$(recorded pane)|$(recorded window)|$(recorded account)|$(recorded generation)|$(recorded launch_line)" \
-  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS '$BRIEF'" \
+  "tmux|$SERVER_PID|$SESSION|$(tm display-message -p -t "$SESSION" '#{window_id}')|$H/.claude|1|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$QUESTION_OFF") '$BRIEF'" \
   "the session record names the runtime, server, pane, window, account, line and generation"
+WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
+identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
+assert_eq "$(identity)" "claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|" \
+  "the session record carries the launch identity the command was built with"
 assert_eq "$(keyed overseer-launch "$OUT" | sed -n 1p | sed 's/session=%[0-9]*/session=%N/; s/window=@[0-9]*/window=@N/')" \
   "oversee: overseer-launch form=prefix lane=$H/.claude trust=none session=%N window=@N server=$SOCKET" \
   "the launch line names the form and the session before the record"
@@ -165,6 +178,26 @@ run_oversee -- launch --wait-secs 5
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
   "no lane above the trigger: refused at 3 with the walk's counts"
+# An overseer opens through overseer-host on this machine, under this machine's
+# copy of the account, so the walk reads that copy even on a fleet whose
+# provider reports the same account with room. Run from a repository of its
+# own, since lane-host takes its project from the working directory.
+HOSTED_WORK="$TMP_ROOT/hosted-work"
+mkdir -p "$HOSTED_WORK/tmp"
+git -C "$HOSTED_WORK" init -q -b main
+printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
+HOSTED_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log")
+RUN_DIR="$HOSTED_WORK" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0" \
+  "a provider row with room for an account this machine reads walled opens no overseer on it"
+# Control: a walk that inherits the fleet's provider launches on the host row.
+HOSTCTL="$(mutant_scripts hostctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$HOSTCTL/lib/overseer-launch.sh" 'OL_PICK_RECORD="$(ol_lanes pick' 'OL_PICK_RECORD="$("$SCRIPT_DIR/lanes" pick'
+RUN_DIR="$HOSTED_WORK" OVERSEE_BIN="$HOSTCTL/oversee" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 20
+assert_eq "$RC|$(overseers)" "0|1" \
+  "control: a walk reading the provider's row opens the overseer on the account this machine reads walled"
+tm kill-window -t fleet:overseer
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A has-session answer that is not "can't find session" is the call failing,
@@ -181,11 +214,20 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
-HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' 'exec sleep 100000')"
+HAND="$(tm new-window -d -t fleet:4 -n hand -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(recorded runtime)|$(recorded account)" \
   "0|oversee: registered session=$HAND window=$(tm display-message -p -t "$HAND" '#{window_id}') server=$SERVER_PID generation=4 account=$H/.eclaude|tmux|$H/.eclaude" \
   "register writes the record for the caller's pane, one generation past the record"
+HAND_IDENTITY="claude|$H/.eclaude|$H/.eclaude|none|none|$(tm display-message -p -t "$HAND" '#{pane_current_path}')|"
+assert_eq "$(identity)" "$HAND_IDENTITY" \
+  "register records the harness the pane runs, its account and directory, and no model or effort"
+# register's control: a harness read that names none leaves the record without one.
+REGCTL="$(mutant_scripts regctl oversee)" || exit 1
+mutate_file "$REGCTL/oversee" '    claude) harness=claude ;;' '    claude) ;;'
+OVERSEE_BIN="$REGCTL/oversee" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" CLAUDE_CONFIG_DIR="$H/.eclaude" -- register
+assert_eq "$RC|$(recorded harness)" "0|none" \
+  "control: a register that reads no harness records none"
 run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$HAND" -- register --account "$H/.claude"
 assert_eq "$RC|$(recorded generation)|$(recorded account)" \
   "0|4|$H/.claude" \
@@ -202,13 +244,52 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 tm kill-window -t "$(recorded window)"
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
-WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 elsewhere_state() { if [[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]]; then echo written; else echo absent; fi; }
 RUN_DIR="$ELSEWHERE" run_oversee -- launch --cwd "$TMP_ROOT/work" --wait-secs 20
 assert_eq "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p -t "$(recorded pane)" '#{pane_current_path}')" \
   "0|5|absent|$WORK_REAL" \
   "launch --cwd from outside the fleet directory records into that directory's state and starts there"
 tm kill-window -t "$(recorded window)"
+
+# ORCH_QUESTION_TOOL=overseer keeps the overseer's question tool: the launch
+# line carries no question-off word. With the default-off rows above, a
+# launcher that stops reading the setting fails one side.
+run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
+assert_eq "$RC|$(recorded_argv)" \
+  "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$BRIEF;" \
+  "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
+tm kill-window -t "$(recorded window)"
+
+# The writer's control: a record write that leaves the launch identity out,
+# over a fleet with no prior record, records a session nothing says the
+# harness or model of.
+WRITECTL="$(mutant_scripts writectl lib/overseer-launch.sh)" || exit 1
+mutate_file "$WRITECTL/lib/overseer-launch.sh" '      + $identity' '      + {}'
+jq 'del(.overseer)' "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+OVERSEE_BIN="$WRITECTL/oversee" run_oversee -- launch --wait-secs 20
+assert_eq "$RC|$(recorded harness)|$(recorded model)" "0|none|none" \
+  "control: a record write without the launch identity records none of it"
+tm kill-window -t "$(recorded window)"
+
+# register on a codex pane running under a private CODEX_HOME: the account is
+# the folder that home was built under, and the home is kept apart from it. A
+# copy of sleep named codex, since only that exact name reads as codex.
+mkdir -p "$TMP_ROOT/codex-bin"
+cp "$(command -v sleep)" "$TMP_ROOT/codex-bin/codex"
+PRIVATE_HOME="$H/.codex/lane-launch/work-1/home"
+CODEX_PANE="$(tm new-window -d -t fleet:6 -n codexhand -P -F '#{pane_id}' "exec '$TMP_ROOT/codex-bin/codex' 100000")"
+register_codex() { # [OVERSEE_BIN]
+  OVERSEE_BIN="${1:-}" run_oversee TMUX="$TMUX_ADDR" TMUX_PANE="$CODEX_PANE" CODEX_HOME="$PRIVATE_HOME" -- register
+}
+register_codex
+assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
+  "0|codex|$H/.codex|$PRIVATE_HOME" \
+  "register on a codex pane records its account and its private CODEX_HOME apart"
+CODEXCTL="$(mutant_scripts codexctl oversee)" || exit 1
+mutate_file "$CODEXCTL/oversee" 'codex) harness=codex; home="${CODEX_HOME:-$ACCOUNT}" ;;' 'codex) harness=codex ;;'
+register_codex "$CODEXCTL/oversee"
+assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
+  "control: a register that takes the account for the home loses the private CODEX_HOME"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

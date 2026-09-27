@@ -83,41 +83,46 @@ screen_for() {
 
 echo "=== lane-state § states: one row per state, over screens and process reads ==="
 
-# NAME|WINDOW|CMD|PID|SCREEN|SESSION|WANT
+# NAME|WINDOW|CMD|PID|SCREEN|SESSION|ACCOUNT|WANT
 #
 # Every state the judge can name has a row, and each row is the inverse of a
-# neighbour: the same screen under a different process observation, or the same
-# process under a different screen, lands elsewhere in the table. WANT is the
-# one word plus the status, so a row fails on the fact it names.
-while IFS='|' read -r name window cmd pid screen session want; do
+# neighbour: the same screen under a different process observation or account
+# reading, or the same process under a different screen, lands elsewhere in the
+# table. WANT is the one word plus the status, so a row fails on the fact it
+# names.
+while IFS='|' read -r name window cmd pid screen session account want; do
   [[ -n "$name" ]] || continue
   row_state=""
   row_rc=0
-  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" || row_rc=$?
+  lane_state row_state "$window" "$cmd" "$pid" "$(screen_for "$screen")" "$session" "$account" || row_rc=$?
   assert_eq "$row_state rc=$row_rc" "$want rc=0" "$name"
 done <<'ROWS'
-no window is gone, whatever its last screen said|gone|claude|100|idle||gone
-a bare shell with nothing under it is exited|listed|bash|101|shell||exited
-a login shell reports itself dashed and is exited all the same|listed|-bash|101|shell||exited
-a bare shell WITH a child is the lane, not its grave|listed|fish|100|idle||idle
-a probe that cannot run leaves the screen to answer, never exited|listed|bash|102|idle||idle
-a spent account outranks the prompt its banner sits above|listed|claude|100|walled||walled
-a dialog waiting on an answer is asking|listed|claude|100|asking||asking
-a permission dialog is the same question|listed|claude|100|claude_dialog||asking
-a streaming token counter is a turn in flight|listed|claude|100|working||working
-a codex turn in flight is the same answer|listed|codex|100|codex_working||working
-a composer under a finished turn is idle|listed|claude|100|idle||idle
-a codex composer under a finished turn is idle|listed|codex|100|codex_idle||idle
-a codex capacity refusal parks the lane, so it is idle|listed|codex|100|capacity||idle
-a screen with no marker at all and no process read is unjudged|listed|claude|100|blank||unjudged
-a markerless screen takes the harness process when there is one|listed|claude|100|blank|busy|working
-an idle harness process answers a markerless screen too|listed|claude|100|blank|idle|idle
-a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged|unjudged
-the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle|working
-a busy process answers before the idle rung, since a turn's first seconds draw a marker and no working hint|listed|claude|100|idle|busy|working
-a process read that could not tell never becomes idle, however plainly the screen reads it|listed|claude|100|idle|unjudged|unjudged
-the same for the codex screen a live session between tool calls draws|listed|codex|100|codex_idle|unjudged|unjudged
-a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle|idle
+no window is gone, whatever its last screen said|gone|claude|100|idle|||gone
+a bare shell with nothing under it is exited|listed|bash|101|shell|||exited
+a login shell reports itself dashed and is exited all the same|listed|-bash|101|shell|||exited
+a bare shell WITH a child is the lane, not its grave|listed|fish|100|idle|||idle
+a probe that cannot run leaves the screen to answer, never exited|listed|bash|102|idle|||idle
+a spent account outranks the prompt its banner sits above|listed|claude|100|walled|||walled
+a banner whose account reads room again is a lifted wall, and the prompt under it answers|listed|claude|100|walled||room|idle
+a banner whose account still reads walled stays walled|listed|claude|100|walled||walled|walled
+an account reading the judge has no word for is unjudged, never a lifted wall|listed|claude|100|walled||lifted|unjudged
+a room reading lifts nothing on a screen with no banner|listed|claude|100|working||room|working
+a dialog waiting on an answer is asking|listed|claude|100|asking|||asking
+a permission dialog is the same question|listed|claude|100|claude_dialog|||asking
+a streaming token counter is a turn in flight|listed|claude|100|working|||working
+a codex turn in flight is the same answer|listed|codex|100|codex_working|||working
+a composer under a finished turn is idle|listed|claude|100|idle|||idle
+a codex composer under a finished turn is idle|listed|codex|100|codex_idle|||idle
+a codex capacity refusal parks the lane, so it is idle|listed|codex|100|capacity|||idle
+a screen with no marker at all and no process read is unjudged|listed|claude|100|blank|||unjudged
+a markerless screen takes the harness process when there is one|listed|claude|100|blank|busy||working
+an idle harness process answers a markerless screen too|listed|claude|100|blank|idle||idle
+a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged||unjudged
+the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle||working
+a busy process answers before the idle rung, since a turn's first seconds draw a marker and no working hint|listed|claude|100|idle|busy||working
+a process read that could not tell never becomes idle, however plainly the screen reads it|listed|claude|100|idle|unjudged||unjudged
+the same for the codex screen a live session between tool calls draws|listed|codex|100|codex_idle|unjudged||unjudged
+a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle||idle
 ROWS
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
@@ -361,7 +366,7 @@ echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 WAKE_REPO="$TMP_ROOT/wake-repo"
 mkdir -p "$WAKE_REPO/scripts/lib" "$TMP_ROOT/wt/CC-1"
 cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$WAKE_REPO/scripts/"
-cp "$SCRIPTS_DIR"/lib/*.sh "$WAKE_REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$WAKE_REPO/scripts/lib/"
 orch_fixture_shared_libs "$WAKE_REPO"
 chmod +x "$WAKE_REPO/scripts/open-terminal"
 git -C "$WAKE_REPO" init -q
@@ -495,7 +500,7 @@ echo "=== lane-state § verb: lanes state, the judge on the command line ==="
 VERB_REPO="$TMP_ROOT/verb-repo"
 mkdir -p "$VERB_REPO/scripts/lib"
 cp "$SCRIPTS_DIR/lanes" "$VERB_REPO/scripts/"
-cp "$SCRIPTS_DIR"/lib/*.sh "$VERB_REPO/scripts/lib/"
+cp -R "$SCRIPTS_DIR/lib/." "$VERB_REPO/scripts/lib/"
 chmod +x "$VERB_REPO/scripts/lanes"
 git -C "$VERB_REPO" init -q
 # The provider, reduced to the one answer the probe reads: `touch` exits with
