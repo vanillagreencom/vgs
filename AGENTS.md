@@ -4,7 +4,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 
 ## Commands
 
-- `scripts/validate [AREA]`: the validation manifest, one area per call. Exit 77 means a check could not run and is not a pass.
+- `scripts/validate [AREA]`: the validation manifest, one area per call. `unit` needs Qt and no Wayland session; `qml` needs the nested sandbox. Exit 77 means a check could not run and is not a pass.
 - `scripts/qml-smoke.sh`: the nested sandbox row alone. It needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment.
 - `bin/vgsh`: the runner and plugin manager. Run it with no arguments for the command list.
 

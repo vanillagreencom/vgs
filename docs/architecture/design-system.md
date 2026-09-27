@@ -1,8 +1,8 @@
 # Design system
 
-Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
+Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
 
-Every value the shell draws with is a token: one table, one judge, one singleton. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton, so one theme restyles every surface, and nothing a user sees is a literal in code.
+Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code.
 
 ## Layers
 
@@ -10,7 +10,8 @@ Each layer reads only the layer above it.
 
 1. The table and the judge, `shell/Commons/Tokens.js` and `shell/Commons/ThemeLogic.js`: plain JavaScript with no Qt object and no I/O. Node runs the same files through `scripts/qml-library.js`, so a script judges with the shell's own judge.
 2. `Theme` in `qs.Commons`: the accepted values as QML values, one read-only, deep-frozen object of primitives per top-level group, plus `name` and `revision`. `ThemeSource.qml` owns the theme file and the accept call; `qmldir` marks it internal to the module, so no plugin can name it.
-3. Every QML file that draws: it reads `Theme.<group>.<token>` and holds no literal style value.
+3. The components in `qs.Ui`: every control extends a `QtQuick.Templates` type or a plain `QtQuick` item, supplies its `background`, `contentItem`, `indicator`, `handle` or `delegate` from tokens, and imports no Quickshell module, so all of it runs under `qmltestrunner` with no compositor. `shell/Ui/qmldir` is the component list; files sit under `foundation/`, `controls/`, `feedback/` and `layout/`.
+4. Every QML file that draws, a plugin's included: it composes components, reads `Theme.<group>.<token>` for what they do not cover, and holds no literal style value.
 
 ## Tiers
 
@@ -39,6 +40,13 @@ The token list is `Tokens.js`; no document copies it. A theme that sets the seve
 
 A value is a literal, a reference `{group.token}` to a token of the same type, or one call: `mix(a, b, t)` moves each channel of colour `a` toward `b` by `t` in sRGB; `alpha(c, a)` sets the alpha; `contrast(c)` is black or white, whichever has the higher WCAG contrast against an opaque `c`; `mul(n, k)` scales a number, length or duration. Calls nest to a depth of 8 and an expression holds at most 256 characters. The judge evaluates no JavaScript from a document.
 
+## Components
+
+- A control that takes a name (`variant`, `size`, `role`, `tone`, `level`) logs an error naming the component and the value for an unknown name and draws its default. A control draws `FocusRing` while `visualFocus` holds, so a keyboard user sees the ring and a pointer user does not. A control sets `Accessible.name` from its text; `IconButton` requires `label` and logs an error without one. A disabled control draws at `opacity.disabled`. Every animation reads a `motion` token, so `motion.scale` of 0 stills the shell.
+- `Label` draws one typography role and sets both `font.weight` and `font.variableAxes`, since a variable font moves on the axis alone and a static family on the weight alone. Letter spacing is stated in em and set in pixels.
+- `Icon` draws Lucide path data from `shell/Ui/icons/Lucide.js`, written by `scripts/vendor-lucide` from the pinned `lucide-static` package with every primitive converted to path commands. The shape is drawn in the data's box and scaled as an item, so `icon.stroke` is the same number of pixels at every size.
+- Radios under one parent are exclusive, as the template makes them. `TextField` draws its action buttons as children of the field, not of its background, because the control puts the background under itself and the input takes every press on it.
+
 ## The shell document
 
 `~/.config/vgs/theme.json` holds `{ "schemaVersion": 1, "name": "<theme>", "tokens": { <nested overrides> } }`. `ThemeLogic.accept` parses, judges and resolves it in one call and answers the name and every resolved value, or one refusal `{ ok: false, reason, token, detail }`, logged as `theme: refused: token=<path> reason=<key> ...` or `theme: refused: document reason=<key> ...`. One bad token refuses the whole document; nothing of a refused document is published and the last accepted theme stands. An absent file publishes the defaults, and a file removed while the shell runs does the same. The document holds shell tokens only; terminal colours and application overrides belong to a theme package, which lands with the themes plugin.
@@ -53,12 +61,14 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 ## Invariants
 
-1. Every default resolves, every refusal is reached by its key, and the derived colours equal values computed by hand. Enforced by `scripts/test-theme-logic.js`, with one control per judge rule in a copy of the judge.
-2. `revision` rises by one after the last group holds a new theme, so a handler on `revisionChanged` reads one theme; a binding on a group reads the current one. A theme change rebuilds no component. Enforced by `scripts/smoke/rows/theme.sh`, which reads the revision, the bar's foreground and a derived component value back from a running instance.
-3. Every top-level group of the table is a property of `Theme`. Enforced by the `group-unpublished` rule of `scripts/check-design-tokens.py` and read back frozen by `scripts/smoke/rows/theme.sh`.
-4. A portable `#rrggbbaa` colour never reaches a QML property. Enforced by `Theme.toColor`, the one conversion, and by the `literal-color` rule for shipped QML.
+1. Every component the module lists instantiates with its defaults, and each guarantee a component states holds under pointer, keyboard and a theme change. Enforced by `scripts/qml-unit.sh` running `scripts/qml-tests/tst_*.qml` against the shipped module through a stand-in `ThemeSource` that calls the shipped `accept`; `scripts/test-qml-unit.sh` applies one mutation per guarantee to a copy of the module and requires its test to fail. The area is `unit`, which needs Qt and no Wayland session; `offline` leaves it out, so CI is unchanged.
+2. Every default resolves, every refusal is reached by its key, and the derived colours equal values computed by hand. Enforced by `scripts/test-theme-logic.js`, with one control per judge rule in a copy of the judge.
+3. `revision` rises by one after the last group holds a new theme, so a handler on `revisionChanged` reads one theme; a binding on a group reads the current one. A theme change rebuilds no component. Enforced by `scripts/smoke/rows/theme.sh`, which reads the revision, the bar's foreground and a derived component value back from a running instance.
+4. Every top-level group of the table is a property of `Theme`. Enforced by the `group-unpublished` rule of `scripts/check-design-tokens.py` and read back frozen by `scripts/smoke/rows/theme.sh`.
+5. A portable `#rrggbbaa` colour never reaches a QML property. Enforced by `Theme.toColor`, the one conversion, and by the `literal-color` rule for shipped QML.
 
 ## Decisions
 
 - Tokens are a JavaScript table judged by pure functions and published as frozen objects, never generated QML properties: [D015](../decisions/D015-tokens-are-a-judged-table.md).
 - One bundled variable font, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
+- Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).

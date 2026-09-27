@@ -1,0 +1,117 @@
+#!/usr/bin/env node
+// Write shell/Ui/icons/Lucide.js from an unpacked lucide-static package: per
+// icon name, one SVG path for the stroked outline and one for the filled
+// parts, with every circle, rect, line, ellipse, polyline and polygon of the
+// icon converted to path commands, so Icon draws one path per icon in a
+// 24 by 24 unit box. The package's version and licence go beside the data.
+//
+// Usage: scripts/vendor-lucide <unpacked lucide-static package directory>
+// Run by hand when the pinned version changes; scripts/test-lucide-data.js
+// checks the written file. Exit 2 with `vendor-lucide: refused: <key>=<value>`
+// when the package cannot be read or holds a node this script does not
+// convert, so an unconverted icon never lands as an empty one.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+
+const OUT = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
+const LICENCE = path.join(__dirname, "..", "shell", "Ui", "icons", "LICENSE");
+
+function refuse(first) {
+    process.stderr.write("vendor-lucide: refused: " + first + "\n");
+    process.exit(2);
+}
+
+function number(attrs, key, fallback) {
+    if (attrs[key] === undefined) {
+        if (fallback !== undefined) return fallback;
+        refuse("attribute=missing key=" + key);
+    }
+    const value = Number(attrs[key]);
+    if (!Number.isFinite(value)) refuse("attribute=not-a-number key=" + key + " value=" + JSON.stringify(attrs[key]));
+    return value;
+}
+
+// One node as path commands; the shapes follow the SVG rendering of each.
+function pathOf(tag, attrs) {
+    switch (tag) {
+    case "path":
+        if (typeof attrs.d !== "string" || attrs.d.trim() === "") refuse("path=empty");
+        return attrs.d.trim();
+    case "circle": {
+        const cx = number(attrs, "cx"), cy = number(attrs, "cy"), r = number(attrs, "r");
+        return `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z`;
+    }
+    case "ellipse": {
+        const cx = number(attrs, "cx"), cy = number(attrs, "cy"), rx = number(attrs, "rx"), ry = number(attrs, "ry");
+        return `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0z`;
+    }
+    case "rect": {
+        const x = number(attrs, "x", 0), y = number(attrs, "y", 0), w = number(attrs, "width"), h = number(attrs, "height");
+        const rx = number(attrs, "rx", 0), ry = number(attrs, "ry", rx);
+        if (rx === 0 && ry === 0) return `M${x} ${y}h${w}v${h}h${-w}z`;
+        return `M${x + rx} ${y}h${w - 2 * rx}a${rx} ${ry} 0 0 1 ${rx} ${ry}v${h - 2 * ry}a${rx} ${ry} 0 0 1 ${-rx} ${ry}h${-(w - 2 * rx)}a${rx} ${ry} 0 0 1 ${-rx} ${-ry}v${-(h - 2 * ry)}a${rx} ${ry} 0 0 1 ${rx} ${-ry}z`;
+    }
+    case "line":
+        return `M${number(attrs, "x1")} ${number(attrs, "y1")}L${number(attrs, "x2")} ${number(attrs, "y2")}`;
+    case "polyline":
+    case "polygon": {
+        const points = String(attrs.points || "").trim().split(/[\s,]+/).map(Number);
+        if (points.length < 4 || points.length % 2 !== 0 || points.some(p => !Number.isFinite(p))) refuse("points=malformed tag=" + tag);
+        let d = `M${points[0]} ${points[1]}`;
+        for (let i = 2; i < points.length; i += 2) d += `L${points[i]} ${points[i + 1]}`;
+        return tag === "polygon" ? d + "z" : d;
+    }
+    default:
+        refuse("tag=unconverted tag=" + tag);
+    }
+}
+
+function main(argv) {
+    if (argv.length !== 3) refuse("usage=package-directory-expected");
+    const pkg = argv[2];
+    let nodes, version, licence;
+    try {
+        nodes = JSON.parse(fs.readFileSync(path.join(pkg, "icon-nodes.json"), "utf8"));
+        version = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).version;
+        licence = fs.readFileSync(path.join(pkg, "LICENSE"), "utf8");
+    } catch (e) {
+        refuse("package=unreadable path=" + pkg + " error=" + (e.code || e.message));
+    }
+    if (typeof version !== "string" || version === "") refuse("version=missing");
+    const icons = {};
+    for (const name of Object.keys(nodes).sort()) {
+        const stroke = [];
+        const fill = [];
+        for (const [tag, attrs] of nodes[name]) {
+            const d = pathOf(tag, attrs);
+            (attrs.fill !== undefined && attrs.fill !== "none" ? fill : stroke).push(d);
+        }
+        icons[name] = [stroke.join(" "), fill.join(" ")];
+    }
+    const lines = [
+        ".pragma library",
+        "",
+        "// Lucide icon path data, written by scripts/vendor-lucide from lucide-static",
+        "// " + version + ". Per name: the stroked path and the filled path, in a 24 by",
+        "// 24 unit box. The licence is LICENSE beside this file.",
+        "",
+        "var VERSION = " + JSON.stringify(version) + ";",
+        "",
+        "// The side of the box every path is drawn in.",
+        "var VIEWBOX = 24;",
+        "",
+        "var ICONS = {"
+    ];
+    const names = Object.keys(icons);
+    names.forEach((name, i) => {
+        lines.push("    " + JSON.stringify(name) + ": " + JSON.stringify(icons[name]) + (i === names.length - 1 ? "" : ","));
+    });
+    lines.push("};", "");
+    fs.mkdirSync(path.dirname(OUT), { recursive: true });
+    fs.writeFileSync(OUT, lines.join("\n"));
+    fs.writeFileSync(LICENCE, licence);
+    process.stdout.write("vendor-lucide: ok version=" + version + " icons=" + names.length + " bytes=" + fs.statSync(OUT).size + "\n");
+}
+
+main(process.argv);

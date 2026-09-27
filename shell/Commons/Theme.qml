@@ -32,7 +32,25 @@ Singleton {
     readonly property var icon: published.icon
     readonly property var font: published.font
     readonly property var text: published.text
+    readonly property var surface: published.surface
+    readonly property var divider: published.divider
+    readonly property var focusRing: published.focusRing
+    readonly property var button: published.button
+    readonly property var segmented: published.segmented
+    readonly property var toggle: published.toggle
+    readonly property var checkbox: published.checkbox
+    readonly property var radio: published.radio
+    readonly property var slider: published.slider
+    readonly property var textField: published.textField
     readonly property var field: published.field
+    readonly property var spinner: published.spinner
+    readonly property var progress: published.progress
+    readonly property var badge: published.badge
+    readonly property var kbd: published.kbd
+    readonly property var tabs: published.tabs
+    readonly property var listItem: published.listItem
+    readonly property var sectionHeader: published.sectionHeader
+    readonly property var scrollArea: published.scrollArea
     readonly property var bar: published.bar
 
     // The accepted values converted once, as one frozen tree. It follows
