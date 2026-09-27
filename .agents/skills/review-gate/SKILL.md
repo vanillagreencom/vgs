@@ -35,7 +35,7 @@ Two greens do NOT mean a review happened. `REVIEW_GATE_MODE = "off"` evaluates n
 |---|---|---|
 | `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. For an inactive or `current` class policy, `REVIEW_GATE_MODE = "off"` evaluates no evidence term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
-| `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
+| `threads-open` | `pending` | Evidence exists, but review threads are unresolved. A merge-route waiver resolution that has lapsed counts as unresolved: [README class policy](README.md#class-policy). |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
 | `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |
@@ -121,7 +121,7 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 Evidence for the CURRENT head is any of:
 
-1. A non-author review object accepted by the configured trust and state rules.
+1. A non-author review object accepted by the configured trust and state rules, carrying content of its own: a verdict, a body, or a thread it opened.
 2. A trusted clean-analysis check-run or commit status that proves analysis ran.
 3. A trusted comment-form pass bound to this head's SHA.
 4. A trusted operator override with a reason, for missing evidence only.
@@ -132,7 +132,7 @@ Carry-forward never creates evidence or bypasses a fail-closed term. Objections 
 
 - `scripts/validate.sh`: validate a consumer installation. `--help`
 - `scripts/validate-workflow.sh`: compare the adopted workflow with the template; `--adopt` re-installs a new template over an unedited copy. `--help`
-- `scripts/validate-standard.sh`: report, read-only, whether this repository's rulesets, classic branch protection, required contexts, app installation and app-secret environment match the organization standard, and whether a standard secret name also sits in a repository, organization or Dependabot secret or in another environment. A row it cannot read is a FAIL. `--help` names each row and the permission its reads need; a token holding only the lanes app's read-only set reads the bypass-actor, classic-protection and app rows and the Dependabot scopes as unreadable.
+- `scripts/validate-standard.sh`: report, read-only, whether this repository's rulesets, classic branch protection, required contexts, app installation and app-secret environment match the organization standard, whether a job named `CI` ran for the pull request the default branch head merged and for that head's merge group, and whether a standard secret name also sits in a repository, organization or Dependabot secret or in another environment. A row it cannot read is a FAIL. `--help` names each row and the permission its reads need; a token holding only the lanes app's read-only set reads the bypass-actor, classic-protection, CI-context and app rows and the Dependabot scopes as unreadable.
 - `scripts/provision-environment.sh`: the organization owner's write half of the standard's environment. From the owner's own machine, never a lane or CI, it creates or corrects the environment, its default-branch-only policy and its secrets in every repository of an organization that is not archived, and reports one record per repository. `--dry-run` writes nothing. `--help`
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
 - `scripts/review-policy`: map the shared classifier's answer to the configured review evidence policy. `--help`

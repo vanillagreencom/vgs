@@ -33,10 +33,6 @@ stub_bin="$SANDBOX/stub-bin"
 mkdir -p "$stub_bin"
 cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
-if [ "$*" = "verify --help" ]; then
-  cat "$KENDEX_STUB_HELP"
-  exit 0
-fi
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
 records=0
 for dir in "$(git rev-parse --git-common-dir)" "$(git rev-parse --git-dir)"; do
@@ -55,10 +51,6 @@ export KENDEX_STUB_TREES="$SANDBOX/kendex-trees"
 # What the stub says on stderr beside the document: verify's human rows,
 # for the row that pins them being carried to a refusal.
 export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
-# The flags verify's help lists, which the classifier reads for --at-record.
-export KENDEX_STUB_HELP="$SANDBOX/kendex-help"
-printf '      --at-record  Render each recorded package at the commit the install record names\n' \
-  >"$KENDEX_STUB_HELP"
 
 # The document a passing run prints for the sandbox consumer: one row per
 # kind that renders there, each with the positions the engine resolved — a
@@ -186,7 +178,10 @@ render-inventory-gain|standard|clean|.kendex-generated.json:1
 instruction-source|standard|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
 trivial-at-ceiling|trivial|dirty|docs/guide.md:20
-trivial-one-over|small|dirty|docs/guide.md:21
+trivial-docs-one-over|small|dirty|docs/guide.md:21
+trivial-product-read-docs-past-the-ceiling|small|dirty|docs/authoring/README.md:100
+trivial-plan-past-the-ceiling|trivial|dirty|docs/plans/v2.md:400
+trivial-plan-beside-other-docs-past-the-ceiling|small|dirty|docs/plans/v2.md:90 docs/guide.md:10
 micro-at-ceiling|micro|dirty|runtime/product.ts:20
 micro-counts-production-not-total|micro|dirty|runtime/product.ts:10 runtime/tests/product.test.sh:200
 micro-one-over|small|dirty|runtime/product.ts:21
@@ -246,19 +241,6 @@ assert_eq "and the refused run still says how many positions it weighed" \
 assert_eq "the verifier is asked for its document against the range's base, at the record's commits" \
   "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD) --at-record" \
   "$(cat "$KENDEX_STUB_CALLS")"
-# A kendex whose verify has no --at-record is still asked, at its sources'
-# revisions now, and the log says which reading the proof took.
-: >"$KENDEX_STUB_CALLS"
-printf '      --base <REV>\n' >"$KENDEX_STUB_HELP"
-older_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "a verify without --at-record is asked without it and says so" \
-  "render-reading: current cause=verify-lacks-at-record
-verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD)" \
-  "$(printf '%s\n' "$older_err" | grep '^render-reading: ')
-$(cat "$KENDEX_STUB_CALLS")"
-printf '      --at-record  Render each recorded package at the commit the install record names\n' \
-  >"$KENDEX_STUB_HELP"
 
 # A registry file kendex writes keys in is owned only where the row that
 # prints it says the rest of the file is as the base held it; a rest that
@@ -901,9 +883,30 @@ git -C "$repo" commit -q -m "configured allowlist"
 PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
   assert_class "a configured allowlist decides trivial" trivial \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
-PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_MAX_LINES=1 \
-  assert_class "a configured ceiling refuses trivial" micro \
+PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' HARNESS_CI_TRIVIAL_MAX_LINES=1 \
+  assert_class "a configured ceiling bounds the configured allowlist" micro \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
+
+# With no configured ceiling the allowlist takes the shipped one, and it
+# replaces the plan exemption as well as the documentation set.
+# label | expected | file:lines
+allowlist_rows=0
+while IFS='|' read -r label expected spec; do
+  allowlist_rows=$((allowlist_rows + 1))
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" "${spec%:*}" "${spec##*:}"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='runtime/*' \
+    assert_class "$label" "$expected" \
+    --repo "$repo" --event pull_request --base "$base" --head HEAD
+done <<'CASES'
+allowlisted-at-the-default-ceiling|trivial|runtime/product.ts:20
+allowlisted-one-over-the-default-ceiling|small|runtime/product.ts:21
+plan-outside-a-configured-allowlist|standard|docs/plans/v2.md:400
+CASES
+require_rows change-class-allowlist-table "$allowlist_rows"
 
 # A ceiling that is not a whole number is a wiring error, not a skipped check:
 # without the refusal the comparison below it fails under strict mode and the

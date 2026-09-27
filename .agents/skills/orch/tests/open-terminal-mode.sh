@@ -2,7 +2,8 @@
 # Terminal-mode selection and the environment a GUI lane receives.
 #
 # With neither --tmux nor --ghostty, open-terminal picks tmux when $TMUX is set
-# and a GUI terminal otherwise. Either flag overrides that. A caller who passes
+# or ORCH_TMUX_SESSION names the fleet session on the person's own server, and
+# a GUI terminal otherwise. Either flag overrides that. A caller who passes
 # --ghostty from inside tmux (the flag inferred from what the screen looked
 # like) is warned that the override moved the lane out of the workspace, and the
 # GUI window it opens carries neither TMUX nor TMUX_PANE: without that scrub the
@@ -30,19 +31,8 @@ SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2   got: $1"; }
-assert_contains() {
-  grep -qF -- "$2" <<<"$1" && ok "$3" || bad "$3" "wanted substring: $2
-        in: $1"
-}
-assert_not_contains() {
-  grep -qF -- "$2" <<<"$1" && bad "$3" "unwanted substring: $2
-        in: $1" || ok "$3"
-}
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 # Stub bin. A GUI terminal stub logs its own name, its argv and the tmux
 # identity it was handed (`<unset>` when the variable is absent, which is what a
@@ -130,8 +120,9 @@ REPO="$TMP_ROOT/repo"
 stage "$REPO" "$SRC_OT"
 
 # run NAME OT WHERE ARGS... — WHERE is `in` (a tmux controller: TMUX and
-# TMUX_PANE set) or `out` (neither present, whatever this suite itself runs
-# under). $RUN_PATH is the launch PATH and $RUN_TERMINAL the $TERMINAL value
+# TMUX_PANE set), `out` (neither present, whatever this suite itself runs
+# under) or `setting` (neither present, ORCH_TMUX_SESSION naming the fleet
+# session on the person's own server). $RUN_PATH is the launch PATH and $RUN_TERMINAL the $TERMINAL value
 # (empty: unset), both defaulting to the `term` arm. Sets RC, ERR,
 # TERM_LOG_TEXT and TMUX_LOG_TEXT.
 RUN_PATH=""
@@ -148,7 +139,8 @@ run() {
   case "$where" in
     in)  launch_env+=(TMUX=stub,1,0 TMUX_PANE=%7 ORCH_TMUX_SESSION=stub) ;;
     out) launch_env+=(-u TMUX -u TMUX_PANE) ;;
-    *) echo "run: WHERE must be in or out, got '$where'" >&2; exit 2 ;;
+    setting) launch_env+=(-u TMUX -u TMUX_PANE ORCH_TMUX_SESSION=stub) ;;
+    *) echo "run: WHERE must be in, out or setting, got '$where'" >&2; exit 2 ;;
   esac
   [[ -z "$RUN_TERMINAL" ]] || launch_env+=("TERMINAL=$RUN_TERMINAL")
   set +e
@@ -182,10 +174,13 @@ WARNING='open-terminal: mode-override option=--ghostty detected=tmux'
 # rejects before its first tmux call; the flag still won, since no GUI opened.
 MODE_ROWS='in||tmux|nowarn
 out||gui|nowarn
+setting||tmux|nowarn
 in|--ghostty|gui|warn
 out|--ghostty|gui|nowarn
+setting|--ghostty|gui|nowarn
 in|--tmux|tmux|nowarn
-out|--tmux|refused|nowarn'
+out|--tmux|refused|nowarn
+setting|--tmux|tmux|nowarn'
 
 # check_mode_rows LABEL OT — runs every row against OT and asserts it.
 check_mode_rows() {
@@ -224,7 +219,7 @@ check_mode_rows() {
   done <<<"$MODE_ROWS"
 }
 
-echo "=== open-terminal: mode is auto-detected from \$TMUX and a flag overrides it ==="
+echo "=== open-terminal: mode is auto-detected from \$TMUX or ORCH_TMUX_SESSION and a flag overrides it ==="
 check_mode_rows main "$REPO/scripts/open-terminal"
 
 echo
@@ -285,9 +280,9 @@ mkdir -p "$NO_SETSID_PATH"
 rm -f -- "$NO_SETSID_PATH/setsid"
 # Without this the case passes vacuously through the setsid branch.
 if PATH="$NO_SETSID_PATH" command -v setsid >/dev/null 2>&1; then
-  bad "the probe PATH resolves no setsid" "setsid is still reachable"
+  fail "the probe PATH resolves no setsid" "setsid is still reachable"
 else
-  ok "the probe PATH resolves no setsid"
+  pass "the probe PATH resolves no setsid"
 fi
 
 RUN_PATH="$BIN:$NO_SETSID_PATH"

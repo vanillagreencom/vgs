@@ -18,8 +18,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
-# shellcheck source=lib/waiter-assertions.sh
-source "$TEST_DIR/lib/waiter-assertions.sh"
+# shellcheck source=lib/assertions.sh
+source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file: the layout and the controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -153,8 +153,10 @@ micro|901|standard|900|miss|false
 micro|900|micro|900|met|false
 small|1501|standard|1500|miss|false
 small|1500|micro|1500|met|true
+small|1500|small|1500|met|false
 standard|5401|standard|5400|miss|false
 standard|5400|micro|5400|met|true
+standard|5400|small|5400|met|true
 ROWS
 
 echo "=== the class is read over the merge commit's first parent to the merge ==="
@@ -310,7 +312,7 @@ while IFS='|' read -r label args want; do
   assert_eq "$(head -n 1 "$CASE/err")" "$want" "$label"
 done <<'ROWS'
 an item the fleet never launched|KEN-9 standard|oversee-cycle: record-missing=KEN-9
-a tier oversee.md never gives|KEN-1 small|oversee-cycle: usage=--tier
+a tier item-tier never prints|KEN-1 start|oversee-cycle: usage=--tier
 ROWS
 edit_json "$CASE/timeline.json" '.merge_commit = null'
 record KEN-1 standard >/dev/null || true

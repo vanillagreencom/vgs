@@ -16,12 +16,9 @@ cleanup() {
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-PASS=0
-FAIL=0
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
-ok() { printf 'ok: %s\n' "$1"; PASS=$((PASS + 1)); }
-bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
-assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
 host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
 close_call_count() { grep -c '^close ' "$HOST_CALLS" || true; }
 # The provider stop calls that name this harness, and the pane-writing tmux
@@ -56,6 +53,7 @@ mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$SCRIPTS/lib/lane-state.sh"
+cp "$TEST_DIR/../scripts/lib/lane-host-slots.sh" "$SCRIPTS/lib/lane-host-slots.sh"
 chmod +x "$SCRIPTS/lane-close"
 
 cat >"$SCRIPTS/workflow-state" <<'EOF'
@@ -64,6 +62,11 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$LANE_CLOSE_STATE_CALLS"
 if [[ "${1:-}" == --state-dir ]]; then shift 2; fi
 verb="$1"; shift
+if [[ "$verb" == remove ]]; then
+  [[ "${LANE_CLOSE_REMOVE_STATUS:-0}" == 0 ]] || { printf 'workflow-state: remove-failed path=/fleet/x\n' >&2; exit "$LANE_CLOSE_REMOVE_STATUS"; }
+  printf 'removed path=/fleet/completion-summary-%s.md\n' "$1"
+  exit 0
+fi
 [[ "$1" == oversee ]]; shift
 case "$verb" in
   get) jq "$1" "$LANE_CLOSE_STATE" ;;
@@ -108,6 +111,12 @@ if [[ "$1" == stop ]]; then
   fi
   printf '%s\n' "${LANE_CLOSE_STOP_OUT-stopped item=$3 processes=1}"
   exit 0
+fi
+# LANE_CLOSE_HOST_MARKER is the clone's item marker, which the shipped ssh
+# provider's close removes: a close that finds it gone is refused as unowned.
+if [[ -n "${LANE_CLOSE_HOST_MARKER:-}" ]]; then
+  [[ -e "$LANE_CLOSE_HOST_MARKER" ]] || { printf 'lane-host-ssh: close-unowned item=%s\n' "$3" >&2; exit 75; }
+  rm -f -- "$LANE_CLOSE_HOST_MARKER"
 fi
 if [[ "${LANE_CLOSE_HOST_STATUS:-0}" -ne 0 ]]; then
   [[ "$LANE_CLOSE_HOST_STATUS" -ne 3 ]] || printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
@@ -193,8 +202,8 @@ case "$1" in
     [[ "${LANE_CLOSE_TMUX_LIST_FAIL_AT:-0}" != "$count" ]] || exit 9
     if [[ "${*: -1}" == '#{pane_id}' ]]; then
       awk -F'\t' '{print $3}' "$LANE_CLOSE_ROWS"
-    elif [[ "${*: -1}" == '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' ]]; then
-      awk -F'\t' '{print $3 "\t" $4 "\t" $5}' "$LANE_CLOSE_ROWS"
+    elif [[ "${*: -1}" == '#{pane_id} #{pane_pid} #{pane_current_command}' ]]; then
+      awk -F'\t' '{print $3 " " $4 " " $5}' "$LANE_CLOSE_ROWS"
     else
       cat -- "$LANE_CLOSE_ROWS"
     fi ;;
@@ -338,6 +347,7 @@ lib_mutant() { # NAME OLD NEW [APPEND]
     ln -s "$SCRIPTS/$sibling" "$dir/skills/orch/scripts/$sibling"
   done
   ln -s "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  ln -s "$SCRIPTS/lib/lane-host-slots.sh" "$dir/skills/orch/scripts/lib/lane-host-slots.sh"
   python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" "${4:-}" <<'MUTPY'
 import pathlib, sys
 source, target, old, new, append = sys.argv[1:]
@@ -397,6 +407,45 @@ printf '\n' >"$SCREEN"
 run_close "$SCRIPT"
 assert_eq "rc=$RC host=$(host_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
   'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted Pi lane closes the provider once, kills by pane id and records done'
+
+echo "=== a full close of a finished item removes its files through workflow-state remove ==="
+# An exited hosted lane, closed under OPTION with the remove stub answering
+# REMOVE_STATUS, the host close HOST_STATUS and the tracker as TRACKER_ENV
+# sets it. ITEM_FILES reads what the close did: the removal, the host close,
+# the window kill, the record, and the kept and refused lines.
+item_files_row() { # OPTION REMOVE_STATUS HOST_STATUS TRACKER_ENV
+  local option=()
+  [[ "$1" == - ]] || option=("$1")
+  write_state running pi /host; write_panes bash; printf '\n' >"$SCREEN"
+  export "$4"
+  LANE_CLOSE_REMOVE_STATUS="$2" LANE_CLOSE_HOST_STATUS="$3" run_close "$SCRIPT" --state-dir "$FLEET_DIR" ${option[@]+"${option[@]}"}
+  unset "${4%%=*}"
+  ITEM_FILES="rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(sed -n 's/^lane-close: item-files-kept item=KEN-1 cause=//p' <<<"$OUT") refused=$(grep -c -x "lane-close: item-files-failed item=KEN-1 status=$2" <<<"$ERR" || true)"
+}
+# label|option|remove status|host status|tracker env|expected
+ITEM_FILE_ROWS=(
+  "a finished item's full close removes its files in the state directory it was handed|-|0|0|LANE_CLOSE_NONE=1|rc=0 remove=1 close=1 kill=1 status=done kept= refused=0"
+  "a removal that fails refuses before the host close, with host, window and record unchanged|-|5|0|LANE_CLOSE_NONE=1|rc=1 remove=1 close=0 kill=0 status=running kept= refused=1"
+  "a host close that refuses after the removal leaves the record running|-|0|3|LANE_CLOSE_NONE=1|rc=3 remove=1 close=1 kill=0 status=running kept= refused=0"
+  "a close that keeps the sandbox keeps the item's files|--keep-sandbox|0|0|LANE_CLOSE_NONE=1|rc=0 remove=0 close=0 kill=1 status=stopped kept= refused=0"
+  "an exited lane whose item is still open closes and keeps its files|-|0|0|LANE_CLOSE_TRACKER_STATE_TYPE=started|rc=0 remove=0 close=1 kill=1 status=done kept=open refused=0"
+  "an exited lane whose tracker does not answer closes and keeps its files|-|0|0|LANE_CLOSE_TRACKER_FAIL=1|rc=0 remove=0 close=1 kill=1 status=done kept=read-failed refused=0"
+)
+for row in "${ITEM_FILE_ROWS[@]}"; do
+  IFS='|' read -r label option remove_status host_status tracker_env want <<<"$row"
+  item_files_row "$option" "$remove_status" "$host_status" "$tracker_env"
+  assert_eq "$ITEM_FILES" "$want" "$label"
+done
+# The retry the refusal promises, against a host whose close takes its item
+# marker: after a failed removal, a second close reaches the removal and the
+# host close.
+: >"$TMP_ROOT/host-marker"
+export LANE_CLOSE_HOST_MARKER="$TMP_ROOT/host-marker"
+item_files_row - 5 0 LANE_CLOSE_NONE=1
+LANE_CLOSE_REMOVE_STATUS=0 run_close "$SCRIPT" --state-dir "$FLEET_DIR"
+unset LANE_CLOSE_HOST_MARKER
+assert_eq "rc=$RC remove=$(grep -c -x -- "--state-dir $FLEET_DIR remove KEN-1" "$STATE_CALLS" || true) close=$(close_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 remove=1 close=1 status=done' \
+  'a second close after a failed removal removes the files, closes the host and records done'
 
 echo '=== a local lane ends the validations its worktree still runs ==='
 validate_calls() { awk 'END { print NR + 0 }' "$LANE_CLOSE_VALIDATE_CALLS"; }
@@ -511,6 +560,29 @@ write_state running codex /host; write_panes python; codex_screen
 LANE_CLOSE_STOP_OUT='' run_close "$SCRIPT"
 assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=codex cause=answer-unparsed$' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 failed=1 kill=0 status=running' 'a provider stop that prints no stopped line refuses as unparsed'
+
+echo '=== a call lane-host refused at its per-home cap changes nothing and exits 69 ==='
+# STEP|VARIABLE|REMOVED: the stub fails that step with lane-host's busy
+# status. The pane reads exited once the stop ran, so the close step is the
+# host close. REMOVED counts the item-file removals the close made first: the
+# host close runs after them, and a second close's removal finds nothing.
+for row in 'stop|LANE_CLOSE_STOP_STATUS|0' 'close|LANE_CLOSE_HOST_STATUS|1' 'mail-read|LANE_CLOSE_MAIL_STATUS|0'; do
+  IFS='|' read -r step var removed <<<"$row"
+  write_state running claude /host; write_panes python; claude_screen
+  export "$var=69"
+  run_close "$SCRIPT"
+  unset "$var"
+  assert_eq "rc=$RC busy=$(grep -cE "^lane-close: lane-host-busy item=KEN-1 (harness=claude )?step=$step\$" <<<"$ERR" || true) failed=$(grep -cE '^lane-close: (stop-failed|mail-read-failed) ' <<<"$ERR" || true) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") removed=$(grep -c -x 'remove KEN-1' "$STATE_CALLS" || true)" \
+    "rc=69 busy=1 failed=0 kill=0 status=running removed=$removed" "a $step lane-host refused at its cap is lane-host-busy, keeping the window and the record"
+done
+# The busy branch's control: without it a refused stop reads as the provider
+# failing.
+MUTANT="$(mutant lane-close-busy-stop '    [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { message lane-host-busy "${fields[@]}" step=stop >&2; exit "$rc"; }
+' '')"
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_STOP_STATUS=69 run_close "$MUTANT"
+assert_eq "rc=$RC failed=$(grep -c '^lane-close: stop-failed item=KEN-1 harness=claude cause=provider status=69$' <<<"$ERR" || true)" 'rc=1 failed=1' \
+  "control: without the busy branch a refused stop reads as the provider failing"
 
 echo '=== a finished hosted lane whose worktree is gone closes without a stop ==='
 # The provider's removed-worktree answer signals nothing, so the harness still

@@ -350,21 +350,26 @@ Options:
                       than read on this disk
   --root ITEM=PATH    the item's lane worktree on this disk, where its
                       mailbox is read; a lane whose worktree sits outside
-                      this checkout (a proposal sweep launched from a source
-                      repository) is read nowhere else. Repeatable, once per
+                      this checkout is read nowhere else. Repeatable, once per
                       item; a --hosted entry for the same item wins
   --handoff PATH      the overseer handoff file a successor's brief names,
                       passed through to `oversee-succeed` when this watch
                       records the overseer's launch line (default
                       tmp/handoffs/OVERSEER-HANDOFF.md)
-  LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
-                      is a window in the session this watch started in, which
-                      it resolves once through $TMUX_PANE and names on
+  LANE_WINDOW...      tmux window names to watch; requires $TMUX or
+                      ORCH_TMUX_SESSION, which lets a watch outside tmux
+                      reach the fleet's session. A bare name is a window in
+                      that session, else the session this watch started in,
+                      which it resolves once through $TMUX_PANE and names on
                       stderr as session-resolved, so a pane that later dies
                       moves no lane into another session; `session:window`,
                       tmux's own target form, names one in another session.
                       A bare name with no session resolved is refused as
-                      session-unresolved naming the lane and the --state file
+                      session-unresolved naming the lane and the --state
+                      file; a setting tmux does not hold as session-missing,
+                      and a has-session call failing for any other reason,
+                      no server at the socket among them, as tmux-failed
+                      naming that socket
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
                       permission flags, plus its current model and effort
@@ -569,114 +574,8 @@ USAGE
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
 # tab, carriage return and newline in field values are escaped. Tool error
 # details and the English explanation follow the stable header.
-ow_message() { # REASON FIELD=VALUE...
-  local reason="$1" text field
-  shift
-  case "$reason" in
-    missing-value) text='The option requires a value.' ;;
-    option-unknown) text='The option is not supported. Use --help for supported options.' ;;
-    state-directory-create-failed) text='The watch state directory could not be created. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    state-directory-unwritable) text='The watch state directory is not writable. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    interval-invalid) text='The interval must be a non-negative integer.' ;;
-    handoff-invalid) text='The handoff path takes letters, digits and ./_- only, as oversee-succeed reads it.' ;;
-    mail-interval-invalid) text='ORCH_WATCH_MAIL_INTERVAL takes a whole number of seconds, with no leading zero.' ;;
-    unread-secs-invalid) text='ORCH_DIRECTIVE_UNREAD_SECS takes a whole number of seconds, with no leading zero.' ;;
-    dead-passes-invalid) text='ORCH_OVERSEER_DEAD_PASSES must be a positive integer.' ;;
-    mark-repeat-invalid) text='ORCH_OVERSEER_MARK_REPEAT must be a positive integer.' ;;
-    overseer-mark-unjudged) text='The overseer own-mark judgement could not be made this pass, so its context use and account headroom settle nothing here. A standing mark is not cleared by a reading that failed; oversee-succeed owns the judgement and its own keyed line says why.' ;;
-    overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
-    overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
-    overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
-    overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
-    overseer-line-missing) text='The fleet state records no overseer launch line, so a dead overseer cannot be relaunched. Start the watch with -- and the overseer flags while the overseer is alive.' ;;
-    overseer-unrecorded) text='The overseer pane could not be recorded in the fleet state. A relaunch reads that record, so this watch reports a death it cannot act on.' ;;
-    overseer-notice-failed) text='The overseer-dead notice could not be delivered. The field names the channel; the event line still went out.' ;;
-    overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
-    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;
-    overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
-    repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
-    state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;
-    state-unreadable) text='The oversee state file could not be read. The watch stops rather than carry a partial fleet.' ;;
-    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
-    window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
-    sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
-    max-loops-invalid) text='The loop limit must be a positive integer.' ;;
-    prepare-secs-invalid) text='ORCH_WATCH_PREPARE_SECS takes a positive whole number of seconds, with no leading zero.' ;;
-    tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
-    limit-banner-missing) text='The pane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read. The field names the lane, or the overseer pane where the overseer is the one classified.' ;;
-    tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
-    since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
-    helper-missing) text='The required helper is not executable. Check the named setting.' ;;
-    item-invalid) text='The work item is not a supported issue identifier.' ;;
-    command-missing) text='The required command is not on PATH.' ;;
-    auth-failed) text='No configured GitHub credential works. Run gh auth login.' ;;
-    repo-unresolved) text='Specify a repository because GitHub could not resolve it.' ;;
-    repo-duplicate) text='Name each repository once.' ;;
-    pr-list-failed) text='The GitHub PR list command failed.' ;;
-    pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
-    triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
-    triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
-    time-failed) text='The current UTC time could not be read.' ;;
-    tracker-list-failed) text='The tracker list command failed.' ;;
-    tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
-    handoff-read-failed) text='The handoff record could not be read.' ;;
-    lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
-    hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
-    hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
-    root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;
-    root-unknown-item) text='The --root item is not one this run watches. Name it with --item, or drop the entry.' ;;
-    root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
-    hosted-duplicate) text='Name each hosted item once.' ;;
-    hosted-without-host) text='A hosted lane is carried, and lane-host resolves this host to local, so its mailbox, state and close would be read on this disk where the lane is not. Set ORCH_LANE_HOST to the provider the lane was launched through, in kendex.settings.toml [env] or .env.local.' ;;
-    host-resolve-failed) text='lane-host could not say which host the hosted lanes live on, so none of them is read. Its own words follow.' ;;
-    session-resolved) text='The tmux session every bare lane window name is read in, resolved once while the pane that started this watch still exists.' ;;
-    session-unresolved) text='A bare lane window name is carried and tmux named no session for this watch, so the name could resolve through whichever session tmux picks. Start the watch from the overseer pane, or record the window as SESSION:WINDOW.' ;;
-    watch-running) text='Another watch already runs on this fleet state, and this start could not show its pane gone: tmux lists it, or this start runs outside tmux, the record names no pane, or the pane list could not be read. Two watches would read one overseer mailbox and each replay what the other drained. Handle its events, or stop it as references/watch-delivery.md states and start again; the pid field is the watch that read finds.' ;;
-    watch-replay-failed) text='The output a restarted watch left beside the fleet state could not be printed or removed, so the start stops rather than lose it or print it twice. The path names the file.' ;;
-    watch-record-failed) text='The watch could not write its own record beside the fleet state, so a second watch could not be refused and a succession could not restart this one.' ;;
-    watch-finishing) text='The watch taken over is finishing a lane-close. This start waits for it to exit, so the lane row is committed before this watch reads it and the output of a restarted watch is replayed whole. The close outcome is in the output of the old watch: for one references/waiter-launch.md started, the log in its run directory.' ;;
-    watch-taken-over) text='A live watch on this fleet state was stopped and this one runs in its place. The reason field says why it could be: succession is the watch oversee-succeed restarted for this pane, pane-gone one whose pane tmux no longer lists.' ;;
-    watch-replayed) text='A watch oversee-succeed restarted wrote output no session read, and the restart wrote how it went. Both follow, stdout here and stderr on stderr, and are then removed, so no event it reported and no refusal it ended on is lost.' ;;
-    mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
-    mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
-    limit-scan-failed) text='The screen could not be searched for a usage limit. The field names the lane, or the overseer pane where the overseer is the one being read.' ;;
-    reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
-    window-list-failed) text='The tmux window list could not be read.' ;;
-    pane-command-failed) text='The pane command could not be read.' ;;
-    pane-command-invalid) text='The pane command reply is malformed.' ;;
-    pane-identity-failed) text='The pane identity could not be read.' ;;
-    pane-identity-invalid) text='The pane identity reply is malformed.' ;;
-    pane-capture-failed) text='The pane could not be captured.' ;;
-    pane-publish-failed) text='The pane capture could not be published.' ;;
-    state-write-failed) text='The watch state file could not be written. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    state-replace-failed) text='The watch state file could not be replaced. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    state-read-failed) text='The watch state file could not be read. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    reducer-failed) text='The PR reducer failed without per-PR output.' ;;
-    triage-disabled) text='Team triage is skipped because LINEAR_TEAM is empty. Other watch checks continue.' ;;
-    reducer-missing) text='The PR reducer is missing. Other watch checks continue.' ;;
-    items-omitted) text='No work items were supplied. Merged and handoff checks are skipped.' ;;
-    lanes-omitted) text='No lane windows were supplied. Pane checks are skipped; the named checks continue.' ;;
-    child-probe-failed) text='The child-process probe could not run. Shell panes remain watched.' ;;
-    report-unjudged) text='oversee-report could not judge whether a report is due, so the pass says nothing about it and exits 2. Its own keyed lines follow.' ;;
-    account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, the seconds the ceiling allowed, or parse=failed when the listing or a record in it could not be read.' ;;
-    account-reset-unparsed) text='The binding_resets_at the baseline held could not be parsed into a time, so whether that bucket reset settles nothing, and the baseline has already moved to the new reading: that reset is not reported. Status and headroom changes on the account are still judged.' ;;
-    claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
-    reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
-    state-target-invalid) text='The watch state target is not a regular file.' ;;
-    long-pass-unfinished) text='The long pass exited 0 without writing its status, so whether it found news is unknown.' ;;
-    *) printf 'oversee-watch: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
-  esac
-  printf 'oversee-watch: %s' "$reason"
-  for field in "$@"; do
-    field="${field//\\/\\\\}"
-    field="${field//$'\t'/\\t}"
-    field="${field//$'\r'/\\r}"
-    field="${field//$'\n'/\\n}"
-    printf ' %s' "$field"
-  done
-  printf '\n%s\n' "$text"
-}
+# shellcheck source=lib/oversee-watch-text.sh
+source "$SCRIPT_DIR/lib/oversee-watch-text.sh"
 die() { # REASON TOOL_DETAIL FIELD=VALUE...
   local reason="$1" detail="$2"
   shift 2
@@ -841,6 +740,10 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/tmux-server.sh
+source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/watch-session.sh
+source "$SCRIPT_DIR/lib/watch-session.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-gitfile.sh
@@ -969,31 +872,6 @@ mail_row_commit() {
   MAIL_SEEN="$1"
 }
 
-# The session every bare lane window name belongs to, resolved ONCE, while the
-# pane that started this watch still exists: tmux resolves a target with no
-# session through the calling pane, and once that pane is gone it picks a
-# session of its own, so a watch outliving its launcher would read every bare
-# lane in some other session and report it window-gone. A repeat pass is handed
-# the wrapper's answer in OVERSEE_WATCH_SESSION and never asks tmux itself.
-# Empty off tmux, or where tmux named none; check_lane_set refuses a bare name
-# then, with tmux's own words in WATCH_SESSION_DETAIL.
-WATCH_SESSION=""
-WATCH_SESSION_DETAIL=""
-watch_session_resolve() {
-  local out target=()
-  [[ -n "${TMUX:-}" ]] || return 0
-  if [[ "$REPEAT_CHILD" -eq 1 ]]; then
-    WATCH_SESSION="${OVERSEE_WATCH_SESSION:-}"
-    return 0
-  fi
-  [[ -z "${TMUX_PANE:-}" ]] || target=(-t "$TMUX_PANE")
-  if out="$(tmux display-message -p ${target[@]+"${target[@]}"} '#S' 2>&1)" && [[ -n "$out" ]]; then
-    WATCH_SESSION="$out"
-  else
-    WATCH_SESSION_DETAIL="$out"
-  fi
-}
-
 # The -t target a lane is read through: a bare name inside the resolved
 # session, matched exactly, and a `session:window` name as it was given.
 lane_target() { # LANE
@@ -1079,25 +957,6 @@ GIVEN_LANES=(${LANES[@]+"${LANES[@]}"})
 GIVEN_HOSTED=(${HOSTED[@]+"${HOSTED[@]}"})
 GIVEN_ROOTS=(${ROOTS[@]+"${ROOTS[@]}"})
 [[ ${#SKIP_LANES[@]} -eq 0 || -n "$STATE_FILE" ]] || die state-required "" "option=--skip-lane"
-# A lane is read through tmux, so a run naming one outside tmux is refused, and
-# so is a bare name with no session to read it in. A single run and every
-# repeat pass ask it of the lanes they carry.
-# The session is named once, by the process that resolved it, the first time
-# a bare name is read in it: after the argument checks, so a refusal is still
-# the first line a refused run prints.
-SESSION_NOTED=0
-check_lane_set() {
-  local lane
-  [[ ${#LANES[@]} -eq 0 || -n "${TMUX:-}" ]] || die tmux-missing "" "lanes=${LANES[*]}"
-  for lane in ${LANES[@]+"${LANES[@]}"}; do
-    [[ "$lane" != *:* ]] || continue
-    [[ -n "$WATCH_SESSION" ]] \
-      || die session-unresolved "$WATCH_SESSION_DETAIL" "lane=$lane" "path=${STATE_FILE:-none}"
-    [[ "$SESSION_NOTED" -eq 0 && "$REPEAT_CHILD" -eq 0 ]] || continue
-    ow_message session-resolved "session=$WATCH_SESSION" >&2
-    SESSION_NOTED=1
-  done
-}
 # A pass the repeat wrapper launched, which inherits that wrapper's session,
 # overseer record and watch record rather than making its own.
 REPEAT_CHILD=0
@@ -1341,70 +1200,17 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
 }
-# The tail every oversee-succeed call this watch makes carries: the handoff
-# path the successor's brief must name, and the overseer's own flags after the
-# `--` that ends that script's parser. Spelled here and nowhere else, because
-# two sites ask for the same successor — the record of the line a death would
-# replay, and the walled recovery that builds one now — and a flag added to
-# one spelling and not the other is a successor launched two ways.
-#
-# An array rather than a printed list: a flag is one argv word whatever it
-# holds, and a line-per-word rendering would split one carrying a newline into
-# two. Never empty, so every call site expands it plainly.
-OVERSEER_LAUNCH_ARGS=()
-overseer_launch_args() {
-  OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
-  [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
-}
+# shellcheck source=lib/watch-overseer-record.sh
+source "$SCRIPT_DIR/lib/watch-overseer-record.sh"
 
-overseer_command_record() {
-  local pane="${TMUX_PANE:-}" key server window line record detail
-  [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  # The key is the orch library's, the same function the report and the lane
-  # turn-end hook read a session's own key with: the hook compares its own
-  # against the pair written here, and a second derivation that drifted would
-  # leave the overseer's turn end judged by nothing, with no keyed line.
-  # That library swallows tmux's own words, and a second read of `#{pid}` here
-  # would be a twin of the verb it owns, so the refusal names the read that
-  # failed instead of replaying a message this script cannot have. The window
-  # read below runs here and does replay tmux's. A key that came back in some
-  # other shape is its own cause and is replayed as one.
-  if ! key="$(lane_context_caller_key)"; then
-    overseer_record_refuse "tmux reported no server pid for pane $pane" \
-      overseer-unrecorded "pane=$pane" "step=identity"
-  fi
-  [[ "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || overseer_record_refuse "the pane key read back as: $key" \
-      overseer-unrecorded "pane=$pane" "step=identity"
-  # Taken here, before the next match replaces BASH_REMATCH.
-  server="${BASH_REMATCH[1]}"
-  if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
-    overseer_record_refuse "$window" overseer-unrecorded "pane=$pane" "step=window"
-  fi
-  [[ "$window" =~ ^@[0-9]+$ ]] \
-    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
-  overseer_launch_args
-  if ! line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)"; then
-    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  fi
-  [[ -n "$line" ]] \
-    || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
-  record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
-    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
-    || overseer_record_refuse "$record" overseer-unrecorded "pane=$pane" "step=render"
-  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    set oversee overseer "$record" 2>&1)" \
-    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
-}
-
-# Whether PANE, a pane id, is one the tmux server this start runs on no longer
+# Whether PANE, a pane id, is one the tmux server this start reaches no longer
 # lists. Only a listing that succeeded answers: a server that could not be
 # asked leaves the pane unjudged, and the watch serving it is refused, not
 # stopped. A pane on another tmux server reads as gone here; one fleet state is
 # watched from one server.
 watch_pane_gone() { # PANE
   local panes
-  [[ -n "${TMUX:-}" && "$1" == %* ]] || return 1
+  tmux_server_named && [[ "$1" == %* ]] || return 1
   panes="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || return 1
   ! awk -v p="$1" '$2 == p { found = 1 } END { exit !found }' <<<"$panes"
 }
@@ -1647,6 +1453,7 @@ hosted_clone() { # ITEM STATE
     3)
       lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=${LANE_HOSTED_GITLINE:-<empty>}"
       return 1 ;;
+    4) lane_failure_set lane-host-busy "" "item=$1"; return 1 ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
@@ -1682,6 +1489,7 @@ item_state_dir() { # ITEM
   fi
   lane_host_fetch "$SCRIPT_DIR/lane-host" "$1" "$LANE_HOSTED_STATE_PATH" \
     "$ITEM_STATE_DIR/workflow-state-$1.json" "$WORK_DIR/host.err" || rc=$?
+  [[ "$rc" -ne 4 ]] || { lane_failure_set lane-host-busy "" "item=$1"; return 1; }
   if [[ "$rc" -gt 1 ]]; then
     lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=${LANE_HOSTED_STATE_PATH%/*}"
     return 1
@@ -1896,7 +1704,7 @@ require_item_helpers
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
 # is no pane to read and nothing to note.
-if [[ -n "${TMUX:-}" && -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
+if tmux_server_named && [[ -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
   ow_message lanes-omitted "count=0" "active=pr-watch,merged,triage,handoff" >&2
 fi
 
@@ -2103,6 +1911,7 @@ mail_read() { # ITEM LANE_MAIL_ARGS...
   shift
   MAIL_OUT="$("$LANE_MAIL" "$@" 2>"$WORK_DIR/mail.err")" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
+  [[ "$rc" -ne "$LANE_HOST_BUSY_EXIT" ]] || { lane_failure_set lane-host-busy "" "item=$item"; return 1; }
   lane_failure_set mail-read-failed "$(cat "$WORK_DIR/mail.err")" "item=$item" "exit=$rc"
   return 1
 }
