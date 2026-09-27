@@ -1,0 +1,10 @@
+# kendex-guard-dialect: legacy-glob
+# Markdown exclusions use pattern<TAB>reason. Globs match full repository paths;
+# * crosses /. A ! entry includes matching files again. Read by md-format,
+# md-refs, prose, and md-reflow. Two classes only: bytes this repository does not
+# author, and bytes a reformatting would damage. Everything VGS writes is held to the format.
+.agents/*	kendex render output, owned upstream; a local reflow is erased by the next refresh
+!.agents/skills/vgs-plugin/*	VGS-owned in-place skill, declared source = "in-place" in kendex.toml
+.claude/*	kendex render output, owned upstream
+.codex/*	kendex render output, owned upstream
+.pi/*	kendex render output, owned upstream

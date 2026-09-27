@@ -1,0 +1,249 @@
+# Public kendex settings for the v2 shell. Keep secrets in .env.local. A kendex
+# skill script resolves a key from the environment, then .env.local, then
+# .kendex/settings.toml, then this [env] table, then its own built-in default.
+# `.env` is never read.
+
+[env]
+CI_FIX_MAX_CYCLES = "6"
+# Reviews are optional; no reviewer wait or required evidence.
+PR_REVIEW_GATE = "off"
+DECISIONS_DIR = "docs/decisions"
+DECISIONS_BASE_REF = "origin/main"
+# Issue branches use the vgs Linear identifier: vgs-<n>-<slug>.
+GH_ISSUE_PATTERN = "vgs-[0-9]+"
+LINEAR_FORMAT = "safe"
+ORCH_STATE_DIR = "tmp"
+ORCH_USER_MODE = "ceo"
+
+# Extra test-path globs branch-size-check adds to its built-in test rule, which
+# names none of them. The controls `scripts/validate` runs are validation code;
+# counting their added lines as production growth spends a branch's stated
+# allowance on its tests. Every control is a `scripts/test-*` file in one of
+# three languages; the checks and runners beside them stay production.
+ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/test-*.py scripts/test-*.sh"
+
+# File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
+# key here: a repeated default goes stale when the class changes.
+
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_TIMEOUT = "1080"
+WORKTREE_BASE_DIR = "~/dev/.worktrees/vgs"
+WORKTREE_COPIES = ""
+WORKTREE_DEFAULT_BRANCH = "main"
+WORKTREE_MKDIRS = "tmp"
+WORKTREE_RELATIVE_SYMLINKS = ""
+WORKTREE_SYMLINKS = ".env.local .cache"
+
+# Optional trusted check-run or commit-status name accepted as review
+# evidence on the current head. Empty accepts review objects only. Names
+# do not authenticate publishers; use only where all publishers are trusted.
+PR_REVIEW_CHECK = ""
+
+# Total concurrent reviewer-session budget, including the primary session.
+# Zero allows all reviewers. A bounded budget runs sequential waves and
+# releases completed sessions.
+REVIEWER_SLOT_BUDGET = "0"
+
+# On total reviewer silence, proceed records a local timeout override.
+# Unresolved threads still block, and CI and comment checks still apply.
+PR_REVIEW_ON_TIMEOUT = "proceed"
+
+# Workflow decision policy: ask prompts the user; auto-recommended selects
+# and records the recommended option. Scope changes and decision-record
+# revisits still require confirmation. Merge uses ORCH_MERGE_AUTONOMY.
+ORCH_DECISION_MODE = "auto-recommended"
+
+
+# The team every Linear write targets. No default: an empty value refuses
+# writes instead of guessing inside whatever workspace the API key reaches
+# (the create actions still take `--team <name>` per call). Confirm with
+# `linear.sh auth-check --strict`.
+LINEAR_TEAM = "vgs"
+
+# Issue identifier prefix used in examples (e.g. PROJ-123).
+LINEAR_TEAM_PREFIX = "VGS"
+
+# Review-gate list values use semicolon separators.
+# See the review-gate skill for the complete key reference.
+
+# Commit-status context the gate posts — the required check name in branch
+# protection. Keep it stable: changing it strands the old required context
+# on open PRs.
+REVIEW_GATE_CONTEXT = "Review gate"
+
+# Trusted check-run or commit-status names may supply clean-review evidence.
+# Name matching requires trusted publishers. Shared github-actions check-runs
+# are rejected; legacy statuses use REVIEW_GATE_STATUS_PUBLISHER_REJECT.
+# Skip-pattern filtering and newest-row selection prevent skipped or stale
+# successes from supplying evidence.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
+
+# Reject a trusted pass whose output contains any listed skip substring.
+# Empty disables this filter.
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+
+# Comment reviewers use login:binding-prefix entries. The author login
+# authenticates the reviewer; the literal prefix binds its comment to a commit.
+# The owner's clean-review comment is evidence on the commit it names.
+REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
+
+# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+
+# Status context for an operator attestation of total reviewer silence.
+# It substitutes only for missing evidence, never requested changes or open
+# threads. The operator posts it manually; publisher rejection still applies.
+REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
+
+# Only listed non-author reviewer logins may supply review-object evidence.
+# An empty list accepts any non-author, which lets an unrelated GitHub account
+# satisfy missing evidence on a public repository. The PR author never qualifies.
+# Every active reviewer must be listed: an unlisted one supplies no evidence
+# yet its engagement holds off the timeout fallback.
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
+
+# Accept non-dismissed review objects from trusted logins. COMMENTED can
+# represent a clean review; requiring APPROVED would discard that evidence.
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+
+# Reject statuses from github-actions[bot] so PR workflows cannot supply
+# trusted reviewer evidence or the operator override.
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
+
+# Carry ancestor evidence for documentation changes. Comment carry is off
+# because its line classifier cannot recognize enclosing strings or heredocs.
+REVIEW_GATE_CARRY_FORWARD = "docs"
+
+# No gate writer or required status exists; shared tools skip review waits.
+REVIEW_GATE_MODE = "off"
+# Require fresh evidence for policy instructions and the checks. Harness trees
+# are excluded whole so a new rendered skill inherits the rule; scripts/ is
+# excluded so the validation code never carries stale evidence.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;.agents/skills/bot-instructions/*"
+
+REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"
+REVIEW_GATE_DOCS_ONLY = "none"
+
+# The agent-routing labels the project-management taxonomy declares. A create
+# carrying none of them is refused: such an issue is invisible to routing.
+LINEAR_AGENT_LABELS = "agent:generalist, agent:multi, agent:human, agent:researcher"
+
+# Every created issue names what reaches it in a `Reached by:` line.
+LINEAR_REQUIRE_REACH = "1"
+
+# Total review-wait budget in seconds before the on-timeout policy applies;
+# an explicit max_wait argument always wins.
+PR_REVIEW_WAIT_SECS = "900"
+
+# Review threads are advisory, not a merge condition.
+REVIEW_GATE_THREADS = "off"
+
+# Bounded attempts per predicate evidence read, and the pause between them.
+# A read failing every attempt is still exit 2 (no verdict).
+REVIEW_GATE_API_ATTEMPTS = "1"
+
+REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
+
+# Seconds per brief-delivery verification pass on tmux handoff lanes.
+ORCH_TMUX_VERIFY_SECS = "15"
+ORCH_LANE_SSH_PROMPT_SECS = "60"
+
+# Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
+# every merge gate is green; "ask" presents the merge decision.
+# MERGE_READY = false never auto-merges.
+ORCH_MERGE_AUTONOMY = "auto"
+ORCH_LANE_OUTPUT = "quiet"
+
+# ORCH_LANE_ALIASES (optional) maps config-directory names to lane names.
+# Discovery owns the lane inventory; ORCH_LANE_DIRS covers other layouts.
+
+# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
+# flight.
+ORCH_OVERSEER_LANES = "12"
+
+# Successor overseer order for oversee-succeed, as harness:rank:effort on the
+# tier ladder: top Claude tier, top Codex tier, then the second tier of each.
+ORCH_OVERSEER_PREFERENCE = "claude:1:high,codex:1:high,claude:2:high,codex:2:high"
+ORCH_HANDOFF_HEADROOM_PCT = "3"
+ORCH_LANE_MAX_PCT = "95"
+
+# Execute the audit's accepted creations and cancellations without a question.
+PM_CREATE_AUTONOMY = "auto"
+
+# Substrings marking a review row's body as the reviewer's own errored-run
+# attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
+# Matched at the start of the body only (first line); a review quoting a
+# pattern in later text stays evidence. Empty disables.
+REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+
+# Cross-model review selects an available roster entry distinct from this session.
+# See the second-opinion skill for selection rules.
+
+# Priority-ordered roster, space/comma separated. Per entry:
+# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
+# SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+SECOND_OPINION_MODELS = "claude codex"
+
+# Opinions a review collects; 2+ unions distinct models on one diff.
+SECOND_OPINION_COUNT = "1"
+
+# Home for review/audit records written without --output; a directory the
+# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
+# left alone — ignore it yourself).
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+
+
+# Repo-local check the pre-commit shim runs LAST: a repo-root-relative
+# executable following the family exit contract (0 clean, 1 violations,
+# else "could not complete"); any nonzero blocks the commit, and so does a
+# missing or non-executable value. Empty = no repo-local check; the chain
+# runs the staged bot-instructions check itself.
+COMMIT_GUARDS_PRE_COMMIT_LOCAL = ""
+
+# Optional manual guard runs use changed files; git hooks remain unarmed.
+COMMIT_GUARDS_MD_SCOPE = "touched"
+
+# md-refs judges every tracked markdown file, decision records and READMEs
+# included, not only the agent-loaded set.
+COMMIT_GUARDS_MD_REFS_PATHS = "*.md"
+
+# Max re-review cycles per issue before the verdict pass; the re-review
+# re-entry refuses once cycles is past it.
+REVIEW_MAX_CYCLES = "4"
+
+# Diff-scoped local checks, including the isolated smoke only when affected.
+DEV_VALIDATE_CMD = "scripts/validate"
+DEV_VALIDATE_RANGE_CMD = "scripts/validate"
+
+# Optional extra verification command for GitHub-side checks; empty means
+# none beyond the guard chain.
+GH_VERIFY_CMD = ""
+
+# Bot identity for gate-side commits; empty means the default account.
+BOT_EMAIL = ""
+
+# Bot display name for gate-side commits; empty means the default account.
+BOT_NAME = ""
+
+# Remote the bot pushes through; empty means origin.
+BOT_REMOTE_NAME = ""
+
+# GitHub login the bot acts as; empty means the default account.
+GH_BOT_USERNAME = ""
+
+# Maximum external review rounds before findings receive dispositions.
+REVIEW_MAX_EXTERNAL_ROUNDS = "4"
+
+# The kendex render trees "vendored" trusts as kendex output, e.g.
+# ".agents/*;.claude/skills/*" — bytes under them carry unreviewed, so hook
+# scripts and instruction markdown belong in the exclusion list, which wins.
+# A rename carries only when both its names are under the set. Config
+# errors: enabling "vendored" over an empty set, or an entry naming no
+# literal path text ("*", "*/*").
+REVIEW_GATE_VENDORED_PATHS = ""
+
+# The kendex command-safety hook refuses a systemd-run command whose MemoryMax
+# or MemoryHigh value is a number followed by K or M; a value in G, a bare
+# byte count or a percentage passes.
+COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^;|&]*Memory(Max|High)=[0-9]+[KkMm]([^[:alnum:]]|$)"

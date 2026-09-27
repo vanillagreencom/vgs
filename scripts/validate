@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# The product validation manifest, run explicitly rather than by git hooks.
+#
+# Usage: scripts/validate [AREA] [--changed BASE | --full] [--list]
+#   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
+#   unit, qml, all (default: all). One area per call.
+#   repo holds the checks this file makes itself, the whitespace
+#   row and the self-check that every scripts/test-* file has a row;
+#   scripts/test-validate.sh, under tools, is their control. unit runs the
+#   QML unit tests, which need Qt and no Wayland session; offline runs
+#   every row but unit and the nested smoke.
+#   --changed BASE selects rows whose inputs changed against BASE, including
+#   staged, unstaged and untracked files. Renames include both paths. Unknown
+#   inputs or an unreadable diff select the whole area. Repository checks
+#   always run. --list prints selected commands without executing them.
+#   Without a scope flag, compare against the default branch's merge base.
+#   --full explicitly selects every row in the area.
+#
+# VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
+#   used as the default change base too. --changed overrides it. Unset,
+#   whitespace_base below resolves the base; an unavailable base exits 77.
+# DEV_VALIDATE_BASE: the fix-round base supplied by Kendex; used when neither
+#   --changed nor --full is present.
+#
+# Exit 0: every selected check passed. Exit 77: every check that ran passed
+# but at least one could not run and is named; that is not a pass. Exit 1: a
+# check failed. Exit 2: invalid area or arguments, named by
+# `validate: refused: area=`, `extra-argument=` or
+#   `changed-base=missing-or-repeated` or `scope=conflicting-or-repeated`.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+cd -- "$repo"
+
+area="all"
+area_given=false
+change_base=""
+list_only=false
+full_scope=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --changed)
+      if [[ $full_scope == true ]]; then
+        echo 'validate: refused: scope=conflicting-or-repeated' >&2; exit 2
+      fi
+      if [[ $# -lt 2 || -z $2 || $2 == -* || -n $change_base ]]; then
+        echo 'validate: refused: changed-base=missing-or-repeated' >&2; exit 2
+      fi
+      change_base="$2"; shift 2 ;;
+    --full)
+      if [[ $full_scope == true || -n $change_base ]]; then
+        echo 'validate: refused: scope=conflicting-or-repeated' >&2; exit 2
+      fi
+      full_scope=true; shift ;;
+    --list) list_only=true; shift ;;
+    *)
+      if [[ $area_given == true ]]; then
+        printf 'validate: refused: extra-argument=%s\none area per call\n' "$1" >&2; exit 2
+      fi
+      area="$1"; area_given=true; shift ;;
+  esac
+done
+case "$area" in
+  logic|manifests|boundary|cli|tools|repo|offline|unit|qml|all) ;;
+  *) printf 'validate: refused: area=%s\n' "$area" >&2; exit 2 ;;
+esac
+failed=()
+skipped=()
+
+run() { # LABEL CMD...
+  local label="$1"; shift
+  echo "== $label"
+  local status=0
+  "$@" || status=$?
+  case "$status" in
+    0) ;;
+    77) skipped+=("$label") ;;
+    *) failed+=("$label (exit $status)") ;;
+  esac
+}
+
+# Rows: area | label | command | additional input globs, space-delimited.
+# Command paths are also inputs.
+rows=(
+  "logic|plugin logic table|node scripts/test-plugin-logic.js|shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js scripts/qml-library.js"
+  "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js scripts/qml-library.js"
+  "logic|library loader controls|node scripts/test-qml-library.js|scripts/qml-library.js"
+  "logic|theme judge table|node scripts/test-theme-logic.js|shell/Commons/ThemeLogic.js shell/Commons/Tokens.js scripts/qml-library.js"
+  "logic|lucide icon data|node scripts/test-lucide-data.js|shell/Ui/icons/Lucide.js scripts/qml-library.js"
+  "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
+  "cli|runner CLI controls|scripts/test-vgsh.sh|bin/vgsh* shell/Core/PluginLogic.js scripts/check-manifests.js scripts/qml-library.js config/shell.json shell/plugins/*"
+  "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py|bin/vgsh-scan"
+  "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py|.agents/skills/vgs-plugin/scripts/* .agents/skills/vgs-plugin/templates/* shell/Core/PluginLogic.js bin/vgsh-scan scripts/check-manifests.js scripts/check-plugin-boundary.py scripts/check-design-tokens.py scripts/qml_source.py scripts/qml-library.js shell/Commons/*"
+  "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan scripts/qml_source.py"
+  "boundary|smoke fixture boundary|python3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures|scripts/smoke/fixtures/* bin/vgsh-scan scripts/qml_source.py"
+  "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py|scripts/check-plugin-boundary.py bin/vgsh-scan scripts/qml_source.py"
+  "boundary|design tokens|python3 scripts/check-design-tokens.py|shell/* .agents/skills/vgs-plugin/templates/* scripts/smoke/fixtures/* bin/vgsh-scan scripts/qml_source.py scripts/qml-library.js"
+  "boundary|design token controls|python3 scripts/test-check-design-tokens.py|scripts/check-design-tokens.py bin/vgsh-scan scripts/qml_source.py scripts/qml-library.js shell/Commons/Tokens.js shell/Commons/ThemeLogic.js shell/Commons/Theme.qml"
+  "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
+  "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
+  "repo|whitespace errors against the base|whitespace_check|"
+  "repo|every test file has a row|rows_cover_tests|"
+  "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js bin/vgsh-scan scripts/smoke/fixtures/*"
+  "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
+  "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/*"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* scripts/smoke/* scripts/sample-shell-memory.sh scripts/qml-library.js"
+)
+
+# The commit the whitespace row compares against, printed on stdout. On
+# failure it prints what is missing as key=value and returns 1.
+# VGS_VALIDATE_BASE wins when set. Otherwise the base is the merge base of
+# HEAD with the remote-tracking copy of the project's base branch,
+# WORKTREE_DEFAULT_BRANCH from the environment or from kendex.settings.toml
+# (read by the kendex settings loader, so the file has one reader). Exactly
+# one remote may carry that branch; none or several is missing, never a
+# guess, so no ref that merely contains HEAD is taken for its base.
+whitespace_base() {
+  if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
+    if ! git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"; then
+      echo "missing=commit VGS_VALIDATE_BASE=$VGS_VALIDATE_BASE"
+      return 1
+    fi
+    return 0
+  fi
+  local branch="${WORKTREE_DEFAULT_BRANCH:-}" loader="$repo/.agents/skills/orch/scripts/lib/kendex-env.sh" ref refs=()
+  if [[ -z $branch && -f $repo/kendex.settings.toml ]]; then
+    # shellcheck source=/dev/null
+    branch="$(source "$loader" && kendex_load_settings_file "$repo/kendex.settings.toml" && printf '%s' "${WORKTREE_DEFAULT_BRANCH:-}")" || branch=""
+  fi
+  if [[ -z $branch ]]; then
+    echo "missing=base-branch source=WORKTREE_DEFAULT_BRANCH"
+    return 1
+  fi
+  while IFS= read -r ref; do
+    [[ $ref =~ ^refs/remotes/[^/]+/(.*)$ && ${BASH_REMATCH[1]} == "$branch" ]] && refs+=("$ref")
+  done < <(git for-each-ref --format='%(refname)' refs/remotes/)
+  if [[ ${#refs[@]} -ne 1 ]]; then
+    echo "missing=base-ref branch=$branch remote-refs=${#refs[@]}"
+    return 1
+  fi
+  if ! git merge-base HEAD "${refs[0]}"; then
+    echo "missing=merge-base ref=${refs[0]}"
+    return 1
+  fi
+}
+
+# Whitespace errors the tree adds over the base: tracked files against the
+# base commit, and every untracked file whole, since a new file has no base.
+# Names are read NUL-delimited, so a name git would quote reaches git as the
+# file's own name. git diff --check exits 2 for findings; with --no-index it
+# exits 1 for a clean difference and 3 for findings. Any other status, or a
+# clean status with output, is a read error and fails the row with git's
+# message. First lines:
+#   whitespace: base=<commit>
+#   whitespace: findings scope=tracked | scope=untracked path=<file>
+#   whitespace: unreadable scope=tracked status=<n> | scope=untracked path=<file> status=<n>
+#   whitespace: failed base=<commit>
+#   whitespace: status=not-measured reason=no-base <missing key=value>
+whitespace_check() {
+  local base file out file_status status=0
+  if ! base="$(whitespace_base)"; then
+    echo "whitespace: status=not-measured reason=no-base ${base##*$'\n'}"
+    echo "set VGS_VALIDATE_BASE to the commit to compare against"
+    return 77
+  fi
+  echo "whitespace: base=$base"
+  file_status=0
+  out="$(git diff --check "$base" -- 2>&1)" || file_status=$?
+  case "$file_status" in
+    0) ;;
+    2) echo "whitespace: findings scope=tracked"; printf '%s\n' "$out"; status=1 ;;
+    *) echo "whitespace: unreadable scope=tracked status=$file_status"; printf '%s\n' "$out"; status=1 ;;
+  esac
+  while IFS= read -r -d '' file; do
+    file_status=0
+    out="$(git diff --no-index --check -- /dev/null "$file" 2>&1)" || file_status=$?
+    case "$file_status" in
+      0|1) [[ -z $out ]] && continue
+           echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
+      3) echo "whitespace: findings scope=untracked path=$file" ;;
+      *) echo "whitespace: unreadable scope=untracked path=$file status=$file_status" ;;
+    esac
+    printf '%s\n' "$out"
+    status=1
+  done < <(git ls-files -z --others --exclude-standard)
+  [[ $status -eq 0 ]] || echo "whitespace: failed base=$base"
+  return "$status"
+}
+
+# Every scripts/test-* file is named by a row, so a check cannot exist
+# without running here.
+rows_cover_tests() {
+  local row file command word words=" " missing=() split=()
+  # Every whole word of every row's command, space-delimited, so a test
+  # file's path matches only a word equal to it, never a longer name that
+  # starts with it.
+  for row in "${rows[@]}"; do
+    command="${row#*|}"
+    command="${command#*|}"
+    command="${command%%|*}"
+    read -r -a split <<<"$command"
+    for word in "${split[@]}"; do words+="$word "; done
+  done
+  for file in scripts/test-*; do
+    [[ -e $file ]] || continue
+    [[ $words == *" $file "* ]] || missing+=("$file")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf 'validate: refused: test-without-row=%s\n' "$(IFS=,; echo "${missing[*]}")"
+    return 1
+  fi
+  echo "validate: every test file has a row"
+}
+
+# Match all rows before filtering by area, so runtime-only inputs do not
+# cause an offline run to select unrelated suites.
+if [[ $full_scope == false && -z $change_base ]]; then
+  if [[ -n ${DEV_VALIDATE_BASE:-} ]]; then
+    change_base="$DEV_VALIDATE_BASE"
+  elif ! change_base="$(whitespace_base)"; then
+    printf 'validate: status=not-measured reason=no-base %s\n' "${change_base##*$'\n'}" >&2
+    exit 77
+  fi
+fi
+if [[ -n $change_base ]]; then
+  export VGS_VALIDATE_BASE="$change_base"
+fi
+affected=()
+for i in "${!rows[@]}"; do affected[i]=true; done
+if [[ -n $change_base ]]; then
+  paths_file="$(mktemp)"
+  trap 'rm -f -- "${paths_file:?}"' EXIT
+  if ! git diff --name-only --no-renames -z "$change_base" -- >"$paths_file" ||
+     ! git ls-files -z --others --exclude-standard >>"$paths_file"; then
+    echo 'validate: selection=full reason=diff-unreadable' >&2
+  else
+    mapfile -d '' -t changed_paths <"$paths_file"
+    for i in "${!rows[@]}"; do affected[i]=false; done
+    full=false
+    for path in "${changed_paths[@]}"; do
+      known=false
+      for i in "${!rows[@]}"; do
+        IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
+        [[ $row_area == repo ]] && continue
+        read -r -a patterns <<<"$command $inputs"
+        for pattern in "${patterns[@]}"; do
+          [[ $pattern == */* ]] || continue
+          if [[ $path == $pattern ]]; then affected[i]=true; known=true; break; fi
+        done
+      done
+      if [[ $known == false ]]; then
+        case "$path" in
+          *.md|*.markdown|docs/*|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
+          .agents/skills/vgs-plugin/*)
+            printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
+          .agents/*|.bot-instructions/*) ;;
+          *) printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
+        esac
+      fi
+    done
+    if [[ $full == true ]]; then
+      for i in "${!rows[@]}"; do affected[i]=true; done
+    fi
+  fi
+fi
+
+selected_count=0
+for i in "${!rows[@]}"; do
+  IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
+  case "$area" in
+    all) ;;
+    offline) [[ $row_area == qml || $row_area == unit ]] && continue ;;
+    *) [[ $area != "$row_area" ]] && continue ;;
+  esac
+  [[ ${affected[i]} == true || $row_area == repo ]] || continue
+  selected_count=$((selected_count + 1))
+  if [[ $list_only == true ]]; then
+    printf '%s\n' "$command"
+  else
+    # shellcheck disable=SC2086
+    run "$label" $command
+  fi
+done
+printf 'validate: selected=%s area=%s\n' "$selected_count" "$area" >&2
+[[ $list_only == true ]] && exit 0
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+  printf 'validate: failed=%s\n' "$(IFS=';'; echo "${failed[*]}")"
+  exit 1
+fi
+if [[ ${#skipped[@]} -gt 0 ]]; then
+  printf 'validate: status=not-measured skipped=%s\n' "$(IFS=';'; echo "${skipped[*]}")"
+  exit 77
+fi
+echo "validate: ok"

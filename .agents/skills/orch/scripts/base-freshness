@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# base-freshness — fetch the base branch and report ahead/behind as JSON so
+# workflows gate the review cycle on a current base instead of trusting
+# whatever a reused worktree happens to sit on.
+#
+# Usage: base-freshness [worktree]
+#
+# Fetches only the resolved base branch's remote-tracking ref (explicit
+# refspec, so mirror-style fetch configs cannot rewrite unrelated refs),
+# through the GitHub skill's git-https-auth wrapper when available, then
+# prints one JSON object:
+#
+#   {"branch", "base_branch", "base_ref", "ahead", "behind", "fresh"}
+#
+# Exit codes:
+#   0  check completed, base is current (behind = 0)
+#   4  check completed, base is STALE (behind > 0) — rebase before review
+#   1  freshness could not be established (no origin, fetch failed);
+#      callers must treat this as stale, never as fresh
+#   2  usage error
+
+set -euo pipefail
+
+# Message text is centralized; callers supply the reason and relevant values.
+message() {
+  local reason="$1"
+  shift
+  printf '%s: %s' base-freshness "$reason"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$reason" in
+  unknown-flag) printf '%s\n' 'Use base-freshness with a worktree path.' ;;
+  not-worktree) printf '%s\n' 'The directory is not a Git worktree.' ;;
+  missing-remote) printf '%s\n' 'The origin remote is absent. Base freshness cannot be verified.' ;;
+  fetch-failed) printf '%s\n' 'The base fetch failed. Base freshness cannot be verified.' ;;
+  esac
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "${1:-}" in
+    --help|-h)
+        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    -*)
+        message unknown-flag "flag=$1" >&2
+        exit 2
+        ;;
+esac
+
+worktree="${1:-.}"
+
+if ! git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1; then
+    message not-worktree "path=$worktree" >&2
+    exit 2
+fi
+
+if ! git -C "$worktree" remote get-url origin >/dev/null 2>&1; then
+    message missing-remote "path=$worktree" remote=origin >&2
+    exit 1
+fi
+
+branch="$(git -C "$worktree" branch --show-current || true)"
+base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")"
+base_ref="refs/remotes/origin/$base_branch"
+
+git_https_auth="$SCRIPT_DIR/../../github/scripts/git-https-auth"
+fetch_ok=true
+fetch_detail=""
+if [[ -x "$git_https_auth" ]]; then
+    fetch_detail="$("$git_https_auth" -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" 2>&1)" || fetch_ok=false
+else
+    fetch_detail="$(git -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" 2>&1)" || fetch_ok=false
+fi
+if [[ "$fetch_ok" != true ]]; then
+    message fetch-failed "ref=origin/$base_branch" >&2
+    [[ -z "$fetch_detail" ]] || printf '%s\n' "$fetch_detail" >&2
+    exit 1
+fi
+
+counts="$(git -C "$worktree" rev-list --left-right --count "$base_ref...HEAD")"
+read -r behind ahead <<<"$counts"
+
+fresh=false
+[[ "$behind" -eq 0 ]] && fresh=true
+
+jq -n \
+    --arg branch "$branch" \
+    --arg base_branch "$base_branch" \
+    --arg base_ref "$base_ref" \
+    --argjson ahead "$ahead" \
+    --argjson behind "$behind" \
+    --argjson fresh "$fresh" \
+    '{branch: $branch, base_branch: $base_branch, base_ref: $base_ref, ahead: $ahead, behind: $behind, fresh: $fresh}'
+
+[[ "$fresh" == true ]] || exit 4

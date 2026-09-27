@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "bar": {
+    "id": "vgs.bar",
+    "layout": {
+      "left": [],
+      "center": [],
+      "right": []
+    }
+  },
+  "plugins": [],
+  "disabledPlugins": []
+}

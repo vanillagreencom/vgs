@@ -1,0 +1,11 @@
+# scripts/
+
+Validation and measurement scripts. A script here reads the repository and the nested sandbox.
+
+- A check is a row in `scripts/validate` with its must-fail control beside it, named `test-<subject>` for the script it exercises. `qml-smoke.sh` is a runner and has none; the checks `validate` makes itself have theirs in `test-validate.sh`.
+- What the sandbox needs, how it exits and where the shell's log is: `docs/architecture/runtime.md` § Validation and § Process.
+- What a memory figure may claim and how the sampler finds the shell: `docs/architecture/memory.md`.
+- Use `scripts/validate --list` to inspect the affected checks, then omit `--list` to run them once. Selection defaults to the default branch's merge base; `--changed BASE` narrows a fix round, and `--full` explicitly requests every row. The input globs beside each manifest row include its shared dependencies. An unmapped source input selects the full area; docs and harness-only changes do not start the product smoke.
+
+- Smoke rows live under `scripts/smoke/rows/`. The runner fixes their order because later rows use earlier state. Only `scripts/smoke/harness.sh` owns the sandbox lifetime.
+- Smoke fixtures live under `scripts/smoke/fixtures/plugins/`. Offline validation checks every fixture. Runtime refusal fixtures belong to the rows that assert their refusal.

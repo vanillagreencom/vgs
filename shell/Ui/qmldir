@@ -1,0 +1,33 @@
+module qs.Ui
+BarWidget 1.0 BarWidget.qml
+Label 1.0 foundation/Label.qml
+Icon 1.0 foundation/Icon.qml
+Surface 1.0 foundation/Surface.qml
+Divider 1.0 foundation/Divider.qml
+FocusRing 1.0 foundation/FocusRing.qml
+Button 1.0 controls/Button.qml
+IconButton 1.0 controls/IconButton.qml
+ToggleButton 1.0 controls/ToggleButton.qml
+SegmentedControl 1.0 controls/SegmentedControl.qml
+Switch 1.0 controls/Switch.qml
+Checkbox 1.0 controls/Checkbox.qml
+Radio 1.0 controls/Radio.qml
+Slider 1.0 controls/Slider.qml
+TextField 1.0 controls/TextField.qml
+Field 1.0 controls/Field.qml
+Spinner 1.0 feedback/Spinner.qml
+ProgressBar 1.0 feedback/ProgressBar.qml
+Badge 1.0 feedback/Badge.qml
+Kbd 1.0 feedback/Kbd.qml
+ScrollArea 1.0 layout/ScrollArea.qml
+Tabs 1.0 layout/Tabs.qml
+ListItem 1.0 layout/ListItem.qml
+SectionHeader 1.0 layout/SectionHeader.qml
+Select 1.0 controls/Select.qml
+Toast 1.0 feedback/Toast.qml
+Popover 1.0 overlay/Popover.qml
+Tooltip 1.0 overlay/Tooltip.qml
+Menu 1.0 overlay/Menu.qml
+MenuItem 1.0 overlay/MenuItem.qml
+internal AnchorTracker overlay/AnchorTracker.qml
+singleton OverlayState 1.0 overlay/OverlayState.qml

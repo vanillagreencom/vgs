@@ -1,0 +1,52 @@
+---
+name: decider
+description: "Load to create, search, or supersede an architecture decision record."
+summary: "Architecture decision records: templates, creation, search, supersession tracking, and INDEX maintenance."
+license: MIT
+user-invocable: true
+metadata:
+  author: vanillagreen
+  source: kendex
+  repository: "https://github.com/vanillagreencom/kendex"
+  bugs: "https://github.com/vanillagreencom/kendex/issues"
+  version: "1.1.0"
+tags: [planning]
+---
+
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+<!-- kendex:shared-instructions:start -->
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+
+VGS delivery policy overrides the shared workflow's mandatory review, CI-wait, branch-size and commit-hook gates. Work targets main. Reviews and PRs are optional; push directly or merge a PR immediately with gh, without a review loop, queue or CI wait. Do not arm git guards. Run scripts/validate once on the final relevant diff; use --changed <last-validated-commit> for a fix round, and reuse passing results while those inputs are unchanged. Do not rerun a full battery at commit, push or submission. Use --full only for an explicit full sweep or an unmapped dependency. Keep the live-session safety rules.
+
+<!-- kendex:shared-instructions:end -->
+<!-- kendex:project-instructions:end -->
+
+# Decider
+
+Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`), with a search CLI, canonical format, and creation/supersession workflows.
+
+```bash
+.agents/skills/decider/scripts/decisions <command> [options]
+```
+
+Actions (`search`, `search --issue`, `list`, `next-id`, `get`, `check`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISIONS_BASE_REF` / `DECISION_ID_*` environment: `decisions --help`. There is no bare `issue` action; use `search --issue`.
+
+Read the full decision file before acting on a hit. A suggestion contradicting an active decision is invalid unless the decision itself is flawed.
+
+## Workflows
+
+| Workflow | Trigger |
+|----------|---------|
+| `workflows/create-decision.md` | A significant path choice is settled |
+| `workflows/update-decision.md` | A new decision supersedes, partially supersedes, or revisits an existing one |
+
+Format: `schemas/decision-format.md` (constraints), `templates/decision-entry.md` (document skeleton), `templates/index-row.md` (INDEX row).
+
+## Approval
+
+Never create a decision document without explicit user approval. When work settles a choice worth recording, say on completion: "this introduced a decision worth recording: [summary]. Want me to create a decision entry?"
+
+Record: technology selections with alternatives, performance trade-offs, path choices whose conditions may change. Do not record: variable names, small refactors, bug fixes, choices with no realistic alternative, standard pattern applications.

@@ -1,0 +1,31 @@
+# Architectural Decision Log
+
+Records the path choices v2 has made, so a later reader can see what was chosen, why, and what would change the answer.
+
+| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
+|------|-----|----------|----------|-----------|--------------|--------|------|
+| 2026-09-21 | D001 | — | Hyprland is the only compositor | Two compositors doubled the code paths and the review surface | A second compositor gains the protocols and a maintainer with hardware | Active | [Full](D001-hyprland-only.md) |
+| 2026-09-21 | D002 | — | Quickshell 0.3.1 is the baseline, every API cited from its reference | Every measurement was taken on 0.3.1 | A release changes imports, IPC, FileView, Process or window types | Active | [Full](D002-quickshell-0-3-1-baseline.md) |
+| 2026-09-21 | D003 | — | Everything outside the core is a plugin; the manager is core; the core names no plugin | A small privileged core fits one agent; a plugin cannot break another | A surface no host can give without a core rewrite | Active | [Full](D003-everything-is-a-plugin.md) |
+| 2026-09-21 | D005 | — | Kinds are surfaces; plugins declare no dependencies | No dependency graph, no refusals, no plugin naming another | A plugin cannot work without another's service and no capability can carry it | Revisited | [Full](D005-kinds-are-surfaces-no-dependencies.md) |
+| 2026-09-21 | D006 | — | Shipped and user configuration layers merged by entry id | A default that never reaches a customised file is a regression channel | A third layer or a shipped override is needed | Active | [Full](D006-two-configuration-layers.md) |
+| 2026-09-21 | D007 | — | Install runs no plugin code and lands the plugin disabled | Removes a supply-chain class for a one-line cost | A plugin needs a system package or the marketplace signs installs | Active | [Full](D007-install-runs-no-plugin-code.md) |
+| 2026-09-21 | D008 | — | Every change carries its validation row; the nested sandbox is the only shell start | Per-change checks catch the regression in its change | CI gains a Wayland runner or a check needs host state | Active | [Full](D008-validation-row-per-change.md) |
+| 2026-09-21 | D009 | — | One manifest judge, PluginLogic.js, shared by shell and scripts under node | A second copy is a twin; pure functions test in milliseconds | A decision needs QML types node cannot host | Active | [Full](D009-one-manifest-judge-under-node.md) |
+| 2026-09-21 | D010 | — | Static import check plus scoped API object, not a process sandbox | Process per plugin multiplies resident size before any plugin justifies it | Budgets measured against process-per-plugin fit, or credentials need protection | Active | [Full](D010-facade-scope-not-sandbox.md) |
+| 2026-09-21 | D011 | — | The manifest and plugin API are v2's own; no other shell's plugins are supported | Shared names had drifted in meaning and nothing tested the promise | A marketplace with a stable versioned schema is worth joining | Active | [Full](D011-native-manifest-no-cross-shell-compatibility.md) |
+| 2026-09-23 | D012 | — | The core owns every session-wide object and lends it per instance with disposers | One owner per object removes collisions and makes disable a complete release | Quickshell releases the notification name on destroy, or two plugins must share a lent object | Active | [Full](D012-core-owns-lent-objects.md) |
+| 2026-09-25 | D013 | — | A built-in widget is part of the plugin that draws it, recorded with origin plugin, never a kind | One closed kind set keeps every switch exhaustive; provenance is its own field | A plugin must draw inside another plugin's surface, or a built-in needs its own schema | Active | [Full](D013-built-in-widgets-are-the-bar-plugins.md) |
+| 2026-09-26 | D014 | — | A plugin's source revision is a published snapshot under the runtime dir; slots key on it; the engine keeps every revision it loaded | Only a new URL for every sibling file makes an edit load again without a new engine, and a new engine loses every service's state | A plugin tree is large enough to feel the copy, retained types matter in a session, or Quickshell evicts per URL | Active | [Full](D014-source-revisions-are-published-snapshots.md) |
+| 2026-09-26 | D015 | — | Tokens are one JavaScript table judged by pure functions and published as frozen objects | One table fixes each type and name; the judge runs under node; no generator | An editor resolves qs modules and typed properties would give completion | Active | [Full](D015-tokens-are-a-judged-table.md) |
+| 2026-09-26 | D016 | — | One bundled variable font; a theme names families and ships no font file | The default theme draws the same on every machine with every weight | A theme package ships fonts or the file is felt in the resident size | Active | [Full](D016-bundled-variable-font.md) |
+| 2026-09-26 | D017 | — | Controls extend QtQuick.Templates; icons are Lucide path data drawn with Shapes | Keyboard, focus and checked state come from Qt; the stroke is a token constant across sizes | Templates cost more than measured, or the pixel tests show a drawing defect the icon font lacks | Active | [Full](D017-templates-and-path-icons.md) |
+| 2026-09-26 | D018 | — | Overlays are Quickshell popup windows anchored to their item, not Qt window popups | Qt places a Wayland window popup once inside the parent's bounds and never moves it | Qt repositions window popups by the screen, or Quickshell offers a popup Qt templates accept | Active | [Full](D018-overlays-are-quickshell-popups.md) |
+
+---
+
+## Format Reference
+
+Log a path choice whose conditions might change: a technology or transport selection with real alternatives, a trade-off taken for a stated reason, or a scope boundary a later reader would otherwise re-argue. Do not log bug fixes, renames, small refactors, or a choice that had no realistic alternative.
+
+Status values: `Active`, `Active ([COMPONENTS] → [DECISION_ID])` for a partial supersession, `Superseded by [DECISION_ID]`, and `Revisited`. Rows are append-only and never re-sorted. The column order is a machine contract the decider skill reads positionally; the Link cell names the decision file.

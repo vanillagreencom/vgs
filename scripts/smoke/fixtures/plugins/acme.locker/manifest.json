@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "acme.locker", "name": "Locker", "version": "0.1.0", "author": "acme", "description": "smoke fixture holding the lock",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["lock"] }

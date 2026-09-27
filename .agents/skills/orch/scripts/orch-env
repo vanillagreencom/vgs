@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Print the effective value of a kendex [env] setting for workflow steps.
+#
+# Precedence matches lib/kendex-env.sh: parent process env > .env.local >
+# .kendex/settings.toml / kendex.settings.toml [env] > supplied
+# default. When the supplied default is numeric, a non-numeric effective
+# value falls back to the default so workflow bounds always get a usable
+# number.
+#
+# Usage: orch-env VAR_NAME DEFAULT
+#   orch-env PR_REVIEW_WAIT_SECS 900
+#
+# ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
+# ladder leaves unset resolves to its unattended value instead of the supplied
+# default; a key the ladder sets wins in either mode. The keys and their
+# composed values are ../references/communication-modes.md § Composition, and this
+# is the one place that mapping is applied.
+#
+# That file defines `ceo` and `engineer` and no other mode. A ladder value
+# outside the two is `engineer` here, both for the composition and for what
+# `orch-env ORCH_USER_MODE ceo` prints, so one unrecognized spelling cannot
+# compose as one mode and be read back as another.
+#
+# Retired settings: ORCH_CONSUMER_REPOS is refused when set, even empty,
+# on every settings read. Consumers refresh through their own Actions workflow.
+#
+# Not for a round cap. Those resolve through `workflow-state cap`, which
+# holds the one table of their defaults; pairing orch-env with a default
+# here would be the second copy that table exists to prevent.
+set -euo pipefail
+
+# The package default for ORCH_USER_MODE, used by the resolution below when the
+# settings ladder names no mode. README.md § Settings publishes the same value
+# for a caller passing it as DEFAULT.
+USER_MODE_DEFAULT=ceo
+
+# user_mode_effective — sets USER_MODE to the mode this run is in: the ladder's
+# value, the package default when the ladder is silent, and `engineer` for
+# anything ../references/communication-modes.md does not define. It normalizes
+# rather than refusing because every caller is a fenced workflow step with no
+# failure branch. It writes a variable for the reason composed_value does.
+USER_MODE=
+user_mode_effective() {
+  local mode="${ORCH_USER_MODE-}"
+  [[ -n "$mode" ]] || mode="$USER_MODE_DEFAULT"
+  case "$mode" in
+  ceo | engineer) USER_MODE="$mode" ;;
+  *) USER_MODE=engineer ;;
+  esac
+}
+
+# composed_value VAR_NAME — sets COMPOSED to the value VAR_NAME takes under
+# ORCH_USER_MODE=ceo, and to the empty string for a key the mode does not
+# compose. It writes a variable rather than printing, so the caller needs no
+# command substitution whose status would end the script under errexit.
+COMPOSED=
+composed_value() {
+  case "$1" in
+  ORCH_DECISION_MODE) COMPOSED=auto-recommended ;;
+  ORCH_MERGE_AUTONOMY | PM_CREATE_AUTONOMY) COMPOSED=auto ;;
+  *) COMPOSED= ;;
+  esac
+}
+
+# Message text is centralized; callers supply the reason and relevant values.
+message() {
+  local reason="$1"
+  shift
+  printf '%s: %s' orch-env "$reason"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$reason" in
+  argument-count) printf '%s\n' 'Use orch-env with a variable name and default value.' ;;
+  invalid-name) printf '%s\n' 'The variable name is not valid.' ;;
+  retired-setting)
+    printf '%s\n' 'Consumer refresh runs in each consumer repository through GitHub Actions.'
+    printf '%s\n' 'Remove ORCH_CONSUMER_REPOS from the environment, kendex.settings.toml [env], .kendex/settings.toml [env], and the private env file, then retry.'
+    ;;
+  esac
+}
+
+# Help is answered before any project configuration is read: .env.local is
+# sourced as shell, so a help form that reaches the loader runs whatever the
+# checkout put there. Position 1 only — the second operand is the DEFAULT
+# VALUE, and a flag-shaped value stays data.
+case "${1:-}" in
+help | --help | -h)
+  sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
+  exit 0
+  ;;
+esac
+
+if [[ $# -ne 2 ]]; then
+  message argument-count "count=$#" >&2
+  exit 2
+fi
+
+if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  message invalid-name "name=$1" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+# Consumer-train settings can remain in existing project configuration after
+# its workflow is removed. Refuse at every read, including overseer startup.
+if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then
+  message retired-setting 'key=ORCH_CONSUMER_REPOS' >&2
+  exit 1
+fi
+
+# Read only now: assigned above the loader, the NAME to look up would itself be
+# settable from the configuration being looked up.
+VAR_NAME="$1"
+DEFAULT="$2"
+
+user_mode_effective
+
+value="${!VAR_NAME-}"
+if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
+  # What ../workflows/oversee.md § 3 Launch selects a question template from,
+  # so it is the same normalized mode the composition below tests.
+  value="$USER_MODE"
+elif [[ -z "$value" ]]; then
+  if [[ "$USER_MODE" == ceo ]]; then
+    composed_value "$VAR_NAME"
+    value="$COMPOSED"
+  fi
+fi
+[[ -n "$value" ]] || value="$DEFAULT"
+if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
+  value="$DEFAULT"
+fi
+printf '%s\n' "$value"

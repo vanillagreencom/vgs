@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "acme.tick", "name": "Tick", "version": "0.1.0", "author": "acme", "description": "smoke fixture widget",
+  "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Widget.qml" }, "defaultSection": "center", "settings": { "format": "HH:mm" } }
