@@ -8,7 +8,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 
 ## Vocabulary
 
-- Core: the runner, the instance lock, the Hyprland connection and its reply judge, the theme tokens, the hosts, the plugin registry, the plugin manager and the IPC surface. `scripts/check-plugin-boundary.py` draws the line.
+- Core: the runner, the instance lock, the Hyprland connection and its reply judge, the design system, the hosts, the plugin registry, the plugin manager and the IPC surface. `scripts/check-plugin-boundary.py` draws the line.
 - Plugin: a directory with `manifest.json` at its root, in the schema [plugins.md](plugins.md) states, plus one QML entry point per kind.
 - Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`. A kind is a surface the core can host, and every kind has a host. The core owns the list; a new kind is a core change.
 - Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own.
@@ -18,6 +18,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the shipped bar's manager built-in, reached through the `manager` capability; its mechanism is core.
+- Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion under `scripts/smoke/rows/` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
@@ -54,11 +55,14 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D012](../decisions/D012-core-owns-lent-objects.md): the core owns every session-wide object and lends it per instance with disposers.
 - [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md): a built-in widget is part of the plugin that draws it, registered with origin `plugin`, never a kind.
 - [D014](../decisions/D014-source-revisions-are-published-snapshots.md): a plugin's source revision is a published snapshot; a rescan rebuilds only the plugins whose files changed.
+- [D015](../decisions/D015-tokens-are-a-judged-table.md): tokens are one JavaScript table judged by pure functions and published as frozen objects.
+- [D016](../decisions/D016-bundled-variable-font.md): one bundled variable font; a theme names families and ships no font file.
 
 ## Topics
 
 - [plugins.md](plugins.md): read before writing a plugin or a host.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
-- [configuration.md](configuration.md): read before touching the configuration files, their judge or the theme.
+- [configuration.md](configuration.md): read before touching the configuration files or their judge.
+- [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

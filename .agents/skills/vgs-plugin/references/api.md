@@ -72,10 +72,10 @@ Nothing else is on it. A capability the manifest did not name is absent, not nul
 
 | Member | Type | Value |
 |---|---|---|
-| `foreground` | color | `Color.bar.text` |
-| `background` | color | `Color.bar.background` |
-| `fontFamily` | string | `Style.font.family` |
-| `barSize` | int | `Style.bar.sizeHorizontal` |
+| `foreground` | color | `Theme.bar.foreground` |
+| `background` | color | `Theme.bar.background` |
+| `fontFamily` | string | `Theme.text.body.family` |
+| `barSize` | int | `Theme.bar.height` |
 
 A widget reads its capabilities from its own `shell`, never from the bar.
 
@@ -109,17 +109,12 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 
 Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock`, `WlSessionLockSurface`, `WlrLayershell`, `Window`, `ApplicationWindow`, and the types the core lends through a capability: `IpcHandler`, `GlobalShortcut`, `NotificationServer`, `PolkitAgent`. `Hyprland.dispatch` is refused; use `shell.compositor`.
 
-## Tokens in `qs.Commons`
+## Singletons in `qs.Commons`
 
-| Token | Type |
+| Member | Type |
 |---|---|
-| `Color.foreground`, `Color.background`, `Color.accent`, `Color.urgent`, `Color.muted` | color |
-| `Color.bar.background`, `Color.bar.text`, `Color.bar.active` | color |
-| `Style.cornerRadius` | int |
-| `Style.space(units)` | int, four pixels per unit |
-| `Style.spacing.xs`, `sm`, `md`, `lg`, `xl` | int |
-| `Style.font.family`, `Style.font.size`, `Style.font.small` | string, int, int |
-| `Style.bar.sizeHorizontal` | int |
+| `Theme.<group>.<token>` | the design tokens: one read-only group per top-level group of `shell/Commons/Tokens.js`, each token a primitive: a colour as the string `#aarrggbb` a `color` property takes (call `Qt.color` on it for channels), an `int` of pixels or milliseconds, a `string`, a `bool`, an `Easing` enumerator; `docs/architecture/design-system.md` states the tiers |
+| `Theme.name`, `Theme.revision` | string, int: the accepted theme's name, and a counter that rises after every group holds a new theme |
 | `Paths.configDir` | string: the directory `shell.json` and `theme.json` are read from |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |
 | `Time.now` | date: the shared wall clock, ticking once a minute |

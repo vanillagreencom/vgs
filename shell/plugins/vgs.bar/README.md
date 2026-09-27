@@ -9,7 +9,7 @@ The bar across the top of every screen. It draws its own workspaces, clock and p
 - Built-in clock: the date and time in the format you choose. It ticks once a minute, or once a second when the format shows seconds.
 - Built-in plugin manager: a Plugins button that opens a panel listing every plugin. Switch a plugin on or off there, and change the settings a plugin offers.
 - Three sections for plugin widgets, after the built-ins in each section. Place a widget by editing `bar.layout` in `~/.config/vgs/shell.json` or with `bin/vgsh plugin enable <id>`.
-- Colours follow `~/.config/vgs/theme.json`. The font is the shell's `Style.font.family` token.
+- Colours, the font and every size follow the design tokens, so `~/.config/vgs/theme.json` restyles the bar.
 
 ## Settings
 

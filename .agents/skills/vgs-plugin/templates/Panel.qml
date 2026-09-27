@@ -5,7 +5,7 @@ import qs.Commons
 // The host calls open(payloadJson) and close(); the plugin never creates
 // a window. A payload that does not parse throws out of open(), and the
 // host answers the summon with `refused: open-failed=<id>`. Colours and
-// spacing come from Color and Style. To open another declared kind here,
+// spacing come from Theme. To open another declared kind here,
 // pass its source Item to shell.surfaces.summon(kind, payloadJson, item);
 // the compositor places it relative to this window.
 Item {
@@ -21,20 +21,20 @@ Item {
 
     function close() {}
 
-    implicitWidth: Style.space(60)
-    implicitHeight: Style.space(40)
+    implicitWidth: Theme.size.panel.sm
+    implicitHeight: Theme.size.panel.sm / 2
 
     Rectangle {
         anchors.fill: parent
-        color: Color.background
-        radius: Style.cornerRadius
+        color: Theme.color.surface
+        radius: Theme.radius.md
 
         Text {
             anchors.centerIn: parent
             text: "__NAME__"
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.size
+            color: Theme.color.text
+            font.family: Theme.text.body.family
+            font.pixelSize: Theme.text.body.size
         }
     }
 }

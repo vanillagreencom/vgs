@@ -30,9 +30,9 @@ Item {
             screen: host.screen
 
             anchors { top: true; left: true; right: true }
-            implicitHeight: Style.bar.sizeHorizontal
+            implicitHeight: Theme.bar.height
             exclusiveZone: implicitHeight
-            color: Color.bar.background
+            color: Theme.bar.background
             WlrLayershell.namespace: "vgs:bar"
             WlrLayershell.layer: WlrLayer.Top
 

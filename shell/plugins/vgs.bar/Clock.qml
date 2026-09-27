@@ -19,14 +19,14 @@ Item {
     Component.onDestruction: Time.holdSeconds(root, false)
 
     implicitWidth: label.implicitWidth
-    implicitHeight: Style.bar.sizeHorizontal
+    implicitHeight: Theme.bar.height
 
     Text {
         id: label
         anchors.centerIn: parent
         text: Qt.formatDateTime(Time.now, root.format)
-        color: Color.bar.text
-        font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        color: Theme.bar.foreground
+        font.family: Theme.text.body.family
+        font.pixelSize: Theme.text.body.size
     }
 }

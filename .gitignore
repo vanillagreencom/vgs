@@ -69,7 +69,7 @@ docs/plans/
 docs/research/
 # An archived copy of another project's Quickshell work, kept locally as a
 # reference only. Nothing in v2 reads, runs or links to it.
-assets/
+/assets/
 
 # Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md

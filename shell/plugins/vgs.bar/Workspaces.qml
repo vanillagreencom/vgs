@@ -12,12 +12,12 @@ Item {
     required property Item bar
 
     implicitWidth: row.implicitWidth
-    implicitHeight: Style.bar.sizeHorizontal
+    implicitHeight: Theme.bar.height
 
     RowLayout {
         id: row
         anchors.fill: parent
-        spacing: Style.spacing.sm
+        spacing: Theme.space.xs
 
         Repeater {
             model: Workspaces.ids
@@ -26,17 +26,17 @@ Item {
                 required property int modelData
                 readonly property bool focused: Workspaces.focusedId === modelData
 
-                Layout.preferredWidth: Style.space(5)
-                Layout.preferredHeight: Style.bar.sizeHorizontal - Style.spacing.md
-                radius: Style.cornerRadius
-                color: focused ? Color.bar.active : "transparent"
+                Layout.preferredWidth: Theme.size.control.sm
+                Layout.preferredHeight: Theme.bar.height - Theme.space.sm
+                radius: Theme.radius.sm
+                color: focused ? Theme.bar.active : "transparent"
 
                 Text {
                     anchors.centerIn: parent
                     text: String(parent.modelData)
-                    color: parent.focused ? Color.background : Color.bar.text
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.size
+                    color: parent.focused ? Theme.bar.onActive : Theme.bar.foreground
+                    font.family: Theme.text.body.family
+                    font.pixelSize: Theme.text.body.size
                 }
 
                 MouseArea {

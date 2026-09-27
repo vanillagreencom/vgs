@@ -48,27 +48,27 @@ Item {
         return keep(id, shell.manager.setSetting(id, key, value));
     }
 
-    implicitWidth: Style.space(90)
-    implicitHeight: Math.min(list.implicitHeight + 2 * Style.spacing.xl, Style.space(150))
+    implicitWidth: Theme.size.panel.md
+    implicitHeight: Math.min(list.implicitHeight + 2 * Theme.space.lg, Theme.size.panel.maxHeight)
 
     Rectangle {
         anchors.fill: parent
-        color: Color.background
-        radius: Style.cornerRadius
-        border.color: Color.muted
-        border.width: 1
+        color: Theme.color.surface
+        radius: Theme.radius.md
+        border.color: Theme.color.border
+        border.width: Theme.border.thin
     }
 
     Flickable {
         anchors.fill: parent
-        anchors.margins: Style.spacing.xl
+        anchors.margins: Theme.space.lg
         contentHeight: list.implicitHeight
         clip: true
 
         ColumnLayout {
             id: list
             width: parent.width
-            spacing: Style.spacing.lg
+            spacing: Theme.space.md
 
             Repeater {
                 id: rows
@@ -81,23 +81,23 @@ Item {
                     id: entry
                     required property var modelData
                     Layout.fillWidth: true
-                    spacing: Style.spacing.sm
+                    spacing: Theme.space.xs
 
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
                             Layout.fillWidth: true
                             text: entry.modelData.name
-                            color: Color.foreground
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.size
+                            color: Theme.color.text
+                            font.family: Theme.text.body.family
+                            font.pixelSize: Theme.text.body.size
                             elide: Text.ElideRight
                         }
                         Text {
                             text: entry.modelData.version
-                            color: Color.muted
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.small
+                            color: Theme.color.textMuted
+                            font.family: Theme.text.hint.family
+                            font.pixelSize: Theme.text.hint.size
                         }
                         Switch {
                             on: entry.modelData.enabled
@@ -109,19 +109,19 @@ Item {
                         Layout.fillWidth: true
                         visible: text !== ""
                         text: root.replies[entry.modelData.id] || ""
-                        color: Color.urgent
+                        color: Theme.color.danger
                         wrapMode: Text.Wrap
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.small
+                        font.family: Theme.text.hint.family
+                        font.pixelSize: Theme.text.hint.size
                     }
 
                     Text {
                         Layout.fillWidth: true
                         text: entry.modelData.description
-                        color: Color.muted
+                        color: Theme.color.textMuted
                         wrapMode: Text.Wrap
-                        font.family: Style.font.family
-                        font.pixelSize: Style.font.small
+                        font.family: Theme.text.hint.family
+                        font.pixelSize: Theme.text.hint.size
                     }
 
                     Repeater {
