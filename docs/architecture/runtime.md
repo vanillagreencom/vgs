@@ -39,6 +39,8 @@ Where the shell's memory sits, how to measure it and the growth invariants are i
 - A JS object handed to `createObject` as an initial property crosses a QVariant conversion: functions vanish and nested lists stop being arrays. Assign such properties after creation.
 - A dependent binding may still hold its old value when a property change handler runs. Read the source property inside the handler; [Qt specifies no binding evaluation order](https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html).
 - `Array.prototype.flatMap` is absent from this engine.
+- Qt reads an eight-digit colour string as `#aarrggbb`, alpha first. The design system's portable colours are `#rrggbbaa`; `Theme.toColor` is the one place that reorders them.
+- A frozen JavaScript object does not protect the channels of a QML colour value inside it: a write to `frozen.accent.r` changes the value read back. Publish a colour as a string.
 
 ## Validation
 

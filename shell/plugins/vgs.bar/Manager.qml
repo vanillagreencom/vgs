@@ -10,8 +10,8 @@ Item {
     // The bar, read for its `shell` alone.
     required property Item bar
 
-    implicitWidth: label.implicitWidth + Style.spacing.lg
-    implicitHeight: Style.bar.sizeHorizontal
+    implicitWidth: label.implicitWidth + Theme.space.md
+    implicitHeight: Theme.bar.height
 
     // Open or close the manager panel under this button; answers the
     // panel host's reply.
@@ -25,9 +25,9 @@ Item {
         id: label
         anchors.centerIn: parent
         text: "Plugins"
-        color: Color.bar.text
-        font.family: Style.font.family
-        font.pixelSize: Style.font.size
+        color: Theme.bar.foreground
+        font.family: Theme.text.body.family
+        font.pixelSize: Theme.text.body.size
     }
 
     MouseArea {

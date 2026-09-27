@@ -71,6 +71,11 @@ const ACCEPTED = [
     { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10]] },
     { tokens: { font: { size: 16 } }, want: [["text.body.size", 16], ["text.hint.size", 14]] },
     { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0]] },
+    // The scale applies after a duration's own expression, so a theme that
+    // states its own timing still goes still at 0 and doubles at 2.
+    { tokens: { motion: { scale: 0, duration: { normal: 200 } } }, want: [["motion.duration.normal", 0]] },
+    { tokens: { motion: { scale: 2, duration: { normal: 200 } } }, want: [["motion.duration.normal", 400], ["motion.duration.fast", 200]] },
+    { tokens: { motion: { scale: 0.5 } } , want: [["motion.duration.fast", 50], ["motion.duration.slow", 125]] },
     { tokens: { radius: { md: 6.4 } }, want: [["radius.md", 6]] },
     { tokens: { radius: { md: "{radius.full}" } }, want: [["radius.md", 4096]] },
     { tokens: { radius: { md: "mul({space.unit}, 1.5)" } }, want: [["radius.md", 6]] },
@@ -142,15 +147,17 @@ const BAD_TABLES = [
     [{ toast: { corner: { type: "choice", value: "top" } } }, "toast.corner is a choice without options"],
     [{ palette: { "on-accent": { type: "color", value: "#fff" } } }, "palette.on-accent is not a token name"],
     [{ palette: {} }, "group palette is empty"],
-    [{ palette: { accent: "#fff" } }, "palette.accent is neither a group nor a token"]
+    [{ palette: { accent: "#fff" } }, "palette.accent is neither a group nor a token"],
+    [{ palette: { accent: { type: "color", value: "#fff" } } }, "motion.scale must be a number token"],
+    [{ motion: { scale: { type: "length", value: 1 } } }, "motion.scale must be a number token"]
 ];
 
 function verify(judge) {
     assert.equal(judge.tableError(TOKENS), "");
     for (const [table, start] of BAD_TABLES)
         assert.ok(judge.tableError(table).startsWith(start), `${start}: got ${JSON.stringify(judge.tableError(table))}`);
-    assert.throws(() => judge.defaults({ palette: {} }), /theme: token table: group palette is empty/);
-    assert.throws(() => judge.defaults({ palette: { accent: { type: "color", value: "{palette.accent}" } } }), /theme: refused: token=palette\.accent reason=cycle/);
+    assert.throws(() => judge.defaults({ palette: {}, motion: { scale: { type: "number", value: 1, min: 0, max: 4 } } }), /theme: token table: group palette is empty/);
+    assert.throws(() => judge.defaults({ palette: { accent: { type: "color", value: "{palette.accent}" } }, motion: { scale: { type: "number", value: 1, min: 0, max: 4 } } }), /theme: refused: token=palette\.accent reason=cycle/);
 
     const defaults = judge.defaults(TOKENS);
     assert.equal(defaults.name, "vgs");
@@ -227,6 +234,8 @@ const CONTROLS = [
     ["family", 'if (typeof value !== "string" || value.trim() === "")', "if (false)"],
     ["option", "if (options.indexOf(value) === -1)", "if (false)"],
     ["whole rounding", "value = Math.round(value);", ""],
+    ["duration scaling", "value *= scale;", ""],
+    ["table motion scale", 'if (!isLeaf(scale) || scale.type !== "number")', "if (false)"],
     ["range", "if (value < range[0] || value > range[1])", "if (false)"],
     ["override wins", "hasOwn(overrides, path) ? overrides[path] : leaf.value", "leaf.value"],
     ["table type", "if (TYPES.indexOf(child.type) === -1)", "if (false)"],
@@ -234,7 +243,7 @@ const CONTROLS = [
     ["table choice options", 'if (child.type === "choice" && ', 'if (false && child.type === "choice" && '],
     ["table name", "if (!NAME_PATTERN.test(keys[i]))", "if (false)"],
     ["table empty group", "if (keys.length === 0)", "if (false)"],
-    ["table defect throws", "if (defect !== \"\")", "if (false)"]
+    ["table defect throws", "if (defect !== \"\")\n        throw new Error(\"theme: token table: \"", "if (false)\n        throw new Error(\"theme: token table: \""]
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");

@@ -28,9 +28,6 @@ function step(units) { return length("mul({space.unit}, " + units + ")"); }
 // A font size, as a multiple of `font.size`.
 function scaled(factor) { return length("mul({font.size}, " + factor + ")"); }
 
-// A duration in milliseconds at `motion.scale` 1.
-function paced(ms) { return duration("mul(" + ms + ", {motion.scale})"); }
-
 // A neutral between the background and the foreground.
 function neutral(amount) { return color("mix({palette.background}, {palette.foreground}, " + amount + ")"); }
 
@@ -138,9 +135,9 @@ var TOKENS = {
     motion: {
         scale: number(1, 0, 4),
         duration: {
-            fast: paced(100),
-            normal: paced(150),
-            slow: paced(250)
+            fast: duration(100),
+            normal: duration(150),
+            slow: duration(250)
         },
         easing: {
             standard: easing("outCubic"),
@@ -195,6 +192,10 @@ var TOKENS = {
         tooltip: role(0.85, 500, 0.02, 1.3, false, "text"),
         button: role(0.85, 500, 0.08, 1, true, "text"),
         code: role(0.92, 400, 0, 1.4, false, "text")
+    },
+
+    field: {
+        labelWidth: length(120)
     },
 
     bar: {

@@ -17,7 +17,7 @@ Scope {
 
         WlSessionLockSurface {
             id: surface
-            color: Color.background
+            color: Theme.color.background
 
             Loader {
                 anchors.fill: parent

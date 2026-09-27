@@ -153,7 +153,7 @@ Scope {
                     readonly property var request: entry.request
                     readonly property var place: {
                         const settings = Registry.settingsOf(entry.modelData, host.kind);
-                        return PluginLogic.surfacePlacement(host.kind, settings, Style.spacing.lg);
+                        return PluginLogic.surfacePlacement(host.kind, settings, Theme.space.md);
                     }
 
                     screen: request ? request.screen : null

@@ -31,7 +31,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 ## Settings
 
 - `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
-- `~/.config/vgs/theme.json`: the five palette colours every plugin reads.
+- `~/.config/vgs/theme.json`: the theme, a document that overrides any design token every plugin reads: colours, fonts, spacing, radius and motion.
 - A widget's settings sit inline on its layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; every other plugin's sit on its row in `plugins`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`. A change reaches the running plugin without a restart.
 
 ## Writing a plugin

@@ -1,8 +1,8 @@
 # Configuration
 
-Covers: shell/Core/Config.qml, shell/Commons/Color.qml, shell/Commons/Paths.qml, config/shell.json
+Covers: shell/Core/Config.qml, shell/Commons/Paths.qml, config/shell.json
 
-The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/Color.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both.
+The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both.
 
 ## Layers
 
@@ -33,7 +33,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 
 ## Theme
 
-`~/.config/vgs/theme.json` holds the palette: `foreground`, `background`, `accent`, `urgent` and `muted`, each a colour string. `Color.qml` reads it the way `Config.qml` reads `shell.json`, and its `judge` function is the one judge of the theme file's shape. An absent file, including one deleted while the shell runs, clears every override so the defaults stand, the same palette a fresh start without the file draws. A file that becomes unreadable, does not parse, is not an object, or holds a role value that is not a colour Qt can parse is logged and leaves the last good palette. The bar's font is the `Style.font.family` token, not a theme value.
+`~/.config/vgs/theme.json` holds the shell document: `schemaVersion`, `name` and `tokens`, a nested tree of overrides for the token table. `ThemeSource.qml` reads it the way `Config.qml` reads `shell.json`, and `ThemeLogic.accept` is the one judge of the document. An absent file, including one deleted while the shell runs, publishes the defaults, the same theme a fresh start without the file draws. A file that becomes unreadable or that the judge refuses is logged with its token and reason and leaves the last accepted theme. The document shape, the tiers and the expression grammar are in [design-system.md](design-system.md). The previous five-key palette file is refused by its first key; no converter ships, because v2 has no release and the defaults draw.
 
 ## Decisions
 

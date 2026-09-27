@@ -111,6 +111,9 @@ row "a scripts/test-* file whose name prefixes a listed suite is refused" "$d" 1
 d="$tmp/smoke-fixtures"; fresh "$d"
 cp -R "$repo/scripts/." "$d/scripts/"
 cp -R "$repo/shell" "$repo/bin" "$d/"
+# The token check walks the skill templates beside the shell tree.
+mkdir -p "$d/.agents/skills/vgs-plugin"
+cp -R "$repo/.agents/skills/vgs-plugin/templates" "$d/.agents/skills/vgs-plugin/"
 test_area=manifests
 row "the smoke fixtures pass the offline manifest area" "$d" 0 "" "validate: ok"
 python3 - "$d/scripts/smoke/fixtures/plugins/acme.tick/manifest.json" <<'PY'
@@ -129,8 +132,8 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 # plans name consumers independently of the dependency table under test.
 repo_plan=$'whitespace_check\nrows_cover_tests'
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
-dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\n'"$repo_plan"
-fixture_plan=$'node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
+dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
+fixture_plan=$'node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
@@ -196,6 +199,9 @@ done
 d="$tmp/selected-guard"; fresh "$d"
 cp -R "$repo/scripts/." "$d/scripts/"
 cp -R "$repo/shell" "$repo/bin" "$d/"
+# The token check walks the skill templates beside the shell tree.
+mkdir -p "$d/.agents/skills/vgs-plugin"
+cp -R "$repo/.agents/skills/vgs-plugin/templates" "$d/.agents/skills/vgs-plugin/"
 "${base_env[@]}" git -C "$d" add -A
 "${base_env[@]}" git -C "$d" commit -q -m fixture
 printf 'import "../plugins/vgs.bar"\nQtObject {}\n' >"$d/shell/Core/Bad.qml"
@@ -208,7 +214,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
-edge = 'plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan'
+edge = 'plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan scripts/qml_source.py'
 assert source.count(edge) == 1
 path.write_text(source.replace(edge, edge.replace('shell/* ', '')))
 PY

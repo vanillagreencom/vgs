@@ -17,15 +17,15 @@ RowLayout {
     property var value
     property bool editable: true
     signal apply(var value)
-    spacing: Style.spacing.lg
+    spacing: Theme.space.md
 
     Text {
-        Layout.preferredWidth: Style.space(30)
+        Layout.preferredWidth: Theme.field.labelWidth
         text: root.spec.label
-        color: Color.foreground
+        color: Theme.color.text
         elide: Text.ElideRight
-        font.family: Style.font.family
-        font.pixelSize: Style.font.small
+        font.family: Theme.text.hint.family
+        font.pixelSize: Theme.text.hint.size
     }
 
     Loader {
@@ -37,20 +37,20 @@ RowLayout {
     Component {
         id: text
         Rectangle {
-            implicitHeight: input.implicitHeight + Style.spacing.md
+            implicitHeight: input.implicitHeight + Theme.space.sm
             color: "transparent"
-            border.color: Color.muted
-            border.width: 1
-            radius: Style.cornerRadius
+            border.color: Theme.color.border
+            border.width: Theme.border.thin
+            radius: Theme.radius.sm
             TextInput {
                 id: input
                 anchors.fill: parent
-                anchors.margins: Style.spacing.xs
+                anchors.margins: Theme.space.xxs
                 text: String(root.value)
                 readOnly: !root.editable
-                color: Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.small
+                color: Theme.color.text
+                font.family: Theme.text.hint.family
+                font.pixelSize: Theme.text.hint.size
                 onEditingFinished: {
                     const typed = text;
                     text = Qt.binding(() => String(root.value));
@@ -76,9 +76,9 @@ RowLayout {
         id: cycle
         Text {
             text: String(root.value)
-            color: Color.accent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.small
+            color: Theme.color.accent
+            font.family: Theme.text.hint.family
+            font.pixelSize: Theme.text.hint.size
             MouseArea {
                 anchors.fill: parent
                 onClicked: {

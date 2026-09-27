@@ -3,6 +3,8 @@ import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 import qs.Core
+import qs.Commons
+import "Commons/Tokens.js" as Tokens
 
 // Loaded only into the sandbox copy. It observes the shipped objects and
 // owns test setup, so tests add no callable methods to the shipped shell.
@@ -115,8 +117,38 @@ Scope {
         return result === undefined ? "" : String(result);
     }
 
+    // A token's QML value as JSON.
+    function themeValue(path) {
+        let node = Theme;
+        for (const key of path.split(".")) {
+            if (node === undefined || node === null) return "absent";
+            node = node[key];
+        }
+        return node === undefined ? "absent" : JSON.stringify(node);
+    }
+
+    // Write into a published group the way a careless plugin would; answers
+    // the value read back after the write, so the row proves nothing moved.
+    function themeWrite(path, value) {
+        const keys = path.split(".");
+        let node = Theme;
+        for (const key of keys.slice(0, -1)) node = node[key];
+        try { node[keys[keys.length - 1]] = value; } catch (e) {}
+        return themeValue(path);
+    }
+
     IpcHandler {
         target: "smoke"
+        // Every top-level group of the token table that Theme does not
+        // publish as a frozen object, so an empty list is the pass.
+        function themeUnpublished(): string {
+            return JSON.stringify(Object.keys(Tokens.TOKENS).filter(group => typeof Theme[group] !== "object" || Theme[group] === null || !Object.isFrozen(Theme[group])));
+        }
+        function themeValue(path: string): string { return root.themeValue(path); }
+        function themeWrite(path: string, value: string): string { return root.themeWrite(path, value); }
+        function themeName(): string { return Theme.name; }
+        function themeRevision(): int { return Theme.revision; }
+        function fontAvailable(family: string): bool { return Qt.fontFamilies().indexOf(family) !== -1; }
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
         function configChanges(): int { return root.changes; }

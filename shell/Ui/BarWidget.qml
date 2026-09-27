@@ -13,7 +13,7 @@ Item {
     property string moduleName: ""
     property var settings: ({})
 
-    readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
+    readonly property int barSize: bar ? bar.barSize : Theme.bar.height
 
     // One setting with a fallback for a missing or null value.
     function setting(name, fallback) {

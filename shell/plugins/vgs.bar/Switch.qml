@@ -8,21 +8,21 @@ Rectangle {
     property bool on: false
     signal clicked()
 
-    implicitWidth: Style.space(9)
-    implicitHeight: Style.space(4.5)
-    radius: height / 2
-    color: on ? Color.accent : Color.muted
+    implicitWidth: Theme.space.xxxl + Theme.space.xs
+    implicitHeight: Theme.space.xl + Theme.space.xxs
+    radius: Theme.radius.full
+    color: on ? Theme.color.accent : Theme.color.borderStrong
 
     // The knob sits `inset` inside the track on every side.
-    readonly property int inset: Style.space(0.5)
+    readonly property int inset: Theme.space.xxs
 
     Rectangle {
         width: parent.height - 2 * root.inset
         height: width
-        radius: width / 2
+        radius: Theme.radius.full
         y: root.inset
         x: root.on ? parent.width - width - root.inset : root.inset
-        color: Color.background
+        color: Theme.color.background
     }
 
     MouseArea {

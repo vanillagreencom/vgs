@@ -6,7 +6,7 @@
 
 `new` writes <DIR>/<id>/ (default DIR: shell/plugins) from the templates
 beside this script, one entry point per kind, then runs `check` on it.
-`check` runs the repository's manifest judge and boundary check on one
+`check` runs the repository's manifest judge, boundary check and token check on one
 plugin directory. Exit 0 when clean, 1 on findings, 2 on a refusal, whose
 first line is keyed: `vgs-plugin: refused: <key>=<value>`, with `kind=` for
 a kind no template covers, `manifest=` for a manifest the judge refuses
@@ -28,6 +28,7 @@ REPO = os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
 TEMPLATES = os.path.join(SKILL, "templates")
 MANIFEST_CHECK = os.path.join(REPO, "scripts", "check-manifests.js")
 BOUNDARY_CHECK = os.path.join(REPO, "scripts", "check-plugin-boundary.py")
+TOKEN_CHECK = os.path.join(REPO, "scripts", "check-design-tokens.py")
 # Every child runs under this environment and nothing inherited beyond it;
 # HOME stays because a version-managed node reads its configuration there.
 ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "LC_ALL": "C"}
@@ -136,6 +137,7 @@ def cmd_check(args):
     for command in (
         ["node", MANIFEST_CHECK, "--", target],
         [sys.executable, BOUNDARY_CHECK, "--shell", os.path.join(REPO, "shell"), target],
+        [sys.executable, TOKEN_CHECK, "--repo", REPO, target],
     ):
         proc = subprocess.run(command, check=False, env=ENV)
         if proc.returncode != 0:

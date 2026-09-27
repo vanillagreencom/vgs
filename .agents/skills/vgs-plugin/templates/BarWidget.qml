@@ -4,7 +4,7 @@ import qs.Ui
 
 // __NAME__: one item in a bar section. The core hands this widget `bar`,
 // `moduleName` and `settings`; BarWidget declares them. Size the widget
-// with implicitWidth and implicitHeight and read every colour from Color.
+// with implicitWidth and implicitHeight and read every colour from Theme.
 BarWidget {
     id: root
 
@@ -19,8 +19,8 @@ BarWidget {
         id: text
         anchors.centerIn: parent
         text: root.label
-        color: root.bar ? root.bar.foreground : Color.bar.text
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.size
+        color: root.bar ? root.bar.foreground : Theme.bar.foreground
+        font.family: root.bar ? root.bar.fontFamily : Theme.text.body.family
+        font.pixelSize: Theme.text.body.size
     }
 }

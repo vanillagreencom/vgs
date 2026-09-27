@@ -29,6 +29,11 @@ var RANGES = { length: [0, 4096], duration: [0, 10000], weight: [100, 900] };
 // Types whose resolved value is rounded to a whole number.
 var WHOLE_TYPES = ["length", "duration", "weight"];
 
+// The number every `duration` is multiplied by after its own expression
+// resolves, so a theme that states its own timing still goes still at 0.
+// The table must hold it as a `number`.
+var MOTION_SCALE = "motion.scale";
+
 // The curves an `easing` token may name. Theme.qml maps each to its QML
 // enumerator.
 var EASINGS = ["linear", "inQuad", "outQuad", "inOutQuad", "inCubic", "outCubic", "inOutCubic", "outQuart", "outQuint", "outExpo", "outBack"];
@@ -136,7 +141,13 @@ function tableError(tokens) {
         }
         return "";
     };
-    return walk(tokens, "");
+    var defect = walk(tokens, "");
+    if (defect !== "")
+        return defect;
+    var scale = nodeAt(tokens, MOTION_SCALE);
+    if (!isLeaf(scale) || scale.type !== "number")
+        return MOTION_SCALE + " must be a number token";
+    return "";
 }
 
 // --- colours
@@ -285,7 +296,7 @@ function resolve(tokens, overrides) {
         return undefined;
     };
 
-    var valueOf = function (path) {
+    function valueOf(path) {
         if (hasOwn(resolved, path))
             return resolved[path];
         if (visiting.indexOf(path) !== -1)
@@ -301,10 +312,10 @@ function resolve(tokens, overrides) {
             return undefined;
         resolved[path] = value;
         return value;
-    };
+    }
 
     // The value of one tree node as type `want`, or undefined after fail().
-    var evaluate = function (tree, want, token) {
+    function evaluate(tree, want, token) {
         switch (tree.kind) {
         case "color":
             if (want !== "color")
@@ -334,9 +345,9 @@ function resolve(tokens, overrides) {
             return call(tree, want, token);
         }
         return fail("syntax", token, "kind=" + tree.kind);
-    };
+    }
 
-    var call = function (tree, want, token) {
+    function call(tree, want, token) {
         if (!hasOwn(FUNCTIONS, tree.name))
             return fail("unknown-function", token, "function=" + tree.name);
         var signature = FUNCTIONS[tree.name];
@@ -375,11 +386,11 @@ function resolve(tokens, overrides) {
             return args[0] * args[1];
         }
         return fail("unknown-function", token, "function=" + tree.name);
-    };
+    }
 
     // The portable value of an evaluated token, checked against its type's
     // range or options, or undefined after fail().
-    var settle = function (leaf, value, token) {
+    function settle(leaf, value, token) {
         if (leaf.type === "color")
             return formatColor(value);
         if (leaf.type === "flag")
@@ -400,13 +411,19 @@ function resolve(tokens, overrides) {
         // values. Anything else is a defect of this file.
         if (typeof value !== "number" || !isFinite(value))
             throw new Error("theme: settle: " + token + " evaluated to " + String(value));
+        if (leaf.type === "duration" && token !== MOTION_SCALE) {
+            var scale = valueOf(MOTION_SCALE);
+            if (scale === undefined)
+                return undefined;
+            value *= scale;
+        }
         if (WHOLE_TYPES.indexOf(leaf.type) !== -1)
             value = Math.round(value);
         var range = leaf.type === "number" ? [leaf.min, leaf.max] : RANGES[leaf.type];
         if (value < range[0] || value > range[1])
             return fail("range", token, "value=" + value + " min=" + range[0] + " max=" + range[1]);
         return value;
-    };
+    }
 
     var all = leaves(tokens);
     var values = {};

@@ -48,7 +48,7 @@ Item {
             screen: host.screen
             anchors { top: true; bottom: true; left: true; right: true }
             exclusionMode: ExclusionMode.Ignore
-            color: Color.background
+            color: Theme.color.background
             WlrLayershell.namespace: "vgs:background"
             WlrLayershell.layer: WlrLayer.Background
 

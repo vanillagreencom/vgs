@@ -13,16 +13,16 @@ Item {
     property var shell: null
     property var screen: null
 
-    readonly property color foreground: Color.bar.text
-    readonly property color background: Color.bar.background
-    readonly property string fontFamily: Style.font.family
-    readonly property int barSize: Style.bar.sizeHorizontal
+    readonly property color foreground: Theme.bar.foreground
+    readonly property color background: Theme.bar.background
+    readonly property string fontFamily: Theme.text.body.family
+    readonly property int barSize: Theme.bar.height
 
     readonly property Item leftSection: left
     readonly property Item centerSection: center
     readonly property Item rightSection: right
 
-    RowLayout { id: left; spacing: Style.spacing.lg; anchors { left: parent.left; leftMargin: Style.spacing.xl; top: parent.top; bottom: parent.bottom } }
-    RowLayout { id: center; spacing: Style.spacing.lg; anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; bottom: parent.bottom } }
-    RowLayout { id: right; spacing: Style.spacing.lg; anchors { right: parent.right; rightMargin: Style.spacing.xl; top: parent.top; bottom: parent.bottom } }
+    RowLayout { id: left; spacing: Theme.bar.gap; anchors { left: parent.left; leftMargin: Theme.bar.padding; top: parent.top; bottom: parent.bottom } }
+    RowLayout { id: center; spacing: Theme.bar.gap; anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; bottom: parent.bottom } }
+    RowLayout { id: right; spacing: Theme.bar.gap; anchors { right: parent.right; rightMargin: Theme.bar.padding; top: parent.top; bottom: parent.bottom } }
 }

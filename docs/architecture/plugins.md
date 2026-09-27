@@ -1,6 +1,6 @@
 # Plugins
 
-Covers: shell/plugins/**, shell/Core/Registry.qml, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Capabilities.qml, shell/Core/ShortcutRegistry.qml, shell/Core/IpcRegistry.qml, shell/Core/NotificationHub.qml, shell/Core/SessionLock.qml, shell/Core/qmldir, shell/Commons/Style.qml, shell/Commons/Time.qml, shell/Commons/Workspaces.qml, shell/Commons/qmldir, shell/Ui/**, shell/Hosts/**, bin/vgsh-scan, .agents/skills/vgs-plugin/**
+Covers: shell/plugins/**, shell/Core/Registry.qml, shell/Core/Plugins.qml, shell/Core/PluginLogic.js, shell/Core/Capabilities.qml, shell/Core/ShortcutRegistry.qml, shell/Core/IpcRegistry.qml, shell/Core/NotificationHub.qml, shell/Core/SessionLock.qml, shell/Core/qmldir, shell/Commons/Time.qml, shell/Commons/Workspaces.qml, shell/Commons/qmldir, shell/Ui/**, shell/Hosts/**, bin/vgsh-scan, .agents/skills/vgs-plugin/**
 
 The plugin contract: what a plugin is, what the core builds for it, what it may use, and how the core keeps a running plugin in step with the configuration. Enabling, installing and the manager's user interface are in [manager.md](manager.md).
 
