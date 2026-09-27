@@ -13,6 +13,7 @@ Item {
     height: 100
 
     SegmentedControl { id: control; model: ["Day", "Week", "Month"] }
+    Button { id: after; text: "Next"; y: 60 }
     SignalSpy { id: activations; target: control; signalName: "activated" }
 
     TestCase {
@@ -50,6 +51,21 @@ Item {
             compare(activations.count, 3);
             control.focus = false;
             compare(ring.visible, false);
+        }
+
+        function test_tab_reaches_the_control_and_not_its_segments() {
+            const ring = control.children[control.children.length - 1];
+            control.focus = false;
+            after.focus = false;
+            root.forceActiveFocus();
+            keyClick(Qt.Key_Tab);
+            compare(control.activeFocus, true);
+            compare(ring.visible, true);
+            verify(!segment(0).activeFocus && !segment(1).activeFocus, "no segment holds focus");
+            keyClick(Qt.Key_Tab);
+            compare(control.activeFocus, false);
+            compare(after.activeFocus, true);
+            after.focus = false;
         }
 
         function test_theme_change_moves_the_segments() {

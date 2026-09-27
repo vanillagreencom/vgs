@@ -5,8 +5,9 @@ import qs.Ui
 
 // One choice among a few, drawn as adjoining segments: `model` lists the
 // segment texts and `currentIndex` the chosen one. A click or the left and
-// right keys move it; `activated` fires on a change the user made. Each
-// segment is a template button, so Space and Enter choose the focused one.
+// right keys move it; `activated` fires on a change the user made. The
+// control is one tab stop: the segments take no focus of their own, so the
+// ring draws around the whole control and the keys act on it.
 Rectangle {
     id: root
 
@@ -46,6 +47,7 @@ Rectangle {
                 readonly property bool current: index === root.currentIndex
 
                 height: row.height
+                focusPolicy: Qt.NoFocus
                 implicitWidth: implicitContentWidth + leftPadding + rightPadding
                 leftPadding: Theme.button.paddingX
                 rightPadding: Theme.button.paddingX

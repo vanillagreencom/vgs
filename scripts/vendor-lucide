@@ -41,8 +41,10 @@ function pathOf(tag, attrs) {
         // an absolute one; joined after another path it would start from
         // that path's end instead. The pairs that follow a move are implicit
         // lines relative to it, so they keep a relative line command.
+        // The SVG number grammar: `16.36.8` is two numbers, 16.36 and .8.
         const d = attrs.d.trim();
-        const lead = /^m\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*(.*)$/s.exec(d);
+        const number = "(-?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)";
+        const lead = new RegExp("^m\\s*" + number + "[\\s,]*" + number + "\\s*(.*)$", "s").exec(d);
         if (lead === null) return d;
         const rest = lead[3];
         return "M" + lead[1] + " " + lead[2] + (rest === "" ? "" : /^[-\d.]/.test(rest) ? " l" + rest : rest);

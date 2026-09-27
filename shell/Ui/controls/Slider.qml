@@ -5,8 +5,9 @@ import qs.Ui
 
 // A horizontal slider. The template owns `from`, `to`, `value`, `stepSize`
 // and the arithmetic of a drag, the arrow keys and a click on the track;
-// this file draws the track, the filled part and the handle. `visualPosition`
-// follows `mirrored`, so a right-to-left layout fills from the right.
+// this file draws the track, the filled part and the handle. The fill is
+// `position` long and starts from the right when mirrored, as the handle
+// does through `visualPosition`.
 T.Slider {
     id: root
 
@@ -26,7 +27,8 @@ T.Slider {
         color: Theme.slider.trackColor
 
         Rectangle {
-            width: root.visualPosition * parent.width
+            x: root.mirrored ? parent.width - width : 0
+            width: root.position * parent.width
             height: parent.height
             radius: Theme.slider.radius
             color: Theme.slider.fill

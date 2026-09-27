@@ -16,6 +16,7 @@ Item {
     Spinner { id: spinner }
     ProgressBar { id: progress; value: 0.25; width: 200; y: 30 }
     ProgressBar { id: busy; indeterminate: true; width: 200; y: 50 }
+    ProgressBar { id: mirroredBar; value: 0.25; width: 200; y: 60; LayoutMirroring.enabled: true }
     Badge { id: badge; text: "Verified"; tone: "success"; y: 70 }
     Kbd { id: kbd; text: "Ctrl"; y: 100 }
 
@@ -54,6 +55,14 @@ Item {
             tryCompare(fill(busy), "x", 0);
             fuzzyCompare(fill(busy).width, busy.contentItem.width, 1);
             busy.indeterminate = true;
+        }
+
+        function test_mirrored_progress_fills_from_the_right() {
+            fuzzyCompare(fill(mirroredBar).width, mirroredBar.contentItem.width / 4, 1);
+            fuzzyCompare(fill(mirroredBar).x + fill(mirroredBar).width, mirroredBar.contentItem.width, 1);
+            mirroredBar.value = 0;
+            fuzzyCompare(fill(mirroredBar).width, 0, 1);
+            mirroredBar.value = 0.25;
         }
 
         function test_badge_draws_its_tone() {

@@ -12,6 +12,7 @@ Item {
     height: 100
 
     Slider { id: slider; from: 0; to: 100; stepSize: 10; value: 50; width: 200 }
+    Slider { id: mirrored; from: 0; to: 100; value: 25; width: 200; y: 40; LayoutMirroring.enabled: true }
 
     TestCase {
         name: "slider"
@@ -40,6 +41,18 @@ Item {
         function test_click_on_the_track_moves_the_value() {
             mouseClick(slider, slider.width - 1, slider.height / 2);
             verify(slider.value >= 90, "a click at the end moves the value near the end: " + slider.value);
+        }
+
+        function test_mirrored_fill_starts_from_the_right() {
+            const fillItem = mirrored.background.children[0];
+            fuzzyCompare(fillItem.width, mirrored.background.width / 4, 1);
+            fuzzyCompare(fillItem.x + fillItem.width, mirrored.background.width, 1);
+            mirrored.value = 0;
+            fuzzyCompare(fillItem.width, 0, 1);
+            mirrored.value = 100;
+            fuzzyCompare(fillItem.width, mirrored.background.width, 1);
+            fuzzyCompare(fillItem.x, 0, 1);
+            mirrored.value = 25;
         }
 
         function test_theme_change_resizes_the_track() {

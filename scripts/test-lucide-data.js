@@ -17,21 +17,45 @@ const COUNT_FLOOR = 1800;
 // The names first-party components and the shipped bar draw.
 const REQUIRED = ["check", "chevron-down", "chevron-right", "chevron-up", "x", "search", "circle", "info", "triangle-alert", "circle-check", "circle-x", "loader-circle", "minus", "plus", "eye", "eye-off", "settings", "square", "palette"];
 
-// One SVG path: commands from the SVG set, each followed by numbers; an
-// arc's flags are 0 or 1. The tokenizer refuses any other character.
-const COMMAND = /[MmZzLlHhVvCcSsQqTtAa]/;
+// One SVG path by its grammar: each command takes a whole number of its
+// argument groups (a move or line a pair, a cubic six, an arc seven with
+// two one-digit flags, a close none), so a coordinate split in the wrong
+// place, such as `16.36.8` read as one number, leaves a group short and
+// refuses.
+const ARITY = { M: 2, L: 2, T: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, A: 7, Z: 0 };
 const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/;
 function parsePath(d) {
     let i = 0;
     let commands = 0;
+    let command = null;
+    let args = 0;
+    const settle = () => command === null || (ARITY[command] === 0 ? args === 0 : args > 0 && args % ARITY[command] === 0);
     while (i < d.length) {
         const c = d[i];
         if (c === " " || c === "," || c === "\n") { i++; continue; }
-        if (COMMAND.test(c)) { commands++; i++; continue; }
+        const upper = c.toUpperCase();
+        if (Object.prototype.hasOwnProperty.call(ARITY, upper)) {
+            if (!settle()) return { ok: false, at: i, char: c };
+            command = upper;
+            args = 0;
+            commands++;
+            i++;
+            continue;
+        }
+        if (command === null || ARITY[command] === 0) return { ok: false, at: i, char: c };
+        // An arc's two flags are single digits and may touch the next number.
+        if (command === "A" && (args % 7 === 3 || args % 7 === 4)) {
+            if (c !== "0" && c !== "1") return { ok: false, at: i, char: c };
+            args++;
+            i++;
+            continue;
+        }
         const m = NUMBER.exec(d.slice(i));
         if (m === null) return { ok: false, at: i, char: c };
+        args++;
         i += m[0].length;
     }
+    if (!settle()) return { ok: false, at: i, char: "end" };
     return { ok: true, commands };
 }
 
@@ -60,6 +84,9 @@ function verify(data) {
     // A second element's leading relative move is absolute once joined.
     assert.equal(data.ICONS.x[0], "M18 6 6 18 M6 6 l12 12");
     assert.equal(data.ICONS["check-check"][0], "M18 6 7 17l-5-5 M22 10 l-7.5 7.5L13 16");
+    // A leading move written with compact decimals, `m7.88 16.36.8 4`, is
+    // two numbers then a pair.
+    assert.ok(data.ICONS.watch[0].indexOf("M7.88 16.36 l.8 4") !== -1, "compact decimals split by the grammar: " + data.ICONS.watch[0]);
     for (const name of names)
         for (const d of data.ICONS[name])
             assert.ok(!/(^|\s)m/.test(d.replace(/^m/, "")), `${name}: a joined path starts with a relative move`);
@@ -75,6 +102,7 @@ const CONTROLS = [
     ["a missing required name", '"check": ["M20 6 9 17l-5-5",""]', '"chekc": ["M20 6 9 17l-5-5",""]'],
     ["a joined path starting with a relative move", '"x": ["M18 6 6 18 M6 6 l12 12",""]', '"x": ["M18 6 6 18 m6 6 12 12",""]'],
     ["a move's implicit lines made absolute", '"x": ["M18 6 6 18 M6 6 l12 12",""]', '"x": ["M18 6 6 18 M6 6 12 12",""]'],
+    ["compact decimals read as one number", "M7.88 16.36 l.8 4", "M7.88 16.36.8 l4"],
     ["a wrong circle conversion", '"circle": ["M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z",""]', '"circle": ["M2 12a10 10 0 1 0 20 0z",""]'],
     ["a fill lost to the stroke path", '2.8z","M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z M17', '2.8z M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z","M17']
 ];
