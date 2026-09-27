@@ -167,6 +167,19 @@ Scope {
             }
             return JSON.stringify(names.filter(name => !seen[name]));
         }
+        // Examples drawn past the gallery's right edge, so a row that does
+        // not wrap to the panel names itself; an empty list is the pass.
+        function galleryOverflow(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.examples === undefined) return "absent";
+            const out = [];
+            for (const child of root.descendants(item.examples)) {
+                if (!child.visible || child.width === undefined || child.width === 0) continue;
+                const right = child.mapToItem(item, child.width, 0).x;
+                if (right > item.width + 1) out.push(String(child).split("(")[0] + ":" + Math.round(right));
+            }
+            return JSON.stringify(out);
+        }
         function galleryHeadings(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.examples === undefined) return "absent";
