@@ -1,6 +1,6 @@
 # Design system
 
-Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
+Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, shell/Core/Toasts.qml, shell/Hosts/ToastHost.qml, scripts/smoke/rows/overlays.sh, scripts/smoke/rows/toasts.sh, scripts/smoke/fixtures/plugins/acme.overlays/**, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
 
 Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code.
 
@@ -10,7 +10,7 @@ Each layer reads only the layer above it.
 
 1. The table and the judge, `shell/Commons/Tokens.js` and `shell/Commons/ThemeLogic.js`: plain JavaScript with no Qt object and no I/O. Node runs the same files through `scripts/qml-library.js`, so a script judges with the shell's own judge.
 2. `Theme` in `qs.Commons`: the accepted values as QML values, one read-only, deep-frozen object of primitives per top-level group, plus `name` and `revision`. `ThemeSource.qml` owns the theme file and the accept call; `qmldir` marks it internal to the module, so no plugin can name it.
-3. The components in `qs.Ui`: every control extends a `QtQuick.Templates` type or a plain `QtQuick` item, supplies its `background`, `contentItem`, `indicator`, `handle` or `delegate` from tokens, and imports no Quickshell module, so all of it runs under `qmltestrunner` with no compositor. `shell/Ui/qmldir` is the component list; files sit under `foundation/`, `controls/`, `feedback/` and `layout/`.
+3. The components in `qs.Ui`: every control extends a `QtQuick.Templates` type or a plain `QtQuick` item and supplies its `background`, `contentItem`, `indicator`, `handle` or `delegate` from tokens. The overlays are Quickshell popup windows; everything else imports no Quickshell module, and the unit runner stands in for the popup window, so all of it runs under `qmltestrunner` with no compositor. `shell/Ui/qmldir` is the component list; files sit under `foundation/`, `controls/`, `feedback/`, `layout/` and `overlay/`.
 4. Every QML file that draws, a plugin's included: it composes components, reads `Theme.<group>.<token>` for what they do not cover, and holds no literal style value.
 
 ## Tiers
@@ -46,6 +46,11 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 - `Label` draws one typography role and sets both `font.weight` and `font.variableAxes`, since a variable font moves on the axis alone and a static family on the weight alone. Letter spacing is stated in em and set in pixels.
 - `Icon` draws Lucide path data from `shell/Ui/icons/Lucide.js`, written by `scripts/vendor-lucide` from the pinned `lucide-static` package with every primitive converted to path commands. The shape is drawn in the data's box and scaled as an item, so `icon.stroke` is the same number of pixels at every size.
 - Radios under one parent are exclusive, as the template makes them. `TextField` draws its action buttons as children of the field, not of its background, because the control puts the background under itself and the input takes every press on it.
+- An overlay (`Popover`, `Tooltip`, `Menu`, the list of `Select`) is a Quickshell `PopupWindow` anchored to the item that declares it, under its bottom-left edge with the theme's gap: its own surface, so it leaves a bar of any height. `Popover`, `Menu` and the list take a focus grab, so they hold the keys and close on a press outside and on Escape; `Tooltip` takes none, opens after `tooltip.delay` while the pointer rests, and stays closed while `OverlayState` counts an open overlay. `AnchorTracker` watches the anchor and its ancestors: a move updates the anchor and a hide closes the popup. `Menu` and `Select` hold their own keys, since the surface a control sits in may take no keyboard focus. [D018](../decisions/D018-overlays-are-quickshell-popups.md) records the choice.
+
+## Toasts
+
+`Toast` is the notice the core's toast stack, `shell/Core/Toasts.qml`, draws through `shell/Hosts/ToastHost.qml` on the focused screen; a plugin shows one through the `toasts` capability, [plugins.md § Capabilities](plugins.md#capabilities). `PluginLogic.toastOptions` judges the options and `PluginLogic.TOAST_VISIBLE_MAX` and `TOAST_QUEUE_MAX` are the ceilings; a theme sets the look, the corner and the default duration, never a ceiling. A toast's timer starts when it shows, so one that waited shows for its whole duration. Expiry, the user's close, the disposer and the instance's teardown all run the one release, which is idempotent. When the stack's screen goes, the shown toasts return to the front of the queue and show again on the next focused screen; with no screen, every toast waits. `scripts/smoke/rows/toasts.sh` reads each of these back from the lending record, the layer list and a click on the close button.
 
 ## The shell document
 
@@ -72,3 +77,4 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 - Tokens are a JavaScript table judged by pure functions and published as frozen objects, never generated QML properties: [D015](../decisions/D015-tokens-are-a-judged-table.md).
 - One bundled variable font, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
+- Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).

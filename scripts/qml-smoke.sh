@@ -67,6 +67,8 @@ source "$repo/scripts/smoke/rows/failed-builds.sh"
 source "$repo/scripts/smoke/rows/monitors.sh"
 source "$repo/scripts/smoke/rows/configuration.sh"
 source "$repo/scripts/smoke/rows/theme.sh"
+source "$repo/scripts/smoke/rows/toasts.sh"
+source "$repo/scripts/smoke/rows/overlays.sh"
 source "$repo/scripts/smoke/rows/instance-guard.sh"
 source "$repo/scripts/smoke/rows/diagnostics.sh"
 

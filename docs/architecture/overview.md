@@ -11,7 +11,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Core: the runner, the instance lock, the Hyprland connection and its reply judge, the design system, the hosts, the plugin registry, the plugin manager and the IPC surface. `scripts/check-plugin-boundary.py` draws the line.
 - Plugin: a directory with `manifest.json` at its root, in the schema [plugins.md](plugins.md) states, plus one QML entry point per kind.
 - Kind: one of `bar-widget`, `bar`, `panel`, `overlay`, `menu`, `service`, `background`. A kind is a surface the core can host, and every kind has a host. The core owns the list; a new kind is a core change.
-- Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own.
+- Host: a core-owned Wayland surface a plugin draws inside. A plugin creates no surface of its own; a popup an overlay component opens is a child of the host surface and dies with the instance that declared it.
 - Bar: the plugin of kind `bar` that is active. It declares three section containers the core mounts bar widgets into; it owns their geometry and its own built-in widgets.
 - Built-in widget: a widget a plugin draws itself inside its own surface, such as the shipped bar's clock. It is part of that plugin, not a plugin and not a kind. The plugin registers it through its `builtins` capability, and the build records list it under the plugin's host key as `<plugin id>/<name>` with origin `plugin` and the registering instance's kind. [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md) records the choice.
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.

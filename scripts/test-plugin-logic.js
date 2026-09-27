@@ -247,6 +247,30 @@ const tunable = ctx.validateManifest({ schemaVersion: 1, id: "acme.tune", name: 
 if (tunable === undefined) { console.log("fixture manifest refused: acme.tune"); process.exit(1); }
 
 // settingRefusal rows: [name, key, value, want]
+// toastOptions: one row per rule. A refusal row pins the start of the error.
+const toastRows = [
+    ["a title alone", { title: "Saved" }, { ok: true, value: { title: "Saved", message: "", tone: "neutral", icon: "", duration: null } }],
+    ["every key", { title: "Saved", message: "to disk", tone: "success", icon: "check", duration: 0 }, { ok: true, value: { title: "Saved", message: "to disk", tone: "success", icon: "check", duration: 0 } }],
+    ["not an object", "Saved", "options must be an object"],
+    ["an unknown key", { title: "Saved", body: "x" }, "body unknown"],
+    ["a missing title", { message: "x" }, "title must be"],
+    ["a blank title", { title: " " }, "title must be"],
+    ["a title past the ceiling", { title: "x".repeat(121) }, "title must be"],
+    ["a message that is not a string", { title: "t", message: 4 }, "message must be"],
+    ["an unknown tone", { title: "t", tone: "loud" }, "tone must be"],
+    ["an icon that is not a string", { title: "t", icon: 4 }, "icon must be"],
+    ["a negative duration", { title: "t", duration: -1 }, "duration must be"],
+    ["a fractional duration", { title: "t", duration: 1.5 }, "duration must be"],
+    ["a duration that is not a number", { title: "t", duration: "5s" }, "duration must be"]
+];
+for (const [name, raw, want] of toastRows) {
+    const got = ctx.toastOptions(raw);
+    if (typeof want === "string") check("toastOptions: " + name, got.ok === false && got.error.startsWith(want), true);
+    else check("toastOptions: " + name, got, want);
+}
+check("toast ceilings are whole numbers above zero", Number.isInteger(ctx.TOAST_VISIBLE_MAX) && ctx.TOAST_VISIBLE_MAX > 0 && Number.isInteger(ctx.TOAST_QUEUE_MAX) && ctx.TOAST_QUEUE_MAX >= ctx.TOAST_VISIBLE_MAX, true);
+check("toasts is a capability", ctx.CAPABILITIES.indexOf("toasts") !== -1, true);
+
 const refusalRows = [
     ["a string fits a string entry", "label", "y", ""],
     ["a number fits a number entry", "size", 3.5, ""],

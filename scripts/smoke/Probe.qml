@@ -145,6 +145,7 @@ Scope {
             return JSON.stringify(Object.keys(Tokens.TOKENS).filter(group => typeof Theme[group] !== "object" || Theme[group] === null || !Object.isFrozen(Theme[group])));
         }
         function themeValue(path: string): string { return root.themeValue(path); }
+        function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
         function themeWrite(path: string, value: string): string { return root.themeWrite(path, value); }
         function themeName(): string { return Theme.name; }
         function themeRevision(): int { return Theme.revision; }

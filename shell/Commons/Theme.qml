@@ -51,6 +51,11 @@ Singleton {
     readonly property var listItem: published.listItem
     readonly property var sectionHeader: published.sectionHeader
     readonly property var scrollArea: published.scrollArea
+    readonly property var popover: published.popover
+    readonly property var tooltip: published.tooltip
+    readonly property var menu: published.menu
+    readonly property var select: published.select
+    readonly property var toast: published.toast
     readonly property var bar: published.bar
 
     // The accepted values converted once, as one frozen tree. It follows

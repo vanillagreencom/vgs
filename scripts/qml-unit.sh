@@ -14,9 +14,9 @@
 # module under test; qs/Commons holds the shipped Theme.qml, Tokens.js and
 # ThemeLogic.js beside a stand-in ThemeSource that takes a document from the
 # UnitTheme singleton of the qs.Unit module and calls the shipped accept; a
-# stand-in Quickshell module supplies the Singleton type alone, since the
-# real module's plugin does not load outside the shell. Nothing under the
-# repository is written.
+# stand-in Quickshell module supplies the Singleton type and a PopupWindow
+# that positions nothing, since the real module's plugin does not load
+# outside the shell. Nothing under the repository is written.
 #
 # QML_UNIT_RUNNER names the qmltestrunner binary; unset, the one on PATH
 # or under /usr/lib/qt6/bin is used. Exit 0 when every test passed, 1 when
@@ -70,8 +70,10 @@ cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
 printf 'module qs.Unit\nsingleton UnitTheme 1.0 UnitTheme.qml\nUnitPaths 1.0 UnitPaths.js\n' >"$imports/qs/Unit/qmldir"
-cp -- "$tests/stand-ins/Singleton.qml" "$imports/Quickshell/Singleton.qml"
-printf 'module Quickshell\nSingleton 1.0 Singleton.qml\n' >"$imports/Quickshell/qmldir"
+for file in Singleton.qml PopupWindow.qml Edges.qml PopupAdjustment.qml; do
+  cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
+done
+printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
 
 if [[ ${#files[@]} -eq 0 ]]; then
   mapfile -t files < <(find "$tests" -maxdepth 1 -name 'tst_*.qml' | sort)

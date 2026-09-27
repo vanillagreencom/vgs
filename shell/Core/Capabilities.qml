@@ -113,6 +113,9 @@ Singleton {
             summon: (kind, payloadJson, anchor) => Plugins.route("summon", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor)),
             hide: kind => Plugins.route("hide", kind, ctx.id, "", null),
             toggle: (kind, payloadJson, anchor) => Plugins.route("toggle", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor))
+        }),
+        toasts: ctx => ({
+            show: options => Toasts.show(ctx, options)
         })
     })
 
@@ -152,7 +155,8 @@ Singleton {
             notificationServer: notifications.server !== null,
             polkitAgent: polkitLoader.item !== null,
             polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
-            lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null }
+            lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null },
+            toasts: Toasts.record()
         });
     }
 }

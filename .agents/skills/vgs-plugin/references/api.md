@@ -63,6 +63,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.manager.plugins`, `.setEnabled(id, enabled)`, `.setSetting(id, key, value)` | capability `manager` | every discovered plugin as `{ id, name, version, description, kinds, enabled, schema, settings }`; enabling and disabling as `setPluginEnabled` does, with `refused: enabled=<value> want=boolean` for a non-boolean; a setting written to every entry the plugin reads, refused for a disabled plugin; each returns the IPC reply |
 | `shell.builtins.register(name, item)` | capability `builtins` | records an item the plugin draws itself under its host key as `<plugin id>/<name>`, origin `plugin`, with this instance's kind; returns a disposer |
 | `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu; pass its source item as `anchor` for a compositor-placed popup, or omit it for layer placement on this instance's screen; returns the IPC reply |
+| `shell.toasts.show({ title, message, tone, icon, duration })` | capability `toasts` | one toast in the core's stack: `title` required, `tone` one of the badge tones, `duration` in milliseconds with 0 for until dismissed and the theme's default when omitted; returns a disposer that ends it; throws `refused: toast=<reason>` for a malformed option and `refused: toasts=full` past the core's ceiling |
 
 A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
 
@@ -95,6 +96,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `surfaces` | `shell.surfaces` |
 | `builtins` | `shell.builtins` |
 | `manager` | `shell.manager` |
+| `toasts` | `shell.toasts` |
 
 ## Allowed imports
 
@@ -130,6 +132,11 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |
 | `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted` |
 | `SectionHeader` | `Column` | `text`, `description` |
+| `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; the list opens in its own surface |
+| `Popover` | `Item` | its content as children, `width`; `open()`, `close()`, `opened`; a surface under the item it is declared in |
+| `Tooltip` | `Item` | `text`; opens on hover of the item it is declared in |
+| `Menu`, `MenuItem` | `Item`, `T.MenuItem` | `MenuItem` children with `text`, `iconName`, `shortcut`, `triggered`; `open()`, `close()` |
+| `Toast` | `Rectangle` | `title`, `message`, `tone`, `iconName`, `dismissed`; the core's toast host draws it, a plugin shows one through `shell.toasts` |
 
 A name a component does not know is logged and drawn as the default. A control's `background`, `contentItem`, `indicator` or `handle` may be replaced on one instance to restyle it.
 

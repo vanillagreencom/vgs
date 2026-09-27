@@ -1,0 +1,3 @@
+{ "schemaVersion": 1, "id": "acme.overlays", "name": "Overlays", "version": "0.1.0", "author": "acme", "description": "smoke fixture for the overlay components",
+  "kinds": ["bar-widget", "panel"], "entryPoints": { "bar-widget": "Widget.qml", "panel": "Panel.qml" },
+  "defaultSection": "left", "capabilities": ["surfaces"] }

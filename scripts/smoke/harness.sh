@@ -1,7 +1,7 @@
 # Sourced by qml-smoke.sh; owns the sandbox and shared readers.
 set -euo pipefail
 missing=()
-for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config; do
+for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists wayland-client; then missing+=("wayland-client.pc"); fi
@@ -239,8 +239,13 @@ spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):
 shell_pid="$spawn_pid"
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.
+# hover X Y: the pointer moved there with no press. type_keys ARGS...:
+# keys typed on the nested seat through wtype, so a row can reach a
+# focused input; wtype's own arguments, such as -k Escape, pass through.
 # Each prints nothing on success; a row reads its status.
 click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
+hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
+type_keys() { "${shell_env[@]}" wtype "$@"; }
 click_centre() {
   local rect
   rect="$(ipc smoke instanceGeometry "$1" "$2")" || return
