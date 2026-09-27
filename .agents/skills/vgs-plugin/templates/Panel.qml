@@ -1,11 +1,12 @@
 import QtQuick
 import qs.Commons
+import qs.Ui
 
 // __NAME__ panel: a summoned surface drawn inside the core's panel host.
 // The host calls open(payloadJson) and close(); the plugin never creates
 // a window. A payload that does not parse throws out of open(), and the
-// host answers the summon with `refused: open-failed=<id>`. Colours and
-// spacing come from Theme. To open another declared kind here,
+// host answers the summon with `refused: open-failed=<id>`. The panel
+// composes the components of qs.Ui; sizes come from Theme. To open another declared kind here,
 // pass its source Item to shell.surfaces.summon(kind, payloadJson, item);
 // the compositor places it relative to this window.
 Item {
@@ -24,17 +25,13 @@ Item {
     implicitWidth: Theme.size.panel.sm
     implicitHeight: Theme.size.panel.sm / 2
 
-    Rectangle {
+    Surface {
         anchors.fill: parent
-        color: Theme.color.surface
-        radius: Theme.radius.md
 
-        Text {
+        Label {
             anchors.centerIn: parent
+            role: "body"
             text: "__NAME__"
-            color: Theme.color.text
-            font.family: Theme.text.body.family
-            font.pixelSize: Theme.text.body.size
         }
     }
 }

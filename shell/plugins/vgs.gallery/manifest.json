@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.gallery",
+  "name": "Gallery",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Every component of the design system in every variant and state, for previewing a theme. Summon it as a panel.",
+  "license": "MIT",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Gallery.qml"
+  },
+  "capabilities": [
+    "toasts"
+  ],
+  "settings": {
+    "placement": "center"
+  }
+}

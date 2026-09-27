@@ -4,7 +4,8 @@ import qs.Ui
 
 // __NAME__: one item in a bar section. The core hands this widget `bar`,
 // `moduleName` and `settings`; BarWidget declares them. Size the widget
-// with implicitWidth and implicitHeight and read every colour from Theme.
+// with implicitWidth and implicitHeight, compose the components of qs.Ui,
+// and read every value they do not cover from Theme.
 BarWidget {
     id: root
 
@@ -15,12 +16,11 @@ BarWidget {
     implicitWidth: text.implicitWidth
     implicitHeight: barSize
 
-    Text {
+    Label {
         id: text
         anchors.centerIn: parent
+        role: "body"
         text: root.label
         color: root.bar ? root.bar.foreground : Theme.bar.foreground
-        font.family: root.bar ? root.bar.fontFamily : Theme.text.body.family
-        font.pixelSize: Theme.text.body.size
     }
 }

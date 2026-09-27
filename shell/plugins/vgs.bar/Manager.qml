@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Ui
 import "Reply.js" as Reply
 
 // The plugin manager's button. A click opens the bar's own manager panel
@@ -10,7 +11,7 @@ Item {
     // The bar, read for its `shell` alone.
     required property Item bar
 
-    implicitWidth: label.implicitWidth + Theme.space.md
+    implicitWidth: button.implicitWidth
     implicitHeight: Theme.bar.height
 
     // Open or close the manager panel under this button; answers the
@@ -21,17 +22,13 @@ Item {
         return reply;
     }
 
-    Text {
-        id: label
+    Button {
+        id: button
         anchors.centerIn: parent
+        variant: "ghost"
+        size: "sm"
+        iconName: "layout-grid"
         text: "Plugins"
-        color: Theme.bar.foreground
-        font.family: Theme.text.body.family
-        font.pixelSize: Theme.text.body.size
-    }
-
-    MouseArea {
-        anchors.fill: parent
         onClicked: root.toggle()
     }
 }

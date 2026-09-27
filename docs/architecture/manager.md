@@ -2,6 +2,8 @@
 
 Covers: bin/vgsh-plugin-judge, shell/plugins/vgs.bar/Manager.qml, shell/plugins/vgs.bar/ManagerPanel.qml, shell/plugins/vgs.bar/SettingField.qml
 
+The manager's panel composes the design system's components: a `ListItem` with a `Switch` per plugin, a `Field` per schema key holding a `TextField`, a `Switch` or a `Select`, [design-system.md](design-system.md).
+
 How plugins are discovered, enabled, disabled, installed, updated and removed, and what the manager's user interface may do. The plugin contract itself is [plugins.md](plugins.md).
 
 ## Mechanism

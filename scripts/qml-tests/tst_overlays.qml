@@ -27,6 +27,8 @@ Item {
     }
     Select { id: select; y: 40; model: ["one", "two", "three"] }
     Select { id: roled; y: 80; textRole: "name"; model: [{ name: "alpha" }, { name: "beta" }] }
+    property int wanted: 0
+    Select { id: bound; y: 120; model: ["one", "two", "three"]; currentIndex: root.wanted }
     Toast { id: toast; y: 120; title: "Saved"; message: "to disk"; tone: "success"; iconName: "check" }
     property int triggered: -1
     SignalSpy { id: dismissals; target: toast; signalName: "dismissed" }
@@ -147,6 +149,16 @@ Item {
             select.choose(1);
             compare(select.listOpen, false);
             compare(OverlayState.open, 0);
+        }
+
+        function test_choosing_the_current_entry_keeps_the_index_binding() {
+            root.wanted = 0;
+            bound.choose(0);
+            root.wanted = 2;
+            compare(bound.currentIndex, 2);
+            bound.choose(1);
+            root.wanted = 0;
+            compare(bound.currentIndex, 1);
         }
 
         function test_enter_opens_the_closed_select() {
