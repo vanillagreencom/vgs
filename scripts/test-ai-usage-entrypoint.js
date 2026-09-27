@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+
+// Drive the widget entrypoint through bin/vshell with a fake backend.
+// Its error payloads and unstamped backend results need provider identity so failures reach the user.
+
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+const repoRoot = path.join(__dirname, "..");
+
+// Read provider fields directly here. test-ai-usage-logic.js exercises widget acceptance decisions.
+
+const VSHELL = path.join(repoRoot, "bin", "vshell");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-ai-usage-"));
+
+function fakeBackend(name, body) {
+    const file = path.join(tmp, name);
+    fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return file;
+}
+
+function runEntrypoint(provider, backend) {
+    const r = spawnSync(VSHELL, ["ai-usage", provider], {
+        encoding: "utf8",
+        env: Object.assign({}, process.env, { VSHELL_AI_USAGE_CMD: backend })
+    });
+    assert.equal(r.status, 0, `vshell ai-usage exited ${r.status}: ${r.stderr}`);
+    let parsed = null;
+    try {
+        parsed = JSON.parse((r.stdout || "").trim());
+    } catch (e) {
+        assert.fail(`vshell ai-usage did not emit JSON: ${JSON.stringify(r.stdout)}`);
+    }
+    return parsed;
+}
+
+// Cases run after the module loads, so the fixture directory is removed in an after hook rather
+// than a module-scope finally, which would run before any case.
+test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+test("a failing, silent or non-JSON backend is reported as a failure stamped with the provider", () => {
+    for (const [label, backend] of [
+        ["a backend that fails", fakeBackend("fails", 'echo "boom" >&2\nexit 7')],
+        ["a backend that prints nothing", fakeBackend("silent", "exit 0")],
+        ["a backend that prints non-JSON", fakeBackend("garbage", "echo not-json")]
+    ]) {
+        for (const provider of ["claude", "codex"]) {
+            const payload = runEntrypoint(provider, backend);
+            assert.equal(payload.ok, false, `${label} reports a failure`);
+            assert.equal(
+                payload.provider, provider,
+                `${label} must still stamp the provider, or the widget discards the real cause — ` +
+                "payloadIsFor() accepts exactly this, proved in test-ai-usage-logic.js"
+            );
+        }
+    }
+});
+
+// An external backend can omit the provider field.
+test("an unstamped backend payload is stamped by the wrapper with its fields untouched", () => {
+    const backend = fakeBackend("unstamped", 'echo \'{"ok":true,"plan":"Max","session":{"pct":12}}\'');
+    const payload = runEntrypoint("codex", backend);
+    assert.equal(payload.ok, true, "a good payload passes through");
+    assert.equal(payload.plan, "Max", "the backend's own fields are untouched");
+    assert.equal(payload.provider, "codex", "an unstamped backend payload is stamped by the wrapper");
+});
+
+// Keep a backend-provided identity; overwriting it would conceal an attribution mismatch.
+test("a backend-provided stamp is preserved, never overwritten", () => {
+    const backend = fakeBackend("stamped", 'echo \'{"ok":false,"provider":"claude","error":"nope"}\'');
+    const payload = runEntrypoint("codex", backend);
+    assert.equal(payload.provider, "claude", "an existing stamp is preserved, never overwritten");
+    assert.notEqual(payload.provider, "codex",
+        "so the widget rejects it as another provider's payload, which is the point");
+});
+
+// The repository backend prevents the missing-backend fixture, so inspect wrapper emissions at source.
+// Read inside the cases: a module-scope read that throws would run before the after hook and
+// leave the executable fake backends behind.
+function cmdAiUsageSource() {
+    const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell_helper.py"), "utf8");
+    // Blank comments before counting print and stamp calls so prose cannot satisfy emission checks.
+    const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+    return helperCode.slice(
+        helperCode.indexOf("def cmd_ai_usage("),
+        helperCode.indexOf("def cmd_fonts(")
+    );
+}
+test("cmd_ai_usage stamps the provider and prints only through the stamping helper", () => {
+    const cmdAiUsage = cmdAiUsageSource();
+    assert.ok(cmdAiUsage.includes('payload.setdefault("provider", provider)'),
+        "cmd_ai_usage must stamp the provider on the payloads it emits");
+    // Count STDOUT emissions only. eprint() writes to stderr, which the widget never reads as a
+    // payload, and a substring match on it counted the helper's own diagnostics as payload paths.
+    assert.equal((cmdAiUsage.match(/(?<![A-Za-z_])print\(/g) || []).length, 1,
+        "cmd_ai_usage must print through the stamping helper only — a second print is an unstamped path");
+    assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not found"})'),
+        "the backend-not-found payload is emitted through the stamping helper");
+});
+
+// A backend can answer and still have degraded: one account it could not normalize, one source
+// file it could not read. Its diagnostic is the only record of that, established here by running a
+// backend that emits both halves rather than by reading the helper for an eprint call.
+test("a backend that answers while reporting a degradation has both halves kept apart", () => {
+    const backend = fakeBackend("degraded",
+        'echo "vshell-ai-usage: jq exited 2; continuing without what it was asked for" >&2\n' +
+        "echo '{\"ok\":true,\"provider\":\"claude\",\"accounts\":[]}'");
+    const r = spawnSync(VSHELL, ["ai-usage", "claude"], {
+        encoding: "utf8",
+        env: Object.assign({}, process.env, { VSHELL_AI_USAGE_CMD: backend })
+    });
+    assert.equal(r.status, 0, "a degraded answer is still an answer");
+    assert.deepEqual(JSON.parse(r.stdout.trim()), { ok: true, provider: "claude", accounts: [] },
+        "stdout carries the payload alone — a diagnostic mixed into it would not parse, and the " +
+        "widget would discard the answer whose cause it was explaining");
+    assert.match(r.stderr, /jq exited 2/,
+        "and the diagnostic reaches stderr, which is where the shell log reads it: discarding it " +
+        "on success left the cause of a dropped account nowhere at all");
+});
+
+// Inspect each payload object. A jq program can emit both success and failure objects,
+// and a stamp in one must not cover the other.
+
+
+// Read object fields at their own brace depth. A nested provider key cannot stamp its parent.
+function objectLiterals(text) {
+    const out = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] !== "{")
+            continue;
+        let depth = 0;
+        let own = "";
+        for (let j = i; j < text.length; j++) {
+            const ch = text[j];
+            if (ch === "{") {
+                depth += 1;
+                continue;
+            }
+            if (ch === "}") {
+                depth -= 1;
+                if (depth === 0) {
+                    out.push({ body: text.slice(i + 1, j), own: own });
+                    break;
+                }
+                continue;
+            }
+            if (depth === 1)
+                own += ch;
+        }
+    }
+    return out;
+}
+
+test("objectLiterals counts a key at the object's own depth only", () => {
+    const sample = objectLiterals('{ok:true, nested:{provider:$p}} {ok:false,provider:$p}');
+    assert.ok(sample.some(o => /ok:true/.test(o.own) && !/provider/.test(o.own)),
+        "a key inside a NESTED object must not count as its parent's");
+    assert.ok(sample.some(o => /ok:false/.test(o.own) && /provider/.test(o.own)),
+        "a key at the object's own level does count");
+    // A nested sibling object must not expose its provider key at the parent depth.
+    const deeper = objectLiterals("{ok:true, a:{provider:$p, b:{x:1}}}");
+    assert.ok(deeper.some(o => /ok:true/.test(o.own) && !/provider/.test(o.own)),
+        "a nested stamp must not count as the payload's own even when a deeper object sits " +
+        "beside it — that let the scan pass after a top-level payload LOST its stamp");
+});
+
+// Inspect jq -n payload builders, not jq -c account normalizers.
+// Require the single-quoted program convention within the same command so an unsupported
+// quote shape cannot borrow a later program's stamp.
+function jqBuildPrograms(text) {
+    const out = [];
+    const at = /\bjq -n[a-z]*\b/g;
+    let hit;
+    while ((hit = at.exec(text)) !== null) {
+        const rest = text.slice(hit.index + hit[0].length);
+
+        const preamble = rest.match(/^(?:\s*\\\n|\s|--arg(?:json)?\s+\w+\s+"[^"]*")*/)[0];
+        const program = rest.slice(preamble.length);
+        assert.equal(program[0], "'",
+            "every jq payload program in bin/vshell-ai-usage must be single-quoted, or this scan " +
+            "cannot tell where it ends and would borrow the next one's text:\n" +
+            program.slice(0, 120));
+        const close = program.indexOf("'", 1);
+        assert.notEqual(close, -1, "an unterminated jq program");
+        out.push(program.slice(1, close));
+    }
+    return out;
+}
+
+// Blank comment lines so a documented payload example cannot count as an emission.
+function backendSource() {
+    const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
+    return backend.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+}
+
+// Recognize payloads by their own ok field, with bare jq or quoted JSON keys.
+// Blank string values first: an error message reading "unknown provider: " is not a key.
+// Strings are consumed in order so quotes pair correctly; one followed by a colon is a
+// quoted key and stays.
+const blankStringValues = text => text.replace(/"[^"]*"(\s*:)?/g, (m, colon) => (colon ? m : '""'));
+const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(blankStringValues(text));
+test("hasKey reads bare and quoted keys at the object's own level and ignores string values", () => {
+    const rows = [
+        ["ok:false,provider:$p", "provider", true, "a bare key"],
+        ['"ok":false,"provider":$p', "provider", true, "a quoted key"],
+        ['"ok":false,"provider":$p', "ok", true, "a quoted ok key still marks a payload"],
+        ['ok:false,error:("unknown provider: "+$p)', "provider", false, "a key name inside a string value"],
+        ['ok:false,error:"provider:"', "provider", false, "a key-shaped string value"],
+        ["ok:false,note:$p", "provider", false, "an absent key"],
+    ];
+    for (const [own, key, expected, why] of rows)
+        assert.equal(hasKey(own, key), expected, `${why}: ${own}`);
+});
+test("every payload bin/vshell-ai-usage builds names its provider at its own level, through jq", () => {
+    const backendCode = backendSource();
+    const programs = jqBuildPrograms(backendCode);
+    assert.ok(programs.length >= 4,
+        `expected the backend's payload-building jq programs to be found, got ${programs.length}`);
+    const payloads = [];
+    for (const program of programs) {
+        for (const object of objectLiterals(program)) {
+            if (hasKey(object.own, "ok"))
+                payloads.push(object);
+        }
+    }
+    // Require separate coverage for success and no-live-account payloads in the same program.
+    assert.ok(payloads.length >= 5,
+        `expected every payload object the backend builds to be found, got ${payloads.length}`);
+    for (const payload of payloads) {
+        assert.ok(hasKey(payload.own, "provider"),
+            "every payload bin/vshell-ai-usage builds must name its provider at its own level:\n" +
+            payload.body.slice(0, 200));
+    }
+    assert.ok(!/^\s*(printf|echo)\s+.*['"]\s*\{/m.test(backendCode),
+        "a payload printed without jq would bypass the provider stamp entirely");
+});

@@ -1,0 +1,616 @@
+{
+  "$comment": [
+    "Distribution package names for the commands declared in",
+    "config/vshell/dependencies.json. scripts/gen-package-metadata.py joins the",
+    "two files and regenerates the optional-dependency blocks in the packaging",
+    "recipes, so the feature manifest and the packaging cannot drift apart.",
+    "The libraries section declares optional runtime modules without inventing executable probes.",
+    "",
+    "Every command in dependencies.json must appear in \"commands\" or the",
+    "generator fails. Use \"skip\" for commands already covered by a hard",
+    "dependency or shipped inside the package. Omit a distro key when the",
+    "distribution has no package for that command; the entry is then left out of",
+    "that distribution's recipe rather than guessed at.",
+    "",
+    "Package names were verified against archlinux.org, packages.debian.org",
+    "(trixie), the Fedora rawhide metadata API, and packages.gentoo.org."
+  ],
+  "required": {
+    "$comment": [
+      "Commands that back first-class, non-optional UI. optdepends/Suggests are",
+      "not installed by default by pacman, paru, apt or dnf, so a command that a",
+      "default bar button or modal points at cannot be advertised that way: the",
+      "screenshot button would report missing tools on a stock install (VGS-53).",
+      "",
+      "The line is: does a default-configuration bar button or modal point at",
+      "it. Genuinely opt-in integrations (rclone, tailscale, greetd, bandwhich,",
+      "gpu-screen-recorder, pywalfox, zoxide, ffmpegthumbnailer, satty,",
+      "tesseract) stay optional and must stay absent-tolerant in the UI.",
+      "tailscale in particular must never become a hard dependency: it is a",
+      "network daemon with its own account and system service.",
+      "",
+      "Terminals are deliberately absent: eight are listed as alternatives and",
+      "packaging has no way to express \"any one of these\". That needs an",
+      "xdg-terminal-exec style resolver, tracked separately.",
+      "",
+      "\"base\" lists the per-distribution hard dependencies that do not come from",
+      "a manifest command (the runtime itself and its interpreters), in the order",
+      "they should appear ahead of the generated ones. A base entry is copied into",
+      "its recipe verbatim, so each carries its own distribution's version-relation",
+      "syntax.",
+      "",
+      "Quickshell carries the supported baseline, 0.3.1, as a minimum on every",
+      "channel generated here whose format has a version slot. The openSUSE spec",
+      "is not generated here; DEVELOPMENT.md names the minimum it must carry.",
+      "Unbound, the recipes install VGS",
+      "against a runtime nobody tested, and a documented claim about Quickshell",
+      "behaviour could not be checked against a version the repository commits to",
+      "(VGS-371). The nix entry is the exception: pkgs.quickshell is an attribute",
+      "path passed to makeBinPath, which has no constraint slot, so the flake's",
+      "nixpkgs input is what decides the version there.",
+      "",
+      "\"unsupported\" waives a required command on a distribution that has no",
+      "package for it. It is mandatory: without a waiver the generator fails",
+      "rather than quietly leaving the command out of one recipe, which would",
+      "ship exactly the broken stock install this list exists to prevent. Each",
+      "waiver is printed on every run, and goes stale loudly — declaring one for",
+      "a command the mapping does package is an error."
+    ],
+    "unsupported": {
+      "hyprpicker": {
+        "gentoo": "not packaged: packages.gentoo.org returns no hyprpicker in ::gentoo (checked 2026-08-04), so the ebuild can neither require nor advertise it. Capture and OCR under Hyprland report it missing on Gentoo until an ebuild exists."
+      },
+      "sudo": {
+        "nix": "on NixOS the working sudo is the setuid wrapper in /run/wrappers/bin; putting pkgs.sudo on the wrapper's PATH prefix would shadow it with a binary that cannot elevate, which is worse than not providing one."
+      },
+      "visudo": {
+        "nix": "ships with the same package as sudo, and is waived for the same reason."
+      }
+    },
+    "commands": [
+      "grim",
+      "slurp",
+      "hyprpicker",
+      "wl-copy",
+      "wl-paste",
+      "notify-send",
+      "gio",
+      "gsettings",
+      "sudo",
+      "visudo"
+    ],
+    "base": {
+      "arch": ["quickshell>=0.3.1", "jq", "python", "systemd"],
+      "debian": ["quickshell (>= 0.3.1)", "jq", "python3", "systemd"],
+      "fedora": ["quickshell >= 0.3.1", "jq", "python3", "bash", "coreutils", "systemd"],
+      "gentoo": ["${PYTHON_DEPS}", "app-misc/jq", ">=gui-apps/quickshell-0.3.1"],
+      "void": ["quickshell>=0.3.1_1", "jq", "python3"],
+      "nix": ["pkgs.quickshell", "pkgs.jq", "python", "pkgs.bash"]
+    }
+  },
+  "conflicts": {
+    "$comment": [
+      "org.freedesktop.Notifications is a first-come, first-served session bus",
+      "name, so two notification daemons on one session is not a supported",
+      "configuration (VGS-56). Every channel has to say so, and every channel",
+      "was saying something slightly different: Fedora named all four, Arch and",
+      "Debian omitted dunst, Gentoo and Void omitted swaync. Some of that is",
+      "correct — a virtual name can cover a daemon — and some of it was drift.",
+      "",
+      "This section is the one list. Gentoo's blockers live inside the generated",
+      "RDEPEND, so they are generated from here; the other channels declare",
+      "conflicts in file-specific shapes and are verified against it instead, so",
+      "a daemon dropped from one recipe fails the run rather than shipping.",
+      "",
+      "A daemon with no package on a channel must be waived, with the reason —",
+      "the same rule as required.unsupported."
+    ],
+    "daemons": {
+      "notification-daemon": {
+        "arch": "notification-daemon",
+        "debian": "notification-daemon",
+        "fedora": "notification-daemon"
+      },
+      "mako": {
+        "arch": "mako",
+        "debian": "mako-notifier",
+        "fedora": "mako",
+        "gentoo": "gui-apps/mako",
+        "void": "mako"
+      },
+      "dunst": {
+        "fedora": "dunst",
+        "gentoo": "x11-misc/dunst",
+        "void": "dunst"
+      },
+      "swaync": {
+        "arch": "swaync",
+        "debian": "sway-notification-center",
+        "fedora": "swaync",
+        "void": "SwayNotificationCenter"
+      }
+    },
+    "unsupported": {
+      "notification-daemon": {
+        "gentoo": "Gentoo has no notification-daemon virtual; the daemons are blocked by name instead.",
+        "void": "xbps has no virtual package for notification daemons; they are conflicted by name instead."
+      },
+      "dunst": {
+        "arch": "dunst provides the notification-daemon virtual on Arch, which is already conflicted.",
+        "debian": "dunst Provides: notification-daemon on Debian, which is already conflicted."
+      },
+      "swaync": {
+        "gentoo": "not packaged: packages.gentoo.org returns no swaync or SwayNotificationCenter in ::gentoo (checked 2026-08-04)."
+      }
+    }
+  },
+
+  "features": {
+    "base": "shell runtime",
+    "theme": "theme engine",
+    "theme-gtk": "GTK theme, icon theme and color-scheme application",
+    "theme-firefox": "Firefox theming",
+    "fonts": "font cache refresh after a font change",
+    "greeter": "greeter and keyring integration",
+    "clipboard": "clipboard history",
+    "network-usage": "per-interface network usage",
+    "capture": "screenshots",
+    "capture-edit": "screenshot annotation",
+    "ocr": "region OCR",
+    "gamma": "night light",
+    "recording": "screen recording",
+    "thumbnails": "file thumbnails",
+    "launcher-zoxide": "launcher recent-directory search",
+    "launcher-search": "launcher text search",
+    "launcher-search-fast": "launcher file and folder search",
+    "trash": "trash instead of deleting files",
+    "launcher-folder-open": "launcher default folder opener",
+    "updates-arch": "repo update checks",
+    "updates-aur": "AUR update checks",
+    "dev-tools": "mise-managed coding agents and language toolchains",
+    "ai-usage": "AI usage widget",
+    "tailscale": "Tailscale widget",
+    "remote-desktop": "Remote desktop widget (Sunshine host)",
+    "brightness": "display brightness",
+    "sudo-toggle": "passwordless sudo toggle widget",
+    "sudo-toggle-grant": "granting passwordless sudo, which needs a terminal",
+    "terminal": "terminal VGS opens for TUI actions",
+    "default-apps": "XDG default-application layer",
+    "file-manager": "file manager VGS opens folders with",
+    "launcher-folder-open-yazi": "launcher Yazi folder opener",
+    "app-scopes": "launching apps into their own systemd scope",
+    "cloud-sync": "cloud file sync",
+    "cloud-sync-stream": "cloud sync streaming mounts",
+    "desktop-integration": "opening files and URLs in their default application",
+    "system-monitor": "CPU, GPU, memory and process widgets",
+    "audio-visualizer": "audio visualizer widget",
+    "calendar": "calendar events in the dash",
+    "bluetooth-codecs": "Bluetooth audio codec selection",
+    "launcher-type-out": "launcher type-out into the focused window",
+    "fingerprint-auth": "fingerprint unlock on the lock screen and greeter",
+    "theme-qt": "Qt application theming",
+    "polkit": "privileged actions run from the shell"
+  },
+  "libraries": {
+    "pillow": {
+      "description": "ICC colour profiles",
+      "arch": "python-pillow",
+      "debian": "python3-pil",
+      "fedora": "python3-pillow",
+      "gentoo": "dev-python/pillow[lcms]"
+    }
+  },
+  "commands": {
+    "qs": { "skip": "quickshell is a hard dependency" },
+    "jq": { "skip": "hard dependency" },
+    "python3": { "skip": "hard dependency" },
+    "udevadm": { "skip": "provided by the systemd hard dependency" },
+    "pacman": { "skip": "provided by the base system on Arch" },
+
+    "hyprctl": {
+      "description": "Hyprland compositor support",
+      "arch": "hyprland",
+      "debian": "hyprland",
+      "fedora": "hyprland"
+    },
+    "Hyprland": {
+      "description": "Hyprland compositor support",
+      "arch": "hyprland",
+      "debian": "hyprland",
+      "fedora": "hyprland"
+    },
+    "niri": {
+      "description": "Niri compositor support",
+      "arch": "niri",
+      "debian": "niri",
+      "fedora": "niri"
+    },
+
+    "greetd": {
+      "arch": "greetd",
+      "debian": "greetd",
+      "fedora": "greetd",
+      "gentoo": "gui-libs/greetd"
+    },
+    "gnome-keyring-daemon": {
+      "arch": "gnome-keyring",
+      "debian": "gnome-keyring",
+      "fedora": "gnome-keyring",
+      "gentoo": "gnome-base/gnome-keyring"
+    },
+
+    "wl-copy": {
+      "arch": "wl-clipboard",
+      "debian": "wl-clipboard",
+      "fedora": "wl-clipboard",
+      "gentoo": "gui-apps/wl-clipboard",
+      "void": "wl-clipboard",
+      "nix": "pkgs.wl-clipboard"
+    },
+    "wl-paste": {
+      "arch": "wl-clipboard",
+      "debian": "wl-clipboard",
+      "fedora": "wl-clipboard",
+      "gentoo": "gui-apps/wl-clipboard",
+      "void": "wl-clipboard",
+      "nix": "pkgs.wl-clipboard"
+    },
+
+    "bandwhich": {
+      "arch": "bandwhich",
+      "debian": "bandwhich",
+      "gentoo": "net-analyzer/bandwhich"
+    },
+
+    "notify-send": {
+      "arch": "libnotify",
+      "debian": "libnotify-bin",
+      "fedora": "libnotify",
+      "gentoo": "x11-libs/libnotify",
+      "void": "libnotify",
+      "nix": "pkgs.libnotify"
+    },
+    "grim": {
+      "arch": "grim",
+      "debian": "grim",
+      "fedora": "grim",
+      "gentoo": "gui-apps/grim",
+      "void": "grim",
+      "nix": "pkgs.grim"
+    },
+    "slurp": {
+      "arch": "slurp",
+      "debian": "slurp",
+      "fedora": "slurp",
+      "gentoo": "gui-apps/slurp",
+      "void": "slurp",
+      "nix": "pkgs.slurp"
+    },
+    "hyprpicker": {
+      "arch": "hyprpicker",
+      "debian": "hyprpicker",
+      "fedora": "hyprpicker",
+      "void": "hyprpicker",
+      "nix": "pkgs.hyprpicker"
+    },
+    "satty": {
+      "arch": "satty",
+      "debian": "satty"
+    },
+    "tesseract": {
+      "arch": ["tesseract", "tesseract-data-eng"],
+      "debian": ["tesseract-ocr", "tesseract-ocr-eng"],
+      "fedora": ["tesseract", "tesseract-langpack-eng"],
+      "gentoo": "app-text/tesseract"
+    },
+
+    "hyprsunset": {
+      "arch": "hyprsunset",
+      "debian": "hyprsunset"
+    },
+    "wlsunset": {
+      "arch": "wlsunset",
+      "debian": "wlsunset",
+      "fedora": "wlsunset"
+    },
+
+    "gpu-screen-recorder": {
+      "arch": "gpu-screen-recorder"
+    },
+    "ffmpeg": {
+      "arch": "ffmpeg",
+      "debian": "ffmpeg",
+      "fedora": "ffmpeg-free",
+      "gentoo": "media-video/ffmpeg"
+    },
+    "ffprobe": {
+      "arch": "ffmpeg",
+      "debian": "ffmpeg",
+      "fedora": "ffmpeg-free",
+      "gentoo": "media-video/ffmpeg"
+    },
+
+    "ffmpegthumbnailer": {
+      "arch": "ffmpegthumbnailer",
+      "debian": "ffmpegthumbnailer",
+      "fedora": "ffmpegthumbnailer",
+      "gentoo": "media-video/ffmpegthumbnailer"
+    },
+    "zoxide": {
+      "arch": "zoxide",
+      "debian": "zoxide",
+      "fedora": "zoxide",
+      "gentoo": "app-shells/zoxide"
+    },
+    "rg": {
+      "arch": "ripgrep",
+      "debian": "ripgrep",
+      "fedora": "ripgrep",
+      "gentoo": "sys-apps/ripgrep"
+    },
+    "fd": {
+      "arch": "fd",
+      "fedora": "fd-find",
+      "gentoo": "sys-apps/fd"
+    },
+    "fdfind": {
+      "debian": "fd-find"
+    },
+
+    "gio": {
+      "arch": "glib2",
+      "debian": "libglib2.0-bin",
+      "fedora": "glib2",
+      "gentoo": "dev-libs/glib",
+      "void": "glib",
+      "nix": "pkgs.glib.bin"
+    },
+    "gsettings": {
+      "arch": "glib2",
+      "debian": "libglib2.0-bin",
+      "fedora": "glib2",
+      "gentoo": "dev-libs/glib",
+      "void": "glib",
+      "nix": "pkgs.glib.bin"
+    },
+    "fc-cache": {
+      "arch": "fontconfig",
+      "debian": "fontconfig",
+      "fedora": "fontconfig",
+      "gentoo": "media-libs/fontconfig"
+    },
+    "pywalfox": {
+      "description": "Firefox theming (AUR; pip elsewhere)",
+      "arch": "python-pywalfox"
+    },
+
+    "checkupdates": { "arch": "pacman-contrib" },
+    "paru": { "arch": "paru" },
+    "mise": {
+      "arch": "mise",
+      "void": "mise"
+    },
+
+    "curl": {
+      "arch": "curl",
+      "debian": "curl",
+      "fedora": "curl",
+      "gentoo": "net-misc/curl"
+    },
+    "sunshine": {
+      "description": "Sunshine remote-desktop host for the remoteDesktop widget",
+      "arch": "sunshine"
+    },
+    "tailscale": {
+      "arch": "tailscale",
+      "debian": "tailscale",
+      "fedora": "tailscale",
+      "gentoo": "net-vpn/tailscale"
+    },
+    "rclone": {
+      "arch": "rclone",
+      "debian": "rclone",
+      "fedora": "rclone",
+      "gentoo": "net-misc/rclone"
+    },
+    "ghostty": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "ghostty"
+    },
+    "kitty": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "kitty",
+      "debian": "kitty",
+      "fedora": "kitty",
+      "gentoo": "x11-terms/kitty"
+    },
+    "alacritty": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "alacritty",
+      "debian": "alacritty",
+      "fedora": "alacritty",
+      "gentoo": "x11-terms/alacritty"
+    },
+    "foot": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "foot",
+      "debian": "foot",
+      "fedora": "foot",
+      "gentoo": "gui-apps/foot"
+    },
+    "wezterm": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "wezterm"
+    },
+    "xterm": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "xterm",
+      "debian": "xterm",
+      "fedora": "xterm",
+      "gentoo": "x11-terms/xterm"
+    },
+    "konsole": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "konsole",
+      "debian": "konsole",
+      "fedora": "konsole",
+      "gentoo": "kde-apps/konsole"
+    },
+    "gnome-terminal": {
+      "description": "terminal for VGS terminal actions",
+      "arch": "gnome-terminal",
+      "debian": "gnome-terminal",
+      "fedora": "gnome-terminal",
+      "gentoo": "x11-terms/gnome-terminal"
+    },
+    "xdg-mime": {
+      "description": "reads and sets default applications",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "nautilus": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "nautilus",
+      "debian": "nautilus",
+      "fedora": "nautilus",
+      "gentoo": "gnome-base/nautilus"
+    },
+    "dolphin": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "dolphin",
+      "debian": "dolphin",
+      "fedora": "dolphin",
+      "gentoo": "kde-apps/dolphin"
+    },
+    "thunar": {
+      "description": "file manager for the launcher folder opener",
+      "arch": "thunar",
+      "debian": "thunar",
+      "fedora": "Thunar",
+      "gentoo": "xfce-base/thunar"
+    },
+    "yazi": {
+      "description": "terminal file manager for the launcher Yazi folder opener",
+      "arch": "yazi",
+      "debian": "yazi",
+      "fedora": "yazi",
+      "gentoo": "app-misc/yazi"
+    },
+    "uwsm": {
+      "description": "launches apps into their own systemd scope",
+      "arch": "uwsm"
+    },
+    "sudo": {
+      "description": "privileged actions run from the shell",
+      "arch": "sudo",
+      "debian": "sudo",
+      "fedora": "sudo",
+      "gentoo": "app-admin/sudo",
+      "void": "sudo"
+    },
+    "visudo": {
+      "description": "sudoers validation before a drop-in is installed",
+      "arch": "sudo",
+      "debian": "sudo",
+      "fedora": "sudo",
+      "gentoo": "app-admin/sudo",
+      "void": "sudo"
+    },
+    "fusermount3": {
+      "arch": "fuse3",
+      "debian": "fuse3",
+      "fedora": "fuse3",
+      "gentoo": "sys-fs/fuse"
+    },
+    "fusermount": {
+      "arch": "fuse3",
+      "debian": "fuse3",
+      "fedora": "fuse3",
+      "gentoo": "sys-fs/fuse"
+    },
+
+    "pkexec": {
+      "description": "privileged actions run from the shell (user management, some system settings)",
+      "arch": "polkit",
+      "debian": "pkexec",
+      "fedora": "polkit",
+      "gentoo": "sys-auth/polkit"
+    },
+
+    "xdg-open": {
+      "description": "opening files and URLs in their default application",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "xdg-mime": {
+      "description": "default-application queries",
+      "arch": "xdg-utils",
+      "debian": "xdg-utils",
+      "fedora": "xdg-utils",
+      "gentoo": "x11-misc/xdg-utils"
+    },
+    "update-desktop-database": {
+      "description": "desktop-entry cache refresh after installing a web app",
+      "arch": "desktop-file-utils",
+      "debian": "desktop-file-utils",
+      "fedora": "desktop-file-utils",
+      "gentoo": "dev-util/desktop-file-utils"
+    },
+    "dgop": {
+      "description": "system metrics for the CPU/GPU/memory widgets and the process list",
+      "arch": "dgop"
+    },
+    "cava": {
+      "description": "audio visualizer widget",
+      "arch": "cava",
+      "debian": "cava",
+      "fedora": "cava",
+      "gentoo": "media-sound/cava"
+    },
+    "khal": {
+      "description": "calendar events in the dash",
+      "arch": "khal",
+      "debian": "khal",
+      "fedora": "khal"
+    },
+    "pactl": {
+      "description": "Bluetooth audio codec selection",
+      "arch": "libpulse",
+      "debian": "pulseaudio-utils",
+      "fedora": "pulseaudio-utils",
+      "gentoo": "media-libs/libpulse"
+    },
+    "wtype": {
+      "description": "launcher type-out into the focused window",
+      "arch": "wtype",
+      "debian": "wtype",
+      "fedora": "wtype",
+      "gentoo": "gui-apps/wtype"
+    },
+    "fprintd-list": {
+      "description": "fingerprint unlock",
+      "arch": "fprintd",
+      "debian": "fprintd",
+      "fedora": "fprintd",
+      "gentoo": "sys-auth/fprintd"
+    },
+    "qt6ct": {
+      "description": "Qt 6 application theming",
+      "arch": "qt6ct",
+      "debian": "qt6ct",
+      "fedora": "qt6ct",
+      "gentoo": "x11-misc/qt6ct"
+    },
+    "qt5ct": {
+      "description": "Qt 5 application theming",
+      "arch": "qt5ct",
+      "debian": "qt5ct",
+      "fedora": "qt5ct",
+      "gentoo": "x11-misc/qt5ct"
+    }
+  }
+}

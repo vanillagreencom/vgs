@@ -1,0 +1,10 @@
+{
+  "overrides": {
+    "diffAdded": "#65c55f",
+    "diffAddedDimmed": "#85bc81",
+    "diffAddedWord": "#4a9c45",
+    "diffRemoved": "#e7998d",
+    "diffRemovedDimmed": "#d3a39c",
+    "diffRemovedWord": "#e25d4e"
+  }
+}

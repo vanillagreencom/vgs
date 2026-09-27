@@ -1,0 +1,10 @@
+{
+  "name": "last-horizon",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-eyes-wide.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.45, "floor": 3}
+  ]
+}

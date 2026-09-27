@@ -1,0 +1,59 @@
+vgs-shell (0.5.0-1) unstable; urgency=medium
+
+  * Themes download on demand from the theme browser, and the package ships
+    only bauhaus and rose of dune.
+  * Each downloaded theme arrives as one checksum-verified archive, with its
+    screenshot shown before you install it.
+  * The vgs-shell-assets package is retired. The vendored icon themes it
+    carried now ship in vgs-shell itself.
+  * Rose of dune is readable in Claude Code's light ANSI theme.
+  * Display settings manage Hyprland outputs natively, with a preview you
+    confirm or revert.
+  * A developer tools catalog installs coding agents, language toolchains and
+    developer apps through mise, and the launcher has an entry for each.
+  * The AI usage widget shows every provider's accounts, with bar icon modes
+    and slots you can arrange.
+  * A Mercury bank widget shows balances in the bar, with accounts and recent
+    activity behind it.
+  * Launcher All search leaves files to the Files category and drops weak
+    matches.
+  * System updates show an up-to-date state instead of buttons with nothing
+    to do.
+  * A dead USB4 or i2c device can no longer freeze the desktop through the
+    brightness poll.
+
+ -- Brad <brad@vanillagreen.com>  Thu, 10 Sep 2026 20:22:30 +0000
+
+vgs-shell (0.4.0-1) unstable; urgency=medium
+
+  * Full-screen wallpaper and theme switchers, replacing the cramped popups.
+  * The wallpaper switcher can target one monitor or all of them, with the
+    scope toggle sitting directly above the wallpaper rail.
+  * Wallpaper thumbnails are cached pre-sized on disk, so the switcher opens
+    from cache instead of decoding full-size sources every time.
+  * Gentoo has a publisher script and a weekly drift alarm.
+
+ -- Brad <brad@vanillagreen.com>  Tue, 25 Aug 2026 04:32:15 +0000
+
+vgs-shell (0.3.0-1) unstable; urgency=medium
+
+  * Split the extras into their own release bundle: the shell download drops
+    from ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog.
+  * vgs-shell-assets carries every other bundled theme, wallpaper and icon theme.
+
+ -- Brad <brad@vanillagreen.com>  Thu, 20 Aug 2026 00:00:00 +0000
+
+vgs-shell (0.2.0-1) unstable; urgency=medium
+
+  * Widget, launcher, greeter and theming fixes across the shell.
+  * Declare the full runtime and optional dependency set.
+  * Split the optional themes, wallpapers and icon themes into vgs-shell-assets.
+  * Take over org.freedesktop.Notifications so the notification centre works.
+
+ -- Brad <brad@vanillagreen.com>  Wed, 19 Aug 2026 00:00:00 +0000
+
+vgs-shell (0.1.0-1) unstable; urgency=medium
+
+  * Initial package.
+
+ -- Brad <brad@vanillagreen.com>  Sun, 26 Jul 2026 00:00:00 +0000

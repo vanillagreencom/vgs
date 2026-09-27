@@ -1,0 +1,12 @@
+{
+  "name": "thegreek",
+  "mode": "light",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-bg1-1.jpg",
+  "contrastShortfalls": [
+    {"slot": "accent", "ratio": 2.17, "floor": 3},
+    {"slot": "color4", "ratio": 2.17, "floor": 3},
+    {"slot": "color12", "ratio": 2.17, "floor": 3}
+  ]
+}

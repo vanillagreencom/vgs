@@ -1,0 +1,18 @@
+{
+  "app": "omp",
+  "template": "vgs-theme.json",
+  "destination": "~/.omp/agent/themes/vgs-{theme_type}.json",
+  "modes": [
+    "dark",
+    "light"
+  ],
+  "detect": {
+    "commands": [
+      "omp"
+    ],
+    "paths": [
+      "~/.omp"
+    ]
+  },
+  "hook": "omp-theme-select"
+}

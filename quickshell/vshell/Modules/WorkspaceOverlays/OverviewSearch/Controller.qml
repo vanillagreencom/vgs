@@ -1,0 +1,2178 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Common
+import qs.Services
+import "Scorer.js" as Scorer
+import "ControllerUtils.js" as Utils
+import "NavigationHelpers.js" as Nav
+import "ItemTransformers.js" as Transform
+
+Item {
+    id: root
+
+    property string searchQuery: ""
+    property string searchMode: "apps"
+    property string previousSearchMode: "apps"
+    property bool autoSwitchedToFiles: false
+    property bool isFileSearching: false
+    property var sections: []
+    property var flatModel: []
+    property int selectedFlatIndex: 0
+    property var selectedItem: null
+    property bool isSearching: false
+    property string activePluginId: ""
+    property var collapsedSections: ({})
+    property bool keyboardNavigationActive: false
+    property bool active: false
+    property var _modeSectionsCache: ({})
+    property bool _queryDrivenSearch: false
+    property bool _diskCacheConsumed: false
+    property var sectionViewModes: ({})
+    property var pluginViewPreferences: ({})
+    property int gridColumns: SettingsData.appLauncherGridColumns
+    property int viewModeVersion: 0
+    property bool forceLinearNavigation: false
+    // Set from the moment the plugin copy is asked to run until it reports that
+    // it did, so a helper that never spawns is told apart from one that ran.
+    property bool _copyAwaitingStart: false
+    // A copy asked to start is as busy as one already running: Quickshell
+    // reports neither a start nor a failure until it transitions, so the raw
+    // running flag reads idle through a window the watchdog owns.
+    readonly property bool _copyInFlight: copyProcess.running || _copyAwaitingStart
+
+    signal itemExecuted
+    signal searchCompleted
+    signal modeChanged(string mode, bool userInitiated)
+    signal queryChanged(string query)
+    signal viewModeChanged(string sectionId, string mode)
+    signal searchQueryRequested(string query)
+    signal sectionExpanded(string sectionId)
+
+    Ref {
+        service: AppSearchService
+    }
+
+    onActiveChanged: {
+        if (active) {
+            // A probe that gave up earlier gets its second chance when a surface
+            // that needs the answer opens, rather than leaving search refused
+            // for the life of the shell.
+            DSearchService.ensureStatus();
+        }
+        if (!active) {
+            SessionData.addLauncherHistory(searchQuery);
+
+            sections = [];
+            flatModel = [];
+            selectedItem = null;
+            _clearModeCache();
+            ClipboardService.invalidateLauncherSearchCache();
+        }
+    }
+
+    onSearchModeChanged: {
+        // Watch mode changes directly because restorePreviousMode bypasses setMode. Reject file replies after leaving that mode.
+        _supersedeFileSearch();
+        if (searchMode === "apps") {
+            _loadAppCategories();
+        } else {
+            appCategory = "";
+            appCategories = [];
+        }
+    }
+
+    Connections {
+        target: SettingsData
+        function onSortAppsAlphabeticallyChanged() {
+            AppSearchService.invalidateLauncherCache();
+            _clearModeCache();
+        }
+        function onLauncherPluginVisibilityChanged() {
+            AppSearchService.invalidateLauncherCache();
+            _clearModeCache();
+            if (active)
+                performSearch();
+        }
+        function onBuiltInPluginSettingsChanged() {
+            AppSearchService.invalidateLauncherCache();
+            _clearModeCache();
+            if (active)
+                performSearch();
+        }
+    }
+
+    Connections {
+        target: ClipboardService
+        function onLauncherSearchReady(query) {
+            if (!active)
+                return;
+
+            const clipboardBuiltInActive = activePluginId === "vgs_clipboard_search";
+            if (!clipboardBuiltInActive && !clipboardSearchEnabledInAll())
+                return;
+            if (!clipboardBuiltInActive && searchMode !== "all")
+                return;
+
+            const trimmed = (searchQuery || "").trim();
+            if (trimmed.length < 2 && query.length > 0)
+                return;
+            const triggerMatch = detectTrigger(trimmed);
+            const effectiveQuery = clipboardBuiltInActive && triggerMatch.pluginId === "vgs_clipboard_search" ? triggerMatch.query : trimmed;
+            if (query !== effectiveQuery)
+                return;
+
+            searchDebounce.restart();
+        }
+    }
+
+    Connections {
+        target: DSearchService
+
+        // Retry a query declined during the initial tool probe so results do not wait for another keystroke.
+        function onDispatchAnswerChanged() {
+            root._retryFileSearchAfterProbe();
+        }
+    }
+
+    function _retryFileSearchAfterProbe() {
+        if (!shouldRetryAfterProbe(active, DSearchService.queryIsSearchable(fileSearchKind(), fileSearchQuery())))
+            return;
+        fileSearchDebounce.restart();
+    }
+
+    Connections {
+        target: AppSearchService
+        function onCacheVersionChanged() {
+            if (!active)
+                return;
+            _clearModeCache();
+            if (searchMode === "apps") {
+                _loadAppCategories();
+                performSearch();
+            } else if (!searchQuery && searchMode === "all") {
+                performSearch();
+            }
+        }
+    }
+
+    Connections {
+        target: PluginService
+        function onRequestLauncherUpdate(pluginId) {
+            if (!active)
+                return;
+            if (activePluginId === pluginId) {
+                if (activePluginCategories.length <= 1)
+                    loadPluginCategories(pluginId);
+                performSearch();
+                return;
+            }
+            if (searchQuery)
+                performSearch();
+        }
+    }
+
+    // A missing plugin executable emits no exit. Report the failed start after the launcher closes.
+    function reportCopyFailedToStart() {
+        _copyAwaitingStart = false;
+        copyStartTimer.stop();
+        ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("The copy helper could not be started"));
+    }
+
+    // Catch starts that never set running true; they emit neither a running transition nor exited.
+    Timer {
+        id: copyStartTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!root._copyAwaitingStart)
+                return;
+            root.reportCopyFailedToStart();
+        }
+    }
+
+    Process {
+        id: copyProcess
+        running: false
+        onStarted: {
+            root._copyAwaitingStart = false;
+            copyStartTimer.stop();
+        }
+        onRunningChanged: {
+            if (running || !root._copyAwaitingStart)
+                return;
+            root.reportCopyFailedToStart();
+        }
+        onExited: exitCode => {
+            root._copyAwaitingStart = false;
+            copyStartTimer.stop();
+            // Pasting after a failed copy would inject whatever stale content
+            // is still on the clipboard.
+            if (exitCode !== 0) {
+                ToastService.showError(I18n.tr("Failed to copy entry"));
+                return;
+            }
+            PasteService.injectPaste();
+        }
+    }
+
+    function pasteSelected() {
+        if (!selectedItem)
+            return;
+        if (selectedItem.type === "clipboard") {
+            if (SettingsData.clipboardEnterToPaste) {
+                ClipboardService.copyEntry(selectedItem.data, function () {
+                    root.itemExecuted();
+                });
+            } else {
+                ClipboardService.pasteEntry(selectedItem.data, function () {
+                    root.itemExecuted();
+                });
+            }
+            return;
+        }
+        if (!SessionService.wtypeAvailable) {
+            ToastService.showError(I18n.tr("wtype not available - install wtype for paste support"));
+            return;
+        }
+
+        const pluginId = selectedItem.pluginId;
+        if (!pluginId)
+            return;
+        const pasteArgs = AppSearchService.getPluginPasteArgs(pluginId, selectedItem.data);
+        if (!pasteArgs)
+            return;
+        if (!startPluginCopy(pasteArgs)) {
+            // Reject repeated Enter while a copy is pending. Leave the launcher open so the user can retry after it finishes.
+            ToastService.showError(I18n.tr("Failed to copy entry"), I18n.tr("Another entry is still being copied"));
+            return;
+        }
+        itemExecuted();
+    }
+
+    // Reject a second copy while Process is active; changing command then would leave the previous selection in flight.
+    // Return whether this request started a copy.
+    function startPluginCopy(pasteArgs) {
+        if (_copyInFlight)
+            return false;
+        copyProcess.command = pasteArgs;
+        _copyAwaitingStart = true;
+        copyProcess.running = true;
+        copyStartTimer.restart();
+        return true;
+    }
+
+    readonly property var sectionDefinitions: [
+        {
+            id: "favorites",
+            title: I18n.tr("Pinned"),
+            icon: "push_pin",
+            priority: 1,
+            defaultViewMode: "list"
+        },
+        {
+            id: "apps",
+            title: I18n.tr("Applications"),
+            icon: "apps",
+            priority: 2,
+            defaultViewMode: "list"
+        },
+        {
+            id: "settings",
+            title: I18n.tr("Settings", "settings window title"),
+            icon: "settings",
+            priority: 2.35,
+            defaultViewMode: "list"
+        },
+        {
+            id: "clipboard",
+            title: I18n.tr("Clipboard"),
+            icon: "content_paste",
+            priority: 2.45,
+            defaultViewMode: "list"
+        },
+        {
+            id: "browse_plugins",
+            title: I18n.tr("Browse"),
+            icon: "category",
+            priority: 2.5,
+            defaultViewMode: "grid"
+        },
+        {
+            id: "files",
+            title: I18n.tr("Files"),
+            icon: "folder",
+            priority: 4,
+            defaultViewMode: "list"
+        },
+        {
+            id: "fallback",
+            title: I18n.tr("Commands"),
+            icon: "terminal",
+            priority: 5,
+            defaultViewMode: "list"
+        }
+    ]
+
+    property int historyIndex: -1
+    property string typingBackup: ""
+
+    function navigateHistory(direction) {
+        let history = SessionData.launcherQueryHistory;
+        if (history.length === 0)
+            return;
+
+        if (historyIndex === -1)
+            typingBackup = searchQuery;
+
+        let nextIndex = historyIndex + (direction === "up" ? 1 : -1);
+        if (nextIndex >= history.length)
+            nextIndex = history.length - 1;
+        if (nextIndex < -1)
+            nextIndex = -1;
+
+        if (nextIndex === historyIndex)
+            return;
+        historyIndex = nextIndex;
+
+        let targetText = (historyIndex === -1) ? typingBackup : history[historyIndex];
+
+        setSearchQuery(targetText);
+        searchQueryRequested(targetText);
+    }
+
+    // Helper failure text for the file-search empty state.
+    property string fileSearchError: ""
+    property int _fileSearchGeneration: 0
+    property string fileSearchType: "file"
+    property string fileSearchExt: ""
+    property string fileSearchFolder: ""
+    property string fileSearchSort: "score"
+
+    property string pluginFilter: ""
+    property string activePluginName: ""
+    property var activePluginCategories: []
+    property string activePluginCategory: ""
+    property string appCategory: ""
+    property var appCategories: []
+
+    function getSectionViewMode(sectionId) {
+        if (searchMode === "files" && fileSearchType === "text")
+            return "list";
+        if (sectionId === "browse_plugins")
+            return "list";
+        if (pluginViewPreferences[sectionId]?.enforced)
+            return pluginViewPreferences[sectionId].mode;
+        if (sectionViewModes[sectionId])
+            return sectionViewModes[sectionId];
+
+        var savedModes = SettingsData.overviewSearchSectionViewModes || {};
+        if (savedModes[sectionId])
+            return savedModes[sectionId];
+
+        for (var i = 0; i < sectionDefinitions.length; i++) {
+            if (sectionDefinitions[i].id === sectionId)
+                return sectionDefinitions[i].defaultViewMode || "list";
+        }
+
+        if (pluginViewPreferences[sectionId]?.mode)
+            return pluginViewPreferences[sectionId].mode;
+
+        return "list";
+    }
+
+    function setSectionViewMode(sectionId, mode) {
+        if (sectionId === "browse_plugins")
+            return;
+        if (pluginViewPreferences[sectionId]?.enforced)
+            return;
+        sectionViewModes = Object.assign({}, sectionViewModes, {
+            [sectionId]: mode
+        });
+        viewModeVersion++;
+        SettingsData.overviewSearchSectionViewModes = Object.assign({}, SettingsData.overviewSearchSectionViewModes || {}, {
+            [sectionId]: mode
+        });
+        viewModeChanged(sectionId, mode);
+    }
+
+    function canChangeSectionViewMode(sectionId) {
+        if (searchMode === "files" && fileSearchType === "text")
+            return false;
+        if (sectionId === "browse_plugins")
+            return false;
+        return !pluginViewPreferences[sectionId]?.enforced;
+    }
+
+    function canCollapseSection(sectionId) {
+        return searchMode === "all";
+    }
+
+    function setPluginViewPreference(pluginId, mode, enforced) {
+        var prefs = Object.assign({}, pluginViewPreferences);
+        prefs[pluginId] = {
+            mode: mode,
+            enforced: enforced || false
+        };
+        pluginViewPreferences = prefs;
+    }
+
+    function applyActivePluginViewPreference(pluginId, isBuiltIn) {
+        var sectionId = "plugin_" + pluginId;
+        var pref = null;
+        if (isBuiltIn) {
+            var builtIn = AppSearchService.builtInPlugins[pluginId];
+            if (builtIn && builtIn.viewMode) {
+                pref = {
+                    mode: builtIn.viewMode,
+                    enforced: builtIn.viewModeEnforced === true
+                };
+            }
+        } else {
+            pref = PluginService.getPluginViewPreference(pluginId);
+        }
+
+        if (pref && pref.mode) {
+            setPluginViewPreference(sectionId, pref.mode, pref.enforced);
+        } else {
+            var prefs = Object.assign({}, pluginViewPreferences);
+            delete prefs[sectionId];
+            pluginViewPreferences = prefs;
+        }
+    }
+
+    function clearActivePluginViewPreference() {
+        var prefs = {};
+        for (var key in pluginViewPreferences) {
+            if (!key.startsWith("plugin_")) {
+                prefs[key] = pluginViewPreferences[key];
+            }
+        }
+        pluginViewPreferences = prefs;
+    }
+
+    property int _searchVersion: 0
+    property bool _pluginPhasePending: false
+    property bool _pluginPhaseForceFirst: false
+    property var _phase1Items: []
+
+    Timer {
+        id: searchDebounce
+        interval: 60
+        onTriggered: root.performSearch()
+    }
+
+    Timer {
+        id: pluginPhaseTimer
+        interval: 1
+        onTriggered: root._performPluginPhase()
+    }
+
+    Timer {
+        id: fileSearchDebounce
+        interval: 200
+        onTriggered: root.performFileSearch()
+    }
+
+    function getOrTransformApp(app) {
+        return AppSearchService.getOrTransformApp(app, transformApp);
+    }
+
+    function setSearchQuery(query) {
+        _searchVersion++;
+        // Invalidate on the keystroke, before debounce: a reply during that delay must not restore results for an abandoned query.
+        _supersedeFileSearch();
+        _queryDrivenSearch = true;
+        _pluginPhasePending = false;
+        _phase1Items = [];
+        pluginPhaseTimer.stop();
+        searchQuery = query;
+        searchDebounce.restart();
+
+        if (searchMode !== "plugins" && query.startsWith("/")) {
+            var prefix = Utils.parseFileSearchPrefix(query);
+            var explicitType = prefix && prefix.type !== null ? prefix.type : null;
+            var targetType = explicitType !== null ? explicitType : (SessionData.launcherLastFileSearchType || "file");
+            if (searchMode !== "files") {
+                setMode("files", true, targetType);
+            } else if (fileSearchType !== targetType) {
+                fileSearchType = targetType;
+            }
+            if (explicitType !== null && SessionData.launcherLastFileSearchType !== explicitType) {
+                SessionData.setLauncherLastFileSearchType(explicitType);
+            }
+        }
+
+        var filesInAll = searchMode === "all" && (SettingsData.launcherIncludeFilesInAll || SettingsData.launcherIncludeFoldersInAll);
+        if (searchMode !== "plugins" && (searchMode === "files" || query.startsWith("/") || filesInAll) && query.length > 0) {
+            fileSearchDebounce.restart();
+        }
+    }
+
+    function setMode(mode, isAutoSwitch, fileTypeOverride, notPersist) {
+        if (searchMode === mode) {
+            if (mode === "files" && fileTypeOverride !== undefined && fileSearchType !== fileTypeOverride) {
+                fileSearchType = fileTypeOverride;
+                performFileSearch();
+            }
+            return;
+        }
+        if (isAutoSwitch) {
+            previousSearchMode = searchMode;
+            autoSwitchedToFiles = true;
+        } else {
+            autoSwitchedToFiles = false;
+        }
+        searchMode = mode;
+        if (mode === "files") {
+            fileSearchType = fileTypeOverride !== undefined ? fileTypeOverride : (SessionData.launcherLastFileSearchType || "file");
+        }
+        modeChanged(mode, !isAutoSwitch && notPersist !== true);
+        performSearch();
+        var filesInAll = mode === "all" && (SettingsData.launcherIncludeFilesInAll || SettingsData.launcherIncludeFoldersInAll) && searchQuery.length > 0;
+        if (mode === "files" || filesInAll) {
+            fileSearchDebounce.restart();
+        }
+    }
+
+    function restorePreviousMode() {
+        if (!autoSwitchedToFiles)
+            return;
+        autoSwitchedToFiles = false;
+        searchMode = previousSearchMode;
+        modeChanged(previousSearchMode, false);
+        performSearch();
+    }
+
+    function cycleMode(reverse = false) {
+        var modes = ["apps", "files"];
+        var currentIndex = modes.indexOf(searchMode);
+        if (!reverse)
+            var nextIndex = (currentIndex + 1) % modes.length;
+        else
+            var nextIndex = (currentIndex - 1 + modes.length) % modes.length;
+        setMode(modes[nextIndex]);
+    }
+
+    function reset() {
+        // Reset can keep the same mode and emit no change. Invalidate replies explicitly so they cannot enter a reopened session.
+        _supersedeFileSearch();
+        searchQuery = "";
+        searchMode = "apps";
+        previousSearchMode = "apps";
+        autoSwitchedToFiles = false;
+        isFileSearching = false;
+        fileSearchError = "";
+        fileSearchType = "file";
+        fileSearchExt = "";
+        fileSearchFolder = "";
+        fileSearchSort = "score";
+        sections = [];
+        flatModel = [];
+        selectedFlatIndex = 0;
+        selectedItem = null;
+        isSearching = false;
+        activePluginId = "";
+        activePluginName = "";
+        activePluginCategories = [];
+        activePluginCategory = "";
+        appCategory = "";
+        appCategories = [];
+        pluginFilter = "";
+        collapsedSections = {};
+        _clearModeCache();
+        _queryDrivenSearch = false;
+        _pluginPhasePending = false;
+        _pluginPhaseForceFirst = false;
+        _phase1Items = [];
+        pluginPhaseTimer.stop();
+    }
+
+    function loadPluginCategories(pluginId) {
+        if (!pluginId) {
+            if (activePluginCategories.length > 0) {
+                activePluginCategories = [];
+                activePluginCategory = "";
+            }
+            return;
+        }
+
+        const categories = AppSearchService.getPluginLauncherCategories(pluginId);
+        if (categories.length === activePluginCategories.length) {
+            let same = true;
+            for (let i = 0; i < categories.length; i++) {
+                if (categories[i].id !== activePluginCategories[i]?.id) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same)
+                return;
+        }
+        activePluginCategories = categories;
+        activePluginCategory = "";
+        AppSearchService.setPluginLauncherCategory(pluginId, "");
+    }
+
+    function setActivePluginCategory(categoryId) {
+        if (activePluginCategory === categoryId)
+            return;
+        activePluginCategory = categoryId;
+        AppSearchService.setPluginLauncherCategory(activePluginId, categoryId);
+        performSearch();
+    }
+
+    function setAppCategory(category) {
+        if (appCategory === category)
+            return;
+        appCategory = category;
+        _queryDrivenSearch = true;
+        _clearModeCache();
+        performSearch();
+    }
+
+    function _loadAppCategories() {
+        appCategories = AppSearchService.getAllCategories();
+    }
+
+    function setFileSearchType(type) {
+        if (fileSearchType === type)
+            return;
+        fileSearchType = type;
+        SessionData.setLauncherLastFileSearchType(type);
+        performFileSearch();
+    }
+
+    function setFileSearchExt(ext) {
+        if (fileSearchExt === ext)
+            return;
+        fileSearchExt = ext;
+        performFileSearch();
+    }
+
+    function setFileSearchFolder(folder) {
+        if (fileSearchFolder === folder)
+            return;
+        fileSearchFolder = folder;
+        performFileSearch();
+    }
+
+    function setFileSearchSort(sort) {
+        if (fileSearchSort === sort)
+            return;
+        fileSearchSort = sort;
+        performFileSearch();
+    }
+
+    function clearPluginFilter() {
+        if (pluginFilter) {
+            pluginFilter = "";
+            performSearch();
+            return true;
+        }
+        return false;
+    }
+
+    function preserveSelectionAfterUpdate(forceFirst) {
+        if (forceFirst)
+            return function () {
+                return getFirstItemIndex();
+            };
+        var previousSelectedId = selectedItem?.id || "";
+        return function (newFlatModel) {
+            if (!previousSelectedId)
+                return getFirstItemIndex();
+            for (var i = 0; i < newFlatModel.length; i++) {
+                if (!newFlatModel[i].isHeader && newFlatModel[i].item?.id === previousSelectedId)
+                    return i;
+            }
+            return getFirstItemIndex();
+        };
+    }
+
+    function performSearch() {
+        queryChanged(searchQuery);
+
+        var currentVersion = _searchVersion;
+        isSearching = true;
+        var shouldResetSelection = _queryDrivenSearch;
+        _queryDrivenSearch = false;
+        var restoreSelection = preserveSelectionAfterUpdate(shouldResetSelection);
+
+        var cachedSections = AppSearchService.getCachedDefaultSections();
+        if (!cachedSections && !_diskCacheConsumed && !searchQuery && searchMode === "all" && !pluginFilter) {
+            _diskCacheConsumed = true;
+            var diskSections = _loadDiskCache();
+            if (diskSections) {
+                activePluginId = "";
+                activePluginName = "";
+                activePluginCategories = [];
+                activePluginCategory = "";
+                clearActivePluginViewPreference();
+                for (var i = 0; i < diskSections.length; i++) {
+                    if (collapsedSections[diskSections[i].id] !== undefined)
+                        diskSections[i].collapsed = collapsedSections[diskSections[i].id];
+                }
+                _applyHighlights(diskSections, "");
+                flatModel = Scorer.flattenSections(diskSections);
+                sections = diskSections;
+                selectedFlatIndex = restoreSelection(flatModel);
+                updateSelectedItem();
+                isSearching = false;
+                searchCompleted();
+                return;
+            }
+        }
+
+        if (cachedSections && !searchQuery && searchMode === "all" && !pluginFilter) {
+            activePluginId = "";
+            activePluginName = "";
+            activePluginCategories = [];
+            activePluginCategory = "";
+            clearActivePluginViewPreference();
+            var modeCache = _getCachedModeData("all");
+            if (modeCache) {
+                _applyHighlights(modeCache.sections, "");
+                sections = modeCache.sections;
+                flatModel = modeCache.flatModel;
+            } else {
+                var newSections = cachedSections.map(function (s) {
+                    var copy = Object.assign({}, s, {
+                        items: s.items ? s.items.slice() : []
+                    });
+                    if (collapsedSections[s.id] !== undefined)
+                        copy.collapsed = collapsedSections[s.id];
+                    return copy;
+                });
+                _applyHighlights(newSections, "");
+                flatModel = Scorer.flattenSections(newSections);
+                sections = newSections;
+                _setCachedModeData("all", sections, flatModel);
+            }
+            selectedFlatIndex = restoreSelection(flatModel);
+            updateSelectedItem();
+            isSearching = false;
+            searchCompleted();
+            return;
+        }
+
+        var allItems = [];
+
+        var triggerMatch = detectTrigger(searchQuery);
+        if (triggerMatch.pluginId) {
+            var pluginChanged = activePluginId !== triggerMatch.pluginId;
+            activePluginId = triggerMatch.pluginId;
+            activePluginName = getPluginName(triggerMatch.pluginId, triggerMatch.isBuiltIn);
+            applyActivePluginViewPreference(triggerMatch.pluginId, triggerMatch.isBuiltIn);
+
+            if (pluginChanged && !triggerMatch.isBuiltIn)
+                loadPluginCategories(triggerMatch.pluginId);
+
+            var pluginItems = getPluginItems(triggerMatch.pluginId, triggerMatch.query);
+            for (var k = 0; k < pluginItems.length; k++)
+                allItems.push(pluginItems[k]);
+
+            if (triggerMatch.isBuiltIn) {
+                var builtInItems = AppSearchService.getBuiltInLauncherItems(triggerMatch.pluginId, triggerMatch.query);
+                for (var j = 0; j < builtInItems.length; j++) {
+                    allItems.push(transformBuiltInSearchItem(builtInItems[j], triggerMatch.pluginId));
+                }
+            }
+
+            var dynamicDefs = buildDynamicSectionDefs(allItems);
+            var scoredItems = Scorer.scoreItems(allItems, triggerMatch.query, getFrecencyForItem);
+            var sortAlpha = !triggerMatch.query && SettingsData.sortAppsAlphabetically;
+            var newSections = Scorer.groupBySection(scoredItems, dynamicDefs, sortAlpha, 500);
+
+            for (var sid in collapsedSections) {
+                for (var i = 0; i < newSections.length; i++) {
+                    if (newSections[i].id === sid) {
+                        newSections[i].collapsed = collapsedSections[sid];
+                    }
+                }
+            }
+
+            _applyHighlights(newSections, triggerMatch.query);
+            flatModel = Scorer.flattenSections(newSections);
+            sections = newSections;
+            selectedFlatIndex = restoreSelection(flatModel);
+            updateSelectedItem();
+
+            isSearching = false;
+            searchCompleted();
+            return;
+        }
+
+        activePluginId = "";
+        activePluginName = "";
+        activePluginCategories = [];
+        activePluginCategory = "";
+        clearActivePluginViewPreference();
+
+        if (searchMode === "files") {
+            var fileQuery = fileSearchQuery();
+            isFileSearching = DSearchService.queryIsSearchable(fileSearchKind(), fileQuery) && DSearchService.canDispatch(fileSearchKind(), fileQuery);
+            sections = [];
+            flatModel = [];
+            selectedFlatIndex = 0;
+            selectedItem = null;
+            isSearching = false;
+            searchCompleted();
+            return;
+        }
+
+        if (searchMode === "apps") {
+            var isCategoryFiltered = appCategory && appCategory !== I18n.tr("All");
+            var cachedSections = AppSearchService.getCachedDefaultSections();
+            if (cachedSections && !searchQuery && !isCategoryFiltered) {
+                var modeCache = _getCachedModeData("apps");
+                if (modeCache) {
+                    _applyHighlights(modeCache.sections, "");
+                    sections = modeCache.sections;
+                    flatModel = modeCache.flatModel;
+                } else {
+                    var appSectionIds = ["favorites", "apps"];
+                    var newSections = cachedSections.filter(function (s) {
+                        return appSectionIds.indexOf(s.id) !== -1;
+                    }).map(function (s) {
+                        var copy = Object.assign({}, s, {
+                            items: s.items ? s.items.slice() : []
+                        });
+                        if (collapsedSections[s.id] !== undefined)
+                            copy.collapsed = collapsedSections[s.id];
+                        return copy;
+                    });
+                    _applyHighlights(newSections, "");
+                    flatModel = Scorer.flattenSections(newSections);
+                    sections = newSections;
+                    _setCachedModeData("apps", sections, flatModel);
+                }
+                selectedFlatIndex = restoreSelection(flatModel);
+                updateSelectedItem();
+                isSearching = false;
+                searchCompleted();
+                return;
+            }
+
+            if (isCategoryFiltered) {
+                var rawApps = AppSearchService.getAppsInCategory(appCategory);
+                for (var i = 0; i < rawApps.length; i++) {
+                    allItems.push(getOrTransformApp(rawApps[i]));
+                }
+
+                var allCoreApps = AppSearchService.getCoreApps("");
+                for (var i = 0; i < allCoreApps.length; i++) {
+                    var coreAppCats = AppSearchService.getCategoriesForApp(allCoreApps[i]);
+                    if (coreAppCats.indexOf(appCategory) !== -1)
+                        allItems.push(transformCoreApp(allCoreApps[i]));
+                }
+            } else {
+                var apps = searchApps(searchQuery);
+                for (var i = 0; i < apps.length; i++) {
+                    allItems.push(apps[i]);
+                }
+            }
+
+            var scoredItems = Scorer.scoreItems(allItems, searchQuery, getFrecencyForItem);
+            var sortAlpha = !searchQuery && SettingsData.sortAppsAlphabetically;
+            var newSections = Scorer.groupBySection(scoredItems, sectionDefinitions, sortAlpha, searchQuery ? 50 : 500);
+
+            for (var sid in collapsedSections) {
+                for (var i = 0; i < newSections.length; i++) {
+                    if (newSections[i].id === sid) {
+                        newSections[i].collapsed = collapsedSections[sid];
+                    }
+                }
+            }
+
+            _applyHighlights(newSections, searchQuery);
+            flatModel = Scorer.flattenSections(newSections);
+            sections = newSections;
+            selectedFlatIndex = restoreSelection(flatModel);
+            updateSelectedItem();
+
+            isSearching = false;
+            searchCompleted();
+            return;
+        }
+
+        if (searchMode === "plugins") {
+            if (!searchQuery && !pluginFilter) {
+                var browseItems = getPluginBrowseItems();
+                for (var k = 0; k < browseItems.length; k++)
+                    allItems.push(browseItems[k]);
+            } else if (pluginFilter) {
+                var isBuiltInFilter = !!AppSearchService.builtInPlugins[pluginFilter];
+                applyActivePluginViewPreference(pluginFilter, isBuiltInFilter);
+
+                var filterItems = getPluginItems(pluginFilter, searchQuery);
+                for (var k = 0; k < filterItems.length; k++)
+                    allItems.push(filterItems[k]);
+
+                var builtInItems = AppSearchService.getBuiltInLauncherItems(pluginFilter, searchQuery);
+                for (var j = 0; j < builtInItems.length; j++) {
+                    allItems.push(transformBuiltInSearchItem(builtInItems[j], pluginFilter));
+                }
+            } else {
+                var emptyTriggerPlugins = getEmptyTriggerPlugins();
+                for (var i = 0; i < emptyTriggerPlugins.length; i++) {
+                    var pluginId = emptyTriggerPlugins[i];
+                    var pItems = getPluginItems(pluginId, searchQuery);
+                    for (var k = 0; k < pItems.length; k++)
+                        allItems.push(pItems[k]);
+                }
+
+                var builtInLauncherPlugins = getBuiltInEmptyTriggerLaunchers();
+                for (var i = 0; i < builtInLauncherPlugins.length; i++) {
+                    var pluginId = builtInLauncherPlugins[i];
+                    var blItems = AppSearchService.getBuiltInLauncherItems(pluginId, searchQuery);
+                    for (var j = 0; j < blItems.length; j++) {
+                        allItems.push(transformBuiltInSearchItem(blItems[j], pluginId));
+                    }
+                }
+            }
+
+            var dynamicDefs = buildDynamicSectionDefs(allItems);
+            var scoredItems = Scorer.scoreItems(allItems, searchQuery, getFrecencyForItem);
+            var sortAlpha = !searchQuery && SettingsData.sortAppsAlphabetically;
+            var newSections = Scorer.groupBySection(scoredItems, dynamicDefs, sortAlpha, 500);
+
+            for (var sid in collapsedSections) {
+                for (var i = 0; i < newSections.length; i++) {
+                    if (newSections[i].id === sid) {
+                        newSections[i].collapsed = collapsedSections[sid];
+                    }
+                }
+            }
+
+            _applyHighlights(newSections, searchQuery);
+            flatModel = Scorer.flattenSections(newSections);
+            sections = newSections;
+            selectedFlatIndex = restoreSelection(flatModel);
+            updateSelectedItem();
+
+            isSearching = false;
+            searchCompleted();
+            return;
+        }
+
+        var apps = searchApps(searchQuery);
+        for (var i = 0; i < apps.length; i++) {
+            allItems.push(apps[i]);
+        }
+
+        if (searchMode === "all") {
+            appendSharedAllResults(allItems, searchQuery);
+            if (searchQuery && searchQuery.length >= 2) {
+                _pluginPhasePending = true;
+                _phase1Items = allItems.slice();
+                _pluginPhaseForceFirst = shouldResetSelection;
+                pluginPhaseTimer.restart();
+                isSearching = true;
+                searchCompleted();
+                return;
+            } else if (!searchQuery) {
+                var emptyTriggerOrdered = getEmptyTriggerPluginsOrdered();
+                for (var i = 0; i < emptyTriggerOrdered.length; i++) {
+                    var plugin = emptyTriggerOrdered[i];
+                    if (plugin.isBuiltIn) {
+                        var blItems = AppSearchService.getBuiltInLauncherItems(plugin.id, searchQuery);
+                        for (var j = 0; j < blItems.length; j++)
+                            allItems.push(transformBuiltInSearchItem(blItems[j], plugin.id));
+                    } else {
+                        var pItems = getPluginItems(plugin.id, searchQuery);
+                        for (var j = 0; j < pItems.length; j++)
+                            allItems.push(pItems[j]);
+                    }
+                }
+
+                var browseItems = getPluginBrowseItems();
+                for (var i = 0; i < browseItems.length; i++)
+                    allItems.push(browseItems[i]);
+            }
+        }
+
+        var dynamicDefs = buildDynamicSectionDefs(allItems);
+
+        if (currentVersion !== _searchVersion) {
+            isSearching = false;
+            return;
+        }
+
+        var scoredItems = Scorer.scoreItems(allItems, searchQuery, getFrecencyForItem);
+        var sortAlpha = !searchQuery && SettingsData.sortAppsAlphabetically;
+        var newSections = Scorer.groupBySection(scoredItems, dynamicDefs, sortAlpha, searchQuery ? 50 : 500);
+
+        if (currentVersion !== _searchVersion) {
+            isSearching = false;
+            return;
+        }
+
+        for (var i = 0; i < newSections.length; i++) {
+            var sid = newSections[i].id;
+            if (collapsedSections[sid] !== undefined) {
+                newSections[i].collapsed = collapsedSections[sid];
+            }
+        }
+
+        _applyHighlights(newSections, searchQuery);
+        flatModel = Scorer.flattenSections(newSections);
+        sections = newSections;
+
+        if (!AppSearchService.isCacheValid() && !searchQuery && searchMode === "all" && !pluginFilter) {
+            AppSearchService.setCachedDefaultSections(sections, flatModel);
+            _saveDiskCache(sections);
+        }
+
+        selectedFlatIndex = restoreSelection(flatModel);
+        updateSelectedItem();
+
+        isSearching = _pluginPhasePending;
+        searchCompleted();
+    }
+
+    function _performPluginPhase() {
+        _pluginPhasePending = false;
+        if (!searchQuery || searchQuery.length < 2 || searchMode !== "all")
+            return;
+
+        var currentVersion = _searchVersion;
+        var restoreSelection = preserveSelectionAfterUpdate(_pluginPhaseForceFirst);
+        var allItems = _phase1Items;
+        _phase1Items = [];
+
+        var allPluginsOrdered = getAllVisiblePluginsOrdered();
+        var maxPerPlugin = 10;
+        for (var i = 0; i < allPluginsOrdered.length; i++) {
+            if (currentVersion !== _searchVersion)
+                return;
+            var plugin = allPluginsOrdered[i];
+            if (plugin.isBuiltIn && (plugin.id === "vgs_settings_search" || plugin.id === "vgs_clipboard_search"))
+                continue;
+            if (plugin.isBuiltIn) {
+                var blItems = AppSearchService.getBuiltInLauncherItems(plugin.id, searchQuery);
+                var blLimit = Math.min(blItems.length, maxPerPlugin);
+                for (var j = 0; j < blLimit; j++) {
+                    var item = transformBuiltInSearchItem(blItems[j], plugin.id);
+                    item._preScored = 900 - j;
+                    allItems.push(item);
+                }
+            } else {
+                var pItems = getPluginItems(plugin.id, searchQuery, maxPerPlugin);
+                for (var j = 0; j < pItems.length; j++) {
+                    pItems[j]._preScored = 900 - j;
+                    allItems.push(pItems[j]);
+                }
+            }
+        }
+
+        if (currentVersion !== _searchVersion)
+            return;
+
+        var dynamicDefs = buildDynamicSectionDefs(allItems);
+        var scoredItems = Scorer.scoreItems(allItems, searchQuery, getFrecencyForItem);
+        var newSections = Scorer.groupBySection(scoredItems, dynamicDefs, false, 50);
+
+        if (currentVersion !== _searchVersion)
+            return;
+
+        for (var i = 0; i < newSections.length; i++) {
+            var sid = newSections[i].id;
+            if (collapsedSections[sid] !== undefined)
+                newSections[i].collapsed = collapsedSections[sid];
+        }
+
+        _applyHighlights(newSections, searchQuery);
+        flatModel = Scorer.flattenSections(newSections);
+        sections = newSections;
+        selectedFlatIndex = restoreSelection(flatModel);
+        updateSelectedItem();
+        isSearching = false;
+        searchCompleted();
+    }
+
+    // Share the search kind with the request and empty state. The overview maps all to files, which excludes directories.
+    function fileSearchKind() {
+        return DSearchService.kindForType(fileSearchType || "file");
+    }
+
+    // Return the effective file query, or empty when none runs. Plugin mode owns its prefix text.
+    // In combined all mode, file-search settings schedule a debounce, but an unprefixed query still resolves empty here.
+    function fileSearchQuery() {
+        return fileSearchQueryFrom(searchMode, searchQuery, Utils.parseFileSearchPrefix(searchQuery)?.query ?? "");
+    }
+
+    // BEGIN FILE SEARCH DECISION
+    // prefixQuery has already consumed the launcher file-search prefix.
+    function fileSearchQueryFrom(mode, rawQuery, prefixQuery) {
+        if (mode === "plugins")
+            return "";
+        if (String(rawQuery || "").startsWith("/"))
+            return String(prefixQuery || "");
+        if (mode === "files")
+            return String(rawQuery || "").trim();
+        return "";
+    }
+
+    // Retry a declined query only while its surface is open and DSearchService still considers it searchable.
+    function shouldRetryAfterProbe(isActive, searchable) {
+        return !!isActive && !!searchable;
+    }
+    // END FILE SEARCH DECISION
+
+    // Invalidate replies for an abandoned search and clear the busy flag.
+    // Stale callbacks return before clearing that flag, so leaving it set would suppress the empty state.
+    function _supersedeFileSearch() {
+        _fileSearchGeneration++;
+        isFileSearching = false;
+    }
+
+    function performFileSearch() {
+        var effectiveType = fileSearchType || "file";
+        var kind = fileSearchKind();
+        var fileQuery = fileSearchQuery();
+
+        if (!DSearchService.queryIsSearchable(kind, fileQuery)) {
+            // A query below the search threshold sends no replacement request. Invalidate the older reply explicitly.
+            _supersedeFileSearch();
+            isFileSearching = false;
+            return;
+        }
+
+        // Each search kind requires its own tool. Clear previous results here because chip and Tab changes bypass performSearch.
+        if (!DSearchService.canDispatch(kind, fileQuery)) {
+            isFileSearching = false;
+            fileSearchError = "";
+            // Supersede anything already in flight, or its answer lands on top
+            // of the empty state that explains why this one was declined.
+            _supersedeFileSearch();
+            _applyFileSearchResults([], effectiveType);
+            return;
+        }
+
+        isFileSearching = true;
+        fileSearchError = "";
+
+        // Service request versions are per kind. A controller generation also rejects replies after switching kinds.
+        var generation = ++_fileSearchGeneration;
+
+        DSearchService.search(fileQuery, {
+            kind: kind,
+            limit: 100
+        }, function (response) {
+            if (generation !== root._fileSearchGeneration)
+                return;
+            isFileSearching = false;
+            if (response.error) {
+                // Keep the helper error so a failed search does not appear to have matched nothing.
+                fileSearchError = response.error;
+                _applyFileSearchResults([], effectiveType);
+                return;
+            }
+            var hits = response.result?.hits || [];
+            var items = [];
+            for (var i = 0; i < hits.length; i++)
+                items.push(transformFileResult(hits[i]));
+            _applyFileSearchResults(items, effectiveType);
+        });
+    }
+
+    function _applyFileSearchResults(fileItems, effectiveType) {
+        var fileSections = [];
+        var showType = effectiveType;
+        var order = SettingsData.launcherPluginOrder || [];
+        var filesOrderIdx = order.indexOf("__files");
+        var foldersOrderIdx = order.indexOf("__folders");
+        var filesPriority = filesOrderIdx !== -1 ? 2.6 + filesOrderIdx * 0.01 : 4;
+        var foldersPriority = foldersOrderIdx !== -1 ? 2.6 + foldersOrderIdx * 0.01 : 4.1;
+
+        if (showType === "all" && DSearchService.supportsTypeFilter) {
+            var onlyFiles = [];
+            var onlyDirs = [];
+            for (var j = 0; j < fileItems.length; j++) {
+                if (fileItems[j].data?.is_dir)
+                    onlyDirs.push(fileItems[j]);
+                else
+                    onlyFiles.push(fileItems[j]);
+            }
+            if (onlyFiles.length > 0) {
+                fileSections.push({
+                    id: "files",
+                    title: I18n.tr("Files"),
+                    icon: "insert_drive_file",
+                    priority: filesPriority,
+                    items: onlyFiles,
+                    collapsed: collapsedSections["files"] || false,
+                    flatStartIndex: 0
+                });
+            }
+            if (onlyDirs.length > 0) {
+                fileSections.push({
+                    id: "folders",
+                    title: I18n.tr("Folders"),
+                    icon: "folder",
+                    priority: foldersPriority,
+                    items: onlyDirs,
+                    collapsed: collapsedSections["folders"] || false,
+                    flatStartIndex: 0
+                });
+            }
+        } else {
+            var filesIcon = showType === "dir" ? "folder" : showType === "text" ? "article" : "insert_drive_file";
+            var filesTitle = showType === "dir" ? I18n.tr("Folders") : showType === "text" ? I18n.tr("Text matches") : I18n.tr("Files");
+            var singlePriority = showType === "dir" ? foldersPriority : filesPriority;
+            if (fileItems.length > 0) {
+                fileSections.push({
+                    id: "files",
+                    title: filesTitle,
+                    icon: filesIcon,
+                    priority: singlePriority,
+                    items: fileItems,
+                    collapsed: collapsedSections["files"] || false,
+                    flatStartIndex: 0
+                });
+            }
+        }
+
+        var newSections;
+        if (searchMode === "files") {
+            newSections = fileSections;
+        } else {
+            var existingNonFile = sections.filter(function (s) {
+                return s.id !== "files" && s.id !== "folders";
+            });
+            newSections = existingNonFile.concat(fileSections);
+        }
+        newSections.sort(function (a, b) {
+            return a.priority - b.priority;
+        });
+        _applyHighlights(newSections, searchQuery);
+        flatModel = Scorer.flattenSections(newSections);
+        sections = newSections;
+        selectedFlatIndex = getFirstItemIndex();
+        updateSelectedItem();
+    }
+
+    function searchApps(query) {
+        var apps = AppSearchService.searchApplications(query);
+        var items = [];
+
+        for (var i = 0; i < apps.length; i++) {
+            items.push(getOrTransformApp(apps[i]));
+        }
+
+        var coreApps = AppSearchService.getCoreApps(query);
+        for (var i = 0; i < coreApps.length; i++) {
+            items.push(transformCoreApp(coreApps[i]));
+        }
+
+        return items;
+    }
+
+    function transformApp(app) {
+        var appId = app.id || app.execString || app.exec || "";
+        var override = SessionData.getAppOverride(appId);
+        return Transform.transformApp(app, override, [], I18n.tr("Launch"));
+    }
+
+    function transformCoreApp(app) {
+        return Transform.transformCoreApp(app, I18n.tr("Open"));
+    }
+
+    function transformBuiltInLauncherItem(item, pluginId) {
+        return Transform.transformBuiltInLauncherItem(item, pluginId, I18n.tr("Open"));
+    }
+
+    function transformBuiltInSearchItem(item, pluginId) {
+        if (pluginId === "vgs_clipboard_search" || item.type === "clipboard")
+            return transformClipboardEntry(item.data || item);
+        return transformBuiltInLauncherItem(item, pluginId);
+    }
+
+    function transformFileResult(file) {
+        return Transform.transformFileResult(file, I18n.tr("Open"), I18n.tr("Open folder"), I18n.tr("Copy path"), I18n.tr("Open in terminal"));
+    }
+
+    function transformClipboardEntry(entry) {
+        var copyLabel = I18n.tr("Copy");
+        var pasteLabel = I18n.tr("Paste");
+        var primaryLabel = SettingsData.clipboardEnterToPaste ? pasteLabel : copyLabel;
+        var pasteHintLabel = SettingsData.clipboardEnterToPaste ? I18n.tr("Shift+Enter to copy") : I18n.tr("Shift+Enter to paste");
+        return Transform.transformClipboardItem(entry, copyLabel, pasteLabel, primaryLabel, I18n.tr("Image"), I18n.tr("Text"), I18n.tr("Pinned"), pasteHintLabel, "", I18n.tr("Clipboard"));
+    }
+
+    function builtInLauncherVisibleInAll(pluginId) {
+        return SettingsData.getBuiltInPluginSetting(pluginId, "enabled", true) && SettingsData.getPluginAllowWithoutTrigger(pluginId);
+    }
+
+    function clipboardSearchEnabledInAll() {
+        return builtInLauncherVisibleInAll("vgs_clipboard_search") && ClipboardService.clipboardAvailable;
+    }
+
+    function appendSharedAllResults(allItems, query) {
+        if (!query || query.length < 2)
+            return;
+
+        if (builtInLauncherVisibleInAll("vgs_settings_search")) {
+            var settingsItems = AppSearchService.getBuiltInLauncherItems("vgs_settings_search", query);
+            var settingsLimit = Math.min(settingsItems.length, 8);
+            for (var i = 0; i < settingsLimit; i++) {
+                settingsItems[i]._preScored = 890 - i;
+                allItems.push(transformBuiltInSearchItem(settingsItems[i], "vgs_settings_search"));
+            }
+        }
+
+        if (clipboardSearchEnabledInAll()) {
+            var clipboardItems = AppSearchService.getBuiltInLauncherItems("vgs_clipboard_search", query);
+            var clipboardLimit = Math.min(clipboardItems.length, 8);
+            for (var j = 0; j < clipboardLimit; j++) {
+                clipboardItems[j]._preScored = 840 - j;
+                allItems.push(transformBuiltInSearchItem(clipboardItems[j], "vgs_clipboard_search"));
+            }
+        }
+    }
+
+    function detectTrigger(query) {
+        if (!query || query.length === 0)
+            return {
+                pluginId: null,
+                query: query
+            };
+
+        var pluginTriggers = PluginService.getAllPluginTriggers();
+        for (var trigger in pluginTriggers) {
+            if (trigger && query.startsWith(trigger)) {
+                return {
+                    pluginId: pluginTriggers[trigger],
+                    query: query.substring(trigger.length).trim()
+                };
+            }
+        }
+
+        var builtInTriggers = AppSearchService.getBuiltInLauncherTriggers();
+        for (var trigger in builtInTriggers) {
+            if (trigger && query.startsWith(trigger)) {
+                return {
+                    pluginId: builtInTriggers[trigger],
+                    query: query.substring(trigger.length).trim(),
+                    isBuiltIn: true
+                };
+            }
+        }
+
+        return {
+            pluginId: null,
+            query: query
+        };
+    }
+
+    function getEmptyTriggerPlugins() {
+        var plugins = PluginService.getPluginsWithEmptyTrigger();
+        var visible = plugins.filter(function (pluginId) {
+            return SettingsData.getPluginAllowWithoutTrigger(pluginId);
+        });
+        return sortPluginIdsByOrder(visible);
+    }
+
+    function getAllLauncherPluginIds() {
+        var launchers = PluginService.getLauncherPlugins();
+        return Object.keys(launchers);
+    }
+
+    function getVisibleLauncherPluginIds() {
+        var launchers = PluginService.getLauncherPlugins();
+        var visible = Object.keys(launchers).filter(function (pluginId) {
+            return SettingsData.getPluginAllowWithoutTrigger(pluginId);
+        });
+        return sortPluginIdsByOrder(visible);
+    }
+
+    function getAllBuiltInLauncherIds() {
+        var launchers = AppSearchService.getBuiltInLauncherPlugins();
+        return Object.keys(launchers);
+    }
+
+    function getVisibleBuiltInLauncherIds() {
+        var launchers = AppSearchService.getBuiltInLauncherPlugins();
+        var visible = Object.keys(launchers).filter(function (pluginId) {
+            return SettingsData.getPluginAllowWithoutTrigger(pluginId);
+        });
+        return sortPluginIdsByOrder(visible);
+    }
+
+    function sortPluginIdsByOrder(pluginIds) {
+        return Utils.sortPluginIdsByOrder(pluginIds, SettingsData.launcherPluginOrder || []);
+    }
+
+    function getAllVisiblePluginsOrdered() {
+        var thirdPartyLaunchers = PluginService.getLauncherPlugins() || {};
+        var builtInLaunchers = AppSearchService.getBuiltInLauncherPlugins() || {};
+        var all = [];
+        for (var id in thirdPartyLaunchers) {
+            if (SettingsData.getPluginAllowWithoutTrigger(id))
+                all.push({
+                    id: id,
+                    isBuiltIn: false
+                });
+        }
+        for (var id in builtInLaunchers) {
+            if (SettingsData.getPluginAllowWithoutTrigger(id))
+                all.push({
+                    id: id,
+                    isBuiltIn: true
+                });
+        }
+        return Utils.sortPluginsOrdered(all, SettingsData.launcherPluginOrder || []);
+    }
+
+    function getEmptyTriggerPluginsOrdered() {
+        var thirdParty = PluginService.getPluginsWithEmptyTrigger() || [];
+        var builtIn = AppSearchService.getBuiltInLauncherPluginsWithEmptyTrigger() || [];
+        var all = [];
+        for (var i = 0; i < thirdParty.length; i++) {
+            var id = thirdParty[i];
+            if (SettingsData.getPluginAllowWithoutTrigger(id))
+                all.push({
+                    id: id,
+                    isBuiltIn: false
+                });
+        }
+        for (var i = 0; i < builtIn.length; i++) {
+            var id = builtIn[i];
+            if (SettingsData.getPluginAllowWithoutTrigger(id))
+                all.push({
+                    id: id,
+                    isBuiltIn: true
+                });
+        }
+        return Utils.sortPluginsOrdered(all, SettingsData.launcherPluginOrder || []);
+    }
+
+    function getPluginBrowseItems() {
+        var items = [];
+        var browseLabel = I18n.tr("Browse");
+        var triggerLabel = I18n.tr("Trigger: %1");
+        var noTriggerLabel = I18n.tr("No trigger");
+
+        var launchers = PluginService.getLauncherPlugins();
+        for (var pluginId in launchers) {
+            var trigger = PluginService.getPluginTrigger(pluginId);
+            var isAllowed = SettingsData.getPluginAllowWithoutTrigger(pluginId);
+            items.push(Transform.createPluginBrowseItem(pluginId, launchers[pluginId], trigger, false, isAllowed, browseLabel, triggerLabel, noTriggerLabel));
+        }
+
+        var builtInLaunchers = AppSearchService.getBuiltInLauncherPlugins();
+        for (var pluginId in builtInLaunchers) {
+            var trigger = AppSearchService.getBuiltInPluginTrigger(pluginId);
+            var isAllowed = SettingsData.getPluginAllowWithoutTrigger(pluginId);
+            items.push(Transform.createPluginBrowseItem(pluginId, builtInLaunchers[pluginId], trigger, true, isAllowed, browseLabel, triggerLabel, noTriggerLabel));
+        }
+
+        return items;
+    }
+
+    function getBuiltInEmptyTriggerLaunchers() {
+        var plugins = AppSearchService.getBuiltInLauncherPluginsWithEmptyTrigger();
+        var visible = plugins.filter(function (pluginId) {
+            return SettingsData.getPluginAllowWithoutTrigger(pluginId);
+        });
+        return sortPluginIdsByOrder(visible);
+    }
+
+    function getPluginItems(pluginId, query, limit) {
+        var items = AppSearchService.getPluginItemsForPlugin(pluginId, query);
+        var count = limit > 0 && limit < items.length ? limit : items.length;
+        var transformed = [];
+
+        for (var i = 0; i < count; i++) {
+            transformed.push(transformPluginItem(items[i], pluginId));
+        }
+
+        return transformed;
+    }
+
+    function getPluginName(pluginId, isBuiltIn) {
+        if (isBuiltIn) {
+            var plugin = AppSearchService.builtInPlugins[pluginId];
+            return plugin ? plugin.name : pluginId;
+        }
+        var launchers = PluginService.getLauncherPlugins();
+        if (launchers[pluginId]) {
+            return launchers[pluginId].name || pluginId;
+        }
+        return pluginId;
+    }
+
+    function getPluginMetadata(pluginId) {
+        var builtIn = AppSearchService.builtInPlugins[pluginId];
+        if (builtIn) {
+            return {
+                name: builtIn.name || pluginId,
+                icon: builtIn.cornerIcon || "extension"
+            };
+        }
+        var launchers = PluginService.getLauncherPlugins();
+        if (launchers[pluginId]) {
+            var rawIcon = launchers[pluginId].icon || "extension";
+            return {
+                name: launchers[pluginId].name || pluginId,
+                icon: Utils.stripIconPrefix(rawIcon)
+            };
+        }
+        return {
+            name: pluginId,
+            icon: "extension"
+        };
+    }
+
+    function buildDynamicSectionDefs(items) {
+        var baseDefs = sectionDefinitions.map(function (def) {
+            return Object.assign({}, def);
+        });
+        var pluginSections = {};
+        var order = SettingsData.launcherPluginOrder || [];
+        var orderMap = {};
+        for (var k = 0; k < order.length; k++)
+            orderMap[order[k]] = k;
+        var unorderedPriority = 2.6 + order.length * 0.01;
+
+        for (var d = 0; d < baseDefs.length; d++) {
+            var virtualId = baseDefs[d].id === "settings" ? "vgs_settings_search" : baseDefs[d].id === "clipboard" ? "vgs_clipboard_search" : "";
+            if (virtualId && orderMap[virtualId] !== undefined)
+                baseDefs[d].priority = 2.6 + orderMap[virtualId] * 0.01;
+        }
+
+        for (var i = 0; i < items.length; i++) {
+            var section = items[i].section;
+            if (!section || !section.startsWith("plugin_"))
+                continue;
+            if (pluginSections[section])
+                continue;
+            var pluginId = section.substring(7);
+            var meta = getPluginMetadata(pluginId);
+            var viewPref = getPluginViewPref(pluginId);
+            var orderIdx = orderMap[pluginId];
+            var priority;
+            if (orderIdx !== undefined) {
+                priority = 2.6 + orderIdx * 0.01;
+            } else {
+                priority = unorderedPriority;
+                unorderedPriority += 0.01;
+            }
+
+            pluginSections[section] = {
+                id: section,
+                title: meta.name,
+                icon: meta.icon,
+                priority: priority,
+                defaultViewMode: viewPref.mode || "list"
+            };
+
+            if (viewPref.mode)
+                setPluginViewPreference(section, viewPref.mode, viewPref.enforced);
+        }
+
+        for (var sectionId in pluginSections) {
+            baseDefs.push(pluginSections[sectionId]);
+        }
+
+        baseDefs.sort(function (a, b) {
+            return a.priority - b.priority;
+        });
+        return baseDefs;
+    }
+
+    function getPluginViewPref(pluginId) {
+        var builtIn = AppSearchService.builtInPlugins[pluginId];
+        if (builtIn && builtIn.viewMode) {
+            return {
+                mode: builtIn.viewMode,
+                enforced: builtIn.viewModeEnforced === true
+            };
+        }
+
+        var pref = PluginService.getPluginViewPreference(pluginId);
+        if (pref && pref.mode) {
+            return pref;
+        }
+
+        return {
+            mode: "list",
+            enforced: false
+        };
+    }
+
+    function transformPluginItem(item, pluginId) {
+        return Transform.transformPluginItem(item, pluginId, I18n.tr("Select"));
+    }
+
+    function getFrecencyForItem(item) {
+        if (item.type !== "app")
+            return null;
+
+        var appId = item.id;
+        var usageRanking = AppUsageHistoryData.appUsageRanking || {};
+
+        var idVariants = [appId, appId.replace(".desktop", "")];
+        var usageData = null;
+
+        for (var i = 0; i < idVariants.length; i++) {
+            if (usageRanking[idVariants[i]]) {
+                usageData = usageRanking[idVariants[i]];
+                break;
+            }
+        }
+
+        return {
+            usageCount: usageData?.usageCount || 0
+        };
+    }
+
+    function getFirstItemIndex() {
+        return Nav.getFirstItemIndex(flatModel);
+    }
+
+    function _getCachedModeData(mode) {
+        return _modeSectionsCache[mode] || null;
+    }
+
+    function _setCachedModeData(mode, sectionsData, flatModelData) {
+        var cache = Object.assign({}, _modeSectionsCache);
+        cache[mode] = {
+            sections: sectionsData,
+            flatModel: flatModelData
+        };
+        _modeSectionsCache = cache;
+    }
+
+    function _clearModeCache() {
+        _modeSectionsCache = {};
+    }
+
+    function _saveDiskCache(sectionsData) {
+        var serializable = [];
+        for (var i = 0; i < sectionsData.length; i++) {
+            var s = sectionsData[i];
+            var items = [];
+            var srcItems = s.items || [];
+            for (var j = 0; j < srcItems.length; j++) {
+                var it = srcItems[j];
+                items.push({
+                    id: it.id,
+                    type: it.type,
+                    name: it.name || "",
+                    subtitle: it.subtitle || "",
+                    icon: it.icon || "",
+                    iconType: it.iconType || "image",
+                    iconFull: it.iconFull || "",
+                    section: it.section || "",
+                    isCore: it.isCore || false,
+                    isBuiltInLauncher: it.isBuiltInLauncher || false,
+                    pluginId: it.pluginId || "",
+                    source: it.source || ""
+                });
+            }
+            serializable.push({
+                id: s.id,
+                title: s.title || "",
+                icon: s.icon || "",
+                priority: s.priority || 0,
+                items: items
+            });
+        }
+        CacheData.saveLauncherCache(serializable);
+    }
+
+    function _actionsFromDesktopEntry(appId) {
+        if (!appId)
+            return [];
+        var entry = DesktopEntries.heuristicLookup(appId);
+        if (!entry || !entry.actions || entry.actions.length === 0)
+            return [];
+        var result = [];
+        for (var i = 0; i < entry.actions.length; i++) {
+            result.push({
+                name: entry.actions[i].name,
+                icon: "play_arrow",
+                actionData: entry.actions[i]
+            });
+        }
+        return result;
+    }
+
+    function _loadDiskCache() {
+        var cached = CacheData.loadLauncherCache();
+        if (!cached || !Array.isArray(cached) || cached.length === 0)
+            return null;
+
+        var sectionsData = [];
+        for (var i = 0; i < cached.length; i++) {
+            var s = cached[i];
+            var items = [];
+            var srcItems = s.items || [];
+            for (var j = 0; j < srcItems.length; j++) {
+                var it = srcItems[j];
+                items.push({
+                    id: it.id || "",
+                    type: it.type || "app",
+                    name: it.name || "",
+                    subtitle: it.subtitle || "",
+                    icon: it.icon || "",
+                    iconType: it.iconType || "image",
+                    iconFull: it.iconFull || "",
+                    section: it.section || "",
+                    isCore: it.isCore || false,
+                    isBuiltInLauncher: it.isBuiltInLauncher || false,
+                    pluginId: it.pluginId || "",
+                    source: it.source || "",
+                    data: {
+                        id: it.id
+                    },
+                    actions: _actionsFromDesktopEntry(it.id),
+                    primaryAction: it.type === "app" && !it.isCore ? {
+                        name: I18n.tr("Launch"),
+                        icon: "open_in_new",
+                        action: "launch"
+                    } : null,
+                    _diskCached: true,
+                    _hName: "",
+                    _hSub: "",
+                    _hRich: false,
+                    _preScored: undefined
+                });
+            }
+            sectionsData.push({
+                id: s.id || "",
+                title: s.title || "",
+                icon: s.icon || "",
+                priority: s.priority || 0,
+                items: items,
+                collapsed: false,
+                flatStartIndex: 0
+            });
+        }
+        return sectionsData;
+    }
+
+    function updateSelectedItem() {
+        if (selectedFlatIndex >= 0 && selectedFlatIndex < flatModel.length) {
+            var entry = flatModel[selectedFlatIndex];
+            selectedItem = entry.isHeader ? null : entry.item;
+        } else {
+            selectedItem = null;
+        }
+    }
+
+    function _applyHighlights(sectionsData, query) {
+        if (!query || query.length === 0) {
+            for (var i = 0; i < sectionsData.length; i++) {
+                var items = sectionsData[i].items;
+                for (var j = 0; j < items.length; j++) {
+                    var item = items[j];
+                    item._hName = item.name || "";
+                    item._hSub = item.subtitle || "";
+                    item._hRich = false;
+                }
+            }
+            return;
+        }
+
+        var highlightColor = Theme.primary;
+        var nameColor = Theme.surfaceText;
+        var subColor = Theme.surfaceVariantText;
+        var lowerQuery = query.toLowerCase();
+
+        for (var i = 0; i < sectionsData.length; i++) {
+            var items = sectionsData[i].items;
+            for (var j = 0; j < items.length; j++) {
+                var item = items[j];
+                item._hName = _highlightField(item.name || "", lowerQuery, query.length, nameColor, highlightColor);
+                item._hSub = _highlightField(item.subtitle || "", lowerQuery, query.length, subColor, highlightColor);
+                item._hRich = true;
+            }
+        }
+    }
+
+    function _highlightField(text, lowerQuery, queryLen, baseColor, highlightColor) {
+        if (!text)
+            return "";
+        var idx = text.toLowerCase().indexOf(lowerQuery);
+        if (idx === -1)
+            return _escapeRichText(text);
+        var before = text.substring(0, idx);
+        var match = text.substring(idx, idx + queryLen);
+        var after = text.substring(idx + queryLen);
+        return '<span style="color:' + baseColor + '">' + _escapeRichText(before) + '</span><span style="color:' + highlightColor + '; font-weight:600">' + _escapeRichText(match) + '</span><span style="color:' + baseColor + '">' + _escapeRichText(after) + '</span>';
+    }
+
+    function _escapeRichText(text) {
+        return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    function getCurrentSectionViewMode() {
+        if (selectedFlatIndex < 0 || selectedFlatIndex >= flatModel.length)
+            return "list";
+        var entry = flatModel[selectedFlatIndex];
+        if (!entry || entry.isHeader)
+            return "list";
+        return getSectionViewMode(entry.sectionId);
+    }
+
+    function getGridColumns(sectionId) {
+        return Nav.getGridColumns(getSectionViewMode(sectionId), gridColumns);
+    }
+
+    function _cancelPendingSelectionReset() {
+        _queryDrivenSearch = false;
+        _pluginPhaseForceFirst = false;
+    }
+
+    function selectNext() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = forceLinearNavigation ? Nav.findNextNonHeaderIndex(flatModel, selectedFlatIndex + 1) : Nav.calculateNextIndex(flatModel, selectedFlatIndex, null, null, gridColumns, getSectionViewMode);
+        if (newIndex === -1)
+            newIndex = selectedFlatIndex;
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectPrevious() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = forceLinearNavigation ? Nav.findPrevNonHeaderIndex(flatModel, selectedFlatIndex - 1) : Nav.calculatePrevIndex(flatModel, selectedFlatIndex, null, null, gridColumns, getSectionViewMode);
+        if (newIndex === -1)
+            newIndex = selectedFlatIndex;
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectRight() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculateRightIndex(flatModel, selectedFlatIndex, getSectionViewMode);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectLeft() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculateLeftIndex(flatModel, selectedFlatIndex, getSectionViewMode);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectNextSection() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculateNextSectionIndex(flatModel, selectedFlatIndex);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectPreviousSection() {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculatePrevSectionIndex(flatModel, selectedFlatIndex);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectPageDown(visibleItems) {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculatePageDownIndex(flatModel, selectedFlatIndex, visibleItems);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectPageUp(visibleItems) {
+        keyboardNavigationActive = true;
+        _cancelPendingSelectionReset();
+        var newIndex = Nav.calculatePageUpIndex(flatModel, selectedFlatIndex, visibleItems);
+        if (newIndex !== selectedFlatIndex) {
+            selectedFlatIndex = newIndex;
+            updateSelectedItem();
+        }
+    }
+
+    function selectIndex(index) {
+        keyboardNavigationActive = false;
+        if (index >= 0 && index < flatModel.length && !flatModel[index].isHeader) {
+            selectedFlatIndex = index;
+            updateSelectedItem();
+        }
+    }
+
+    function toggleSection(sectionId) {
+        _clearModeCache();
+        var newCollapsed = Object.assign({}, collapsedSections);
+        var currentState = newCollapsed[sectionId];
+
+        if (currentState === undefined) {
+            for (var i = 0; i < sections.length; i++) {
+                if (sections[i].id === sectionId) {
+                    currentState = sections[i].collapsed || false;
+                    break;
+                }
+            }
+        }
+
+        newCollapsed[sectionId] = !currentState;
+        collapsedSections = newCollapsed;
+
+        var newSections = sections.slice();
+        for (var i = 0; i < newSections.length; i++) {
+            if (newSections[i].id === sectionId) {
+                newSections[i] = Object.assign({}, newSections[i], {
+                    collapsed: newCollapsed[sectionId]
+                });
+            }
+        }
+        flatModel = Scorer.flattenSections(newSections);
+        sections = newSections;
+
+        if (selectedFlatIndex >= flatModel.length) {
+            selectedFlatIndex = getFirstItemIndex();
+        }
+        updateSelectedItem();
+
+        if (!newCollapsed[sectionId])
+            sectionExpanded(sectionId);
+    }
+
+    function executeSelected() {
+        if (searchDebounce.running) {
+            searchDebounce.stop();
+            performSearch();
+        }
+        if (!selectedItem)
+            return;
+        executeItem(selectedItem, true);
+    }
+
+    function executeItem(item, isKeyboard = false) {
+        if (!item)
+            return;
+
+        SessionData.addLauncherHistory(searchQuery);
+
+        if (item.type === "plugin_browse") {
+            var browsePluginId = item.data?.pluginId;
+            if (!browsePluginId)
+                return;
+            var browseTrigger = item.data.isBuiltIn ? AppSearchService.getBuiltInPluginTrigger(browsePluginId) : PluginService.getPluginTrigger(browsePluginId);
+
+            if (browseTrigger && browseTrigger.length > 0) {
+                searchQueryRequested(browseTrigger);
+            } else {
+                setMode("plugins", false, undefined, true);
+                pluginFilter = browsePluginId;
+                performSearch();
+            }
+            return;
+        }
+
+        switch (item.type) {
+        case "app":
+            if (item.isCore) {
+                AppSearchService.executeCoreApp(item.data);
+            } else if (item.data?.isAction) {
+                launchAppAction(item.data);
+            } else {
+                launchApp(item.data);
+            }
+            break;
+        case "plugin":
+            if (item.isBuiltInLauncher) {
+                AppSearchService.executeBuiltInLauncherItem(item.data);
+            } else {
+                AppSearchService.executePluginItem(item.data, item.pluginId);
+            }
+            break;
+        case "setting":
+            AppSearchService.executeBuiltInLauncherItem(item.data);
+            break;
+        case "clipboard":
+            var shouldPaste = isKeyboard ? SettingsData.clipboardEnterToPaste : SettingsData.clipboardClickToPaste;
+            if (shouldPaste) {
+                ClipboardService.pasteEntry(item.data, function () {
+                    root.itemExecuted();
+                });
+            } else {
+                ClipboardService.copyEntry(item.data, function () {
+                    root.itemExecuted();
+                });
+            }
+            return;
+        case "file":
+            if (item.data?.is_dir)
+                openFolder(item.data?.path, true);
+            else
+                openFile(item.data?.path);
+            break;
+        default:
+            return;
+        }
+
+        itemExecuted();
+    }
+
+    function executeAction(item, action) {
+        if (!item || !action)
+            return;
+        switch (action.action) {
+        case "launch":
+            executeItem(item);
+            break;
+        case "open":
+            if (item.data?.is_dir)
+                openFolder(item.data.path, true);
+            else
+                openFile(item.data.path);
+            break;
+        case "open_folder":
+            openFolder(item.data.path, false);
+            break;
+        case "open_with":
+            openWith(item.data.path);
+            break;
+        case "copy_path":
+            copyToClipboard(item.data.path);
+            break;
+        case "open_terminal":
+            openTerminal(item.data.path);
+            break;
+        case "copy":
+            copyToClipboard(item.name);
+            break;
+        case "execute":
+            executeItem(item);
+            break;
+        case "clipboard_copy":
+            ClipboardService.copyEntry(item.data, function () {
+                root.itemExecuted();
+            });
+            return;
+        case "clipboard_paste":
+            ClipboardService.pasteEntry(item.data, function () {
+                root.itemExecuted();
+            });
+            return;
+        case "launch_dgpu":
+            if (item.type === "app" && item.data) {
+                launchAppWithNvidia(item.data);
+            }
+            break;
+        case "toggle_all_visibility":
+            if (item.type === "plugin_browse" && item.data?.pluginId) {
+                var pluginId = item.data.pluginId;
+                var currentState = SettingsData.getPluginAllowWithoutTrigger(pluginId);
+                SettingsData.setPluginAllowWithoutTrigger(pluginId, !currentState);
+                performSearch();
+            }
+            return;
+        default:
+            if (item.type === "app" && action.actionData) {
+                launchAppAction({
+                    parentApp: item.data,
+                    actionData: action.actionData
+                });
+            }
+        }
+
+        itemExecuted();
+    }
+
+    function _resolveDesktopEntry(app) {
+        if (!app)
+            return null;
+        if (app.command)
+            return app;
+        var id = app.id || app.execString || app.exec || "";
+        if (!id)
+            return null;
+        return DesktopEntries.heuristicLookup(id);
+    }
+
+    function launchApp(app) {
+        var entry = _resolveDesktopEntry(app);
+        if (!entry)
+            return;
+        SessionService.launchDesktopEntry(entry);
+        AppUsageHistoryData.addAppUsage(entry);
+    }
+
+    function launchAppWithNvidia(app) {
+        var entry = _resolveDesktopEntry(app);
+        if (!entry)
+            return;
+        SessionService.launchDesktopEntry(entry, true);
+        AppUsageHistoryData.addAppUsage(entry);
+    }
+
+    function launchAppAction(actionItem) {
+        if (!actionItem || !actionItem.actionData)
+            return;
+        var entry = _resolveDesktopEntry(actionItem.parentApp);
+        if (!entry)
+            return;
+        SessionService.launchDesktopAction(entry, actionItem.actionData);
+        AppUsageHistoryData.addAppUsage(entry);
+    }
+
+    function openFile(path) {
+        if (!path)
+            return;
+        Qt.openUrlExternally("file://" + path);
+    }
+
+    function openWith(path) {
+        if (!path)
+            return;
+        Quickshell.execDetached([Paths.vshellCli, "open", "--type", "file", path]);
+    }
+
+    function openFolder(path, openDirectory = false) {
+        if (!path)
+            return;
+        var target = openDirectory ? path : path.substring(0, path.lastIndexOf("/"));
+        var args = [Paths.vshellCli, "launcher-search", "open-folder"];
+        if (SettingsData.launcherFolderOpenCommand)
+            args.push("--command=" + SettingsData.launcherFolderOpenCommand);
+        args.push("--", target);
+        Quickshell.execDetached(args);
+    }
+
+    function openTerminal(path) {
+        if (!path)
+            return;
+        Quickshell.execDetached({
+            command: [Paths.vshellCli, "terminal", "open"],
+            workingDirectory: path
+        });
+    }
+
+    function copyToClipboard(text) {
+        if (!text)
+            return;
+        Quickshell.execDetached([Paths.vshellCli, "cl", "copy", text]);
+    }
+}

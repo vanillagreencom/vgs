@@ -1,0 +1,64 @@
+import QtQuick
+import qs.Common
+import qs.Modules.Plugins
+import qs.Services
+import qs.Widgets
+
+BasePill {
+    id: root
+
+    opacity: VGSBackendService.capsLockState ? 1 : 0
+
+    states: [
+        State {
+            name: "hidden_horizontal"
+            when: !VGSBackendService.capsLockState && !isVerticalOrientation
+            PropertyChanges {
+                target: root
+                width: 0
+            }
+        },
+        State {
+            name: "hidden_vertical"
+            when: !VGSBackendService.capsLockState && isVerticalOrientation
+            PropertyChanges {
+                target: root
+                height: 0
+            }
+        }
+    ]
+
+    transitions: [
+        Transition {
+            NumberAnimation {
+                properties: "width,height"
+                duration: Theme.shortDuration
+                easing.type: Theme.standardEasing
+            }
+        }
+    ]
+
+    Behavior on opacity {
+        NumberAnimation {
+            duration: Theme.shortDuration
+            easing.type: Theme.standardEasing
+        }
+    }
+
+    content: Component {
+        Item {
+            implicitWidth: icon.width
+            implicitHeight: root.widgetThickness - root.horizontalPadding * 2
+
+            VgsIcon {
+                id: icon
+                anchors.centerIn: parent
+                name: "shift_lock"
+                size: Theme.barIconSize(root.barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
+                // The widget only appears while caps lock is on, so presence is
+                // the state signal; the icon keeps the shared bar icon color.
+                color: Theme.widgetIconColor
+            }
+        }
+    }
+}

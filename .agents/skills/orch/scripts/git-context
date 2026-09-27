@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Print small git context values for workflow snippets without inline shell plumbing.
+
+set -euo pipefail
+
+# Callers preserve positional values for this diagnostic catalog.
+git_context_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    issue-unmatched)
+      printf 'git-context: issue-unmatched branch=%s\n' "$branch"
+      printf '%s\n' "Error: no issue id matched branch '$branch'"
+      ;;
+    issue-uncanonical)
+      printf 'git-context: issue-uncanonical id=%s\n' "$issue_arg"
+      printf '%s\n' "Error: '$issue_arg' matches no case of pattern '$pattern'"
+      ;;
+    timestamp-format)
+      printf 'git-context: timestamp-format format=%s\n' "$format"
+      printf '%s\n' "Error: unknown timestamp format '$format'"
+      ;;
+    unknown-command)
+      printf 'git-context: unknown-command cmd=%s\n' "$cmd"
+      printf '%s\n' "Unknown command: $cmd"
+      ;;
+  esac
+}
+
+
+cmd="${1:-help}"
+shift || true
+
+worktree_arg() {
+    printf '%s' "${1:-.}"
+}
+
+# The tracker's canonical spelling of an id: `issue-N` lower case for a GitHub
+# item, upper case for every other tracker's. The one owner of that rule, so no
+# caller spells a canonical id a second way.
+canonical_issue_id() { # ID
+    local id="$1" lower
+    # tr, not the case-conversion expansions: macOS Bash 3.2 lacks them.
+    lower="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')" || return 1
+    case "$lower" in
+        issue-*) printf '%s\n' "$lower" ;;
+        *) printf '%s' "$id" | tr '[:lower:]' '[:upper:]' || return 1; printf '\n' ;;
+    esac
+}
+
+case "$cmd" in
+    branch)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" branch --show-current
+        ;;
+    head)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" rev-parse HEAD
+        ;;
+    issue-from-branch)
+        worktree="$(worktree_arg "$@")"
+        pattern="${2:-${GH_ISSUE_PATTERN:-([A-Z]+-[0-9]+|issue-[0-9]+)}}"
+        branch="$(git -C "$worktree" branch --show-current)"
+        shopt -s nocasematch
+        if [[ "$branch" =~ $pattern ]]; then
+            canonical_issue_id "${BASH_REMATCH[0]}"
+        else
+            git_context_message issue-unmatched "$@" >&2
+            exit 1
+        fi
+        ;;
+    issue-canonical)
+        issue_arg="${1:-}"
+        pattern="${2:-${GH_ISSUE_PATTERN:-([A-Z]+-[0-9]+|issue-[0-9]+)}}"
+        shopt -s nocasematch
+        if [[ -n "$issue_arg" && "$issue_arg" =~ ^$pattern$ ]]; then
+            canonical_issue_id "$issue_arg"
+        else
+            git_context_message issue-uncanonical "$@" >&2
+            exit 1
+        fi
+        ;;
+    repo-root)
+        worktree="$(worktree_arg "$@")"
+        git -C "$worktree" rev-parse --show-toplevel
+        ;;
+    common-root)
+        worktree="$(worktree_arg "$@")"
+        git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir)"
+        case "$git_common_dir" in
+            # Git answers relative to the worktree it was asked about, so the
+            # value is resolved from there and printed physical. A caller
+            # composes paths on this, and a relative one resolves against the
+            # caller's own directory, naming somewhere else entirely. Both
+            # steps are physical: a logical cd keeps the symlink in $PWD, so a
+            # link to a nested directory would climb from the link's own place
+            # and answer an ancestor of it rather than the checkout.
+            */.git) (cd -P -- "$worktree" && cd -P -- "$(dirname -- "$git_common_dir")" && pwd -P) ;;
+            *) git -C "$worktree" rev-parse --show-toplevel ;;
+        esac
+        ;;
+    timestamp)
+        format="${1:-compact}"
+        case "$format" in
+            compact) date +%Y%m%d-%H%M%S ;;
+            epoch) date +%s ;;
+            iso) date -u +%Y-%m-%dT%H:%M:%SZ ;;
+            *) git_context_message timestamp-format "$@" >&2; exit 2 ;;
+        esac
+        ;;
+    help|--help|-h)
+        cat << 'EOF'
+Usage: git-context <command> [worktree]
+
+Commands:
+  branch [worktree]               Print current branch
+  head [worktree]                 Print current HEAD SHA
+  issue-from-branch [worktree]    Print issue id matched from branch
+  issue-canonical ID [pattern]    Print the canonical spelling of an id the
+                                  pattern accepts in any case
+  repo-root [worktree]            Print git worktree root
+  common-root [worktree]          Print main checkout root for worktree sets
+  timestamp [compact|epoch|iso]   Print workflow timestamp (iso is UTC RFC-3339)
+EOF
+        ;;
+    *)
+        git_context_message unknown-command "$@" >&2
+        exit 1
+        ;;
+esac

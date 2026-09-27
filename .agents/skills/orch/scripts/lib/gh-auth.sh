@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Orch compatibility wrappers around the shared GitHub auth helpers.
+#
+# Source this file; do not execute it directly.
+
+
+# Callers preserve positional values for this diagnostic catalog.
+gh_auth_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    helper-missing)
+      printf 'gh-auth: helper-missing path=%s\n' "$_ORCH_SHARED_GH_AUTH"
+      printf '%s\n' "orch gh-auth: shared GitHub auth helper not found at $_ORCH_SHARED_GH_AUTH"
+      ;;
+  esac
+}
+
+_ORCH_GH_AUTH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ORCH_SHARED_GH_AUTH="$_ORCH_GH_AUTH_DIR/../../../github/scripts/lib/gh-auth.sh"
+if [[ ! -f "$_ORCH_SHARED_GH_AUTH" ]]; then
+  gh_auth_message helper-missing "$@" >&2
+  return 1 2>/dev/null || exit 1
+fi
+# shellcheck source=../../../github/scripts/lib/gh-auth.sh
+source "$_ORCH_SHARED_GH_AUTH"
+unset _ORCH_GH_AUTH_DIR _ORCH_SHARED_GH_AUTH
+
+orch_sanitize_gh_env() {
+  kendex_github_sanitize_gh_env
+}
+
+# 124 is gh killed at its bound, nothing against an env token: the first call
+# through an egress proxy can be the slow one, so the token is asked once more
+# before any caller's fallback drops it.
+orch_github_auth_status() {
+  local status=0
+  kendex_github_auth_status || status=$?
+  if [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then
+    kendex_github_auth_status
+    return
+  fi
+  return "$status"
+}
+
+orch_github_auth_status_capture() {
+  kendex_github_auth_status_capture "$@"
+}
+
+orch_github_keyring_auth_status() {
+  kendex_github_keyring_auth_status
+}
+
+orch_is_resolved_github_token() {
+  kendex_github_is_resolved_token "$@"
+}
+
+orch_select_github_auth_token() {
+  kendex_github_select_auth_token default
+}
+
+orch_load_env_bot_token() {
+  local project_root="${1:?orch_load_env_bot_token: project_root required}"
+  local token
+  token="$(kendex_github_load_token "$project_root" default || true)"
+  [[ -n "$token" ]] || return 1
+  export GH_TOKEN="$token"
+  return 0
+}

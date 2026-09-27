@@ -1,0 +1,144 @@
+# Package maintenance
+
+This guide holds package-generation and publishing mechanics. Release sequencing belongs to [../.agents/skills/vgs-release/SKILL.md](../.agents/skills/vgs-release/SKILL.md); channel completion belongs to [../.agents/skills/vgs-distro-publish/SKILL.md](../.agents/skills/vgs-distro-publish/SKILL.md).
+
+## Dependency declarations
+
+`config/vshell/dependencies.json` declares feature commands. `packaging/optional-packages.json` supplies package mappings, required commands, unsupported mappings and notification conflicts. `scripts/gen-package-metadata.py` verifies the recipes; its `--write` mode updates generated blocks. Do not hand-edit those blocks.
+
+Default UI commands require hard dependencies. Optional features must report missing tools without failing the shell. The generator reports unsupported mappings with their recorded reasons.
+
+Fedora uses `Suggests` to avoid installing optional compositors and login managers by default. Void has no weak-dependency list; `INSTALL.msg` and `vshell deps status` identify optional tools. Terminal choice belongs to the helper's existing resolver.
+
+## Themes and catalog
+
+`install-system.sh` installs one theme set, the same on every channel: every theme's definitions and full-size preview, the default `bauhaus` theme's wallpapers, the `targets` templates, the download catalog, one thumbnail per catalogued theme, and the vendored icon themes. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
+
+`scripts/gen-theme-catalog.py` owns catalog generation, release-pin checks and the list of files a theme package ships; `scripts/publish-theme-assets.py` owns the per-theme wallpaper archives, `themes/asset-lock.json` and the thumbnails; `scripts/capture-theme-previews.py` owns the committed `preview.jpg` files.
+
+### Publishing theme imagery
+
+The repository holds no wallpapers for most themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/backgrounds/`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases on the repository the lock names, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
+
+A changed theme needs a new preview before it publishes, because the publish derives the thumbnail from `themes/<name>/preview.jpg`. `scripts/capture-theme-previews.py [NAME]...` renders each named theme, or every theme, over the asset working directory's wallpapers. It starts nested Hyprland sessions, so run it from the checkout that owns the desktop session.
+
+## Signing
+
+Use the release signing key `C23A00D650F28E947AD8EEBA6CB466C12AA86B98`, configured as `user.signingkey`. Always supply a tag message. Headless signing requires a cached PIN in gpg-agent; unlock it from a terminal when needed. If signing is unavailable, an annotated tag is permitted only with the unsigned status recorded in the release notes.
+
+## Publishers
+
+AUR and Gentoo are separate publishing repositories. Changes here reach users through `scripts/publish-aur.sh` and `scripts/publish-gentoo.sh`; edits made directly in those repositories are overwritten.
+
+The AUR publisher defers a package whose release assets are missing, whose published checksums do not match, or that the AUR already publishes above this checkout's version. Other network and authentication failures fail the publish. It refuses to publish `vgs-shell-git` from a checkout that is not on the branch that recipe clones, because the version it stamps has to name a commit a build reaches. It needs `AUR_SSH_PRIVATE_KEY` and `AUR_SSH_KNOWN_HOSTS`; verify the stored host-key fingerprint against Arch's published fingerprint. The Gentoo publisher requires overlay commit rights.
+
+Two triggers of `publish-aur.yml` publish on their own, and between them they cover both Arch packages. The push on `main` publishes `vgs-shell-git`, whose version counts the commits on that branch. It defers `vgs-shell` between a version bump and its release tag, because that recipe's source tarball does not exist until the tag is cut; the `workflow_call` from `release.yml` publishes it once the tarballs are up. `workflow_dispatch` publishes a chosen package set by hand and takes a dry-run input, and the weekly schedule only checks the published recipes for drift.
+
+Both publishing triggers select both packages, so a release run reaches `vgs-shell-git` as well. It defers that package whenever `main` advanced past the tag on a path in the push filter since the last push publish, because the AUR then already carries the higher version.
+
+`scripts/publish-ppa.sh` builds the Ubuntu source package from the release archive, signs it, uploads it, and waits until Launchpad lists it. `release.yml` runs it through `publish-ppa.yml`. It needs `PPA_SIGNING_KEY_ID` and `PPA_SIGNING_PRIVATE_KEY_PASSWORD`, and `PPA_SIGNING_PRIVATE_KEY` where the key is not in the keyring. The Ubuntu signing key is separate from the release tag key.
+
+`scripts/prune-ppa.py` then deletes every PPA publication older than `VERSION`, because Launchpad keeps a superseded source and its binaries installable until someone deletes them. It deletes nothing until this release has a published binary for amd64 and arm64, so the channel keeps an installable version throughout. It needs `launchpadlib` and the OAuth credentials `LP_CREDENTIALS_FILE` names, which `launchpadlib`'s `login_with` writes once after a browser authorization; CI takes them from the `LP_CREDENTIALS` secret.
+
+## Manual channel commands
+
+Replace version placeholders before use. Keep build work in a temporary directory outside the source checkout. The OBS commands prepare publication artifacts, not installation checks.
+
+```bash
+# Gentoo overlay
+scripts/publish-gentoo.sh                     # needs overlay commit rights
+scripts/publish-gentoo.sh --check             # drift; also runs weekly in CI
+
+# Fedora COPR
+copr-cli build vanillagreen/vgs-shell packaging/fedora/vgs-shell.spec
+
+# openSUSE + Debian 13 (one OBS package, three build targets)
+osc checkout home:vanillagreen vgs-shell -o /tmp/obs
+( cd /tmp/obs                                 # subshell: this cd must not leak
+  # update _service (version + source sha256), vgs-shell.spec, and the .dsc +
+  # debian.tar.xz built from packaging/debian/
+  # vgs-shell.spec there is an openSUSE variant, not a copy of
+  # packaging/fedora/vgs-shell.spec: it takes Source0 from the orig tarball
+  # _service downloads, uses openSUSE package names, and carries no %{?dist}.
+  # Bump its version and changelog; replacing it with the Fedora spec fails
+  # the build on a missing source file. Carry the Quickshell minimum there too:
+  # "Requires: quickshell >= 0.3.1". No generator reaches that spec, so the
+  # openSUSE package accepts any Quickshell until this is set by hand.
+  osc commit -m "Update to vX.Y.Z" )
+osc results home:vanillagreen vgs-shell
+
+# Ubuntu PPA (release.yml runs this; by hand only when that job failed)
+scripts/publish-ppa.sh                        # needs the PPA signing variables above
+scripts/publish-ppa.sh --dry-run              # builds the source package only
+scripts/publish-ppa.sh --revision 2           # re-uploads a release Launchpad has seen
+```
+
+## Artifact verification
+
+The checks below compare the requested version with published repository metadata. They supplement the public installation checks required by the publishing skill. AUR RPC metadata can lag its git repository; a successful COPR or OBS build can precede repository publication.
+
+```bash
+V=$(cat VERSION); bad=0
+
+# AUR — recipes match this repo, apart from pkgver and pkgrel in vgs-shell-git,
+# which publication stamps with the head it publishes
+scripts/check-aur-sync.py --remote || bad=1
+
+# Fedora COPR — the chroot's DNF metadata, which is what dnf resolves against.
+# A build can succeed while repository regeneration lags or fails.
+for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
+  u="https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c"
+  pri=$(curl -sL "$u/repodata/repomd.xml" | grep -oE 'repodata/[a-f0-9]+-primary\.xml\.[a-z]+' | head -1)
+  # Bound to the vgs-shell package: a bare version grep matches any entry in the
+  # repository, so another package at this version would vouch for a missing or
+  # stale vgs-shell.
+  curl -sL "$u/$pri" | { zstd -dc 2>/dev/null || zcat; } | python3 -c '
+import sys, xml.etree.ElementTree as ET
+ns = {"c": "http://linux.duke.edu/metadata/common"}
+want = sys.argv[1]
+root = ET.fromstring(sys.stdin.read())
+ok = any(p.find("c:name", ns).text == "vgs-shell"
+         and p.find("c:version", ns).get("ver") == want
+         for p in root.findall("c:package", ns))
+sys.exit(0 if ok else 1)' "$V" && echo "$c ok" || { echo "$c NOT $V"; bad=1; }
+done
+
+# openSUSE + Debian — the repository index, not osc results
+for r in openSUSE_Tumbleweed/x86_64 openSUSE_Slowroll/x86_64; do
+  curl -s "https://download.opensuse.org/repositories/home:/vanillagreen/$r/" \
+    | grep -q "vgs-shell-$V-" && echo "$r ok" || { echo "$r NOT $V"; bad=1; }
+done
+curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/amd64/ \
+  | grep -q "vgs-shell_$V-" && echo "Debian_13 ok" || { echo "Debian_13 NOT $V"; bad=1; }
+
+# Ubuntu — the published BINARIES, per architecture. A source can be accepted
+# and published while a build fails, and then nobody can install it.
+N=${PPA_REVISION:-1}                          # the --revision the upload used
+for a in amd64 arm64; do
+  curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedBinaries&binary_name=vgs-shell&version=$V-1~ubuntu26.04.$N&status=Published" \
+    | grep -q "/$a" && echo "PPA $a ok" || { echo "PPA $a NOT $V"; bad=1; }
+done
+
+# Gentoo — the overlay's ebuild
+scripts/publish-gentoo.sh --check || bad=1
+
+# Nix — BUILD the flake. Evaluating .version only reads back the VERSION file
+# the derivation was handed, so it passes on a package that cannot build.
+F="github:vanillagreencom/vgs/v$V"
+nix build --no-link "$F#packages.x86_64-linux.default" || bad=1
+# flake.nix declares aarch64-linux too. Its derivation is evaluated here; a full
+# aarch64 BUILD needs an aarch64 builder — run it there when one exists.
+# `nix flake check` evaluates every output. It does NOT instantiate
+# homeManagerModules.default against a real Home Manager configuration, so a
+# broken module body can still reach users; that needs home-manager as a flake
+# input and is not done here.
+nix eval --raw "$F#packages.aarch64-linux.default.drvPath" >/dev/null || bad=1
+nix flake check "$F" || bad=1
+
+# A per-channel report that always exits 0 is how a stale channel gets claimed
+# as shipped. Every miss above sets bad; this is the block's answer.
+exit "$bad"
+```
+
+
+The Nix ARM evaluation does not prove an ARM build. The flake check does not instantiate the Home Manager module with a real configuration. Record these limits if suitable builders or environments are unavailable.

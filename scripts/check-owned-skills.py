@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Compare skill trees with their ownership register in kendex.toml.
+
+The register reader defines which skills belong to this repo and which are
+rendered. Disk checks report missing or extra skill trees.
+Self-tests run on each invocation. Process controls in test-owned-skills-e2e.py
+check how main() combines findings and propagates failure.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from typing import NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from kendex_skills import (  # noqa: E402
+    SKILLS_DIR,
+    RegisterError,
+    in_place_names,
+    register_text,
+    rendered_names,
+    switched_off,
+)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# The process control sets this to test main() failure propagation.
+TRIPWIRE = "VGS_OWNED_SKILLS_TRIP_CONTROL"
+
+
+class _Unlistable:
+    """A root whose `.agents/skills` is there and refuses to be listed.
+
+    A STAND-IN RATHER THAN A REAL DIRECTORY: dropping the read bit does nothing
+    when the suite runs as root, so that control would pass for the wrong
+    reason. Duck-typed on the calls `tree_problems` makes of a root."""
+
+    def __truediv__(self, _segment: str) -> "_Unlistable":
+        return self
+
+    def is_dir(self) -> bool:
+        return True
+
+    def iterdir(self):
+        raise PermissionError(13, "Permission denied")
+
+
+def skill_roots(skills: Path, registered: set[str], prefix: str = "") -> list[str]:
+    """Return skill trees using the path names accepted by the register.
+
+    Declared names can include subdirectories. Stop at a declared skill or a
+    SKILL.md file so its nested content is not registered separately. Do not
+    follow symlinks. Use iterdir so directory read failures reach the caller.
+    """
+    roots: list[str] = []
+    for path in sorted(skills.iterdir()):
+        if not path.is_dir():
+            continue
+        name = f"{prefix}{path.name}"
+        stop = name in registered or path.is_symlink() or (path / "SKILL.md").is_file()
+        found = [name] if stop else skill_roots(path, registered, f"{name}/")
+        roots.extend(found or [name])
+    return roots
+
+
+def tree_problems(
+    root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...], off: tuple[str, ...] = ()
+) -> list[str]:
+    """Report differences between the register and skill trees on disk.
+
+    Disabled skills retain their trees and registration, but do not require
+    SKILL.md. Missing rendered and in-place trees need different repairs.
+    """
+    problems: list[str] = []
+    skills = root / SKILLS_DIR
+    registered = set(in_place) | set(rendered)
+    for name in in_place:
+        if name not in off and not (skills / name / "SKILL.md").is_file():
+            problems.append(
+                f"kendex.toml registers {name} as `source = in-place`, but "
+                f"{SKILLS_DIR}/{name}/SKILL.md is not there. Every guard scoping to "
+                f"the owned set derives that path, so each one is now scanning a "
+                f"directory that does not exist and reporting nothing. Fix the row "
+                f"or restore the tree."
+            )
+    for name in rendered:
+        if name not in off and not (skills / name / "SKILL.md").is_file():
+            problems.append(
+                f"kendex.toml registers {name} as render output, but "
+                f"{SKILLS_DIR}/{name}/SKILL.md is not there. The committed render is "
+                f"incomplete, so a fresh clone is missing a skill the harnesses read "
+                f"and no guard here scopes to. Restore the tree with `kendex refresh`, "
+                f"or drop the row."
+            )
+    present: list[str] = []
+    if skills.is_dir():
+        try:
+            present = sorted(skill_roots(skills, registered))
+        except OSError as error:
+            # A listing failure must not look like an empty skill tree.
+            problems.append(
+                f"{SKILLS_DIR}/ could not be listed ({error}), so no tree there was "
+                f"compared against the register and NOTHING on disk was checked."
+            )
+            return problems
+    for name in present:
+        if name not in registered:
+            problems.append(
+                f"{SKILLS_DIR}/{name} has no `[skills.{name}]` row in kendex.toml, so "
+                f"nothing says whether it is this repo's or render output — the bots "
+                f"cannot scope to it and `kendex refresh` does not own it. Register "
+                f"it, or delete the tree."
+            )
+    # Check even when the directory is absent, so a moved tree is reported.
+    if not present:
+        problems.append(
+            f"{SKILLS_DIR}/ holds no skill tree, so every arm here compared the "
+            f"register against nothing. The render tree moved or was emptied."
+        )
+    return problems
+
+
+class Controls(NamedTuple):
+    """Record self-test failures and the number of controls exercised."""
+
+    exercised: int
+    failures: list[str]
+
+
+def self_test(root: Path) -> Controls:
+    """Each arm must be able to fail, and must say which failure it found."""
+    failures: list[str] = []
+    exercised = 0
+
+    def record(passed: bool, message: str) -> None:
+        nonlocal exercised
+        exercised += 1
+        if not passed:
+            failures.append(message)
+
+    register = (
+        '[skills.owned]\nsource = "in-place"\nenabled = true\n\n'
+        '[skills.rendered]\nsource = "kendex"\nenabled = true\n'
+    )
+    record(
+        in_place_names(register) == ("owned",) and rendered_names(register) == ("rendered",),
+        f"the register reader sorted a two-row fixture wrong: in-place "
+        f"{in_place_names(register)}, rendered {rendered_names(register)}",
+    )
+    # An empty register would disable every check derived from it.
+    for broken, why, expect in (
+        (
+            '[install]\nmethod = "symlink"\n',
+            "a file with no `[skills.<name>]` table",
+            "yielded no `[skills.<name>]` table",
+        ),
+        (
+            "[skills.owned]\nenabled = true\n",
+            "a skill row with no `source` key",
+            "with no `source` key",
+        ),
+        (
+            '[skills.rendered]\nsource = "kendex"\n',
+            "a register with no in-place row",
+            'declares no skill `source = "in-place"`',
+        ),
+        (
+            '[skills.owned]\nsource = "in-place\n',
+            "a file that is not TOML at all",
+            "is not readable TOML",
+        ),
+    ):
+        said = ""
+        try:
+            in_place_names(broken)
+        except RegisterError as error:
+            said = str(error)
+        record(
+            expect in said,
+            f"{why} was not refused with {expect!r}, so either it was read as a "
+            f"register or another arm answered for it and its own refusal could "
+            f"be deleted unnoticed: {said!r}",
+        )
+
+    unlistable = tree_problems(_Unlistable(), (), ())
+    record(
+        any("could not be listed" in problem for problem in unlistable),
+        f"a render root that cannot be listed was not reported, so it reaches the "
+        f"operator as a bare traceback naming no directory: {unlistable}",
+    )
+    # The diagnostic must identify the rendered tree, whose repair differs.
+    unrendered = tree_problems(root / "no-such-root", (), ("rendered",))
+    record(
+        any("committed render is incomplete" in problem for problem in unrendered),
+        f"a registered rendered skill with no SKILL.md on disk was not reported "
+        f"with the render's own sentence, so an incomplete render is either "
+        f"unreported or blamed on the register: {unrendered}",
+    )
+
+    # Process controls test whether main() uses the control results.
+    if os.environ.get(TRIPWIRE):
+        record(False, "the control tripwire is set, so this run must fail")
+    return Controls(exercised, failures)
+
+
+def main() -> int:
+    """Read the register, run the checks and return the combined exit status."""
+    root = REPO_ROOT
+    try:
+        register = register_text(root / "kendex.toml")
+        in_place = in_place_names(register)
+        rendered = rendered_names(register)
+        off = switched_off(register)
+    except RegisterError as error:
+        print(f"check-owned-skills: FAIL\n  - {error}", file=sys.stderr)
+        return 1
+
+    controls = self_test(root)
+    problems = tree_problems(root, in_place, rendered, off)
+    if controls.failures or problems:
+        print("check-owned-skills: FAIL", file=sys.stderr)
+        for failure in controls.failures:
+            print(f"  - control: {failure}", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
+    print(
+        f"check-owned-skills: ok ({len(in_place)} in-place and {len(rendered)} rendered "
+        f"skill trees agree with kendex.toml; "
+        f"{controls.exercised} controls)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

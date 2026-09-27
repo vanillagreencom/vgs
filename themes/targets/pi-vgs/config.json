@@ -1,0 +1,12 @@
+{
+  "app": "pi",
+  "template": "vgs-theme.json",
+  "destination": "~/.pi/agent/themes/vgs-theme.json",
+  "curatedFile": "pi.json",
+  "detect": {
+    "paths": [
+      "~/.pi"
+    ]
+  },
+  "hook": "pi-theme-link"
+}

@@ -1,0 +1,9 @@
+{
+  "app": "claude",
+  "detect": {
+    "paths": [
+      "~/.claude"
+    ]
+  },
+  "hook": "claude-theme"
+}

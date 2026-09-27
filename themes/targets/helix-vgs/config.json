@@ -1,0 +1,12 @@
+{
+  "app": "helix",
+  "template": "vgs.toml",
+  "destination": "~/.config/helix/themes/vgs.toml",
+  "curatedFile": "helix.toml",
+  "detect": {
+    "commands": [
+      "hx",
+      "helix"
+    ]
+  }
+}

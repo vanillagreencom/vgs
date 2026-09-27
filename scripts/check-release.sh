@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(cat "$root/VERSION")"
+
+grep -q "pkgver=$version" "$root/packaging/arch/PKGBUILD"
+grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
+grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
+grep -q "version=$version" "$root/packaging/void/template"
+grep -qx "$version" "$root/quickshell/vshell/VERSION"
+# Gentoo stores its version in the ebuild filename. Metadata generation discovers it by glob,
+# so that generation alone cannot detect a missing release rename.
+test -f "$root/packaging/gentoo/vgs-shell-$version.ebuild"
+# errexit does not fail on a negated pipeline. Use an explicit failure branch.
+# Checksum patterns must cover architecture arrays and indented template fields.
+if grep -qE "sha256sums(_[a-z0-9_]+)?=\('SKIP'\)" "$root/packaging/arch/PKGBUILD"; then
+  echo "check-release: packaging/arch/PKGBUILD still carries a sha256sums SKIP entry" >&2
+  exit 1
+fi
+if grep -qE '^[[:space:]]*checksum=SKIP$' "$root/packaging/void/template"; then
+  echo "check-release: packaging/void/template still carries checksum=SKIP" >&2
+  exit 1
+fi
+
+# The activation message requires agreement between PKGBUILD, .SRCINFO, and the scriptlet.
+grep -q "install='vgs-shell.install'" "$root/packaging/arch/PKGBUILD"
+grep -q '^	install = vgs-shell.install$' "$root/packaging/arch/.SRCINFO"
+test -f "$root/packaging/arch/vgs-shell.install"
+grep -q "install='vgs-shell-git.install'" "$root/packaging/arch/vgs-shell-git/PKGBUILD"
+grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git/.SRCINFO"
+test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
+
+# Every catalogued theme must name a theme-asset release that exists, and the
+# themes the catalog describes must be committed under this release tag.
+"$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
+
+"$root/scripts/gen-package-metadata.py"
+# AUR clients read .SRCINFO, so it must agree with PKGBUILD.
+"$root/scripts/check-aur-sync.py"
+bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
+bash "$root/scripts/check-package-assets.sh"
+git diff --check
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+"$root/scripts/build-release.sh" "$version" "$(uname -m)" "$tmp" >/dev/null
+archive="$tmp/vgs-$version-linux-$(uname -m).tar.gz"
+tar -tzf "$archive" > "$tmp/archive.list"
+grep -q "/bin/vshell-backend$" "$tmp/archive.list"
+grep -q "/quickshell/vshell/shell.qml$" "$tmp/archive.list"
+grep -q "/packaging/install-system.sh$" "$tmp/archive.list"
+# The retired assets archive was the only carrier of the vendored icon themes, and
+# install.sh unpacks this archive rather than running packaging/install-system.sh, so
+# scripts/check-package-assets.sh says nothing about the tarball channel. The Icons
+# settings picker lists a set only when its index.theme is installed beside it, so the
+# bundle's set list is compared with the repository's, set by set.
+sed -n "s|^vgs-$version-linux-[^/]*/config/vshell/icons/\([^/]*\)/index\.theme$|\1|p" \
+  "$tmp/archive.list" | LC_ALL=C sort > "$tmp/icon-sets.have"
+( cd "$root/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%h\n' ) \
+  | sed 's|^\./||' | LC_ALL=C sort > "$tmp/icon-sets.want"
+# The reference is the repository tree, so an empty listing would compare equal to a
+# bundle that shipped none.
+if ! grep -qxF 'Yaru-purple' "$tmp/icon-sets.want"; then
+  echo "check-release: config/vshell/icons lists no Yaru-purple/index.theme, so the icon set comparison below has no reference" >&2
+  exit 1
+fi
+if ! icon_sets_diff="$(diff "$tmp/icon-sets.want" "$tmp/icon-sets.have")"; then
+  echo "check-release: the release bundle's icon sets differ from config/vshell/icons:" >&2
+  printf '%s\n' "$icon_sets_diff" >&2
+  exit 1
+fi
+# The bundle carries exactly the theme package files install-system.sh keeps,
+# as scripts/gen-theme-catalog.py lists them.
+sed -n -e '\|/themes/targets/|d' -e '\|/themes/thumbnails/|d' \
+  -e "s|^vgs-$version-linux-[^/]*/themes/\([^/]*/.*[^/]\)$|\1|p" "$tmp/archive.list" \
+  | LC_ALL=C sort > "$tmp/theme-files.have"
+"$root/scripts/gen-theme-catalog.py" --package-files | LC_ALL=C sort > "$tmp/theme-files.want"
+if ! theme_files_diff="$(diff "$tmp/theme-files.want" "$tmp/theme-files.have")"; then
+  echo "check-release: the release bundle's theme packages differ from scripts/gen-theme-catalog.py --package-files:" >&2
+  printf '%s\n' "$theme_files_diff" >&2
+  exit 1
+fi
+# Compare the thumbnail set with the catalogued themes. A nonempty archive can
+# still omit thumbnails, which leaves the download browser blank for those themes.
+sed -n 's|.*/themes/thumbnails/\(.*\)\.jpg$|\1|p' "$tmp/archive.list" | sort > "$tmp/thumbnails.have"
+python3 -c 'import json, sys; print("\n".join(sorted(t["name"] for t in json.load(open(sys.argv[1]))["themes"])))' \
+  "$root/themes/catalog.json" | sort > "$tmp/thumbnails.want"
+# Any failed comparison must stop the check, including errors while reading either file.
+if ! thumbnail_diff="$(diff "$tmp/thumbnails.want" "$tmp/thumbnails.have")"; then
+  echo "check-release: the release bundle's theme thumbnails do not match the catalogued themes:" >&2
+  printf '%s\n' "$thumbnail_diff" >&2
+  exit 1
+fi
+tar -xzf "$archive" -C "$tmp"
+bundle="$tmp/vgs-$version-linux-$(uname -m)"
+test "$("$bundle/bin/vshell" --version)" = "$version"
+runtime_dir="$tmp/runtime"
+mkdir -p "$runtime_dir"
+XDG_RUNTIME_DIR="$runtime_dir" VGS_BACKEND_SOCKET='' "$bundle/bin/vshell-backend" methods --json \
+  | python3 -c 'import json,sys; expected=sys.argv[1]; actual=json.load(sys.stdin)["cliVersion"]; raise SystemExit(0 if actual == expected else f"backend cliVersion {actual!r} != {expected!r}")' "$version"
+# The tarball ships packaging/install-system.sh and then carries the theme
+# directories that installer copies. build-release.sh spells that set a second
+# time, so drift publishes a tarball whose own installer dies at cp. Void
+# installs exactly this way, so run it.
+DESTDIR="$tmp/tarball-install" VGS_BACKEND_BINARY="$bundle/bin/vshell-backend" \
+  "$bundle/packaging/install-system.sh"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/bauhaus/theme.json"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/roseofdune/theme.json"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/tokyo-night/theme.json"
+test -d "$tmp/tarball-install/usr/lib/vshell/themes/targets"
+test -s "$tmp/tarball-install/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
+test -d "$tmp/tarball-install/usr/lib/vshell/config/vshell/icons"
+echo "release checks passed for $version"

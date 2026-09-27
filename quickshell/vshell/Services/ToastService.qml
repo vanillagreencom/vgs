@@ -1,0 +1,249 @@
+pragma Singleton
+
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import Quickshell
+import qs.Services
+import "ToastAction.js" as ToastAction
+import "ToastQueue.js" as ToastQueue
+
+Singleton {
+    id: root
+
+    readonly property int levelInfo: 0
+    readonly property int levelWarn: 1
+    readonly property int levelError: 2
+    property string currentMessage: ""
+    property int currentLevel: levelInfo
+    property bool toastVisible: false
+    property var toastQueue: []
+    property string currentDetails: ""
+    property string currentCommand: ""
+    property bool hasDetails: false
+    property string wallpaperErrorStatus: ""
+    property int maxQueueSize: 3
+    property var lastErrorTime: ({})
+    property int errorThrottleMs: 1000
+    property string currentCategory: ""
+    readonly property var stickyCategories: ["greeter-autologin-sync", "notification-server-conflict", "notification-server-takeover", "notification-server-takeover-failed"]
+
+    // Protect notices about automatic system changes and their failures from queue trimming.
+    // Replacement by category limits each protected category to one queued entry.
+    readonly property var undroppableCategories: ["notification-server-takeover", "notification-server-takeover-failed"]
+
+    // Expose the displayed action as properties for Toast.qml.
+    // Clear its callback when the toast leaves the screen; queued entries retain only their own callbacks.
+    property string currentActionLabel: ""
+    property string currentActionSettingsTab: ""
+    property var currentActionCallback: null
+    readonly property bool hasAction: currentActionLabel.length > 0 && (currentActionSettingsTab.length > 0 || currentActionCallback !== null)
+
+    function isStickyCategory(category) {
+        return category && stickyCategories.indexOf(category) >= 0
+    }
+
+    function isUndroppableCategory(category) {
+        return !!category && undroppableCategories.indexOf(category) >= 0
+    }
+
+    // A toast with an action has to stay up long enough to read it and reach
+    // the button; the ordinary 1.5s info timeout is not that.
+    function _toastInterval(level, withDetails, withAction) {
+        if (withAction) {
+            return 10000
+        }
+        if (level === levelError) {
+            return withDetails ? 8000 : 5000
+        }
+        return level === levelWarn ? 3000 : 1500
+    }
+
+    function _setCurrentAction(normalized) {
+        currentActionLabel = normalized ? normalized.label : ""
+        currentActionSettingsTab = normalized ? normalized.settingsTab : ""
+        currentActionCallback = normalized ? normalized.callback : null
+    }
+
+    // Runs the displayed toast's action and dismisses it. The action is read
+    // out before hideToast(), because hideToast() is what releases it.
+    function invokeAction() {
+        if (!hasAction) {
+            return
+        }
+
+        const settingsTab = currentActionSettingsTab
+        const callback = currentActionCallback
+        hideToast()
+
+        if (settingsTab) {
+            PopoutService.openSettingsWithTab(settingsTab)
+            return
+        }
+        callback()
+    }
+
+    function showToast(message, level = levelInfo, details = "", command = "", category = "", action = null) {
+        const now = Date.now()
+        const messageKey = message + level
+        const normalizedAction = ToastAction.normalizeAction(action)
+
+        const updatesVisibleToast = !!category && currentCategory === category && toastVisible && currentLevel === level
+
+        // Only changed message content may bypass error throttling; repeats remain throttled.
+        const correctsVisibleToast = updatesVisibleToast && (currentMessage !== message || currentDetails !== (details || ""))
+
+        if (level === levelError && !correctsVisibleToast) {
+            const lastTime = lastErrorTime[messageKey] || 0
+            if (now - lastTime < errorThrottleMs) {
+                return
+            }
+            lastErrorTime[messageKey] = now
+        }
+
+        if (category) {
+            if (updatesVisibleToast) {
+                currentMessage = message
+                currentDetails = details || ""
+                currentCommand = command || ""
+                hasDetails = currentDetails.length > 0 || currentCommand.length > 0
+                _setCurrentAction(normalizedAction)
+                resetToastState()
+                toastTimer.interval = _toastInterval(level, hasDetails, ToastAction.hasAction(normalizedAction))
+                toastTimer.restart()
+                return
+            }
+
+            toastQueue = ToastQueue.dropCategory(toastQueue, category)
+        }
+
+        const isDuplicate = toastQueue.some(toast =>
+            toast.message === message && toast.level === level
+        )
+        if (isDuplicate) {
+            return
+        }
+
+        if (toastQueue.length >= maxQueueSize && !isUndroppableCategory(category)) {
+            if (level === levelError) {
+                // An error makes room by evicting queued errors -- but never an
+                // undroppable entry, of any level. The exemption above only
+                // covers ADMISSION; if it did not hold here too, an error
+                // arriving later could still discard the one message the user
+                // needs, and "undroppable" would be a claim the code does not
+                // keep.
+                toastQueue = ToastQueue.trimToLimit(
+                    ToastQueue.dropLevel(toastQueue, levelError, isUndroppableCategory),
+                    maxQueueSize - 1, isUndroppableCategory)
+            } else {
+                return
+            }
+        }
+
+        toastQueue.push({
+                            "message": message,
+                            "level": level,
+                            "details": details,
+                            "command": command,
+                            "category": category,
+                            "action": normalizedAction
+                        })
+        if (!toastVisible) {
+            processQueue()
+        }
+    }
+
+    function showInfo(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelInfo, details, command, category, action)
+    }
+
+    function showWarning(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelWarn, details, command, category, action)
+    }
+
+    function showError(message, details = "", command = "", category = "", action = null) {
+        showToast(message, levelError, details, command, category, action)
+    }
+
+    function dismissCategory(category) {
+        if (!category) {
+            return
+        }
+
+        if (currentCategory === category && toastVisible) {
+            hideToast()
+            return
+        }
+
+        toastQueue = ToastQueue.dropCategory(toastQueue, category)
+    }
+
+    function hideToast() {
+        toastVisible = false
+        currentMessage = ""
+        currentDetails = ""
+        currentCommand = ""
+        currentCategory = ""
+        hasDetails = false
+        currentLevel = levelInfo
+        _setCurrentAction(null)
+        toastTimer.stop()
+        resetToastState()
+        if (toastQueue.length > 0) {
+            processQueue()
+        }
+    }
+
+    function processQueue() {
+        if (toastQueue.length === 0) {
+            return
+        }
+
+        const toast = toastQueue.shift()
+        currentMessage = toast.message
+        currentLevel = toast.level
+        currentDetails = toast.details || ""
+        currentCommand = toast.command || ""
+        currentCategory = toast.category || ""
+        hasDetails = currentDetails.length > 0 || currentCommand.length > 0
+        _setCurrentAction(toast.action || null)
+        toastVisible = true
+        resetToastState()
+
+        if (isStickyCategory(toast.category)) {
+            toastTimer.stop()
+        } else {
+            toastTimer.interval = _toastInterval(toast.level, hasDetails, ToastAction.hasAction(toast.action))
+            toastTimer.start()
+        }
+    }
+
+    signal resetToastState
+
+    function stopTimer() {
+        toastTimer.stop()
+    }
+
+    function restartTimer() {
+        if (isStickyCategory(currentCategory)) {
+            return
+        }
+        if (hasAction || (hasDetails && currentLevel === levelError)) {
+            toastTimer.interval = _toastInterval(currentLevel, hasDetails, hasAction)
+            toastTimer.restart()
+        }
+    }
+
+    function clearWallpaperError() {
+        wallpaperErrorStatus = ""
+    }
+
+    Timer {
+        id: toastTimer
+
+        interval: 5000
+        running: false
+        repeat: false
+        onTriggered: hideToast()
+    }
+}

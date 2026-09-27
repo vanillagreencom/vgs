@@ -1,0 +1,19 @@
+{
+    "id": "sudoToggle",
+    "name": "Passwordless Sudo",
+    "description": "Turn passwordless sudo on or off for your user.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "gpp_maybe",
+    "components": {
+        "widget": "./SudoToggleWidget.qml",
+        "daemon": "./SudoToggleDaemon.qml"
+    },
+    "settings": "./SudoToggleSettings.qml",
+    "requires_shell": ">=0.1.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

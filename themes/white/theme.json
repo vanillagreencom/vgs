@@ -1,0 +1,10 @@
+{
+  "name": "white",
+  "mode": "light",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-white.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.82, "floor": 3}
+  ]
+}

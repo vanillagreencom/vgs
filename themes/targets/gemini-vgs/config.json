@@ -1,0 +1,14 @@
+{
+  "app": "gemini",
+  "template": "vgs.json",
+  "destination": "~/.gemini/themes/vgs.json",
+  "detect": {
+    "commands": [
+      "gemini"
+    ],
+    "paths": [
+      "~/.gemini"
+    ]
+  },
+  "hook": "gemini-theme-select"
+}

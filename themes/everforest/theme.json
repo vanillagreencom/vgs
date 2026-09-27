@@ -1,0 +1,10 @@
+{
+  "name": "everforest",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-tree-tops.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.55, "floor": 3}
+  ]
+}

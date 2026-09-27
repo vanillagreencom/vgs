@@ -1,0 +1,15 @@
+{
+  "app": "chromium",
+  "template": "chromium.rgb",
+  "destination": "~/.config/vshell/generated/chromium.rgb",
+  "curatedFile": "chromium.theme",
+  "detect": {
+    "commands": [
+      "chromium",
+      "chromium-browser",
+      "google-chrome",
+      "brave"
+    ]
+  },
+  "hook": "chromium-policy"
+}

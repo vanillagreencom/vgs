@@ -1,0 +1,11 @@
+{
+  "app": "emacs",
+  "template": "vgs-theme.el",
+  "destination": "~/.config/emacs/vgs-theme.el",
+  "curatedFile": "emacs.el",
+  "detect": {
+    "commands": [
+      "emacs"
+    ]
+  }
+}

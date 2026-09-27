@@ -1,0 +1,10 @@
+{
+  "name": "osaka-jade",
+  "mode": "dark",
+  "pair": "",
+  "source": "curated",
+  "wallpaper": "1-glowing-city.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.91, "floor": 3}
+  ]
+}
