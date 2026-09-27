@@ -406,6 +406,61 @@ var TOKENS = {
         paddingBottom: length("{space.xs}")
     },
 
+    popover: {
+        radius: length("{radius.md}"),
+        padding: length("{space.md}"),
+        gap: length("{space.xs}"),
+        background: color("{color.surfaceRaised}"),
+        border: color("{color.borderStrong}")
+    },
+
+    tooltip: {
+        delay: number(500, 0, 5000),
+        radius: length("{radius.sm}"),
+        paddingX: length("{space.sm}"),
+        paddingY: length("{space.xxs}"),
+        gap: length("{space.xs}"),
+        background: color("{color.inverse}"),
+        foreground: color("contrast({tooltip.background})")
+    },
+
+    menu: {
+        minWidth: length(160),
+        radius: length("{radius.md}"),
+        padding: length("{space.xxs}"),
+        gap: length("{space.xs}"),
+        background: color("{color.surfaceRaised}"),
+        border: color("{color.borderStrong}"),
+        item: {
+            height: length("{size.control.md}"),
+            paddingX: length("{space.sm}"),
+            radius: length("{radius.sm}"),
+            hover: color("{color.surfaceHover}"),
+            foreground: color("{color.text}"),
+            shortcut: color("{color.textFaint}")
+        }
+    },
+
+    select: {
+        maxHeight: length(280),
+        gap: length("{space.xs}"),
+        highlight: color("{color.surfaceHover}"),
+        selected: color("{color.accentSubtle}"),
+        selectedForeground: color("{color.accent}")
+    },
+
+    toast: {
+        width: length("{size.panel.md}"),
+        margin: length("{space.lg}"),
+        gap: length("{space.sm}"),
+        padding: length("{space.md}"),
+        radius: length("{radius.md}"),
+        duration: number(5000, 0, 60000),
+        corner: { type: "choice", value: "top-right", options: ["top-left", "top-right", "bottom-left", "bottom-right"] },
+        background: color("{color.surfaceRaised}"),
+        border: color("{color.borderStrong}")
+    },
+
     scrollArea: {
         barWidth: length("{space.xs}"),
         barRadius: length("{radius.full}"),

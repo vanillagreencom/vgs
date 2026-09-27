@@ -18,6 +18,17 @@ Singleton {
     property var queue: []
     property var completion: null
 
+    // The screen a surface lands on when nothing chose one: the focused
+    // monitor, or the first screen when Hyprland names none Quickshell
+    // knows, or null with no screen at all.
+    function focusedScreen() {
+        const monitor = Hyprland.focusedMonitor;
+        const screens = Quickshell.screens;
+        for (let i = 0; i < screens.length; i++)
+            if (monitor !== null && screens[i].name === monitor.name) return screens[i];
+        return screens.length > 0 ? screens[0] : null;
+    }
+
     // Send one dispatcher Dispatch.js knows. Returns `ok` once the request
     // is accepted, or the keyed refusal; the reply is judged when it lands.
     function send(name, args) {

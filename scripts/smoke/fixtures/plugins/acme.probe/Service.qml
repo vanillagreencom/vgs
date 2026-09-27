@@ -10,6 +10,9 @@ Item {
     property string duplicateIpc: ""
     property int notified: 0
     property string lastSummary: ""
+    // title -> disposer of a toast this service showed.
+    property var toasts: ({})
+    property string lastToastRefusal: ""
     readonly property bool lockSecure: shell !== null && shell.lock.secure
     readonly property bool hasAgent: shell !== null && shell.polkit.agent !== null
     readonly property bool agentRegistered: shell !== null && shell.polkit.registered
@@ -36,6 +39,22 @@ Item {
         // N dispatches of one request in one call; answers the last reply.
         shell.ipc.handle("flood", arg => { const a = arg.split(" "); let last = ""; for (let i = 0; i < Number(a[0]); i++) last = root.shell.compositor[a[1]].apply(null, a.slice(2)); return last; });
         shell.notifications.subscribe(n => { root.notified += 1; root.lastSummary = n.summary; });
+        // toast <title>[|<tone>[|<duration>]] shows one; a refusal is kept
+        // and answered. untoast <title> runs its disposer.
+        shell.ipc.handle("toast", arg => {
+            const parts = arg.split("|");
+            const options = { title: parts[0] };
+            if (parts[1] !== undefined && parts[1] !== "") options.tone = parts[1];
+            if (parts[2] !== undefined) options.duration = Number(parts[2]);
+            try {
+                root.toasts[parts[0]] = root.shell.toasts.show(options);
+                return "ok";
+            } catch (e) {
+                root.lastToastRefusal = e.message;
+                return e.message;
+            }
+        });
+        shell.ipc.handle("untoast", title => { const release = root.toasts[title]; if (release === undefined) return "absent"; release(); delete root.toasts[title]; return "ok"; });
         // A lock holder rebuilt into a locked session hands its screen over again.
         if (shell.lock.locked) shell.lock.lock(lockContent);
     }

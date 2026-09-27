@@ -9,7 +9,18 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts"];
+
+// The toast stack's ceilings: how many show at once and how many wait. Core
+// policy; a theme sets the look and the default duration, never these.
+var TOAST_VISIBLE_MAX = 3;
+var TOAST_QUEUE_MAX = 20;
+var TOAST_TONES = ["neutral", "accent", "success", "warning", "danger", "info"];
+var TOAST_KEYS = ["title", "message", "tone", "icon", "duration"];
+// A toast's title is one line and its message a few: longer text is not a
+// toast.
+var TOAST_TITLE_MAX = 120;
+var TOAST_MESSAGE_MAX = 600;
 
 // Capabilities whose core object serves one plugin at a time: the session
 // lock and the polkit agent. A second plugin naming one is not built while
@@ -526,6 +537,32 @@ function lendRefusal(held, manifest) {
             return "refused: capability=" + name + " held-by=" + held[name];
     }
     return "";
+}
+
+// Judge one toast's options, the argument of shell.toasts.show: an object
+// with a non-empty string `title`, an optional string `message`, `tone`
+// from TOAST_TONES, an optional string `icon` and an optional `duration` in
+// whole milliseconds at or above zero, zero meaning until dismissed.
+// Answers { ok: true, value } with every key present, or { ok: false,
+// error } with the offending key first.
+function toastOptions(raw) {
+    if (!isPlainObject(raw))
+        return { ok: false, error: "options must be an object" };
+    var keys = Object.keys(raw);
+    for (var i = 0; i < keys.length; i++)
+        if (TOAST_KEYS.indexOf(keys[i]) === -1)
+            return { ok: false, error: keys[i] + " unknown" };
+    if (typeof raw.title !== "string" || raw.title.trim() === "" || raw.title.length > TOAST_TITLE_MAX)
+        return { ok: false, error: "title must be a string of 1 to " + TOAST_TITLE_MAX + " characters" };
+    if (raw.message !== undefined && (typeof raw.message !== "string" || raw.message.length > TOAST_MESSAGE_MAX))
+        return { ok: false, error: "message must be a string of at most " + TOAST_MESSAGE_MAX + " characters" };
+    if (raw.tone !== undefined && TOAST_TONES.indexOf(raw.tone) === -1)
+        return { ok: false, error: "tone must be one of " + TOAST_TONES.join(", ") };
+    if (raw.icon !== undefined && typeof raw.icon !== "string")
+        return { ok: false, error: "icon must be a string" };
+    if (raw.duration !== undefined && !(typeof raw.duration === "number" && isFinite(raw.duration) && raw.duration >= 0 && Math.floor(raw.duration) === raw.duration))
+        return { ok: false, error: "duration must be a whole number of milliseconds at or above 0" };
+    return { ok: true, value: { title: raw.title, message: raw.message === undefined ? "" : raw.message, tone: raw.tone === undefined ? "neutral" : raw.tone, icon: raw.icon === undefined ? "" : raw.icon, duration: raw.duration === undefined ? null : raw.duration } };
 }
 
 // Layer placement for a summon without an item anchor. Popups delegate

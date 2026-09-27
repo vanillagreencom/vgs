@@ -1,7 +1,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Hyprland
 import qs.Core
 import qs.Commons
 
@@ -30,16 +29,6 @@ Scope {
 
     Component.onCompleted: Plugins.registerHost(kind, host)
 
-    // The screen a summon without an anchor lands on: the focused monitor,
-    // or the first screen when Hyprland names none Quickshell knows.
-    function focusedScreen() {
-        const monitor = Hyprland.focusedMonitor;
-        const screens = Quickshell.screens;
-        for (let i = 0; i < screens.length; i++)
-            if (monitor !== null && screens[i].name === monitor.name) return screens[i];
-        return screens.length > 0 ? screens[0] : null;
-    }
-
     // Open `id`, or hand an open one the new payload. `origin` is null for
     // an IPC summon, or { anchor, screen } for one from a plugin. The
     // anchor is the item whose window owns the popup.
@@ -53,7 +42,7 @@ Scope {
             drop(id);
             return "refused: open-failed=" + id;
         }
-        const screen = origin && origin.screen ? origin.screen : focusedScreen();
+        const screen = origin && origin.screen ? origin.screen : Compositor.focusedScreen();
         if (screen === null) return "refused: screen=none";
         const next = Object.assign({}, requests);
         next[id] = { payloadJson: payloadJson, anchor: origin ? origin.anchor : null, anchored: !!(origin && origin.anchor), screen: screen };

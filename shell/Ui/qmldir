@@ -23,3 +23,11 @@ ScrollArea 1.0 layout/ScrollArea.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
 SectionHeader 1.0 layout/SectionHeader.qml
+Select 1.0 controls/Select.qml
+Toast 1.0 feedback/Toast.qml
+Popover 1.0 overlay/Popover.qml
+Tooltip 1.0 overlay/Tooltip.qml
+Menu 1.0 overlay/Menu.qml
+MenuItem 1.0 overlay/MenuItem.qml
+internal AnchorTracker overlay/AnchorTracker.qml
+singleton OverlayState 1.0 overlay/OverlayState.qml
