@@ -48,7 +48,7 @@ mutations=(
   "the icon keeps an unknown name's paths|foundation/Icon.qml|return [\"\", \"\"];|return Lucide.ICONS.circle;|tst_icon.qml"
   "the focus ring ignores a text input's focus|foundation/FocusRing.qml|visible: target.visualFocus === undefined ? target.activeFocus : target.visualFocus|visible: target.visualFocus === true|tst_textfield.qml"
   "the progress fill stays displaced|feedback/ProgressBar.qml|onStopped: fill.x = Qt.binding(() => root.mirrored && !root.indeterminate ? fill.parent.width - fill.width : 0)|onStopped: {}|tst_feedback.qml"
-  "the popover does not count as open|overlay/Popover.qml|onVisibleChanged: visible ? OverlayState.opened() : OverlayState.closed()|onVisibleChanged: {}|tst_overlays.qml"
+  "the popover does not count as open|overlay/Popover.qml|onVisibleChanged: root.share(visible)|onVisibleChanged: {}|tst_overlays.qml"
   "a hidden anchor leaves its popup open|overlay/AnchorTracker.qml|function onVisibleChanged() { if (!target.visible) tracker.popup.visible = false; }|function onVisibleChanged() {}|tst_overlays.qml"
   "a moved anchor leaves its popup behind|overlay/AnchorTracker.qml|if (popup.visible) popup.anchor.updateAnchor();|return;|tst_overlays.qml"
   "the tooltip opens under an open overlay|overlay/Tooltip.qml|if (root.resting && OverlayState.open === 0) window.visible = true|if (root.resting) window.visible = true|tst_overlays.qml"
