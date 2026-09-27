@@ -19,6 +19,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the shipped bar's manager built-in, reached through the `manager` capability; its mechanism is core.
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
+- Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token.
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion under `scripts/smoke/rows/` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
@@ -57,6 +58,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D014](../decisions/D014-source-revisions-are-published-snapshots.md): a plugin's source revision is a published snapshot; a rescan rebuilds only the plugins whose files changed.
 - [D015](../decisions/D015-tokens-are-a-judged-table.md): tokens are one JavaScript table judged by pure functions and published as frozen objects.
 - [D016](../decisions/D016-bundled-variable-font.md): one bundled variable font; a theme names families and ships no font file.
+- [D017](../decisions/D017-templates-and-path-icons.md): controls extend `QtQuick.Templates`; icons are Lucide path data drawn with `QtQuick.Shapes`.
 
 ## Topics
 

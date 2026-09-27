@@ -58,6 +58,25 @@ function status(name) {
     return out;
 }
 
+// One button variant: its fill, the text on it, the hover and pressed
+// fills moved from that fill, and its outline. `path` is the variant's own
+// path, so a theme that sets one fill keeps every value derived from it.
+function variant(path, background, fontWeight, hoverToward, pressedToward) {
+    return {
+        background: color(background),
+        foreground: color("contrast({" + path + ".background})"),
+        hover: color("mix({" + path + ".background}, {" + hoverToward + "}, 0.12)"),
+        pressed: color("mix({" + path + ".background}, {" + pressedToward + "}, 0.24)"),
+        border: color("{" + path + ".background}"),
+        weight: weight(fontWeight)
+    };
+}
+
+// One badge tone: a faint fill of the role with the role as its text.
+function tone(role) {
+    return { background: color("{color." + role + "Subtle}"), foreground: color("{color." + role + "}") };
+}
+
 function merge() {
     var out = {};
     for (var i = 0; i < arguments.length; i++)
@@ -194,8 +213,204 @@ var TOKENS = {
         code: role(0.92, 400, 0, 1.4, false, "text")
     },
 
+    surface: {
+        radius: length("{radius.md}"),
+        border: length("{border.thin}"),
+        padding: length("{space.lg}"),
+        level: {
+            base: { background: color("{color.surface}"), border: color("{color.border}") },
+            raised: { background: color("{color.surfaceRaised}"), border: color("{color.borderStrong}") },
+            sunken: { background: color("{color.surfaceSunken}"), border: color("{color.borderSubtle}") }
+        }
+    },
+
+    divider: {
+        thickness: length("{border.thin}"),
+        color: color("{color.border}")
+    },
+
+    focusRing: {
+        width: length("{border.thick}"),
+        offset: length(2),
+        radius: length("{radius.sm}"),
+        color: color("{color.focus}")
+    },
+
+    button: {
+        radius: length("{radius.md}"),
+        border: length("{border.thin}"),
+        paddingX: length("{space.md}"),
+        gap: length("{space.xs}"),
+        variant: {
+            primary: variant("button.variant.primary", "{color.accent}", 700, "palette.foreground", "palette.background"),
+            secondary: variant("button.variant.secondary", "{color.inverse}", 500, "palette.background", "palette.background"),
+            tertiary: merge(variant("button.variant.tertiary", "{color.surface}", 500, "palette.foreground", "palette.foreground"), {
+                foreground: color("{color.text}"),
+                border: color("{color.border}")
+            }),
+            ghost: merge(variant("button.variant.ghost", "alpha({palette.background}, 0)", 500, "palette.foreground", "palette.foreground"), {
+                foreground: color("{color.text}"),
+                hover: color("{color.surfaceHover}"),
+                pressed: color("{color.surfaceRaised}"),
+                border: color("alpha({palette.background}, 0)")
+            }),
+            danger: variant("button.variant.danger", "{color.danger}", 600, "palette.foreground", "palette.background")
+        },
+        checked: {
+            background: color("{color.accentSubtle}"),
+            foreground: color("{color.accent}"),
+            border: color("{color.accent}")
+        }
+    },
+
+    segmented: {
+        height: length("{size.control.md}"),
+        radius: length("{radius.sm}"),
+        padding: length("{space.xxs}"),
+        gap: length("{space.xxs}"),
+        background: color("{color.surfaceSunken}"),
+        border: color("{color.border}"),
+        foreground: color("{color.textMuted}"),
+        selected: color("{color.surfaceRaised}"),
+        selectedForeground: color("{color.text}")
+    },
+
+    toggle: {
+        width: length(36),
+        height: length(20),
+        inset: length("{space.xxs}"),
+        radius: length("{radius.full}"),
+        on: color("{color.accent}"),
+        off: color("{color.borderStrong}"),
+        knobOn: color("contrast({toggle.on})"),
+        knobOff: color("contrast({toggle.off})"),
+        gap: length("{space.sm}")
+    },
+
+    checkbox: {
+        size: length("{icon.size.md}"),
+        radius: length("{radius.sm}"),
+        border: length("{border.thin}"),
+        background: color("{color.surfaceSunken}"),
+        borderColor: color("{color.borderStrong}"),
+        checked: color("{color.accent}"),
+        mark: color("contrast({checkbox.checked})"),
+        gap: length("{space.sm}")
+    },
+
+    radio: {
+        size: length("{icon.size.md}"),
+        border: length("{border.thin}"),
+        background: color("{color.surfaceSunken}"),
+        borderColor: color("{color.borderStrong}"),
+        checked: color("{color.accent}"),
+        dot: length(6),
+        gap: length("{space.sm}")
+    },
+
+    slider: {
+        track: length(4),
+        handle: length(14),
+        radius: length("{radius.full}"),
+        trackColor: color("{color.borderStrong}"),
+        fill: color("{color.accent}"),
+        handleColor: color("{color.text}"),
+        handleBorder: color("{color.background}")
+    },
+
+    textField: {
+        height: length("{size.control.md}"),
+        radius: length("{radius.sm}"),
+        border: length("{border.thin}"),
+        paddingX: length("{space.sm}"),
+        gap: length("{space.xs}"),
+        background: color("{color.surfaceSunken}"),
+        borderColor: color("{color.border}"),
+        hover: color("{color.borderStrong}"),
+        focus: color("{color.focus}"),
+        error: color("{color.danger}"),
+        placeholder: color("{color.textFaint}"),
+        icon: color("{color.textMuted}"),
+        selection: color("{color.selection}"),
+        selectedText: color("{color.text}")
+    },
+
     field: {
-        labelWidth: length(120)
+        inline: flag(false),
+        labelWidth: length(120),
+        gap: length("{space.xxs}")
+    },
+
+    spinner: {
+        size: length("{icon.size.md}"),
+        stroke: number("{icon.stroke}", 0.5, 4),
+        color: color("{color.accent}"),
+        track: color("{color.border}"),
+        duration: duration(900)
+    },
+
+    progress: {
+        height: length("{space.xs}"),
+        radius: length("{radius.full}"),
+        track: color("{color.border}"),
+        fill: color("{color.accent}"),
+        indeterminateShare: share(0.3),
+        duration: duration(1200)
+    },
+
+    badge: {
+        height: length(20),
+        radius: length("{radius.sm}"),
+        paddingX: length("{space.xs}"),
+        tone: {
+            neutral: { background: color("{color.surfaceRaised}"), foreground: color("{color.textMuted}") },
+            accent: tone("accent"),
+            success: tone("success"),
+            warning: tone("warning"),
+            danger: tone("danger"),
+            info: tone("info")
+        }
+    },
+
+    kbd: {
+        radius: length("{radius.sm}"),
+        border: length("{border.thin}"),
+        paddingX: length("{space.xxs}"),
+        background: color("{color.surfaceRaised}"),
+        borderColor: color("{color.borderStrong}"),
+        foreground: color("{color.textMuted}")
+    },
+
+    tabs: {
+        height: length("{size.control.md}"),
+        gap: length("{space.md}"),
+        indicator: length("{border.thick}"),
+        indicatorColor: color("{color.accent}"),
+        foreground: color("{color.textMuted}"),
+        active: color("{color.text}"),
+        border: color("{color.border}")
+    },
+
+    listItem: {
+        height: length("{size.control.lg}"),
+        paddingX: length("{space.sm}"),
+        gap: length("{space.sm}"),
+        radius: length("{radius.sm}"),
+        hover: color("{color.surfaceHover}"),
+        selected: color("{color.accentSubtle}"),
+        selectedForeground: color("{color.accent}")
+    },
+
+    sectionHeader: {
+        paddingTop: length("{space.md}"),
+        paddingBottom: length("{space.xs}")
+    },
+
+    scrollArea: {
+        barWidth: length("{space.xs}"),
+        barRadius: length("{radius.full}"),
+        bar: color("{color.borderStrong}"),
+        barHover: color("{color.textFaint}")
     },
 
     bar: {

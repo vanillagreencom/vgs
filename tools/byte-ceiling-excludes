@@ -1,3 +1,4 @@
 # kendex-guard-dialect: legacy-glob
 # Byte-ceiling exclusions use pattern<TAB>reason. Globs match full repository paths; * crosses /.
 shell/assets/*	bundled binary assets: the design system font and its licence
+shell/Ui/icons/Lucide.js	generated Lucide path data, written by scripts/vendor-lucide

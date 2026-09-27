@@ -4,11 +4,12 @@
 #
 # Usage: scripts/validate [AREA] [--changed BASE] [--list]
 #   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
-#   qml, all (default: all). One area per call.
+#   unit, qml, all (default: all). One area per call.
 #   repo holds the checks this file makes itself, the whitespace
 #   row and the self-check that every scripts/test-* file has a row;
-#   scripts/test-validate.sh, under tools, is their control. offline runs
-#   every row but the nested smoke.
+#   scripts/test-validate.sh, under tools, is their control. unit runs the
+#   QML unit tests, which need Qt and no Wayland session; offline runs
+#   every row but unit and the nested smoke, and is what CI runs.
 #   --changed BASE selects rows whose inputs changed against BASE, including
 #   staged, unstaged and untracked files. Renames include both paths. Unknown
 #   inputs or an unreadable diff select the whole area. Repository checks
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 case "$area" in
-  logic|manifests|boundary|cli|tools|repo|offline|qml|all) ;;
+  logic|manifests|boundary|cli|tools|repo|offline|unit|qml|all) ;;
   *) printf 'validate: refused: area=%s\n' "$area" >&2; exit 2 ;;
 esac
 failed=()
@@ -75,6 +76,7 @@ rows=(
   "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js scripts/qml-library.js"
   "logic|library loader controls|node scripts/test-qml-library.js|scripts/qml-library.js"
   "logic|theme judge table|node scripts/test-theme-logic.js|shell/Commons/ThemeLogic.js shell/Commons/Tokens.js scripts/qml-library.js"
+  "logic|lucide icon data|node scripts/test-lucide-data.js|shell/Ui/icons/Lucide.js scripts/qml-library.js"
   "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
   "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
@@ -91,6 +93,8 @@ rows=(
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js bin/vgsh-scan scripts/smoke/fixtures/*"
+  "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
+  "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/*"
   "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* scripts/smoke/* scripts/sample-shell-memory.sh scripts/qml-library.js"
 )
 
@@ -244,7 +248,7 @@ for i in "${!rows[@]}"; do
   IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
   case "$area" in
     all) ;;
-    offline) [[ $row_area == qml ]] && continue ;;
+    offline) [[ $row_area == qml || $row_area == unit ]] && continue ;;
     *) [[ $area != "$row_area" ]] && continue ;;
   esac
   [[ ${affected[i]} == true || $row_area == repo ]] || continue

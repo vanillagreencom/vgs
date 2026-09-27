@@ -109,6 +109,30 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 
 Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow`, `FloatingWindow`, `PopupWindow`, `WlSessionLock`, `WlSessionLockSurface`, `WlrLayershell`, `Window`, `ApplicationWindow`, and the types the core lends through a capability: `IpcHandler`, `GlobalShortcut`, `NotificationServer`, `PolkitAgent`. `Hyprland.dispatch` is refused; use `shell.compositor`.
 
+## Components in `qs.Ui`
+
+`shell/Ui/qmldir` is the list. Each component's header states what it takes; the names below are what a plugin composes.
+
+| Component | Base | Takes |
+|---|---|---|
+| `Label` | `Text` | `role`: a group of `Theme.text` (`display`, `h1`, `h2`, `h3`, `eyebrow`, `subheading`, `body`, `bodyStrong`, `label`, `hint`, `tooltip`, `button`, `code`) |
+| `Icon` | `Item` | `name`: a Lucide icon; `size`, `color`, `stroke` |
+| `Surface`, `Divider`, `FocusRing` | `Rectangle` | `level`; `vertical`; `target` |
+| `Button`, `IconButton`, `ToggleButton` | `T.Button` | `text`, `iconName`, `variant` (`primary`, `secondary`, `tertiary`, `ghost`, `danger`), `size` (`sm`, `md`, `lg`); `label` for an icon button |
+| `SegmentedControl` | `Rectangle` | `model`, `currentIndex`, `activated(index)` |
+| `Switch`, `Checkbox`, `Radio` | `T.Switch`, `T.CheckBox`, `T.RadioButton` | `text`, `checked` |
+| `Slider` | `T.Slider` | `from`, `to`, `value`, `stepSize` |
+| `TextField` | `T.TextField` | `placeholderText`, `leadingIcon`, `trailingIcon`, `actions`, `error`, `validator` |
+| `Field` | `Column` | `label`, `hint`, `error`, `inline`; the control as its child |
+| `Spinner`, `ProgressBar` | `Item`, `T.ProgressBar` | `running`; `value`, `indeterminate` |
+| `Badge`, `Kbd` | `Rectangle` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text` |
+| `ScrollArea` | `Flickable` | its children |
+| `Tabs` | `T.TabBar` | `model`, `currentIndex` |
+| `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted` |
+| `SectionHeader` | `Column` | `text`, `description` |
+
+A name a component does not know is logged and drawn as the default. A control's `background`, `contentItem`, `indicator` or `handle` may be replaced on one instance to restyle it.
+
 ## Singletons in `qs.Commons`
 
 | Member | Type |
