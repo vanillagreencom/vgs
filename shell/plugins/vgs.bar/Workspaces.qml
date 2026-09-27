@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import qs.Ui
 
 // Workspace numbers from the shared Workspaces token. Focusing one goes
 // through the bar's own compositor capability, which checks the argument
@@ -30,13 +31,13 @@ Item {
                 Layout.preferredHeight: Theme.bar.height - Theme.space.sm
                 radius: Theme.radius.sm
                 color: focused ? Theme.bar.active : "transparent"
+                Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
 
-                Text {
+                Label {
                     anchors.centerIn: parent
+                    role: "body"
                     text: String(parent.modelData)
                     color: parent.focused ? Theme.bar.onActive : Theme.bar.foreground
-                    font.family: Theme.text.body.family
-                    font.pixelSize: Theme.text.body.size
                 }
 
                 MouseArea {

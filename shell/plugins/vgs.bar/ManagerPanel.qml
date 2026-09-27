@@ -1,7 +1,7 @@
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
 import qs.Commons
+import qs.Ui
 import "Reply.js" as Reply
 
 // The plugin manager: every discovered plugin with its enabled state, and a
@@ -49,100 +49,84 @@ Item {
     }
 
     implicitWidth: Theme.size.panel.md
-    implicitHeight: Math.min(list.implicitHeight + 2 * Theme.space.lg, Theme.size.panel.maxHeight)
+    implicitHeight: Math.min(list.implicitHeight + 2 * Theme.surface.padding, Theme.size.panel.maxHeight)
 
-    Rectangle {
+    Surface {
         anchors.fill: parent
-        color: Theme.color.surface
-        radius: Theme.radius.md
-        border.color: Theme.color.border
-        border.width: Theme.border.thin
-    }
 
-    Flickable {
-        anchors.fill: parent
-        anchors.margins: Theme.space.lg
-        contentHeight: list.implicitHeight
-        clip: true
+        ScrollArea {
+            anchors.fill: parent
+            anchors.margins: Theme.surface.padding
 
-        ColumnLayout {
-            id: list
-            width: parent.width
-            spacing: Theme.space.md
+            Column {
+                id: list
+                width: parent.width
+                spacing: Theme.space.md
 
-            Repeater {
-                id: rows
-                model: ScriptModel {
-                    values: root.plugins
-                    objectProp: "id"
-                }
+                SectionHeader { text: "Plugins"; description: "Every plugin the shell found, and the settings each declares" }
 
-                ColumnLayout {
-                    id: entry
-                    required property var modelData
-                    Layout.fillWidth: true
-                    spacing: Theme.space.xs
+                Repeater {
+                    id: rows
+                    model: ScriptModel {
+                        values: root.plugins
+                        objectProp: "id"
+                    }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            Layout.fillWidth: true
+                    Column {
+                        id: entry
+                        required property var modelData
+                        // The list, not `parent`, which is null while the
+                        // repeater tears the row down.
+                        width: list.width
+                        spacing: Theme.space.xs
+
+                        ListItem {
+                            width: parent.width
                             text: entry.modelData.name
-                            color: Theme.color.text
-                            font.family: Theme.text.body.family
-                            font.pixelSize: Theme.text.body.size
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            text: entry.modelData.version
-                            color: Theme.color.textMuted
-                            font.family: Theme.text.hint.family
-                            font.pixelSize: Theme.text.hint.size
-                        }
-                        Switch {
-                            on: entry.modelData.enabled
-                            onClicked: root.toggle(entry.modelData.id)
-                        }
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        visible: text !== ""
-                        text: root.replies[entry.modelData.id] || ""
-                        color: Theme.color.danger
-                        wrapMode: Text.Wrap
-                        font.family: Theme.text.hint.family
-                        font.pixelSize: Theme.text.hint.size
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: entry.modelData.description
-                        color: Theme.color.textMuted
-                        wrapMode: Text.Wrap
-                        font.family: Theme.text.hint.family
-                        font.pixelSize: Theme.text.hint.size
-                    }
-
-                    Repeater {
-                        id: fields
-                        model: ScriptModel {
-                            values: Object.keys(entry.modelData.schema)
+                            secondary: entry.modelData.version + "  " + entry.modelData.description
+                            iconName: "package"
+                            trailing: [
+                                Switch {
+                                    checked: entry.modelData.enabled
+                                    onToggled: {
+                                        checked = Qt.binding(() => entry.modelData.enabled);
+                                        root.toggle(entry.modelData.id);
+                                    }
+                                }
+                            ]
                         }
 
-                        SettingField {
-                            required property string modelData
-                            Layout.fillWidth: true
-                            pluginId: entry.modelData.id
-                            key: modelData
-                            spec: entry.modelData.schema[modelData]
-                            value: entry.modelData.settings[modelData]
-                            editable: entry.modelData.enabled
-                            // An editor loses focus while the panel is
-                            // torn down and emits apply into a panel that
-                            // is gone; that edit was never committed.
-                            onApply: v => { if (root !== null) root.writeSetting(pluginId, key, v); }
+                        Label {
+                            role: "hint"
+                            width: parent.width
+                            visible: text !== ""
+                            text: root.replies[entry.modelData.id] || ""
+                            color: Theme.color.danger
+                            wrapMode: Text.Wrap
                         }
+
+                        Repeater {
+                            id: fields
+                            model: ScriptModel {
+                                values: Object.keys(entry.modelData.schema)
+                            }
+
+                            SettingField {
+                                required property string modelData
+                                width: parent.width
+                                pluginId: entry.modelData.id
+                                key: modelData
+                                spec: entry.modelData.schema[modelData]
+                                value: entry.modelData.settings[modelData]
+                                editable: entry.modelData.enabled
+                                // An editor loses focus while the panel is
+                                // torn down and emits apply into a panel that
+                                // is gone; that edit was never committed.
+                                onApply: v => { if (root !== null) root.writeSetting(pluginId, key, v); }
+                            }
+                        }
+
+                        Divider { width: parent.width }
                     }
                 }
             }

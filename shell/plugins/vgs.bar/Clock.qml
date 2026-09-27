@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Ui
 
 // Date and time from the shared clock, in the bar's `clockFormat`. The
 // shared clock ticks once a second only while some format on some screen
@@ -21,12 +22,11 @@ Item {
     implicitWidth: label.implicitWidth
     implicitHeight: Theme.bar.height
 
-    Text {
+    Label {
         id: label
         anchors.centerIn: parent
+        role: "body"
         text: Qt.formatDateTime(Time.now, root.format)
         color: Theme.bar.foreground
-        font.family: Theme.text.body.family
-        font.pixelSize: Theme.text.body.size
     }
 }
