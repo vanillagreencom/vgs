@@ -36,7 +36,10 @@ Item {
         }
 
         function test_keys_move_the_choice() {
-            control.forceActiveFocus();
+            const ring = control.children[control.children.length - 1];
+            compare(ring.visible, false);
+            control.forceActiveFocus(Qt.TabFocusReason);
+            compare(ring.visible, true);
             keyClick(Qt.Key_Right);
             compare(control.currentIndex, 1);
             keyClick(Qt.Key_Right);
@@ -45,6 +48,8 @@ Item {
             keyClick(Qt.Key_Left);
             compare(control.currentIndex, 1);
             compare(activations.count, 3);
+            control.focus = false;
+            compare(ring.visible, false);
         }
 
         function test_theme_change_moves_the_segments() {

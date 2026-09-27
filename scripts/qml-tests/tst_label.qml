@@ -50,10 +50,10 @@ Item {
         }
 
         function test_theme_change_moves_the_role() {
-            compare(UnitTheme.override({ text: { body: { size: 20, family: "Inter", uppercase: true } } }), "ok");
+            compare(UnitTheme.override({ text: { body: { size: 20, family: "No Such Family VGS", uppercase: true } } }), "ok");
             compare(body.font.pixelSize, 20);
             compare(body.font.capitalization, Font.AllUppercase);
-            // Inter is not on this machine: the bundled family stands in.
+            // An absent family draws with the bundled one.
             compare(body.font.family, "JetBrains Mono");
         }
 

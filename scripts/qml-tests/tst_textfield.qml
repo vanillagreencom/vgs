@@ -38,13 +38,17 @@ Item {
         }
 
         function test_outline_follows_focus_and_error() {
+            const ring = plain.background.children[plain.background.children.length - 1];
             compare(String(plain.outline), String(Qt.color(Theme.textField.borderColor)));
+            compare(ring.visible, false);
             plain.forceActiveFocus();
             compare(String(plain.outline), String(Qt.color(Theme.textField.focus)));
+            compare(ring.visible, true);
             plain.error = true;
             compare(String(plain.outline), String(Qt.color(Theme.textField.error)));
             plain.error = false;
             plain.focus = false;
+            compare(ring.visible, false);
             mouseMove(plain, plain.width / 2, plain.height / 2);
             tryCompare(plain, "hovered", true);
             compare(String(plain.outline), String(Qt.color(Theme.textField.hover)));

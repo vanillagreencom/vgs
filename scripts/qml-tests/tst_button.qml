@@ -79,6 +79,7 @@ Item {
 
         function test_icon_button_is_square_and_named() {
             compare(iconOnly.width, iconOnly.height);
+            fuzzyCompare(iconOnly.contentItem.y, (iconOnly.height - iconOnly.contentItem.height) / 2, 1);
             compare(iconOnly.Accessible.name, "Close");
             const unnamed = Qt.createQmlObject("import qs.Ui\nIconButton { iconName: \"x\" }", root);
             unnamed.destroy();

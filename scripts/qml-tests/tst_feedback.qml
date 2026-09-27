@@ -48,6 +48,12 @@ Item {
             fuzzyCompare(fill(busy).width, busy.contentItem.width * Theme.progress.indeterminateShare, 1);
             wait(150);
             verify(fill(busy).x !== slide, "the indeterminate fill moved");
+            // Leaving the indeterminate state returns the fill to the origin.
+            busy.indeterminate = false;
+            busy.value = 1;
+            tryCompare(fill(busy), "x", 0);
+            fuzzyCompare(fill(busy).width, busy.contentItem.width, 1);
+            busy.indeterminate = true;
         }
 
         function test_badge_draws_its_tone() {

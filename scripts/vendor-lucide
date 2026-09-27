@@ -35,9 +35,18 @@ function number(attrs, key, fallback) {
 // One node as path commands; the shapes follow the SVG rendering of each.
 function pathOf(tag, attrs) {
     switch (tag) {
-    case "path":
+    case "path": {
         if (typeof attrs.d !== "string" || attrs.d.trim() === "") refuse("path=empty");
-        return attrs.d.trim();
+        // Each element starts at the origin, so its leading relative move is
+        // an absolute one; joined after another path it would start from
+        // that path's end instead. The pairs that follow a move are implicit
+        // lines relative to it, so they keep a relative line command.
+        const d = attrs.d.trim();
+        const lead = /^m\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*(.*)$/s.exec(d);
+        if (lead === null) return d;
+        const rest = lead[3];
+        return "M" + lead[1] + " " + lead[2] + (rest === "" ? "" : /^[-\d.]/.test(rest) ? " l" + rest : rest);
+    }
     case "circle": {
         const cx = number(attrs, "cx"), cy = number(attrs, "cy"), r = number(attrs, "r");
         return `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z`;

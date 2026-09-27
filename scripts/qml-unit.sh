@@ -87,9 +87,22 @@ status=0
 for file in "${files[@]}"; do
   echo "== $(basename -- "$file")"
   file_status=0
-  env -i HOME="$root/home" PATH="/usr/bin:/usr/lib/qt6/bin" LC_ALL=C.UTF-8 \
+  out="$(env -i HOME="$root/home" PATH="/usr/bin:/usr/lib/qt6/bin" LC_ALL=C.UTF-8 \
     QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$root/runtime" QML_XHR_ALLOW_FILE_READ=1 \
-    "$runner" -import "$imports" -input "$file" 2>&1 | grep -vE '^Totals: [0-9]+ passed, 0 failed|^\*{9} (Start|Finished) testing|^Config: Using QtTest|^PASS   :' || file_status=${PIPESTATUS[0]}
+    "$runner" -import "$imports" -input "$file" 2>&1)" || file_status=$?
+  # grep exits 1 when every line was filtered, which is the quiet pass.
+  filtered=0
+  grep -vE '^Totals: [0-9]+ passed, 0 failed|^\*{9} (Start|Finished) testing|^Config: Using QtTest|^PASS   :' <<<"$out" || filtered=$?
+  if [[ $filtered -gt 1 ]]; then
+    echo "qml-unit: refused: output-filter=$filtered file=$(basename -- "$file")"
+    exit 2
+  fi
+  # A binding that assigned nothing or a script that threw is a defect the
+  # assertions may not reach.
+  if grep -qE 'Unable to assign|TypeError|ReferenceError|is not a function|Cannot read property' <<<"$out"; then
+    echo "qml-unit: warnings file=$(basename -- "$file")"
+    file_status=1
+  fi
   if [[ $file_status -ne 0 ]]; then
     status=1
     echo "qml-unit: failed file=$(basename -- "$file") status=$file_status"

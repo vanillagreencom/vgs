@@ -17,6 +17,7 @@ Item {
     ScrollArea { id: scroll; width: 100; height: 50; Column { Repeater { model: 10; Rectangle { width: 80; height: 20; color: "transparent" } } } }
     Tabs { id: tabs; model: ["Installed", "Available"]; y: 60 }
     ListItem { id: row; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; width: 300; y: 100 }
+    ListItem { id: bare; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; y: 300 }
     SectionHeader { id: header; text: "Listed since"; description: "Sep 24"; width: 300; y: 150 }
     Surface { id: surface; level: "raised"; width: 100; height: 40; y: 220 }
     Divider { id: divider; width: 100; y: 270 }
@@ -57,6 +58,8 @@ Item {
             mouseClick(row);
             compare(clicks.count, 1);
             verify(row.height >= Theme.listItem.height);
+            // A row without a width prefers the width of its text.
+            verify(bare.implicitWidth > 100, "a populated row without a width is " + bare.implicitWidth + " wide");
         }
 
         function test_section_header_and_divider() {

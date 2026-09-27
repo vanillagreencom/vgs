@@ -17,6 +17,7 @@ Item {
     Icon { id: large; name: "minus"; size: 48; color: "white"; x: 40; y: 10 }
     Icon { id: circle; name: "circle"; size: 24; color: "white"; x: 80; y: 10 }
     Icon { id: themed; name: "check" }
+    Icon { id: cross; name: "x"; size: 24; color: "white"; x: 120; y: 10 }
 
     TestCase {
         name: "icon"
@@ -59,6 +60,15 @@ Item {
             const img = grabImage(circle);
             verify(img.red(12, 12) < 128, "the centre of the ring is empty");
             verify(img.red(2, 12) > 128 || img.red(3, 12) > 128, "the ring passes the left edge");
+        }
+
+        function test_second_path_starts_at_the_origin() {
+            wait(100);
+            const img = grabImage(cross);
+            // Both strokes of the x cross the centre and reach each corner.
+            verify(img.red(12, 12) > 128, "the strokes cross at the centre");
+            verify(img.red(6, 18) > 128 || img.red(6, 17) > 128, "the first stroke reaches the bottom-left");
+            verify(img.red(18, 18) > 128 || img.red(17, 17) > 128, "the second stroke reaches the bottom-right");
         }
 
         function test_theme_change_reaches_the_icon() {

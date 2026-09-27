@@ -57,6 +57,12 @@ function verify(data) {
     assert.equal(data.ICONS.circle[0], "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z");
     assert.equal(data.ICONS.square[0], "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2z");
     assert.equal(data.ICONS.minus[0], "M5 12h14");
+    // A second element's leading relative move is absolute once joined.
+    assert.equal(data.ICONS.x[0], "M18 6 6 18 M6 6 l12 12");
+    assert.equal(data.ICONS["check-check"][0], "M18 6 7 17l-5-5 M22 10 l-7.5 7.5L13 16");
+    for (const name of names)
+        for (const d of data.ICONS[name])
+            assert.ok(!/(^|\s)m/.test(d.replace(/^m/, "")), `${name}: a joined path starts with a relative move`);
     assert.ok(data.ICONS.palette[1].startsWith("M13 6.5a0.5 0.5 0 1 0 1 0"), "a filled circle lands in the fill path");
 }
 verify(load(dataFile));
@@ -67,6 +73,8 @@ const CONTROLS = [
     ["viewbox", "var VIEWBOX = 24;", "var VIEWBOX = 16;"],
     ["a malformed path", '"check": ["M20 6 9 17l-5-5",""]', '"check": ["M20 6 9 17l-5-5 x",""]'],
     ["a missing required name", '"check": ["M20 6 9 17l-5-5",""]', '"chekc": ["M20 6 9 17l-5-5",""]'],
+    ["a joined path starting with a relative move", '"x": ["M18 6 6 18 M6 6 l12 12",""]', '"x": ["M18 6 6 18 m6 6 12 12",""]'],
+    ["a move's implicit lines made absolute", '"x": ["M18 6 6 18 M6 6 l12 12",""]', '"x": ["M18 6 6 18 M6 6 12 12",""]'],
     ["a wrong circle conversion", '"circle": ["M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z",""]', '"circle": ["M2 12a10 10 0 1 0 20 0z",""]'],
     ["a fill lost to the stroke path", '2.8z","M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z M17', '2.8z M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z","M17']
 ];

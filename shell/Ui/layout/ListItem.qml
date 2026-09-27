@@ -14,7 +14,7 @@ T.ItemDelegate {
     property string secondary: ""
     property alias trailing: trailingRow.data
 
-    implicitWidth: implicitContentWidth + leftPadding + rightPadding
+    implicitWidth: leftPadding + rightPadding + (iconName !== "" ? Theme.icon.size.md + spacing : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + spacing : 0)
     implicitHeight: Math.max(Theme.listItem.height, implicitContentHeight + topPadding + bottomPadding)
     leftPadding: Theme.listItem.paddingX
     rightPadding: Theme.listItem.paddingX
@@ -36,6 +36,7 @@ T.ItemDelegate {
             width: parent.width - (parent.children[0].visible ? parent.children[0].width + parent.spacing : 0) - (trailingRow.width > 0 ? trailingRow.width + parent.spacing : 0)
             anchors.verticalCenter: parent.verticalCenter
             Label {
+                id: title
                 role: "body"
                 text: root.text
                 color: root.highlighted ? Theme.listItem.selectedForeground : Theme.color.text
@@ -43,6 +44,7 @@ T.ItemDelegate {
                 elide: Text.ElideRight
             }
             Label {
+                id: secondaryLabel
                 role: "hint"
                 text: root.secondary
                 visible: root.secondary !== ""

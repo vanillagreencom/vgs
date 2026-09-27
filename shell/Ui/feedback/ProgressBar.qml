@@ -29,6 +29,7 @@ T.ProgressBar {
             SequentialAnimation on x {
                 running: root.indeterminate && Theme.progress.duration > 0
                 loops: Animation.Infinite
+                onStopped: fill.x = 0
                 NumberAnimation { from: 0; to: fill.parent.width - fill.span; duration: Theme.progress.duration; easing.type: Theme.motion.easing.standard }
                 NumberAnimation { from: fill.parent.width - fill.span; to: 0; duration: Theme.progress.duration; easing.type: Theme.motion.easing.standard }
             }

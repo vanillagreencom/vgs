@@ -14,6 +14,8 @@ Button {
     variant: "ghost"
     leftPadding: (controlHeight - Theme.icon.size.md) / 2
     rightPadding: leftPadding
+    topPadding: leftPadding
+    bottomPadding: leftPadding
     implicitWidth: controlHeight
     Accessible.name: label
 
