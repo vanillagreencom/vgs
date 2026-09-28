@@ -1,0 +1,82 @@
+#!/usr/bin/env node
+// Judge theme packages through the shell's own theme logic under node.
+//
+//   vgsh-theme-judge packages [DIR]
+//
+// With DIR omitted it checks every shipped package under themes/. A package is
+// one direct child directory. The script reads theme.json and optional
+// terminal.json, then asks ThemeLogic.acceptPackage. It prints one line per
+// package and exits 0 when every package is accepted, 1 when any package is
+// refused, or 2 when a directory or required file cannot be read.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+
+const repo = path.join(__dirname, "..");
+const { load } = require(path.join(repo, "scripts", "qml-library.js"));
+const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
+const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
+
+function unreadable(where, cause) {
+    console.log("vgsh-theme-judge: unreadable: " + where + ": " + cause);
+    process.exit(2);
+}
+
+function usage() {
+    console.error("vgsh-theme-judge: refused: command=" + (process.argv[2] || "missing"));
+    process.exit(2);
+}
+
+function readRequired(file) {
+    try {
+        return fs.readFileSync(file, "utf8");
+    } catch (e) {
+        unreadable(file, e.code);
+    }
+}
+
+function readOptional(file) {
+    try {
+        return fs.readFileSync(file, "utf8");
+    } catch (e) {
+        if (e.code === "ENOENT") return undefined;
+        unreadable(file, e.code);
+    }
+}
+
+function packageDirs(base) {
+    let entries;
+    try {
+        entries = fs.readdirSync(base, { withFileTypes: true });
+    } catch (e) {
+        unreadable(base, e.code);
+    }
+    const dirs = entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)).sort();
+    if (dirs.length === 0) unreadable(base, "no theme packages");
+    return dirs;
+}
+
+const [command, dirArg, ...extra] = process.argv.slice(2);
+if (command !== "packages" || extra.length > 0) usage();
+const base = path.resolve(dirArg || path.join(repo, "themes"));
+
+let refused = 0;
+for (const dir of packageDirs(base)) {
+    const result = logic.acceptPackage(tokens, {
+        directoryName: path.basename(dir),
+        themeJson: readRequired(path.join(dir, "theme.json")),
+        terminalJson: readOptional(path.join(dir, "terminal.json")),
+        shipped: true
+    });
+    if (result.ok) {
+        console.log("ok       " + result.name);
+        continue;
+    }
+    console.log("refused  " + dir + ": " + logic.refusalLine(result));
+    refused += 1;
+}
+if (refused > 0) {
+    console.log("vgsh-theme-judge: refused=" + refused);
+    process.exit(1);
+}
+console.log("vgsh-theme-judge: ok");

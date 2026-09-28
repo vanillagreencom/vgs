@@ -80,7 +80,7 @@ home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 python3 - "$repo" "$sandbox/repo" <<'PY'
 import pathlib, shutil, sys
 source, target = map(pathlib.Path, sys.argv[1:])
-for directory in ("shell", "bin", "config", "scripts"):
+for directory in ("shell", "bin", "config", "scripts", "themes"):
     shutil.copytree(source / directory, target / directory)
 shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
 path = target / "shell/shell.qml"

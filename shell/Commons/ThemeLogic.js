@@ -502,8 +502,88 @@ function accept(tokens, text) {
     return { ok: true, name: document.name, values: result.values };
 }
 
-// The name the defaults carry.
+// The name the defaults carry and the only package name an installed theme
+// may not take. The shipped package with this name is the revert.
 var DEFAULT_NAME = "vgs";
+
+var TERMINAL_SCHEMA_VERSION = 1;
+var TERMINAL_SLOT_PREFIX = "color";
+var TERMINAL_SLOT_COUNT = 16;
+
+function terminalSlotName(index) {
+    return TERMINAL_SLOT_PREFIX + index;
+}
+
+function terminalSlotNames() {
+    var out = [];
+    for (var i = 0; i < TERMINAL_SLOT_COUNT; i++)
+        out.push(terminalSlotName(i));
+    return out;
+}
+
+function acceptTerminal(text) {
+    if (text === undefined)
+        return { ok: true, slots: null };
+    if (typeof text !== "string")
+        return refusal("terminal-json", "", "got=" + JSON.stringify(text));
+    var document;
+    try {
+        document = JSON.parse(text);
+    } catch (e) {
+        return refusal("terminal-json", "", e.message);
+    }
+    if (!isPlainObject(document))
+        return refusal("terminal-document", "");
+    if (document.schemaVersion !== TERMINAL_SCHEMA_VERSION)
+        return refusal("terminal-schema-version", "", "want=" + TERMINAL_SCHEMA_VERSION + " got=" + JSON.stringify(document.schemaVersion));
+    if (!isPlainObject(document.slots))
+        return refusal("terminal-slots", "", "got=" + JSON.stringify(document.slots));
+    var names = terminalSlotNames();
+    var expected = {};
+    for (var i = 0; i < names.length; i++)
+        expected[names[i]] = true;
+    var keys = Object.keys(document.slots);
+    for (i = 0; i < keys.length; i++)
+        if (!hasOwn(expected, keys[i]))
+            return refusal("terminal-slot", "terminal", "slot=" + keys[i]);
+    var out = {};
+    for (i = 0; i < names.length; i++) {
+        var name = names[i];
+        if (!hasOwn(document.slots, name))
+            return refusal("terminal-slot", "terminal", "missing=" + name);
+        if (typeof document.slots[name] !== "string")
+            return refusal("terminal-colour", "terminal." + name, "value=" + JSON.stringify(document.slots[name]));
+        var colour = parseColor(document.slots[name]);
+        if (colour === null)
+            return refusal("terminal-colour", "terminal." + name, "value=" + JSON.stringify(document.slots[name]));
+        out[name] = formatColor(colour);
+    }
+    return { ok: true, slots: out };
+}
+
+// Judge one package directory from the file texts its caller read. `files`
+// carries the directory name, the required `theme.json` text, an optional
+// `terminal.json` text and whether the package is shipped with the shell.
+// The directory walk stays in the runner; this function does no I/O.
+function acceptPackage(tokens, files) {
+    if (!isPlainObject(files))
+        return refusal("package", "", "got=" + JSON.stringify(files));
+    if (typeof files.directoryName !== "string" || files.directoryName.trim() === "")
+        return refusal("package-name", "", "got=" + JSON.stringify(files.directoryName));
+    if (files.directoryName === DEFAULT_NAME && files.shipped !== true)
+        return refusal("reserved-name", "", "name=" + DEFAULT_NAME);
+    if (typeof files.themeJson !== "string")
+        return refusal("package-theme", "", "got=" + JSON.stringify(files.themeJson));
+    var shell = accept(tokens, files.themeJson);
+    if (!shell.ok)
+        return shell;
+    if (shell.name !== files.directoryName)
+        return refusal("name-mismatch", "", "directory=" + files.directoryName + " document=" + shell.name);
+    var terminal = acceptTerminal(files.terminalJson);
+    if (!terminal.ok)
+        return terminal;
+    return { ok: true, name: shell.name, values: shell.values, terminal: terminal.slots };
+}
 
 // The table's defaults resolved, as accept answers a document. The table
 // ships with the shell, so a defect in it is the shell's and throws.

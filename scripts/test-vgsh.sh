@@ -45,7 +45,7 @@ if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
   echo "test-vgsh: status=not-measured missing=node"
   exit 77
 fi
-base_env=(env -i PATH="$tmp:$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_NOSYSTEM=1)
+base_env=(env -i PATH="$tmp:$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$tmp")
 
 failures=0
 ok() { printf '  ok    %s\n' "$*"; }

@@ -8,15 +8,16 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { load } = require("./qml-library.js");
 
+const repo = path.join(__dirname, "..");
 const judgeFile = path.join(__dirname, "..", "shell", "Commons", "ThemeLogic.js");
 const TOKENS = load(path.join(__dirname, "..", "shell", "Commons", "Tokens.js")).TOKENS;
 
 const at = (tree, dotted) => dotted.split(".").reduce((node, key) => node[key], tree);
 const document = tokens => JSON.stringify({ schemaVersion: 1, name: "probe", tokens: tokens });
+const TERMINAL_SLOTS = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`color${index}`, "#000000"]));
 
 // Resolved defaults, by token: the expression and the arithmetic.
 const DEFAULTS = [
@@ -210,6 +211,40 @@ function verify(judge) {
         assert.deepEqual(Object.keys(result).sort(), ["detail", "ok", "reason", "token"], label);
     }
 
+    const shippedVgs = judge.acceptPackage(TOKENS, {
+        directoryName: "vgs",
+        themeJson: fs.readFileSync(path.join(repo, "themes", "vgs", "theme.json"), "utf8"),
+        terminalJson: fs.readFileSync(path.join(repo, "themes", "vgs", "terminal.json"), "utf8"),
+        shipped: true
+    });
+    assert.equal(shippedVgs.ok, true, shippedVgs.ok ? "" : judge.refusalLine(shippedVgs));
+    assert.equal(shippedVgs.name, "vgs");
+    assert.equal(shippedVgs.terminal.color0, "#0b0b0bff");
+    assert.equal(shippedVgs.terminal.color15, "#ffffffff");
+    assert.equal(Object.keys(shippedVgs.terminal).length, 16);
+
+    const packageWithoutTerminal = judge.acceptPackage(TOKENS, {
+        directoryName: "probe",
+        themeJson: document({ palette: { accent: "#abcdef" } }),
+        shipped: false
+    });
+    assert.equal(packageWithoutTerminal.ok, true, packageWithoutTerminal.ok ? "" : judge.refusalLine(packageWithoutTerminal));
+    assert.equal(packageWithoutTerminal.terminal, null);
+    assert.equal(at(packageWithoutTerminal.values, "palette.accent"), "#abcdefff");
+
+    const packageRefusals = [
+        [{ directoryName: "vgs", themeJson: JSON.stringify({ schemaVersion: 1, name: "vgs", tokens: {} }), shipped: false }, "reserved-name", ""],
+        [{ directoryName: "other", themeJson: document({}), shipped: false }, "name-mismatch", ""],
+        [{ directoryName: "probe", themeJson: document({}), terminalJson: JSON.stringify({ schemaVersion: 1, slots: Object.assign({ colour0: "#000000" }, TERMINAL_SLOTS) }), shipped: false }, "terminal-slot", "terminal"],
+        [{ directoryName: "probe", themeJson: document({}), terminalJson: JSON.stringify({ schemaVersion: 1, slots: Object.assign({}, TERMINAL_SLOTS, { color3: "red" }) }), shipped: false }, "terminal-colour", "terminal.color3"]
+    ];
+    for (const [files, reason, token] of packageRefusals) {
+        const result = judge.acceptPackage(TOKENS, files);
+        assert.equal(result.ok, false, JSON.stringify(files));
+        assert.equal(result.reason, reason, JSON.stringify(files));
+        assert.equal(result.token, token, JSON.stringify(files));
+    }
+
     assert.equal(judge.refusalLine(judge.accept(TOKENS, document({ palette: { acent: "#fff" } }))), "theme: refused: token=palette.acent reason=unknown-token");
     assert.equal(judge.refusalLine(judge.accept(TOKENS, JSON.stringify({ foreground: "#123456" }))), "theme: refused: document reason=unknown-key key=foreground");
 }
@@ -252,11 +287,16 @@ const CONTROLS = [
     ["table choice options", 'if (child.type === "choice" && ', 'if (false && child.type === "choice" && '],
     ["table name", "if (!NAME_PATTERN.test(keys[i]))", "if (false)"],
     ["table empty group", "if (keys.length === 0)", "if (false)"],
-    ["table defect throws", "if (defect !== \"\")\n        throw new Error(\"theme: token table: \"", "if (false)\n        throw new Error(\"theme: token table: \""]
+    ["table defect throws", "if (defect !== \"\")\n        throw new Error(\"theme: token table: \"", "if (false)\n        throw new Error(\"theme: token table: \""],
+    ["package reserved name", "if (files.directoryName === DEFAULT_NAME && files.shipped !== true)", "if (false)"],
+    ["package name mismatch", "if (shell.name !== files.directoryName)", "if (false)"],
+    ["terminal slot name", "if (!hasOwn(expected, keys[i]))", "if (false)"],
+    ["terminal colour syntax", "if (colour === null)", "if (false)"]
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "theme-logic-control-"));
+fs.mkdirSync(path.join(repo, "tmp"), { recursive: true });
+const temp = fs.mkdtempSync(path.join(repo, "tmp", "theme-logic-control-"));
 try {
     for (const [label, needle, replacement] of CONTROLS) {
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);
