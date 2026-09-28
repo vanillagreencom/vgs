@@ -21,6 +21,10 @@ Singleton {
 
     readonly property string name: source.name
     readonly property int revision: source.revision
+    // The theme file's state as ThemeSource last read it: `pending`, then
+    // `loaded`, `absent`, `refused` or `unreadable`. A refused edit moves it
+    // without a new revision.
+    readonly property string fileState: source.state
 
     readonly property var palette: published.palette
     readonly property var color: published.color

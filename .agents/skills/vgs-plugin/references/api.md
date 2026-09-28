@@ -64,6 +64,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.builtins.register(name, item)` | capability `builtins` | records an item the plugin draws itself under its host key as `<plugin id>/<name>`, origin `plugin`, with this instance's kind; returns a disposer |
 | `shell.surfaces.summon(kind, payloadJson, anchor)`, `.hide(kind)`, `.toggle(kind, payloadJson, anchor)` | capability `surfaces` | the plugin's own panel, overlay or menu; pass its source item as `anchor` for a compositor-placed popup, or omit it for layer placement on this instance's screen; returns the IPC reply |
 | `shell.toasts.show({ title, message, tone, icon, duration })` | capability `toasts` | one toast in the core's stack: `title` required, `tone` one of the badge tones, `duration` in milliseconds with 0 for until dismissed and the theme's default when omitted; returns a disposer that ends it; throws `refused: toast=<reason>` for a malformed option and `refused: toasts=full` past the core's ceiling |
+| `shell.theme.list(done)`, `.apply(name, done)`, `.swatch(name)`, `.current`, `.revision`, `.fileState`, `.modified`, `.last` | capability `theme` | `list` hands `done` `{ file, packages, reason }` as `vgsh theme list --json` prints them, `reason` null, or `file` and `packages` null beside the reason the runner could not report them; `apply` starts `vgsh theme apply --json <name>` and returns `ok`, or `refused: theme=<name> reason=busy` while another apply runs and `reason=malformed-name` at once, and `done` receives the structured result `{ state, shell, targets, theme, reason }`, every other refusal included; `swatch` is one accepted package's palette from the last list as `#aarrggbb` strings, null for a refused or unknown package; `current`, `revision` and `fileState` are `Theme.name`, `Theme.revision` and `Theme.fileState`, and `done` can run before they move; `modified` is the last list's answer, null before one; `last` is `{ applying, result }`, the apply running and the last result, kept by the core across instances; a destroyed instance's `done` is dropped and its apply still completes. `done` that is not a function throws `refused: theme=<verb> done=not-a-function` |
 
 A registration name is lower case, digits and dashes. Registering a taken shortcut or IPC name throws an `Error` whose message starts `refused:`. Register shortcuts and IPC handlers from one instance, a service, since every instance of the plugin shares the names. Disabling the plugin runs every disposer; call one to release earlier. `lock` and `polkit` serve one plugin at a time: a second plugin naming either is not built while another holds it.
 
@@ -97,6 +98,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `builtins` | `shell.builtins` |
 | `manager` | `shell.manager` |
 | `toasts` | `shell.toasts` |
+| `theme` | `shell.theme` |
 
 ## Allowed imports
 
@@ -145,7 +147,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | Member | Type |
 |---|---|
 | `Theme.<group>.<token>` | the design tokens: one read-only group per top-level group of `shell/Commons/Tokens.js`, each token a primitive: a colour as the string `#aarrggbb` a `color` property takes (call `Qt.color` on it for channels), an `int` of pixels or milliseconds, a `string`, a `bool`, an `Easing` enumerator; `docs/architecture/design-system.md` states the tiers |
-| `Theme.name`, `Theme.revision` | string, int: the accepted theme's name, and a counter that rises after every group holds a new theme |
+| `Theme.name`, `Theme.revision`, `Theme.fileState` | string, int, string: the accepted theme's name, a counter that rises after every group holds a new theme, and the theme file's state (`pending`, `loaded`, `absent`, `refused`, `unreadable`), which a refused edit moves without a new revision |
 | `Paths.configDir` | string: the directory `shell.json` and `theme.json` are read from |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |
 | `Time.now` | date: the shared wall clock, ticking once a minute |
@@ -162,7 +164,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | `listPlugins` | no | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned`; `config` with `ready`, `shipped` and `user` states |
 | `listShellConfig` | no | the effective configuration as JSON |
 | `built` | no | JSON: host key to the records on that surface, each `id`, `kind`, `origin` (`core` for an instance the core built, `plugin` for a registered built-in) and `capabilities` |
-| `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `polkitRegistered`, `lock` |
+| `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `polkitRegistered`, `lock`, `toasts`, `theme` with its `jobs` (`verb`, `name`, `started`, `waiters`) and `last` |
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |

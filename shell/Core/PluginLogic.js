@@ -9,7 +9,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.

@@ -2,4 +2,4 @@
   "kinds": ["service", "bar-widget"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml" },
   "defaultSection": "right", "settings": { "label": "probe", "tags": ["a", "b"] },
   "schema": { "label": { "type": "string", "label": "Label" } },
-  "capabilities": ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "toasts"] }
+  "capabilities": ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "toasts", "theme"] }

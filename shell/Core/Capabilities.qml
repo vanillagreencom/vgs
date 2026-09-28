@@ -18,6 +18,7 @@ Singleton {
     IpcRegistry { id: commands }
     NotificationHub { id: notifications; active: root.notificationsHeld }
     SessionLock { id: sessionLock }
+    ThemeRunner { id: themes }
     readonly property alias sessionLock: sessionLock
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
@@ -116,7 +117,8 @@ Singleton {
         }),
         toasts: ctx => ({
             show: options => Toasts.show(ctx, options)
-        })
+        }),
+        theme: themes.provider
     })
 
     // The compositor places anchored surfaces relative to the item's own
@@ -156,7 +158,8 @@ Singleton {
             polkitAgent: polkitLoader.item !== null,
             polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
             lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null },
-            toasts: Toasts.record()
+            toasts: Toasts.record(),
+            theme: themes.record()
         });
     }
 }

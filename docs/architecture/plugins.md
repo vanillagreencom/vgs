@@ -69,13 +69,13 @@ A capability is a core API named in the manifest's `capabilities` and delivered 
 - A build that fails after its capabilities were made (an entry point without `shell`, a background without `screen`, a widget without the `BarWidget` properties) drains the same lifetime, leaves no build record and is reported to the host as a failed build.
 - Every instance is destroyed under the host key it was built under, so a host whose key changes while its screen goes away still releases everything.
 - The notification server and the polkit agent exist only while a plugin holds their capability, so a shell with no such plugin claims neither role. The smoke asserts both objects are gone once the holder is disabled. Whether the process keeps the notification D-Bus name after the server is destroyed is Quickshell's, and [D012](../decisions/D012-core-owns-lent-objects.md) names it as the revisit condition.
-- `toasts` shows a notice in the core's toast stack; [design-system.md § Toasts](design-system.md#toasts) holds the contract.
+- `toasts` and `theme` have contracts of their own: [design-system.md § Toasts](design-system.md#toasts) and [themes.md § Capability](themes.md#capability).
 
 Each capability's members are listed in [`.agents/skills/vgs-plugin/references/api.md` § The shell object](../../.agents/skills/vgs-plugin/references/api.md#the-shell-object). Three carry rules of their own: `compositor` offers one function per dispatcher in `Dispatch.PLUGIN_DISPATCHERS`, and `shell/Core/Dispatch.js` refuses an argument that could break out of the session's syntax; `configure` writes only a key the manifest's `schema` declares, with a value of its type, to the configuration entry `PluginLogic.settingTargetOf` names for the calling instance's kind; `lock` keeps a locked session locked when its holder is unloaded.
 
 A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 
-`Capabilities` maps providers and accounts for holds. Each resource owner keeps its state, registration and release together. New shared connectors follow this contract; stateless providers need no separate component.
+`Capabilities` maps providers and accounts for holds. Each resource owner keeps its state, registration and release together; a stateless provider needs no separate component.
 
 ## Isolation
 

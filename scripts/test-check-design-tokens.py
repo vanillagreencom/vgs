@@ -36,6 +36,7 @@ ROWS = [
     ("a property of a token's value is not a finding", UI, "Item { property int n: Theme.color.accent.length }\n", None),
     ("a group reference is not a finding", UI, "Item { property var role: Theme.text.body }\n", None),
     ("a member Theme.qml declares is not a finding", UI, "Item { property string n: Theme.name + Theme.revision }\n", None),
+    ("a function Theme.qml declares is not a finding", "shell/Core/Thing.qml", "Item { property string c: Theme.toColor(\"#12ab34ff\") }\n", None),
     ("another object named Theme is not judged", UI, "Item { property var x: acme.Theme.nope }\n", None),
     ("an unknown token in core JS is a finding", "shell/Core/Thing.js", ".pragma library\nfunction f(Theme) { return Theme.nope; }\n", "token-unknown"),
     ("an unknown token in a smoke fixture is a finding", "scripts/smoke/fixtures/plugins/acme.probe/Bad.qml", "Item { color: Theme.palette.acent }\n", "token-unknown"),

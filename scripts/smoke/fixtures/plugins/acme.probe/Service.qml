@@ -13,6 +13,12 @@ Item {
     // title -> disposer of a toast this service showed.
     property var toasts: ({})
     property string lastToastRefusal: ""
+    // What the theme capability's callbacks last received, as JSON, and
+    // how many times each ran.
+    property string themeListed: ""
+    property int themeLists: 0
+    property string themeApplied: ""
+    property int themeApplies: 0
     readonly property bool lockSecure: shell !== null && shell.lock.secure
     readonly property bool hasAgent: shell !== null && shell.polkit.agent !== null
     readonly property bool agentRegistered: shell !== null && shell.polkit.registered
@@ -55,6 +61,12 @@ Item {
             }
         });
         shell.ipc.handle("untoast", title => { const release = root.toasts[title]; if (release === undefined) return "absent"; release(); delete root.toasts[title]; return "ok"; });
+        // theme-list and theme-apply <name> keep what their callbacks
+        // received; theme <member> answers one member as JSON, and
+        // theme swatch=<name> one package's swatch.
+        shell.ipc.handle("theme-list", () => { root.shell.theme.list(result => { root.themeListed = JSON.stringify(result); root.themeLists += 1; }); return "ok"; });
+        shell.ipc.handle("theme-apply", name => root.shell.theme.apply(name, result => { root.themeApplied = JSON.stringify(result); root.themeApplies += 1; }));
+        shell.ipc.handle("theme", member => JSON.stringify(member.startsWith("swatch=") ? root.shell.theme.swatch(member.slice(7)) : root.shell.theme[member]));
         // A lock holder rebuilt into a locked session hands its screen over again.
         if (shell.lock.locked) shell.lock.lock(lockContent);
     }

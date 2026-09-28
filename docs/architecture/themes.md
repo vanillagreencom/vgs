@@ -1,6 +1,6 @@
 # Themes
 
-Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, bin/lib/theme-render.js, scripts/test-vgsh-theme-judge.js, scripts/test-theme-render.js, shell/Core/ThemeRunner.qml
+Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, bin/lib/theme-render.js, scripts/test-vgsh-theme-judge.js, scripts/test-theme-render.js, shell/Core/ThemeRunner.qml, scripts/smoke/rows/themes.sh
 
 A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the directory walk, the list and the apply.
 
@@ -19,7 +19,7 @@ The directory name is the package name and must equal `theme.json`'s `name`; `Th
 - `ThemeLogic.acceptPackage` takes the token table and file texts. It performs no I/O. It judges `theme.json` through `ThemeLogic.accept`, judges terminal slot names and colours, checks the directory/document name match, and applies the `vgs` reservation.
 - `bin/vgsh-theme-judge` walks the package directories, reads `theme.json` and `terminal.json` and the theme file, and makes every decision through `ThemeLogic.js` and `Tokens.js`, loaded through `scripts/qml-library.js`. Its refusal and its file writes are `bin/lib/judge-files.js`, shared with `bin/vgsh-plugin-judge`.
 - `bin/lib/theme-render.js` judges `target.json`, renders templates and chooses the terminal slots. It performs no I/O: the judge reads every file and passes its text or bytes, with `ThemeLogic.js` and the token table as arguments, so a token path means what it means to the shell.
-- `shell/Core/ThemeRunner.qml` owns the apply process when the theme capability lands. It starts runner commands and reports their structured result; it does not judge package files itself.
+- `shell/Core/ThemeRunner.qml` owns the `vgsh theme` process behind the `theme` capability, [§ Capability](#capability). It starts runner commands and reports their structured result; it judges no package file itself.
 - `shell/plugins/vgs.themes/**` belongs to [plugins.md](plugins.md). This topic covers package and core runner contracts only.
 
 ## Runner
@@ -73,6 +73,15 @@ Encoders, each shown for `#ff5a3659`:
 
 No encoder writes `#`: a template writes it where its application wants one, as `#@{palette.accent}`.
 
+## Capability
+
+`shell.theme`, for a plugin naming `theme`, lists and applies packages; token values stay on `Theme`. `shell/Core/ThemeRunner.qml` owns the one `vgsh theme` process, started as `Quickshell.shellDir + "/../bin/vgsh"`, the jobs waiting for it, the last list and the last apply result. [`api.md` § The shell object](../../.agents/skills/vgs-plugin/references/api.md#the-shell-object) lists the members.
+
+- **Queue.** One job runs at a time. A list asked for while the last queued job is a list joins it. `apply` answers `refused: theme=<name> reason=busy` at once while another apply runs or waits, and `refused: theme=<name> reason=malformed-name`, the name JSON-quoted, for a name `ThemeLogic.isPackageName` refuses; every other refusal arrives in `done`, since the judge makes it. A job starts after the call that queued it returns, so `done` never runs before `apply` answers.
+- **Results.** The runner's JSON line is the answer whatever the exit code, so a refusal's exit 1 and a held lock's 75 reach `done` as results. A process that fails to start emits only `runningChanged` ([runtime.md § QML](runtime.md#qml)) and answers `{ state: failed, shell: failed, targets: [], theme, reason: start-failed }`; an exit without a readable line answers the same with `reason: output-unreadable`. Both are logged as `theme: vgsh theme <verb> reason=<key>`. A list answers `{ file, packages, reason }`: `reason` is null when the runner printed the list, and `file` and `packages` are null beside the reason otherwise.
+- **Lifetimes.** Each `done` is registered in its instance's lifetime: a destroyed instance's callback is dropped and its job still runs, so an apply always completes. `last` is `{ applying, result }`, `applying` the name of the apply running or waiting, or null. It lives in the runner, so a panel closed during an apply and reopened after it reads the result.
+- **Readings.** `swatch(name)` is the `ok` package's `palette` from the last list, each colour through `Theme.toColor`; a refused, shadowed or unknown package has none. `modified` is the last list's `file.modified`. Both are null before the first list and after a failed one. `current`, `revision` and `fileState` are `Theme.name`, `Theme.revision` and `Theme.fileState`. `done` can run before `ThemeSource` reloads the file, so a caller that needs the new theme waits on `revision`.
+
 ## Trust
 
 Applying a third-party package carries plugin-level trust. A curated target file is written verbatim into a path an application includes, so package application has the same user-privilege impact as enabling a plugin. [D019](../decisions/D019-theme-packages-carry-plugin-trust.md) records the boundary.
@@ -88,3 +97,4 @@ Applying a third-party package carries plugin-level trust. A curated target file
 7. A second apply is refused with `reason=busy` while the lock is held. Enforced by `scripts/test-vgsh.sh`, with a lockless `bin/vgsh` copy as its control.
 8. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence and the terminal fallback hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer.
 9. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.
+10. Through the `theme` capability a plugin applies a package and then reads `current` and `revision` move, lists every package with its state, reads a swatch alpha first and `modified` after a hand edit and `fileState` after a refused one; is refused busy and malformed at once; receives a refusal's non-zero exit as its result, an unreadable result and a failed start as failures; and a destroyed instance's callbacks are dropped while its apply completes into `last`, which the rebuilt instance reads. Enforced by `scripts/smoke/rows/themes.sh` through the `acme.probe` fixture, with the sandbox's `vgsh` replaced by stand-ins for the held, unreadable and unstartable runs.

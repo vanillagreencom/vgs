@@ -110,7 +110,7 @@ rows=(
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js scripts/qml-library.js themes/*"
   "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
   "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/*"
-  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* scripts/smoke/* scripts/sample-shell-memory.sh scripts/qml-library.js"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* scripts/smoke/* scripts/sample-shell-memory.sh scripts/qml-library.js"
 )
 
 # The commit the whitespace row compares against, printed on stdout. On

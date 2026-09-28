@@ -3,9 +3,10 @@
 
 Token rule, on every QML and JS file under shell/, the vgs-plugin skill
 templates and the smoke fixtures:
-  token-unknown      a `Theme.<path>` names no token, no group and no member
-                     Theme.qml declares; the paths come from Tokens.js through
-                     scripts/qml-library.js, never from a second list
+  token-unknown      a `Theme.<path>` names no token, no group and no
+                     read-only property or function Theme.qml declares; the
+                     paths come from Tokens.js through scripts/qml-library.js,
+                     never from a second list
   group-unpublished  a top-level group of Tokens.js has no read-only property
                      in Theme.qml, so no file could read its tokens
 Literal rules, on shipped QML (shell/Ui, shell/Hosts, shell/plugins) and the
@@ -65,6 +66,7 @@ TOKEN_PATHS = (
 
 THEME_REFERENCE = re.compile(r"(?<![\w.$])Theme\.((?:[A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*)")
 THEME_MEMBER = re.compile(r"^\s*readonly property \w+ (\w+)\s*:", re.MULTILINE)
+THEME_FUNCTION = re.compile(r"^\s*function (\w+)\s*\(", re.MULTILINE)
 THEME_FIRST_MEMBER = re.compile(r"^\s*readonly property ", re.MULTILINE)
 
 NUMBER = r"-?\d+(?:\.\d+)?"
@@ -149,7 +151,7 @@ class Table:
                 text = fh.read()
         except OSError as exc:
             raise Unreadable(self.theme, exc.strerror) from exc
-        self.members = set(THEME_MEMBER.findall(text))
+        self.members = set(THEME_MEMBER.findall(text)) | set(THEME_FUNCTION.findall(text))
         first = THEME_FIRST_MEMBER.search(text)
         if first is None:
             raise Unreadable(self.theme, "no read-only property declared; the member scan is broken")
