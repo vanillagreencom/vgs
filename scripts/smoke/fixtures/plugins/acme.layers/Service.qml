@@ -6,6 +6,7 @@ import QtQuick
 // while `full` is set.
 //   invoke draw        registers the layer; `ok` or the refusal
 //   invoke undraw      runs the disposer; `ok` or `absent`
+//   invoke redraw      runs the disposer and registers again in one call
 //   invoke full <0|1>  sets whether the whole surface takes input
 //   invoke bad         shows something that is no component; the refusal
 //   invoke bare        shows a component without `screen`, which the host
@@ -18,14 +19,19 @@ Item {
     property var bareRelease: null
     property bool full: false
     property int presses: 0
-    // The screen every built copy of the content received, sorted.
+    // The screen every live copy of the content received, sorted, each
+    // once; a copy on its way out can overlap its successor on a screen, so
+    // copies are counted per screen.
     property var built: []
+    property var copies: ({})
     property bool registered: false
 
     function note(name, add) {
-        const next = built.filter(n => n !== name);
-        if (add) next.push(name);
-        built = next.sort();
+        const next = Object.assign({}, copies);
+        next[name] = (next[name] || 0) + (add ? 1 : -1);
+        if (next[name] <= 0) delete next[name];
+        copies = next;
+        built = Object.keys(next).sort();
     }
 
     Component {
@@ -75,6 +81,12 @@ Item {
             if (root.release === null) return "absent";
             root.release();
             root.release = null;
+            return "ok";
+        });
+        shell.ipc.handle("redraw", () => {
+            if (root.release === null) return "absent";
+            root.release();
+            root.release = root.shell.layers.show(content);
             return "ok";
         });
         shell.ipc.handle("bare", () => {

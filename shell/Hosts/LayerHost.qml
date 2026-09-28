@@ -18,8 +18,11 @@ Scope {
 
     Component.onCompleted: Plugins.registerHost("layer", host)
 
+    // Every screen keeps its scope, surfaces or none, so a registration that
+    // ends as another begins never tears a scope down while its inner
+    // Variants still answers the new one.
     Variants {
-        model: Layers.serials.length > 0 ? Quickshell.screens : []
+        model: Quickshell.screens
 
         Scope {
             id: onScreen
@@ -97,7 +100,7 @@ Scope {
                         if (content === null || entry === null) return;
                         const item = content;
                         content = null;
-                        delete entry.screens[builtOn];
+                        if (entry.screens[builtOn] === item) delete entry.screens[builtOn];
                         builtOn = "";
                         item.destroy();
                     }

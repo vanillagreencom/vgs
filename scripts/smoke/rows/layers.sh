@@ -69,6 +69,13 @@ expect_log "the host logs the content it did not build" 1 'layers: acme\.layers 
 expect "the refused content maps no surface" "$monitors" layer_count vgs:layer
 expect "releasing the refused content is allowed" ok layered unbare
 
+# A registration that ends as another begins, in one call, leaves the new
+# one built on every screen and recorded there.
+expect "the fixture releases and registers again at once" ok layered redraw
+expect_poll "the new registration has one surface per screen" "$monitors" layer_count vgs:layer
+expect_poll "every copy of the new registration received its screen" "$screen_json" built_screens
+expect_poll "the lending record lists the new registration on every screen" "[{\"plugin\": \"acme.layers\", \"screens\": $screen_json}]" lent_layers
+
 # The disposer and a disable release every surface.
 expect "the fixture's disposer hides the layer" ok layered undraw
 expect_poll "the disposer destroyed every layer surface" 0 layer_count vgs:layer
