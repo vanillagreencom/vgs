@@ -5,7 +5,7 @@
 #   vgsh pid                       print the running shell's pid from the instance lock
 #   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
 #   vgsh log <qs log args...>      read the running shell's log
-#   vgsh plugin list               every discovered plugin with its enabled state
+#   vgsh plugin list               every discovered plugin with its enabled state, and each configured id no plugin has
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
@@ -16,7 +16,8 @@
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
 #   vgsh theme reload [--json]     run every pending reload hook again
-#   vgsh theme background next     show the applied package's next background image and remember it
+#   vgsh theme background [--json] next|previous
+#                                  show the applied package's next or previous background image and remember it
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -57,11 +58,12 @@
 # holds the same lock and runs every pending hook again, and nothing else.
 # Apply also makes the package's remembered background image, else its
 # first, the current one: the ${XDG_STATE_HOME:-~/.local/state}/vgs/background
-# symlink and backgrounds.json beside it. `theme background next` holds the
-# same lock and moves to the applied package's next image, remembering it:
-# docs/architecture/theme-backgrounds.md.
+# symlink and backgrounds.json beside it. `theme background next` and
+# `previous` hold the same lock and move to the applied package's next or
+# previous image, remembering it: docs/architecture/theme-backgrounds.md.
 # `--json` prints the list, the apply's result `{ state, shell, targets,
-# theme, reason }` or the reload's `{ state, targets, reason }`, refusals
+# theme, reason }`, the reload's `{ state, targets, reason }` or the
+# background step's `{ state, background, theme, path, reason }`, refusals
 # included, as one JSON line on stdout. `theme` commands never contact the
 # shell: docs/architecture/theme-apply.md.
 #
@@ -393,7 +395,10 @@ case "$cmd" in
       printf 'vgsh: refused: argument=%s\nrun takes no arguments; the shell runs in the foreground under the runner\n' "$1" >&2
       exit 2
     fi
-    mkdir -p -- "$config_home/vgs"
+    # The shell watches files in both directories from its start, and a
+    # watch on a file whose directory is absent never fires once the
+    # directory appears: docs/architecture/runtime-qml.md.
+    mkdir -p -- "$config_home/vgs" "$state_home/vgs"
     # Opened for append so a runner that loses the race never truncates the
     # holder's pid; only the holder rewrites the file.
     exec 9>>"$lock"
@@ -443,6 +448,8 @@ for e in data["errors"]:
     print(f"error   {e['dir']}: {e['error']}")
 for c in data["collisions"]:
     print(f"hidden  {c}")
+for u in data["unknown"]:
+    print(f"unknown {u['id']} in {u['key']}")
 if data.get("scanError"):
     print(f"scan-error {data['scanError']}")
 PY
@@ -501,11 +508,11 @@ PY
         exec node "$theme_judge" reload "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       background)
-        [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
-        if [[ ${1:-} != next ]]; then printf 'vgsh: refused: background-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2; fi
+        step="${1:-}"
+        if [[ $step != next && $step != previous ]]; then printf 'vgsh: refused: background-subcommand=%s\n' "${step:-missing}" >&2; usage; exit 2; fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         theme_lock_verdict
-        exec node "$theme_judge" background-next "$config_home/vgs" "$state_home/vgs" "$verdict"
+        exec node "$theme_judge" background "$format" "$step" "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       browser-policy)
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }

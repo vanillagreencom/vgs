@@ -401,6 +401,24 @@ function isEnabled(config, manifest, defaultBarId) {
     return pluginRow(config, manifest.id) !== undefined || manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0;
 }
 
+// The ids the configuration lists in `disabledPlugins` and `plugins` that
+// no discovered plugin in `manifests` has, as { id, key } rows, `key` the
+// configuration key that lists the id, in that key order and then in list
+// order, each id once per key. A plugin removed or renamed leaves its id
+// behind; the manager reports the row and changes nothing.
+function unknownIds(config, manifests) {
+    var out = [];
+    function report(key, ids) {
+        ids.forEach(function (id) {
+            var listed = out.some(function (row) { return row.id === id && row.key === key; });
+            if (!hasOwn(manifests, id) && !listed) out.push({ id: id, key: key });
+        });
+    }
+    report("disabledPlugins", Array.isArray(config.disabledPlugins) ? config.disabledPlugins : []);
+    report("plugins", (Array.isArray(config.plugins) ? config.plugins : []).map(function (entry) { return entry.id; }));
+    return out;
+}
+
 // The widgets each bar section shows: the layout entries whose plugin is
 // known, declares kind bar-widget and is enabled. This is the one place
 // enablement meets placement; a bar receives the result and interprets

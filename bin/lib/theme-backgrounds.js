@@ -1,15 +1,15 @@
 // The background state bin/vgsh-theme-judge keeps for `vgsh theme apply`
-// and `vgsh theme background next`: the images a package's backgrounds/
-// holds, the remembered image per theme and the current image, in the
-// state directory as backgrounds.json and the `background` symlink.
+// and `vgsh theme background next` and `previous`: the images a package's
+// backgrounds/ holds, the remembered image per theme and the current image,
+// in the state directory as backgrounds.json and the `background` symlink.
 //
 // backgrounds.json is `{ "schemaVersion": 1, "current": <path|null>,
 // "stamp": <string|null>, "themes": { "<theme>": "<file>" } }`: `current`
 // is the absolute path of the image the `background` symlink names, which
-// the vgs.background plugin draws, `stamp` that file's size and
-// modification time, so an image replaced under its name rewrites the file
-// and the plugin decodes it again, and `themes` the image `next` last chose
-// for each theme. An absent file is no current image and nothing
+// the vgs.themes plugin draws, `stamp` that file's size and modification
+// time, so an image replaced under its name rewrites the file and the
+// plugin decodes it again, and `themes` the image `next` or `previous` last
+// chose for each theme. An absent file is no current image and nothing
 // remembered; a state that is both is written as no file. The judge is
 // this file's only writer: docs/architecture/theme-backgrounds.md.
 "use strict";

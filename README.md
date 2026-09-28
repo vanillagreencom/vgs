@@ -20,7 +20,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 | Plugin | What it does |
 |---|---|
 | [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces, clock and plugin manager, and three sections for plugin widgets. |
-| [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
+| [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click, and the applied theme's wallpaper on every screen, with Previous and Next in the panel. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
 
 ## How it works
 

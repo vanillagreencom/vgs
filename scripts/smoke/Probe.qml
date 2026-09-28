@@ -346,6 +346,14 @@ Scope {
             const found = root.descendants(item).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
             return root.geometry(found === undefined ? null : found);
         }
+        // The same for the first visible, enabled item named `type` whose
+        // `label` is `label`, for an icon button, which draws no text.
+        function labelledGeometry(hostKey: string, id: string, type: string, label: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === type && child.label === label && child.visible && child.enabled);
+            return root.geometry(found === undefined ? null : found);
+        }
         // Every Image under an instance, in tree order, as the local path it
         // draws, without a query ("" for none), its status (`null`, `ready`, `loading` or
         // `error`), its box's size and the size it decoded the file to, so

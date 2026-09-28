@@ -266,14 +266,14 @@ fi
 # enabled by default, start disabled here: their shortcuts, IPC targets,
 # notification subscriber and server would sit in every lending record the
 # capability rows read back. rows/launcher.sh and rows/notifications.sh
-# enable them. The background plugin starts disabled too, so the host rows
-# see only their fixture's background surface; its block in rows/themes.sh
-# enables it.
+# enable them. vgs.themes stays enabled, its background built on every
+# screen: it maps no surface while the sandbox holds no backgrounds.json,
+# so the host rows see only their fixture's background surface.
 tick="$home/.config/vgs/plugins/acme.tick"
 mkdir -p "$tick"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
 cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.background", "vgs.launcher", "vgs.notifications"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications"] }
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }

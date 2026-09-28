@@ -10,15 +10,17 @@ import "../Commons/ThemeLogic.js" as ThemeLogic
 // and reopened after it reads the result from `last`. A job's callbacks
 // belong to their instances' lifetimes: a destroyed instance's callback is
 // dropped and its job still runs. The runner judges no package; every
-// answer but an immediate busy or malformed name is what `vgsh` printed.
+// answer but an immediate busy, malformed name or malformed step is what
+// `vgsh` printed.
 Scope {
     id: root
 
     // Waiting and running jobs in order, the first one running once
-    // started: { verb: "list" | "apply", name, started, waiters }, each
-    // waiter { id, done, release }, `release` ending its registration in
-    // the instance's lifetime. Replaced whole on every change so `last`
-    // re-evaluates.
+    // started: { verb: "list" | "apply" | "background", name, started,
+    // waiters }, `name` the package an apply lands or the step a background
+    // job takes, null for a list; each waiter { id, done, release },
+    // `release` ending its registration in the instance's lifetime.
+    // Replaced whole on every change so `last` re-evaluates.
     property var jobs: []
     // { code, status } of the running job's exit, null until it exits.
     property var completion: null
@@ -27,6 +29,8 @@ Scope {
     property var listing: null
     // The last apply's structured result, null before the first.
     property var lastResult: null
+    // The steps `vgsh theme background` takes.
+    readonly property var backgroundSteps: ["next", "previous"]
 
     // The running state and the last structured apply result: `applying`
     // is the name of the apply running or waiting, or null.
@@ -43,6 +47,7 @@ Scope {
             get fileState() { return Theme.fileState; },
             get modified() { return root.listing === null ? null : root.listing.file.modified; },
             apply: (name, done) => root.apply(ctx, name, done),
+            background: (step, done) => root.background(ctx, step, done),
             swatch: name => root.swatch(name),
             get last() { return root.last; }
         };
@@ -68,6 +73,19 @@ Scope {
         if (jobs.some(job => job.verb === "apply")) return "refused: theme=" + name + " reason=busy";
         const job = { verb: "apply", name: name, started: false, waiters: [] };
         wait(ctx, job, "apply", done);
+        enqueue(job);
+        return "ok";
+    }
+
+    // background: `ok` once a step through the applied package's images is
+    // queued, or an immediate refusal for a step that is neither `next` nor
+    // `previous`; `done` receives the structured result `{ state,
+    // background, theme, path, reason }` `vgsh theme background --json`
+    // prints, every refusal included.
+    function background(ctx, step, done) {
+        if (root.backgroundSteps.indexOf(step) === -1) return "refused: background=" + JSON.stringify(step) + " reason=malformed-step";
+        const job = { verb: "background", name: step, started: false, waiters: [] };
+        wait(ctx, job, "background", done);
         enqueue(job);
         return "ok";
     }
@@ -106,7 +124,7 @@ Scope {
         const job = jobs[0];
         job.started = true;
         const command = [Quickshell.shellDir + "/../bin/vgsh", "theme", job.verb, "--json"];
-        process.command = job.verb === "apply" ? command.concat([job.name]) : command;
+        process.command = job.name === null ? command : command.concat([job.name]);
         completion = null;
         process.running = true;
     }
@@ -125,7 +143,7 @@ Scope {
             return failure(job, "output-unreadable", exit + " error=" + e.message);
         }
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
-        if (job.verb === "apply" && isObject(value) && typeof value.state === "string") return value;
+        if ((job.verb === "apply" || job.verb === "background") && isObject(value) && typeof value.state === "string") return value;
         if (job.verb === "list" && isObject(value) && isObject(value.file) && Array.isArray(value.packages))
             return { file: value.file, packages: value.packages, reason: null };
         return failure(job, "output-unreadable", exit + " error=shape");
@@ -133,9 +151,15 @@ Scope {
 
     function failure(job, reason, detail) {
         console.error("theme: vgsh theme " + job.verb + " reason=" + reason + (job.name === null ? "" : " name=" + job.name) + detail);
-        return job.verb === "apply"
-            ? { state: "failed", shell: "failed", targets: [], theme: job.name, reason: reason }
-            : { file: null, packages: null, reason: reason };
+        switch (job.verb) {
+        case "apply":
+            return { state: "failed", shell: "failed", targets: [], theme: job.name, reason: reason };
+        case "background":
+            return { state: "failed", background: null, theme: null, path: null, reason: reason };
+        case "list":
+            return { file: null, packages: null, reason: reason };
+        }
+        throw new Error("theme: failure for unknown verb=" + job.verb);
     }
 
     // The running job ended: record its answer, take it off the queue, hand
@@ -147,7 +171,7 @@ Scope {
         // can change what another reads.
         const result = frozen(resultOf(job));
         if (job.verb === "apply") lastResult = result;
-        else listing = result.reason === null ? result : null;
+        else if (job.verb === "list") listing = result.reason === null ? result : null;
         jobs = jobs.slice(1);
         for (const waiter of job.waiters.slice()) {
             waiter.release();

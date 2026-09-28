@@ -347,6 +347,21 @@ for (const [name, held, capabilities, want] of lendRows) {
     check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
 }
 
+// unknownIds rows: [name, config, want]. `manifests` knows vgs.bar,
+// vgs.clock, vgs.workspaces, vgs.svc and acme.svc.
+const unknownRows = [
+    ["a configuration naming only known ids reports none", { disabledPlugins: ["vgs.clock"], plugins: [{ id: "acme.svc" }] }, []],
+    ["a disabled id no plugin has is reported under disabledPlugins", { disabledPlugins: ["vgs.clock", "vgs.background"] }, [{ id: "vgs.background", key: "disabledPlugins" }]],
+    ["a plugins row no plugin has is reported under plugins", { plugins: [{ id: "acme.svc" }, { id: "vgs.background", x: 1 }] }, [{ id: "vgs.background", key: "plugins" }]],
+    ["an id in both keys is reported once per key, disabledPlugins first", { plugins: [{ id: "acme.gone" }], disabledPlugins: ["acme.gone"] }, [{ id: "acme.gone", key: "disabledPlugins" }, { id: "acme.gone", key: "plugins" }]],
+    ["an id listed twice in one key is reported once", { disabledPlugins: ["acme.gone", "acme.gone"] }, [{ id: "acme.gone", key: "disabledPlugins" }]],
+    ["ids are reported in list order", { disabledPlugins: ["b.gone", "a.gone"] }, [{ id: "b.gone", key: "disabledPlugins" }, { id: "a.gone", key: "disabledPlugins" }]],
+    ["a configuration without either key reports none", {}, []],
+];
+for (const [name, config, want] of unknownRows) {
+    check("unknownIds: " + name, ctx.unknownIds(config, manifests), want);
+}
+
 // surfacePlacement rows: [name, kind, settings, want subset]
 const placementRows = [
     ["an overlay fills its screen on the overlay layer", "overlay", {}, { anchors: { top: true, bottom: true, left: true, right: true }, exclusion: "ignore", layer: "overlay", placement: "fill" }],

@@ -227,7 +227,9 @@ Singleton {
             dir: manifests[id].__sourceDir,
             revision: manifests[id].__revision
         }));
-        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
+        // Before the first scan no id is known, so none is reported unknown.
+        const unknown = scanned ? Logic.unknownIds(Config.effective, manifests) : [];
+        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, unknown: unknown, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
     }
 
     Component.onCompleted: rescan()

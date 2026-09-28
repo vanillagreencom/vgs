@@ -25,11 +25,12 @@
 //   vgsh-theme-judge reload <text|json> <config-dir> <state-dir> <held|busy|failed>
 //       run the hook of every target <state-dir>/reload-pending.json lists
 //       again, under the same lock verdict.
-//   vgsh-theme-judge background-next <config-dir> <state-dir> <held|busy|failed>
-//       make the next image of the applied package's backgrounds/ the
-//       current background and remember it for that package, under the
-//       same lock verdict; prints `ok background=<file> theme=<name>
-//       path=<image>`.
+//   vgsh-theme-judge background <text|json> <next|previous> <config-dir> <state-dir> <held|busy|failed>
+//       make the next or the previous image of the applied package's
+//       backgrounds/ the current background and remember it for that
+//       package, under the same lock verdict; prints `ok background=<file>
+//       theme=<name> path=<image>`, or under `json` the result
+//       `{ state, background, theme, path, reason }`.
 //   vgsh-theme-judge accept <dir> [<name>]
 //       judge the package in DIR as an installed package, for `vgsh theme
 //       add` (no NAME: it lands under its document's own name) and `vgsh
@@ -40,10 +41,10 @@
 //       print the directory of installed package NAME under
 //       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
 //
-// list, apply, reload, background-next and installed refuse with one line
+// list, apply, reload, background and installed refuse with one line
 // on stderr, `vgsh: refused: <key>=...`, through bin/lib/judge-files.js:
 // exit 1, or 75 for `reason=busy`. Under `json`, apply prints its structured result on stdout
-// first, refusals included, and so does reload. A partial apply or reload
+// first, refusals included, and so do reload and background. A partial apply or reload
 // prints one such line per failed or reload-pending target and exits 3. A
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner and § Install, theme-apply.md,
@@ -1166,12 +1167,16 @@ function reload(format, configDir, stateDir, lock) {
 
 // --- backgrounds
 
+// How far each background step moves through the applied package's images.
+const BACKGROUND_STEPS = { next: 1, previous: -1 };
+
 // The file theme.name, which apply writes after the swap, names the
-// applied package; `next` cycles that package's images in name order from
-// the one it shows, remembers the new one for it and makes it current.
-function backgroundNext(configDir, stateDir, lock) {
-    const key = "background=next reason";
-    if (lock === "busy") refuse("background=next reason=busy", "busy", 75);
+// applied package; a step cycles that package's images in name order from
+// the one it shows, wrapping at either end, remembers the new one for it
+// and makes it current. RESULT is filled as the step learns each part.
+function stepBackground(result, step, configDir, stateDir, lock) {
+    const key = "background=" + step + " reason";
+    if (lock === "busy") refuse("background=" + step + " reason=busy", "busy", 75);
     if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
     const shown = backgrounds.read(logic, stateDir, key);
     const file = path.join(stateDir, "theme.name");
@@ -1184,14 +1189,35 @@ function backgroundNext(configDir, stateDir, lock) {
     }
     name = name.endsWith("\n") ? name.slice(0, -1) : name;
     if (!logic.isPackageName(name)) refuse(key + "=malformed path=" + file, "malformed");
+    result.theme = name;
     const row = packageSet(configDir, key).resolved.get(name);
     if (row === undefined) refuse(key + "=unknown theme=" + name, "unknown");
     if (row.state !== "ok") refuse(key + "=" + row.reason + " theme=" + name + " path=" + row.path, row.reason);
     const list = backgrounds.images(row.path, key);
     if (list.length === 0) refuse(key + "=no-backgrounds theme=" + name + " path=" + path.join(row.path, backgrounds.DIR), "no-backgrounds");
-    const next = list[(list.indexOf(backgrounds.choose(list, shown.themes[name])) + 1) % list.length];
-    const current = backgrounds.land(stateDir, row.path, next, Object.assign({}, shown.themes, { [name]: next }), shown, key);
-    console.log("ok background=" + next + " theme=" + name + " path=" + current);
+    const at = list.indexOf(backgrounds.choose(list, shown.themes[name]));
+    const chosen = list[(at + BACKGROUND_STEPS[step] + list.length) % list.length];
+    result.path = backgrounds.land(stateDir, row.path, chosen, Object.assign({}, shown.themes, { [name]: chosen }), shown, key);
+    result.background = chosen;
+    result.state = "ok";
+}
+
+// Run one background step and print its result: under `json` one line on
+// stdout, a refusal's included, `state` "failed" beside the refusal's
+// reason; in text the `ok` line.
+function background(format, step, configDir, stateDir, lock) {
+    const result = { state: "failed", background: null, theme: null, path: null, reason: null };
+    try {
+        stepBackground(result, step, configDir, stateDir, lock);
+    } catch (e) {
+        if (e instanceof Refusal && format === "json") {
+            result.reason = e.reason;
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }
+        throw e;
+    }
+    if (format === "json") process.stdout.write(JSON.stringify(result) + "\n");
+    else console.log("ok background=" + result.background + " theme=" + result.theme + " path=" + result.path);
 }
 
 // --- install
@@ -1285,9 +1311,9 @@ main(() => {
         if (args.length !== 4 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
         reload(...args);
         break;
-    case "background-next":
-        if (args.length !== 3 || !LOCK_VERDICTS.includes(args[2])) usage("arguments=" + command);
-        backgroundNext(...args);
+    case "background":
+        if (args.length !== 5 || !FORMATS.includes(args[0]) || !Object.hasOwn(BACKGROUND_STEPS, args[1]) || !LOCK_VERDICTS.includes(args[4])) usage("arguments=" + command);
+        background(...args);
         break;
     case "accept":
         if (args.length < 1 || args.length > 2) usage("arguments=" + command);

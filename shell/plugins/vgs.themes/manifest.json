@@ -4,15 +4,17 @@
   "name": "Themes",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A bar button that opens a panel listing every theme package; a click applies one, and the panel shows the targets the last apply could not land.",
+  "description": "A bar button that opens a panel listing every theme package and the wallpaper; a click applies a package or steps to the next or previous wallpaper, and the applied theme's wallpaper is drawn under every window.",
   "license": "MIT",
   "kinds": [
     "bar-widget",
-    "panel"
+    "panel",
+    "background"
   ],
   "entryPoints": {
     "bar-widget": "Widget.qml",
-    "panel": "ThemesPanel.qml"
+    "panel": "ThemesPanel.qml",
+    "background": "Background.qml"
   },
   "capabilities": [
     "surfaces",

@@ -3,12 +3,14 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 
-// The themes panel: every theme package the runner lists, each with its
+// The themes panel: the current wallpaper with a step to the next or the
+// previous one, then every theme package the runner lists, each with its
 // palette and its state, and a click that applies one. It is built on
-// summon and destroyed on hide, so everything it shows is read from the
-// theme capability on open: the list, and `last`, which the core keeps
-// across instances, so a panel closed during an apply and reopened after
-// it shows the result.
+// summon and destroyed on hide, so everything it shows is read on open:
+// the wallpaper from WallpaperState, which follows every change of the
+// runner's state file, the list, and `last`, which the core keeps across
+// instances, so a panel closed during an apply and reopened after it shows
+// the result.
 Item {
     id: root
 
@@ -27,6 +29,14 @@ Item {
     // The package a click asked for and the refusal `apply` answered at
     // once, or null; shown on its row until the next click.
     property var refusal: null
+    // The current wallpaper's file name, "" while no image is current.
+    readonly property string wallpaperName: wallpaper.path === "" ? "" : wallpaper.path.slice(wallpaper.path.lastIndexOf("/") + 1)
+    // Whether a wallpaper step this instance asked for is still running.
+    property bool stepping: false
+    // Why the last wallpaper step failed, "" when it did not; shown until
+    // the next click.
+    property string stepProblem: ""
+    readonly property bool canStep: wallpaper.path !== "" && !stepping
 
     // The panel takes no payload; what a summoner passes is ignored.
     function open(payloadJson) { refresh(); }
@@ -55,6 +65,25 @@ Item {
         readLast();
         return reply;
     }
+
+    // Move to the applied package's `next` or `previous` wallpaper; answers
+    // the capability's reply. `done` never runs before the reply.
+    function step(direction) {
+        stepProblem = "";
+        const reply = shell.theme.background(direction, result => {
+            root.stepping = false;
+            if (result.state !== "ok") root.stepProblem = "The wallpaper step failed: " + result.reason;
+        });
+        if (reply !== "ok") {
+            stepProblem = reply;
+            console.warn("themes panel: " + reply);
+            return reply;
+        }
+        stepping = true;
+        return reply;
+    }
+
+    WallpaperState { id: wallpaper }
 
     // The lines the row of package `name` shows for the last result: the
     // result's own refusal reason, then every target that did not land and
@@ -102,6 +131,60 @@ Item {
                 id: list
                 width: parent.width
                 spacing: Theme.space.xs
+
+                SectionHeader {
+                    text: "Wallpaper"
+                    description: "The applied theme's background image; the buttons step through its package's images"
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
+                }
+
+                Item {
+                    x: Theme.row.paddingX
+                    width: parent.width - 2 * Theme.row.paddingX
+                    implicitHeight: Math.max(wallpaperLabel.implicitHeight, nextWallpaper.implicitHeight)
+
+                    Label {
+                        id: wallpaperLabel
+                        role: "body"
+                        anchors.left: parent.left
+                        anchors.right: previousWallpaper.left
+                        anchors.rightMargin: Theme.space.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        elide: Text.ElideMiddle
+                        text: root.wallpaperName === "" ? "None" : root.wallpaperName
+                    }
+                    IconButton {
+                        id: previousWallpaper
+                        anchors.right: nextWallpaper.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: "sm"
+                        iconName: "chevron-left"
+                        label: "Previous wallpaper"
+                        enabled: root.canStep
+                        onClicked: root.step("previous")
+                    }
+                    IconButton {
+                        id: nextWallpaper
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: "sm"
+                        iconName: "chevron-right"
+                        label: "Next wallpaper"
+                        enabled: root.canStep
+                        onClicked: root.step("next")
+                    }
+                }
+
+                Label {
+                    role: "hint"
+                    x: Theme.row.paddingX
+                    width: parent.width - 2 * Theme.row.paddingX
+                    visible: text !== ""
+                    text: root.stepProblem
+                    color: Theme.color.danger
+                    wrapMode: Text.Wrap
+                }
 
                 SectionHeader {
                     text: "Themes"

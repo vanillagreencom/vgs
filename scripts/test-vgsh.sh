@@ -50,7 +50,8 @@ run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT WANT_ERR
   if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
 }
 
-list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"scanError":"","scanned":true}'
+list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[],"scanError":"","scanned":true}'
+unknown_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[{"id":"vgs.background","key":"disabledPlugins"}],"scanError":"","scanned":true}'
 dead_pid="$(( $(cat /proc/sys/kernel/pid_max) + 1 ))"
 
 run_row "enable prints ok" "$rt_live" "STUB_REPLY=ok" "plugin enable vgs.clock" "ok" 0 ""
@@ -66,6 +67,7 @@ run_row "no lock file exits 69 on ipc" "$rt_empty" "STUB_REPLY=ok" "ipc call she
 run_row "pid prints the pid the lock file records" "$rt_live" "" "pid" "$$" 0 ""
 run_row "pid with no lock file exits 69" "$rt_empty" "" "pid" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
 run_row "list formats one row per plugin" "$rt_live" "STUB_REPLY=$list_json" "plugin list" "vgs.bar                      0.1.0    enabled   kinds=bar" 0 ""
+run_row "list names a configured id no plugin has and its key" "$rt_live" "STUB_REPLY=$unknown_json" "plugin list" "unknown vgs.background in disabledPlugins" 0 ""
 run_row "missing id is exit 2" "$rt_live" "" "plugin enable" "" 2 "vgsh: refused: id=missing"
 run_row "unknown subcommand is exit 2" "$rt_live" "" "plugin frobnicate" "" 2 "vgsh: refused: plugin-subcommand=frobnicate"
 run_row "unknown command is exit 2" "$rt_live" "" "frobnicate" "" 2 "vgsh: refused: command=frobnicate"
@@ -97,6 +99,8 @@ if [[ $status == 0 && $out == $'ok hidden=vgs.clock,vgs.workspaces\nthose bar wi
 # and execs the shell with that pid as its identity; with a holder it exits
 # 75 before any shell starts.
 rt_run="$tmp/rt-run"; mkdir -p "$rt_run/vgsh-sources-1"; : >"$rt_run/vgsh-sources-1/x"
+run_state="$tmp/home/.local/state/vgs"
+if [[ ! -e $run_state ]]; then ok "no state directory stands before run"; else fail "a row before run created $run_state"; fi
 set +e
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_run" STUB_RECORD="$tmp/record" "$repo/bin/vgsh" run 2>"$tmp/err"
 status=$?
@@ -110,6 +114,7 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   if [[ "$(cat "$rt_run/vgsh.lock")" == "$pid" ]]; then ok "run records the shell's pid in the lock file"; else fail "lock file holds [$(cat "$rt_run/vgsh.lock")] want $pid"; fi
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
   if [[ ! -e $rt_run/vgsh-sources-1 ]]; then ok "run removes the source snapshot roots dead shells left"; else fail "run left $rt_run/vgsh-sources-1"; fi
+  if [[ -d $run_state ]]; then ok "run creates the state directory the shell watches"; else fail "run left no $run_state"; fi
 else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
 fi

@@ -25,3 +25,24 @@ expect "the bar stays with a malformed user file" "$monitors" bar_count
 expect_widgets "the placed widget stays with a malformed user file" '["acme.tick"]'
 printf '%s\n' "$user_good" >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
 expect_poll "the user file reads as loaded once the row is fixed" loaded config_user_state
+
+# An id the user file lists that no discovered plugin has, as a removed
+# plugin leaves behind, is reported by `vgsh plugin list` under the key
+# that lists it, and the file keeps it. The rows read the one id they
+# plant; the failed-builds rows leave their own removed fixture listed.
+plugin_list_unknown() {
+  local listed
+  listed="$("${shell_env[@]}" "$repo/bin/vgsh" plugin list)" || return
+  grep -F 'unknown vgs.background ' <<<"$listed" || [[ $? == 1 ]]
+}
+python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["disabledPlugins"] = d.get("disabledPlugins", []) + ["vgs.background"]
+json.dump(d, open(p + ".tmp", "w"), indent=2)
+os.replace(p + ".tmp", p)
+PY
+expect_poll "vgsh plugin list names a disabled id no plugin has" "unknown vgs.background in disabledPlugins" plugin_list_unknown
+printf '%s\n' "$user_good" >"$home/.config/vgs/shell.json.tmp" && mv -T -- "$home/.config/vgs/shell.json.tmp" "$home/.config/vgs/shell.json"
+expect_poll "vgsh plugin list names no unknown id once the file drops it" "" plugin_list_unknown

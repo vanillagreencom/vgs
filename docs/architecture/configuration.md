@@ -2,7 +2,7 @@
 
 Covers: shell/Core/Config.qml, shell/Commons/Paths.qml, shell/Commons/WatchedFile.qml, config/shell.json
 
-The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both. `Paths.stateDir` is the directory `vgsh theme` keeps what it applied in, which the `vgs.background` plugin reads: [theme-backgrounds.md](theme-backgrounds.md).
+The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both. `Paths.stateDir` is the directory `vgsh theme` keeps what it applied in, which the `vgs.themes` plugin reads for the wallpaper: [theme-backgrounds.md](theme-backgrounds.md).
 
 ## Layers
 
@@ -22,6 +22,10 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 | `plugins[]` | Objects, each with a string `id` and the plugin's settings beside it. |
 | `disabledPlugins[]` | Strings: plugin ids. |
 | `disabledTargets[]` | Strings: theme target names an apply skips. A user list replaces the shipped one. |
+
+## Unknown ids
+
+An id `disabledPlugins` or `plugins` lists that no discovered plugin has, as a removed plugin leaves behind, enables and disables nothing, and the shell keeps it in the file. `PluginLogic.unknownIds` names each one with the key that lists it, once per key. `listPlugins` carries the rows as `unknown` once the first scan has completed, and `vgsh plugin list` prints one `unknown <id> in <key>` line per row. `scripts/test-plugin-logic.js` pins the rule, `scripts/test-vgsh.sh` the line, and `scripts/smoke/rows/configuration.sh` the shell's report of a stale `disabledPlugins` entry.
 
 ## States
 
