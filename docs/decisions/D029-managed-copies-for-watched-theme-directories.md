@@ -18,6 +18,18 @@
 - Byte equality is the only marker a copy can carry without adding a second file; comparing both old and new bytes keeps unchanged applies quiet and lets a disabled target remove the copy it made.
 - The single-key selection edit keeps credentials, comments and unrelated settings intact.
 
+## Omarchy comparison
+
+The design was compared with basecamp/omarchy's latest default branch, `quattro` at b18ab49. VGS takes Omarchy's core approach for the CLIs both systems serve: publish a stable named theme file into the CLI's own theme directory by atomic copy, set the stable theme key value and reload opencode with `SIGUSR2`.
+
+VGS differs where Omarchy's desktop assumptions do not fit this repo:
+
+- Omarchy rewrites settings files with `jq` and creates them when absent. VGS keeps [D024](D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md)'s byte-preserving single-key edit and never creates absent settings files, because these files can hold credentials and user formatting.
+- Omarchy sets opencode to its `system` theme and sends `SIGUSR2` to every process named `opencode`. VGS renders its own opencode theme and signals only interactive opencode processes, because `serve`, `web` and `acp` install no handler and the signal would end them.
+- Omarchy publishes Hermes skins to every `profiles/*/skins` directory and activates the skin with `hermes config set`. VGS serves the default home only and sets the selection through its judged `select` edit, because apply does not run application CLIs and does not create profile homes.
+- Omarchy overwrites its managed files unconditionally. VGS replaces a copy only while its bytes match the render VGS last landed or the new render, preserving [D022](D022-theme-apply-keeps-managed-links-in-application-directories.md)'s occupied-path rule for user-edited files.
+- Omarchy has no Codex or Gemini counterpart. Codex keeps a link because it reads the theme at start and has no watch, and Gemini keeps no entry because its settings file names the state file directly.
+
 **Revisit When**: A watched CLI cannot reload from an atomic copy, or a copied theme file needs permissions other than `0644`.
 
 **Verification**: `scripts/test-theme-render.js` covers the `copies` schema and `entryItems` kind. `scripts/test-vgsh-entries.sh` covers create, unchanged, changed, old-link migration, occupied edited copies and disable removal. `scripts/test-vgsh-agents.sh` covers the agent CLI targets and opencode reload filtering.
