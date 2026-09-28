@@ -121,6 +121,20 @@ const REFUSED_TEMPLATES = [
     ["ok @{palette.accent} then @{palette.accent", "template=probe.conf unterminated=26"]
 ];
 
+// A configuration file's text before the wiring, and after it, or null when
+// the line already stands on a line of its own.
+const LINE = "include=/s/foot.ini";
+const WIRED = [
+    [undefined, "include=/s/foot.ini\n"],
+    ["", "include=/s/foot.ini\n"],
+    ["[main]\nfont=x\n", "include=/s/foot.ini\n[main]\nfont=x\n"],
+    ["font=x", "include=/s/foot.ini\nfont=x"],
+    ["font=x\ninclude=/s/foot.ini\n[colors]\n", null],
+    ["include=/s/foot.ini", null],
+    ["# include=/s/foot.ini\n", "include=/s/foot.ini\n# include=/s/foot.ini\n"],
+    ["include=/s/foot.ini.old\n", "include=/s/foot.ini\ninclude=/s/foot.ini.old\n"]
+];
+
 function verify(render) {
     const accepted = (name, text) => {
         const result = render.acceptTarget(logic, name, text);
@@ -190,6 +204,13 @@ function verify(render) {
 
     assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map(), { values: probe.values, slots: defaults.terminal, curated: new Map() }), /was not read/);
     assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map([["probe.conf", ""]]), { values: probe.values, slots: null, curated: new Map() }), /without terminal slots/);
+
+    // The wiring line names the state directory; `@@{` stays a literal.
+    assert.equal(render.wiringLine(target("hex6"), "/s/vgs/theme"), "include=/s/vgs/theme/probe.conf");
+    const escaped = accepted("probe", targetText({ wiring: Object.assign({}, wiring, { line: "a=@@{x} source @{state}/b @{state}/c" }) }));
+    assert.equal(render.wiringLine(escaped, "/s"), "a=@{x} source /s/b /s/c");
+    for (const [text, want] of WIRED)
+        assert.equal(render.wiredText(text, LINE), want, JSON.stringify(text));
 }
 verify(require(rendererFile));
 
@@ -229,7 +250,11 @@ const CONTROLS = [
     ["wiring create", "if (typeof wiring.create !== \"boolean\") return", "if (false) return"],
     ["reload keys", "if (!hasExactKeys(logic, reload, RELOAD_KEYS)) return", "if (!logic.isPlainObject(reload)) return"],
     ["reload command", "if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return", "if (false) return"],
-    ["reload timeout", "if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return", "if (false) return"]
+    ["reload timeout", "if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return", "if (false) return"],
+    ["wiring line state", "        return state;\n", "        return \"@{state}\";\n"],
+    ["wiring whole line", "if (text.split(\"\\n\").includes(line)) return null;", "if (text.includes(line)) return null;"],
+    ["wiring line first", "return line + \"\\n\" + text;", "return text + \"\\n\" + line;"],
+    ["wiring creates", "if (text === undefined) return line + \"\\n\";", "if (text === undefined) return null;"]
 ];
 
 const source = fs.readFileSync(rendererFile, "utf8");
@@ -251,4 +276,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length} controls=${CONTROLS.length}`);

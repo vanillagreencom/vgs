@@ -15,9 +15,12 @@
 //       every shipped package and every package under <config-dir>/themes,
 //       and the state of <config-dir>/theme.json.
 //   vgsh-theme-judge apply <text|json> <config-dir> <state-dir> <held|busy|failed> <name>
-//       apply one package; the fourth argument is the caller's verdict on
-//       the flock of <config-dir>/theme.lock, which it holds for as long as
-//       this process runs when the verdict is `held`.
+//       apply one package and every enabled shipped target; the fourth
+//       argument is the caller's verdict on the flock of
+//       <config-dir>/theme.lock, which it holds for as long as this process
+//       runs when the verdict is `held`. <config-dir> is the vgs directory
+//       of the configuration home, whose parent a target's wiring file is
+//       relative to.
 //   vgsh-theme-judge accept <dir> [<name>]
 //       judge the package in DIR as an installed package, for `vgsh theme
 //       add` (no NAME: it lands under its document's own name) and `vgsh
@@ -31,9 +34,11 @@
 // list, apply and installed refuse with one line on stderr, `vgsh: refused:
 // <key>=...`, through bin/lib/judge-files.js: exit 1, or 75 for
 // `reason=busy`. Under `json`, apply prints its structured result on stdout
-// first, refusals included. A malformed invocation exits 2.
-// docs/architecture/themes.md § Runner, § Install and § Targets hold the
-// rules this file implements; the target renderer is bin/lib/theme-render.js.
+// first, refusals included. A partial apply prints one such line per failed
+// target and exits 3. A malformed invocation exits 2.
+// docs/architecture/themes.md § Runner, § Apply and § Install, and
+// docs/architecture/theme-targets.md, hold the rules this file implements;
+// the target renderer is bin/lib/theme-render.js.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -42,10 +47,12 @@ const repo = path.join(__dirname, "..");
 const { load } = require(path.join(repo, "scripts", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
-const { Refusal, refuse, main, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const pluginLogic = load(path.join(repo, "shell", "Core", "PluginLogic.js"));
+const { Refusal, refuse, main, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 
 const SHIPPED = path.join(repo, "themes");
+const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
 // The directory of a themes directory that holds targets; it is never a
 // package.
 const TARGETS = "targets";
@@ -215,11 +222,12 @@ function checkTargets(base, defaults) {
 
 // One package: `state` is `ok`, `refused` with its `reason`, or `shadowed`
 // by an installed package of its name, which is never read. `palette` is
-// the resolved palette group of an accepted package. `files` and
-// `terminal`, the judge's slots or null, stay in this process.
+// the resolved palette group of an accepted package. `files`, `values`, the
+// judge's resolved tokens, and `terminal`, its slots or null, stay in this
+// process.
 function packageRow(base, name, source) {
     const dir = path.join(base, name);
-    const row = { name, source, path: dir, state: "refused", reason: null, palette: null, files: null, terminal: null };
+    const row = { name, source, path: dir, state: "refused", reason: null, palette: null, files: null, values: null, terminal: null };
     let judged;
     try {
         judged = readPackage(dir, source === "shipped");
@@ -233,7 +241,8 @@ function packageRow(base, name, source) {
         return row;
     }
     row.state = "ok";
-    row.palette = judged.verdict.values.palette;
+    row.values = judged.verdict.values;
+    row.palette = row.values.palette;
     row.terminal = judged.verdict.terminal;
     return row;
 }
@@ -265,7 +274,7 @@ function packageSet(configDir, key) {
     }
     for (const name of dirs(SHIPPED, true)) {
         if (resolved.has(name)) {
-            rows.push({ name, source: "shipped", path: path.join(SHIPPED, name), state: "shadowed", reason: null, palette: null, files: null, terminal: null });
+            rows.push({ name, source: "shipped", path: path.join(SHIPPED, name), state: "shadowed", reason: null, palette: null, files: null, values: null, terminal: null });
             continue;
         }
         const row = packageRow(SHIPPED, name, "shipped");
@@ -329,11 +338,166 @@ function list(format, configDir) {
 
 // --- apply
 
-// Render the package into <state-dir>/next-theme/, move it over theme/,
-// write theme.name, then copy theme.json's bytes to the theme file, which
-// the shell watches, so the shell restyles only after the state directory
-// holds the theme. RESULT's `shell` follows the theme file.
-function applyTo(result, configDir, stateDir, lock, name) {
+// The exit status of an apply a target failed in: the shell took the theme
+// and at least one application did not.
+const PARTIAL_STATUS = 3;
+
+// The target names the effective shell.json lists in `disabledTargets`: the
+// shipped layer merged with the user's by PluginLogic.effectiveConfig, each
+// judged by configError first. A layer the judge refuses refuses the apply,
+// since no target's enablement can then be known.
+function disabledTargets(configDir, key) {
+    const shipped = readConfig(pluginLogic, SHIPPED_CONFIG, key);
+    const user = readConfig(pluginLogic, path.join(configDir, "shell.json"), key, true);
+    const effective = pluginLogic.effectiveConfig(shipped, user);
+    return Array.isArray(effective.disabledTargets) ? effective.disabledTargets : [];
+}
+
+// Whether COMMAND is an executable file in an absolute directory of PATH. A
+// relative entry names no fixed directory and is skipped; a directory that
+// cannot be searched holds no command, as it holds none for a shell.
+function onPath(command) {
+    for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+        if (!path.isAbsolute(dir)) continue;
+        const file = path.join(dir, command);
+        try {
+            fs.accessSync(file, fs.constants.X_OK);
+            if (fs.statSync(file).isFile()) return true;
+        } catch (e) {
+            if (!["ENOENT", "ENOTDIR", "EACCES"].includes(e.code)) throw e;
+        }
+    }
+    return false;
+}
+
+// Run READ, whose fs failure is the target's own: answers READ's value, or
+// FAILED, the target entry naming the file and the error code. Any other
+// throw is no read failure and propagates.
+function reading(name, dir, read, failed) {
+    try {
+        return { ok: true, value: read() };
+    } catch (e) {
+        if (typeof e.code !== "string") throw e;
+        return { ok: false, entry: failed("unreadable", "target=" + name + " reason=unreadable path=" + (e.path || dir) + " error=" + e.code) };
+    }
+}
+
+// One shipped target judged and rendered for package ROW, in memory, before
+// any file moves. `state` is `skipped` or `failed` with its `reason`, a
+// failed one carrying `failure`, its keyed line; a rendered one is `pending`
+// with its `target` and `files` until the stage compares their bytes.
+// SLOTS are the terminal slots terminalSource chose.
+function planTarget(dir, row, slots, disabled, configHome) {
+    const name = path.basename(dir);
+    const skipped = reason => ({ name, state: "skipped", reason });
+    const failed = (reason, failure) => ({ name, state: "failed", reason, failure });
+    if (disabled.includes(name)) return skipped("disabled");
+    const judged = reading(name, dir, () => readTarget(dir), failed);
+    if (!judged.ok) return judged.entry;
+    const verdict = judged.value.verdict;
+    if (!verdict.ok) return failed(verdict.reason, render.refusalLine(name, verdict));
+    const target = verdict.target;
+    const found = reading(name, dir, () => {
+        if (!target.detect.every(onPath)) return "not-detected";
+        if (!target.wiring.create && fs.statSync(path.join(configHome, target.wiring.file), { throwIfNoEntry: false }) === undefined) return "wiring-file-absent";
+        return null;
+    }, failed);
+    if (!found.ok) return found.entry;
+    if (found.value !== null) return skipped(found.value);
+    const curated = reading(name, dir, () => {
+        const files = new Map();
+        for (const file of target.files) {
+            const bytes = readIfPresent(path.join(row.path, TARGETS, file.destination));
+            if (bytes !== undefined) files.set(file.destination, bytes);
+        }
+        return files;
+    }, failed);
+    if (!curated.ok) return curated.entry;
+    const rendered = render.renderTarget(logic, tokens, target, judged.value.templates, { values: row.values, slots, curated: curated.value });
+    if (!rendered.ok) return failed(rendered.reason, render.refusalLine(name, rendered));
+    return { name, state: "pending", reason: null, target, files: rendered.files };
+}
+
+// Every shipped target under themes/targets/, planned by planTarget, in
+// name order. KEY leads the refusal for a targets directory that cannot be
+// listed; an absent one holds no target.
+function planTargets(row, slots, disabled, configHome, key) {
+    const base = path.join(SHIPPED, TARGETS);
+    let names;
+    try {
+        names = childDirs(base);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
+    }
+    return (names || []).map(name => planTarget(path.join(base, name), row, slots, disabled, configHome));
+}
+
+// Whether every file of a rendered target already stands in LIVE with the
+// same bytes. A file that cannot be read there is taken as changed: the
+// stage replaces it whatever it held.
+function sameBytes(live, files) {
+    return files.every(file => {
+        let bytes;
+        try {
+            bytes = readIfPresent(path.join(live, file.destination));
+        } catch (e) {
+            if (typeof e.code !== "string") throw e;
+            return false;
+        }
+        return bytes !== undefined && bytes.equals(file.bytes);
+    });
+}
+
+// Keep ENTRY's include line, pointing at LIVE, in its application's
+// configuration file under CONFIG_HOME, edited where it stands: a symlink is
+// resolved and the file it names is replaced with its mode kept, so a dotfile
+// manager's link stays a link. The file's bytes are read and written as
+// latin1, one character per byte, so every byte but the new line's is kept.
+// An absent file is created holding the line when the target's wiring says
+// so, never through a dangling symlink. Answers ENTRY, or its failed entry.
+function wire(entry, configHome, live) {
+    const file = path.join(configHome, entry.target.wiring.file);
+    const key = "target=" + entry.name + " reason";
+    const failed = (reason, failure) => ({ name: entry.name, state: "failed", reason, failure });
+    let real = null;
+    let text;
+    try {
+        real = fs.realpathSync(file);
+        text = fs.readFileSync(real, "latin1");
+    } catch (e) {
+        if (e.code !== "ENOENT") return failed("unreadable", key + "=unreadable path=" + file + " error=" + e.code);
+        real = null;
+    }
+    if (real === null && !entry.target.wiring.create) return failed("wiring-file-absent", key + "=wiring-file-absent path=" + file);
+    const line = Buffer.from(render.wiringLine(entry.target, live), "utf8").toString("latin1");
+    const next = render.wiredText(text, line);
+    if (next === null) return entry;
+    try {
+        if (real === null) {
+            writing(file, key, () => {
+                fs.mkdirSync(path.dirname(file), { recursive: true });
+                fs.writeFileSync(file, Buffer.from(next, "latin1"), { flag: "wx" });
+            });
+        } else {
+            let mode;
+            writing(real, key, () => { mode = fs.statSync(real).mode & 0o7777; });
+            replaceFile(real, Buffer.from(next, "latin1"), key, mode);
+        }
+    } catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        return failed(e.reason, e.first);
+    }
+    return entry;
+}
+
+// Render the package and every enabled target into <state-dir>/next-theme/,
+// move it over theme/, write theme.name, keep each landed target's include
+// line, then copy theme.json's bytes to the theme file, which the shell
+// watches, so the shell restyles only after every application file is in
+// place. RESULT's `shell` follows the theme file and its `targets` are set
+// once the swap has landed them; FAILURES takes each failed target's keyed
+// line.
+function applyTo(result, failures, configDir, stateDir, lock, name) {
     if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
     const key = "theme=" + name + " reason";
     if (lock === "busy") refuse(key + "=busy", "busy", 75);
@@ -346,19 +510,28 @@ function applyTo(result, configDir, stateDir, lock, name) {
     const source = render.terminalSource(row, defaults === undefined ? null : defaults);
     if (source === null) refuse(key + "=terminal-fallback path=" + path.join(SHIPPED, logic.DEFAULT_NAME), "terminal-fallback");
     const terminal = source.files.terminal;
+    // The configuration home is the parent of the vgs configuration directory;
+    // a target's wiring file is relative to it.
+    const configHome = path.dirname(configDir);
+    const targets = planTargets(row, source.terminal, disabledTargets(configDir, key), configHome, key);
 
     const live = path.join(stateDir, "theme");
     const stage = path.join(stateDir, "next-theme");
     const aside = path.join(stateDir, "old-theme");
+    for (const entry of targets)
+        if (entry.state === "pending") entry.state = sameBytes(live, entry.files) ? "unchanged" : "written";
     try {
         // A stage or an aside copy left by an apply that died is stale:
-        // the lock proves no apply is running.
+        // the lock proves no apply is running. Every file is created
+        // exclusively, so two writers of one name refuse the apply.
         writing(stage, key, () => {
             fs.rmSync(stage, { recursive: true, force: true });
             fs.rmSync(aside, { recursive: true, force: true });
             fs.mkdirSync(stage, { recursive: true });
-            fs.writeFileSync(path.join(stage, "theme.json"), row.files.theme);
-            fs.writeFileSync(path.join(stage, "terminal.json"), terminal);
+            fs.writeFileSync(path.join(stage, "theme.json"), row.files.theme, { flag: "wx" });
+            fs.writeFileSync(path.join(stage, "terminal.json"), terminal, { flag: "wx" });
+            for (const entry of targets)
+                for (const file of entry.files || []) fs.writeFileSync(path.join(stage, file.destination), file.bytes, { flag: "wx" });
         });
         // A rename cannot replace a non-empty directory: the old render
         // moves aside first, so theme/ is absent between the two renames.
@@ -387,22 +560,35 @@ function applyTo(result, configDir, stateDir, lock, name) {
         throw e;
     }
     replaceFile(path.join(stateDir, "theme.name"), name + "\n", key);
+    // Asserted on every apply, unchanged bytes included, so a line removed
+    // by hand comes back.
+    const landed = targets.map(entry => entry.state === "written" || entry.state === "unchanged" ? wire(entry, configHome, live) : entry);
+    result.targets = landed.map(entry => ({ name: entry.name, state: entry.state, reason: entry.reason }));
+    for (const entry of landed) if (entry.state === "failed") failures.push(entry.failure);
 
     const file = themeFile(path.join(configDir, "theme.json"));
-    if (file.bytes !== null && file.bytes.equals(row.files.theme)) {
-        result.state = "unchanged";
-        return;
+    if (file.bytes === null || !file.bytes.equals(row.files.theme)) {
+        result.shell = "failed";
+        replaceFile(file.path, row.files.theme, key);
+        result.shell = "applied";
     }
-    result.shell = "failed";
-    replaceFile(file.path, row.files.theme, key);
-    result.shell = "applied";
-    result.state = "applied";
+    result.state = applyState(result.shell, result.targets);
+}
+
+// The apply's state from its shell and target states: `partial` when a
+// target failed, `applied` when the shell or a target took new bytes,
+// otherwise `unchanged`.
+function applyState(shell, targets) {
+    if (targets.some(t => t.state === "failed")) return "partial";
+    if (shell === "applied" || targets.some(t => t.state === "written")) return "applied";
+    return "unchanged";
 }
 
 function apply(format, configDir, stateDir, lock, name) {
     const result = { state: "failed", shell: "unchanged", targets: [], theme: name, reason: null };
+    const failures = [];
     try {
-        applyTo(result, configDir, stateDir, lock, name);
+        applyTo(result, failures, configDir, stateDir, lock, name);
     } catch (e) {
         if (e instanceof Refusal && format === "json") {
             result.state = "failed";
@@ -411,8 +597,14 @@ function apply(format, configDir, stateDir, lock, name) {
         }
         throw e;
     }
-    if (format === "json") process.stdout.write(JSON.stringify(result) + "\n");
-    else console.log("ok theme=" + name + " state=" + result.state + " shell=" + result.shell);
+    for (const failure of failures) process.stderr.write("vgsh: refused: " + failure + "\n");
+    if (format === "json") {
+        process.stdout.write(JSON.stringify(result) + "\n");
+    } else {
+        for (const t of result.targets) console.log("target=" + t.name + " state=" + t.state + (t.reason === null ? "" : " reason=" + t.reason));
+        console.log((result.state === "partial" ? "partial" : "ok") + " theme=" + name + " state=" + result.state + " shell=" + result.shell);
+    }
+    if (result.state === "partial") process.exitCode = PARTIAL_STATUS;
 }
 
 // --- install

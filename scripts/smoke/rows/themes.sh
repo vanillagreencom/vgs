@@ -11,6 +11,9 @@ installed="$home/.config/vgs/themes"
 # What the fixture's last apply callback received: state, shell, theme and
 # reason, a null reason printed as None.
 applied() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["shell"], r["theme"], r["reason"])'; }
+# The [name, state, reason] rows of that result's targets whose name starts
+# with PREFIX, so a host's own detected application stays out of the reading.
+applied_targets() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(json.dumps([[t["name"], t["state"], t["reason"]] for t in r["targets"] if t["name"].startswith(sys.argv[1])]))' "$1"; }
 # What the fixture's last list callback received: `packages` as
 # [name, source, state, reason] rows, `current` the rows marked current,
 # `file` its state, name and modified flag, `reason` the list's own.
@@ -83,6 +86,27 @@ expect_poll "the unknown package's result reaches the fixture" 4 applies
 expect "the refusal's output is the result, not discarded" "failed unchanged nosuch unknown" applied
 expect "a malformed name is refused at once" 'refused: theme="../x" reason=malformed-name' probe theme-apply ../x
 expect "a malformed name queues nothing" '[]' theme_jobs
+
+# A real partial apply: two fixture targets beside the shipped ones in the
+# sandbox copy, always detected, one naming no token. The shell takes the
+# theme, the other target lands, and the result and its exit 3 reach the
+# fixture whole.
+fixture_targets="$repo/themes/targets"
+fixture_target() { # NAME TEMPLATE_TEXT
+  mkdir -p -- "$fixture_targets/$1"
+  printf '{ "app": "%s", "encoder": "hex8", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": [], "wiring": { "file": "%s/%s.conf", "line": "include=@{state}/%s.conf", "create": true }, "reload": null }\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$fixture_targets/$1/target.json"
+  printf '%s\n' "$2" >"$fixture_targets/$1/$1.conf"
+}
+fixture_target smoke-fails 'accent=@{palette.nope}'
+fixture_target smoke-lands 'accent=@{palette.accent}'
+expect "an apply a fixture target fails in is accepted" ok probe theme-apply vgs
+expect_poll "the partial result reaches the fixture" 5 applies
+expect "the shell takes the theme in a partial apply" "partial applied vgs None" applied
+expect "the partial result names each fixture target's state" '[["smoke-fails", "failed", "placeholder"], ["smoke-lands", "written", null]]' applied_targets smoke-
+expect "last holds the partial result" '"partial"' last_part result.state
+expect "the landed fixture target's file is rendered into the state directory" "accent=ff5a36ff" cat "$home/.local/state/vgs/theme/smoke-lands.conf"
+expect "the landed fixture target's include line is wired" "include=$home/.local/state/vgs/theme/smoke-lands.conf" cat "$home/.config/smoke-lands/smoke-lands.conf"
+rm -r -- "$fixture_targets/smoke-fails" "$fixture_targets/smoke-lands"
 
 write_theme '{ "schemaVersion": 1, "name": "smoke", "tokens": { "palette": { "accent": "#12ab35" } } }'
 expect_poll "the shell takes a hand edit" '"#ff12ab35"' ipc smoke themeValue palette.accent

@@ -72,9 +72,10 @@ var CONFIG_VERSION = 1;
 
 // The first defect of a configuration file (shipped or user), or "". The
 // file is an object; `version`, when present, is CONFIG_VERSION; `plugins`
-// is a list of objects each with a string `id`; `disabledPlugins` is a list
-// of strings; `bar` is an object whose `id` is a string and whose `layout`
-// holds, per section in SECTIONS, a list of objects each with a string `id`.
+// is a list of objects each with a string `id`; `disabledPlugins` and
+// `disabledTargets` are lists of strings; `bar` is an object whose `id` is
+// a string and whose `layout` holds, per section in SECTIONS, a list of
+// objects each with a string `id`.
 // A key outside that set is carried untouched. Config.qml runs this judge
 // on every parsed file and reports a defect as the file's state, so no
 // malformed row is dropped on the way to the screen.
@@ -95,14 +96,19 @@ function configError(config) {
     var bad;
     if (config.plugins !== undefined && (bad = rows(config.plugins, "plugins")) !== "")
         return bad;
-    if (config.disabledPlugins !== undefined) {
-        if (!Array.isArray(config.disabledPlugins))
-            return "disabledPlugins must be a list";
-        for (var d = 0; d < config.disabledPlugins.length; d++) {
-            if (typeof config.disabledPlugins[d] !== "string")
-                return "disabledPlugins." + d + " must be a string";
+    var names = function (list, at) {
+        if (!Array.isArray(list))
+            return at + " must be a list";
+        for (var i = 0; i < list.length; i++) {
+            if (typeof list[i] !== "string")
+                return at + "." + i + " must be a string";
         }
-    }
+        return "";
+    };
+    if (config.disabledPlugins !== undefined && (bad = names(config.disabledPlugins, "disabledPlugins")) !== "")
+        return bad;
+    if (config.disabledTargets !== undefined && (bad = names(config.disabledTargets, "disabledTargets")) !== "")
+        return bad;
     if (config.bar !== undefined) {
         if (!isPlainObject(config.bar))
             return "bar must be an object";

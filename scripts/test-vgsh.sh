@@ -45,7 +45,8 @@ if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
   echo "test-vgsh: status=not-measured missing=node"
   exit 77
 fi
-base_env=(env -i PATH="$tmp:$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$tmp")
+base_path="$tmp:$(dirname -- "$node_bin"):$PATH"
+base_env=(env -i PATH="$base_path" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$tmp")
 
 failures=0
 ok() { printf '  ok    %s\n' "$*"; }
@@ -182,11 +183,12 @@ source_repo taken "$(manifest vgs.bar 0.1.0)"
 # Stdout lands in $tmp/out for rows that read more than its last line;
 # WANT_LAST_STDOUT is $any_out for a row whose checks after it read that.
 # INST_BIN names the vgsh under test; the mutation control runs its copy.
+# INST_PATH replaces the rows' PATH.
 inst() {
   local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
   shift 6
   set +e
-  out="$("${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err")"
+  out="$("${base_env[@]}" PATH="${INST_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err")"
   status=$?
   set -e
   printf '%s\n' "$out" >"$tmp/out"
@@ -379,14 +381,30 @@ INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$
 # rows run a copy of the tree the theme commands load, holding one more
 # shipped package; production code has no knob for its themes directory.
 # XDG_STATE_HOME is unset, so the state directory is the $HOME fallback.
-tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons"
+tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/config"
 cp -R -- "$repo/bin" "$repo/themes" "$tree/"
+cp -- "$repo/config/shell.json" "$tree/config/"
+cp -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/"
 # The targets directory beside the shipped packages is no package: the exact
 # package rows below list none for it.
 mkdir -p "$tree/themes/targets"
 cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
 cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
-tinst() { INST_BIN="${THEME_BIN:-$tree/bin/vgsh}" inst "$@"; }
+# A target is detected by its commands on PATH, so the theme rows run under
+# a PATH holding only the tools bin/vgsh and its judge call, and a row that
+# wants a target detected adds $stubs, whose commands record a run and
+# exit 1: detection never runs one. The host's own foot is never found.
+theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"
+for tool in bash readlink dirname mkdir flock awk git mktemp mv rm; do
+  tool_bin="$(command -v "$tool")" || { echo "test-vgsh: status=not-measured missing=$tool"; exit 77; }
+  ln -s -- "$tool_bin" "$theme_path/$tool"
+done
+ln -s -- "$node_bin" "$theme_path/node"
+for stub in foot vgs-probe-app; do
+  printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
+  chmod +x "$stubs/$stub"
+done
+tinst() { INST_BIN="${THEME_BIN:-$tree/bin/vgsh}" INST_PATH="${THEME_PATH:-$theme_path}" inst "$@"; }
 theme_pkg() { # DIR THEME_JSON_TEXT [TERMINAL_JSON_TEXT]
   mkdir -p "$1"
   printf '%s' "$2" >"$1/theme.json"
@@ -434,7 +452,7 @@ tinst "theme list after a hand edit" "$cfg" "$rt_empty" 0 "$any_out" "" theme li
 tail -n 1 "$tmp/out" >"$tmp/list.json"
 check "a hand edit of the theme file reports it modified" json_is "$tmp/list.json" 'd["file"]["state"] == "loaded" and d["file"]["name"] == "dusk" and d["file"]["modified"] is True'
 
-tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[],"theme":"nord","reason":null}' "" theme apply --json nord
+tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[{"name":"foot","state":"skipped","reason":"not-detected"}],"theme":"nord","reason":null}' "" theme apply --json nord
 check "a package's own terminal.json is rendered as it is" cmp -s "$themes/nord/terminal.json" "$state/theme/terminal.json"
 
 # A stage a crashed apply left behind is removed, never carried into theme/.
@@ -686,6 +704,83 @@ check "removing an installed vgs leaves the shipped defaults" test -f "$tree/the
 tinst "theme remove deletes the installed package" "$cfg" "$rt_empty" 0 "ok removed=moss" "" theme remove moss
 check "theme remove leaves no package directory" test ! -e "$moss"
 tinst "theme remove refuses a removed package as unknown" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=moss reason=unknown" theme remove moss
+
+# Targets in the apply: the shipped foot target and fixture targets beside
+# it in the tree copy. `fails` names no token, `off` is listed in
+# disabledTargets and `probe` wires a file it never creates. `dusk` has no
+# terminal.json, so every slot is the shipped vgs slot: color1 is #f43f5e.
+cfg="$tmp/cfg-targets"; file="$cfg/vgs/theme.json"; live="$state/theme"
+mkdir -p "$cfg/vgs"; cp -R -- "$tmp/cfg-theme/vgs/themes" "$cfg/vgs/themes"
+printf '{ "disabledTargets": ["off"] }\n' >"$cfg/vgs/shell.json"
+target_dir() { # NAME TARGET_JSON TEMPLATE_TEXT
+  mkdir -p "$tree/themes/targets/$1"
+  printf '%s\n' "$2" >"$tree/themes/targets/$1/target.json"
+  printf '%s' "$3" >"$tree/themes/targets/$1/$1.conf"
+}
+target_json() { # NAME ENCODER DETECT_JSON WIRING_LINE CREATE
+  printf '{ "app": "%s", "encoder": "%s", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": %s, "wiring": { "file": "%s/%s.conf", "line": "%s", "create": %s }, "reload": null }' "$1" "$2" "$1" "$1" "$3" "$1" "$1" "$4" "$5"
+}
+target_dir probe "$(target_json probe hyprland '["vgs-probe-app"]' 'source = @{state}/probe.conf' false)" $'accent=@{palette.accent} slot1=@{terminal.color1}\n'
+target_dir fails "$(target_json fails hex6 '[]' 'include=@{state}/fails.conf' true)" 'x=@{palette.nope}'
+target_dir off "$(target_json off hex6 '[]' 'include=@{state}/off.conf' true)" 'x=@{palette.accent}'
+with_stubs="$stubs:$theme_path"
+foot_line="include=$live/foot.ini"
+
+THEME_PATH="$with_stubs" tinst "an apply a target fails in is partial with exit 3" "$cfg" "$rt_empty" 3 '{"state":"partial","shell":"applied","targets":[{"name":"fails","state":"failed","reason":"placeholder"},{"name":"foot","state":"written","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"skipped","reason":"wiring-file-absent"}],"theme":"dusk","reason":null}' 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme apply --json dusk
+check "the partial apply's shell took the theme" cmp -s "$cfg/vgs/themes/dusk/theme.json" "$file"
+check "foot's file lands in the state directory with the hex6 encoder" grep -qxF 'urls=222222' "$live/foot.ini"
+check "foot's file takes the shipped slots" grep -qxF 'regular1=f43f5e' "$live/foot.ini"
+check "only the landed target's file is in theme/" test "$(find "$live" -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" == "foot.ini terminal.json theme.json "
+check "an absent foot.ini is created holding the include line" test "$(cat "$cfg/foot/foot.ini")" == "$foot_line"
+check "a failed, disabled or unwired target writes no application file" test ! -e "$cfg/fails" -a ! -e "$cfg/off" -a ! -e "$cfg/probe"
+
+# A dotfile manager's link: the configuration file is a symlink into another
+# tree, and the edit goes through it.
+mkdir -p "$tmp/dotfiles" "$cfg/probe"
+printf '[general]\nx=1\n' >"$tmp/dotfiles/probe.conf"; chmod 640 "$tmp/dotfiles/probe.conf"
+ln -s -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
+rm -r -- "$tree/themes/targets/fails"
+THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"foot","state":"unchanged","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"written","reason":null}],"theme":"dusk","reason":null}' "" theme apply --json dusk
+check "the probe's file is rendered with the hyprland encoder" test "$(cat "$live/probe.conf")" == "accent=rgba(222222ff) slot1=rgba(f43f5eff)"
+check "the wiring edits a symlinked file through its link" test -L "$cfg/probe/probe.conf"
+check "the include line goes first and the file's own text is kept" test "$(cat "$tmp/dotfiles/probe.conf")" == "source = $live/probe.conf"$'\n[general]\nx=1'
+check "the edited file keeps its mode" test "$(stat -c %a "$tmp/dotfiles/probe.conf")" == 640
+
+# A hand edit that drops the include line is repaired though no byte of the
+# theme changed.
+printf '[main]\nfont=x\n' >"$cfg/foot/foot.ini"
+THEME_PATH="$with_stubs" tinst "an apply with unchanged bytes is unchanged" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "text mode prints one line per target" has_line "target=foot state=unchanged"
+check "the wiring is asserted on unchanged bytes" test "$(cat "$cfg/foot/foot.ini")" == "$foot_line"$'\n[main]\nfont=x'
+THEME_PATH="$with_stubs" tinst "a wired file is not written again" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "the include line is kept once" test "$(grep -cxF -- "$foot_line" "$cfg/foot/foot.ini")" == 1
+check "detection never ran a detected command" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
+
+printf '{ "disabledTargets": "off" }\n' >"$cfg/vgs/shell.json"
+tinst "a user file the config judge refuses refuses the apply" "$cfg" "$rt_empty" 1 '{"state":"failed","shell":"unchanged","targets":[],"theme":"dusk","reason":"malformed"}' "vgsh: refused: theme=dusk reason=malformed path=$cfg/vgs/shell.json error=disabledTargets must be a list" theme apply --json dusk
+inst "plugin add refuses the same malformed user file" "$cfg" "$rt_empty" 1 "" "vgsh: refused: user-config=malformed path=$cfg/vgs/shell.json error=disabledTargets must be a list" plugin add "$tmp/src/probe.git"
+printf '{ "disabledTargets": ["off"] }\n' >"$cfg/vgs/shell.json"
+
+# Must-fail controls, each on a judge copy: one that replaces the symlink
+# instead of the file it names, and one that wires written targets only.
+wiring_control() { # NAME NEEDLE REPLACEMENT
+  local copy="$tmp/tree-$1"
+  cp -R -- "$tree" "$copy"
+  check "the $1 control's text occurs once in bin/vgsh-theme-judge" test "$(grep -c -F -- "$2" "$repo/bin/vgsh-theme-judge")" == 1
+  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/bin/vgsh-theme-judge" "$2" "$3"
+  check "the $1 mutant differs from bin/vgsh-theme-judge" test "$(cmp -s "$repo/bin/vgsh-theme-judge" "$copy/bin/vgsh-theme-judge"; echo $?)" == 1
+  THEME_BIN="$copy/bin/vgsh"
+}
+ln -sfn -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
+wiring_control symlink 'real = fs.realpathSync(file);' 'real = file;'
+printf 'x=1\n' >"$tmp/dotfiles/probe.conf"
+THEME_PATH="$with_stubs" tinst "the symlink-replacing mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+check "the symlink-replacing mutant breaks the link" test ! -L "$cfg/probe/probe.conf"
+printf '[main]\n' >"$cfg/foot/foot.ini"
+wiring_control written-only 'entry.state === "written" || entry.state === "unchanged" ? wire(' 'entry.state === "written" ? wire('
+THEME_PATH="$with_stubs" tinst "the written-only mutant applies unchanged bytes" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "the written-only mutant leaves the dropped include line out" test "$(cat "$cfg/foot/foot.ini")" == "[main]"
+unset THEME_BIN
 
 # --help prints the header comment of the script itself on stderr and exits
 # 0; the expected first line is read from the script, not restated here.

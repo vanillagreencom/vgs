@@ -12,7 +12,7 @@ An enable or disable edit starts with the effective disabled list. This preserve
 
 ## shell.json keys
 
-Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. A key outside this table is carried untouched.
+Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. The shell reads every key of the table but `disabledTargets`, which only `vgsh theme apply` reads: [themes.md § Apply](themes.md#apply). The shell carries that key, and any key outside this table, untouched.
 
 | Key | Shape |
 |---|---|
@@ -21,6 +21,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 | `bar.layout.left[]`, `bar.layout.center[]`, `bar.layout.right[]` | Objects, each with a string `id` and the widget's settings beside it. |
 | `plugins[]` | Objects, each with a string `id` and the plugin's settings beside it. |
 | `disabledPlugins[]` | Strings: plugin ids. |
+| `disabledTargets[]` | Strings: theme target names an apply skips. A user list replaces the shipped one. |
 
 ## States
 
@@ -33,7 +34,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 
 ## Theme
 
-`~/.config/vgs/theme.json` holds the shell document: `schemaVersion`, `name` and `tokens`, a nested tree of overrides for the token table. `ThemeSource.qml` reads it the way `Config.qml` reads `shell.json`, and `ThemeLogic.accept` is the one judge of the document. An absent file, including one deleted while the shell runs, publishes the defaults, the same theme a fresh start without the file draws. A file that becomes unreadable or that the judge refuses is logged with its token and reason and leaves the last accepted theme. The document shape, the tiers and the expression grammar are in [design-system.md](design-system.md). The file is the applied package's document: `vgsh theme apply <name>` replaces it with the package's `theme.json` bytes, and `vgsh theme list` reports it modified when a hand edit makes it differ, [themes.md § Runner](themes.md#runner). No overlay layer merges over it; reverting an edit is applying the package again. The previous five-key palette file is refused by its first key; no converter ships, because v2 has no release and the defaults draw.
+`~/.config/vgs/theme.json` holds the shell document: `schemaVersion`, `name` and `tokens`, a nested tree of overrides for the token table. `ThemeSource.qml` reads it the way `Config.qml` reads `shell.json`, and `ThemeLogic.accept` is the one judge of the document. An absent file, including one deleted while the shell runs, publishes the defaults, the same theme a fresh start without the file draws. A file that becomes unreadable or that the judge refuses is logged with its token and reason and leaves the last accepted theme. The document shape, the tiers and the expression grammar are in [design-system.md](design-system.md). The file is the applied package's document: `vgsh theme apply <name>` replaces it with the package's `theme.json` bytes, and `vgsh theme list` reports it modified when a hand edit makes it differ, [themes.md § Apply](themes.md#apply). No overlay layer merges over it; reverting an edit is applying the package again. The previous five-key palette file is refused by its first key; no converter ships, because v2 has no release and the defaults draw.
 
 ## Decisions
 

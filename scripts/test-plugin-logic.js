@@ -77,7 +77,7 @@ check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").mani
 // the error text.
 const configRows = [
     ["an empty object passes", {}, ""],
-    ["every key of the table, well formed, passes", { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "a.b" }], center: [], right: [] } }, plugins: [{ id: "a.c", x: 1 }], disabledPlugins: ["a.d"] }, ""],
+    ["every key of the table, well formed, passes", { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "a.b" }], center: [], right: [] } }, plugins: [{ id: "a.c", x: 1 }], disabledPlugins: ["a.d"], disabledTargets: ["foot"] }, ""],
     ["a key outside the table is carried", { unrelated: { any: 1 } }, ""],
     ["a list is not a config", [], "config must be an object"],
     ["null is not a config", null, "config must be an object"],
@@ -87,6 +87,8 @@ const configRows = [
     ["a plugins row that is a string", { plugins: ["a.b"] }, "plugins.0 must be an object with a string id"],
     ["disabledPlugins not a list", { disabledPlugins: "a.b" }, "disabledPlugins must be a list"],
     ["a disabledPlugins entry that is not a string", { disabledPlugins: ["a.b", 1] }, "disabledPlugins.1 must be a string"],
+    ["disabledTargets not a list", { disabledTargets: "foot" }, "disabledTargets must be a list"],
+    ["a disabledTargets entry that is not a string", { disabledTargets: ["foot", null] }, "disabledTargets.1 must be a string"],
     ["bar not an object", { bar: "vgs.bar" }, "bar must be an object"],
     ["bar.id not a string", { bar: { id: 1 } }, "bar.id must be a string"],
     ["bar.layout not an object", { bar: { layout: [] } }, "bar.layout must be an object"],

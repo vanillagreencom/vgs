@@ -60,6 +60,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D016](../decisions/D016-bundled-variable-font.md): two bundled variable fonts, sans and mono; a theme names families and ships no font file.
 - [D017](../decisions/D017-templates-and-path-icons.md): controls extend `QtQuick.Templates`; icons are Lucide path data drawn with `QtQuick.Shapes`.
 - [D019](../decisions/D019-theme-packages-carry-plugin-trust.md): theme packages are directories with plugin trust; terminal slots are package files.
+- [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md): a theme apply stages every write beside its destination and writes the shell document last.
 
 ## Topics
 
@@ -67,6 +68,8 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
-- [themes.md](themes.md): read before touching a theme package, package judge, target file, or theme runner.
+- [themes.md](themes.md): read before touching a theme package, package judge, the apply, or theme runner.
+- [theme-capability.md](theme-capability.md): read before touching `ThemeRunner` or the `theme` capability.
+- [theme-targets.md](theme-targets.md): read before touching a theme target, a template, an encoder or the wiring text.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

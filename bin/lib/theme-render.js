@@ -6,7 +6,7 @@
 // LOGIC is the shell's theme judge, shell/Commons/ThemeLogic.js, and TOKENS
 // its token table, both loaded by the caller through scripts/qml-library.js,
 // so a token path and a terminal slot name mean here what they mean to the
-// shell. docs/architecture/themes.md § Targets and § Templates hold the rules.
+// shell. docs/architecture/theme-targets.md holds the rules.
 //
 // A refusal is { ok: false, reason, detail }; `refusalLine` prints it.
 "use strict";
@@ -212,4 +212,30 @@ function renderTarget(logic, tokens, target, templates, input) {
     return { ok: true, files };
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine };
+// The include line an accepted TARGET keeps in its application's
+// configuration file, with `@{state}` written as STATE, the state
+// directory's `theme/` path. acceptTarget admits no other placeholder.
+function wiringLine(target, state) {
+    const line = parseTemplate(target.wiring.line);
+    if (!line.ok) throw new Error("theme-render: wiringLine: target " + target.name + " has an unterminated wiring line");
+    return line.parts.map(part => {
+        if (typeof part === "string") return part;
+        if (part.name !== STATE_PLACEHOLDER)
+            throw new Error("theme-render: wiringLine: target " + target.name + " names placeholder " + part.name + " in its wiring line");
+        return state;
+    }).join("");
+}
+
+// The text a configuration file holding TEXT takes so that LINE is one of its
+// lines, or null when it already is one. An absent file (TEXT undefined)
+// becomes the line alone. Otherwise the line goes first, ahead of every
+// section, so an INI file reads it in its main section and the file's own
+// settings after it override the included theme; the rest of the text is
+// kept byte for byte.
+function wiredText(text, line) {
+    if (text === undefined) return line + "\n";
+    if (text.split("\n").includes(line)) return null;
+    return line + "\n" + text;
+}
+
+module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringLine, wiredText };

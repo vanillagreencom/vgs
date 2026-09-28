@@ -14,7 +14,7 @@
 #   vgsh plugin remove <id>        delete an installed plugin's directory
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
-#                                  apply one theme package to the shell; `apply vgs` restores the defaults
+#                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -38,12 +38,16 @@
 # hides a shipped one of its name, except the reserved `vgs`. `theme apply`
 # holds flock on ${XDG_CONFIG_HOME:-~/.config}/vgs/theme.lock for the whole
 # apply, so a second apply from any caller is refused with reason=busy. It
-# renders the package into ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/,
-# writes theme.name beside it, then copies the package's theme.json byte
-# for byte to theme.json beside the lock, the file the shell watches. `--json`
-# prints the list, or the apply's result `{ state, shell, targets, theme,
-# reason }` with refusals included, as one JSON line on stdout. `theme`
-# commands never contact the shell: docs/architecture/themes.md § Runner.
+# renders the package and every target under themes/targets/ whose commands
+# are on PATH and that shell.json's disabledTargets does not list into
+# ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/, writes theme.name beside it,
+# keeps each target's include line in its application's configuration file,
+# then copies the package's theme.json byte for byte to theme.json beside the
+# lock, the file the shell watches. No other application file is written.
+# `--json` prints the list, or the apply's result `{ state, shell, targets,
+# theme, reason }` with refusals included, as one JSON line on stdout.
+# `theme` commands never contact the shell: docs/architecture/themes.md
+# § Apply.
 #
 # `theme add`, `update` and `remove` follow the plugin rules above for
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
@@ -55,10 +59,12 @@
 # docs/architecture/themes.md § Install.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
-# Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when another
-# shell holds the lock or another theme command holds the theme lock, 69 when
-# the shell is not running. The usage text is this header; `vgsh --help`
-# prints it and exits 0.
+# Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
+# apply is partial (the shell took the theme and a target failed; each
+# failed target prints `vgsh: refused: target=<name> reason=<key>`), 75 when
+# another shell holds the lock or another theme command holds the theme
+# lock, 69 when the shell is not running. The usage text is this header;
+# `vgsh --help` prints it and exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"

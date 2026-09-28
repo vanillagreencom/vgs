@@ -1,0 +1,8 @@
+{
+  "app": "foot",
+  "encoder": "hex6",
+  "files": [{ "template": "foot.ini", "destination": "foot.ini" }],
+  "detect": ["foot"],
+  "wiring": { "file": "foot/foot.ini", "line": "include=@{state}/foot.ini", "create": true },
+  "reload": null
+}

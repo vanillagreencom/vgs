@@ -38,11 +38,13 @@ function main(command) {
 
 // The parsed JSON file. KEY leads the refusal line:
 // `KEY=unreadable path=<file> error=<code>` or `KEY=unparseable path=<file>`.
-function readJson(file, key) {
+// With OPTIONAL an absent file answers null instead of the refusal.
+function readJson(file, key, optional = false) {
     let text;
     try {
         text = fs.readFileSync(file, "utf8");
     } catch (e) {
+        if (optional && e.code === "ENOENT") return null;
         refuse(key + "=unreadable path=" + file + " error=" + e.code, "unreadable");
     }
     try {
@@ -50,6 +52,19 @@ function readJson(file, key) {
     } catch (e) {
         refuse(key + "=unparseable path=" + file, "unparseable");
     }
+}
+
+// A shell.json layer read and judged by PluginLogic.configError, LOGIC here,
+// the judge Config.qml runs on every parse, so a judge and the shell agree on
+// which files hold a configuration and which are malformed: the refusal
+// `KEY=malformed path=<file> error=<defect>`. With OPTIONAL an absent file
+// answers null.
+function readConfig(logic, file, key, optional = false) {
+    const config = readJson(file, key, optional);
+    if (config === null && optional) return null;
+    const error = logic.configError(config);
+    if (error !== "") refuse(key + "=malformed path=" + file + " error=" + error, "malformed");
+    return config;
 }
 
 // Run WRITE, a change to FILE through fs calls; a failed call is the
@@ -63,14 +78,16 @@ function writing(file, key, write) {
 }
 
 // Replace a file by rename, so a shell watching it never reads half of it.
-// DATA is a string or a Buffer, written as it is; a failure leaves no
-// temporary file and refuses as `writing` does.
-function replaceFile(file, data, key) {
+// DATA is a string or a Buffer, written as it is; MODE, when given, is the
+// permission bits the new file takes. A failure leaves no temporary file and
+// refuses as `writing` does.
+function replaceFile(file, data, key, mode) {
     const tmp = file + ".vgsh-" + process.pid;
     writing(file, key, () => {
         try {
             fs.mkdirSync(path.dirname(file), { recursive: true });
             fs.writeFileSync(tmp, data);
+            if (mode !== undefined) fs.chmodSync(tmp, mode);
             fs.renameSync(tmp, file);
         } catch (e) {
             fs.rmSync(tmp, { force: true });
@@ -79,4 +96,4 @@ function replaceFile(file, data, key) {
     });
 }
 
-module.exports = { Refusal, refuse, main, readJson, writing, replaceFile };
+module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile };
