@@ -1,0 +1,8 @@
+{
+  "app": "Alacritty",
+  "encoder": "hex6",
+  "files": [{ "template": "alacritty.toml", "destination": "alacritty.toml" }],
+  "detect": ["alacritty"],
+  "wiring": { "file": "alacritty/alacritty.toml", "line": "import = [\"@{state}/alacritty.toml\"]", "create": true, "section": "general" },
+  "reload": { "command": ["sh", "-c", "touch -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/alacritty/alacritty.toml\""], "timeoutMs": 5000 }
+}

@@ -1,0 +1,32 @@
+# The vgs theme for Alacritty, imported from alacritty.toml by vgsh theme apply.
+[colors.primary]
+foreground = "#@{palette.foreground}"
+background = "#@{palette.background}"
+
+[colors.cursor]
+text = "#@{palette.background}"
+cursor = "#@{palette.foreground}"
+
+[colors.selection]
+text = "#@{palette.foreground}"
+background = "#@{color.borderStrong}"
+
+[colors.normal]
+black = "#@{terminal.color0}"
+red = "#@{terminal.color1}"
+green = "#@{terminal.color2}"
+yellow = "#@{terminal.color3}"
+blue = "#@{terminal.color4}"
+magenta = "#@{terminal.color5}"
+cyan = "#@{terminal.color6}"
+white = "#@{terminal.color7}"
+
+[colors.bright]
+black = "#@{terminal.color8}"
+red = "#@{terminal.color9}"
+green = "#@{terminal.color10}"
+yellow = "#@{terminal.color11}"
+blue = "#@{terminal.color12}"
+magenta = "#@{terminal.color13}"
+cyan = "#@{terminal.color14}"
+white = "#@{terminal.color15}"

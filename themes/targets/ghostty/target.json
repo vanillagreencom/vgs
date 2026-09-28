@@ -1,0 +1,8 @@
+{
+  "app": "Ghostty",
+  "encoder": "hex6",
+  "files": [{ "template": "ghostty.conf", "destination": "ghostty.conf" }],
+  "detect": ["ghostty"],
+  "wiring": { "file": "ghostty/config.ghostty", "line": "config-file = ?@{state}/ghostty.conf", "create": true },
+  "reload": { "command": ["sh", "-c", "pkill -USR2 -x -u \"$(id -u)\" ghostty; [ \"$?\" -le 1 ]"], "timeoutMs": 5000 }
+}

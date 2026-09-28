@@ -50,7 +50,7 @@ one_line() { [[ "$(wc -l <"$tmp/out")" == 1 ]]; }
 run_line() { printf 'alpha fd9=/dev/null rt=%s pending=%s' "$rt_empty" "$1"; }
 alpha_due='{"schemaVersion":1,"targets":["alpha"]}'
 result() { # ALPHA_STATE ALPHA_REASON PLAIN_STATE: an apply's targets
-  printf '[{"name":"alpha","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"plain","state":"%s","reason":null}]' "$1" "$2" "$3"
+  printf '[{"name":"alacritty","state":"skipped","reason":"not-detected"},{"name":"alpha","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"skipped","reason":"not-detected"},{"name":"plain","state":"%s","reason":null},{"name":"wezterm","state":"skipped","reason":"not-detected"}]' "$1" "$2" "$3"
 }
 
 # Changed bytes run the hook once, after the pending file names it, with
@@ -85,7 +85,7 @@ started="$(date +%s%N)"
 tinst "a hook past its timeout is reload-pending" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=alpha reason=reload-timeout command=vgs-hook timeout-ms=200" theme apply --json dusk
 elapsed_ms=$(( ($(date +%s%N) - started) / 1000000 ))
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
-check "the timed-out target is reload-pending with reload-timeout" json_is "$tmp/apply.json" 'd["state"] == "partial" and d["targets"][0] == {"name": "alpha", "state": "reload-pending", "reason": "reload-timeout"}'
+check "the timed-out target is reload-pending with reload-timeout" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alpha"] == [{"name": "alpha", "state": "reload-pending", "reason": "reload-timeout"}]'
 check "the timed-out hook is pending" pending_is '["alpha"]'
 check "the timeout ends the apply before the hook's own 5 s ($elapsed_ms ms)" test "$elapsed_ms" -lt 3000
 

@@ -23,9 +23,20 @@ A target name is lower-case letters, digits and `-`, with no dot. `targets` unde
 
 The shipped targets:
 
-| Target | Encoder | Detect | Wiring |
-|---|---|---|---|
-| `foot` | `hex6` | `foot` | `include=@{state}/foot.ini` in `foot/foot.ini`, created when absent. Both `[colors-dark]` and `[colors-light]` hold the theme. |
+| Target | Encoder | Detect | Wiring | Reload |
+|---|---|---|---|---|
+| `alacritty` | `hex6` | `alacritty` | `import = ["@{state}/alacritty.toml"]` in the `general` table of `alacritty/alacritty.toml`, created when absent. | `touch -c` of `alacritty.toml`. |
+| `foot` | `hex6` | `foot` | `include=@{state}/foot.ini` in `foot/foot.ini`, created when absent. Both `[colors-dark]` and `[colors-light]` hold the theme. | None. |
+| `ghostty` | `hex6` | `ghostty` | `config-file = ?@{state}/ghostty.conf` in `ghostty/config.ghostty`, created when absent. | `SIGUSR2` to the user's `ghostty` processes. |
+| `kitty` | `hex6` | `kitty` | `include @{state}/kitty.conf` in `kitty/kitty.conf`, created when absent. | `SIGUSR1` to the user's `kitty` processes. |
+| `wezterm` | `hex6` | `wezterm` | `pcall(dofile, "@{state}/wezterm.lua")` first in `wezterm/wezterm.lua`, never created. | `touch -c` of `wezterm.lua`. |
+
+Each terminal draws its foreground, background, selection, cursor and sixteen slots from the theme; kitty also its URL colour.
+
+- **Precedence.** Alacritty reads an import before the importing file, and kitty and foot read the include line where it stands, so the file's own settings override the theme. Ghostty reads a `config-file` after the whole configuration, so the theme overrides the file's own colours; its `?` makes a missing theme file no error.
+- **WezTerm.** It has no include directive. Its theme file wraps `wezterm.config_builder`, when that exists, so a config it builds starts on the `vgs` colour scheme, and a `color_scheme` or `colors` the file sets afterwards overrides it. A configuration not built by `config_builder` takes no theme, and neither does a `~/.wezterm.lua`, since the wiring file is relative to the configuration home. `pcall` keeps a missing theme file from failing the whole configuration.
+- **Signals.** A `pkill -x -u` of the user's processes by exact name that matches none succeeds, so an application that is not running is not left pending. Ghostty reloads on `SIGUSR2` from 1.2.0; an older Ghostty is ended by it.
+- **Touch.** Alacritty watches the directory of each file it imports, which the swap replaces, and WezTerm watches no file its configuration reads with `dofile`. The hook changes only the time of the configuration file each one watches, so it reads its configuration and the theme again; both reload so only with their automatic reload on, the default.
 
 ## Templates
 
@@ -78,3 +89,4 @@ An application that reads no include line from its configuration finds its theme
 
 1. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence, the terminal fallback, the wiring line's substitution and the wiring text's whole-line match, first-line placement, placement after the first header of its section or with the header at the end, and creation, and the removal's whole-line match of every copy hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer, and, for the apply's placement in a section, by `scripts/test-vgsh-targets.sh`, with a judge copy that drops the section as its control. The entry form's keys, bases, directory segments, owned flag, link names and destinations, its form test and the links' targets hold under the same suite's controls.
 2. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.
+3. Each shipped terminal target lands its file with its encoder, keeps its include line in its application's configuration file, in `general` for Alacritty, creates none for WezTerm, signals the user's kitty and Ghostty by exact name, a run matching no process succeeding, and touches the file Alacritty and WezTerm watch, only when its bytes change or its reload is pending. Enforced by `scripts/test-vgsh-targets.sh` under a PATH of stub detect and signal commands.

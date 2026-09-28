@@ -1,0 +1,8 @@
+{
+  "app": "kitty",
+  "encoder": "hex6",
+  "files": [{ "template": "kitty.conf", "destination": "kitty.conf" }],
+  "detect": ["kitty"],
+  "wiring": { "file": "kitty/kitty.conf", "line": "include @{state}/kitty.conf", "create": true },
+  "reload": { "command": ["sh", "-c", "pkill -USR1 -x -u \"$(id -u)\" kitty; [ \"$?\" -le 1 ]"], "timeoutMs": 5000 }
+}
