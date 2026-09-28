@@ -15,32 +15,16 @@
 //
 // Every refusal is one line on stderr, `vgsh: refused: <key>=<value>`, and
 // exits 1. A scan element carrying an error exits 1 too: a directory that
-// could not be read may hold the id, so its absence is never assumed.
+// could not be read may hold the id, so its absence is never assumed. The
+// refusal and the file helpers are bin/lib/judge-files.js, shared with
+// bin/vgsh-theme-judge.
 "use strict";
 const fs = require("fs");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const logic = require(path.join(repo, "scripts", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
-
-function refuse(first) {
-    process.stderr.write("vgsh: refused: " + first + "\n");
-    process.exit(1);
-}
-
-function readJson(file, key) {
-    let text;
-    try {
-        text = fs.readFileSync(file, "utf8");
-    } catch (e) {
-        refuse(key + "=unreadable path=" + file + " error=" + e.code);
-    }
-    try {
-        return JSON.parse(text);
-    } catch (e) {
-        refuse(key + "=unparseable path=" + file);
-    }
-}
+const { refuse, main, readJson, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 // A configuration file read and judged by PluginLogic.configError, the
 // judge Config.qml runs on every parse, so this reader and the shell's agree
@@ -62,64 +46,53 @@ function validated(dir) {
     return r.manifest;
 }
 
-// Replace a file by rename, so a shell watching it never reads half of it.
-function replaceFile(file, text) {
-    const tmp = file + ".vgsh-" + process.pid;
-    try {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(tmp, text);
-        fs.renameSync(tmp, file);
-    } catch (e) {
-        fs.rmSync(tmp, { force: true });
-        refuse("user-config=unwritable path=" + file + " error=" + e.code);
-    }
-}
-
 const [command, ...args] = process.argv.slice(2);
-switch (command) {
-case "id": {
-    const raw = manifestOf(args[0]);
-    if (!logic.isPlainObject(raw) || typeof raw.id !== "string") refuse("manifest-id=missing path=" + args[0]);
-    console.log(raw.id);
-    break;
-}
-case "owners": {
-    let entries;
-    try {
-        entries = JSON.parse(fs.readFileSync(0, "utf8"));
-    } catch (e) {
-        refuse("scan=unparseable");
-    }
-    for (const entry of entries) {
-        if (entry.error !== undefined) refuse("unreadable=" + entry.dir + " error=" + entry.error);
-        let raw;
-        try {
-            raw = JSON.parse(entry.text);
-        } catch (e) {
-            // The registry refuses a manifest that does not parse, so it owns no id.
-            continue;
-        }
-        const r = logic.validateManifest(raw, entry.dir);
-        if (r.ok && r.manifest.id === args[0]) console.log(entry.dir);
-    }
-    break;
-}
-case "land-disabled": {
-    const [shippedPath, userPath, dir] = args;
-    const shipped = readConfig(shippedPath, "shipped-config");
-    const user = fs.existsSync(userPath) ? readConfig(userPath, "user-config") : null;
-    const manifest = validated(dir);
-    const effective = logic.effectiveConfig(shipped, user);
-    const defaultBarId = logic.activeBarId(shipped, "");
-    if (!logic.isEnabled(effective, manifest, defaultBarId)) {
-        console.log("unchanged");
+main(() => {
+    switch (command) {
+    case "id": {
+        const raw = manifestOf(args[0]);
+        if (!logic.isPlainObject(raw) || typeof raw.id !== "string") refuse("manifest-id=missing path=" + args[0]);
+        console.log(raw.id);
         break;
     }
-    replaceFile(userPath, JSON.stringify(logic.withEnabled(user, manifest, false, effective), null, 2) + "\n");
-    console.log("written");
-    break;
-}
-default:
-    process.stderr.write("vgsh-plugin-judge: refused: command=" + (command || "missing") + "\n");
-    process.exit(2);
-}
+    case "owners": {
+        let entries;
+        try {
+            entries = JSON.parse(fs.readFileSync(0, "utf8"));
+        } catch (e) {
+            refuse("scan=unparseable");
+        }
+        for (const entry of entries) {
+            if (entry.error !== undefined) refuse("unreadable=" + entry.dir + " error=" + entry.error);
+            let raw;
+            try {
+                raw = JSON.parse(entry.text);
+            } catch (e) {
+                // The registry refuses a manifest that does not parse, so it owns no id.
+                continue;
+            }
+            const r = logic.validateManifest(raw, entry.dir);
+            if (r.ok && r.manifest.id === args[0]) console.log(entry.dir);
+        }
+        break;
+    }
+    case "land-disabled": {
+        const [shippedPath, userPath, dir] = args;
+        const shipped = readConfig(shippedPath, "shipped-config");
+        const user = fs.existsSync(userPath) ? readConfig(userPath, "user-config") : null;
+        const manifest = validated(dir);
+        const effective = logic.effectiveConfig(shipped, user);
+        const defaultBarId = logic.activeBarId(shipped, "");
+        if (!logic.isEnabled(effective, manifest, defaultBarId)) {
+            console.log("unchanged");
+            break;
+        }
+        replaceFile(userPath, JSON.stringify(logic.withEnabled(user, manifest, false, effective), null, 2) + "\n", "user-config");
+        console.log("written");
+        break;
+    }
+    default:
+        process.stderr.write("vgsh-plugin-judge: refused: command=" + (command || "missing") + "\n");
+        process.exit(2);
+    }
+});
