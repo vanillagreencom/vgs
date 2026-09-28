@@ -2,9 +2,9 @@
 
 Covers: shell/Core/Layers.qml, shell/Hosts/LayerHost.qml, scripts/smoke/rows/layers.sh, scripts/smoke/fixtures/plugins/acme.layers/**
 
-A passive layer is a surface a plugin draws in without taking the keyboard: a notification stack, an on-screen display, anything that shows while the user keeps typing into another window. The summonable kinds do not fit it: an overlay covers its screen and takes keyboard focus on demand, a panel sits at one placement, and each is built on summon and destroyed on hide. The core toast stack draws a fixed, theme-styled card.
+A passive layer is a surface a plugin draws in without taking the keyboard: a notification stack, an on-screen display, anything that shows while the user keeps typing into another window.
 
-`layers` is a capability rather than a kind because the state belongs to the plugin's service and a layer is only its view on every screen: a kind would build a second instance of the plugin per screen, with state of its own to reconcile. The surface covers its screen at a fixed size, so adding or removing a card changes only the content, never the surface's size, and the compositor never scales a stale buffer.
+`layers` is a capability rather than a kind: [D026](../decisions/D026-passive-layers-are-a-capability.md).
 
 ## The contract
 

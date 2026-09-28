@@ -28,6 +28,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-27 | D023 | VGS-475 | A plugin may own its look, a judged table taking the theme's mode, accent and motion scale alone | The owner's glass designs must not restyle with unrelated theme values, and every value stays judged | A plugin needs a third theme input, or qs.Ui gains parameterized components such plugins share | Active | [Full](D023-plugin-owned-appearance.md) |
 | 2026-09-28 | D024 | VGS-471 | Theme apply sets one theme key in a CLI's own settings file | The key alone makes the CLI read the linked theme; a line edit keeps every other byte | A CLI names its theme in a file shape the edit refuses | Active | [Full](D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md) |
 | 2026-09-28 | D025 | VGS-473 | No user override layer; a changed colour is an edited copy installed as a package | One source of truth for every colour; a plugin fork can be added later | Users must keep local changes while following an installed package's updates | Active | [Full](D025-no-theme-override-layer.md) |
+| 2026-09-28 | D026 | VGS-476 | A passive layer is a capability drawing a plugin's component on every screen | The service keeps its state; the surface never takes the keyboard | A layer needs keyboard focus, one screen, or a layer other than overlay | Active | [Full](D026-passive-layers-are-a-capability.md) |
 
 ---
 
