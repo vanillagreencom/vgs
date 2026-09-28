@@ -8,7 +8,7 @@ A target is one application's colour files: the directory `themes/targets/<targe
 
 A target name is lower-case letters, digits and `-`, with no dot. `targets` under a themes directory holds targets and is never read as a package.
 
-`acceptTarget` judges `target.json`. Every key but `wiring.section`, `wiring.profiles` and `reload.always` is required and any other key is refused with `reason=target-schema`. `wiring` takes one of two forms, told apart by `links`, or is `null`, and `wiringForm` names which, `include`, `entry` or `none`:
+`acceptTarget` judges `target.json`. Every key but `wiring.section`, `wiring.profiles`, `wiring.vaults` and `reload.always` is required and any other key is refused with `reason=target-schema`. `wiring` takes one of two forms, told apart by `links`, or is `null`, and `wiringForm` names which, `include`, `entry` or `none`:
 
 | Key | Holds |
 |---|---|
@@ -16,7 +16,7 @@ A target name is lower-case letters, digits and `-`, with no dot. `targets` unde
 | `encoder` | The encoder every colour placeholder of the target is written with: [§ Templates](#templates). |
 | `files` | One or more `{ template, destination }`, with an optional `curatedKeys`: [§ Templates](#templates). `template` is a file name in the target directory other than `target.json`. `destination` is the file name the render takes under the state directory's `theme/`: `<target>.<ext>`, unique in the target, so no two targets write one file. |
 | `detect` | Command names; a target whose command is not an executable file in an absolute directory of `PATH` is skipped. An empty list is always detected. Detection never runs the command. |
-| `wiring` | The include form, `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. An optional `section`, one bare name of letters, digits, `_` and `-`, is the INI section or TOML table the line belongs in: [§ Wiring text](#wiring-text). An optional `profiles` is a Mozilla `profiles.ini` relative to the home directory, each segment a name that may start with a dot, and makes `file` relative to each profile directory it lists: [§ Profile wiring](#profile-wiring). The entry form, `{ base, dir, owned, links }`, edits no configuration file: [theme-editors.md § Entry wiring](theme-editors.md#entry-wiring). `null` keeps nothing outside the state directory, for a target whose hook asserts the setting its application reads the files through; apply adds and removes nothing for it. |
+| `wiring` | The include form, `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. An optional `section`, one bare name of letters, digits, `_` and `-`, is the INI section or TOML table the line belongs in: [theme-wiring.md § Wiring text](theme-wiring.md#wiring-text). An optional `profiles` is a Mozilla `profiles.ini` relative to the home directory, each segment a name that may start with a dot, and makes `file` relative to each profile directory it lists: [theme-wiring.md § Profile wiring](theme-wiring.md#profile-wiring). The entry form, `{ base, dir, owned, links }`, edits no configuration file: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-wiring). `null` keeps nothing outside the state directory, for a target whose hook asserts the setting its application reads the files through; apply adds and removes nothing for it. |
 | `reload` | `null`, or `{ command, timeoutMs }`: the argv that makes a running application re-read its files, and its bound in whole milliseconds. `command[0]` is looked up on `PATH`. An argument's only placeholder is `@{state}`, the state directory's `theme/` path, which `reloadCommand` writes; `@@{` is a literal `@{`. Apply runs it after the theme file when the target's bytes changed or its reload is pending. An optional `always: true` also runs it on every apply that lands the target, unchanged bytes included, for a hook that asserts a setting no file carries: [theme-apply.md § Reload](theme-apply.md#reload). |
 
 `bin/vgsh-theme-judge packages themes`, the offline row, renders every target under `themes/targets/` against the shipped `vgs` package and prints one line per target, `ok       targets/<target>` or `refused  <dir>: target=<target> reason=<key> <detail>`. A template or `target.json` that cannot be read, or targets without an accepted `vgs` package holding terminal slots, exit 2.
@@ -43,6 +43,8 @@ The editor targets, their table and their one-time steps are in [theme-editors.m
 
 The GTK, Qt, KDE colour scheme and icon theme targets: [theme-toolkits.md](theme-toolkits.md).
 
+The chat and tool targets: [theme-tool-targets.md](theme-tool-targets.md).
+
 ## Templates
 
 `renderTarget` renders every file of an accepted target from the package's resolved token values, the terminal slots and the package's curated files.
@@ -63,28 +65,6 @@ Encoders, each shown for `#ff5a3659`:
 | `hyprland` | `rgba(rrggbbaa)` | `rgba(ff5a3659)` |
 
 No encoder writes `#`: a template writes it where its application wants one, as `#@{palette.accent}`.
-
-## Wiring text
-
-`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. The rest of the text is kept.
-
-- **No section.** An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme.
-- **A section.** The line goes right after the first header of that section, `[<section>]` with whitespace around the name and a `#` comment after it allowed; `[[<section>]]` is no header of it. A file without one, an absent file included, takes the header and the line at its end, so a TOML file never declares the table twice, which a dotted key ahead of its `[<section>]` header would. A wiring that would give TOML a key twice is refused with `reason=wiring-conflict section=<section> key=<key>` and the file is left: a section that already assigns the line's key, up to the next header of any kind, or, with no header, a line ahead of every header that assigns `<section>` or a `<section>.` key. An Alacritty configuration with its own `general.import` is refused so, since TOML holds one `import` there.
-
-`unwiredText` undoes it for a disabled target: every whole line equal to the include line goes, with its line break, and every other byte stays, a header `wiredText` added included.
-
-## Profile wiring
-
-A Mozilla-family browser keeps its configuration in profile directories with random names, listed in a `profiles.ini` such as Zen's `~/.zen/profiles.ini`. An include target with `profiles` keeps its line in `file` under every one of them. The profile's `chrome/userChrome.css` is one such file: CSS reads an `@import` only ahead of every other rule, and the line goes first.
-
-- **Profiles.** `profileDirs` reads the ini: each `[Profile<N>]` section's `Path`, under the ini's own directory when its `IsRelative` is `1`, else absolute. Keys and values are trimmed. A section without a `Path`, one whose `IsRelative` is not `1` and whose `Path` does not start with `/`, and every other section, `[General]` and `[Install<hash>]` included, name no profile.
-- **Wired and unwired.** Apply keeps the line in the file of every listed profile and a disabled target's removal takes it from every one, each as [§ Wiring text](#wiring-text) edits one file. A profile no longer listed is not the target's, and a line left in it stays.
-- **Skipped or failed.** An absent ini, or one listing no profile, skips the target with `wiring-file-absent`, and so does any listed profile's absent `file` when `create` is `false`. An ini that cannot be read fails the target with `unreadable`.
-- **The browser's side.** The browser reads `userChrome.css` only once the user sets `toolkit.legacyUserProfileCustomizations.stylesheets` to `true`, and only at startup, so such a target's `reload` is `null` and it applies on restart. Apply never edits `prefs.js` or `user.js`.
-
-## Entry wiring
-
-The entry form, `{ base, dir, owned, links }`, keeps links in an application's own directory: [theme-editors.md § Entry wiring](theme-editors.md#entry-wiring).
 
 ## Invariants
 

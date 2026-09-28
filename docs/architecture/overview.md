@@ -74,8 +74,10 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
 - [theme-apply.md](theme-apply.md): read before touching the apply, a reload hook or `vgsh theme reload`.
 - [theme-capability.md](theme-capability.md): read before touching `ThemeRunner` or the `theme` capability.
-- [theme-targets.md](theme-targets.md): read before touching a theme target, a template, an encoder or the wiring text.
+- [theme-targets.md](theme-targets.md): read before touching a theme target, a template or an encoder.
+- [theme-wiring.md](theme-wiring.md): read before touching the wiring text, the profile wiring or the entry form's links.
 - [theme-editors.md](theme-editors.md): read before touching an editor's target or its one-time step.
 - [theme-toolkits.md](theme-toolkits.md): read before touching the GTK, Qt, KDE or icon theme target.
+- [theme-tool-targets.md](theme-tool-targets.md): read before touching a Discord client's, btop's, fastfetch's, tmux's, Oh My Posh's or Obsidian's target.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

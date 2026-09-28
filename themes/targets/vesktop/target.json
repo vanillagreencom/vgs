@@ -1,0 +1,8 @@
+{
+  "app": "Vesktop",
+  "encoder": "hex6",
+  "files": [{ "template": "vesktop.css", "destination": "vesktop.css" }],
+  "detect": ["vesktop"],
+  "wiring": { "base": "config", "dir": "vesktop/themes", "owned": false, "links": { "vgs.css": "vesktop.css" } },
+  "reload": { "command": ["sh", "-c", "touch -h -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/vesktop/themes/vgs.css\""], "timeoutMs": 5000 }
+}

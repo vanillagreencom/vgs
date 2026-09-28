@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 4,
+  "final_space": true,
+  "palette": {
+    "background": "#@{palette.background}",
+    "foreground": "#@{palette.foreground}",
+    "accent": "#@{palette.accent}",
+    "muted": "#@{color.textMuted}",
+    "faint": "#@{color.textFaint}",
+    "success": "#@{palette.success}",
+    "warning": "#@{palette.warning}",
+    "danger": "#@{palette.danger}",
+    "info": "#@{palette.info}"
+  },
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        {
+          "type": "path",
+          "style": "plain",
+          "foreground": "p:accent",
+          "template": "{{ .Path }} ",
+          "options": { "style": "folder" }
+        },
+        {
+          "type": "git",
+          "style": "plain",
+          "foreground": "p:muted",
+          "foreground_templates": ["{{ if or (.Working.Changed) (.Staging.Changed) }}p:warning{{ end }}"],
+          "template": "{{ .HEAD }}{{ if or (.Working.Changed) (.Staging.Changed) }}*{{ end }} "
+        },
+        {
+          "type": "status",
+          "style": "plain",
+          "foreground": "p:success",
+          "foreground_templates": ["{{ if gt .Code 0 }}p:danger{{ end }}"],
+          "template": "❯",
+          "options": { "always_enabled": true }
+        }
+      ]
+    }
+  ]
+}

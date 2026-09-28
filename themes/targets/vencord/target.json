@@ -1,0 +1,8 @@
+{
+  "app": "Vencord",
+  "encoder": "hex6",
+  "files": [{ "template": "vencord.css", "destination": "vencord.css" }],
+  "detect": ["discord"],
+  "wiring": { "base": "config", "dir": "Vencord/themes", "owned": false, "links": { "vgs.css": "vencord.css" } },
+  "reload": { "command": ["sh", "-c", "touch -h -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/Vencord/themes/vgs.css\""], "timeoutMs": 5000 }
+}

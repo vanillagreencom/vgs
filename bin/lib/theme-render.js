@@ -22,12 +22,15 @@ const CURATED_KEYS_KEY = "curatedKeys";
 // application's configuration file; its optional keys are the section the
 // line goes into and the Mozilla profiles.ini whose profile directories the
 // file is relative to. An entry wiring keeps links to the target's files in
-// the application's theme or extension directory and edits no file. `links`
-// tells them apart. A null wiring keeps nothing: the target's hook asserts
-// the setting that makes its application read the files.
+// the application's theme or extension directory and edits no file; its
+// optional key is the Obsidian vault registry whose vaults the directory is
+// relative to. `links` tells them apart. A null wiring keeps nothing: the
+// target's hook asserts the setting that makes its application read the
+// files.
 const WIRING_KEYS = ["file", "line", "create"];
 const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];
 const ENTRY_KEYS = ["base", "dir", "owned", "links"];
+const ENTRY_OPTIONAL_KEYS = ["vaults"];
 const ENTRY_KEY = "links";
 // The directories an entry's `dir` is relative to: the user's configuration
 // home, ${XDG_CONFIG_HOME:-~/.config}, the home directory, or the user's
@@ -54,9 +57,9 @@ const TERMINAL_PREFIX = "terminal.";
 // state directory.
 const STATE_PLACEHOLDER = "state";
 
-// One segment of an entry's `dir` or of a wiring's `profiles`: a directory
-// or file name, a leading dot allowed so `.vscode` can be named, never `.`
-// or `..`.
+// One segment of an entry's `dir` or `vaults` or of a wiring's `profiles`:
+// a directory or file name, a leading dot allowed so `.vscode` can be
+// named, never `.` or `..`.
 const DIR_SEGMENT_PATTERN = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // A wiring section is one bare name, as an INI section or a TOML table
@@ -185,13 +188,21 @@ function wiringForm(wiring) {
     return Object.prototype.hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include";
 }
 
+// Whether VALUE is a relative path of one name per segment.
+function isRelativePath(value) {
+    return typeof value === "string" && value.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment));
+}
+
 // The first defect of an entry `wiring`, or "". `dir` is relative to its
-// `base`, one directory name per segment; `links` maps each link's file
-// name in `dir` to one of DESTINATIONS, the target's own files.
+// `base`, or, with `vaults`, to each vault the Obsidian registry at `vaults`
+// under `base` lists, one directory name per segment; `links` maps each
+// link's file name in `dir` to one of DESTINATIONS, the target's own files.
 function entryError(logic, wiring, destinations) {
-    if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return "key=wiring";
+    if (!ENTRY_KEYS.every(key => logic.hasOwn(wiring, key)) ||
+        !Object.keys(wiring).every(key => ENTRY_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return "key=wiring";
     if (!ENTRY_BASES.includes(wiring.base)) return "key=wiring.base";
-    if (typeof wiring.dir !== "string" || !wiring.dir.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment))) return "key=wiring.dir";
+    if (!isRelativePath(wiring.dir)) return "key=wiring.dir";
+    if (logic.hasOwn(wiring, "vaults") && !isRelativePath(wiring.vaults)) return "key=wiring.vaults";
     if (typeof wiring.owned !== "boolean") return "key=wiring.owned";
     if (!logic.isPlainObject(wiring.links) || Object.keys(wiring.links).length === 0) return "key=wiring.links";
     for (const [link, destination] of Object.entries(wiring.links))
@@ -381,6 +392,29 @@ function profileDirs(text) {
         .filter(dir => dir.relative ? dir.path !== "" : dir.path.startsWith("/"));
 }
 
+// The vault directories an Obsidian registry, obsidian.json, holding TEXT
+// lists, in its order and each once: every `vaults.<id>.path` that is
+// absolute. A registry without `vaults` lists none. Null for TEXT that is
+// not a JSON object, or whose `vaults` is no object, since no vault it
+// names can then be known.
+function vaultDirs(logic, text) {
+    let registry;
+    try {
+        registry = JSON.parse(text);
+    } catch (e) {
+        return null;
+    }
+    if (!logic.isPlainObject(registry)) return null;
+    if (!logic.hasOwn(registry, "vaults")) return [];
+    if (!logic.isPlainObject(registry.vaults)) return null;
+    const dirs = [];
+    for (const vault of Object.values(registry.vaults)) {
+        const dir = logic.isPlainObject(vault) ? vault.path : undefined;
+        if (typeof dir === "string" && dir.startsWith("/") && !dirs.includes(dir)) dirs.push(dir);
+    }
+    return dirs;
+}
+
 // Whether the line TEXT is the header of SECTION.
 function isSectionHeader(text, section) {
     const m = SECTION_HEADER.exec(text);
@@ -439,4 +473,4 @@ function unwiredText(text, line) {
     return lines.filter(existing => existing !== line).join("\n");
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, reloadCommand, reloadAlways, wiredText, unwiredText };
+module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, wiredText, unwiredText };

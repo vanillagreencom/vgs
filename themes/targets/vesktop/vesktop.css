@@ -1,0 +1,81 @@
+/**
+ * @name vgs
+ * @description The vgs theme, kept up to date by vgsh theme apply. Built on refact0r's midnight, which draws Discord from the colours below.
+ * @author vgs
+ * @version 1.0.0
+ * @source https://github.com/refact0r/midnight-discord
+ */
+
+/* Vesktop, Equibop and Vencord take this one theme: equibop.css and vencord.css are copies of vesktop.css. */
+
+@import url('https://refact0r.github.io/midnight-discord/build/midnight.css');
+
+:root {
+    --colors: on;
+
+    /* text */
+    --text-0: #@{color.onAccent};
+    --text-1: #@{color.textHeading};
+    --text-2: #@{color.text};
+    --text-3: #@{color.text};
+    --text-4: #@{color.textMuted};
+    --text-5: #@{color.textFaint};
+
+    /* backgrounds, from the pressed buttons down to the main panel */
+    --bg-1: #@{color.surfaceHover};
+    --bg-2: #@{color.surfaceRaised};
+    --bg-3: #@{color.surfaceSunken};
+    --bg-4: #@{palette.background};
+    --hover: #@{color.surfaceHover};
+    --active: #@{color.borderSubtle};
+    --active-2: #@{color.border};
+    --message-hover: #@{color.surface};
+
+    /* accent */
+    --accent-1: #@{color.accentHover};
+    --accent-2: #@{palette.accent};
+    --accent-3: #@{palette.accent};
+    --accent-4: #@{color.accentHover};
+    --accent-5: #@{color.accentPressed};
+    --accent-new: #@{palette.danger};
+
+    /* status */
+    --online: #@{palette.success};
+    --dnd: #@{palette.danger};
+    --idle: #@{palette.warning};
+    --streaming: #@{terminal.color5};
+    --offline: #@{color.textFaint};
+
+    /* borders */
+    --border-light: #@{color.borderSubtle};
+    --border: #@{color.border};
+    --border-hover: #@{color.borderStrong};
+    --button-border: #@{color.border};
+
+    /* the hues midnight derives the rest from */
+    --red-1: #@{terminal.color9};
+    --red-2: #@{palette.danger};
+    --red-3: #@{palette.danger};
+    --red-4: #@{palette.danger};
+    --red-5: #@{palette.danger};
+    --green-1: #@{terminal.color10};
+    --green-2: #@{palette.success};
+    --green-3: #@{palette.success};
+    --green-4: #@{palette.success};
+    --green-5: #@{palette.success};
+    --blue-1: #@{terminal.color12};
+    --blue-2: #@{palette.info};
+    --blue-3: #@{palette.info};
+    --blue-4: #@{palette.info};
+    --blue-5: #@{palette.info};
+    --yellow-1: #@{terminal.color11};
+    --yellow-2: #@{palette.warning};
+    --yellow-3: #@{palette.warning};
+    --yellow-4: #@{palette.warning};
+    --yellow-5: #@{palette.warning};
+    --purple-1: #@{terminal.color13};
+    --purple-2: #@{terminal.color5};
+    --purple-3: #@{terminal.color5};
+    --purple-4: #@{terminal.color5};
+    --purple-5: #@{terminal.color5};
+}

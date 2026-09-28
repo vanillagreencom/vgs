@@ -44,24 +44,7 @@ The editor targets, one per editor, beside the others of [theme-targets.md § Ta
 - **Reload.** None. VS Code reads an extension's colour theme when a window loads. A later apply changes the linked file, and VS Code shows it after `Developer: Reload Window`.
 - **Detect.** `code` is Microsoft's VS Code. Code - OSS, the command Arch's `code` package installs, and VSCodium read `~/.vscode-oss/extensions` instead (`dataFolderName` in `product.json`). On those, the target writes a folder that nothing reads.
 
-## Entry wiring
-
-Helix, Zed and VS Code take their theme through this form; any target whose application finds its theme in a directory of its own may.
-
-An application that reads no include line from its configuration finds its themes by name in a directory of its own, such as Helix's `~/.config/helix/themes/`. The entry form keeps links there instead: [D022](../decisions/D022-theme-apply-keeps-managed-links-in-application-directories.md). The user selects the theme once in the application.
-
-| Key | Holds |
-|---|---|
-| `base` | `config` for `${XDG_CONFIG_HOME:-~/.config}`, `home` for the home directory, `cache` for `${XDG_CACHE_HOME:-~/.cache}`. |
-| `dir` | The directory the links stand in, relative to `base`, each segment a directory name that may start with a dot: `.vscode/extensions/vgs-theme`. |
-| `owned` | `true` when `dir` itself belongs to the target, such as an extension directory; `false` when it is the application's own directory. |
-| `links` | One or more `"<name>": "<destination>"`: a link's file name in `dir`, and the target file it names, one of the target's `destination`s. |
-
-`entryLinks` answers each link's `name` and `to`, its destination under the state directory's `theme/`. `wiringLine` refuses an entry target and `entryLinks` an include target.
-
-- **Managed.** A link is the target's when it is a symlink whose target is exactly its `to`. Apply writes no other kind of entry, and nothing else points into the state directory's `theme/`, so a symlink to it proves the link is managed without a marker file. A managed link whose file is gone is still managed.
-- **Occupied.** A `dir` that exists and is no directory, or a link path holding anything but its managed link, a file, a directory or a symlink to elsewhere, skips the target with reason `entry-occupied`. Nothing at that path is replaced.
-- **Symlinked directories.** `dir` and its parents are followed where they stand, so a dotfile manager's link to a directory serves, and the link is created in the directory it names.
+The entry form's rules: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-wiring).
 
 ## Invariants
 

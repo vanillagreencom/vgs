@@ -1,0 +1,35 @@
+// The vgs theme for fastfetch, linked as vgs.jsonc in fastfetch's configuration
+// directory by vgsh theme apply. Run it with `fastfetch --config vgs`.
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "color": { "1": "#@{palette.accent}", "2": "#@{palette.foreground}" }
+  },
+  "display": {
+    "separator": "  ",
+    "color": {
+      "keys": "#@{palette.accent}",
+      "title": "#@{palette.accent}",
+      "output": "#@{palette.foreground}",
+      "separator": "#@{color.textFaint}"
+    }
+  },
+  "modules": [
+    "title",
+    "separator",
+    "os",
+    "host",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "wm",
+    "terminal",
+    "cpu",
+    "gpu",
+    "memory",
+    "disk",
+    "break",
+    "colors"
+  ]
+}

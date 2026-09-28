@@ -415,8 +415,11 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
             if (!target.wiring.create && files.some(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)) return "wiring-file-absent";
             return null;
         }
-        case "entry":
-            return entryOccupied(target, configHome, live) === null ? null : "entry-occupied";
+        case "entry": {
+            const dirs = entryDirs(target, configHome);
+            if (dirs.length === 0) return "wiring-file-absent";
+            return entryOccupied(target, dirs, live) === null ? null : "entry-occupied";
+        }
         case "none":
             return null;
         default:
@@ -579,16 +582,50 @@ function editFile(key, target, file, live, edit) {
     return null;
 }
 
-// The directory an entry TARGET's links stand in: its `dir` under the
+// The directory an entry TARGET's `dir` or `vaults` is relative to: the
 // configuration home, the home directory or the cache home,
 // ${XDG_CACHE_HOME:-~/.cache}, as its `base` names.
-function entryDir(target, configHome) {
+function entryBase(target, configHome) {
     switch (target.wiring.base) {
-    case "config": return path.join(configHome, target.wiring.dir);
-    case "home": return path.join(os.homedir(), target.wiring.dir);
-    case "cache": return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), target.wiring.dir);
-    default: throw new Error("vgsh-theme-judge: entryDir: target " + target.name + " has no known base");
+    case "config": return configHome;
+    case "home": return os.homedir();
+    case "cache": return process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+    default: throw new Error("vgsh-theme-judge: entryBase: target " + target.name + " has no known base");
     }
+}
+
+// The directories entry TARGET's links stand in: its `dir` under its base,
+// or, with `vaults`, under every vault that Obsidian registry, relative to
+// the base, lists, one whose first `dir` segment is a directory in it, so
+// a registered vault that is gone or was never opened gets nothing. An
+// absent registry lists none. Throws the fs error of a registry that cannot
+// be read, its `path` the registry's, and one with code `unparseable` for a
+// registry vaultDirs cannot read a vault list from.
+function entryDirs(target, configHome) {
+    const wiring = target.wiring;
+    const base = entryBase(target, configHome);
+    if (wiring.vaults === undefined) return [path.join(base, wiring.dir)];
+    const registry = path.join(base, wiring.vaults);
+    let bytes;
+    try {
+        bytes = readIfPresent(registry);
+    } catch (e) {
+        if (typeof e.code === "string") e.path = registry;
+        throw e;
+    }
+    if (bytes === undefined) return [];
+    const vaults = render.vaultDirs(logic, bytes.toString("utf8"));
+    if (vaults === null) throw Object.assign(new Error("unparseable vault registry " + registry), { code: "unparseable", path: registry });
+    const first = wiring.dir.split("/")[0];
+    return vaults.filter(vault => fs.statSync(path.join(vault, first), { throwIfNoEntry: false })?.isDirectory() === true)
+        .map(vault => path.join(vault, wiring.dir));
+}
+
+// The failure of target NAME whose entryDirs threw E, keyed by KEY, or a
+// rethrow of an E that is no read failure.
+function entryDirsFailure(key, e) {
+    if (typeof e.code !== "string") throw e;
+    return { reason: "unreadable", failure: key + "=unreadable path=" + e.path + " error=" + e.code };
 }
 
 // What stands at FILE, where a link to TO belongs: `absent`, `managed`, a
@@ -603,35 +640,45 @@ function linkState(file, to) {
 }
 
 // The first path that stops entry TARGET from keeping its links in place,
-// or null: a `dir` that is no directory, or a link's path something other
-// than its managed link holds. A symlinked `dir` counts as the directory it
-// names, so a dotfile manager's link serves. Throws the fs error of a path
-// that cannot be read.
-function entryOccupied(target, configHome, live) {
-    const dir = entryDir(target, configHome);
-    const stat = fs.statSync(dir, { throwIfNoEntry: false });
-    if (stat === undefined) return null;
-    if (!stat.isDirectory()) return dir;
-    const occupied = render.entryLinks(target, live).find(link => linkState(path.join(dir, link.name), link.to) === "occupied");
-    return occupied === undefined ? null : path.join(dir, occupied.name);
+// or null: a directory of entryDirs that is no directory, or a link's path
+// something other than its managed link holds. A symlinked directory counts
+// as the directory it names, so a dotfile manager's link serves. Throws the
+// fs error of a path that cannot be read.
+function entryOccupied(target, dirs, live) {
+    for (const dir of dirs) {
+        const stat = fs.statSync(dir, { throwIfNoEntry: false });
+        if (stat === undefined) continue;
+        if (!stat.isDirectory()) return dir;
+        const occupied = render.entryLinks(target, live).find(link => linkState(path.join(dir, link.name), link.to) === "occupied");
+        if (occupied !== undefined) return path.join(dir, occupied.name);
+    }
+    return null;
 }
 
-// Keep entry TARGET's links in its `dir`, created with its parents when
-// absent. A managed link is left as it is, so a later apply changes nothing
-// there, and nothing but the links is written. Answers null, or the failure's
-// { reason, failure } for target NAME: `entry-occupied` when a path came to
-// be taken after the plan judged it free, else what the write met.
+// Keep entry TARGET's links in each of its directories, each created with
+// its parents when absent. A managed link is left as it is, so a later apply
+// changes nothing there, and nothing but the links is written. Answers null,
+// or the failure's { reason, failure } for target NAME: `entry-occupied`
+// when a path came to be taken after the plan judged it free, else what the
+// read or write met.
 function keepLinks(name, target, configHome, live) {
     const key = "target=" + name + " reason";
-    const dir = entryDir(target, configHome);
+    let dirs;
     try {
-        writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));
-        for (const link of render.entryLinks(target, live)) {
-            const file = path.join(dir, link.name);
-            let state;
-            writing(file, key, () => { state = linkState(file, link.to); });
-            if (state === "occupied") return { reason: "entry-occupied", failure: key + "=entry-occupied path=" + file };
-            if (state === "absent") writing(file, key, () => fs.symlinkSync(link.to, file));
+        dirs = entryDirs(target, configHome);
+    } catch (e) {
+        return entryDirsFailure(key, e);
+    }
+    try {
+        for (const dir of dirs) {
+            writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));
+            for (const link of render.entryLinks(target, live)) {
+                const file = path.join(dir, link.name);
+                let state;
+                writing(file, key, () => { state = linkState(file, link.to); });
+                if (state === "occupied") return { reason: "entry-occupied", failure: key + "=entry-occupied path=" + file };
+                if (state === "absent") writing(file, key, () => fs.symlinkSync(link.to, file));
+            }
         }
     } catch (e) {
         if (!(e instanceof Refusal)) throw e;
@@ -640,29 +687,36 @@ function keepLinks(name, target, configHome, live) {
     return null;
 }
 
-// Remove entry TARGET's managed links from its `dir`, and an `owned` dir
-// once it is empty. A path something else holds is not the target's and
-// stays, and so does an owned dir holding anything else. Answers null, or
-// the failure's { reason, failure } for target NAME.
+// Remove entry TARGET's managed links from each of its directories, and an
+// `owned` one once it is empty. A path something else holds is not the
+// target's and stays, and so does an owned directory holding anything else.
+// Answers null, or the failure's { reason, failure } for target NAME.
 function dropLinks(name, target, configHome, live) {
     const key = "target=" + name + " reason";
-    const dir = entryDir(target, configHome);
+    let dirs;
     try {
-        for (const link of render.entryLinks(target, live)) {
-            const file = path.join(dir, link.name);
-            writing(file, key, () => {
-                if (linkState(file, link.to) === "managed") fs.unlinkSync(file);
+        dirs = entryDirs(target, configHome);
+    } catch (e) {
+        return entryDirsFailure(key, e);
+    }
+    try {
+        for (const dir of dirs) {
+            for (const link of render.entryLinks(target, live)) {
+                const file = path.join(dir, link.name);
+                writing(file, key, () => {
+                    if (linkState(file, link.to) === "managed") fs.unlinkSync(file);
+                });
+            }
+            if (target.wiring.owned) writing(dir, key, () => {
+                const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+                if (stat === undefined || !stat.isDirectory()) return;
+                try {
+                    fs.rmdirSync(dir);
+                } catch (e) {
+                    if (e.code !== "ENOTEMPTY" && e.code !== "EEXIST") throw e;
+                }
             });
         }
-        if (target.wiring.owned) writing(dir, key, () => {
-            const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
-            if (stat === undefined || !stat.isDirectory()) return;
-            try {
-                fs.rmdirSync(dir);
-            } catch (e) {
-                if (e.code !== "ENOTEMPTY" && e.code !== "EEXIST") throw e;
-            }
-        });
     } catch (e) {
         if (!(e instanceof Refusal)) throw e;
         return { reason: e.reason, failure: e.first };

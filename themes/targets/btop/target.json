@@ -1,0 +1,8 @@
+{
+  "app": "btop",
+  "encoder": "hex6",
+  "files": [{ "template": "btop.theme", "destination": "btop.theme" }],
+  "detect": ["btop"],
+  "wiring": { "base": "config", "dir": "btop/themes", "owned": false, "links": { "vgs.theme": "btop.theme" } },
+  "reload": { "command": ["sh", "-c", "pkill -USR2 -x -u \"$(id -u)\" btop; [ \"$?\" -le 1 ]"], "timeoutMs": 5000 }
+}

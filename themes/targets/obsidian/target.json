@@ -1,0 +1,8 @@
+{
+  "app": "Obsidian",
+  "encoder": "hex6",
+  "files": [{ "template": "obsidian.css", "destination": "obsidian.css" }, { "template": "manifest.json", "destination": "obsidian.manifest.json" }],
+  "detect": ["obsidian"],
+  "wiring": { "base": "config", "vaults": "obsidian/obsidian.json", "dir": ".obsidian/themes/vgs", "owned": true, "links": { "theme.css": "obsidian.css", "manifest.json": "obsidian.manifest.json" } },
+  "reload": null
+}

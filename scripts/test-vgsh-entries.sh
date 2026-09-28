@@ -112,7 +112,7 @@ rm -- "$cfg/occ/themes/vgs.toml"; ln -s -- "$tmp/elsewhere.toml" "$cfg/occ/theme
 disable '"occ"'
 apply_json "the any-link mutant disables occ" 0 dusk
 check "the any-link mutant removes a link it never made" test ! -L "$cfg/occ/themes/vgs.toml"
-control no-plan-check 'return occupied === undefined ? null : path.join(dir, occupied.name);' 'return null;'
+control no-plan-check 'if (occupied !== undefined) return path.join(dir, occupied.name);' ''
 apply_json "the no-plan-check mutant applies" 3 dusk "vgsh: refused: target=occ reason=entry-occupied path=$cfg/occ/themes/vgs.toml"
 check "the no-plan-check mutant fails the occupied target instead of skipping it" test "$(target_state occ)" == "failed entry-occupied"
 control never-rmdir 'if (target.wiring.owned) writing(dir, key, () => {' 'if (false) writing(dir, key, () => {'
@@ -130,7 +130,7 @@ control remove-any 'if (linkState(file, link.to) === "managed") fs.unlinkSync(fi
 disable '"occ"'
 apply_json "the remove-any mutant disables occ" 0 dusk
 check "the remove-any mutant deletes the user's file" test ! -e "$cfg/occ/themes/vgs.toml"
-control home-as-config 'case "home": return path.join(os.homedir(), target.wiring.dir);' 'case "home": return path.join(configHome, target.wiring.dir);'
+control home-as-config 'case "home": return os.homedir();' 'case "home": return configHome;'
 apply_json "the home-as-config mutant applies" 0 dusk
 check "the home-as-config mutant puts the owned directory under the configuration home" test -d "$cfg/.ext/extensions/vgs-theme" -a ! -e "$ext_dir"
 unset THEME_BIN

@@ -1,0 +1,48 @@
+# Theme wiring
+
+Covers: bin/lib/theme-render.js, bin/vgsh-theme-judge, scripts/test-theme-render.js, scripts/test-vgsh-entries.sh
+
+How a landed target's files reach its application: the include line kept in a configuration file, the Mozilla profiles it is kept in, and the entry form's links. The target format is [theme-targets.md § Targets](theme-targets.md#targets); when apply wires and unwires is [theme-apply.md § Apply](theme-apply.md#apply).
+
+## Wiring text
+
+`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. The rest of the text is kept.
+
+- **No section.** An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme.
+- **A section.** The line goes right after the first header of that section, `[<section>]` with whitespace around the name and a `#` comment after it allowed; `[[<section>]]` is no header of it. A file without one, an absent file included, takes the header and the line at its end, so a TOML file never declares the table twice, which a dotted key ahead of its `[<section>]` header would. A wiring that would give TOML a key twice is refused with `reason=wiring-conflict section=<section> key=<key>` and the file is left: a section that already assigns the line's key, up to the next header of any kind, or, with no header, a line ahead of every header that assigns `<section>` or a `<section>.` key. An Alacritty configuration with its own `general.import` is refused so, since TOML holds one `import` there.
+
+`unwiredText` undoes it for a disabled target: every whole line equal to the include line goes, with its line break, and every other byte stays, a header `wiredText` added included.
+
+## Profile wiring
+
+A Mozilla-family browser keeps its configuration in profile directories with random names, listed in a `profiles.ini` such as Zen's `~/.zen/profiles.ini`. An include target with `profiles` keeps its line in `file` under every one of them. The profile's `chrome/userChrome.css` is one such file: CSS reads an `@import` only ahead of every other rule, and the line goes first.
+
+- **Profiles.** `profileDirs` reads the ini: each `[Profile<N>]` section's `Path`, under the ini's own directory when its `IsRelative` is `1`, else absolute. Keys and values are trimmed. A section without a `Path`, one whose `IsRelative` is not `1` and whose `Path` does not start with `/`, and every other section, `[General]` and `[Install<hash>]` included, name no profile.
+- **Wired and unwired.** Apply keeps the line in the file of every listed profile and a disabled target's removal takes it from every one, each as [§ Wiring text](#wiring-text) edits one file. A profile no longer listed is not the target's, and a line left in it stays.
+- **Skipped or failed.** An absent ini, or one listing no profile, skips the target with `wiring-file-absent`, and so does any listed profile's absent `file` when `create` is `false`. An ini that cannot be read fails the target with `unreadable`.
+- **The browser's side.** The browser reads `userChrome.css` only once the user sets `toolkit.legacyUserProfileCustomizations.stylesheets` to `true`, and only at startup, so such a target's `reload` is `null` and it applies on restart. Apply never edits `prefs.js` or `user.js`.
+
+## Entry wiring
+
+Helix, Zed and VS Code take their theme through this form; any target whose application finds its theme in a directory of its own may.
+
+An application that reads no include line from its configuration finds its themes by name in a directory of its own, such as Helix's `~/.config/helix/themes/`. The entry form keeps links there instead: [D022](../decisions/D022-theme-apply-keeps-managed-links-in-application-directories.md). The user selects the theme once in the application.
+
+| Key | Holds |
+|---|---|
+| `base` | `config` for `${XDG_CONFIG_HOME:-~/.config}`, `home` for the home directory, `cache` for `${XDG_CACHE_HOME:-~/.cache}`. |
+| `dir` | The directory the links stand in, relative to `base`, each segment a directory name that may start with a dot: `.vscode/extensions/vgs-theme`. |
+| `owned` | `true` when `dir` itself belongs to the target, such as an extension directory; `false` when it is the application's own directory. |
+| `links` | One or more `"<name>": "<destination>"`: a link's file name in `dir`, and the target file it names, one of the target's `destination`s. |
+| `vaults` | Optional. An Obsidian vault registry relative to `base`, each segment a name that may start with a dot, such as `obsidian/obsidian.json`; `dir` is then relative to each vault it lists. |
+
+`entryLinks` answers each link's `name` and `to`, its destination under the state directory's `theme/`. `wiringLine` refuses an entry target and `entryLinks` an include target.
+
+- **Managed.** A link is the target's when it is a symlink whose target is exactly its `to`. Apply writes no other kind of entry, and nothing else points into the state directory's `theme/`, so a symlink to it proves the link is managed without a marker file. A managed link whose file is gone is still managed.
+- **Occupied.** A `dir` that exists and is no directory, or a link path holding anything but its managed link, a file, a directory or a symlink to elsewhere, skips the target with reason `entry-occupied`. Nothing at that path is replaced.
+- **Vaults.** `vaultDirs` reads the registry's `vaults.<id>.path`, each absolute one once, in its order. A vault whose first `dir` segment is no directory, one that is gone or was never opened, takes no links. An absent registry, or one listing no such vault, skips the target with `wiring-file-absent`; one that cannot be read, or that is no JSON object with an object `vaults`, fails it with `unreadable`, on apply and on disable. Apply keeps the links in every such vault, and a disabled target's removal takes them from every one.
+- **Symlinked directories.** `dir` and its parents are followed where they stand, so a dotfile manager's link to a directory serves, and the link is created in the directory it names.
+
+## Invariants
+
+1. The `vaults` key's admission and path and every `vaultDirs` rule hold: a JSON object, a registry without `vaults`, an object `vaults`, an object vault, an absolute path and each path once. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer. Through the apply, `scripts/test-vgsh-chat-tools.sh` holds the links in every opened vault: [theme-tool-targets.md § Invariants](theme-tool-targets.md#invariants).

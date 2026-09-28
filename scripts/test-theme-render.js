@@ -70,7 +70,9 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } })],
     ["probe", entryText({ base: "cache", dir: "wal" })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { file: "chrome/userChrome.css", profiles: ".zen/profiles.ini" }) })],
-    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general", profiles: "profiles.ini" }) })]
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general", profiles: "profiles.ini" }) })],
+    ["probe", entryText({ dir: ".obsidian/themes/vgs", owned: true, vaults: "obsidian/obsidian.json" })],
+    ["probe", entryText({ base: "home", dir: ".probe", vaults: ".probe-vaults.json" })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -118,6 +120,13 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: [".zen/profiles.ini"] }) }), "target-schema", "key=wiring.profiles"],
     ["probe", entryText({ profiles: ".zen/profiles.ini" }), "target-schema", "key=wiring"],
     ["probe", entryText({ line: "include=@{state}/probe.conf" }), "target-schema", "key=wiring"],
+    ["probe", entryText({ vault: "obsidian/obsidian.json" }), "target-schema", "key=wiring"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { vaults: "obsidian/obsidian.json" }) }), "target-schema", "key=wiring"],
+    ["probe", entryText({ vaults: "" }), "target-schema", "key=wiring.vaults"],
+    ["probe", entryText({ vaults: "/home/u/.config/obsidian/obsidian.json" }), "target-schema", "key=wiring.vaults"],
+    ["probe", entryText({ vaults: "../obsidian.json" }), "target-schema", "key=wiring.vaults"],
+    ["probe", entryText({ vaults: "obsidian//obsidian.json" }), "target-schema", "key=wiring.vaults"],
+    ["probe", entryText({ vaults: ["obsidian/obsidian.json"] }), "target-schema", "key=wiring.vaults"],
     ["probe", targetText({ files: twoFiles, wiring: { base: "config", dir: "probe", links: { "vgs.conf": "probe.conf" } } }), "target-schema", "key=wiring"],
     ["probe", entryText({ base: "state" }), "target-schema", "key=wiring.base"],
     ["probe", entryText({ dir: "../probe" }), "target-schema", "key=wiring.dir"],
@@ -247,6 +256,23 @@ const PROFILES = [
     ["[Profile0]\nIsRelative=true\nPath=relative/p0\n", []]
 ];
 
+// An Obsidian vault registry's text, and the vault directories it lists;
+// null for a registry no vault list can be read from.
+const VAULTS = [
+    ["{}", []],
+    ['{"vaults":{}}', []],
+    ['{"vaults":{"a1b2":{"path":"/home/u/Notes","ts":1,"open":true},"c3d4":{"path":"/srv/Work Vault"}},"updateDisabled":true}', ["/home/u/Notes", "/srv/Work Vault"]],
+    ['{"vaults":{"a":{"path":"/n"},"b":{"path":"/n"},"c":{"path":"/m"}}}', ["/n", "/m"]],
+    ['{"vaults":{"a":{"path":"Notes"},"b":{"path":""},"c":{"path":3},"d":"/x","e":null,"f":{"ts":1},"g":{"path":"/ok"}}}', ["/ok"]],
+    ["", null],
+    ["{", null],
+    ["[]", null],
+    ['"/n"', null],
+    ["null", null],
+    ['{"vaults":[{"path":"/n"}]}', null],
+    ['{"vaults":"/n"}', null]
+];
+
 function verify(render) {
     const accepted = (name, text) => {
         const result = render.acceptTarget(logic, name, text);
@@ -345,6 +371,8 @@ function verify(render) {
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
     for (const [text, want] of PROFILES)
         assert.deepEqual(render.profileDirs(text), want, JSON.stringify(text));
+    for (const [text, want] of VAULTS)
+        assert.deepEqual(render.vaultDirs(logic, text), want, JSON.stringify(text));
 
     // An entry target's links point at its files in the state directory's
     // theme/, in target.json's order; each form refuses the other's helper.
@@ -456,7 +484,17 @@ const CONTROLS = [
     ["dotted keys at the root only", "const root = lines.slice(0, first === -1 ? lines.length : first);", "const root = lines;"],
     ["section appended on its own line", "(before === \"\" || before.endsWith(\"\\n\") ? \"\" : \"\\n\")", "\"\""],
     ["entry form", 'hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include"', 'hasOwnProperty.call(wiring, "nope") ? "entry" : "include"'],
-    ["entry keys", "if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return", "if (!logic.isPlainObject(wiring)) return"],
+    ["entry required keys", "if (!ENTRY_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "if (false ||"],
+    ["entry unknown key", "!Object.keys(wiring).every(key => ENTRY_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return", "false) return"],
+    ["entry vaults admitted", 'const ENTRY_OPTIONAL_KEYS = ["vaults"];', "const ENTRY_OPTIONAL_KEYS = [];"],
+    ["entry vaults path", 'if (logic.hasOwn(wiring, "vaults") && !isRelativePath(wiring.vaults)) return', "if (false) return"],
+    ["vault registry parses", "        registry = JSON.parse(text);\n    } catch (e) {\n        return null;", "        registry = JSON.parse(text);\n    } catch (e) {\n        return [];"],
+    ["vault registry is an object", "if (!logic.isPlainObject(registry)) return null;", "if (registry === null) return null;"],
+    ["vault registry without vaults", 'if (!logic.hasOwn(registry, "vaults")) return [];', ""],
+    ["vault list is an object", "if (!logic.isPlainObject(registry.vaults)) return null;", "if (false) return null;"],
+    ["vault entry is an object", "logic.isPlainObject(vault) ? vault.path : undefined", "vault.path"],
+    ["vault path absolute", 'dir.startsWith("/") && !dirs.includes(dir)', "!dirs.includes(dir)"],
+    ["vault listed once", "&& !dirs.includes(dir)) dirs.push(dir);", ") dirs.push(dir);"],
     ["entry base", "if (!ENTRY_BASES.includes(wiring.base)) return", "if (false) return"],
     ["entry cache base", 'const ENTRY_BASES = ["config", "home", "cache"];', 'const ENTRY_BASES = ["config", "home"];'],
     ["entry dir segment", "const DIR_SEGMENT_PATTERN = /^\\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;", "const DIR_SEGMENT_PATTERN = /^[.A-Za-z0-9_-]+$/;"],
@@ -488,4 +526,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length + VAULTS.length} controls=${CONTROLS.length}`);

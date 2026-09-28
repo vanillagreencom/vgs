@@ -1,0 +1,8 @@
+{
+  "app": "Equibop",
+  "encoder": "hex6",
+  "files": [{ "template": "equibop.css", "destination": "equibop.css" }],
+  "detect": ["equibop"],
+  "wiring": { "base": "config", "dir": "equibop/themes", "owned": false, "links": { "vgs.css": "equibop.css" } },
+  "reload": { "command": ["sh", "-c", "touch -h -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/equibop/themes/vgs.css\""], "timeoutMs": 5000 }
+}

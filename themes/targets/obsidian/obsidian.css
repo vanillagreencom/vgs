@@ -1,0 +1,63 @@
+/* The vgs theme for Obsidian, linked into each vault's .obsidian/themes/vgs/
+   by vgsh theme apply. Select it once per vault as the theme "vgs". */
+
+.theme-dark,
+.theme-light {
+    --background-primary: #@{palette.background};
+    --background-primary-alt: #@{color.surfaceSunken};
+    --background-secondary: #@{color.surface};
+    --background-secondary-alt: #@{color.surfaceRaised};
+    --background-modifier-hover: #@{color.surfaceHover};
+    --background-modifier-border: #@{color.border};
+    --background-modifier-border-hover: #@{color.borderStrong};
+    --background-modifier-border-focus: #@{palette.accent};
+
+    --text-normal: #@{color.text};
+    --text-muted: #@{color.textMuted};
+    --text-faint: #@{color.textFaint};
+    --text-on-accent: #@{color.onAccent};
+    --text-accent: #@{palette.accent};
+    --text-accent-hover: #@{color.accentHover};
+    --text-selection: #@{color.borderStrong};
+    --text-error: #@{palette.danger};
+    --text-warning: #@{palette.warning};
+    --text-success: #@{palette.success};
+
+    --interactive-normal: #@{color.surfaceRaised};
+    --interactive-hover: #@{color.surfaceHover};
+    --interactive-accent: #@{palette.accent};
+    --interactive-accent-hover: #@{color.accentHover};
+
+    --h1-color: #@{color.textHeading};
+    --h2-color: #@{color.textHeading};
+    --h3-color: #@{color.textHeading};
+    --h4-color: #@{color.text};
+    --h5-color: #@{color.text};
+    --h6-color: #@{color.textMuted};
+
+    --link-color: #@{palette.accent};
+    --link-color-hover: #@{color.accentHover};
+    --link-external-color: #@{palette.info};
+    --link-external-color-hover: #@{palette.info};
+
+    --code-normal: #@{terminal.color6};
+    --code-comment: #@{color.textFaint};
+    --code-keyword: #@{terminal.color5};
+    --code-string: #@{terminal.color2};
+    --code-value: #@{terminal.color3};
+    --code-function: #@{terminal.color4};
+    --code-tag: #@{terminal.color1};
+    --code-operator: #@{color.textMuted};
+    --code-punctuation: #@{color.textMuted};
+
+    --tag-color: #@{palette.accent};
+    --tag-background: #@{color.surfaceRaised};
+    --blockquote-border-color: #@{palette.accent};
+
+    --graph-line: #@{color.border};
+    --graph-node: #@{color.textMuted};
+    --graph-node-focused: #@{palette.accent};
+    --graph-node-tag: #@{palette.info};
+    --graph-node-attachment: #@{palette.success};
+    --graph-node-unresolved: #@{color.textFaint};
+}
