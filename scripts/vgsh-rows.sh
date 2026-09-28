@@ -6,11 +6,7 @@
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"
-mkdir -p -- "$repo/tmp"
-tmp="$repo/tmp/$(basename -- "$0" .sh)-$$"
-rm -rf -- "${tmp:?}"
-mkdir -p -- "$tmp"
-tmp="$(cd -- "$tmp" && pwd -P)"
+tmp="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${tmp:?}"' EXIT
 rt_empty="$tmp/rt-empty"; mkdir -p "$rt_empty"
 

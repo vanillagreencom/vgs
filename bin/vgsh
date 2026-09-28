@@ -41,7 +41,8 @@
 # `restart` refuses while the session is locked, because the shell owns the
 # lock client. Otherwise it stops the pid in the instance lock, waits for
 # that lock to free and asks Hyprland to run `vgsh run`, so the new shell
-# inherits the session environment.
+# inherits the session environment. It prints the new pid once that shell
+# answers as the guarded instance.
 #
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
@@ -234,7 +235,7 @@ rescan_if_running() {
 }
 
 shell_restart() {
-  local pid hypr_status status using_lua reply cmd request dispatch_reply new_pid lua_cmd
+  local pid hypr_status status using_lua locked_out reply cmd request dispatch_reply new_pid guarded_out lua_cmd
   pid="$(shell_pid)" || exit $?
   set +e
   hypr_status="$(hyprctl -j status 2>&1)"
@@ -246,7 +247,14 @@ shell_restart() {
   using_lua=false
   [[ $hypr_status =~ \"configProvider\"[[:space:]]*:[[:space:]]*\"lua\" ]] && using_lua=true
 
-  reply="$(ipc shell locked)" || exit $?
+  set +e
+  locked_out="$(qs ipc --pid "$pid" call shell locked 2>/dev/null)"
+  status=$?
+  set -e
+  [[ $status == 0 ]] ||
+    refuse 1 "locked=unanswered pid=$pid" \
+      "the shell did not answer shell.locked; a shell started before vgsh restart existed must be stopped and started with vgsh run by hand; the shell was not stopped"
+  reply="${locked_out##*$'\n'}"
   case "$reply" in
     true)
       refuse 4 "session=locked" \
@@ -277,10 +285,20 @@ shell_restart() {
       "the shell stopped; start it with vgsh run"
   fi
 
-  for _ in $(seq 1 100); do
-    if new_pid="$(shell_pid 2>/dev/null)" && [[ $new_pid != "$pid" && -d /proc/$new_pid ]]; then
-      printf 'ok pid=%s\n' "$new_pid"
-      return 0
+  for _ in $(seq 1 300); do
+    if [[ -r $lock ]] && IFS= read -r new_pid <"$lock" && [[ $new_pid =~ ^[0-9]+$ && $new_pid != "$pid" ]]; then
+      if [[ ! -d /proc/$new_pid ]]; then
+        refuse 1 "start=exited pid=$new_pid" \
+          "the new shell exited; read its log or start it with vgsh run"
+      fi
+      set +e
+      guarded_out="$(qs ipc --pid "$new_pid" call shell guarded 2>/dev/null)"
+      status=$?
+      set -e
+      if [[ $status == 0 && ${guarded_out##*$'\n'} == true ]]; then
+        printf 'ok pid=%s\n' "$new_pid"
+        return 0
+      fi
     fi
     sleep 0.1
   done

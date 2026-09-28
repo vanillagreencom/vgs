@@ -39,7 +39,11 @@ if [[ ${1:-} != ipc && ${1:-} != log ]]; then
 fi
 printf '%s\n' "$*" >"${STUB_ARGS:-/dev/null}"
 [[ -n ${STUB_NOISE:-} ]] && printf '%s\n' "$STUB_NOISE"
-printf '%s\n' "${STUB_REPLY:-ok}"
+reply="${STUB_REPLY:-ok}"
+if [[ ${4:-} == call && ${5:-} == shell && ${6:-} == guarded ]]; then
+  reply="${STUB_GUARDED:-true}"
+fi
+printf '%s\n' "$reply"
 [[ -n ${STUB_STDERR:-} ]] && printf '%s\n' "$STUB_STDERR" >&2
 exit "${STUB_STATUS:-0}"
 EOF2
@@ -274,39 +278,18 @@ if [[ $restart_status == 4 && -z $restart_out && $restart_err == "vgsh: refused:
 if [[ -d /proc/$locked_pid ]]; then ok "a locked restart leaves the shell running"; else fail "locked restart stopped pid=$locked_pid"; fi
 if [[ ! -e $dispatch ]]; then ok "a locked restart never dispatches a relaunch"; else fail "locked restart dispatched: $(cat "$dispatch")"; fi
 
-restart_mutant="$tmp/restart-mutant"; mkdir -p "$restart_mutant/bin"
-cp -- "$repo/bin/vgsh" "$restart_mutant/bin/vgsh"; chmod +x "$restart_mutant/bin/vgsh"
-python3 - "$restart_mutant/bin/vgsh" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-old = '''    true)
-      refuse 4 "session=locked" \\
-        "the lock client is the shell; stopping it leaves Hyprland's dead-lock screen; unlock first"
-      ;;'''
-new = '''    true) ;;'''
-count = text.count(old)
-if count != 1:
-    raise SystemExit(f"restart-locked-control: expected one match, found {count}")
-changed = text.replace(old, new)
-if changed == text:
-    raise SystemExit("restart-locked-control: mutation changed nothing")
-path.write_text(changed)
-PY
-rt_restart_mutant="$tmp/rt-restart-mutant"; dispatch="$tmp/dispatch-mutant"
-start_fake_shell "restart locked control fixture starts a shell" "$rt_restart_mutant" "$tmp/record-mutant-locked"
-mutant_locked_pid="$fake_pid"
-RESTART_BIN="$restart_mutant/bin/vgsh" run_restart_capture "$rt_restart_mutant" "$tmp/record-mutant-new" "$dispatch" true
-wait "$mutant_locked_pid" 2>/dev/null || true
-if [[ $restart_status == 0 && -s $dispatch && ! -d /proc/$mutant_locked_pid ]]; then ok "a restart without the locked refusal fails the assertion"; else fail "locked restart mutant: exit=$restart_status dispatch=$([[ -s $dispatch ]] && cat "$dispatch" || echo absent) pid_live=$([[ -d /proc/$mutant_locked_pid ]] && echo yes || echo no)"; fi
-if new_pid="$(lock_live_pid "$rt_restart_mutant")"; then started_pids+=("$new_pid"); fi
+rt_restart_locked_unanswered="$tmp/rt-restart-locked-unanswered"; dispatch="$tmp/dispatch-locked-unanswered"
+start_fake_shell "restart locked-unanswered fixture starts a shell" "$rt_restart_locked_unanswered" "$tmp/record-locked-unanswered"
+unanswered_pid="$fake_pid"
+run_restart_capture "$rt_restart_locked_unanswered" "$tmp/record-locked-unanswered-new" "$dispatch" false STUB_STATUS=1
+if [[ $restart_status == 1 && -z $restart_out && $restart_err == "vgsh: refused: locked=unanswered pid=$unanswered_pid" ]]; then ok "restart refuses when shell.locked is unanswered"; else fail "locked unanswered restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ -d /proc/$unanswered_pid ]]; then ok "a locked-unanswered restart leaves the shell running"; else fail "locked-unanswered restart stopped pid=$unanswered_pid"; fi
+if [[ ! -e $dispatch ]]; then ok "a locked-unanswered restart never dispatches"; else fail "locked-unanswered restart dispatched: $(cat "$dispatch")"; fi
 
 rt_restart_lua="$tmp/rt-restart-lua"; dispatch="$tmp/dispatch-lua"
 start_fake_shell "restart lua fixture starts a shell" "$rt_restart_lua" "$tmp/record-lua-old"
 old_pid="$fake_pid"
-run_restart_capture "$rt_restart_lua" "$tmp/record-lua-new" "$dispatch" false
+run_restart_capture "$rt_restart_lua" "$tmp/record-lua-new" "$dispatch" false STUB_ARGS="$tmp/args-lua"
 wait "$old_pid" 2>/dev/null || true
 if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then
   new_pid="${BASH_REMATCH[1]}"; started_pids+=("$new_pid"); ok "restart prints the relaunched pid"
@@ -317,16 +300,18 @@ fi
 if [[ -n $new_pid && ! -d /proc/$old_pid && -d /proc/$new_pid ]]; then ok "restart stops the old pid and leaves the new pid running"; else fail "restart pids old_live=$([[ -d /proc/$old_pid ]] && echo yes || echo no) new=$new_pid"; fi
 if [[ -n $new_pid && "$(cat "$rt_restart_lua/vgsh.lock")" == "$new_pid" ]]; then ok "restart records the new pid in the lock file"; else fail "restart lock holds [$(cat "$rt_restart_lua/vgsh.lock" 2>/dev/null || echo absent)] want $new_pid"; fi
 if [[ "$(cat "$dispatch")" == "$lua_request" ]]; then ok "restart uses the Lua Hyprland exec dialect"; else fail "lua dispatch: $(cat "$dispatch")"; fi
+if [[ -n $new_pid && "$(cat "$tmp/args-lua")" == "ipc --pid $new_pid call shell guarded" ]]; then ok "restart waits for the new guarded shell"; else fail "lua guarded check: $(cat "$tmp/args-lua" 2>/dev/null || echo absent)"; fi
 new_record="$(cat "$tmp/record-lua-new")"
 if [[ $(record_runner "$new_record") == "$new_pid" ]] && run_has_file_watcher_env "$new_record"; then ok "the relaunched shell gets the runner and watcher environment"; else fail "new shell record: $new_record"; fi
 
 rt_restart_classic="$tmp/rt-restart-classic"; dispatch="$tmp/dispatch-classic"
 start_fake_shell "restart classic fixture starts a shell" "$rt_restart_classic" "$tmp/record-classic-old"
 old_pid="$fake_pid"
-run_restart_capture "$rt_restart_classic" "$tmp/record-classic-new" "$dispatch" false 'STUB_HYPR_STATUS={"configProvider":"hyprlang"}'
+run_restart_capture "$rt_restart_classic" "$tmp/record-classic-new" "$dispatch" false 'STUB_HYPR_STATUS={"configProvider":"hyprlang"}' STUB_ARGS="$tmp/args-classic"
 wait "$old_pid" 2>/dev/null || true
-if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then started_pids+=("${BASH_REMATCH[1]}"); ok "restart succeeds with the classic Hyprland dialect"; else fail "classic restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then classic_pid="${BASH_REMATCH[1]}"; started_pids+=("$classic_pid"); ok "restart succeeds with the classic Hyprland dialect"; else classic_pid=""; fail "classic restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ "$(cat "$dispatch")" == "$classic_request" ]]; then ok "restart uses the classic Hyprland exec dialect"; else fail "classic dispatch: $(cat "$dispatch")"; fi
+if [[ -n $classic_pid && "$(cat "$tmp/args-classic")" == "ipc --pid $classic_pid call shell guarded" ]]; then ok "classic restart waits for the new guarded shell"; else fail "classic guarded check: $(cat "$tmp/args-classic" 2>/dev/null || echo absent)"; fi
 
 rt_restart_unreachable="$tmp/rt-restart-unreachable"; dispatch="$tmp/dispatch-unreachable"
 start_fake_shell "restart unreachable fixture starts a shell" "$rt_restart_unreachable" "$tmp/record-unreachable"
@@ -353,6 +338,14 @@ run_restart_capture "$rt_restart_bad_reply" "$tmp/record-bad-reply-new" "$dispat
 wait "$old_pid" 2>/dev/null || true
 if [[ $restart_status == 1 && -z $restart_out && $restart_err == "vgsh: refused: start=failed reply=nope" ]]; then ok "restart refuses a failed Hyprland dispatch reply"; else fail "restart bad dispatch: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ ! -d /proc/$old_pid ]]; then ok "a failed relaunch reports that the old shell stopped"; else fail "failed relaunch left old pid=$old_pid"; fi
+
+rt_restart_exited="$tmp/rt-restart-exited"; dispatch="$tmp/dispatch-exited"
+start_fake_shell "restart exited fixture starts a shell" "$rt_restart_exited" "$tmp/record-exited-old"
+old_pid="$fake_pid"
+run_restart_capture "$rt_restart_exited" "$tmp/record-exited-new" "$dispatch" false STUB_SHELL_HOLD=
+wait "$old_pid" 2>/dev/null || true
+if [[ $restart_status == 1 && -z $restart_out && $restart_err =~ ^vgsh:\ refused:\ start=exited\ pid=([0-9]+)$ ]]; then exited_pid="${BASH_REMATCH[1]}"; ok "restart refuses a shell that exits before it is guarded"; else exited_pid=""; fail "exited restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ -n $exited_pid && ! -d /proc/$exited_pid ]]; then ok "the exited restart names a dead replacement pid"; else fail "exited restart pid live=$([[ -n $exited_pid && -d /proc/$exited_pid ]] && echo yes || echo no) pid=${exited_pid:-missing}"; fi
 
 # Install, update and remove, with local bare repositories as the source,
 # through the library's `g`.
