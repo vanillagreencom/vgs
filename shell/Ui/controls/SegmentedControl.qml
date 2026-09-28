@@ -49,8 +49,8 @@ Rectangle {
                 height: row.height
                 focusPolicy: Qt.NoFocus
                 implicitWidth: implicitContentWidth + leftPadding + rightPadding
-                leftPadding: Theme.button.paddingX
-                rightPadding: Theme.button.paddingX
+                leftPadding: Theme.segmented.paddingX
+                rightPadding: Theme.segmented.paddingX
                 hoverEnabled: true
                 text: String(modelData)
                 Accessible.name: text

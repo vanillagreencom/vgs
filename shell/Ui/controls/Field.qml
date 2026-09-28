@@ -4,8 +4,10 @@ import qs.Ui
 
 // A labelled control with a hint and an error line: the control goes in
 // the body, `label` above it (or beside it when `inline` holds, at the
-// theme's label width), `hint` under it, and `error` in the hint's place
-// in the error colour while it is set. Width comes from the parent.
+// theme's label width and label gap), `hint` under it, and `error` in the
+// hint's place in the error colour while it is set. Width comes from the
+// parent; the label, the control and the hint sit `field.paddingX` in from
+// each side, the edge a list item's icon starts on.
 Column {
     id: root
 
@@ -14,20 +16,26 @@ Column {
     property string error: ""
     property bool inline: Theme.field.inline
     default property alias control: slot.data
+    // The width the label, the control's row and the hint share: the
+    // column's own, less its padding, since a positioner does not narrow
+    // its children.
+    readonly property real bodyWidth: width - leftPadding - rightPadding
 
+    leftPadding: Theme.field.paddingX
+    rightPadding: Theme.field.paddingX
     spacing: Theme.field.gap
 
     Label {
         role: "label"
         text: root.label
         visible: root.label !== "" && !root.inline
-        width: parent.width
+        width: root.bodyWidth
         elide: Text.ElideRight
     }
 
     Row {
-        width: parent.width
-        spacing: Theme.field.gap
+        width: root.bodyWidth
+        spacing: Theme.field.labelGap
 
         Label {
             role: "label"
@@ -50,7 +58,7 @@ Column {
         text: root.error !== "" ? root.error : root.hint
         color: root.error !== "" ? Theme.color.danger : Theme.text.hint.color
         visible: text !== ""
-        width: parent.width
+        width: root.bodyWidth
         wrapMode: Text.Wrap
     }
 }

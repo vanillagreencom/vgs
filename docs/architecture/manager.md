@@ -1,8 +1,8 @@
 # Plugin manager
 
-Covers: bin/vgsh-plugin-judge, shell/plugins/vgs.bar/Manager.qml, shell/plugins/vgs.bar/ManagerPanel.qml, shell/plugins/vgs.bar/SettingField.qml
+Covers: bin/vgsh-plugin-judge, shell/plugins/vgs.bar/Manager.qml, shell/plugins/vgs.bar/ManagerPanel.qml, shell/plugins/vgs.bar/SettingField.qml, scripts/smoke/rows/manager.sh
 
-The manager's panel composes the design system's components: a `ListItem` with a `Switch` per plugin, a `Field` per schema key holding a `TextField`, a `Switch` or a `Select`, [design-system.md](design-system.md).
+The manager's panel composes the design system's components: a `ListItem` with a `Switch` per plugin, a `Field` per schema key holding a `TextField`, a `Switch` or a `Select`, [design-system.md](design-system.md). Its rows share one left edge, `row.paddingX` in from the list: the heading, each list item's icon, each reply and each field's inline label; every field control starts `field.labelWidth` plus `field.labelGap` past that edge. `scripts/smoke/rows/manager.sh` reads the panel back through the probe's `descendantGeometry` and holds each to its edge within one pixel.
 
 How plugins are discovered, enabled, disabled, installed, updated and removed, and what the manager's user interface may do. The plugin contract itself is [plugins.md](plugins.md).
 

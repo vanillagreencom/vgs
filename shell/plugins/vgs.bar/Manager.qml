@@ -5,9 +5,9 @@ import "Reply.js" as Reply
 
 // The plugin manager's button. A click opens the bar's own manager panel
 // under the button, or closes it when it is open. It draws like a workspace
-// pill: `text.bar` for its text, `bar.item` for its padding and corner, its
-// content's height plus `space.xs` tall, with the icon and the text on the
-// button's vertical centre and the button on the bar's.
+// pill: `text.bar` for its text, `bar.item` for its padding, its icon gap
+// and its corner, its content's height plus `space.xs` tall, with the icon
+// and the text on the button's vertical centre and the button on the bar's.
 Item {
     id: root
 
@@ -36,7 +36,7 @@ Item {
         topPadding: Theme.space.xs / 2
         bottomPadding: Theme.space.xs / 2
         implicitHeight: implicitContentHeight + topPadding + bottomPadding
-        spacing: Theme.bar.item.gap
+        spacing: Theme.bar.item.iconGap
         onClicked: root.toggle()
 
         contentItem: Row {

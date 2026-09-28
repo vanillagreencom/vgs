@@ -37,6 +37,8 @@ Singleton {
     readonly property var icon: published.icon
     readonly property var font: published.font
     readonly property var text: published.text
+    readonly property var control: published.control
+    readonly property var row: published.row
     readonly property var surface: published.surface
     readonly property var divider: published.divider
     readonly property var focusRing: published.focusRing

@@ -82,17 +82,22 @@ Item {
             field.error = "Taken";
             compare(hint.text, "Taken");
             compare(String(hint.color), String(Qt.color(Theme.color.danger)));
-            compare(inner.width, field.width);
+            const pad = Theme.field.paddingX;
+            tryVerify(() => inner.mapToItem(field, 0, 0).x === pad);
+            compare(inner.width, field.width - 2 * pad);
             field.inline = true;
-            compare(inner.width, field.width - Theme.field.labelWidth - Theme.field.gap);
+            const inset = pad + Theme.field.labelWidth + Theme.field.labelGap;
+            tryVerify(() => inner.mapToItem(field, 0, 0).x === inset);
+            compare(inner.width, field.width - inset - pad);
         }
 
         function test_theme_change_moves_the_field() {
-            compare(UnitTheme.override({ textField: { height: 44, background: "#00ff00" }, field: { inline: true, labelWidth: 80 } }), "ok");
+            compare(UnitTheme.override({ textField: { height: 44, background: "#00ff00" }, field: { inline: true, labelWidth: 80, labelGap: 5, paddingX: 3 } }), "ok");
             compare(plain.height, 44);
             compare(String(plain.background.color), "#00ff00");
             compare(field.inline, true);
-            compare(inner.width, field.width - 80 - Theme.field.gap);
+            tryVerify(() => inner.mapToItem(field, 0, 0).x === 3 + 80 + 5);
+            compare(inner.width, field.width - 3 - 80 - 5 - 3);
         }
     }
 }

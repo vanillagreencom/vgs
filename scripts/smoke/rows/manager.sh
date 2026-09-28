@@ -25,6 +25,76 @@ expect_poll "the manager panel shows the fixture disabled" '{"acme.bare": true, 
 expected_errors+=('manager panel: acme\.probe refused: disabled=acme\.probe' 'manager panel: acme\.probe refused: setting=tags undeclared')
 expect "the manager refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc smoke invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"x"}'
 expect "the manager panel shows the refusal on the plugin's row" '{"acme.probe":"refused: disabled=acme.probe"}' ipc smoke readInstance panel vgs.bar replies
+# Every row of the panel starts on one left edge, `row.paddingX` in from
+# the list: the heading's lines, each list item's icon, each reply (one is
+# shown now; the rest hold their place empty) and each field's inline
+# label. Every field control
+# starts `field.labelWidth` plus `field.labelGap` past that edge, and each
+# list item's switch and each full-width field control end `row.paddingX`
+# in from the list's right. The list's edges are the list items' boxes,
+# which span it. Answers the misplaced items, so `[]` is the pass, within
+# one pixel.
+manager_alignment() {
+  local rows pad label_w label_gap
+  rows="$(ipc smoke descendantGeometry panel vgs.bar)" || return
+  pad="$(ipc smoke themeValue row.paddingX)" || return
+  label_w="$(ipc smoke themeValue field.labelWidth)" || return
+  label_gap="$(ipc smoke themeValue field.labelGap)" || return
+  python3 - "$rows" "$pad" "$label_w" "$label_gap" <<'PY'
+import json, sys
+rows, pad, label_w, label_gap = (json.loads(a) for a in sys.argv[1:])
+out = []
+def near(a, b): return abs(a - b) <= 1
+def check(name, got, want):
+    if not near(got, want): out.append("%s=%.2f want=%.2f" % (name, got, want))
+def left(r): return r["box"][0]
+def right(r): return r["box"][0] + r["box"][2]
+def ancestor(i, kind):
+    i = rows[i]["parent"]
+    while i != -1:
+        if rows[i]["type"] == kind: return i
+        i = rows[i]["parent"]
+    return None
+def of(kind): return [i for i, r in enumerate(rows) if r["type"] == kind]
+def labels(parent, role): return [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("role") == role and r["parent"] == parent]
+items, fields, headers = of("ListItem"), of("SettingField"), of("SectionHeader")
+if len(items) < 3: out.append("list items=%d" % len(items))
+if len(fields) < 2: out.append("fields=%d" % len(fields))
+if len(headers) != 1: out.append("headers=%d" % len(headers))
+if out:
+    print(json.dumps(out))
+    sys.exit()
+edge_l, edge_r = left(rows[items[0]]), right(rows[items[0]])
+start, end = edge_l + pad, edge_r - pad
+for n, i in enumerate(items):
+    check("item%d.left" % n, left(rows[i]), edge_l)
+    check("item%d.right" % n, right(rows[i]), edge_r)
+    icons = [j for j in of("Icon") if ancestor(j, "ListItem") == i]
+    switches = [j for j in of("Switch") if ancestor(j, "ListItem") == i]
+    if len(icons) != 1 or len(switches) != 1: out.append("item%d icons=%d switches=%d" % (n, len(icons), len(switches)))
+    for j in icons: check("item%d.icon.x" % n, left(rows[j]), start)
+    for j in switches: check("item%d.switch.right" % n, right(rows[j]), end)
+for i in headers:
+    lines = labels(i, "eyebrow") + labels(i, "hint")
+    if len(lines) != 2: out.append("header lines=%d" % len(lines))
+    for j in lines: check("header.%s.x" % rows[j]["role"], left(rows[j]), start)
+for n, i in enumerate(fields):
+    inline = [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("role") == "label" and r["parent"] != -1 and rows[r["parent"]]["type"] == "QQuickRow" and rows[r["parent"]]["parent"] == i]
+    controls = [j for j, r in enumerate(rows) if r["type"] in ("TextField", "Select", "Switch") and r["parent"] != -1 and rows[r["parent"]]["type"] == "QQuickLoader" and ancestor(j, "SettingField") == i]
+    if len(inline) != 1 or len(controls) != 1: out.append("field%d labels=%d controls=%d" % (n, len(inline), len(controls)))
+    for j in inline: check("field%d.label.x" % n, left(rows[j]), start)
+    for j in controls:
+        check("field%d.%s.x" % (n, rows[j]["type"]), left(rows[j]), start + label_w + label_gap)
+        if rows[j]["type"] != "Switch": check("field%d.%s.right" % (n, rows[j]["type"]), right(rows[j]), end)
+replies = [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("role") == "hint" and any(rows[k]["parent"] == r["parent"] for k in items)]
+if len(replies) != len(items): out.append("replies=%d items=%d" % (len(replies), len(items)))
+for n, j in enumerate(replies):
+    check("reply%d.x" % n, left(rows[j]), start)
+    check("reply%d.right" % n, right(rows[j]), end)
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the manager panel's rows share one left edge" '[]' manager_alignment
 expect "the manager toggles the fixture back on" ok ipc smoke invokeInstance panel vgs.bar toggle acme.probe
 expect_poll "listPlugins reads the fixture enabled" True plugin_enabled acme.probe
 expect "the manager form writes the fixture's setting" ok ipc smoke invokeInstance panel vgs.bar applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'

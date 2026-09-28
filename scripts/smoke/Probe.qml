@@ -201,11 +201,12 @@ Scope {
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
-        // its type name, with the engine's suffix for a QML-defined or
-        // extended type removed, its box in screen coordinates, its implicit
-        // size, the index of its parent in the list and a Label's role. A row
-        // measures alignment from it, so the shipped item carries no
-        // readback of its own.
+        // its type name, with the engine's suffixes for a QML-defined type
+        // and for one extended in place (a delegate that declares a
+        // property of its own) removed, its box in screen coordinates, its
+        // implicit size, the index of its parent in the list and a Label's
+        // role. A row measures alignment from it, so the shipped item
+        // carries no readback of its own.
         function descendantGeometry(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
@@ -213,7 +214,7 @@ Scope {
             return JSON.stringify(items.map(child => {
                 const at = child.mapToGlobal(0, 0);
                 return {
-                    type: String(child).split("(")[0].replace(/_QML(TYPE)?_\d+$/, ""),
+                    type: String(child).split("(")[0].replace(/(_QML(TYPE)?_\d+)+$/, ""),
                     box: [at.x, at.y, child.width, child.height],
                     implicit: [child.implicitWidth, child.implicitHeight],
                     parent: items.indexOf(child.parent),

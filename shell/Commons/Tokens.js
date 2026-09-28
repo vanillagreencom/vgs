@@ -200,9 +200,9 @@ var TOKENS = {
 
     // Reading text draws in sans; chrome (labels, buttons, key caps, code,
     // tips and the bar) draws in mono at 11 to 13 px. The reference rule each
-    // role is read from is docs/architecture/design-system.md § Reference
-    // values. A single-line chrome role takes line height 1, so its line box
-    // is the font's own height and centring the box centres the glyphs.
+    // role is read from is docs/reference/design-values.md § Text roles. A
+    // single-line chrome role takes line height 1, so its line box is the
+    // font's own height and centring the box centres the glyphs.
     text: {
         display: role("sans", 2.27, 700, -0.02, 1.15, false, "textHeading"),
         h1: role("sans", 1.6, 700, -0.01, 1.2, false, "textHeading"),
@@ -219,6 +219,28 @@ var TOKENS = {
         kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
         code: role("mono", 0.87, 500, 0, 1.65, false, "text"),
         bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
+    },
+
+    // The one rhythm every one-line control follows: a button, a text
+    // field, a select and a segmented control are `size.control.md` tall,
+    // the step a button's `md` size names, with `paddingX` a side and `gap`
+    // between an icon and its text. Both are the reference's own 9 and 7 px,
+    // off the 4 px unit.
+    control: {
+        paddingX: length(9),
+        gap: length(7)
+    },
+
+    // The rhythm of a row that holds controls: a list item, a menu item and
+    // a field pad their content `paddingX` a side; a row's inline label is
+    // `labelWidth` wide and `gap` from its control; `lineGap` separates a
+    // label from the line it names. `labelWidth` is the reference's own
+    // 130 px label column.
+    row: {
+        paddingX: length("{space.lg}"),
+        gap: length("{space.lg}"),
+        labelWidth: length(130),
+        lineGap: length("{space.xs}")
     },
 
     surface: {
@@ -247,8 +269,8 @@ var TOKENS = {
     button: {
         radius: length("{radius.md}"),
         border: length("{border.thin}"),
-        paddingX: length("{space.md}"),
-        gap: length("{space.xs}"),
+        paddingX: length("{control.paddingX}"),
+        gap: length("{control.gap}"),
         variant: {
             primary: variant("button.variant.primary", "{color.accent}", 700, "palette.foreground", "palette.background"),
             secondary: variant("button.variant.secondary", "{color.inverse}", 500, "palette.background", "palette.background"),
@@ -275,6 +297,7 @@ var TOKENS = {
         height: length("{size.control.md}"),
         radius: length("{radius.sm}"),
         padding: length("{space.xxs}"),
+        paddingX: length("{control.paddingX}"),
         gap: length("{space.xxs}"),
         background: color("{color.surfaceSunken}"),
         border: color("{color.border}"),
@@ -292,7 +315,7 @@ var TOKENS = {
         off: color("{color.borderStrong}"),
         knobOn: color("contrast({toggle.on})"),
         knobOff: color("contrast({toggle.off})"),
-        gap: length("{space.sm}")
+        gap: length("{control.gap}")
     },
 
     checkbox: {
@@ -303,7 +326,7 @@ var TOKENS = {
         borderColor: color("{color.borderStrong}"),
         checked: color("{color.accent}"),
         mark: color("contrast({checkbox.checked})"),
-        gap: length("{space.sm}")
+        gap: length("{control.gap}")
     },
 
     radio: {
@@ -313,7 +336,7 @@ var TOKENS = {
         borderColor: color("{color.borderStrong}"),
         checked: color("{color.accent}"),
         dot: length(6),
-        gap: length("{space.sm}")
+        gap: length("{control.gap}")
     },
 
     slider: {
@@ -330,8 +353,8 @@ var TOKENS = {
         height: length("{size.control.md}"),
         radius: length("{radius.sm}"),
         border: length("{border.thin}"),
-        paddingX: length("{space.sm}"),
-        gap: length("{space.xs}"),
+        paddingX: length("{control.paddingX}"),
+        gap: length("{control.gap}"),
         background: color("{color.surfaceSunken}"),
         borderColor: color("{color.border}"),
         hover: color("{color.borderStrong}"),
@@ -343,10 +366,14 @@ var TOKENS = {
         selectedText: color("{color.text}")
     },
 
+    // `gap` stacks the label, the control and the hint; `labelGap` is the
+    // gap after an inline label.
     field: {
         inline: flag(false),
-        labelWidth: length(120),
-        gap: length("{space.xxs}")
+        paddingX: length("{row.paddingX}"),
+        labelWidth: length("{row.labelWidth}"),
+        labelGap: length("{row.gap}"),
+        gap: length("{row.lineGap}")
     },
 
     spinner: {
@@ -370,6 +397,7 @@ var TOKENS = {
         height: length(20),
         radius: length("{radius.sm}"),
         paddingX: length("{space.xs}"),
+        gap: length("{control.gap}"),
         tone: {
             neutral: { background: color("{color.surfaceRaised}"), foreground: color("{color.textMuted}") },
             accent: tone("accent"),
@@ -401,8 +429,8 @@ var TOKENS = {
 
     listItem: {
         height: length("{size.control.lg}"),
-        paddingX: length("{space.sm}"),
-        gap: length("{space.sm}"),
+        paddingX: length("{row.paddingX}"),
+        gap: length("{control.gap}"),
         radius: length("{radius.sm}"),
         hover: color("{color.surfaceHover}"),
         selected: color("{color.accentSubtle}"),
@@ -411,7 +439,8 @@ var TOKENS = {
 
     sectionHeader: {
         paddingTop: length("{space.md}"),
-        paddingBottom: length("{space.xs}")
+        paddingBottom: length("{space.xs}"),
+        gap: length("{row.lineGap}")
     },
 
     popover: {
@@ -441,7 +470,8 @@ var TOKENS = {
         border: color("{color.borderStrong}"),
         item: {
             height: length("{size.control.md}"),
-            paddingX: length("{space.sm}"),
+            paddingX: length("{row.paddingX}"),
+            gap: length("{control.gap}"),
             radius: length("{radius.sm}"),
             hover: color("{color.surfaceHover}"),
             foreground: color("{color.text}"),
@@ -457,11 +487,14 @@ var TOKENS = {
         selectedForeground: color("{color.accent}")
     },
 
+    // `gap` separates the toasts of the stack; `contentGap` the icon, the
+    // text and the close button of one toast.
     toast: {
         width: length("{size.panel.md}"),
         margin: length("{space.lg}"),
         gap: length("{space.sm}"),
         padding: length("{space.md}"),
+        contentGap: length("{control.gap}"),
         radius: length("{radius.md}"),
         duration: number(5000, 0, 60000),
         corner: { type: "choice", value: "top-right", options: ["top-left", "top-right", "bottom-left", "bottom-right"] },
@@ -485,10 +518,12 @@ var TOKENS = {
         gap: length("{space.md}"),
         padding: length("{space.lg}"),
         // One item of the bar, such as a workspace pill: its horizontal
-        // padding, the gap between items of one widget, and its corner.
+        // padding, the gap between items of one widget, the gap between an
+        // item's icon and its text, and its corner.
         item: {
             paddingX: length("{space.sm}"),
             gap: length("{space.xs}"),
+            iconGap: length("{control.gap}"),
             radius: length("{radius.sm}")
         }
     }

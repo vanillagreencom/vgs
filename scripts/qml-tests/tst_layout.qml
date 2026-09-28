@@ -7,8 +7,8 @@ import qs.Unit
 // ScrollArea, Tabs, ListItem, SectionHeader, Surface and Divider: the
 // scroll area's content height follows its children and its bar shows on
 // overflow, a click opens a tab, a list item highlights and clicks, a
-// section header draws its eyebrow, a surface draws its level and logs an
-// unknown one, and a divider is one hairline thick.
+// section header draws its eyebrow inside its padding, a surface draws its
+// level and logs an unknown one, and a divider is one hairline thick.
 Item {
     id: root
     width: 400
@@ -19,6 +19,7 @@ Item {
     ListItem { id: row; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; width: 300; y: 100 }
     ListItem { id: bare; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; y: 300 }
     SectionHeader { id: header; text: "Listed since"; description: "Sep 24"; width: 300; y: 150 }
+    SectionHeader { id: inset; text: "Plugins"; description: "Every plugin the shell found"; leftPadding: Theme.row.paddingX; rightPadding: Theme.row.paddingX; width: 300; y: 330 }
     Surface { id: surface; level: "raised"; width: 100; height: 40; y: 220 }
     Divider { id: divider; width: 100; y: 270 }
     SignalSpy { id: clicks; target: row; signalName: "clicked" }
@@ -66,6 +67,11 @@ Item {
             const eyebrow = header.children[0];
             compare(eyebrow.role, "eyebrow");
             compare(eyebrow.text, "Listed since");
+            // A padded header keeps its lines inside the padding.
+            for (const line of inset.children) {
+                compare(line.x, inset.leftPadding);
+                compare(line.width, inset.width - inset.leftPadding - inset.rightPadding);
+            }
             compare(divider.height, Theme.divider.thickness);
             compare(String(divider.color), String(Qt.color(Theme.divider.color)));
         }

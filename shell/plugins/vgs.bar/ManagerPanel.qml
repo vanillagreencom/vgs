@@ -63,7 +63,14 @@ Item {
                 width: parent.width
                 spacing: Theme.space.md
 
-                SectionHeader { text: "Plugins"; description: "Every plugin the shell found, and the settings each declares" }
+                // Every row starts `row.paddingX` in from the list: the
+                // heading, a list item's icon, a reply and a field's label.
+                SectionHeader {
+                    text: "Plugins"
+                    description: "Every plugin the shell found, and the settings each declares"
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
+                }
 
                 Repeater {
                     id: rows
@@ -98,7 +105,8 @@ Item {
 
                         Label {
                             role: "hint"
-                            width: parent.width
+                            x: Theme.row.paddingX
+                            width: parent.width - 2 * Theme.row.paddingX
                             visible: text !== ""
                             text: root.replies[entry.modelData.id] || ""
                             color: Theme.color.danger

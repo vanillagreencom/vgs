@@ -18,7 +18,7 @@ T.MenuItem {
     implicitHeight: Math.max(Theme.menu.item.height, implicitContentHeight + topPadding + bottomPadding)
     leftPadding: Theme.menu.item.paddingX
     rightPadding: Theme.menu.item.paddingX
-    spacing: Theme.space.sm
+    spacing: Theme.menu.item.gap
     hoverEnabled: true
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text

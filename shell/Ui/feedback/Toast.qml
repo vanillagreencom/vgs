@@ -37,7 +37,7 @@ Rectangle {
         x: Theme.toast.padding
         y: Theme.toast.padding
         width: parent.width - 2 * Theme.toast.padding
-        spacing: Theme.space.sm
+        spacing: Theme.toast.contentGap
 
         Icon {
             visible: root.iconName !== ""

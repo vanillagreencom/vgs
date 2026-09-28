@@ -29,7 +29,7 @@ Rectangle {
     Row {
         id: row
         anchors.centerIn: parent
-        spacing: Theme.space.xxs
+        spacing: Theme.badge.gap
         Icon {
             visible: root.iconName !== ""
             name: root.iconName

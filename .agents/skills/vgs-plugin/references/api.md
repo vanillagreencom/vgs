@@ -133,7 +133,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `ScrollArea` | `Flickable` | its children |
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |
 | `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted` |
-| `SectionHeader` | `Column` | `text`, `description` |
+| `SectionHeader` | `Column` | `text`, `description`; `leftPadding` and `rightPadding` inset both lines |
 | `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; the list opens in its own surface |
 | `Popover` | `Item` | its content as children, `width`; `open()`, `close()`, `opened`; a surface under the item it is declared in |
 | `Tooltip` | `Item` | `text`; opens on hover of the item it is declared in |
