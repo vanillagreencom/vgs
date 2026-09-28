@@ -385,18 +385,19 @@ function reading(name, dir, read, failed) {
 // One shipped target judged and rendered for package ROW, in memory, before
 // any file moves. `state` is `skipped` or `failed` with its `reason`, a
 // failed one carrying `failure`, its keyed line; a rendered one is `pending`
-// with its `target` and `files` until the stage compares their bytes.
+// with its `target` and `files` until the stage compares their bytes. A
+// disabled target keeps its `target`, whose include line apply removes.
 // SLOTS are the terminal slots terminalSource chose.
 function planTarget(dir, row, slots, disabled, configHome) {
     const name = path.basename(dir);
     const skipped = reason => ({ name, state: "skipped", reason });
     const failed = (reason, failure) => ({ name, state: "failed", reason, failure });
-    if (disabled.includes(name)) return skipped("disabled");
     const judged = reading(name, dir, () => readTarget(dir), failed);
     if (!judged.ok) return judged.entry;
     const verdict = judged.value.verdict;
     if (!verdict.ok) return failed(verdict.reason, render.refusalLine(name, verdict));
     const target = verdict.target;
+    if (disabled.includes(name)) return { name, state: "skipped", reason: "disabled", target };
     const found = reading(name, dir, () => {
         if (!target.detect.every(onPath)) return "not-detected";
         if (!target.wiring.create && fs.statSync(path.join(configHome, target.wiring.file), { throwIfNoEntry: false }) === undefined) return "wiring-file-absent";
@@ -448,30 +449,58 @@ function sameBytes(live, files) {
     });
 }
 
-// Keep ENTRY's include line, pointing at LIVE, in its application's
-// configuration file under CONFIG_HOME, edited where it stands: a symlink is
-// resolved and the file it names is replaced with its mode kept, so a dotfile
-// manager's link stays a link. The file's bytes are read and written as
-// latin1, one character per byte, so every byte but the new line's is kept.
-// An absent file is created holding the line when the target's wiring says
-// so, never through a dangling symlink. Answers ENTRY, or its failed entry.
-function wire(entry, configHome, live) {
-    const file = path.join(configHome, entry.target.wiring.file);
-    const key = "target=" + entry.name + " reason";
-    const failed = (reason, failure) => ({ name: entry.name, state: "failed", reason, failure });
+// The files the state directory's theme/ holds for its package, never a
+// target's.
+const PACKAGE_FILES = ["theme.json", "terminal.json"];
+
+// The files target NAME landed in LIVE on an earlier apply, as
+// { destination, bytes }. A destination is `<target>.<ext>` and a target
+// name holds no dot, so the text before a file's first dot names its target,
+// whether or not target.json can still be read. An absent LIVE holds none;
+// KEY leads the refusal for one that cannot be read, since a file left out
+// would leave its include line naming nothing.
+function landedFiles(live, name, key) {
+    let names;
+    try {
+        names = fs.readdirSync(live);
+    } catch (e) {
+        if (e.code === "ENOENT") return [];
+        refuse(key + "=unreadable path=" + live + " error=" + e.code, "unreadable");
+    }
+    return names.filter(file => !PACKAGE_FILES.includes(file) && file.split(".")[0] === name).sort().map(file => {
+        const at = path.join(live, file);
+        try {
+            return { destination: file, bytes: fs.readFileSync(at) };
+        } catch (e) {
+            refuse(key + "=unreadable path=" + at + " error=" + e.code, "unreadable");
+        }
+    });
+}
+
+// Edit TARGET's configuration file under CONFIG_HOME where it stands: a
+// symlink is resolved and the file it names is replaced with its mode kept,
+// so a dotfile manager's link stays a link. EDIT maps the file's text, or
+// undefined for an absent file, and the include line pointing at LIVE to the
+// new text, or null to leave the file as it is. The bytes are read and
+// written as latin1, one character per byte, so every byte EDIT keeps is
+// kept. An absent file is created only when the target's wiring says so, and
+// never through a dangling symlink. Answers null, or the failure's
+// { reason, failure } for target NAME.
+function editWiring(name, target, configHome, live, edit) {
+    const file = path.join(configHome, target.wiring.file);
+    const key = "target=" + name + " reason";
     let real = null;
     let text;
     try {
         real = fs.realpathSync(file);
         text = fs.readFileSync(real, "latin1");
     } catch (e) {
-        if (e.code !== "ENOENT") return failed("unreadable", key + "=unreadable path=" + file + " error=" + e.code);
+        if (e.code !== "ENOENT") return { reason: "unreadable", failure: key + "=unreadable path=" + file + " error=" + e.code };
         real = null;
     }
-    if (real === null && !entry.target.wiring.create) return failed("wiring-file-absent", key + "=wiring-file-absent path=" + file);
-    const line = Buffer.from(render.wiringLine(entry.target, live), "utf8").toString("latin1");
-    const next = render.wiredText(text, line);
-    if (next === null) return entry;
+    const next = edit(text, Buffer.from(render.wiringLine(target, live), "utf8").toString("latin1"));
+    if (next === null) return null;
+    if (real === null && !target.wiring.create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
     try {
         if (real === null) {
             writing(file, key, () => {
@@ -485,14 +514,36 @@ function wire(entry, configHome, live) {
         }
     } catch (e) {
         if (!(e instanceof Refusal)) throw e;
-        return failed(e.reason, e.first);
+        return { reason: e.reason, failure: e.first };
     }
-    return entry;
+    return null;
+}
+
+// Keep a landed ENTRY's include line in its configuration file. Answers
+// ENTRY, or its failed entry.
+function wire(entry, configHome, live) {
+    const failure = editWiring(entry.name, entry.target, configHome, live, render.wiredText);
+    return failure === null ? entry : Object.assign({ name: entry.name, state: "failed" }, failure);
+}
+
+// Settle every target that does not land its own render this apply, before
+// the stage, so no include line is left naming a file the swap drops. A
+// disabled target's include line is removed and its files dropped; a
+// removal that fails keeps them and fails the target. Every other target,
+// failed or skipped, carries the files it landed before into the stage, so
+// its application keeps its last theme.
+function settle(entry, configHome, live, key) {
+    if (entry.state === "skipped" && entry.reason === "disabled") {
+        const failure = editWiring(entry.name, entry.target, configHome, live, render.unwiredText);
+        if (failure === null) return entry;
+        entry = Object.assign({ name: entry.name, state: "failed" }, failure);
+    }
+    return Object.assign({}, entry, { files: landedFiles(live, entry.name, key) });
 }
 
 // Render the package and every enabled target into <state-dir>/next-theme/,
-// move it over theme/, write theme.name, keep each landed target's include
-// line, then copy theme.json's bytes to the theme file, which the shell
+// with the files settle carries, move it over theme/, write theme.name,
+// keep each landed target's include line, then copy theme.json's bytes to the theme file, which the shell
 // watches, so the shell restyles only after every application file is in
 // place. RESULT's `shell` follows the theme file and its `targets` are set
 // once the swap has landed them; FAILURES takes each failed target's keyed
@@ -518,8 +569,11 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     const live = path.join(stateDir, "theme");
     const stage = path.join(stateDir, "next-theme");
     const aside = path.join(stateDir, "old-theme");
-    for (const entry of targets)
-        if (entry.state === "pending") entry.state = sameBytes(live, entry.files) ? "unchanged" : "written";
+    const settled = targets.map(entry => {
+        if (entry.state !== "pending") return settle(entry, configHome, live, key);
+        entry.state = sameBytes(live, entry.files) ? "unchanged" : "written";
+        return entry;
+    });
     try {
         // A stage or an aside copy left by an apply that died is stale:
         // the lock proves no apply is running. Every file is created
@@ -530,7 +584,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
             fs.mkdirSync(stage, { recursive: true });
             fs.writeFileSync(path.join(stage, "theme.json"), row.files.theme, { flag: "wx" });
             fs.writeFileSync(path.join(stage, "terminal.json"), terminal, { flag: "wx" });
-            for (const entry of targets)
+            for (const entry of settled)
                 for (const file of entry.files || []) fs.writeFileSync(path.join(stage, file.destination), file.bytes, { flag: "wx" });
         });
         // A rename cannot replace a non-empty directory: the old render
@@ -562,7 +616,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     replaceFile(path.join(stateDir, "theme.name"), name + "\n", key);
     // Asserted on every apply, unchanged bytes included, so a line removed
     // by hand comes back.
-    const landed = targets.map(entry => entry.state === "written" || entry.state === "unchanged" ? wire(entry, configHome, live) : entry);
+    const landed = settled.map(entry => entry.state === "written" || entry.state === "unchanged" ? wire(entry, configHome, live) : entry);
     result.targets = landed.map(entry => ({ name: entry.name, state: entry.state, reason: entry.reason }));
     for (const entry of landed) if (entry.state === "failed") failures.push(entry.failure);
 

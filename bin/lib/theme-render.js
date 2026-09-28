@@ -238,4 +238,15 @@ function wiredText(text, line) {
     return line + "\n" + text;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringLine, wiredText };
+// The text a configuration file holding TEXT takes once LINE is none of its
+// lines, or null when it is none already or the file is absent (TEXT
+// undefined). Every whole line equal to LINE goes, with its line break; the
+// rest of the text is kept byte for byte, so this undoes wiredText.
+function unwiredText(text, line) {
+    if (text === undefined) return null;
+    const lines = text.split("\n");
+    if (!lines.includes(line)) return null;
+    return lines.filter(existing => existing !== line).join("\n");
+}
+
+module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringLine, wiredText, unwiredText };

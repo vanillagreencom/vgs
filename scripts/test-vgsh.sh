@@ -533,12 +533,20 @@ check "apply vgs beside an unreadable installed vgs writes the shipped defaults'
 chmod 600 "$themes/vgs/theme.json"
 
 # A state directory apply cannot enter refuses with the structured result
-# and the keyed line, never an fs exception from the stage's cleanup.
+# and the keyed line, never an fs exception from the stage's cleanup. foot is
+# disabled, so no carried file is read from theme/ before the stage.
+printf '{ "disabledTargets": ["foot"] }\n' >"$cfg/vgs/shell.json"
 chmod 000 "$state"
 tinst "theme apply --json refuses a state directory it cannot enter" "$cfg" "$rt_empty" 1 '{"state":"failed","shell":"unchanged","targets":[],"theme":"plain","reason":"unwritable"}' "vgsh: refused: theme=plain reason=unwritable path=$state/next-theme error=EACCES" theme apply --json plain
 chmod 700 "$state"
 check "the unwritable refusal is its one stderr line" test "$(wc -l <"$tmp/err")" == 1
 check "an unwritable state directory leaves the theme file alone" cmp -s "$repo/themes/vgs/theme.json" "$file"
+# An undetected foot carries what it landed before, so a theme/ that cannot
+# be listed refuses the apply before anything moves.
+printf '{}\n' >"$cfg/vgs/shell.json"
+chmod 000 "$state"
+tinst "theme apply --json refuses a theme/ it cannot list for a carried target" "$cfg" "$rt_empty" 1 '{"state":"failed","shell":"unchanged","targets":[],"theme":"plain","reason":"unreadable"}' "vgsh: refused: theme=plain reason=unreadable path=$state/theme error=EACCES" theme apply --json plain
+chmod 700 "$state"
 
 # Theme add, update and remove, from local bare repositories as the plugin
 # rows install, against the tree copy, whose shipped `dusk` an installed
@@ -781,6 +789,63 @@ wiring_control written-only 'entry.state === "written" || entry.state === "uncha
 THEME_PATH="$with_stubs" tinst "the written-only mutant applies unchanged bytes" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
 check "the written-only mutant leaves the dropped include line out" test "$(cat "$cfg/foot/foot.ini")" == "[main]"
 unset THEME_BIN
+
+# A landed target that then fails to render carries the file it landed, so
+# its include line keeps naming a file; the apply is partial. nord's accent
+# differs from dusk's, so a render would have changed the bytes.
+probe_template=$'accent=@{palette.accent} slot1=@{terminal.color1}\n'
+probe_error='vgsh: refused: target=probe reason=placeholder template=probe.conf placeholder="palette.nope"'
+cp -- "$live/probe.conf" "$tmp/probe-landed"
+printf 'x=@{palette.nope}' >"$tree/themes/targets/probe/probe.conf"
+THEME_PATH="$with_stubs" tinst "a landed target that fails to render is partial" "$cfg" "$rt_empty" 3 "$any_out" "$probe_error" theme apply --json nord
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the failing target is failed beside a written foot" json_is "$tmp/apply.json" 'd["state"] == "partial" and [(t["name"], t["state"], t["reason"]) for t in d["targets"]] == [("foot", "written", None), ("off", "skipped", "disabled"), ("probe", "failed", "placeholder")]'
+check "the failing target's landed file is carried into theme/ byte for byte" cmp -s "$tmp/probe-landed" "$live/probe.conf"
+check "the failing target's include line stays" grep -qxF "source = $live/probe.conf" "$cfg/probe/probe.conf"
+# The must-fail control: a judge copy that carries nothing drops the file.
+wiring_control no-carry 'return Object.assign({}, entry, { files: landedFiles(live, entry.name, key) });' 'return entry;'
+THEME_PATH="$with_stubs" tinst "the no-carry mutant applies" "$cfg" "$rt_empty" 3 "$any_out" "$probe_error" theme apply dusk
+check "the no-carry mutant drops the failing target's landed file" test ! -e "$live/probe.conf"
+unset THEME_BIN
+printf '%s' "$probe_template" >"$tree/themes/targets/probe/probe.conf"
+
+# A target disabled after it landed: its include line leaves the file in
+# place, through a symlink with its mode, the rest kept byte for byte, and
+# its file leaves theme/.
+printf '# mine\n[main]\nfont=x' >"$tmp/dotfiles/foot.ini"; chmod 640 "$tmp/dotfiles/foot.ini"
+cp -- "$tmp/dotfiles/foot.ini" "$tmp/foot-own"
+ln -sfn -- "$tmp/dotfiles/foot.ini" "$cfg/foot/foot.ini"
+disable_foot() { printf '{ "disabledTargets": [%s] }\n' "$1" >"$cfg/vgs/shell.json"; }
+THEME_PATH="$with_stubs" tinst "foot lands through a symlinked foot.ini" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
+check "the symlinked foot.ini takes the include line first" test "$(head -n 1 "$tmp/dotfiles/foot.ini")" == "$foot_line"
+disable_foot '"off", "foot"'
+THEME_PATH="$with_stubs" tinst "an apply with foot disabled after it landed" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the disabled foot is skipped" json_is "$tmp/apply.json" '[t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "skipped", "reason": "disabled"}]'
+check "disabling foot removes its include line and keeps the rest byte for byte" cmp -s "$tmp/foot-own" "$tmp/dotfiles/foot.ini"
+check "the unwired foot.ini stays a symlink" test -L "$cfg/foot/foot.ini"
+check "the unwired foot.ini keeps its mode" test "$(stat -c %a "$tmp/dotfiles/foot.ini")" == 640
+check "a disabled foot's file leaves theme/" test ! -e "$live/foot.ini"
+# A removal that cannot be written keeps the line and carries the file.
+disable_foot '"off"'
+THEME_PATH="$with_stubs" tinst "foot lands again once enabled" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
+cp -- "$live/foot.ini" "$tmp/foot-landed"
+disable_foot '"off", "foot"'
+chmod 500 "$tmp/dotfiles"
+THEME_PATH="$with_stubs" tinst "an unwritable removal fails the disabled target" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=foot reason=unwritable path=$tmp/dotfiles/foot.ini error=EACCES" theme apply --json dusk
+chmod 700 "$tmp/dotfiles"
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the unremoved target is failed unwritable" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "failed", "reason": "unwritable"}]'
+check "an unremoved include line keeps its file in theme/" cmp -s "$tmp/foot-landed" "$live/foot.ini"
+check "an unremoved include line stays" grep -qxF -- "$foot_line" "$tmp/dotfiles/foot.ini"
+# The must-fail control: a judge copy that never removes the line leaves it
+# naming the file the swap drops.
+wiring_control keeps-line 'editWiring(entry.name, entry.target, configHome, live, render.unwiredText)' 'null'
+THEME_PATH="$with_stubs" tinst "the line-keeping mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
+check "the line-keeping mutant leaves the include line" grep -qxF -- "$foot_line" "$tmp/dotfiles/foot.ini"
+check "the line-keeping mutant's line names a dropped file" test ! -e "$live/foot.ini"
+unset THEME_BIN
+disable_foot '"off"'
 
 # --help prints the header comment of the script itself on stderr and exits
 # 0; the expected first line is read from the script, not restated here.

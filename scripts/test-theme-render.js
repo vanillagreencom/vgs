@@ -135,6 +135,19 @@ const WIRED = [
     ["include=/s/foot.ini.old\n", "include=/s/foot.ini\ninclude=/s/foot.ini.old\n"]
 ];
 
+// A configuration file's text before the line is removed, and after it, or
+// null when no line of it is the include line.
+const UNWIRED = [
+    [undefined, null],
+    ["", null],
+    ["[main]\nfont=x\n", null],
+    ["# include=/s/foot.ini\ninclude=/s/foot.ini.old\n", null],
+    ["include=/s/foot.ini\n[main]\nfont=x\n", "[main]\nfont=x\n"],
+    ["include=/s/foot.ini\nfont=x", "font=x"],
+    ["include=/s/foot.ini\n", ""],
+    ["font=x\ninclude=/s/foot.ini\n[colors]\ninclude=/s/foot.ini\n", "font=x\n[colors]\n"]
+];
+
 function verify(render) {
     const accepted = (name, text) => {
         const result = render.acceptTarget(logic, name, text);
@@ -211,6 +224,8 @@ function verify(render) {
     assert.equal(render.wiringLine(escaped, "/s"), "a=@{x} source /s/b /s/c");
     for (const [text, want] of WIRED)
         assert.equal(render.wiredText(text, LINE), want, JSON.stringify(text));
+    for (const [text, want] of UNWIRED)
+        assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
 }
 verify(require(rendererFile));
 
@@ -254,7 +269,9 @@ const CONTROLS = [
     ["wiring line state", "        return state;\n", "        return \"@{state}\";\n"],
     ["wiring whole line", "if (text.split(\"\\n\").includes(line)) return null;", "if (text.includes(line)) return null;"],
     ["wiring line first", "return line + \"\\n\" + text;", "return text + \"\\n\" + line;"],
-    ["wiring creates", "if (text === undefined) return line + \"\\n\";", "if (text === undefined) return null;"]
+    ["wiring creates", "if (text === undefined) return line + \"\\n\";", "if (text === undefined) return null;"],
+    ["unwiring whole line", "if (!lines.includes(line)) return null;", "if (!text.includes(line)) return null;"],
+    ["unwiring every line", "return lines.filter(existing => existing !== line).join(\"\\n\");", "return lines.filter((existing, at) => at !== lines.indexOf(line)).join(\"\\n\");"]
 ];
 
 const source = fs.readFileSync(rendererFile, "utf8");
@@ -276,4 +293,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + UNWIRED.length} controls=${CONTROLS.length}`);

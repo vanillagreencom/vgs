@@ -41,9 +41,11 @@
 # renders the package and every target under themes/targets/ whose commands
 # are on PATH and that shell.json's disabledTargets does not list into
 # ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/, writes theme.name beside it,
-# keeps each target's include line in its application's configuration file,
-# then copies the package's theme.json byte for byte to theme.json beside the
-# lock, the file the shell watches. No other application file is written.
+# keeps each target's include line in its application's configuration file
+# (a disabled target's is removed; one that renders nothing keeps the file it
+# landed before), then copies the package's theme.json byte for byte to
+# theme.json beside the lock, the file the shell watches. No other
+# application file is written.
 # `--json` prints the list, or the apply's result `{ state, shell, targets,
 # theme, reason }` with refusals included, as one JSON line on stdout.
 # `theme` commands never contact the shell: docs/architecture/themes.md

@@ -50,9 +50,9 @@ No encoder writes `#`: a template writes it where its application wants one, as 
 
 ## Wiring text
 
-`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme. The rest of the text is kept.
+`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme. The rest of the text is kept. `unwiredText` undoes it for a disabled target: every whole line equal to the include line goes, with its line break, and every other byte stays.
 
 ## Invariants
 
-1. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence, the terminal fallback, the wiring line's substitution and the wiring text's whole-line match, first-line placement and creation hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer.
+1. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence, the terminal fallback, the wiring line's substitution and the wiring text's whole-line match, first-line placement and creation, and the removal's whole-line match of every copy hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer.
 2. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.
