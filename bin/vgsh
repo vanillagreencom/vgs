@@ -2,6 +2,7 @@
 # vgsh: the v2 shell runner and plugin manager CLI.
 #
 #   vgsh run                       start the shell in the foreground; holds the instance lock
+#   vgsh restart                   stop the running shell and relaunch it through Hyprland
 #   vgsh pid                       print the running shell's pid from the instance lock
 #   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
 #   vgsh log <qs log args...>      read the running shell's log
@@ -36,6 +37,11 @@
 # command that contacts the shell addresses that instance alone, so a shell
 # started any other way is never reached. `plugin validate`, `plugin add`,
 # `plugin update` and `plugin remove` work with no shell running.
+#
+# `restart` refuses while the session is locked, because the shell owns the
+# lock client. Otherwise it stops the pid in the instance lock, waits for
+# that lock to free and asks Hyprland to run `vgsh run`, so the new shell
+# inherits the session environment.
 #
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
@@ -116,10 +122,11 @@
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
 # apply, follow or reload is partial (a target failed or its reload stays pending;
-# each prints `vgsh: refused: target=<name> reason=<key>`), 75 when
-# another shell holds the lock or another theme command holds the theme
-# lock, 69 when the shell is not running. The usage text is this header;
-# `vgsh --help` prints it and exits 0.
+# each prints `vgsh: refused: target=<name> reason=<key>`), 4 when restart
+# refuses because the session is locked, 75 when another shell holds the
+# lock or another theme command holds the theme lock, 69 when the shell is
+# not running. The usage text is this header; `vgsh --help` prints it and
+# exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -224,6 +231,60 @@ rescan_if_running() {
     busy) echo "shell=rescan-queued" ;;
     *) refuse 1 "rescan=$reply" "the plugin files changed; run vgsh ipc call shell rescanPlugins" ;;
   esac
+}
+
+shell_restart() {
+  local pid hypr_status status using_lua reply cmd request dispatch_reply new_pid lua_cmd
+  pid="$(shell_pid)" || exit $?
+  set +e
+  hypr_status="$(hyprctl -j status 2>&1)"
+  status=$?
+  set -e
+  [[ $status == 0 ]] ||
+    refuse 69 "hyprland=unreachable" "the shell was not stopped"
+
+  using_lua=false
+  [[ $hypr_status =~ \"configProvider\"[[:space:]]*:[[:space:]]*\"lua\" ]] && using_lua=true
+
+  reply="$(ipc shell locked)" || exit $?
+  case "$reply" in
+    true)
+      refuse 4 "session=locked" \
+        "the lock client is the shell; stopping it leaves Hyprland's dead-lock screen; unlock first"
+      ;;
+    false) ;;
+    *) refuse 1 "locked=${reply//$'\n'/\\n}" ;;
+  esac
+
+  kill -TERM "$pid" || refuse 1 "stop=failed pid=$pid"
+  flock -w 10 "$lock" true ||
+    refuse 1 "stop=timeout pid=$pid" "the shell is still running"
+
+  cmd="$(printf '%q run' "$self")"
+  if [[ $using_lua == true ]]; then
+    lua_cmd="${cmd//\\/\\\\}"
+    lua_cmd="${lua_cmd//\"/\\\"}"
+    request="hl.dsp.exec_cmd(\"$lua_cmd\")"
+  else
+    request="exec $cmd"
+  fi
+
+  set +e
+  dispatch_reply="$(hyprctl dispatch "$request" 2>&1)"
+  set -e
+  if [[ $dispatch_reply != ok ]]; then
+    refuse 1 "start=failed reply=${dispatch_reply//$'\n'/\\n}" \
+      "the shell stopped; start it with vgsh run"
+  fi
+
+  for _ in $(seq 1 100); do
+    if new_pid="$(shell_pid 2>/dev/null)" && [[ $new_pid != "$pid" && -d /proc/$new_pid ]]; then
+      printf 'ok pid=%s\n' "$new_pid"
+      return 0
+    fi
+    sleep 0.1
+  done
+  refuse 1 "start=timeout" "the shell stopped; start it with vgsh run"
 }
 
 # The directory `add` installed plugin ID into, resolved. An absent one is
@@ -471,6 +532,12 @@ case "$cmd" in
     # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
     # A Quickshell reload while the session lock is live can unlock it.
     VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
+    ;;
+  restart)
+    if [[ $# -gt 0 ]]; then
+      refuse 2 "argument=$1" "restart takes no arguments"
+    fi
+    shell_restart
     ;;
   pid)
     pid="$(shell_pid)" || exit $?

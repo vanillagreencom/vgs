@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Controls for bin/vgsh against a stub qs on PATH. Each row pins a reply,
-# an exit status or a keyed refusal the header promises. No shell starts:
-# `run` execs the stub, which records the identity and environment it was
-# handed.
+# an exit status or a keyed refusal the header promises. `run` execs the
+# stub, which records the identity and environment it was handed.
 set -euo pipefail
 
 # One row removes a directory's permission bits, which bind only a non-root
@@ -11,17 +10,31 @@ if [[ $(id -u) == 0 ]]; then
   echo "test-vgsh: status=not-measured reason=euid-0"
   exit 77
 fi
+# shellcheck source=scripts/vgsh-rows.sh
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
+
+started_pids=()
+cleanup_started_pids() {
+  local pid
+  for pid in "${started_pids[@]}"; do
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+}
+trap 'cleanup_started_pids; rm -rf -- "${tmp:?}"' EXIT
 
 # The stub answers `qs ipc ... call <target> <fn> ...` from STUB_REPLY and
 # STUB_STATUS, prints STUB_NOISE on stdout before the reply (as qs does with
 # its log) and STUB_STDERR on stderr after it. Invoked as the shell (no
 # `ipc` argument) it records its pid, VGSH_RUNNER_PID, the file-watcher
-# environment and its arguments in STUB_RECORD and exits 0.
+# environment and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
+# process and the inherited instance lock alive for restart rows.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
 if [[ ${1:-} != ipc && ${1:-} != log ]]; then
   printf 'pid=%s runner=%s disable=%s no_popup=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "${QS_DISABLE_FILE_WATCHER:-unset}" "${QS_NO_RELOAD_POPUP:-unset}" "$*" >"${STUB_RECORD:?}"
+  [[ -n ${STUB_SHELL_HOLD:-} ]] && exec sleep "$STUB_SHELL_HOLD"
   exit 0
 fi
 printf '%s\n' "$*" >"${STUB_ARGS:-/dev/null}"
@@ -31,6 +44,27 @@ printf '%s\n' "${STUB_REPLY:-ok}"
 exit "${STUB_STATUS:-0}"
 EOF2
 chmod +x "$tmp/qs"
+
+cat >"$tmp/hyprctl" <<'EOF2'
+#!/usr/bin/env bash
+if [[ ${1:-} == -j && ${2:-} == status ]]; then
+  status='{"configProvider":"lua"}'
+  printf '%s\n' "${STUB_HYPR_STATUS:-$status}"
+  exit "${STUB_HYPR_STATUS_EXIT:-0}"
+fi
+if [[ ${1:-} == dispatch ]]; then
+  printf '%s\n' "${2:-}" >>"${STUB_HYPR_DISPATCH:?}"
+  reply="${STUB_HYPR_REPLY:-ok}"
+  printf '%s\n' "$reply"
+  if [[ $reply == ok ]]; then
+    setsid "${STUB_HYPR_LAUNCH:?}" run </dev/null >/dev/null 2>&1 &
+  fi
+  exit 0
+fi
+printf 'unexpected hyprctl args: %s\n' "$*" >&2
+exit 1
+EOF2
+chmod +x "$tmp/hyprctl"
 
 # Every row runs with this environment and nothing else. The runtime dir
 # holds the lock file; `live` names a lock file recording this process,
@@ -58,6 +92,58 @@ run_has_file_watcher_env() { # RECORD
   no_popup="${record#*no_popup=}"
   no_popup="${no_popup%% *}"
   [[ $disable == 1 && $no_popup == 1 ]]
+}
+
+record_runner() { # RECORD
+  local record="$1" runner
+  runner="${record#*runner=}"
+  printf '%s\n' "${runner%% *}"
+}
+
+lock_live_pid() { # RUNTIME_DIR
+  local pid
+  [[ -r $1/vgsh.lock ]] || return 1
+  IFS= read -r pid <"$1/vgsh.lock" || return 1
+  [[ $pid =~ ^[0-9]+$ && -d /proc/$pid ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+wait_lock_pid() { # RUNTIME_DIR [OLD_PID]
+  local rt="$1" old="${2:-}" pid
+  for _ in $(seq 1 100); do
+    if pid="$(lock_live_pid "$rt")" && [[ -z $old || $pid != "$old" ]]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+start_fake_shell() { # NAME RUNTIME_DIR RECORD
+  local name="$1" rt="$2" record="$3" pid lock_pid
+  mkdir -p -- "$rt"
+  "${base_env[@]}" XDG_RUNTIME_DIR="$rt" STUB_RECORD="$record" STUB_SHELL_HOLD=60 "$repo/bin/vgsh" run &
+  pid=$!
+  fake_pid="$pid"
+  started_pids+=("$pid")
+  if lock_pid="$(wait_lock_pid "$rt")" && [[ $lock_pid == "$pid" ]]; then
+    ok "$name"
+  else
+    fail "$name: pid=$pid lock=${lock_pid:-unreadable}"
+  fi
+}
+
+run_restart_capture() { # RUNTIME_DIR RECORD DISPATCH REPLY [ENV...]
+  local rt="$1" record="$2" dispatch="$3" reply="$4" bin="${RESTART_BIN:-$repo/bin/vgsh}"
+  shift 4
+  set +e
+  restart_out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" STUB_RECORD="$record" STUB_SHELL_HOLD=60 STUB_HYPR_DISPATCH="$dispatch" STUB_HYPR_LAUNCH="$repo/bin/vgsh" STUB_REPLY="$reply" "$@" "$bin" restart 2>"$tmp/err")"
+  restart_status=$?
+  set -e
+  restart_err=""
+  [[ -s $tmp/err ]] && IFS= read -r restart_err <"$tmp/err"
+  return 0
 }
 
 list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[],"scanError":"","scanned":true}'
@@ -173,6 +259,100 @@ if [[ $status == 75 && ! -e $tmp/record-held ]]; then ok "a held lock makes run 
 if [[ "$(head -n 1 "$tmp/err")" == "vgsh: refused: lock=$rt_held/vgsh.lock" ]]; then ok "the lock refusal names the lock file"; else fail "lock refusal line: $(head -n 1 "$tmp/err")"; fi
 if [[ "$(cat "$rt_held/vgsh.lock")" == "$$" ]]; then ok "a refused run leaves the holder's pid in the lock file"; else fail "lock file after refusal: $(cat "$rt_held/vgsh.lock")"; fi
 if [[ -e $rt_held/vgsh-sources-2/x ]]; then ok "a refused run leaves the holder's source snapshot root alone"; else fail "a refused run removed $rt_held/vgsh-sources-2"; fi
+
+# Restart stops only the recorded pid, waits for the lock to free and asks
+# Hyprland to launch the new runner so it inherits the session environment.
+cmd="$(printf '%q run' "$repo/bin/vgsh")"
+lua_request="hl.dsp.exec_cmd(\"$cmd\")"
+classic_request="exec $cmd"
+
+rt_restart_locked="$tmp/rt-restart-locked"; dispatch="$tmp/dispatch-locked"
+start_fake_shell "restart locked fixture starts a shell" "$rt_restart_locked" "$tmp/record-locked"
+locked_pid="$fake_pid"
+run_restart_capture "$rt_restart_locked" "$tmp/record-locked-new" "$dispatch" true
+if [[ $restart_status == 4 && -z $restart_out && $restart_err == "vgsh: refused: session=locked" ]]; then ok "restart refuses while the session is locked"; else fail "locked restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ -d /proc/$locked_pid ]]; then ok "a locked restart leaves the shell running"; else fail "locked restart stopped pid=$locked_pid"; fi
+if [[ ! -e $dispatch ]]; then ok "a locked restart never dispatches a relaunch"; else fail "locked restart dispatched: $(cat "$dispatch")"; fi
+
+restart_mutant="$tmp/restart-mutant"; mkdir -p "$restart_mutant/bin"
+cp -- "$repo/bin/vgsh" "$restart_mutant/bin/vgsh"; chmod +x "$restart_mutant/bin/vgsh"
+python3 - "$restart_mutant/bin/vgsh" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+old = '''    true)
+      refuse 4 "session=locked" \\
+        "the lock client is the shell; stopping it leaves Hyprland's dead-lock screen; unlock first"
+      ;;'''
+new = '''    true) ;;'''
+count = text.count(old)
+if count != 1:
+    raise SystemExit(f"restart-locked-control: expected one match, found {count}")
+changed = text.replace(old, new)
+if changed == text:
+    raise SystemExit("restart-locked-control: mutation changed nothing")
+path.write_text(changed)
+PY
+rt_restart_mutant="$tmp/rt-restart-mutant"; dispatch="$tmp/dispatch-mutant"
+start_fake_shell "restart locked control fixture starts a shell" "$rt_restart_mutant" "$tmp/record-mutant-locked"
+mutant_locked_pid="$fake_pid"
+RESTART_BIN="$restart_mutant/bin/vgsh" run_restart_capture "$rt_restart_mutant" "$tmp/record-mutant-new" "$dispatch" true
+wait "$mutant_locked_pid" 2>/dev/null || true
+if [[ $restart_status == 0 && -s $dispatch && ! -d /proc/$mutant_locked_pid ]]; then ok "a restart without the locked refusal fails the assertion"; else fail "locked restart mutant: exit=$restart_status dispatch=$([[ -s $dispatch ]] && cat "$dispatch" || echo absent) pid_live=$([[ -d /proc/$mutant_locked_pid ]] && echo yes || echo no)"; fi
+if new_pid="$(lock_live_pid "$rt_restart_mutant")"; then started_pids+=("$new_pid"); fi
+
+rt_restart_lua="$tmp/rt-restart-lua"; dispatch="$tmp/dispatch-lua"
+start_fake_shell "restart lua fixture starts a shell" "$rt_restart_lua" "$tmp/record-lua-old"
+old_pid="$fake_pid"
+run_restart_capture "$rt_restart_lua" "$tmp/record-lua-new" "$dispatch" false
+wait "$old_pid" 2>/dev/null || true
+if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then
+  new_pid="${BASH_REMATCH[1]}"; started_pids+=("$new_pid"); ok "restart prints the relaunched pid"
+else
+  new_pid=""
+  fail "lua restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"
+fi
+if [[ -n $new_pid && ! -d /proc/$old_pid && -d /proc/$new_pid ]]; then ok "restart stops the old pid and leaves the new pid running"; else fail "restart pids old_live=$([[ -d /proc/$old_pid ]] && echo yes || echo no) new=$new_pid"; fi
+if [[ -n $new_pid && "$(cat "$rt_restart_lua/vgsh.lock")" == "$new_pid" ]]; then ok "restart records the new pid in the lock file"; else fail "restart lock holds [$(cat "$rt_restart_lua/vgsh.lock" 2>/dev/null || echo absent)] want $new_pid"; fi
+if [[ "$(cat "$dispatch")" == "$lua_request" ]]; then ok "restart uses the Lua Hyprland exec dialect"; else fail "lua dispatch: $(cat "$dispatch")"; fi
+new_record="$(cat "$tmp/record-lua-new")"
+if [[ $(record_runner "$new_record") == "$new_pid" ]] && run_has_file_watcher_env "$new_record"; then ok "the relaunched shell gets the runner and watcher environment"; else fail "new shell record: $new_record"; fi
+
+rt_restart_classic="$tmp/rt-restart-classic"; dispatch="$tmp/dispatch-classic"
+start_fake_shell "restart classic fixture starts a shell" "$rt_restart_classic" "$tmp/record-classic-old"
+old_pid="$fake_pid"
+run_restart_capture "$rt_restart_classic" "$tmp/record-classic-new" "$dispatch" false 'STUB_HYPR_STATUS={"configProvider":"hyprlang"}'
+wait "$old_pid" 2>/dev/null || true
+if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then started_pids+=("${BASH_REMATCH[1]}"); ok "restart succeeds with the classic Hyprland dialect"; else fail "classic restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ "$(cat "$dispatch")" == "$classic_request" ]]; then ok "restart uses the classic Hyprland exec dialect"; else fail "classic dispatch: $(cat "$dispatch")"; fi
+
+rt_restart_unreachable="$tmp/rt-restart-unreachable"; dispatch="$tmp/dispatch-unreachable"
+start_fake_shell "restart unreachable fixture starts a shell" "$rt_restart_unreachable" "$tmp/record-unreachable"
+unreachable_pid="$fake_pid"
+run_restart_capture "$rt_restart_unreachable" "$tmp/record-unreachable-new" "$dispatch" false STUB_HYPR_STATUS_EXIT=1
+if [[ $restart_status == 69 && -z $restart_out && $restart_err == "vgsh: refused: hyprland=unreachable" ]]; then ok "restart refuses when Hyprland is unreachable"; else fail "unreachable restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ -d /proc/$unreachable_pid ]]; then ok "an unreachable Hyprland leaves the shell running"; else fail "unreachable restart stopped pid=$unreachable_pid"; fi
+if [[ ! -e $dispatch ]]; then ok "an unreachable Hyprland never dispatches"; else fail "unreachable restart dispatched: $(cat "$dispatch")"; fi
+
+run_restart_capture "$rt_empty" "$tmp/record-not-running" "$tmp/dispatch-not-running" false
+if [[ $restart_status == 69 && -z $restart_out && $restart_err == "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock" ]]; then ok "restart with no shell exits 69"; else fail "restart not-running: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+
+set +e
+restart_out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt_empty" "$repo/bin/vgsh" restart again 2>"$tmp/err")"
+restart_status=$?
+set -e
+restart_err=""; [[ -s $tmp/err ]] && IFS= read -r restart_err <"$tmp/err"
+if [[ $restart_status == 2 && -z $restart_out && $restart_err == "vgsh: refused: argument=again" ]]; then ok "restart refuses an argument"; else fail "restart argument: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+
+rt_restart_bad_reply="$tmp/rt-restart-bad-reply"; dispatch="$tmp/dispatch-bad-reply"
+start_fake_shell "restart dispatch-failure fixture starts a shell" "$rt_restart_bad_reply" "$tmp/record-bad-reply-old"
+old_pid="$fake_pid"
+run_restart_capture "$rt_restart_bad_reply" "$tmp/record-bad-reply-new" "$dispatch" false STUB_HYPR_REPLY=nope
+wait "$old_pid" 2>/dev/null || true
+if [[ $restart_status == 1 && -z $restart_out && $restart_err == "vgsh: refused: start=failed reply=nope" ]]; then ok "restart refuses a failed Hyprland dispatch reply"; else fail "restart bad dispatch: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+if [[ ! -d /proc/$old_pid ]]; then ok "a failed relaunch reports that the old shell stopped"; else fail "failed relaunch left old pid=$old_pid"; fi
 
 # Install, update and remove, with local bare repositories as the source,
 # through the library's `g`.

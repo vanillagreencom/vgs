@@ -22,6 +22,7 @@ expect "the bare qs refuses to rescan" "refused: guard=unowned pid=$bare_pid" ba
 expect "the bare qs refuses to summon" "refused: guard=unowned pid=$bare_pid" bare_ipc shell summon panel acme.probe '{}'
 if [[ "$(cat "$home/.config/vgs/shell.json")" == "$user_before" ]]; then ok "the refused write left the user file alone"; else fail "the bare qs changed the user file"; fi
 expect "the runner's CLI still reaches the guarded instance beside a bare one" true ipc shell guarded
+expect "the runner's CLI reports the session unlocked" false ipc shell locked
 kill -TERM "$bare_pid" 2>/dev/null || true
 
 # A follow writes the theme and application files, so an unguarded

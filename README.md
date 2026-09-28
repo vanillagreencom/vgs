@@ -26,6 +26,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 ## How it works
 
 - `bin/vgsh run` takes the instance lock and starts one shell for the session.
+- `bin/vgsh restart` refuses while locked, then stops the recorded pid and relaunches through Hyprland.
 - The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
 - Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
 - `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.
