@@ -283,6 +283,7 @@ for (const [name, raw, want] of toastRows) {
 check("toast ceilings are whole numbers above zero", Number.isInteger(ctx.TOAST_VISIBLE_MAX) && ctx.TOAST_VISIBLE_MAX > 0 && Number.isInteger(ctx.TOAST_QUEUE_MAX) && ctx.TOAST_QUEUE_MAX >= ctx.TOAST_VISIBLE_MAX, true);
 check("toasts is a capability", ctx.CAPABILITIES.indexOf("toasts") !== -1, true);
 check("theme is a capability", ctx.CAPABILITIES.indexOf("theme") !== -1, true);
+check("layers is a capability", ctx.CAPABILITIES.indexOf("layers") !== -1, true);
 
 const refusalRows = [
     ["a string fits a string entry", "label", "y", ""],

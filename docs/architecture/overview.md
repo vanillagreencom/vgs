@@ -68,6 +68,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [plugins.md](plugins.md): read before writing a plugin or a host.
 - [capabilities.md](capabilities.md): read before touching a capability's provider, its lending record or its release.
 - [appearance.md](appearance.md): read before writing a plugin that owns its look, or touching `Theme.appearance` or its judge.
+- [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.

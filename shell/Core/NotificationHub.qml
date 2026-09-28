@@ -46,8 +46,10 @@ Scope {
         NotificationServer {
             keepOnReload: false
             bodySupported: true
+            bodyMarkupSupported: true
             actionsSupported: true
             imageSupported: true
+            persistenceSupported: true
             onNotification: n => root.fanOut(n)
         }
     }

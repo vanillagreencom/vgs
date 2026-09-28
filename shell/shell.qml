@@ -62,6 +62,11 @@ ShellRoot {
         ToastHost {}
     }
 
+    LazyLoader {
+        active: root.guarded
+        LayerHost {}
+    }
+
     IpcHandler {
         target: "shell"
 

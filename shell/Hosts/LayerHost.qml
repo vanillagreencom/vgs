@@ -1,0 +1,108 @@
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+import qs.Core
+
+// The passive layer surfaces: one per screen for every registration in
+// Layers, each drawing one copy of the plugin's component. The surface
+// covers the part of its screen other layers do not reserve, sits on the
+// overlay layer and never takes keyboard focus, so it cannot steal input
+// from the focused application. Pointer input reaches it only where its
+// content says: the whole surface while the content's `inputAll` is true,
+// otherwise the rectangle of its `inputItem`, and nowhere without one. The
+// core assigns the content its `screen` after creation; a content without
+// that property is not built, logged, and maps no surface. A screen that
+// goes takes its surfaces with it.
+Scope {
+    id: host
+
+    Component.onCompleted: Plugins.registerHost("layer", host)
+
+    Variants {
+        model: Layers.serials.length > 0 ? Quickshell.screens : []
+
+        Scope {
+            id: onScreen
+
+            required property var modelData
+
+            Variants {
+                model: Layers.serials
+
+                PanelWindow {
+                    id: win
+
+                    required property int modelData
+                    // Read once, not bound: the entry leaves Layers before its
+                    // surface goes.
+                    property var entry: null
+                    property Item content: null
+                    // The screen name the content was built on, kept while the
+                    // screen itself reads null during teardown.
+                    property string builtOn: ""
+                    readonly property bool inputAll: content !== null && content.inputAll === true
+                    readonly property Item inputItem: content !== null && content.inputItem instanceof Item ? content.inputItem : null
+
+                    screen: onScreen.modelData
+                    anchors { top: true; bottom: true; left: true; right: true }
+                    exclusionMode: ExclusionMode.Normal
+                    exclusiveZone: 0
+                    color: "transparent"
+                    // Mapped only once its content is built, so a content the
+                    // host refused leaves no surface.
+                    visible: content !== null
+                    mask: inputAll ? null : inputRegion
+                    WlrLayershell.namespace: "vgs:layer"
+                    WlrLayershell.layer: WlrLayer.Overlay
+                    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+                    // An item-less region is empty: the surface lets every
+                    // press through.
+                    Region { id: inputRegion; item: win.inputItem }
+
+                    Component.onCompleted: build()
+                    Component.onDestruction: drop()
+
+                    Connections {
+                        target: Layers
+                        function onReleased(released) { if (released === win.entry) win.drop(); }
+                    }
+
+                    function build() {
+                        entry = Layers.entryOf(modelData);
+                        if (entry === null) {
+                            console.error("layers: no registration for serial " + modelData + ": the host's model ran ahead of Layers.entries");
+                            return;
+                        }
+                        const name = screen ? screen.name : "";
+                        const item = entry.component.createObject(win.contentItem);
+                        if (item === null) {
+                            console.error("layers: " + entry.pluginId + " content not built on " + name + ": createObject answered null");
+                            return;
+                        }
+                        try {
+                            item.screen = screen;
+                            item.anchors.fill = win.contentItem;
+                        } catch (e) {
+                            console.error("layers: " + entry.pluginId + " content not built on " + name + ": " + e.message);
+                            item.destroy();
+                            return;
+                        }
+                        content = item;
+                        builtOn = name;
+                        entry.screens[name] = item;
+                    }
+
+                    function drop() {
+                        if (content === null || entry === null) return;
+                        const item = content;
+                        content = null;
+                        delete entry.screens[builtOn];
+                        builtOn = "";
+                        item.destroy();
+                    }
+                }
+            }
+        }
+    }
+}

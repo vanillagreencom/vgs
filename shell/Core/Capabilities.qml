@@ -118,6 +118,9 @@ Singleton {
         toasts: ctx => ({
             show: options => Toasts.show(ctx, options)
         }),
+        layers: ctx => ({
+            show: component => Layers.show(ctx, component)
+        }),
         theme: themes.provider
     })
 
@@ -159,6 +162,7 @@ Singleton {
             polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
             lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null },
             toasts: Toasts.record(),
+            layers: Layers.record(),
             theme: themes.record()
         });
     }

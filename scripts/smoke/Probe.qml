@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Core
 import qs.Commons
 import "Commons/Tokens.js" as Tokens
@@ -155,6 +156,18 @@ Scope {
             return JSON.stringify(Object.keys(Tokens.TOKENS).filter(group => typeof Theme[group] !== "object" || Theme[group] === null || !Object.isFrozen(Theme[group])));
         }
         function themeValue(path: string): string { return root.themeValue(path); }
+        // Each surface the layer host built for a plugin, sorted by screen:
+        // [screen, takes no keyboard, on the overlay layer, clear of
+        // reserved space].
+        function layerSurfaces(id: string): string {
+            const out = [];
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const name of Object.keys(entry.screens).sort()) {
+                    const win = entry.screens[name].QsWindow.window;
+                    out.push([name, win.WlrLayershell.keyboardFocus === WlrKeyboardFocus.None, win.WlrLayershell.layer === WlrLayer.Overlay, win.exclusionMode === ExclusionMode.Normal]);
+                }
+            return JSON.stringify(out);
+        }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
         // The components of qs.Ui, read from its qmldir, that the gallery
         // draws no instance of; an empty list is the pass. A QML-defined

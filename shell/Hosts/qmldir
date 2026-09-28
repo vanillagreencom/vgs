@@ -7,3 +7,4 @@ BackgroundHost 1.0 BackgroundHost.qml
 SummonHost 1.0 SummonHost.qml
 SummonPopup 1.0 SummonPopup.qml
 ToastHost 1.0 ToastHost.qml
+LayerHost 1.0 LayerHost.qml
