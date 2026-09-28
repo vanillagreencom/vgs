@@ -20,6 +20,10 @@ const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 // key paths that each take the value. bin/lib/theme-select.js makes the
 // edit.
 const SELECT_KEY = "select";
+// The optional top-level key naming the command a one-time owner step
+// installs and the target's hook runs: until it is on PATH the target is
+// skipped with `setup-absent`, so no apply runs a hook that cannot work.
+const SETUP_KEY = "setup";
 const SELECT_KEYS = ["base", "file", "format", "key", "value"];
 const SELECT_FORMATS = ["json", "toml", "yaml"];
 // The longest `key` a line-exact format takes: a root key, or a key in one
@@ -294,6 +298,13 @@ function detected(detect, onPath) {
     return detect.every(entry => Array.isArray(entry) ? entry.some(onPath) : onPath(entry));
 }
 
+// Whether an accepted TARGET's setup command, when it names one, is a
+// command ON_PATH answers true for. Both of the judge's enablement checks
+// ask this after `detected`.
+function setupDone(target, onPath) {
+    return target.setup === undefined || onPath(target.setup);
+}
+
 // Whether KEY is a key path FORMAT takes: one bare name per segment, and
 // at most SELECT_LINE_DEPTH of them for a line-exact format.
 function isKeyPath(format, key) {
@@ -341,7 +352,7 @@ function acceptTarget(logic, name, text) {
     }
     if (!logic.isPlainObject(document)) return refused("target-schema", "key=document");
     for (const key of Object.keys(document))
-        if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY) return refused("target-schema", "unknown=" + key);
+        if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY && key !== SETUP_KEY) return refused("target-schema", "unknown=" + key);
     for (const key of TARGET_KEYS)
         if (!logic.hasOwn(document, key)) return refused("target-schema", "missing=" + key);
     if (!isLine(document.app)) return refused("target-schema", "key=app");
@@ -355,6 +366,7 @@ function acceptTarget(logic, name, text) {
         destinations.add(document.files[at].destination);
     }
     if (!Array.isArray(document.detect) || !document.detect.every(entry => isDetectEntry(logic, entry))) return refused("target-schema", "key=detect");
+    if (logic.hasOwn(document, SETUP_KEY) && !logic.isPackageName(document.setup)) return refused("target-schema", "key=setup");
     const wiring = document.wiring === null ? ""
         : logic.isPlainObject(document.wiring) && wiringForm(document.wiring) === "entry" ? entryError(logic, document.wiring, destinations)
         : wiringError(logic, document.wiring);
@@ -689,4 +701,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadNamesWiring, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };
+module.exports = { TARGET_FILE, acceptTarget, detected, setupDone, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadNamesWiring, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };

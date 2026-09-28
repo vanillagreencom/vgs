@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active
+**Status**: Superseded by D029
 
 **Research**: VGS-487
 

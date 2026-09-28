@@ -20,6 +20,8 @@
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
 #   vgsh theme remove <name>       delete an installed theme package's directory
+#   vgsh theme browser-policy install
+#                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
@@ -71,6 +73,13 @@
 # deletes only an installed package, never a shipped one. Each holds the
 # theme lock while it changes the package; a held lock is reason=busy.
 # docs/architecture/themes.md § Install.
+#
+# `theme browser-policy install` is the one command that asks for a
+# privilege: bin/vgsh-browser-policy installs itself root-owned with one
+# NOPASSWD sudoers rule for the calling user, the setup the chromium
+# target's hook needs. Apply never prompts: until the setup exists that
+# target is skipped with reason=setup-absent, and its hook runs `sudo -n`.
+# docs/architecture/theme-browsers.md § Chromium.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
@@ -497,6 +506,12 @@ PY
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         theme_lock_verdict
         exec node "$theme_judge" background-next "$config_home/vgs" "$state_home/vgs" "$verdict"
+        ;;
+      browser-policy)
+        [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
+        if [[ ${1:-} != install ]]; then printf 'vgsh: refused: browser-policy-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        exec "$root/bin/vgsh-browser-policy" install
         ;;
       add|update|remove)
         arg="${1:-}"

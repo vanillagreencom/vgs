@@ -1,0 +1,9 @@
+{
+  "app": "Chromium, Google Chrome, Microsoft Edge and Brave",
+  "encoder": "hex6",
+  "files": [{ "template": "chromium.color", "destination": "chromium.color" }],
+  "detect": [["chromium", "google-chrome-stable", "google-chrome", "microsoft-edge-stable", "brave"]],
+  "setup": "vgs-browser-policy",
+  "wiring": null,
+  "reload": { "command": ["sh", "-c", "color=$(cat -- \"$1\") || exit 1; exec vgs-browser-policy \"$color\"", "sh", "@{state}/chromium.color"], "timeoutMs": 15000, "always": true }
+}

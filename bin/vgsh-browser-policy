@@ -1,0 +1,201 @@
+#!/bin/bash
+# vgsh-browser-policy: the Chromium-family theme colour, written as the
+# managed policy color.json by theme apply's one privileged step.
+#
+#   vgs-browser-policy <rrggbb>   write the colour, as the chromium target's hook
+#   vgsh-browser-policy install   install the writer and its sudoers rule, once
+#
+# `install`, run from the checkout by `vgsh theme browser-policy install`,
+# asks sudo for the password once. It installs the one sudoers rule, then
+# this file root-owned at /usr/local/bin/vgs-browser-policy, so the writer
+# is never on PATH without its rule. The rule lets the installing user run
+# the writer as root with no password and with six lowercase hex digits as
+# its only argument.
+#
+# Run as the user with a colour, the writer exits 0 at once when every
+# policy directory below that exists, or whose browser is installed, holds
+# the canonical color.json, root:root 0644. Otherwise it runs itself as root
+# through `sudo -n`, which never prompts, then has each running browser of
+# the family read its policy again. Run as root with a colour, it hardens
+# each directory's chain to root:root 0755, creates the directory of an
+# installed browser, and replaces color.json by rename.
+#
+# Every refusal prints one keyed line first, `vgs-browser-policy: <key>=<value>`.
+# Exit 0 on success, 1 when a write, the elevation or the install failed,
+# 2 on a bad invocation. docs/architecture/theme-browsers.md.
+#
+# /bin/bash rather than env: as root nothing here resolves through a PATH
+# a user chose.
+set -euo pipefail
+
+# Every path below derives from prefix, empty in production.
+prefix=
+# Whenever this runs, as root through the rule or as the user's hook, a bare
+# command resolves in the system directories alone, so no checkout or
+# user-writable directory supplies one.
+export PATH="$prefix/usr/local/sbin:$prefix/usr/local/bin:$prefix/usr/sbin:$prefix/usr/bin:$prefix/sbin:$prefix/bin"
+umask 022
+# The path the sudoers rule names.
+installed_path=/usr/local/bin/vgs-browser-policy
+installed="$prefix$installed_path"
+rule_file="$prefix/etc/sudoers.d/vgs-browser-policy"
+etc="$prefix/etc"
+# Each managed policy directory and the browser commands whose install
+# gives it one. The caller chooses a colour, never a path.
+policy_dirs=(
+  "$etc/chromium/policies/managed|chromium"
+  "$etc/opt/chrome/policies/managed|google-chrome-stable google-chrome"
+  "$etc/opt/edge/policies/managed|microsoft-edge-stable"
+  "$etc/brave/policies/managed|brave"
+)
+# The running process name of each browser and the command that refreshes
+# it; Chrome installs under either name.
+refreshers=(chromium:chromium chrome:google-chrome-stable chrome:google-chrome msedge:microsoft-edge-stable brave:brave)
+
+say() { printf 'vgs-browser-policy: %s\n' "$@" >&2; }
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}" >&2; }
+
+# Whether one of COMMANDS, a space-separated list, is installed.
+installed_any() { # COMMANDS
+  local command
+  for command in $1; do command -v -- "$command" >/dev/null && return 0; done
+  return 1
+}
+
+# Whether DIR is a real directory root owns that only root can write.
+trusted() { # DIR
+  local info
+  [[ -d $1 && ! -L $1 ]] || return 1
+  info="$(stat -c '%u:%g %a' -- "$1")" || return 1
+  [[ $info == 0:* ]] && (( (8#${info#* } & 8#022) == 0 ))
+}
+
+# Whether FILE is the canonical color.json: a regular file root:root 0644
+# holding exactly the policy for the colour.
+canonical() { # FILE
+  [[ -f $1 && ! -L $1 ]] || return 1
+  [[ $(stat -c '%u:%g %a' -- "$1") == "0:0 644" ]] || return 1
+  [[ $(<"$1") == "$policy" ]]
+}
+
+install_rule() {
+  local user staged self status=0
+  (( EUID != 0 )) || { say "install=root" "run it as the user whose theme applies; sudo asks for the password"; exit 1; }
+  user="$(id -un)" || { say "install=user-unknown"; exit 1; }
+  self="$(readlink -f -- "${BASH_SOURCE[0]}")" || { say "install=unresolved path=${BASH_SOURCE[0]}"; exit 1; }
+  [[ $user =~ ^[a-z_][a-z0-9_-]*$ ]] || { say "install=user-name user=$user"; exit 1; }
+  staged="$(mktemp)" || { say "install=staging"; exit 1; }
+  # The argument is six hex character classes, not a wildcard: sudoers
+  # matches the whole argument list, so the grant carries a colour and
+  # nothing else, and a `#` in it would open a comment.
+  printf '%s\n' "# Installed by vgsh theme browser-policy install: the browser theme colour policy." \
+    "$user ALL=(root) NOPASSWD: $installed_path [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]" >"$staged" || status=1
+  if (( status == 0 )) && ! visudo -cqf "$staged" >/dev/null; then say "install=rule-refused"; status=1; fi
+  if (( status == 0 )) && ! sudo install -m 0440 -o root -g root -T -- "$staged" "$rule_file"; then say "install=rule path=$rule_file"; status=1; fi
+  if (( status == 0 )) && ! sudo install -m 0755 -o root -g root -T -- "$self" "$installed"; then say "install=writer path=$installed"; status=1; fi
+  rm -f -- "$staged"
+  (( status == 0 )) || exit 1
+  printf 'ok browser-policy rule=%s writer=%s\n' "$rule_file" "$installed"
+}
+
+# Make DIR's chain below its system directory real directories root:root
+# 0755, top-down: each entry is checked only once root alone can write its
+# parent, so no user can swap it for a link after the check. A missing
+# entry is created when CREATE is 1.
+harden() { # DIR CREATE
+  local dir="$1" create="$2" system step part parts
+  case $dir in "$etc/opt/"*) system="$etc/opt" ;; *) system="$etc" ;; esac
+  if ! trusted "$etc" || ! trusted "$system"; then say "untrusted=$system"; return 1; fi
+  step="$system"
+  IFS=/ read -ra parts <<<"${dir#"$system"/}"
+  for part in "${parts[@]}"; do
+    step="$step/$part"
+    if [[ ! -e $step && ! -L $step && $create == 1 ]]; then
+      mkdir -m 0755 -- "$step" || { say "create-failed=$step"; return 1; }
+    fi
+    [[ -d $step && ! -L $step ]] || { say "not-a-directory=$step"; return 1; }
+    { chown root:root -- "$step" && chmod 0755 -- "$step"; } || { say "harden-failed=$step"; return 1; }
+  done
+}
+
+# Replace DIR's color.json with the canonical policy by rename, unless it
+# already is canonical. A directory or link at that name is removed first.
+write_policy() { # DIR
+  local dest="$1/color.json" staged
+  canonical "$dest" && return 0
+  if [[ -L $dest || -d $dest ]]; then rm -rf -- "$dest" || { say "replace-failed=$dest"; return 1; }; fi
+  # The staged name does not end in .json, so a browser reading the
+  # directory never takes it for a policy file.
+  staged="$(mktemp -- "$1/.color.json.XXXXXX")" || { say "staging-failed=$1"; return 1; }
+  if ! { printf '%s\n' "$policy" >"$staged" && chmod 0644 -- "$staged" && chown root:root -- "$staged" && mv -fT -- "$staged" "$dest"; }; then
+    rm -f -- "$staged"
+    say "write-failed=$dest"
+    return 1
+  fi
+}
+
+as_root() {
+  local entry dir failed=0 wrote=0
+  for entry in "${policy_dirs[@]}"; do
+    dir="${entry%%|*}"
+    if [[ -e $dir || -L $dir ]]; then
+      harden "$dir" 0 || { failed=1; continue; }
+    elif installed_any "${entry#*|}"; then
+      harden "$dir" 1 || { failed=1; continue; }
+    else
+      continue
+    fi
+    write_policy "$dir" || { failed=1; continue; }
+    wrote=1
+  done
+  if (( wrote == 0 && failed == 0 )); then say "no-policy-directory=$etc" "no browser of the family is installed"; exit 1; fi
+  exit "$failed"
+}
+
+# Whether any directory needs the write: one that exists, or whose browser
+# is installed, and does not hold the canonical file.
+needs_write() {
+  local entry dir
+  for entry in "${policy_dirs[@]}"; do
+    dir="${entry%%|*}"
+    if [[ -e $dir || -L $dir ]] || installed_any "${entry#*|}"; then
+      canonical "$dir/color.json" || return 0
+    fi
+  done
+  return 1
+}
+
+as_user() {
+  local running pair process command failed=0 pids=() pid
+  local -A refreshed=()
+  needs_write || exit 0
+  sudo -n -- "$installed" "$color" </dev/null || { say "elevation-failed=$installed" "the sudoers rule is absent or refused: vgsh theme browser-policy install"; failed=1; }
+  running="$(ps -u "$EUID" -o comm=)" || { say "process-list-failed"; exit 1; }
+  for pair in "${refreshers[@]}"; do
+    process="${pair%%:*}" command="${pair#*:}"
+    { [[ -z ${refreshed[$process]:-} ]] && grep -qxF -- "$process" <<<"$running" && command -v -- "$command" >/dev/null; } || continue
+    refreshed[$process]=1
+    "$command" --refresh-platform-policy --no-startup-window </dev/null >/dev/null 2>&1 &
+    pids+=("$!")
+  done
+  # A refresh's status is not the policy's: the file is in place either
+  # way, and the browser reads it at its next start.
+  for pid in "${pids[@]}"; do wait "$pid" || true; done
+  exit "$failed"
+}
+
+if [[ $# == 1 && $1 == install ]]; then
+  install_rule
+  exit 0
+fi
+# Six lowercase hex digits is the whole of what the writer accepts, the
+# shape the sudoers rule spells, since a sudo run from a terminal does not
+# come through the rule.
+if [[ $# != 1 || ! $1 =~ ^[0-9a-f]{6}$ ]]; then
+  say "argument=$(printf '%q' "${1-}") count=$#"
+  usage
+  exit 2
+fi
+color="$1"
+policy="{\"BrowserThemeColor\": \"#$color\", \"BrowserColorScheme\": \"device\"}"
+if (( EUID == 0 )); then as_root; else as_user; fi

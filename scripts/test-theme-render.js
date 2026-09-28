@@ -83,7 +83,8 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".config/probe/probe.conf", ".probe.conf"] }) })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".probe.conf"] }), reload: { command: ["touch", "-c", "--", "@{wiring}", "@{state}", "@@{x}"], timeoutMs: 2000 } })],
     ["probe", entryText({ dir: ".obsidian/themes/vgs", owned: true, vaults: "obsidian/obsidian.json" })],
-    ["probe", entryText({ base: "home", dir: ".probe", vaults: ".probe-vaults.json" })]
+    ["probe", entryText({ base: "home", dir: ".probe", vaults: ".probe-vaults.json" })],
+    ["probe", targetText({ setup: "probe-setup", wiring: null })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -176,7 +177,10 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: ["profiles.ini"] }), reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ files: twoFiles, wiring: entry, reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ wiring: null, reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
-    ["probe", targetText({ wiring: "none" }), "target-schema", "key=wiring"]
+    ["probe", targetText({ wiring: "none" }), "target-schema", "key=wiring"],
+    ["probe", targetText({ setup: "/usr/local/bin/probe" }), "target-schema", "key=setup"],
+    ["probe", targetText({ setup: ["probe"] }), "target-schema", "key=setup"],
+    ["probe", targetText({ setup: "" }), "target-schema", "key=setup"]
 ];
 
 // One colour through each encoder: the defaults' color.selection is
@@ -518,6 +522,12 @@ function verify(render) {
     assert.equal(render.reloadNamesWiring(hookless), false);
     assert.equal(render.reloadAlways(hookless), false);
     assert.throws(() => render.reloadCommand(hookless, "/s"), /has no reload/);
+
+    // A setup command is met by PATH alone; a target naming none always is.
+    const setup = accepted("probe", targetText({ setup: "probe-setup" }));
+    assert.equal(render.setupDone(setup, command => command === "probe-setup"), true);
+    assert.equal(render.setupDone(setup, command => command === "probe"), false);
+    assert.equal(render.setupDone(target("hex6"), () => false), true);
 }
 verify(require(rendererFile));
 
@@ -553,7 +563,7 @@ const CONTROLS = [
     ["own terminal first", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [defaults, pkg]) {"],
     ["terminal fallback", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [pkg]) {"],
     ["target name", "if (typeof name !== \"string\" || !TARGET_NAME_PATTERN.test(name))", "if (false)"],
-    ["unknown key", "if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY) return", "if (false) return"],
+    ["unknown key", "if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY && key !== SETUP_KEY) return", "if (false) return"],
     ["missing key", "if (!logic.hasOwn(document, key)) return", "if (false) return"],
     ["app", "if (!isLine(document.app)) return", "if (false) return"],
     ["encoder name", "if (!logic.hasOwn(ENCODERS, document.encoder)) return", "if (false) return"],
@@ -600,6 +610,9 @@ const CONTROLS = [
     ["reload names wiring", "return names !== null && names.includes(WIRING_PLACEHOLDER);", "return false;"],
     ["reload argument state", "target.reload.command.map(arg => withValues(arg, values,", "target.reload.command.map(arg => String(arg,"],
     ["reload always read", "target.reload.always === true", "target.reload.always !== undefined"],
+    ["setup admitted", "key !== SELECT_KEY && key !== SETUP_KEY)", "key !== SELECT_KEY)"],
+    ["setup is a command name", "!logic.isPackageName(document.setup)", "false"],
+    ["setup read", "target.setup === undefined || onPath(target.setup)", "true"],
     ["wiring none form", "if (wiring === null) return \"none\";", "if (false) return \"none\";"],
     ["wiring null accepted", "document.wiring === null ? \"\"", "document.wiring === undefined ? \"\""],
     ["reload command", "if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return", "if (false) return"],
