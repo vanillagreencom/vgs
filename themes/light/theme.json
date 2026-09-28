@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "name": "light",
   "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
     "palette": {
       "background": "#fafaf9",
       "foreground": "#18181b",

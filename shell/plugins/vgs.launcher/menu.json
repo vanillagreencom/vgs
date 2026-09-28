@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "items": {
+    "apps": { "icon": "layout-grid", "label": "Apps", "aliases": ["app", "applications"], "provider": "apps" },
+    "style": { "icon": "paintbrush", "label": "Style" },
+    "style.theme": { "icon": "palette", "label": "Theme", "aliases": ["theme", "themes"], "provider": "themes" },
+    "system": { "icon": "power", "label": "System", "aliases": ["power-menu", "power"] },
+    "system.lock": { "icon": "lock", "label": "Lock", "requires": ["loginctl"], "run": ["loginctl", "lock-session"] },
+    "system.suspend": { "icon": "moon", "label": "Suspend", "requires": ["systemctl"], "run": ["systemctl", "suspend"] },
+    "system.hibernate": { "icon": "snowflake", "label": "Hibernate", "requires": ["systemctl"], "run": ["systemctl", "hibernate"] },
+    "system.logout": { "icon": "log-out", "label": "Log out", "requires": ["loginctl"], "run": ["sh", "-c", "exec loginctl terminate-session ''"] },
+    "system.reboot": { "icon": "rotate-ccw", "label": "Reboot", "requires": ["systemctl"], "run": ["systemctl", "reboot"] },
+    "system.shutdown": { "icon": "power-off", "label": "Shut down", "requires": ["systemctl"], "run": ["systemctl", "poweroff"] },
+    "tools": { "icon": "terminal", "label": "Tools" },
+    "tools.terminal": { "icon": "terminal", "label": "Terminal", "requires": ["xdg-terminal-exec"], "run": ["xdg-terminal-exec"] },
+    "tools.screenshot": { "icon": "camera", "label": "Screenshot", "description": "Select a region and copy it", "requires": ["grim", "slurp", "wl-copy"], "run": ["sh", "-c", "grim -g \"$(slurp)\" - | wl-copy --type image/png"] },
+    "tools.files": { "icon": "folder", "label": "Files", "requires": ["xdg-open"], "run": ["sh", "-c", "exec xdg-open \"$HOME\""] },
+    "install": { "icon": "package", "label": "Install", "unavailable": "Installing packages needs a distribution's installer; the shell has none" },
+    "remove": { "icon": "package", "label": "Remove", "aliases": ["uninstall"], "unavailable": "Removing packages needs a confirmed host action; the shell has none" },
+    "update": { "icon": "refresh-cw", "label": "Update", "unavailable": "System updates belong to the distribution's own tools" }
+  }
+}

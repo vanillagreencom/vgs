@@ -252,12 +252,14 @@ else
 fi
 # The shipped bar carries its clock and workspaces as built-ins, so the
 # widget rows use a third-party widget placed in the user file before the
-# shell starts.
+# shell starts. The launcher, first-party and so enabled by default, starts
+# disabled here: its shortcut and IPC target would sit in every lending
+# record the capability rows read back. rows/launcher.sh enables it.
 tick="$home/.config/vgs/plugins/acme.tick"
 mkdir -p "$tick"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
 cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } } }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher"] }
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }

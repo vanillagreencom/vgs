@@ -87,6 +87,14 @@ function merge() {
 }
 
 var TOKENS = {
+    // Whether the theme is light or dark, stated by the theme and never
+    // inferred from its colours. No shell component reads it: it chooses
+    // which palette a plugin-owned appearance resolves, as
+    // ThemeLogic.acceptAppearance states.
+    scheme: {
+        mode: { type: "choice", value: "dark", options: ["dark", "light"] }
+    },
+
     palette: {
         background: color("#000000"),
         foreground: color("#d7d7d9"),

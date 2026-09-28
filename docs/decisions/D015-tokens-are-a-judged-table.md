@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-26
 
-**Status**: Active
+**Status**: Active (a plugin-owned look → D022)
 
 **Research**: —
 
@@ -20,7 +20,7 @@
 - Scaling durations after resolution keeps reduced motion effective for a theme that states its own timing.
 - A judge with no Qt dependency tests in milliseconds under node, as [D009](D009-one-manifest-judge-under-node.md) chose for manifests.
 
-**Revisit When**: An editor resolves `qs` modules for plugin authors and typed properties would give completion, or a decision needs a QML type node cannot host.
+**Revisit When**: An editor resolves `qs` modules for plugin authors and typed properties would give completion, or a decision needs a QML type node cannot host. A plugin that owns its look draws from its own table, judged by the same functions, instead of from shell tokens: [D022](D022-plugin-owned-appearance.md).
 
 **Verification**: `scripts/test-theme-logic.js` pins every default, every refusal key and the derived colours, with one control per rule; `scripts/check-design-tokens.py` refuses an unknown token path and a literal in shipped QML; `scripts/smoke/rows/theme.sh` reads the revision and the published values back from a running shell.
 

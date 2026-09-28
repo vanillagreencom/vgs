@@ -26,6 +26,7 @@ Singleton {
     // without a new revision.
     readonly property string fileState: source.state
 
+    readonly property var scheme: published.scheme
     readonly property var palette: published.palette
     readonly property var color: published.color
     readonly property var space: published.space
@@ -112,20 +113,43 @@ Singleton {
         }
     }
 
-    function convert(values, loaded) {
+    // `values` resolved from `table` as one deep-frozen tree of QML values.
+    // `defaults` holds each family's fallback, in the same shape.
+    function convertTree(table, values, defaults, loaded) {
         const missing = [];
         let known = null;
         const families = () => {
             if (known === null) known = Qt.fontFamilies();
             return known;
         };
-        const walk = (table, node, defaults) => {
+        const walk = (level, node, fallback) => {
             const out = {};
-            for (const key of Object.keys(table))
-                out[key] = ThemeLogic.isLeaf(table[key]) ? convertLeaf(table[key], node[key], defaults[key], loaded, families, missing) : walk(table[key], node[key], defaults[key]);
+            for (const key of Object.keys(level))
+                out[key] = ThemeLogic.isLeaf(level[key]) ? convertLeaf(level[key], node[key], fallback[key], loaded, families, missing) : walk(level[key], node[key], fallback[key]);
             return Object.freeze(out);
         };
-        return walk(Tokens.TOKENS, values, source.defaults.values);
+        return walk(table, values, defaults);
+    }
+
+    function convert(values, loaded) {
+        return convertTree(Tokens.TOKENS, values, source.defaults.values, loaded);
+    }
+
+    // A plugin's own look, for a plugin whose manifest declares
+    // `appearance`: its table resolved against the active theme's
+    // `scheme.mode`, `palette.accent` and `motion.scale` and nothing else
+    // of it, converted as the shell's groups are. A binding on it follows
+    // the theme and answers the same values for any theme with those three.
+    // A refusal is logged and answers null, so the caller fails loudly
+    // instead of drawing a look the judge did not accept. A family is the
+    // plugin's own and is never substituted.
+    function appearance(table, light) {
+        const accepted = ThemeLogic.acceptAppearance(table, light, source.values);
+        if (!accepted.ok) {
+            console.error("appearance: refused: " + ThemeLogic.refusalLine(accepted).replace(/^theme: refused: /, ""));
+            return null;
+        }
+        return convertTree(table, accepted.values, accepted.values, []);
     }
 
     FontLoader {

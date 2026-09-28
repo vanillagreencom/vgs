@@ -46,7 +46,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance"];
 
 function hasOwn(obj, key) {
     return obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
@@ -228,6 +228,15 @@ function validateManifest(raw, sourceDir) {
             return { ok: false, error: "entryPoints." + kind + " is required for kind " + kind };
         if (entry.indexOf("..") !== -1 || entry.charAt(0) === "/")
             return { ok: false, error: "entryPoints." + kind + " must stay inside the plugin directory" };
+    }
+    // A plugin that owns its look names the `.pragma library` file whose
+    // `TOKENS` and `LIGHT` ThemeLogic.acceptAppearance judges; the design
+    // token check reads the table from it.
+    if (raw.appearance !== undefined) {
+        if (typeof raw.appearance !== "string" || !/\.js$/.test(raw.appearance))
+            return { ok: false, error: "appearance must name a .js file, got " + JSON.stringify(raw.appearance) };
+        if (raw.appearance.indexOf("..") !== -1 || raw.appearance.charAt(0) === "/")
+            return { ok: false, error: "appearance must stay inside the plugin directory" };
     }
     var capabilities = raw.capabilities === undefined ? [] : raw.capabilities;
     if (!Array.isArray(capabilities))

@@ -19,7 +19,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the shipped bar's manager built-in, reached through the `manager` capability; its mechanism is core.
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
-- Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token.
+- Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token, or through its own judged table when it owns its look ([appearance.md](appearance.md)).
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion under `scripts/smoke/rows/` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
@@ -61,10 +61,13 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D017](../decisions/D017-templates-and-path-icons.md): controls extend `QtQuick.Templates`; icons are Lucide path data drawn with `QtQuick.Shapes`.
 - [D019](../decisions/D019-theme-packages-carry-plugin-trust.md): theme packages are directories with plugin trust; terminal slots are package files.
 - [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md): a theme apply stages every write beside its destination and writes the shell document last.
+- [D022](../decisions/D022-plugin-owned-appearance.md): a plugin may own its look, taking the theme's mode, accent and motion scale alone.
 
 ## Topics
 
 - [plugins.md](plugins.md): read before writing a plugin or a host.
+- [capabilities.md](capabilities.md): read before touching a capability's provider, its lending record or its release.
+- [appearance.md](appearance.md): read before writing a plugin that owns its look, or touching `Theme.appearance` or its judge.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.

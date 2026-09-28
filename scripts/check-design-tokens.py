@@ -29,6 +29,21 @@ fixed geometry is what a placement row measures:
   literal-duration   a numeric literal assigned to a duration
 A value that is more than one literal, such as `2 * inset`, is layout and
 passes. Comments are blanked and strings kept, through scripts/qml_source.py.
+Appearance rules, on a plugin whose manifest declares `appearance` (each
+directory under shell/plugins, or each directory given): the plugin draws
+with its own table, `look`, instead of Theme, so
+  appearance-refused the declared file throws as it loads, or
+                     ThemeLogic.acceptAppearance refuses its TOKENS and LIGHT
+                     in dark or in light mode against the shell's defaults;
+                     the manifest is read through PluginLogic.validateManifest,
+                     and a manifest it refuses or a file scripts/qml-library.js
+                     refuses (absent, no pragma) is unreadable
+  look-unknown       a `look.<path>` names no path of that table
+  theme-read         a `Theme.<path>` other than `Theme.appearance`, since
+                     every other member carries the global look
+The declared file is exempt from the literal rules, since the judge types
+each of its values; every other file of the plugin stays under them, with a
+radius that names `look.` reading a token.
 
 Usage: check-design-tokens.py [--repo DIR] [PLUGIN_DIR...]
 With no plugin directories, the repository's own trees are checked. With them,
@@ -64,7 +79,38 @@ TOKEN_PATHS = (
     "process.stdout.write(JSON.stringify({ paths: judge.paths(table), leaves: judge.leaves(table).map(l => l.path) }));"
 )
 
+# A plugin's appearance: its manifest judged by the one manifest judge and,
+# when it declares `appearance`, the table in that file judged in both modes
+# against the shell's defaults, with every path the table holds.
+APPEARANCE = (
+    "const fs = require('fs'); const path = require('path');"
+    "const { load } = require(process.argv[1]);"
+    "const plugins = load(process.argv[2]); const judge = load(process.argv[3]);"
+    "const shell = judge.defaults(load(process.argv[4]).TOKENS).values;"
+    "const dir = process.argv[5];"
+    "const out = { error: null, appearance: null, refusals: [], paths: [] };"
+    "let raw; try { raw = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (e) { out.error = e.message; }"
+    "const judged = out.error === null ? plugins.validateManifest(raw, dir) : null;"
+    "if (judged !== null && !judged.ok) out.error = 'manifest: ' + judged.error;"
+    "if (judged !== null && judged.ok && judged.manifest.appearance !== undefined) {"
+    "  out.appearance = judged.manifest.appearance;"
+    "  let look = null; try { look = load(path.join(dir, out.appearance)); } catch (e) { out.refusals.push('unloadable: ' + e.message); }"
+    "  if (look !== null) {"
+    "    for (const mode of ['dark', 'light']) {"
+    "      const theme = Object.assign({}, shell, { scheme: { mode: mode } });"
+    "      const result = judge.acceptAppearance(look.TOKENS, look.LIGHT, theme);"
+    "      if (!result.ok) out.refusals.push('mode=' + mode + ' ' + judge.refusalLine(result).replace(/^theme: refused: /, ''));"
+    "    }"
+    "    if (out.refusals.length === 0) out.paths = judge.paths(look.TOKENS);"
+    "  }"
+    "}"
+    "process.stdout.write(JSON.stringify(out));"
+)
+
 THEME_REFERENCE = re.compile(r"(?<![\w.$])Theme\.((?:[A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*)")
+LOOK_REFERENCE = re.compile(r"(?<![\w$])look\.((?:[A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*)")
+# The one member of Theme a plugin with its own appearance reads.
+APPEARANCE_MEMBER = "appearance"
 THEME_MEMBER = re.compile(r"^\s*readonly property \w+ (\w+)\s*:", re.MULTILINE)
 THEME_FUNCTION = re.compile(r"^\s*function (\w+)\s*\(", re.MULTILINE)
 THEME_FIRST_MEMBER = re.compile(r"^\s*readonly property ", re.MULTILINE)
@@ -96,8 +142,9 @@ def font_property(name):
     return name.startswith("font.") or "." not in name
 
 
-def literal_findings(line):
-    """Every literal-rule finding on one code line, as (rule, detail)."""
+def literal_findings(line, tokens=("Theme.",)):
+    """Every literal-rule finding on one code line, as (rule, detail).
+    `tokens` are the prefixes a radius may name to read a token."""
     out = []
     for m in HEX_COLOR.finditer(line):
         out.append(("literal-color", m.group(0)))
@@ -112,7 +159,7 @@ def literal_findings(line):
             out.append(("literal-font", m.group(1) + ": " + m.group(2).strip()))
     for m in RADIUS_ASSIGNMENT.finditer(line):
         value = m.group(2).strip()
-        if "Theme." not in value and not IS_PROPERTY_PATH.match(value):
+        if not any(prefix in value for prefix in tokens) and not IS_PROPERTY_PATH.match(value):
             out.append(("literal-radius", m.group(1) + ": " + value))
     for m in METRIC_ASSIGNMENT.finditer(line):
         value = m.group(2).strip()
@@ -126,6 +173,46 @@ def literal_findings(line):
         if IS_NUMBER.match(m.group(2).strip()):
             out.append(("literal-duration", m.group(1) + ": " + m.group(2).strip()))
     return out
+
+
+def unknown_prefix(dotted, paths, leaves):
+    """The shortest prefix of `dotted` that names no path, or None once a
+    prefix names a leaf, whose value's own properties are not judged."""
+    parts = dotted.split(".")
+    for i in range(1, len(parts) + 1):
+        prefix = ".".join(parts[:i])
+        if prefix in leaves:
+            return None
+        if prefix not in paths:
+            return prefix
+    return None
+
+
+class Look:
+    """A plugin's appearance: the declared file and its table's paths, or
+    None for a plugin that declares none."""
+
+    def __init__(self, repo, plugin):
+        commons = os.path.join(repo, "shell", "Commons")
+        command = ["node", "-e", APPEARANCE, os.path.join(repo, "scripts", "qml-library.js"), os.path.join(repo, "shell", "Core", "PluginLogic.js"),
+                   os.path.join(commons, "ThemeLogic.js"), os.path.join(commons, "Tokens.js"), plugin]
+        try:
+            run = subprocess.run(command, capture_output=True, text=True, check=False, env=NODE_ENV)
+        except OSError as exc:
+            raise Unreadable("appearance", exc.strerror) from exc
+        if run.returncode != 0:
+            raise Unreadable(plugin, "appearance judge exited " + str(run.returncode) + ": " + run.stderr.strip())
+        answer = json.loads(run.stdout)
+        manifest = os.path.join(plugin, "manifest.json")
+        if answer["error"] is not None:
+            if not os.path.exists(manifest):
+                self.file = None
+                return
+            raise Unreadable(manifest, answer["error"])
+        self.file = None if answer["appearance"] is None else os.path.join(plugin, answer["appearance"])
+        self.refusals = answer["refusals"]
+        self.paths = set(answer["paths"])
+        self.leaves = {p for p in self.paths if not any(other.startswith(p + ".") for other in self.paths)}
 
 
 class Table:
@@ -165,27 +252,58 @@ class Table:
         parts = dotted.split(".")
         if parts[0] in self.members and parts[0] not in self.paths:
             return None
-        for i in range(1, len(parts) + 1):
-            prefix = ".".join(parts[:i])
-            if prefix in self.leaves:
-                return None
-            if prefix not in self.paths:
-                return prefix
-        return None
+        return unknown_prefix(dotted, self.paths, self.leaves)
 
 
-def check_tree(root, table, literal, findings, notices):
+def plugin_looks(repo, root, plugins):
+    """The appearance of every plugin under `root`, keyed by its directory.
+    `plugins` is "children" when each directory under `root` is a plugin,
+    "self" when `root` is one, and None for a tree the rules skip."""
+    if plugins is None:
+        return {}
+    if plugins == "self":
+        dirs = [root]
+    else:
+        try:
+            names = sorted(os.listdir(root))
+        except OSError as exc:
+            raise Unreadable(root, exc.strerror) from exc
+        dirs = [os.path.join(root, name) for name in names if os.path.isdir(os.path.join(root, name))]
+    return {d: Look(repo, d) for d in dirs}
+
+
+def look_of(looks, path):
+    """The appearance of the plugin `path` sits in, or None."""
+    for directory, look in looks.items():
+        if path.startswith(directory + os.sep) and look.file is not None:
+            return look
+    return None
+
+
+def check_tree(root, table, literal, looks, findings, notices):
     """Check every source file under `root`; answer the file count."""
     files = set()
+    for look in looks.values():
+        if look.file is not None:
+            for refusal in look.refusals:
+                findings.append(f"appearance-refused {look.file}:1 {refusal}")
     for path, number, line in source_lines(root):
         files.add(path)
+        look = look_of(looks, path)
         for m in THEME_REFERENCE.finditer(line):
             unknown = table.unknown(m.group(1))
             if unknown is not None:
                 findings.append(f"token-unknown {path}:{number} Theme.{unknown}")
-        if literal is None:
+            elif look is not None and m.group(1).split(".")[0] != APPEARANCE_MEMBER:
+                findings.append(f"theme-read {path}:{number} Theme.{m.group(1)}")
+        if look is not None and not look.refusals:
+            for m in LOOK_REFERENCE.finditer(line):
+                unknown = unknown_prefix(m.group(1), look.paths, look.leaves)
+                if unknown is not None:
+                    findings.append(f"look-unknown {path}:{number} look.{unknown}")
+        if literal is None or (look is not None and path == look.file):
             continue
-        for rule, detail in literal_findings(line):
+        for rule, detail in literal_findings(line, ("Theme.",) if look is None else ("Theme.", "look.")):
             (findings if literal == "finding" else notices).append(f"{rule} {path}:{number} {detail}")
     if not files:
         raise Unreadable(root, "no source file found")
@@ -201,13 +319,13 @@ def main(argv):
     shell = os.path.join(repo, "shell")
     templates = os.path.join(repo, ".agents", "skills", "vgs-plugin", "templates")
     fixtures = os.path.join(repo, "scripts", "smoke", "fixtures", "plugins")
-    # root -> how a literal rule is reported there: a finding, a notice, or
-    # not judged.
+    # root -> how a literal rule is reported there (a finding, a notice, or
+    # not judged) and where its plugins are, for the appearance rules.
     if args.plugin_dirs:
-        trees = [(os.path.abspath(d), "notice") for d in args.plugin_dirs]
+        trees = [(os.path.abspath(d), "notice", "self") for d in args.plugin_dirs]
     else:
-        trees = [(os.path.join(shell, "Ui"), "finding"), (os.path.join(shell, "Hosts"), "finding"), (os.path.join(shell, "plugins"), "finding"), (templates, "finding"),
-                 (os.path.join(shell, "Commons"), None), (os.path.join(shell, "Core"), None), (fixtures, None)]
+        trees = [(os.path.join(shell, "Ui"), "finding", None), (os.path.join(shell, "Hosts"), "finding", None), (os.path.join(shell, "plugins"), "finding", "children"),
+                 (templates, "finding", None), (os.path.join(shell, "Commons"), None, None), (os.path.join(shell, "Core"), None, None), (fixtures, None, None)]
     findings = []
     notices = []
     files = 0
@@ -215,8 +333,8 @@ def main(argv):
         table = Table(repo)
         for group in table.unpublished:
             findings.append(f"group-unpublished {table.theme}:{table.members_line} {group}")
-        for root, literal in trees:
-            files += check_tree(root, table, literal, findings, notices)
+        for root, literal, plugins in trees:
+            files += check_tree(root, table, literal, plugin_looks(repo, root, plugins), findings, notices)
     except Unreadable as exc:
         print(f"check-design-tokens: unreadable: {exc.path}: {exc.strerror}")
         return 2

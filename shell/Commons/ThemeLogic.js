@@ -502,6 +502,62 @@ function accept(tokens, text) {
     return { ok: true, name: document.name, values: result.values };
 }
 
+// --- plugin-owned appearance
+
+// The tokens a plugin-owned appearance takes from the active theme, by the
+// path both tables hold them at, and nothing else of the theme. The accent
+// is the one colour; the scale is the motion control, so reduced motion
+// reaches the plugin's durations as it reaches the shell's.
+var APPEARANCE_INPUTS = ["palette.accent", MOTION_SCALE];
+
+// The token whose value picks the plugin's light overrides.
+var SCHEME_MODE = "scheme.mode";
+
+// Judge and resolve a plugin's own token table. `table` is in Tokens.js
+// leaf format; `light` is an overrides tree in document shape, applied when
+// the theme's `scheme.mode` is `light` and judged in both modes, so a defect
+// in it refuses in either. `theme` is the active theme's resolved values,
+// as accept answers them, so its mode is one the shell's own judge
+// accepted. The table's `palette` group holds `accent` alone and `light`
+// sets no input, so no other theme value reaches the plugin and the plugin
+// cannot shadow what the theme gives it. Answers { ok: true, values } or
+// one refusal whose reason starts `appearance-` or is the resolver's own.
+function acceptAppearance(table, light, theme) {
+    var defect = tableError(table);
+    if (defect !== "")
+        return refusal("appearance-table", "", defect);
+    var palette = nodeAt(table, "palette");
+    var accent = nodeAt(table, APPEARANCE_INPUTS[0]);
+    if (!isLeaf(accent) || accent.type !== "color" || Object.keys(palette).length !== 1)
+        return refusal("appearance-palette", "palette", "want=accent-colour-alone");
+    if (!isPlainObject(light))
+        return refusal("appearance-light", "", "got=" + JSON.stringify(light));
+    var stated = overridesOf(table, light);
+    if (!stated.ok)
+        return stated;
+    for (var i = 0; i < APPEARANCE_INPUTS.length; i++)
+        if (hasOwn(stated.overrides, APPEARANCE_INPUTS[i]))
+            return refusal("appearance-input", APPEARANCE_INPUTS[i], "light sets an input");
+    var read = function (dotted) {
+        var node = theme;
+        var parts = dotted.split(".");
+        for (var p = 0; p < parts.length; p++)
+            node = isPlainObject(node) && hasOwn(node, parts[p]) ? node[parts[p]] : undefined;
+        return node;
+    };
+    var mode = read(SCHEME_MODE);
+    if (typeof mode !== "string")
+        return refusal("appearance-theme", SCHEME_MODE, "got=" + JSON.stringify(mode));
+    var overrides = mode === "light" ? stated.overrides : {};
+    for (var j = 0; j < APPEARANCE_INPUTS.length; j++) {
+        var value = read(APPEARANCE_INPUTS[j]);
+        if (value === undefined)
+            return refusal("appearance-theme", APPEARANCE_INPUTS[j], "got=undefined");
+        overrides[APPEARANCE_INPUTS[j]] = value;
+    }
+    return resolve(table, overrides);
+}
+
 // The name the defaults carry and the only package name an installed theme
 // may not take. The shipped package with this name is the revert.
 var DEFAULT_NAME = "vgs";

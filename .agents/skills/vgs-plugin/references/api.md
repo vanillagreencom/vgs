@@ -147,6 +147,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | Member | Type |
 |---|---|
 | `Theme.<group>.<token>` | the design tokens: one read-only group per top-level group of `shell/Commons/Tokens.js`, each token a primitive: a colour as the string `#aarrggbb` a `color` property takes (call `Qt.color` on it for channels), an `int` of pixels or milliseconds, a `string`, a `bool`, an `Easing` enumerator; `docs/architecture/design-system.md` states the tiers |
+| `Theme.appearance(TOKENS, LIGHT)` | function: a plugin-owned look, the plugin's own table resolved against the theme's `scheme.mode`, `palette.accent` and `motion.scale` alone, frozen and converted as the groups are; null after a logged refusal. Only for a plugin whose manifest names `appearance`: [`docs/architecture/appearance.md`](../../../../docs/architecture/appearance.md) |
 | `Theme.name`, `Theme.revision`, `Theme.fileState` | string, int, string: the accepted theme's name, a counter that rises after every group holds a new theme, and the theme file's state (`pending`, `loaded`, `absent`, `refused`, `unreadable`), which a refused edit moves without a new revision |
 | `Paths.configDir` | string: the directory `shell.json` and `theme.json` are read from |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |

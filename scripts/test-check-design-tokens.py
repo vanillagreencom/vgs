@@ -19,10 +19,11 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 # Files copied from the repository into every fixture: the real table, judge,
 # singleton and loader, so a row judges against the shipped token paths.
-SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "scripts/qml-library.js")
+SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "scripts/qml-library.js")
 # Every tree the default scope walks, each with one clean file, so a fixture
 # walks what the repository walks: these six, the three shipped files under
-# shell/Commons, and the planted file.
+# shell/Commons, the shipped manifest judge under shell/Core, and the planted
+# file.
 TREES = ("shell/Ui", "shell/Hosts", "shell/plugins/acme.widget", ".agents/skills/vgs-plugin/templates", "shell/Core", "scripts/smoke/fixtures/plugins/acme.probe")
 CLEAN = "import QtQuick\nimport qs.Commons\nItem {\n    color: Theme.color.surface\n    radius: Theme.radius.md\n    width: 2 * Theme.space.md\n}\n"
 UI = "shell/Ui/Thing.qml"
@@ -84,6 +85,54 @@ ROWS = [
 ]
 
 
+# A plugin that owns its look: a manifest declaring `Look.js`, whose table
+# holds literals the judge types, and a view that reads it.
+LOOK_MANIFEST = '{"schemaVersion": 1, "id": "acme.look", "name": "L", "version": "1", "author": "a", "description": "d", "kinds": ["panel"], "entryPoints": {"panel": "View.qml"}, "appearance": "Look.js"}'
+LOOK_TABLE = (".pragma library\n"
+              "var TOKENS = { palette: { accent: { type: \"color\", value: \"#000000\" } },"
+              " motion: { scale: { type: \"number\", value: 1, min: 0, max: 4 } },"
+              " card: { fill: { type: \"color\", value: \"#151515\" }, radius: { type: \"length\", value: 18 } } };\n"
+              "var LIGHT = { card: { fill: \"#efefef\" } };\n")
+LOOK_VIEW = ("import QtQuick\nimport qs.Commons\nimport \"Look.js\" as Look\nRectangle {\n"
+             "    readonly property var look: Theme.appearance(Look.TOKENS, Look.LIGHT)\n"
+             "    color: look.card.fill\n    radius: look.card.radius\n}\n")
+LOOK_DIR = "shell/plugins/acme.look"
+
+# rows: name, the plugin's files over the clean three, expected rule key or
+# None. The clean plugin adds two source files to the ten.
+LOOK_ROWS = [
+    ("a plugin reading its own look", {}, None),
+    ("a literal in the declared table is not a finding", {"Look.js": LOOK_TABLE.replace("#151515", "#123456")}, None),
+    ("a light tree that sets an input is refused", {"Look.js": LOOK_TABLE.replace("card: { fill: \"#efefef\" }", "palette: { accent: \"#ffffff\" }")}, "appearance-refused"),
+    ("a palette colour other than the accent is refused", {"Look.js": LOOK_TABLE.replace("palette: { accent:", "palette: { foreground: { type: \"color\", value: \"#fff\" }, accent:")}, "appearance-refused"),
+    ("a light value of the wrong type is refused", {"Look.js": LOOK_TABLE.replace("\"#efefef\"", "18")}, "appearance-refused"),
+    ("a declared file that does not load is refused", {"Look.js": ".pragma library\nvar TOKENS = {\n"}, "appearance-refused"),
+    ("a look path the table does not hold", {"View.qml": LOOK_VIEW.replace("look.card.fill", "look.card.glow")}, "look-unknown"),
+    ("a property of a look value is not a finding", {"View.qml": LOOK_VIEW.replace("look.card.fill", "look.card.fill.shade.x").replace("color: look", "property var c: look")}, None),
+    ("a Theme member other than appearance", {"View.qml": LOOK_VIEW.replace("color: look.card.fill", "color: Theme.color.text")}, "theme-read"),
+    ("a literal in another file of the plugin is a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "width: 10")}, "literal-metric"),
+    ("a radius from a look path inside arithmetic is not a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "radius: Math.min(look.card.radius, height / 2)")}, None),
+    ("a radius that names no look path is a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "radius: height / 2")}, "literal-radius"),
+]
+
+
+def run_look_row(name, files, want):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_repo(tmp)
+        plugin = dict({"manifest.json": LOOK_MANIFEST, "Look.js": LOOK_TABLE, "View.qml": LOOK_VIEW}, **files)
+        os.makedirs(os.path.join(root, LOOK_DIR))
+        for relative, text in plugin.items():
+            with open(os.path.join(root, LOOK_DIR, relative), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        proc = run_check(root)
+        keys = keys_of(proc)
+        if want is None:
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=12"]
+        else:
+            good = proc.returncode == 1 and keys == {want}
+        return report(name, good, proc)
+
+
 def build_repo(tmp, planted=None, theme=None, tokens=None):
     root = os.path.join(tmp, "repo")
     for relative in SHIPPED:
@@ -125,14 +174,21 @@ def run_row(name, path, text, want):
         proc = run_check(build_repo(tmp, (path, text)))
         keys = keys_of(proc)
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=10"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=11"]
         else:
             good = proc.returncode == 1 and keys == {want} and proc.stdout.splitlines()[-1] == "check-design-tokens: findings=1"
         return report(name, good, proc)
 
 
 def main():
-    results = [run_row(*row) for row in ROWS]
+    results = [run_row(*row) for row in ROWS] + [run_look_row(*row) for row in LOOK_ROWS]
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = run_check(build_repo(tmp, ("shell/plugins/acme.widget/Look.qml", "Rectangle { property var c: look.nope; radius: Math.min(look.card.radius, height / 2) }\n")))
+        results.append(report("a plugin without an appearance takes no look rule and no look radius", proc.returncode == 1 and keys_of(proc) == {"literal-radius"}, proc))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_repo(tmp, ("shell/plugins/acme.widget/manifest.json", '{"schemaVersion": 1, "id": "acme.widget"}'))
+        proc = run_check(root)
+        results.append(report("a manifest the judge refuses exits 2", proc.returncode == 2 and proc.stdout.startswith(f"check-design-tokens: unreadable: {root}/shell/plugins/acme.widget/manifest.json: manifest: "), proc))
     theme = open(os.path.join(REPO, "shell/Commons/Theme.qml"), encoding="utf-8").read()
     with tempfile.TemporaryDirectory() as tmp:
         needle = "    readonly property var bar: published.bar\n"
@@ -163,6 +219,13 @@ def main():
             fh.write("Item { color: Theme.nope }\n")
         proc = run_check(root, plugin)
         results.append(report("an unknown token in a checked plugin directory is a finding", proc.returncode == 1 and keys_of(proc) == {"token-unknown"}, proc))
+        look = os.path.join(tmp, "acme.look")
+        os.makedirs(look)
+        for relative, text in {"manifest.json": LOOK_MANIFEST, "Look.js": LOOK_TABLE.replace("card: { fill: \"#efefef\" }", "motion: { scale: 0 }"), "View.qml": LOOK_VIEW.replace("radius: look.card.radius", "width: 10")}.items():
+            with open(os.path.join(look, relative), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        proc = run_check(root, look)
+        results.append(report("a refused appearance in a checked plugin directory is a finding and a literal a notice", proc.returncode == 1 and keys_of(proc) == {"appearance-refused"} and any(line.startswith("notice literal-metric ") for line in proc.stdout.splitlines()), proc))
     proc = run_check("/nonexistent/repo")
     results.append(report("an unreadable repository exits 2", proc.returncode == 2 and proc.stdout.startswith("check-design-tokens: unreadable: "), proc))
     if all(results):

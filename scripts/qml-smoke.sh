@@ -77,6 +77,7 @@ source "$repo/scripts/smoke/rows/themes.sh"
 source "$repo/scripts/smoke/rows/toasts.sh"
 source "$repo/scripts/smoke/rows/overlays.sh"
 source "$repo/scripts/smoke/rows/gallery.sh"
+source "$repo/scripts/smoke/rows/launcher.sh"
 source "$repo/scripts/smoke/rows/instance-guard.sh"
 source "$repo/scripts/smoke/rows/diagnostics.sh"
 

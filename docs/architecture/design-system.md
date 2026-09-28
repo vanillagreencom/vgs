@@ -2,7 +2,7 @@
 
 Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, shell/Core/Toasts.qml, shell/Hosts/ToastHost.qml, scripts/smoke/rows/overlays.sh, scripts/smoke/rows/toasts.sh, scripts/smoke/rows/gallery.sh, scripts/smoke/fixtures/plugins/acme.overlays/**, shell/plugins/vgs.gallery/**, shell/Ui/AGENTS.md, shell/Commons/AGENTS.md, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
 
-Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code.
+Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code. A plugin that owns its look takes the theme's mode and accent alone: [appearance.md](appearance.md).
 
 ## Layers
 
@@ -17,6 +17,7 @@ Each layer reads only the layer above it.
 
 | Tier | Groups | Holds |
 |---|---|---|
+| Scheme | `scheme` | `mode`, `dark` or `light`, which no component reads: it picks a plugin-owned look's light values |
 | Palette | `palette` | `background`, `foreground`, `accent`, `success`, `warning`, `danger`, `info` |
 | Scale | `space`, `radius`, `border`, `opacity`, `motion`, `size`, `icon`, `font` | the spacing unit and its steps, radius steps, border widths, the disabled opacity, `motion.scale` with the durations and easings, control and panel sizes, icon sizes and stroke, font families and the base size |
 | Semantic | `color`, `text` | colour roles derived from the palette; one typography role per kind of text, each with `family`, `size`, `weight`, `letterSpacing` in em, `lineHeight` and `uppercase` |
@@ -64,7 +65,7 @@ Every one-line control is `size.control.md` tall, with `control.paddingX` a side
 
 ## Toasts
 
-`Toast` is the notice the core's toast stack, `shell/Core/Toasts.qml`, draws through `shell/Hosts/ToastHost.qml` on the focused screen; a plugin shows one through the `toasts` capability, [plugins.md § Capabilities](plugins.md#capabilities). `PluginLogic.toastOptions` judges the options and `PluginLogic.TOAST_VISIBLE_MAX` and `TOAST_QUEUE_MAX` are the ceilings; a theme sets the look, the corner and the default duration, never a ceiling. A toast's timer starts when it shows, so one that waited shows for its whole duration. Expiry, the user's close, the disposer and the instance's teardown all run the one release, which is idempotent. When the stack's screen goes, the shown toasts return to the front of the queue and show again on the next focused screen; with no screen, every toast waits. `scripts/smoke/rows/toasts.sh` reads each of these back from the lending record, the layer list and a click on the close button.
+`Toast` is the notice the core's toast stack, `shell/Core/Toasts.qml`, draws through `shell/Hosts/ToastHost.qml` on the focused screen; a plugin shows one through the `toasts` capability, [capabilities.md](capabilities.md). `PluginLogic.toastOptions` judges the options and `PluginLogic.TOAST_VISIBLE_MAX` and `TOAST_QUEUE_MAX` are the ceilings; a theme sets the look, the corner and the default duration, never a ceiling. A toast's timer starts when it shows, so one that waited shows for its whole duration. Expiry, the user's close, the disposer and the instance's teardown all run the one release, which is idempotent. When the stack's screen goes, the shown toasts return to the front of the queue and show again on the next focused screen; with no screen, every toast waits. `scripts/smoke/rows/toasts.sh` reads each of these back from the lending record, the layer list and a click on the close button.
 
 ## The shell document
 
@@ -74,7 +75,7 @@ Every one-line control is `size.control.md` tall, with `control.paddingX` a side
 
 - The table and the judge import nothing and take the table as an argument, so `scripts/test-theme-logic.js` runs them under node with no copy. Enforced by the `.pragma library` header `scripts/qml-library.js` requires.
 - `Theme` publishes frozen objects of primitives through read-only properties. A write to `Theme.color.accent` or to a group from any file changes nothing. Enforced by `Object.freeze` in `Theme.convert` and by publishing no QML colour value, whose channels a frozen object cannot protect; `scripts/smoke/rows/theme.sh` reads every group back frozen and writes a token and a group.
-- Shipped QML (`shell/Ui`, `shell/Hosts`, `shell/plugins`) and the vgs-plugin skill templates hold no literal colour, font, metric, opacity or duration, every radius reads a token, and every `Theme.<path>` anywhere under `shell/`, the templates and the smoke fixtures names a token. Enforced by `scripts/check-design-tokens.py`, whose header names each rule; `scripts/test-check-design-tokens.py` plants one violation per rule. `shell/Commons` and `shell/Core` draw nothing and a fixture's fixed geometry is what a placement row measures, so those trees are under the token rule alone.
+- Shipped QML (`shell/Ui`, `shell/Hosts`, `shell/plugins`) and the vgs-plugin skill templates hold no literal colour, font, metric, opacity or duration, every radius reads a token, and every `Theme.<path>` anywhere under `shell/`, the templates and the smoke fixtures names a token. Enforced by `scripts/check-design-tokens.py`, whose header names each rule; `scripts/test-check-design-tokens.py` plants one violation per rule. A plugin that owns its look reads it from its own table, under the rules [appearance.md § The style check](appearance.md#the-style-check) adds. `shell/Commons` and `shell/Core` draw nothing and a fixture's fixed geometry is what a placement row measures, so those trees are under the token rule alone.
 - `vgs-plugin check` runs the same check on a third-party plugin: an unknown token fails it and a literal is a notice, since an author may choose one.
 - The bundled fonts are `shell/assets/fonts/InterVariable.ttf`, which Qt names `Inter Variable`, and `shell/assets/fonts/JetBrainsMono-Variable.ttf`, each with its licence beside it. `tools/byte-ceiling-excludes` exempts `shell/assets/` from the commit-guards byte ceiling. A theme names families and ships no font file; a family Qt does not list is logged as `theme: font=<family> unavailable; drawing <bundled>` and the bundled family the token's default names draws in its place, so a sans role stays sans and a chrome role stays mono.
 
@@ -92,3 +93,4 @@ Every one-line control is `size.control.md` tall, with `control.paddingX` a side
 - Two bundled variable fonts, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
+- A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D022](../decisions/D022-plugin-owned-appearance.md).

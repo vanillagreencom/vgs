@@ -22,6 +22,7 @@ const TERMINAL_SLOTS = Object.fromEntries(Array.from({ length: 16 }, (_, index) 
 
 // Resolved defaults, by token: the expression and the arithmetic.
 const DEFAULTS = [
+    ["scheme.mode", "dark"],
     ["palette.accent", "#ff5a36ff"],
     // mix(#000000, #d7d7d9, 0.05): 215 * 0.05 = 10.75, 217 * 0.05 = 10.85
     ["color.surface", "#0b0b0bff"],
@@ -94,6 +95,7 @@ const DEFAULTS = [
 // A document that is accepted, and the values it must resolve to.
 const ACCEPTED = [
     { tokens: {}, want: [["palette.accent", "#ff5a36ff"]] },
+    { tokens: { scheme: { mode: "light" } }, want: [["scheme.mode", "light"], ["palette.background", "#000000ff"]] },
     // A palette colour reaches every role derived from it; #7aa2f7 has
     // luminance 0.36, so the text on it is black.
     { tokens: { palette: { accent: "#7aa2f7" } }, want: [["color.accent", "#7aa2f7ff"], ["color.focus", "#7aa2f7ff"], ["bar.active", "#7aa2f7ff"], ["color.onAccent", "#000000ff"]] },
@@ -183,7 +185,58 @@ const REFUSED = [
     // The default text on a fill derives from the fill, so a translucent
     // fill alone is refused where that default is evaluated.
     { tokens: { bar: { active: "#ff5a3680" } }, reason: "contrast-translucent", token: "bar.onActive" },
-    { tokens: { motion: { easing: { standard: "bouncy" } } }, reason: "option", token: "motion.easing.standard" }
+    { tokens: { motion: { easing: { standard: "bouncy" } } }, reason: "option", token: "motion.easing.standard" },
+    { tokens: { scheme: { mode: "dim" } }, reason: "option", token: "scheme.mode" }
+];
+
+// A plugin's own table and its light overrides, the shape a plugin's
+// appearance file exports. Every expected value is computed by hand.
+const LOOK = {
+    palette: { accent: { type: "color", value: "#000000" } },
+    motion: { scale: { type: "number", value: 1, min: 0, max: 4 }, open: { type: "duration", value: 200 } },
+    card: {
+        fill: { type: "color", value: "#151515c7" },
+        text: { type: "color", value: "#e8e8e8" },
+        edge: { type: "color", value: "alpha({palette.accent}, 0.5)" },
+        radius: { type: "length", value: 18 }
+    }
+};
+const LOOK_LIGHT = { card: { fill: "#efefefcc", text: "#2a2a2a" } };
+const shellTheme = tokens => {
+    const result = load(judgeFile).accept(TOKENS, document(tokens));
+    assert.equal(result.ok, true, "shell document for an appearance row");
+    return result.values;
+};
+const DARK_THEME = shellTheme({ palette: { accent: "#7aa2f7" } });
+const LIGHT_THEME = shellTheme({ scheme: { mode: "light" }, palette: { accent: "#a8330a" } });
+// Every shell token but the three inputs moves; the plugin's values stay.
+const UNRELATED_THEME = shellTheme({ palette: { accent: "#7aa2f7", foreground: "#ff00ff", background: "#00ff00" }, font: { size: 22, family: { mono: "Courier", sans: "Serif" } }, space: { unit: 7 }, radius: { md: 9 } });
+
+// Accepted appearance rows: [label, table, light, theme, want].
+const APPEARANCE_ACCEPTED = [
+    ["dark mode keeps the table's own values and takes the accent", LOOK, LOOK_LIGHT, DARK_THEME, [["card.fill", "#151515c7"], ["card.text", "#e8e8e8ff"], ["palette.accent", "#7aa2f7ff"], ["card.edge", "#7aa2f780"], ["card.radius", 18], ["motion.open", 200]]],
+    ["light mode applies the light overrides and the light accent", LOOK, LOOK_LIGHT, LIGHT_THEME, [["card.fill", "#efefefcc"], ["card.text", "#2a2a2aff"], ["card.edge", "#a8330a80"], ["card.radius", 18]]],
+    ["unrelated shell tokens reach no plugin value", LOOK, LOOK_LIGHT, UNRELATED_THEME, [["card.fill", "#151515c7"], ["card.text", "#e8e8e8ff"], ["card.edge", "#7aa2f780"], ["card.radius", 18], ["motion.open", 200]]],
+    ["the theme's motion scale reaches the plugin's durations", LOOK, LOOK_LIGHT, shellTheme({ motion: { scale: 0 } }), [["motion.open", 0], ["motion.scale", 0]]],
+    ["the scale doubles the plugin's durations", LOOK, LOOK_LIGHT, shellTheme({ motion: { scale: 2 } }), [["motion.open", 400]]]
+];
+
+// Refused appearance rows: [label, table, light, theme, reason, token].
+const APPEARANCE_REFUSED = [
+    ["a table defect", { palette: { accent: { type: "colour", value: "#000" } }, motion: LOOK.motion }, {}, DARK_THEME, "appearance-table", ""],
+    ["a palette with a second colour", Object.assign({}, LOOK, { palette: { accent: LOOK.palette.accent, foreground: { type: "color", value: "#fff" } } }), {}, DARK_THEME, "appearance-palette", "palette"],
+    ["no palette", { motion: LOOK.motion, card: LOOK.card }, {}, DARK_THEME, "appearance-palette", "palette"],
+    ["an accent that is no colour", Object.assign({}, LOOK, { palette: { accent: { type: "length", value: 1 } } }), {}, DARK_THEME, "appearance-palette", "palette"],
+    ["light overrides that are no tree", LOOK, [], DARK_THEME, "appearance-light", ""],
+    ["light overrides naming no token of the table", LOOK, { card: { glow: "#fff" } }, DARK_THEME, "unknown-token", "card.glow"],
+    ["light overrides setting the accent", LOOK, { palette: { accent: "#fff" } }, DARK_THEME, "appearance-input", "palette.accent"],
+    ["light overrides setting the scale", LOOK, { motion: { scale: 0 } }, DARK_THEME, "appearance-input", "motion.scale"],
+    ["a theme without a mode", LOOK, LOOK_LIGHT, {}, "appearance-theme", "scheme.mode"],
+    ["a theme without an accent", LOOK, LOOK_LIGHT, { scheme: { mode: "dark" }, motion: { scale: 1 } }, "appearance-theme", "palette.accent"],
+    ["a theme without a scale", LOOK, LOOK_LIGHT, { scheme: { mode: "dark" }, palette: { accent: "#000000ff" } }, "appearance-theme", "motion.scale"],
+    // A light value is judged only where it applies, but its path is
+    // judged in both modes.
+    ["a light value of the wrong type in light mode", LOOK, { card: { radius: "#fff" } }, LIGHT_THEME, "type", "card.radius"]
 ];
 
 // A table with one defect, and the text its report starts with.
@@ -288,6 +341,21 @@ function verify(judge) {
     for (const name of ["", ".", "..", "../x", "a/b", "a b", "-x", ".x", "x\n", 7, undefined])
         assert.equal(judge.isPackageName(name), false, JSON.stringify(name));
 
+    for (const [label, table, light, theme, want] of APPEARANCE_ACCEPTED) {
+        const result = judge.acceptAppearance(table, light, theme);
+        assert.equal(result.ok, true, `${label}: ${result.ok ? "" : judge.refusalLine(result)}`);
+        for (const [token, value] of want)
+            assert.deepEqual(at(result.values, token), value, `${label} ${token}`);
+    }
+    assert.deepEqual(judge.acceptAppearance(LOOK, LOOK_LIGHT, UNRELATED_THEME).values, judge.acceptAppearance(LOOK, LOOK_LIGHT, DARK_THEME).values, "unrelated shell tokens moved a plugin value");
+    for (const [label, table, light, theme, reason, token] of APPEARANCE_REFUSED) {
+        const result = judge.acceptAppearance(table, light, theme);
+        assert.equal(result.ok, false, label);
+        assert.equal(result.reason, reason, label);
+        assert.equal(result.token, token, label);
+    }
+    assert.equal(judge.acceptAppearance(LOOK, { card: { radius: "#fff" } }, DARK_THEME).ok, true, "a light value applies only in light mode");
+
     assert.equal(judge.refusalLine(judge.accept(TOKENS, document({ palette: { acent: "#fff" } }))), "theme: refused: token=palette.acent reason=unknown-token");
     assert.equal(judge.refusalLine(judge.accept(TOKENS, JSON.stringify({ foreground: "#123456" }))), "theme: refused: document reason=unknown-key key=foreground");
 }
@@ -336,7 +404,16 @@ const CONTROLS = [
     ["package reserved name", "if (files.directoryName === DEFAULT_NAME && files.shipped !== true)", "if (false)"],
     ["package name mismatch", "if (shell.name !== files.directoryName)", "if (false)"],
     ["terminal slot name", "if (!hasOwn(expected, keys[i]))", "if (false)"],
-    ["terminal colour syntax", "if (colour === null)", "if (false)"]
+    ["terminal colour syntax", "if (colour === null)", "if (false)"],
+    ["appearance table", "if (defect !== \"\")\n        return refusal(\"appearance-table\"", "if (false)\n        return refusal(\"appearance-table\""],
+    ["appearance palette", 'if (!isLeaf(accent) || accent.type !== "color" || Object.keys(palette).length !== 1)', "if (!isLeaf(accent))"],
+    ["appearance light tree", "if (!isPlainObject(light))", "if (false)"],
+    ["appearance light judged", "if (!stated.ok)\n        return stated;\n    for", "if (false)\n        return stated;\n    for"],
+    ["appearance input", "if (hasOwn(stated.overrides, APPEARANCE_INPUTS[i]))", "if (false)"],
+    ["appearance mode", 'var overrides = mode === "light" ? stated.overrides : {};', "var overrides = stated.overrides;"],
+    ["appearance theme mode", 'if (typeof mode !== "string")', "if (false)"],
+    ["appearance theme input", "if (value === undefined)\n            return refusal(\"appearance-theme\"", "if (false)\n            return refusal(\"appearance-theme\""],
+    ["appearance inputs applied", "overrides[APPEARANCE_INPUTS[j]] = value;", ""]
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");

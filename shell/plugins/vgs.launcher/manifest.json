@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.launcher",
+  "name": "launcher",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "A Spotlight launcher: search applications, menus and files from one glass field. Open it with the vgs.launcher:toggle shortcut, its bar entry or IPC.",
+  "license": "MIT",
+  "kinds": [
+    "overlay",
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "overlay": "Launcher.qml",
+    "bar-widget": "Widget.qml",
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "ipc",
+    "run",
+    "shortcut",
+    "surfaces",
+    "theme"
+  ],
+  "settings": {},
+  "defaultSection": "left",
+  "appearance": "Appearance.js"
+}

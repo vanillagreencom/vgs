@@ -310,5 +310,30 @@ Scope {
             return -1;
         }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.invoke(hostKey, id, name, arg); }
+        // Whether an item under the instance holds keyboard focus in an
+        // active window, so a row types only once the compositor gave the
+        // surface the keyboard.
+        function activeFocusIn(hostKey: string, id: string): bool {
+            const item = root.instance(hostKey, id);
+            return item !== null && root.descendants(item).some(child => child.activeFocus);
+        }
+        // The launcher's rows as it draws them, in list order: each
+        // LauncherRow delegate's kind, label and detail.
+        function launcherRows(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const rows = root.descendants(item).filter(child => /^LauncherRow_QMLTYPE_/.test(String(child)) && child.index >= 0);
+            rows.sort((a, b) => a.index - b.index);
+            return JSON.stringify(rows.map(row => [row.kind, row.label, row.detail]));
+        }
+        // The launcher's edge light: the URL its shader loaded from and
+        // whether the engine compiled it.
+        function launcherShader(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const shader = root.descendants(item).find(child => child instanceof ShaderEffect);
+            if (shader === undefined) return "no-shader";
+            return JSON.stringify({ url: String(shader.fragmentShader), compiled: shader.status === ShaderEffect.Compiled, log: shader.log });
+        }
     }
 }

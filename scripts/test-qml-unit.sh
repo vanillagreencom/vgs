@@ -44,7 +44,7 @@ mutations=(
   "the label's weight does not reach the axis|foundation/Label.qml|font.variableAxes: ({ wght: typography.weight })|font.variableAxes: ({ wght: 400 })|tst_label.qml"
   "the bar role draws at the body metrics|../Commons/Tokens.js|bar: role(\"mono\", 0.8, 500, 0.08, 1, true, \"text\")|bar: role(\"sans\", 1, 400, 0, 1.55, false, \"text\")|tst_label.qml"
   "body text draws in the mono family|../Commons/Tokens.js|body: role(\"sans\", 1, 400, 0, 1.55, false, \"text\")|body: role(\"mono\", 1, 400, 0, 1.55, false, \"text\")|tst_label.qml"
-  "an absent family draws the mono family whatever its token|../Commons/Theme.qml|convertLeaf(table[key], node[key], defaults[key], loaded, families, missing)|convertLeaf(table[key], node[key], loaded[0], loaded, families, missing)|tst_label.qml"
+  "an absent family draws the mono family whatever its token|../Commons/Theme.qml|convertLeaf(level[key], node[key], fallback[key], loaded, families, missing)|convertLeaf(level[key], node[key], loaded[0], loaded, families, missing)|tst_label.qml"
   "the label's letter spacing is not scaled|foundation/Label.qml|font.letterSpacing: typography.letterSpacing * typography.size|font.letterSpacing: typography.letterSpacing|tst_label.qml"
   "the icon's stroke scales with its size|foundation/Icon.qml|strokeWidth: root.stroke / root.factor|strokeWidth: root.stroke|tst_icon.qml"
   "the icon's path is not scaled|foundation/Icon.qml|transform: Scale { xScale: root.factor; yScale: root.factor }|transform: Scale { xScale: 1; yScale: 1 }|tst_icon.qml"
@@ -118,6 +118,8 @@ mutations=(
   "the inline label stands the stacking gap from its control|controls/Field.qml|spacing: Theme.field.labelGap|spacing: Theme.field.gap|tst_textfield.qml"
   "a padded section header's lines overflow it|layout/SectionHeader.qml|readonly property real bodyWidth: width - leftPadding - rightPadding|readonly property real bodyWidth: width|tst_layout.qml"
   "a theme change does not reach a group|../Commons/Theme.qml|readonly property var color: published.color|readonly property var color: convert(source.defaults.values, []).color|tst_theme.qml"
+  "an appearance reads the whole theme|../Commons/Theme.qml|return convertTree(table, accepted.values, accepted.values, []);|return convertTree(table, Object.assign({}, accepted.values, { card: Object.assign({}, accepted.values.card, { fill: source.values.color.surface }) }), accepted.values, []);|tst_appearance.qml"
+  "an appearance never applies its light overrides|../Commons/Theme.qml|ThemeLogic.acceptAppearance(table, light, source.values)|ThemeLogic.acceptAppearance(table, light, Object.assign({}, source.values, { scheme: { mode: \"dark\" } }))|tst_appearance.qml"
 )
 
 copy="$tmp/ui"
