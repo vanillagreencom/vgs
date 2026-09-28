@@ -589,6 +589,29 @@ tinst "theme add --json is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argum
 # Update against the package the first add row installed.
 cfg="$tmp/cfg-theme-add"
 tinst "theme update with nothing new is up to date" "$cfg" "$rt_empty" 0 "ok up-to-date=moss" "" theme update moss
+
+# No git call inherits the theme lock's descriptor, since a gc git detaches
+# would hold the lock after vgsh exits. A git first on PATH that records
+# whether descriptor 9 is open stands in for that gc; the must-fail control
+# is a vgsh copy whose git calls keep the descriptor.
+spy="$tmp/git-spy"; mkdir -p "$spy"
+real_git="$(command -v git)" || { fail "git resolves on PATH"; real_git=git; }
+printf '#!/bin/sh\n: >"%s/ran"\n[ -e /proc/self/fd/9 ] && : >"%s/fd9-open"\nexec "%s" "$@"\n' "$spy" "$spy" "$real_git" >"$spy/git"
+chmod +x "$spy/git"
+spied_update() { # VGSH
+  rm -f -- "$spy/ran" "$spy/fd9-open"
+  "${base_env[@]}" PATH="$spy:$tmp:$(dirname -- "$node_bin"):$PATH" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" "$1" theme update moss >/dev/null 2>&1
+}
+closing='"$@" 9>&-; }'
+check "git calls close the lock descriptor once in bin/vgsh" test "$(grep -o -F -- "$closing" "$repo/bin/vgsh" | wc -l)" == 1
+check "a spied update succeeds" spied_update "$tree/bin/vgsh"
+check "the spied update ran git through the spy" test -e "$spy/ran"
+check "no git call of an update holds descriptor 9" test ! -e "$spy/fd9-open"
+mutant="$tmp/tree-git-keeps-lock"; cp -R -- "$tree" "$mutant"
+sed -i "s/ 9>&-; }/; }/" "$mutant/bin/vgsh"
+check "the descriptor-keeping mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
+spied_update "$mutant/bin/vgsh" || true
+check "the descriptor-keeping mutant's git holds descriptor 9" test -e "$spy/fd9-open"
 before="$(head_of "$moss")"
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123456" } }')"
 after="$(head_of "$src/moss")"

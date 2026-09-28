@@ -127,8 +127,9 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
 
 # Every git call: no pager, no hook, no filesystem monitor. The plugin's
 # repository cannot set any of these, but the user's git configuration can,
-# and none of them may run while vgsh handles plugin files.
-git_plain() { git --no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+# and none of them may run while vgsh handles plugin files. Descriptor 9 is
+# closed for git, so a gc git detaches never holds the theme lock.
+git_plain() { git --no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@" 9>&-; }
 
 # One git call whose failure is a refusal: KEY is the first stderr line and
 # git's own messages follow it. Stdout passes through.
