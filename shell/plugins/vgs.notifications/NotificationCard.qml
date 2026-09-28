@@ -136,8 +136,29 @@ Item {
         }
     }
 
-    // The hover actions float over the right end of the text; a fade of the
-    // glass under them keeps the text from colliding with them.
+    // The fade of the glass under the hover actions keeps the text from
+    // colliding with them. It starts and ramps where the reference's did,
+    // then holds its full alpha out to the capsule's own right end, rounded
+    // to that end, so nothing draws past the glass's curve; the card's clip
+    // is only its bounding box. It stays put while the pills slide in.
+    Rectangle {
+        id: trayFade
+        readonly property real ramp: card.look.tray.fadeStop * (tray.width + card.look.tray.fadeReach)
+        x: tray.x - (card.look.tray.fadeReach - card.look.tray.fadeOverhang)
+        width: card.width - x
+        height: card.height
+        topRightRadius: Math.min(card.radius, height / 2)
+        bottomRightRadius: topRightRadius
+        visible: tray.visible
+        opacity: tray.opacity
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: card.look.tray.fadeStart }
+            GradientStop { position: Math.min(1, trayFade.ramp / Math.max(1, trayFade.width)); color: card.look.tray.fadeEnd }
+        }
+    }
+
+    // The hover actions float over the right end of the text.
     Item {
         id: tray
         anchors.right: parent.right
@@ -149,19 +170,6 @@ Item {
         opacity: card.showActions && card.actions.length > 0 && card.contentOpacity >= 1 ? 1 : 0
         Behavior on opacity { Anim { duration: card.look.motion.duration.short4; curve: card.look.motion.curve.standard } }
         transform: Translate { x: (1 - tray.opacity) * card.look.tray.slide }
-
-        Rectangle {
-            anchors.right: parent.right
-            anchors.rightMargin: -card.look.tray.fadeOverhang
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width + card.look.tray.fadeReach
-            height: card.height
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0; color: card.look.tray.fadeStart }
-                GradientStop { position: card.look.tray.fadeStop; color: card.look.tray.fadeEnd }
-            }
-        }
 
         Row {
             id: actionRow

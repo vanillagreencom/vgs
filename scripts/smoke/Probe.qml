@@ -19,6 +19,7 @@ Scope {
     property var previousRows: []
     property var heldField: null
     property var heldEditor: null
+    property string grab: ""
 
     Connections {
         target: Plugins
@@ -185,6 +186,26 @@ Scope {
                     }
             return JSON.stringify(out);
         }
+        // Saves the first item of a type in a plugin's layer copies whose
+        // property reads the value to PATH as a PNG: the item and its
+        // children as its window draws them, without the items under or
+        // over it. Answers grabbing, absent, or refused when the item cannot
+        // be grabbed now; grabbed() answers the outcome.
+        function grabLayerItem(id: string, type: string, property: string, value: string, path: string): string {
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const screen of Object.keys(entry.screens).sort())
+                    for (const item of root.descendants(entry.screens[screen]).filter(i => root.typeName(i) === type && String(i[property]) === value)) {
+                        root.grab = "pending " + path;
+                        if (!item.grabToImage(result => root.grab = (result.saveToFile(path) ? "saved " : "unsaved ") + path)) {
+                            root.grab = "";
+                            return "refused";
+                        }
+                        return "grabbing";
+                    }
+            return "absent";
+        }
+        // pending, saved or unsaved, and the path, for the last grab.
+        function grabbed(): string { return root.grab; }
         // Every shader effect in a plugin's layer copies: [screen, its
         // fragment shader's URL, whether it compiled].
         function layerShaders(id: string): string {

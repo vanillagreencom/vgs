@@ -144,6 +144,49 @@ read -r ax ay < <(card_centre Actioned) || fail "the actionable toast has no car
 hover "$ax" "$ay" || fail "the hover over the actionable toast failed"
 expect_poll "the hover reveals the sender's actions and Dismiss" '["Open", "Reply", "Dismiss"]' shown_pills Actioned
 sleep 0.5
+# The hover actions draw nothing past the capsule's rounded ends: the card
+# grabbed alone, without the glass under it, is clear everywhere more than
+# 1.5 px outside either end's curve, and drawn where the fade runs under
+# no pill. The PNG is read with the standard library.
+capsule_clear() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c '
+import json, math, struct, sys, zlib
+path, summary = sys.argv[1], sys.argv[2]
+w, h = next((r[2], r[3]) for s, r, v in json.load(sys.stdin) if v["summary"] == summary)
+data = open(path, "rb").read()
+pos, idat, head = 8, b"", None
+while pos < len(data):
+    n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+    if kind == b"IHDR": head = struct.unpack(">IIBBBBB", data[pos + 8:pos + 8 + n])
+    elif kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
+    pos += 12 + n
+iw, ih, depth, ctype, _, _, interlace = head
+if (depth, ctype, interlace) != (8, 6, 0): print("png=%d/%d/%d" % (depth, ctype, interlace)); sys.exit()
+raw, stride, prev, alpha = zlib.decompress(idat), iw * 4, bytearray(iw * 4), []
+for y in range(ih):
+    f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+    for i in range(stride):
+        a, b, c = (line[i - 4] if i >= 4 else 0), prev[i], (prev[i - 4] if i >= 4 else 0)
+        if f == 1: line[i] = (line[i] + a) & 255
+        elif f == 2: line[i] = (line[i] + b) & 255
+        elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
+        elif f == 4:
+            p = a + b - c
+            line[i] = (line[i] + (a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c)) & 255
+    alpha.append(line[3::4]); prev = line
+s, r = iw / w, min(w, h) / 2
+at = lambda x, y: alpha[min(ih - 1, int(y * s))][min(iw - 1, int(x * s))]
+outside = 0
+for py in range(ih):
+    for px in range(iw):
+        x, y = (px + 0.5) / s, (py + 0.5) / s
+        cx = r if x < r else w - r if x > w - r else None
+        if cx is not None and math.hypot(x - cx, y - min(max(y, r), h - r)) > r + 1.5: outside = max(outside, alpha[py][px])
+inside = min(at(w - r, 3), at(w - r, h - 4))
+print("clear" if outside <= 8 and inside >= 128 else "outside=%d inside=%d" % (outside, inside))' "$1" "$2"; }
+card_grab="$sandbox/actioned-card.png"
+render expect "the hovered actionable card is grabbed" grabbing ipc smoke grabLayerItem vgs.notifications NotificationCard summary Actioned "$card_grab"
+render expect_poll "the grab of the hovered card is saved" "saved $card_grab" ipc smoke grabbed
+render expect "the hover actions draw nothing past the capsule's rounded ends" clear capsule_clear "$card_grab" Actioned
 read -r px py < <(pill_centre Reply) || fail "the Reply pill is not drawn"
 click "$px" "$py" || fail "the click on Reply failed"
 invoked() { grep -c "ActionInvoked (uint32 [0-9]*, '$1')" -- "$signals" || true; }
