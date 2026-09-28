@@ -10,7 +10,9 @@
 # process groups this run created.
 #
 # Exit 0 when every check passed. Exit 77 when a prerequisite is missing,
-# naming it, or when a run whose only failures are geometry or render rows
+# naming it; when the nested compositor still lists a monitor with no size
+# after 10 s, nested-monitor=unsized, since it configures no bar there;
+# or when a run whose only failures are geometry or render rows
 # met a sandbox fault: the nested compositor failed to allocate its output
 # buffers, or the host withheld frame callbacks so the shell never drew
 # again; that is not a pass. Exit 1 when a check failed.
