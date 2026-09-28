@@ -170,7 +170,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | `listPlugins` | no | JSON: `plugins[]` with `id`, `version`, `kinds`, `enabled`, `dir`; `errors[]`; `collisions[]`; `scanError`; `scanned`; `config` with `ready`, `shipped` and `user` states |
 | `listShellConfig` | no | the effective configuration as JSON |
 | `built` | no | JSON: host key to the records on that surface, each `id`, `kind`, `origin` (`core` for an instance the core built, `plugin` for a registered built-in) and `capabilities` |
-| `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `polkitRegistered`, `lock`, `toasts`, `layers` (plugin and screens per registration), `theme` with its `jobs` (`verb` `list`, `apply` or `follow`, `name`, `started`, `waiters`) and `last` |
+| `lent` | no | JSON: `holders` (capability to plugin ids), `shortcuts`, `ipcTargets`, `subscribers`, `notificationServer`, `polkitAgent`, `polkitRegistered`, `lock`, `toasts`, `layers` (plugin and screens per registration), `theme` with its `jobs` (`verb` `list`, `apply`, `background` or `follow`, `name`, `started`, `waiters`) and `last` |
 | `setPluginEnabled <id> <true|false>` | yes | `ok`, `ok hidden=<ids>`, `unknown: <id>` or `refused: user-config=...` |
 | `reloadConfig` | yes | `ok` |
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
