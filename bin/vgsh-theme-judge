@@ -11,9 +11,10 @@
 //       refused, 2 when DIR, a package or target directory or a required
 //       file cannot be read, or when targets exist and DIR holds no
 //       accepted `vgs` package with terminal slots.
-//   vgsh-theme-judge list <text|json> <config-dir>
+//   vgsh-theme-judge list <text|json> <config-dir> <state-dir>
 //       every shipped package and every package under <config-dir>/themes,
-//       and the state of <config-dir>/theme.json.
+//       and the state of <config-dir>/theme.json, `modified` read against
+//       the apply <state-dir>/applied.json records.
 //   vgsh-theme-judge apply <text|json> <config-dir> <state-dir> <held|busy|failed> <name>
 //       apply one package and every enabled shipped target; the fourth
 //       argument is the caller's verdict on the flock of
@@ -22,6 +23,11 @@
 //       of the configuration home, whose parent a target's wiring file is
 //       relative to unless its wiring names a profiles.ini. Each target
 //       whose reload is due runs its hook last.
+//   vgsh-theme-judge follow <text|json> <config-dir> <state-dir> <held|busy|failed> [<name>]
+//       apply again the package <state-dir>/applied.json records when its
+//       content changed and the theme file still holds the bytes that
+//       apply wrote, under the same lock verdict; with NAME, only when the
+//       record names that package.
 //   vgsh-theme-judge reload <text|json> <config-dir> <state-dir> <held|busy|failed>
 //       run the hook of every target <state-dir>/reload-pending.json lists
 //       again, under the same lock verdict.
@@ -41,11 +47,13 @@
 //       print the directory of installed package NAME under
 //       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
 //
-// list, apply, reload, background and installed refuse with one line
-// on stderr, `vgsh: refused: <key>=...`, through bin/lib/judge-files.js:
-// exit 1, or 75 for `reason=busy`. Under `json`, apply prints its structured result on stdout
-// first, refusals included, and so do reload and background. A partial apply or reload
-// prints one such line per failed or reload-pending target and exits 3. A
+// list, apply, follow, reload, background and installed refuse with one
+// line on stderr, `vgsh: refused: <key>=...`, through
+// bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under `json`,
+// apply prints its structured result on stdout first, refusals included,
+// and so do follow, reload and background. A partial apply, follow or
+// reload prints one such line per failed or reload-pending target and
+// exits 3. A
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner and § Install, theme-apply.md,
 // theme-targets.md and theme-backgrounds.md hold the rules this file
@@ -53,6 +61,7 @@
 // background state bin/lib/theme-backgrounds.js, and the edit a target's
 // `select` keeps in its application's settings file bin/lib/theme-select.js.
 "use strict";
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -320,17 +329,84 @@ function themeFile(file) {
     return { path: file, state: accepted.ok ? "loaded" : "refused", name: accepted.ok ? accepted.name : null, bytes };
 }
 
-// Whether the file's bytes differ from its named package's theme.json. An
-// absent file is the defaults, unmodified; a refused one is no accepted
-// package's bytes; an unreadable one cannot be compared, so null.
-function modified(file, resolved) {
+// --- the applied record
+
+// Beside theme.name. This judge is its only reader and writer.
+const APPLIED_FILE = "applied.json";
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function sha256(bytes) {
+    return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+// The digest of package ROW's content as apply reads it: theme.json,
+// terminal.json, an absent one marked as absent, and each file directly
+// under its targets/, a symlink to a file included, in name order. Each
+// part is framed by its name and length, so no two contents share a
+// digest. Backgrounds are no colours and stay out. KEY leads the refusal
+// for a targets/ or a file in it that cannot be read.
+function packageDigest(row, key) {
+    const hash = crypto.createHash("sha256");
+    const part = (name, bytes) => {
+        hash.update(name + "\0" + (bytes === undefined ? "absent" : String(bytes.length)) + "\0");
+        if (bytes !== undefined) hash.update(bytes);
+    };
+    part("theme.json", row.files.theme);
+    part("terminal.json", row.files.terminal);
+    const dir = path.join(row.path, TARGETS);
+    let names;
+    try {
+        names = fs.readdirSync(dir).sort();
+    } catch (e) {
+        if (e.code !== "ENOENT") refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+        names = [];
+    }
+    for (const name of names) {
+        const file = path.join(dir, name);
+        let bytes;
+        try {
+            if (fs.statSync(file, { throwIfNoEntry: false })?.isFile() !== true) continue;
+            bytes = fs.readFileSync(file);
+        } catch (e) {
+            refuse(key + "=unreadable path=" + file + " error=" + e.code, "unreadable");
+        }
+        part(TARGETS + "/" + name, bytes);
+    }
+    return hash.digest("hex");
+}
+
+// The apply <state-dir>/applied.json records, `{ schemaVersion: 1, name,
+// file, package }`: the package's name, the sha256 of the theme.json bytes
+// it wrote to the theme file and its packageDigest. Null when absent. KEY
+// leads the refusal for a file that cannot be read or parsed, or is no
+// such record.
+function readApplied(stateDir, key) {
+    const file = path.join(stateDir, APPLIED_FILE);
+    const doc = readJson(file, key, true);
+    if (doc === null) return null;
+    const isDigest = value => typeof value === "string" && SHA256_HEX.test(value);
+    const shaped = logic.isPlainObject(doc) && Object.keys(doc).length === 4 && doc.schemaVersion === 1 &&
+        logic.isPackageName(doc.name) && isDigest(doc.file) && isDigest(doc.package);
+    if (!shaped) refuse(key + "=malformed path=" + file, "malformed");
+    return doc;
+}
+
+// Whether the file differs from what its named package gave it: false when
+// that package is accepted and the file holds either its theme.json or the
+// bytes APPLIED, the record, says the last apply of it wrote, a version a
+// follow has yet to replace. An absent file is the defaults, unmodified; a
+// refused one is no accepted package's bytes; an unreadable one cannot be
+// compared, so null.
+function modified(file, resolved, applied) {
     switch (file.state) {
     case "absent": return false;
     case "unreadable": return null;
     case "refused": return true;
     case "loaded": {
         const row = resolved.get(file.name);
-        return !(row !== undefined && row.state === "ok" && row.files.theme.equals(file.bytes));
+        if (row === undefined || row.state !== "ok") return true;
+        if (row.files.theme.equals(file.bytes)) return false;
+        return !(applied !== null && applied.name === file.name && sha256(file.bytes) === applied.file);
     }
     default: throw new Error("vgsh-theme-judge: file state " + file.state + " is none of absent, unreadable, refused, loaded");
     }
@@ -338,12 +414,13 @@ function modified(file, resolved) {
 
 // --- list
 
-function list(format, configDir) {
+function list(format, configDir, stateDir) {
     const { rows, resolved } = packageSet(configDir, "themes");
+    const applied = readApplied(stateDir, "themes");
     const file = themeFile(path.join(configDir, "theme.json"));
     const current = file.state === "loaded" ? resolved.get(file.name) : undefined;
     const packages = rows.map(row => ({ name: row.name, source: row.source, path: row.path, state: row.state, reason: row.reason, current: row === current, palette: row.palette }));
-    const report = { file: { path: file.path, state: file.state, name: file.name, modified: modified(file, resolved) }, packages };
+    const report = { file: { path: file.path, state: file.state, name: file.name, modified: modified(file, resolved, applied) }, packages };
     if (format === "json") {
         process.stdout.write(JSON.stringify(report) + "\n");
         return;
@@ -858,11 +935,12 @@ function settle(entry, configHome, live, key) {
 
 // Render the package and every enabled target into <state-dir>/next-theme/,
 // with the files settle carries, move it over theme/, write theme.name,
-// keep each landed target's wiring, then copy theme.json's bytes to the theme file, which the shell
-// watches, so the shell restyles only after every application file is in
-// place. RESULT's `shell` follows the theme file and its `targets` are set
-// once the swap has landed them; FAILURES takes each failed target's keyed
-// line.
+// keep each landed target's wiring, then copy theme.json's bytes to the
+// theme file, which the shell watches, so the shell restyles only after
+// every application file is in place, and record the apply in
+// applied.json. RESULT's `shell` follows the theme file and its `targets`
+// are set once the swap has landed them; FAILURES takes each failed
+// target's keyed line.
 function applyTo(result, failures, configDir, stateDir, lock, name) {
     if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
     const key = "theme=" + name + " reason";
@@ -886,6 +964,9 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     // cannot be read refuses the apply whole.
     const shown = backgrounds.read(logic, stateDir, key);
     const background = backgrounds.choose(backgrounds.images(row.path, key), shown.themes[name]);
+    // Taken before anything moves too, for the record written after the
+    // theme file.
+    const digest = packageDigest(row, key);
 
     const stage = path.join(stateDir, "next-theme");
     const aside = path.join(stateDir, "old-theme");
@@ -951,6 +1032,9 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
         replaceFile(file.path, row.files.theme, key);
         result.shell = "applied";
     }
+    // Once the theme file holds the package's bytes, so a follow never
+    // takes bytes this apply did not write for its own.
+    replaceFile(path.join(stateDir, APPLIED_FILE), JSON.stringify({ schemaVersion: 1, name, file: sha256(row.files.theme), package: digest }) + "\n", key);
     // Last, so each application re-reads files that are all in place.
     result.targets = landed.map((entry, i) => entry.state !== "failed" && due.includes(entry.name)
         ? reloadRow(entry.name, entry.target, configHome, live, result.targets[i], failures)
@@ -998,6 +1082,48 @@ function apply(format, configDir, stateDir, lock, name) {
     const result = { state: "failed", shell: "unchanged", targets: [], theme: name, reason: null };
     report(format, result, failures => applyTo(result, failures, configDir, stateDir, lock, name),
         r => "theme=" + name + " state=" + r.state + " shell=" + r.shell);
+}
+
+// --- follow
+
+// Apply again the package applied.json records once its content changed,
+// while the theme file still holds the bytes that apply wrote. RESULT's
+// `follow` is `none` with no record, or with ONLY, a name, when the record
+// names another package; `edited` when the theme file is absent or holds
+// other bytes, a hand edit the follow leaves; `unavailable` when the name
+// no longer resolves to an accepted package; `current` when the package's
+// digest is the recorded one; `reapplied` once applyTo runs for it, whose
+// result RESULT then carries.
+function followTo(result, failures, configDir, stateDir, lock, only) {
+    const key = "follow=applied reason";
+    if (lock === "busy") refuse(key + "=busy", "busy", 75);
+    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    const applied = readApplied(stateDir, key);
+    const settled = outcome => {
+        result.follow = outcome;
+        result.state = "unchanged";
+    };
+    if (applied === null || (only !== undefined && applied.name !== only)) return settled("none");
+    result.theme = applied.name;
+    const themePath = path.join(configDir, "theme.json");
+    let bytes;
+    try {
+        bytes = readIfPresent(themePath);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + themePath + " error=" + e.code, "unreadable");
+    }
+    if (bytes === undefined || sha256(bytes) !== applied.file) return settled("edited");
+    const row = packageSet(configDir, key).resolved.get(applied.name);
+    if (row === undefined || row.state !== "ok") return settled("unavailable");
+    if (packageDigest(row, key) === applied.package) return settled("current");
+    result.follow = "reapplied";
+    applyTo(result, failures, configDir, stateDir, lock, applied.name);
+}
+
+function follow(format, configDir, stateDir, lock, only) {
+    const result = { state: "failed", shell: "unchanged", targets: [], theme: null, reason: null, follow: null };
+    report(format, result, failures => followTo(result, failures, configDir, stateDir, lock, only),
+        r => "follow=" + r.follow + " theme=" + (r.theme === null ? "-" : r.theme) + " state=" + r.state);
 }
 
 // --- reload
@@ -1300,12 +1426,16 @@ main(() => {
         checkPackages(args[0]);
         break;
     case "list":
-        if (args.length !== 2 || !FORMATS.includes(args[0])) usage("arguments=" + command);
-        list(args[0], args[1]);
+        if (args.length !== 3 || !FORMATS.includes(args[0])) usage("arguments=" + command);
+        list(args[0], args[1], args[2]);
         break;
     case "apply":
         if (args.length !== 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
         apply(...args);
+        break;
+    case "follow":
+        if (args.length < 4 || args.length > 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
+        follow(...args);
         break;
     case "reload":
         if (args.length !== 4 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);

@@ -41,6 +41,9 @@ Singleton {
     signal changed()
     // The settled copy of the exclusive holders moved.
     signal lendingChanged()
+    // A scan attempt ended, with a result or with scanError; the first runs
+    // at start. ThemeRunner follows the applied theme package on it.
+    signal scanFinished()
 
     function has(id) { return Logic.hasOwn(manifests, id); }
 
@@ -116,6 +119,7 @@ Singleton {
                 root.scanError = "vgsh-scan exited " + root.completion.code + " status=" + root.completion.status;
             else root.applyScan(output.text);
             if (root.scanError !== "") console.error("plugins: " + root.scanError);
+            root.scanFinished();
             if (root.rescanPending) {
                 root.rescanPending = false;
                 root.rescan();

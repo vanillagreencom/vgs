@@ -132,14 +132,8 @@ if [[ "$(head -n 1 "$tmp/err")" == "vgsh: refused: lock=$rt_held/vgsh.lock" ]]; 
 if [[ "$(cat "$rt_held/vgsh.lock")" == "$$" ]]; then ok "a refused run leaves the holder's pid in the lock file"; else fail "lock file after refusal: $(cat "$rt_held/vgsh.lock")"; fi
 if [[ -e $rt_held/vgsh-sources-2/x ]]; then ok "a refused run leaves the holder's source snapshot root alone"; else fail "a refused run removed $rt_held/vgsh-sources-2"; fi
 
-# Install, update and remove, with local bare repositories as the source.
-# Every git call here and in vgsh reads only the fixture home's own git
-# configuration, never the developer's, so a row meets no hook or setting
-# it did not plant itself.
-mkdir -p "$tmp/home"
-git_env=(env -i PATH="$PATH" HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1
-  GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid)
-g() { "${git_env[@]}" git -c init.defaultBranch=main "$@"; }
+# Install, update and remove, with local bare repositories as the source,
+# through the library's `g`.
 
 # A plugin source: a work tree at $tmp/src/NAME and its bare repository at
 # $tmp/src/NAME.git, holding one commit with MANIFEST and a service entry.
@@ -350,11 +344,6 @@ for stub in foot vgs-probe-app; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"
 done
-slots_json() { # COLOUR: all sixteen slots
-  local i out=""
-  for i in $(seq 0 15); do out+="${out:+, }\"color$i\": \"$1\""; done
-  printf '{ "schemaVersion": 1, "slots": { %s } }\n' "$out"
-}
 cfg="$tmp/cfg-theme"; themes="$cfg/vgs/themes"; file="$cfg/vgs/theme.json"
 theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'
 # Key order and whitespace no serialiser writes, so only a byte copy keeps them.
@@ -489,24 +478,6 @@ chmod 700 "$state/theme"
 # Theme add, update and remove, from local bare repositories as the plugin
 # rows install, against the tree copy, whose shipped `dusk` an installed
 # package can shadow. The fixture home's hooks stay live.
-theme_source() { # NAME THEME_JSON_TEXT [TERMINAL_JSON_TEXT]: an empty THEME_JSON_TEXT writes none
-  local work="$tmp/tsrc/$1"
-  mkdir -p "$work"
-  printf 'fixture\n' >"$work/README"
-  [[ -z $2 ]] || theme_pkg "$work" "$2" "${3:-}"
-  g init -q "$work"
-  g -C "$work" add -A
-  g -C "$work" commit -q -m init
-  g init -q --bare "$work.git"
-  g -C "$work" push -q "$work.git" main
-}
-theme_commit() { # NAME FILE TEXT
-  printf '%s' "$3" >"$tmp/tsrc/$1/$2"
-  g -C "$tmp/tsrc/$1" add -A
-  g -C "$tmp/tsrc/$1" commit -q -m change
-  g -C "$tmp/tsrc/$1" push -q "$tmp/tsrc/$1.git" main
-}
-doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; }
 unstaged() { test -z "$(find "$1/vgs" -maxdepth 1 -name '.vgsh-theme-add.*' -print)"; }
 src="$tmp/tsrc"
 theme_source moss "$(doc moss)"
@@ -579,7 +550,8 @@ check "the descriptor-keeping mutant's git holds descriptor 9" test -e "$spy/fd9
 before="$(head_of "$moss")"
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123456" } }')"
 after="$(head_of "$src/moss")"
-tinst "theme update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "ok updated=moss from=${before:0:12} to=${after:0:12}" "" theme update moss
+tinst "theme update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "ok follow=none theme=- state=unchanged" "" theme update moss
+check "theme update reports both commits" has_line "ok updated=moss from=${before:0:12} to=${after:0:12}"
 check "theme update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
 check "theme update prints the incoming diff" grep -q '^+.*#123456' "$tmp/out"
 check "theme update leaves the new version installed" cmp -s "$src/moss/theme.json" "$moss/theme.json"

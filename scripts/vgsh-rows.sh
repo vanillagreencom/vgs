@@ -1,7 +1,8 @@
 # The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
-# the scratch directory, the child environment, the row helpers and the
-# theme tree fixture. It sets `set -euo pipefail`, `repo`, `tmp` (removed on
-# exit), `rt_empty`, `node_bin`, `base_path`, `base_env` and `failures`.
+# the scratch directory, the child environment, the row helpers, the theme
+# tree fixture and the git source fixture. It sets `set -euo pipefail`,
+# `repo`, `tmp` (removed on exit), `rt_empty`, `node_bin`, `base_path`,
+# `base_env`, `git_env` and `failures`.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -90,6 +91,11 @@ theme_pkg() { # DIR THEME_JSON_TEXT [TERMINAL_JSON_TEXT]
   printf '%s' "$2" >"$1/theme.json"
   [[ -z ${3:-} ]] || printf '%s' "$3" >"$1/terminal.json"
 }
+slots_json() { # COLOUR: a terminal.json whose sixteen slots are COLOUR
+  local i out=""
+  for i in $(seq 0 15); do out+="${out:+, }\"color$i\": \"$1\""; done
+  printf '{ "schemaVersion": 1, "slots": { %s } }\n' "$out"
+}
 target_dir() { # NAME TARGET_JSON TEMPLATE_TEXT
   mkdir -p "$tree/themes/targets/$1"
   printf '%s\n' "$2" >"$tree/themes/targets/$1/target.json"
@@ -111,6 +117,34 @@ tree_control() { # NAME FILE NEEDLE REPLACEMENT
   THEME_BIN="$copy/bin/vgsh"
 }
 judge_control() { tree_control "$1" bin/vgsh-theme-judge "$2" "$3"; } # NAME NEEDLE REPLACEMENT
+
+# Theme sources as local git repositories. Every git call here and in vgsh
+# reads only the fixture home's own git configuration, never the
+# developer's, so a row meets no hook or setting it did not plant itself.
+mkdir -p "$tmp/home"
+git_env=(env -i PATH="$PATH" HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1
+  GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid)
+g() { "${git_env[@]}" git -c init.defaultBranch=main "$@"; }
+# A theme source: a work tree at $tmp/tsrc/NAME and its bare repository at
+# $tmp/tsrc/NAME.git, holding one commit.
+theme_source() { # NAME THEME_JSON_TEXT [TERMINAL_JSON_TEXT]: an empty THEME_JSON_TEXT writes none
+  local work="$tmp/tsrc/$1"
+  mkdir -p "$work"
+  printf 'fixture\n' >"$work/README"
+  [[ -z $2 ]] || theme_pkg "$work" "$2" "${3:-}"
+  g init -q "$work"
+  g -C "$work" add -A
+  g -C "$work" commit -q -m init
+  g init -q --bare "$work.git"
+  g -C "$work" push -q "$work.git" main
+}
+theme_commit() { # NAME FILE TEXT: commit TEXT as FILE in source NAME and push it
+  printf '%s' "$3" >"$tmp/tsrc/$1/$2"
+  g -C "$tmp/tsrc/$1" add -A
+  g -C "$tmp/tsrc/$1" commit -q -m change
+  g -C "$tmp/tsrc/$1" push -q "$tmp/tsrc/$1.git" main
+}
+doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; } # NAME [TOKENS_JSON]
 
 rows_done() { # SUITE
   if [[ $failures -gt 0 ]]; then echo "$1: failed=$failures"; exit 1; fi

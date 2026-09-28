@@ -304,6 +304,24 @@ shim_hyprctl real
 rm -- "$hypr_conf" "$sandbox/hyprland-own.conf"
 rm -r -- "$repo/themes/targets/hyprland"
 
+# Every scan ends with a follow, which applies the applied package again
+# once it changed under an unedited theme file. The installed smoke
+# package's accent changes, a rescan re-applies it, and the package's own
+# bytes come back with vgs applied after it. The core loads once per
+# sandbox, so no ThemeRunner copy without the follow can stand in as a
+# control; a shell that never follows fails the accent row.
+expect "the fixture applies smoke for the follow rows" ok probe theme-apply smoke
+expect "the smoke apply for the follow rows ends" idle theme_idle
+cp -- "$installed/smoke/theme.json" "$sandbox/smoke-theme.json"
+printf '%s\n' '{ "schemaVersion": 1, "name": "smoke", "tokens": { "palette": { "accent": "#12ab37" } } }' >"$installed/smoke/theme.json"
+expect "a rescan for the follow is accepted" ok ipc shell rescanPlugins
+expect_poll "the follow re-applies the changed package" '"#ff12ab37"' ipc smoke themeValue palette.accent
+expect "the follow ends" idle theme_idle
+expect "last holds the follow's re-apply" '"reapplied"' last_part result.follow
+cp -- "$sandbox/smoke-theme.json" "$installed/smoke/theme.json"
+expect "the fixture applies vgs after the follow rows" ok probe theme-apply vgs
+expect "the vgs apply after the follow rows ends" idle theme_idle
+
 expect "disabling the fixture after the theme rows is allowed" ok ipc shell setPluginEnabled acme.probe false
 
 # ---- vgs.themes: the themes widget and panel ------------------------------
@@ -578,6 +596,7 @@ if [[ $(grep -c -F 'onChanged: read()' -- "$state_qml") == 1 ]]; then
   control_builds="$(builds)" || { fail "buildCount unreadable before the unwatched control"; control_builds=0; }
   expect "a rescan builds the unwatched control" ok ipc shell rescanPlugins
   expect_poll "the control rebuilds every vgs.themes instance" "$((control_builds + themes_instances))" builds
+  expect "the follow the rescan queued ends before the row's theme command" idle theme_idle
   expect "the control draws the current image when built" "$scenic/backgrounds/a.png ready" background_image
   expect "next moves on under the control" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
   sleep 2
@@ -585,6 +604,7 @@ if [[ $(grep -c -F 'onChanged: read()' -- "$state_qml") == 1 ]]; then
   cp -p -- "$sandbox/WallpaperState.qml.real" "$state_qml.tmp" && mv -T -- "$state_qml.tmp" "$state_qml"
   expect "a rescan restores the plugin" ok ipc shell rescanPlugins
   expect_poll "the restored plugin draws the current image" "$scenic/backgrounds/b.png ready" background_image
+  expect "the follow the restoring rescan queued ends" idle theme_idle
 else
   fail "the unwatched control's text occurs once in $state_qml"
 fi
@@ -611,6 +631,7 @@ if [[ $(grep -c -F 'readonly property bool shown: drawn' -- "$plugin_qml") == 1 
   control_builds="$(builds)" || { fail "buildCount unreadable before the always-shown control"; control_builds=0; }
   expect "a rescan builds the always-shown control" ok ipc shell rescanPlugins
   expect_poll "the always-shown control rebuilds every vgs.themes instance" "$((control_builds + themes_instances))" builds
+  expect "the follow the always-shown rescan queued ends" idle theme_idle
   expect "vgs applies under the always-shown control" "ok theme=vgs state=applied shell=applied" vgsh_theme apply vgs
   expect_poll "the always-shown control draws no image" "- null" background_image
   expect "the always-shown control maps a surface with no image" "$monitors" layer_count vgs:background

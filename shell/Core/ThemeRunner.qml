@@ -12,22 +12,25 @@ import "../Commons/ThemeLogic.js" as ThemeLogic
 // dropped and its job still runs. The runner judges no package; every
 // answer but an immediate busy, malformed name or malformed step is what
 // `vgsh` printed.
+// Every scan the Registry ends queues `vgsh theme follow`, which applies
+// the applied package again once it changed; no plugin reaches it.
 Scope {
     id: root
 
     // Waiting and running jobs in order, the first one running once
-    // started: { verb: "list" | "apply" | "background", name, started,
-    // waiters }, `name` the package an apply lands or the step a background
-    // job takes, null for a list; each waiter { id, done, release },
-    // `release` ending its registration in the instance's lifetime.
-    // Replaced whole on every change so `last` re-evaluates.
+    // started: { verb: "list" | "apply" | "background" | "follow", name,
+    // started, waiters }, `name` the package an apply lands or the step a
+    // background job takes, null for a list or a follow; each waiter { id,
+    // done, release }, `release` ending its registration in the instance's
+    // lifetime. Replaced whole on every change so `last` re-evaluates.
     property var jobs: []
     // { code, status } of the running job's exit, null until it exits.
     property var completion: null
     // The last list `vgsh theme list --json` printed, or null before the
     // first and after one that failed.
     property var listing: null
-    // The last apply's structured result, null before the first.
+    // The last apply's structured result, or a follow's that applied again,
+    // null before the first.
     property var lastResult: null
     // The steps `vgsh theme background` takes.
     readonly property var backgroundSteps: ["next", "previous"]
@@ -90,6 +93,20 @@ Scope {
         return "ok";
     }
 
+    // follow: queue `vgsh theme follow --json`. A follow asked for while a
+    // follow waits joins it; one asked for while a follow runs waits, since
+    // the running one may have read the packages before they changed.
+    function follow() {
+        const tail = jobs[jobs.length - 1];
+        if (tail !== undefined && tail.verb === "follow" && !tail.started) return;
+        enqueue({ verb: "follow", name: null, started: false, waiters: [] });
+    }
+
+    Connections {
+        target: Registry
+        function onScanFinished() { root.follow(); }
+    }
+
     // One package's resolved palette from the last list, each colour as the
     // `#aarrggbb` string a colour property takes; null for a package the
     // last list did not accept or does not name.
@@ -143,7 +160,7 @@ Scope {
             return failure(job, "output-unreadable", exit + " error=" + e.message);
         }
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
-        if ((job.verb === "apply" || job.verb === "background") && isObject(value) && typeof value.state === "string") return value;
+        if ((job.verb === "apply" || job.verb === "background" || job.verb === "follow") && isObject(value) && typeof value.state === "string") return value;
         if (job.verb === "list" && isObject(value) && isObject(value.file) && Array.isArray(value.packages))
             return { file: value.file, packages: value.packages, reason: null };
         return failure(job, "output-unreadable", exit + " error=shape");
@@ -156,6 +173,8 @@ Scope {
             return { state: "failed", shell: "failed", targets: [], theme: job.name, reason: reason };
         case "background":
             return { state: "failed", background: null, theme: null, path: null, reason: reason };
+        case "follow":
+            return { state: "failed", shell: "failed", targets: [], theme: null, reason: reason, follow: null };
         case "list":
             return { file: null, packages: null, reason: reason };
         }
@@ -170,8 +189,26 @@ Scope {
         // Every waiter and every later reader shares the one answer, so none
         // can change what another reads.
         const result = frozen(resultOf(job));
-        if (job.verb === "apply") lastResult = result;
-        else if (job.verb === "list") listing = result.reason === null ? result : null;
+        switch (job.verb) {
+        case "apply":
+            lastResult = result;
+            break;
+        case "background":
+            break;
+        case "follow": {
+            if (result.follow === "reapplied") lastResult = result;
+            // One line per follow; a follow that did not run is an error.
+            const line = "theme: follow=" + result.follow + " state=" + result.state + (result.reason === null ? "" : " reason=" + result.reason);
+            if (result.state === "failed") console.error(line);
+            else console.info(line);
+            break;
+        }
+        case "list":
+            listing = result.reason === null ? result : null;
+            break;
+        default:
+            throw new Error("theme: finish for unknown verb=" + job.verb);
+        }
         jobs = jobs.slice(1);
         for (const waiter of job.waiters.slice()) {
             waiter.release();

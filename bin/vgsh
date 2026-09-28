@@ -16,10 +16,11 @@
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
 #   vgsh theme reload [--json]     run every pending reload hook again
+#   vgsh theme follow [--json]     apply the applied package again when it changed and the theme file is unedited
 #   vgsh theme background [--json] next|previous
 #                                  show the applied package's next or previous background image and remember it
 #   vgsh theme add <git url>       clone, judge and install one theme package
-#   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
+#   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
@@ -56,24 +57,33 @@
 # fails or times out leaves the target reload-pending in
 # ${XDG_STATE_HOME:-~/.local/state}/vgs/reload-pending.json. `theme reload`
 # holds the same lock and runs every pending hook again, and nothing else.
+# Apply records the package's name, the hash of the bytes it wrote to the
+# theme file and a digest of the package's content in
+# ${XDG_STATE_HOME:-~/.local/state}/vgs/applied.json. `theme follow` holds
+# the same lock and applies the recorded package again when its content
+# changed while the theme file still holds those bytes; a hand-edited file
+# stays. `theme list` reports that unedited file unmodified.
 # Apply also makes the package's remembered background image, else its
 # first, the current one: the ${XDG_STATE_HOME:-~/.local/state}/vgs/background
 # symlink and backgrounds.json beside it. `theme background next` and
 # `previous` hold the same lock and move to the applied package's next or
 # previous image, remembering it: docs/architecture/theme-backgrounds.md.
 # `--json` prints the list, the apply's result `{ state, shell, targets,
-# theme, reason }`, the reload's `{ state, targets, reason }` or the
-# background step's `{ state, background, theme, path, reason }`, refusals
-# included, as one JSON line on stdout. `theme` commands never contact the
+# theme, reason }`, the follow's, that result with its `follow` outcome,
+# the reload's `{ state, targets, reason }` or the background step's
+# `{ state, background, theme, path, reason }`, refusals included, as one
+# JSON line on stdout. `theme` commands never contact the
 # shell: docs/architecture/theme-apply.md.
 #
 # `theme add`, `update` and `remove` follow the plugin rules above for
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
 # lands it under its theme.json name once the theme judge accepts it and
 # refuses an occupied name and the reserved `vgs`; update refuses a
-# modified checkout and rolls back a version the judge refuses; remove
-# deletes only an installed package, never a shipped one. Each holds the
-# theme lock while it changes the package; a held lock is reason=busy.
+# modified checkout and rolls back a version the judge refuses, and a
+# version it accepts follows as `theme follow` does for that package, its
+# line last and its exit status update's; remove deletes only an installed
+# package, never a shipped one. Each holds the theme lock while it changes
+# the package; a held lock is reason=busy.
 # docs/architecture/themes.md § Install.
 #
 # `theme browser-policy install` is the one command that asks for a
@@ -85,7 +95,7 @@
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
-# apply or reload is partial (a target failed or its reload stays pending;
+# apply, follow or reload is partial (a target failed or its reload stays pending;
 # each prints `vgsh: refused: target=<name> reason=<key>`), 75 when
 # another shell holds the lock or another theme command holds the theme
 # lock, 69 when the shell is not running. The usage text is this header;
@@ -377,6 +387,8 @@ theme_update() { # NAME
     refuse 1 "theme=$name $verdict rolled-back=${ff_old:0:12}"
   fi
   echo "ok updated=$name from=${ff_old:0:12} to=${ff_new:0:12}"
+  # Still under the lock this process holds on descriptor 9.
+  exec node "$theme_judge" follow text "$config_home/vgs" "$state_home/vgs" held "$name"
 }
 
 theme_remove() { # NAME
@@ -493,7 +505,7 @@ PY
     case "$sub" in
       list)
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
-        exec node "$theme_judge" list "$format" "$config_home/vgs"
+        exec node "$theme_judge" list "$format" "$config_home/vgs" "$state_home/vgs"
         ;;
       apply)
         name="${1:-}"
@@ -506,6 +518,11 @@ PY
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
         theme_lock_verdict
         exec node "$theme_judge" reload "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
+        ;;
+      follow)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        theme_lock_verdict
+        exec node "$theme_judge" follow "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       background)
         step="${1:-}"

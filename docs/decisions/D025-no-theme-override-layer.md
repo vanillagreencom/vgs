@@ -28,6 +28,6 @@
 
 **Revisit When**: Users need to keep a local change while following upstream updates of an installed package, which `vgsh theme update` refuses on a checkout with local changes; or an application target needs a per-user value that no package can carry.
 
-**Verification**: `scripts/test-vgsh.sh` pins that an installed package shadows the shipped package of its name, that an installed `vgs` shadows nothing, and that `theme list` reports `modified` by a byte comparison of the theme file with the named package's `theme.json`.
+**Verification**: `scripts/test-vgsh.sh` pins that an installed package shadows the shipped package of its name, that an installed `vgs` shadows nothing, and that `theme list` reports `modified` by a byte comparison of the theme file with the named package's `theme.json`. `scripts/test-vgsh-follow.sh` pins that a file holding the bytes the last apply of its package wrote, as `applied.json` records them, is unmodified and is applied again once the package changes, and that a hand-edited file stays and is modified.
 
 **References**: [D015](D015-tokens-are-a-judged-table.md), [D019](D019-theme-packages-carry-plugin-trust.md), [D020](D020-theme-apply-swaps-state-and-writes-the-shell-file-last.md), VGS-465 (themes panel), VGS-474 (`vgsh theme add`, `update`, `remove`)

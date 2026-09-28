@@ -111,6 +111,7 @@ rows=(
   "cli|browser target controls|scripts/test-vgsh-browsers.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|browser policy writer controls|scripts/test-vgsh-browser-policy.sh|scripts/vgsh-rows.sh bin/vgsh-browser-policy"
   "cli|theme background controls|scripts/test-vgsh-backgrounds.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "cli|theme follow controls|scripts/test-vgsh-follow.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|agent CLI target controls|scripts/test-vgsh-agents.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|judge file helper controls|node scripts/test-judge-files.js|bin/lib/judge-files.js"
   "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py|bin/vgsh-scan"
