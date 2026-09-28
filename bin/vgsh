@@ -428,7 +428,8 @@ case "$cmd" in
     done
     # exec keeps this pid and the lock descriptor, so the shell can prove it
     # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
-    VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"
+    # A Quickshell reload while the session lock is live can unlock it.
+    VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
     ;;
   pid)
     pid="$(shell_pid)" || exit $?

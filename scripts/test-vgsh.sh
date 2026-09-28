@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Controls for bin/vgsh against a stub qs on PATH. Each row pins a reply,
 # an exit status or a keyed refusal the header promises. No shell starts:
-# `run` execs the stub, which records the identity it was handed.
+# `run` execs the stub, which records the identity and environment it was
+# handed.
 set -euo pipefail
 
 # One row removes a directory's permission bits, which bind only a non-root
@@ -15,12 +16,12 @@ source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
 # The stub answers `qs ipc ... call <target> <fn> ...` from STUB_REPLY and
 # STUB_STATUS, prints STUB_NOISE on stdout before the reply (as qs does with
 # its log) and STUB_STDERR on stderr after it. Invoked as the shell (no
-# `ipc` argument) it records its pid, VGSH_RUNNER_PID and its arguments in
-# STUB_RECORD and exits 0.
+# `ipc` argument) it records its pid, VGSH_RUNNER_PID, the file-watcher
+# environment and its arguments in STUB_RECORD and exits 0.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
 if [[ ${1:-} != ipc && ${1:-} != log ]]; then
-  printf 'pid=%s runner=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "$*" >"${STUB_RECORD:?}"
+  printf 'pid=%s runner=%s disable=%s no_popup=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "${QS_DISABLE_FILE_WATCHER:-unset}" "${QS_NO_RELOAD_POPUP:-unset}" "$*" >"${STUB_RECORD:?}"
   exit 0
 fi
 printf '%s\n' "$*" >"${STUB_ARGS:-/dev/null}"
@@ -48,6 +49,15 @@ run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT WANT_ERR
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
   local last="${out##*$'\n'}"
   if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
+}
+
+run_has_file_watcher_env() { # RECORD
+  local record="$1" disable no_popup
+  disable="${record#*disable=}"
+  disable="${disable%% *}"
+  no_popup="${record#*no_popup=}"
+  no_popup="${no_popup%% *}"
+  [[ $disable == 1 && $no_popup == 1 ]]
 }
 
 list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[],"scanError":"","scanned":true}'
@@ -111,12 +121,44 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   runner="${record#*runner=}"; runner="${runner%% *}"
   args="${record#*args=}"
   if [[ $pid == "$runner" ]]; then ok "run execs the shell with its own pid as the runner identity"; else fail "run identity: $record"; fi
+  if run_has_file_watcher_env "$record"; then ok "run disables Quickshell's file watcher and reload popup"; else fail "run watcher env: $record"; fi
   if [[ "$(cat "$rt_run/vgsh.lock")" == "$pid" ]]; then ok "run records the shell's pid in the lock file"; else fail "lock file holds [$(cat "$rt_run/vgsh.lock")] want $pid"; fi
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
   if [[ ! -e $rt_run/vgsh-sources-1 ]]; then ok "run removes the source snapshot roots dead shells left"; else fail "run left $rt_run/vgsh-sources-1"; fi
   if [[ -d $run_state ]]; then ok "run creates the state directory the shell watches"; else fail "run left no $run_state"; fi
 else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
+fi
+
+mutant="$tmp/mutant"; mkdir -p "$mutant/bin" "$mutant/shell"
+cp -- "$repo/bin/vgsh" "$mutant/bin/vgsh"; chmod +x "$mutant/bin/vgsh"
+python3 - "$mutant/bin/vgsh" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+old = 'VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"'
+new = 'VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"'
+count = text.count(old)
+if count != 1:
+    raise SystemExit(f"watcher-env-control: expected one match, found {count}")
+changed = text.replace(old, new)
+if changed == text:
+    raise SystemExit("watcher-env-control: mutation changed nothing")
+path.write_text(changed)
+PY
+rt_mutant="$tmp/rt-mutant"; mkdir -p "$rt_mutant"
+set +e
+"${base_env[@]}" XDG_RUNTIME_DIR="$rt_mutant" STUB_RECORD="$tmp/record-mutant" "$mutant/bin/vgsh" run 2>"$tmp/err"
+status=$?
+set -e
+mutant_record=""
+[[ -f $tmp/record-mutant ]] && mutant_record="$(cat "$tmp/record-mutant")"
+if [[ $status == 0 && -n $mutant_record ]] && ! run_has_file_watcher_env "$mutant_record"; then
+  ok "a vgsh run without the watcher environment fails the assertion"
+else
+  fail "watcher env mutant: exit=$status record=${mutant_record:-absent}"
 fi
 
 rt_held="$tmp/rt-held"; mkdir -p "$rt_held/vgsh-sources-2"; : >"$rt_held/vgsh-sources-2/x"; printf '%s\n' "$$" >"$rt_held/vgsh.lock"
