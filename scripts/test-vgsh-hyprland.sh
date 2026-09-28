@@ -29,8 +29,16 @@ theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": {
 fresh() { : >"$runs"; }
 ran() { [[ "$(cat "$runs")" == "$1" ]]; }
 no_pending() { [[ ! -e $pending ]]; }
-targets() { # HYPRLAND_STATE HYPRLAND_REASON_JSON: an apply's targets
-  printf '[{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"hyprland","state":"%s","reason":%s}]' "$1" "$2"
+# apply_json NAME WANT_EXIT WANT_FIRST_STDERR PACKAGE: an apply with --json,
+# its result line kept in $tmp/apply.json.
+apply_json() {
+  tinst "$1" "$cfg" "$rt_empty" "$2" "$any_out" "$3" theme apply --json "$4"
+  tail -n 1 "$tmp/out" >"$tmp/apply.json"
+}
+# result_is STATE SHELL HYPRLAND_STATE HYPRLAND_REASON: the kept result's
+# state, shell and hyprland entry; every other shipped target is undetected.
+result_is() {
+  json_is "$tmp/apply.json" 'd["state"] == "'"$1"'" and d["shell"] == "'"$2"'" and [t for t in d["targets"] if t["name"] == "hyprland"] == [{"name": "hyprland", "state": "'"$3"'", "reason": '"$4"'}] and all(t["state"] == "skipped" for t in d["targets"] if t["name"] != "hyprland")'
 }
 source_first() { # CONF OWN_TEXT_FILE
   [[ "$(head -n 1 -- "$1")" == "source = $live/hyprland.conf" ]] && tail -n +2 -- "$1" | cmp -s - "$2"
@@ -40,7 +48,8 @@ reload_line="reload sig=vgs-rows-instance"
 # A session with no hyprland.conf, as one configured by hyprland.lua, is
 # skipped: no file is created and no hook runs.
 cfg="$tmp/cfg-lua"; mkdir -p "$cfg/vgs"; fresh
-tinst "an apply with no hyprland.conf skips the target" "$cfg" "$rt_empty" 0 "{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":$(targets skipped '"wiring-file-absent"'),\"theme\":\"dusk\",\"reason\":null}" "" theme apply --json dusk
+apply_json "an apply with no hyprland.conf succeeds" 0 "" dusk
+check "an apply with no hyprland.conf skips the target" result_is applied applied skipped '"wiring-file-absent"'
 check "no hyprland.conf is created" test ! -e "$cfg/hypr"
 check "a skipped target lands no file" test ! -e "$live/hyprland.conf"
 check "a skipped target runs no hook" ran ""
@@ -49,7 +58,8 @@ check "a skipped target runs no hook" ran ""
 # rendered file and one hyprctl reload.
 cfg="$tmp/cfg-hypr"; conf="$cfg/hypr/hyprland.conf"; mkdir -p "$cfg/vgs" "$cfg/hypr"
 printf '# mine\ngeneral {\n    border_size = 3\n}\n' >"$conf"; cp -- "$conf" "$tmp/conf-own"; fresh
-tinst "an apply with a hyprland.conf writes the target" "$cfg" "$rt_empty" 0 "{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":$(targets written null),\"theme\":\"dusk\",\"reason\":null}" "" theme apply --json dusk
+apply_json "an apply with a hyprland.conf succeeds" 0 "" dusk
+check "an apply with a hyprland.conf writes the target" result_is applied applied written None
 check "the accent is written with the hyprland encoder" grep -qxF -- '$vgs_accent = rgba(112233ff)' "$live/hyprland.conf"
 check "the background is written with the hyprland encoder" grep -qxF -- '$vgs_background = rgba(0a0b0cff)' "$live/hyprland.conf"
 check "the active border takes the accent" grep -qxF -- '    col.active_border = $vgs_accent' "$live/hyprland.conf"
@@ -57,13 +67,15 @@ check "the source line goes first and the file's own text is kept" source_first 
 check "the hook is one hyprctl reload naming no instance, with the session's signature" ran "$reload_line"
 check "a hook that exits 0 leaves nothing pending" no_pending
 fresh
-tinst "unchanged Hyprland bytes are unchanged" "$cfg" "$rt_empty" 0 "{\"state\":\"unchanged\",\"shell\":\"unchanged\",\"targets\":$(targets unchanged null),\"theme\":\"dusk\",\"reason\":null}" "" theme apply --json dusk
+apply_json "an apply of unchanged bytes succeeds" 0 "" dusk
+check "unchanged Hyprland bytes are unchanged" result_is unchanged unchanged unchanged None
 check "unchanged bytes run no hook" ran ""
 
 # hyprctl fails when no Hyprland answers: the target stays pending until a
 # reload with Hyprland up runs it again.
 printf '1\n' >"$tmp/hyprctl-exit"; fresh
-tinst "a failing hyprctl leaves the target reload-pending" "$cfg" "$rt_empty" 3 "{\"state\":\"partial\",\"shell\":\"applied\",\"targets\":$(targets reload-pending '"reload-failed"'),\"theme\":\"nord\",\"reason\":null}" "vgsh: refused: target=hyprland reason=reload-failed command=hyprctl status=1" theme apply --json nord
+apply_json "an apply whose hyprctl fails is partial with exit 3" 3 "vgsh: refused: target=hyprland reason=reload-failed command=hyprctl status=1" nord
+check "a failing hyprctl leaves the target reload-pending" result_is partial applied reload-pending '"reload-failed"'
 check "the failed hook ran once" ran "$reload_line"
 check "the failed reload is pending" test "$(cat "$pending")" == '{"schemaVersion":1,"targets":["hyprland"]}'
 rm -- "$tmp/hyprctl-exit"; fresh
