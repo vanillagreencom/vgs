@@ -42,6 +42,7 @@ fresh() {
 mutations=(
   "the label's role is not read|foundation/Label.qml|const found = Theme.text[name];|const found = undefined;|tst_label.qml"
   "the label's weight does not reach the axis|foundation/Label.qml|font.variableAxes: ({ wght: typography.weight })|font.variableAxes: ({ wght: 400 })|tst_label.qml"
+  "the bar role draws at the body metrics|../Commons/Tokens.js|bar: role(0.92, 500, 0.02, 1, false, \"text\")|bar: role(1, 400, 0, 1.45, false, \"text\")|tst_label.qml"
   "the label's letter spacing is not scaled|foundation/Label.qml|font.letterSpacing: typography.letterSpacing * typography.size|font.letterSpacing: typography.letterSpacing|tst_label.qml"
   "the icon's stroke scales with its size|foundation/Icon.qml|strokeWidth: root.stroke / root.factor|strokeWidth: root.stroke|tst_icon.qml"
   "the icon's path is not scaled|foundation/Icon.qml|transform: Scale { xScale: root.factor; yScale: root.factor }|transform: Scale { xScale: 1; yScale: 1 }|tst_icon.qml"

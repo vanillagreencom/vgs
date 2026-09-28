@@ -7,17 +7,20 @@ import qs.Unit
 // Label draws one typography role: every font property and the colour come
 // from the role, a theme change moves them, an unknown role is logged and
 // drawn as body, and the weight reaches the variable font: a heavier weight
-// leaves more ink.
+// leaves more ink. The bar role draws at the bar's chrome metrics with a
+// line box exactly the font's height, so centring the box centres the text.
 Item {
     id: root
     width: 300
-    height: 120
+    height: 150
 
     Rectangle { anchors.fill: parent; color: "black" }
     Label { id: body; text: "Plugin updates" }
     Label { id: eyebrow; role: "eyebrow"; text: "Community registry"; y: 30 }
     Label { id: light; text: "Weight"; y: 60; font.weight: 300; font.variableAxes: ({ wght: 300 }); color: "white" }
     Label { id: heavy; text: "Weight"; y: 90; font.weight: 800; font.variableAxes: ({ wght: 800 }); color: "white" }
+    Label { id: bar; role: "bar"; text: "10"; y: 120 }
+    FontMetrics { id: barMetrics; font: bar.font }
 
     TestCase {
         name: "label"
@@ -47,6 +50,20 @@ Item {
             compare(String(eyebrow.color), String(Qt.color(role.color)));
             compare(body.font.capitalization, Font.MixedCase);
             compare(String(body.color), String(Qt.color(Theme.text.body.color)));
+        }
+
+        // The values are the reference's, restated here rather than read
+        // from the table, so a changed row reddens this test.
+        function test_bar_role_draws_the_chrome_metrics() {
+            compare(bar.font.family, "JetBrains Mono");
+            compare(bar.font.pixelSize, 12);
+            compare(bar.font.weight, 500);
+            compare(bar.font.variableAxes.wght, 500);
+            fuzzyCompare(bar.font.letterSpacing, 0.02 * 12, 0.07);
+            compare(bar.font.capitalization, Font.MixedCase);
+            compare(bar.lineHeight, 1);
+            compare(bar.lineHeightMode, Text.ProportionalHeight);
+            fuzzyCompare(bar.implicitHeight, barMetrics.height, 1);
         }
 
         function test_theme_change_moves_the_role() {

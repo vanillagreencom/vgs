@@ -374,6 +374,9 @@ expect_widgets() { # LABEL EXPECTED_JSON_LIST
   fail "$1: got $got want $want"
 }
 
+# The first bar host's key, for reading a widget instance back.
+bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
+
 # Built-in widget ids every bar registered, sorted: the records of origin
 # `plugin` under each bar host key.
 bar_builtins() {

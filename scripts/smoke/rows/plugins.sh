@@ -29,8 +29,6 @@ expect_poll "user-directory plugin discovered and disabled until enabled" False 
 expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare true
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
-# The first bar host's key, for reading a widget instance back.
-bar_key() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(k for k in d if k.startswith("bar:"))[0])'; }
 read_widget() { ipc smoke readInstance "$(bar_key)" acme.probe "$1"; }
 read_service() { ipc smoke readInstance service acme.probe "$1"; }
 read_clock() { ipc smoke readInstance "$(bar_key)" vgs.bar/center-clock "$1"; }

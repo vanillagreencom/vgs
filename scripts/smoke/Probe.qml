@@ -200,6 +200,27 @@ Scope {
         function configSettled(): bool { return Config.activeSave === null && !Config.reloading && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
+        // Every item under an instance, the instance first, breadth first:
+        // its type name, with the engine's suffix for a QML-defined or
+        // extended type removed, its box in screen coordinates, its implicit
+        // size, the index of its parent in the list and a Label's role. A row
+        // measures alignment from it, so the shipped item carries no
+        // readback of its own.
+        function descendantGeometry(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const items = root.descendants(item);
+            return JSON.stringify(items.map(child => {
+                const at = child.mapToGlobal(0, 0);
+                return {
+                    type: String(child).split("(")[0].replace(/_QML(TYPE)?_\d+$/, ""),
+                    box: [at.x, at.y, child.width, child.height],
+                    implicit: [child.implicitWidth, child.implicitHeight],
+                    parent: items.indexOf(child.parent),
+                    role: child.role
+                };
+            }));
+        }
         function hasWorkspaceAction(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
             if (item === null || !item.bar || !item.bar.shell) return false;

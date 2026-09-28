@@ -42,8 +42,10 @@ const DEFAULTS = [
     ["radius.md", 0],
     ["motion.duration.normal", 150],
     ["motion.easing.standard", "outCubic"],
-    // mul(13, 0.85) = 11.05, mul(13, 1.7) = 22.1, mul(13, 2.3) = 29.9
+    // mul(13, 0.85) = 11.05, mul(13, 1.7) = 22.1, mul(13, 2.3) = 29.9, mul(13, 0.92) = 11.96
     ["text.hint.size", 11],
+    ["text.bar.size", 12],
+    ["text.bar.lineHeight", 1],
     ["text.h1.size", 22],
     ["text.display.size", 30],
     ["text.eyebrow.uppercase", true],
@@ -51,7 +53,9 @@ const DEFAULTS = [
     ["text.body.family", "JetBrains Mono"],
     ["font.family.sans", "JetBrains Mono"],
     ["bar.height", 26],
-    ["bar.onActive", "#000000ff"]
+    ["bar.onActive", "#000000ff"],
+    ["bar.item.paddingX", 6],
+    ["bar.item.gap", 4]
 ];
 
 // A document that is accepted, and the values it must resolve to.

@@ -210,7 +210,13 @@ var TOKENS = {
         hint: role(0.85, 400, 0.01, 1.35, false, "textFaint"),
         tooltip: role(0.85, 500, 0.02, 1.3, false, "text"),
         button: role(0.85, 500, 0.08, 1, true, "text"),
-        code: role(0.92, 400, 0, 1.4, false, "text")
+        code: role(0.92, 400, 0, 1.4, false, "text"),
+        // Bar chrome. The reference, plugins.omarchy.org (stylesheet read
+        // 2026-09-27), sets chrome in mono at 12 to 13 px with line height
+        // 1; 0.92 of the 13 px base is 12 px. A line height of 1 makes the
+        // line box the font's own height, so centring the box centres the
+        // glyphs.
+        bar: role(0.92, 500, 0.02, 1, false, "text")
     },
 
     surface: {
@@ -475,6 +481,13 @@ var TOKENS = {
         active: color("{color.accent}"),
         onActive: color("contrast({bar.active})"),
         gap: length("{space.md}"),
-        padding: length("{space.lg}")
+        padding: length("{space.lg}"),
+        // One item of the bar, such as a workspace pill: its horizontal
+        // padding, the gap between items of one widget, and its corner.
+        item: {
+            paddingX: length("{space.sm}"),
+            gap: length("{space.xs}"),
+            radius: length("{radius.sm}")
+        }
     }
 };

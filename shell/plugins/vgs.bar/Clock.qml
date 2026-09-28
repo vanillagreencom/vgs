@@ -2,9 +2,10 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Date and time from the shared clock, in the bar's `clockFormat`. The
-// shared clock ticks once a second only while some format on some screen
-// shows seconds.
+// Date and time from the shared clock, in the bar's `clockFormat`, in the
+// `text.bar` role at the bar's vertical centre, where the workspace labels
+// sit. The shared clock ticks once a second only while some format on some
+// screen shows seconds.
 Item {
     id: root
 
@@ -25,7 +26,7 @@ Item {
     Label {
         id: label
         anchors.centerIn: parent
-        role: "body"
+        role: "bar"
         text: Qt.formatDateTime(Time.now, root.format)
         color: Theme.bar.foreground
     }

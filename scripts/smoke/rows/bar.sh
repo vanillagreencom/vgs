@@ -29,6 +29,61 @@ if [[ $bars == "$monitors" && $monitors != 0 && $monitors != -1 ]]; then ok "one
 expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
 expect_builtins "every bar registered its built-in workspaces, clock and plugin manager" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
 
+# The built-ins share one vertical centre, the bar's, and draw in the
+# `text.bar` role alone. A workspace pill is its label plus
+# `bar.item.paddingX` a side with `size.control.sm` as its floor, and its
+# label's line height plus `space.xs` tall, with the label at its centre;
+# pills stand `bar.item.gap` apart. The manager's icon and text sit on its
+# button's centre. Read from the first bar's items, each within one pixel;
+# the answer is the list of misplaced items, so `[]` is the pass.
+bar_alignment() {
+  local key bar_box ws clock manager pad gap floor xs
+  key="$(bar_key)" || return
+  bar_box="$(ipc smoke instanceGeometry "$key" vgs.bar)" || return
+  ws="$(ipc smoke descendantGeometry "$key" vgs.bar/left-workspaces)" || return
+  clock="$(ipc smoke descendantGeometry "$key" vgs.bar/center-clock)" || return
+  manager="$(ipc smoke descendantGeometry "$key" vgs.bar/right-manager)" || return
+  pad="$(ipc smoke themeValue bar.item.paddingX)" || return
+  gap="$(ipc smoke themeValue bar.item.gap)" || return
+  floor="$(ipc smoke themeValue size.control.sm)" || return
+  xs="$(ipc smoke themeValue space.xs)" || return
+  python3 - "$bar_box" "$ws" "$clock" "$manager" "$pad" "$gap" "$floor" "$xs" <<'PY'
+import json, sys
+bar, ws, clock, manager, pad, gap, floor, xs = (json.loads(a) for a in sys.argv[1:])
+out = []
+def near(a, b): return abs(a - b) <= 1
+def mid_x(r): return r["box"][0] + r["box"][2] / 2
+def mid_y(r): return r["box"][1] + r["box"][3] / 2
+def check(name, got, want):
+    if not near(got, want): out.append("%s=%.2f want=%.2f" % (name, got, want))
+def children(rows, i, kind): return [c for c in rows if c["parent"] == i and c["type"] == kind]
+centre = bar[1] + bar[3] / 2
+for name, rows in (("workspaces", ws), ("clock", clock), ("manager", manager)):
+    roles = sorted({str(r.get("role")) for r in rows if r["type"] == "Label"})
+    if roles != ["bar"]: out.append("%s roles=%s" % (name, roles))
+pills = sorted(((r, children(ws, i, "Label")) for i, r in enumerate(ws) if r["type"] == "QQuickRectangle" and children(ws, i, "Label")), key=lambda p: p[0]["box"][0])
+if not pills: out.append("workspaces pills=0")
+for n, (pill, (label,)) in enumerate(pills):
+    check("pill%d.width" % n, pill["box"][2], max(floor, label["implicit"][0] + 2 * pad))
+    check("pill%d.height" % n, pill["box"][3], label["implicit"][1] + xs)
+    check("pill%d.label.x" % n, mid_x(label), mid_x(pill))
+    check("pill%d.label.y" % n, mid_y(label), mid_y(pill))
+    check("pill%d.y" % n, mid_y(pill), centre)
+    if n: check("pill%d.gap" % n, pill["box"][0] - (pills[n - 1][0]["box"][0] + pills[n - 1][0]["box"][2]), gap)
+clock_labels = [r for r in clock if r["type"] == "Label"]
+if len(clock_labels) != 1: out.append("clock labels=%d" % len(clock_labels))
+for label in clock_labels: check("clock.label.y", mid_y(label), centre)
+buttons = [(i, r) for i, r in enumerate(manager) if r["type"] == "Button"]
+if len(buttons) != 1: out.append("manager buttons=%d" % len(buttons))
+for i, button in buttons:
+    check("manager.button.y", mid_y(button), centre)
+    inside = [r for j, r in enumerate(manager) if j > i and r["type"] in ("Icon", "Label")]
+    if sorted(r["type"] for r in inside) != ["Icon", "Label"]: out.append("manager content=%s" % sorted(r["type"] for r in inside))
+    for r in inside: check("manager.%s.y" % r["type"].lower(), mid_y(r), mid_y(button))
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the workspace pills, the clock and the manager share the bar's centre" '[]' bar_alignment
 expect "the core built the bar and its placed widget per screen, and no built-in" "$((2 * monitors))" builds
 
 # Disable only lists the id: the layout entry and its settings stay, so
