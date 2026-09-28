@@ -250,9 +250,32 @@ check "a reload that succeeds clears the pending terminals" test ! -e "$pending"
 # wezterm.lua, HOME/.config/wezterm/wezterm.lua when XDG_CONFIG_HOME points
 # elsewhere, then HOME/.wezterm.lua.
 rm -- "$cfg/wezterm/wezterm.lua"
-printf '%s\n%s\n' "pcall(dofile, \"$live/wezterm.lua\")" "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
+mkdir -p "$home/.config/wezterm"
+printf '%s\n' "$wezterm_home_own" >"$home/.config/wezterm/wezterm.lua"; touch -d @1000 -- "$home/.config/wezterm/wezterm.lua"
+printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
+apply_json "a HOME config wezterm.lua fallback applies wezterm" 0 nord
+check "the HOME config wezterm.lua fallback is written" test "$(target_state wezterm)" == written
+check "the include line goes into HOME/.config/wezterm/wezterm.lua" test "$(cat "$home/.config/wezterm/wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_home_own"
+check "the HOME config fallback wins over HOME/.wezterm.lua" test "$(cat "$home/.wezterm.lua")" == "$wezterm_home_own" -a "$(stat -c %Y -- "$home/.wezterm.lua")" == 1000
+check "the HOME config wezterm.lua fallback hook touched the watched file" test "$(stat -c %Y -- "$home/.config/wezterm/wezterm.lua")" != 1000
+printf '{"schemaVersion":1,"targets":["wezterm"]}\n' >"$pending"
+touch -d @1000 -- "$home/.config/wezterm/wezterm.lua" "$home/.wezterm.lua"
+tinst "reload touches a pending HOME config wezterm.lua" "$cfg" "$rt_empty" 0 "ok reload state=reloaded" "" theme reload
+check "reload touched the HOME config wezterm.lua fallback" test "$(stat -c %Y -- "$home/.config/wezterm/wezterm.lua")" != 1000
+check "reload left HOME/.wezterm.lua untouched" test "$(stat -c %Y -- "$home/.wezterm.lua")" == 1000 -a "$(cat "$home/.wezterm.lua")" == "$wezterm_home_own"
+check "reload cleared the pending HOME config wezterm hook" test ! -e "$pending"
+
+printf '%s\n' "$wezterm_home_own" >"$home/.config/wezterm/wezterm.lua"; touch -d @1000 -- "$home/.config/wezterm/wezterm.lua"
+printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
+judge_control fallback-last-first 'for (const relative of relatives) {' 'for (const relative of relatives.slice().reverse()) {'
+apply_json "the fallback-last-first mutant applies" 0 nord
+check "the fallback-last-first mutant wires HOME/.wezterm.lua before HOME/.config/wezterm/wezterm.lua" test "$(cat "$home/.wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_home_own" -a "$(cat "$home/.config/wezterm/wezterm.lua")" == "$wezterm_home_own"
+unset THEME_BIN
+rm -- "$home/.config/wezterm/wezterm.lua"; rmdir -- "$home/.config/wezterm"
+
+printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
 apply_json "a HOME wezterm.lua fallback applies wezterm" 0 nord
-check "the HOME wezterm.lua fallback is written" test "$(target_state wezterm)" == written
+check "the HOME wezterm.lua fallback is active" test "$(target_verdict wezterm)" == "unchanged None"
 check "the include line goes into HOME/.wezterm.lua" test "$(cat "$home/.wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_home_own"
 check "a HOME wezterm.lua fallback leaves config-home absent" test ! -e "$cfg/wezterm/wezterm.lua"
 check "the HOME wezterm.lua fallback hook touched the watched file" test "$(stat -c %Y -- "$home/.wezterm.lua")" != 1000

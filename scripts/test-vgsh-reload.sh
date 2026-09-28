@@ -129,6 +129,20 @@ check "the disabled target's hook never ran and it is dropped" test -z "$(cat "$
 printf '{}\n' >"$cfg/vgs/shell.json"; hook 0
 tinst "alpha lands again" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 
+# A reload hook that names no `@{wiring}` does not need its wiring path:
+# a broken path lookup must not keep a pending hook from running.
+target_dir alpha '{ "app": "alpha", "encoder": "hex6", "files": [{ "template": "alpha.conf", "destination": "alpha.conf" }], "detect": [], "wiring": { "file": "alpha/alpha.conf", "line": "include=@{state}/alpha.conf", "create": true, "fallbacks": [".alpha.conf"] }, "reload": { "command": ["vgs-hook", "alpha"], "timeoutMs": 3000 } }' 'a=@{palette.accent}'
+printf '%s\n' "$alpha_due" >"$pending"; rm -rf -- "$cfg/alpha"; printf 'not a directory\n' >"$cfg/alpha"; fresh
+tinst "a reload ignores an unneeded wiring path" "$cfg" "$rt_empty" 0 '{"state":"reloaded","targets":[{"name":"alpha","state":"reloaded","reason":null}],"reason":null}' "" theme reload --json
+check "the reload with an unneeded wiring path ran the hook" ran "$(run_line "$alpha_due")"
+check "the reload with an unneeded wiring path cleared pending" no_pending
+printf '%s\n' "$alpha_due" >"$pending"; fresh
+judge_control unneeded-wiring-path 'if (!render.reloadNamesWiring(target)) return { ok: true, path: undefined };' 'if (false) return { ok: true, path: undefined };'
+tinst "the unneeded-wiring-path mutant reloads" "$cfg" "$rt_empty" 3 '{"state":"partial","targets":[{"name":"alpha","state":"reload-pending","reason":"reload-failed"}],"reason":null}' "vgsh: refused: target=alpha reason=reload-failed path=$cfg/alpha/alpha.conf error=ENOTDIR" theme reload --json
+check "the unneeded-wiring-path mutant leaves the hook pending" pending_is '["alpha"]'
+unset THEME_BIN
+rm -- "$cfg/alpha"; mkdir -p "$cfg/alpha"; printf 'include=%s/alpha.conf\n' "$state/theme" >"$cfg/alpha/alpha.conf"; rm -f -- "$pending"
+
 # A reload detects as apply does: a pending target whose one entry lists
 # alternatives is dropped when none is on PATH and reloaded through any one.
 alpha_any_of() { target_dir alpha "$(target_json alpha hex6 "[[$1]]" 'include=@{state}/alpha.conf' true '{ "command": ["vgs-hook", "alpha"], "timeoutMs": 3000 }')" 'a=@{palette.accent}'; }

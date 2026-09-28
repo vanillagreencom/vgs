@@ -249,14 +249,19 @@ function entryLinks(target, live) {
 }
 
 // The placeholders a reload command may name for TARGET.
-function reloadPlaceholders(target) {
+function reloadPlaceholders(logic, target) {
     const names = [STATE_PLACEHOLDER];
-    if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logicHasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);
+    if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logic.hasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);
     return names;
 }
 
-function logicHasOwn(value, key) {
-    return Object.prototype.hasOwnProperty.call(value, key);
+// Whether TARGET's reload command names the wiring-file placeholder.
+function reloadNamesWiring(target) {
+    if (target.reload === null) return false;
+    return target.reload.command.some(arg => {
+        const names = placeholderNames(arg);
+        return names !== null && names.includes(WIRING_PLACEHOLDER);
+    });
 }
 
 // The first defect of `reload`, or "": null, or an argv whose placeholders
@@ -268,7 +273,7 @@ function reloadError(logic, reload, target) {
         !Object.keys(reload).every(key => RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)) return "key=reload";
     if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return "key=reload.command";
     const names = reload.command.map(placeholderNames);
-    const allowed = reloadPlaceholders(target);
+    const allowed = reloadPlaceholders(logic, target);
     if (names.some(list => list === null || list.some(name => !allowed.includes(name)))) return "key=reload.command";
     if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return "key=reload.timeoutMs";
     if (logic.hasOwn(reload, ALWAYS_KEY) && typeof reload.always !== "boolean") return "key=reload.always";
@@ -684,4 +689,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };
+module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadNamesWiring, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };

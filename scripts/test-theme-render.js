@@ -504,14 +504,18 @@ function verify(render) {
     // alone makes a hook due on every apply.
     const hooked = accepted("probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } }));
     assert.deepEqual(render.reloadCommand(hooked, "/s/vgs/theme"), ["probe", "--file=/s/vgs/theme/probe.conf", "@{x}"]);
+    assert.equal(render.reloadNamesWiring(hooked), false);
     const wiringHook = accepted("probe", targetText({ reload: { command: ["touch", "-c", "--", "@{wiring}", "@{state}", "@@{x}"], timeoutMs: 2000 } }));
+    assert.equal(render.reloadNamesWiring(wiringHook), true);
     assert.deepEqual(render.reloadCommand(wiringHook, "/s/vgs/theme", "/home/u/.wezterm.lua"), ["touch", "-c", "--", "/home/u/.wezterm.lua", "/s/vgs/theme", "@{x}"]);
     assert.throws(() => render.reloadCommand(wiringHook, "/s/vgs/theme"), /names placeholder wiring/);
     assert.deepEqual(render.reloadCommand(target("hex6"), "/s"), ["probe", "--reload"]);
+    assert.equal(render.reloadNamesWiring(target("hex6")), false);
     assert.equal(render.reloadAlways(hooked), true);
     assert.equal(render.reloadAlways(target("hex6")), false);
     assert.equal(render.reloadAlways(accepted("probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } }))), false);
     const hookless = accepted("probe", targetText({ reload: null }));
+    assert.equal(render.reloadNamesWiring(hookless), false);
     assert.equal(render.reloadAlways(hookless), false);
     assert.throws(() => render.reloadCommand(hookless, "/s"), /has no reload/);
 }
@@ -592,7 +596,8 @@ const CONTROLS = [
     ["reload always boolean", "typeof reload.always !== \"boolean\"", "false"],
     ["reload argument placeholder", "!allowed.includes(name)", "false"],
     ["reload argument unterminated", "list === null ||", "false ||"],
-    ["reload wiring placeholder gate", 'if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logicHasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);', "names.push(WIRING_PLACEHOLDER);"],
+    ["reload wiring placeholder gate", 'if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logic.hasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);', "names.push(WIRING_PLACEHOLDER);"],
+    ["reload names wiring", "return names !== null && names.includes(WIRING_PLACEHOLDER);", "return false;"],
     ["reload argument state", "target.reload.command.map(arg => withValues(arg, values,", "target.reload.command.map(arg => String(arg,"],
     ["reload always read", "target.reload.always === true", "target.reload.always !== undefined"],
     ["wiring none form", "if (wiring === null) return \"none\";", "if (false) return \"none\";"],

@@ -544,7 +544,8 @@ function firstHomeRelative(relatives, read) {
     return null;
 }
 
-// Whether FILE exists, following symlinks. A dangling symlink is absent.
+// FILE when it exists, following symlinks, or undefined when it is absent.
+// A dangling symlink is absent; non-ENOENT stat failures throw.
 function existingPath(file) {
     try {
         fs.statSync(file);
@@ -1055,7 +1056,7 @@ function stillPending(rows, due) {
 // has no such placeholder. A lookup failure keeps the target pending; the
 // hook cannot be run with the wrong path.
 function reloadWiring(name, target, configHome, failures) {
-    if (render.wiringForm(target.wiring) !== "include" || target.wiring.profiles !== undefined) return { ok: true, path: undefined };
+    if (!render.reloadNamesWiring(target)) return { ok: true, path: undefined };
     try {
         return { ok: true, path: includeFiles(target, configHome)[0] };
     } catch (e) {
