@@ -84,7 +84,7 @@ printf '[general]\nlive_config_reload = true\n\n[window]\nopacity = 0.9\n' >"$cf
 wezterm_own=$'local wezterm = require \'wezterm\'\nlocal config = wezterm.config_builder()\nconfig.font_size = 11\nreturn config'
 printf '%s\n' "$wezterm_own" >"$cfg/wezterm/wezterm.lua"
 terminals() { # ALACRITTY GHOSTTY KITTY WEZTERM: each a state and a JSON reason
-  printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
+  printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
 }
 written="written null"
 signalled() { # WANT: the signal command's argument lines since the last `: >"$signals"`
