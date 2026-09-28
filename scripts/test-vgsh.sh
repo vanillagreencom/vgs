@@ -497,6 +497,28 @@ tinst "theme list with an unreadable file" "$cfg" "$rt_empty" 0 "$vgs_row" "" th
 check "an unreadable file is unreadable and not compared" has_line "file path=$file state=unreadable name=- modified=null"
 chmod 600 "$file"
 
+# An installed vgs whose files cannot be read is still refused for its
+# name, so it never hides the shipped defaults or their terminal slots.
+cfg="$tmp/cfg-theme-locked"; themes="$cfg/vgs/themes"; file="$cfg/vgs/theme.json"
+theme_pkg "$themes/vgs" '{ "schemaVersion": 1, "name": "vgs", "tokens": {} }'
+theme_pkg "$themes/plain" '{ "schemaVersion": 1, "name": "plain", "tokens": {} }'
+chmod 000 "$themes/vgs/theme.json"
+tinst "theme list with an unreadable installed vgs" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "an unreadable installed vgs is refused for its reserved name" has_line "theme=vgs source=installed state=refused reason=reserved-name current=false"
+tinst "theme apply plain beside an unreadable installed vgs" "$cfg" "$rt_empty" 0 "ok theme=plain state=applied shell=applied" "" theme apply plain
+check "a package without terminal.json takes the shipped vgs slots beside an unreadable installed vgs" cmp -s "$repo/themes/vgs/terminal.json" "$state/theme/terminal.json"
+tinst "theme apply vgs beside an unreadable installed vgs" "$cfg" "$rt_empty" 0 "ok theme=vgs state=applied shell=applied" "" theme apply vgs
+check "apply vgs beside an unreadable installed vgs writes the shipped defaults' bytes" cmp -s "$repo/themes/vgs/theme.json" "$file"
+chmod 600 "$themes/vgs/theme.json"
+
+# A state directory apply cannot enter refuses with the structured result
+# and the keyed line, never an fs exception from the stage's cleanup.
+chmod 000 "$state"
+tinst "theme apply --json refuses a state directory it cannot enter" "$cfg" "$rt_empty" 1 '{"state":"failed","shell":"unchanged","targets":[],"theme":"plain","reason":"unwritable"}' "vgsh: refused: theme=plain reason=unwritable path=$state/next-theme error=EACCES" theme apply --json plain
+chmod 700 "$state"
+check "the unwritable refusal is its one stderr line" test "$(wc -l <"$tmp/err")" == 1
+check "an unwritable state directory leaves the theme file alone" cmp -s "$repo/themes/vgs/theme.json" "$file"
+
 # --help prints the header comment of the script itself on stderr and exits
 # 0; the expected first line is read from the script, not restated here.
 set +e

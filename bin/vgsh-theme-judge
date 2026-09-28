@@ -73,15 +73,27 @@ function text(bytes) {
 
 // A package's two files as bytes, absent ones undefined, and the judge's
 // verdict on their text. `acceptPackage` is the only judge of a package.
+// It judges the name before the document, so a package it refuses by name
+// is refused, with `files` null, whether or not its files can be read: an
+// unreadable installed `vgs` stays reserved. Any other read failure throws
+// the fs error.
 function readPackage(dir, shipped) {
-    const files = { theme: readIfPresent(path.join(dir, "theme.json")), terminal: readIfPresent(path.join(dir, "terminal.json")) };
-    const verdict = logic.acceptPackage(tokens, {
+    const judge = files => logic.acceptPackage(tokens, {
         directoryName: path.basename(dir),
         themeJson: text(files.theme),
         terminalJson: text(files.terminal),
         shipped: shipped
     });
-    return { files, verdict };
+    let files;
+    try {
+        files = { theme: readIfPresent(path.join(dir, "theme.json")), terminal: readIfPresent(path.join(dir, "terminal.json")) };
+    } catch (e) {
+        const byName = judge({});
+        // `package-theme` is the judge reaching the document it was not given.
+        if (byName.reason === "package-theme") throw e;
+        return { files: null, verdict: byName };
+    }
+    return { files, verdict: judge(files) };
 }
 
 // --- packages
@@ -110,7 +122,7 @@ function checkPackages(dirArg) {
         } catch (e) {
             unreadable(e.path || dir, e.code);
         }
-        if (judged.files.theme === undefined) unreadable(path.join(dir, "theme.json"), "ENOENT");
+        if (judged.files !== null && judged.files.theme === undefined) unreadable(path.join(dir, "theme.json"), "ENOENT");
         if (judged.verdict.ok) {
             console.log("ok       " + judged.verdict.name);
             continue;
@@ -292,8 +304,15 @@ function applyTo(result, configDir, stateDir, lock, name) {
             }
         });
         writing(aside, key, () => fs.rmSync(aside, { recursive: true, force: true }));
-    } finally {
-        fs.rmSync(stage, { recursive: true, force: true });
+    } catch (e) {
+        // The next apply removes a stage this one leaves, under the lock,
+        // so a failed removal here never replaces the refusal it follows.
+        try {
+            fs.rmSync(stage, { recursive: true, force: true });
+        } catch (cleanup) {
+            // The refusal being rethrown names the cause.
+        }
+        throw e;
     }
     replaceFile(path.join(stateDir, "theme.name"), name + "\n", key);
 
