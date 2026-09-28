@@ -31,7 +31,6 @@ Read each before acting:
 - dev: .agents/skills/dev/SKILL.md
 - github: .agents/skills/github/SKILL.md
 - linear: .agents/skills/linear/SKILL.md
-- review-gate: .agents/skills/review-gate/SKILL.md
 - code-quality: .agents/skills/code-quality/SKILL.md
 - preflight: .agents/skills/preflight/SKILL.md
 

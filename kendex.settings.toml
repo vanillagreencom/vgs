@@ -68,66 +68,8 @@ LINEAR_TEAM = "vgs"
 # Issue identifier prefix used in examples (e.g. PROJ-123).
 LINEAR_TEAM_PREFIX = "VGS"
 
-# Review-gate list values use semicolon separators.
-# See the review-gate skill for the complete key reference.
-
-# Commit-status context the gate posts — the required check name in branch
-# protection. Keep it stable: changing it strands the old required context
-# on open PRs.
-REVIEW_GATE_CONTEXT = "Review gate"
-
-# Trusted check-run or commit-status names may supply clean-review evidence.
-# Name matching requires trusted publishers. Shared github-actions check-runs
-# are rejected; legacy statuses use REVIEW_GATE_STATUS_PUBLISHER_REJECT.
-# Skip-pattern filtering and newest-row selection prevent skipped or stale
-# successes from supplying evidence.
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
-
-# Reject a trusted pass whose output contains any listed skip substring.
-# Empty disables this filter.
-REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
-
-# Comment reviewers use login:binding-prefix entries. The author login
-# authenticates the reviewer; the literal prefix binds its comment to a commit.
-# The owner's clean-review comment is evidence on the commit it names.
-REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
-
-# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
-REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
-
-# Status context for an operator attestation of total reviewer silence.
-# It substitutes only for missing evidence, never requested changes or open
-# threads. The operator posts it manually; publisher rejection still applies.
-REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
-
-# Only listed non-author reviewer logins may supply review-object evidence.
-# An empty list accepts any non-author, which lets an unrelated GitHub account
-# satisfy missing evidence on a public repository. The PR author never qualifies.
-# Every active reviewer must be listed: an unlisted one supplies no evidence
-# yet its engagement holds off the timeout fallback.
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
-
-# Accept non-dismissed review objects from trusted logins. COMMENTED can
-# represent a clean review; requiring APPROVED would discard that evidence.
-REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
-
-# Reject statuses from github-actions[bot] so PR workflows cannot supply
-# trusted reviewer evidence or the operator override.
-REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
-
-# Carry ancestor evidence for documentation changes. Comment carry is off
-# because its line classifier cannot recognize enclosing strings or heredocs.
-REVIEW_GATE_CARRY_FORWARD = "docs"
-
-# No gate writer or required status exists; shared tools skip review waits.
+# Orch reads this switch even without the review-gate package installed.
 REVIEW_GATE_MODE = "off"
-# Require fresh evidence for policy instructions and the checks. Harness trees
-# are excluded whole so a new rendered skill inherits the rule; scripts/ is
-# excluded so the validation code never carries stale evidence.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;.agents/skills/bot-instructions/*"
-
-REVIEW_GATE_CLASS_POLICY = "render:none;trivial:none;micro:none;small:none;standard:none"
-REVIEW_GATE_DOCS_ONLY = "none"
 
 # The agent-routing labels the project-management taxonomy declares. A create
 # carrying none of them is refused: such an issue is invisible to routing.
@@ -139,15 +81,6 @@ LINEAR_REQUIRE_REACH = "1"
 # Total review-wait budget in seconds before the on-timeout policy applies;
 # an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
-
-# Review threads are advisory, not a merge condition.
-REVIEW_GATE_THREADS = "off"
-
-# Bounded attempts per predicate evidence read, and the pause between them.
-# A read failing every attempt is still exit 2 (no verdict).
-REVIEW_GATE_API_ATTEMPTS = "1"
-
-REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
@@ -174,12 +107,6 @@ ORCH_LANE_MAX_PCT = "95"
 
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
-
-# Substrings marking a review row's body as the reviewer's own errored-run
-# attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
-# Matched at the start of the body only (first line); a review quoting a
-# pattern in later text stays evidence. Empty disables.
-REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
 
 # Cross-model review selects an available roster entry distinct from this session.
 # See the second-opinion skill for selection rules.
@@ -241,14 +168,6 @@ GH_BOT_USERNAME = ""
 
 # Maximum external review rounds before findings receive dispositions.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
-
-# The kendex render trees "vendored" trusts as kendex output, e.g.
-# ".agents/*;.claude/skills/*" — bytes under them carry unreviewed, so hook
-# scripts and instruction markdown belong in the exclusion list, which wins.
-# A rename carries only when both its names are under the set. Config
-# errors: enabling "vendored" over an empty set, or an entry naming no
-# literal path text ("*", "*/*").
-REVIEW_GATE_VENDORED_PATHS = ""
 
 # The kendex command-safety hook refuses a systemd-run command whose MemoryMax
 # or MemoryHigh value is a number followed by K or M; a value in G, a bare

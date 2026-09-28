@@ -2,6 +2,8 @@
 
 `kendex.toml` holds the review configuration. The bot-instructions package renders the root review section and the enabled native instruction files.
 
+The review-gate package and automatic refresh workflow are not installed. Update packages manually with `kendex refresh` from the main checkout.
+
 ## Capability record
 
 | Capability | State | Evidence or remaining check |

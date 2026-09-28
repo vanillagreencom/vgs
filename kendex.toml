@@ -202,10 +202,6 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.review-gate]
-source = "kendex"
-enabled = true
-
 [skills.reviewer]
 source = "kendex"
 enabled = true
@@ -332,7 +328,6 @@ generalist = [
     "dev",
     "github",
     "linear",
-    "review-gate",
     "code-quality",
     "preflight",
 ]
