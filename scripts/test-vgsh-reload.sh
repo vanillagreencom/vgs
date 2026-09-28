@@ -150,6 +150,33 @@ flock 7
 tinst "a reload while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 '{"state":"failed","targets":[],"reason":"busy"}' "vgsh: refused: reload=pending reason=busy" theme reload --json
 exec 7>&-
 
+# A hook due on every apply runs on unchanged bytes too, and each argument's
+# `@{state}` names the state directory's theme/. vgs-args writes its
+# arguments, one per line, to $every_args.
+every_args="$tmp/every-args"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" >"%s"\n' "$every_args" >"$stubs/vgs-args"
+chmod +x "$stubs/vgs-args"
+target_dir every "$(target_json every hex6 '[]' 'include=@{state}/every.conf' true '{ "command": ["vgs-args", "--file=@{state}/every.conf", "@@{state}"], "timeoutMs": 3000, "always": true }')" 'e=@{palette.accent}'
+every_ran() { [[ "$(cat "$every_args" 2>/dev/null)" == "--file=$state/theme/every.conf"$'\n''@{state}' ]]; }
+fresh
+tinst "a hook due on every apply runs on changed bytes" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+check "the every-apply hook takes the state directory in its argument" every_ran
+rm -f -- "$every_args"; fresh
+tinst "a hook due on every apply runs on unchanged bytes" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "the every-apply hook ran on unchanged bytes" every_ran
+check "unchanged bytes ran no other hook" ran ""
+check "a successful every-apply hook leaves nothing pending" no_pending
+rm -f -- "$every_args"
+judge_control every-apply 'if (entry.state === "unchanged" && render.reloadAlways(entry.target)) return true;' ''
+tinst "the every-apply-dropping mutant applies unchanged bytes" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+check "the every-apply-dropping mutant runs no hook on unchanged bytes" test ! -e "$every_args"
+judge_control state-argument 'render.reloadCommand(target, live)' 'reload.command'
+tinst "the literal-argument mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
+check "the literal-argument mutant's hook takes @{state} unwritten" test "$(head -n 1 "$every_args")" == "--file=@{state}/every.conf"
+unset THEME_BIN
+rm -r -- "$tree/themes/targets/every"
+tinst "every is gone again" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+
 # Must-fail controls, each on a judge copy, one per rule. Each starts from
 # alpha landed with dusk, nothing pending. A copy without the descriptor
 # 9 slot alone stays green here: node marks its inherited descriptors 0 to

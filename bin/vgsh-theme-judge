@@ -413,6 +413,8 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
             return null;
         case "entry":
             return entryOccupied(target, configHome, live) === null ? null : "entry-occupied";
+        case "none":
+            return null;
         default:
             throw new Error("vgsh-theme-judge: planTarget: target " + name + " has no known wiring form");
         }
@@ -632,6 +634,7 @@ function wire(entry, configHome, live) {
     switch (render.wiringForm(entry.target.wiring)) {
     case "include": failure = editWiring(entry.name, entry.target, configHome, live, render.wiredText); break;
     case "entry": failure = keepLinks(entry.name, entry.target, configHome, live); break;
+    case "none": failure = null; break;
     default: throw new Error("vgsh-theme-judge: wire: target " + entry.name + " has no known wiring form");
     }
     return failure === null ? entry : Object.assign({ name: entry.name, state: "failed" }, failure);
@@ -643,6 +646,7 @@ function unwire(name, target, configHome, live) {
     switch (render.wiringForm(target.wiring)) {
     case "include": return editWiring(name, target, configHome, live, render.unwiredText);
     case "entry": return dropLinks(name, target, configHome, live);
+    case "none": return null;
     default: throw new Error("vgsh-theme-judge: unwire: target " + name + " has no known wiring form");
     }
 }
@@ -754,7 +758,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     }
     // Last, so each application re-reads files that are all in place.
     result.targets = landed.map((entry, i) => entry.state !== "failed" && due.includes(entry.name)
-        ? reloadRow(entry.name, entry.target.reload, result.targets[i], failures)
+        ? reloadRow(entry.name, entry.target, live, result.targets[i], failures)
         : result.targets[i]);
     writePending(stateDir, stillPending(result.targets, due), due, key);
     result.state = applyState(result.shell, result.targets);
@@ -839,12 +843,14 @@ function writePending(stateDir, names, before, key) {
 }
 
 // Whether a settled ENTRY's reload is due once this apply lands: it has a
-// hook and its bytes change now or were pending before. A skipped target
-// drops its entry: its application no longer reads the files. A failed one
-// keeps whatever it had, since it is unknown whether it has a hook.
+// hook and its bytes change now or were pending before, or its hook is due
+// on every apply and it lands, written or unchanged. A skipped target drops
+// its entry: its application no longer reads the files. A failed one keeps
+// whatever it had, since it is unknown whether it has a hook.
 function reloadDue(entry, before) {
     if (entry.state === "skipped") return false;
     if (entry.target !== undefined && entry.target.reload === null) return false;
+    if (entry.state === "unchanged" && render.reloadAlways(entry.target)) return true;
     return entry.state === "written" || before.includes(entry.name);
 }
 
@@ -853,13 +859,15 @@ function stillPending(rows, due) {
     return rows.filter(t => due.includes(t.name) && (t.state === "failed" || t.state === "reload-pending")).map(t => t.name);
 }
 
-// Run target NAME's RELOAD hook, bounded by its timeoutMs, with this
+// Run target NAME's reload hook, the argv render.reloadCommand writes with
+// LIVE, the state directory's theme/, bounded by its timeoutMs, with this
 // process's environment. Answers ROW when it exits 0, else a reload-pending
 // row with its reason and its keyed line pushed onto FAILURES. No stream is
 // a pipe: the hook's output never reaches the result on stdout, and
 // spawnSync would wait past the timeout for a pipe a hook's child holds.
-function reloadRow(name, reload, row, failures) {
-    const [command, ...args] = reload.command;
+function reloadRow(name, target, live, row, failures) {
+    const reload = target.reload;
+    const [command, ...args] = render.reloadCommand(target, live);
     const nul = fs.openSync("/dev/null", "r");
     let run;
     try {
@@ -891,7 +899,7 @@ function reloadRow(name, reload, row, failures) {
 // One pending target of a reload: `skipped` and dropped when it is no
 // longer shipped, enabled or given a hook; `failed` and kept when its
 // target.json cannot be read or judged; else its hook's row, `reloaded`.
-function reloadTarget(name, shipped, disabled, failures) {
+function reloadTarget(name, shipped, disabled, live, failures) {
     const skipped = reason => ({ name, state: "skipped", reason });
     const failed = (reason, failure) => {
         failures.push(failure);
@@ -908,7 +916,7 @@ function reloadTarget(name, shipped, disabled, failures) {
     if (!found.ok) return found.entry;
     if (!found.value) return skipped("not-detected");
     if (verdict.target.reload === null) return skipped("no-reload");
-    return reloadRow(name, verdict.target.reload, { name, state: "reloaded", reason: null }, failures);
+    return reloadRow(name, verdict.target, live, { name, state: "reloaded", reason: null }, failures);
 }
 
 // Run every pending reload hook again, in name order, and keep pending the
@@ -930,7 +938,8 @@ function reloadAll(result, failures, configDir, stateDir, lock) {
     } catch (e) {
         refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
     }
-    result.targets = before.map(name => reloadTarget(name, shipped, disabled, failures));
+    const live = path.join(stateDir, "theme");
+    result.targets = before.map(name => reloadTarget(name, shipped, disabled, live, failures));
     writePending(stateDir, stillPending(result.targets, before), before, key);
     result.state = stillPending(result.targets, before).length > 0 ? "partial" : "reloaded";
 }

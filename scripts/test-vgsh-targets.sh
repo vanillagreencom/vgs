@@ -2,10 +2,12 @@
 # Controls for targets in `vgsh theme apply` beyond foot: a target whose
 # wiring names a section keeps its include line in that section of its
 # application's configuration file, and each shipped terminal target lands
-# its file, keeps its include line and runs its reload. Every command a target
-# detects with and the command a reload signals with are stubs on the rows'
-# PATH, under a temporary HOME, XDG_CONFIG_HOME and XDG_RUNTIME_DIR, so no
-# row reaches a real application or the developer's session.
+# its file, keeps its include line and runs its reload, and a target whose
+# wiring is null lands with nothing kept outside the state directory. Every
+# command a target detects with and the command a reload signals with are
+# stubs on the rows' PATH, under a temporary HOME, XDG_CONFIG_HOME and
+# XDG_RUNTIME_DIR, so no row reaches a real application or the developer's
+# session.
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
@@ -166,5 +168,28 @@ tinst "the conflict-swallowing mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
 check "the conflict-swallowing mutant reports alacritty landed" test "$(target_state alacritty)" == written
 unset THEME_BIN
+
+# A null wiring keeps nothing outside the state directory: the target lands
+# its file, and disabled it only leaves theme/.
+mkdir -p "$tree/themes/targets/bare"
+printf '%s\n' '{ "app": "bare", "encoder": "hex6", "files": [{ "template": "bare.conf", "destination": "bare.conf" }], "detect": [], "wiring": null, "reload": null }' >"$tree/themes/targets/bare/target.json"
+printf 'accent=@{palette.accent}\n' >"$tree/themes/targets/bare/bare.conf"
+rm -- "$cfg/alacritty/alacritty.toml"
+apply_json "a target with a null wiring applies" 0 nord
+check "the unwired target is written" test "$(target_state bare)" == written
+check "the unwired target's file lands in theme/" test "$(cat "$live/bare.conf")" == "accent=222222"
+check "nothing outside the state directory names the unwired target" test -z "$(find "$cfg" "$tmp/home" -path "$state" -prune -o -name '*bare*' -print)"
+printf '{ "disabledTargets": ["bare"] }\n' >"$cfg/vgs/shell.json"
+apply_json "a disabled target with a null wiring" 0 dusk
+check "the disabled unwired target is skipped" test "$(target_state bare)" == skipped
+check "the disabled unwired target's file leaves theme/" test ! -e "$live/bare.conf"
+rm -- "$cfg/vgs/shell.json"
+# The must-fail control: a judge copy that plans a null wiring as absent
+# skips the target.
+judge_control none-skipped '        case "none":' '        case "none": return "wiring-file-absent";'
+apply_json "the none-skipping mutant applies" 0 nord
+check "the none-skipping mutant skips the unwired target" test "$(target_state bare)" == skipped
+unset THEME_BIN
+rm -r -- "$tree/themes/targets/bare"
 
 rows_done test-vgsh-targets

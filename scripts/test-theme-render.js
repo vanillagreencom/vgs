@@ -63,7 +63,10 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general" }) })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })],
     ["probe", entryText()],
-    ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })]
+    ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })],
+    ["probe", targetText({ wiring: null })],
+    ["probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } })],
+    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -114,7 +117,13 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ reload: { command: ["probe"] } }), "target-schema", "key=reload"],
     ["probe", targetText({ reload: { command: [], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 0 } }), "target-schema", "key=reload.timeoutMs"],
-    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 1.5 } }), "target-schema", "key=reload.timeoutMs"]
+    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 1.5 } }), "target-schema", "key=reload.timeoutMs"],
+    ["probe", targetText({ reload: { command: ["probe"], always: true } }), "target-schema", "key=reload"],
+    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, often: true } }), "target-schema", "key=reload"],
+    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: "yes" } }), "target-schema", "key=reload.always"],
+    ["probe", targetText({ reload: { command: ["probe", "@{palette.accent}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
+    ["probe", targetText({ reload: { command: ["probe", "@{state"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
+    ["probe", targetText({ wiring: "none" }), "target-schema", "key=wiring"]
 ];
 
 // One colour through each encoder: the defaults' color.selection is
@@ -294,8 +303,26 @@ function verify(render) {
     assert.equal(render.wiringForm(linked.wiring), "entry");
     assert.equal(render.wiringForm(target("hex6").wiring), "include");
     assert.deepEqual(render.entryLinks(linked, "/s/vgs/theme"), [{ name: "vgs.conf", to: "/s/vgs/theme/probe.conf" }, { name: "package.json", to: "/s/vgs/theme/probe.pkg.json" }]);
-    assert.throws(() => render.wiringLine(linked, "/s"), /has an entry wiring/);
-    assert.throws(() => render.entryLinks(target("hex6"), "/s"), /has an include wiring/);
+    assert.throws(() => render.wiringLine(linked, "/s"), /has wiring form entry/);
+    assert.throws(() => render.entryLinks(target("hex6"), "/s"), /has wiring form include/);
+
+    // A null wiring is its own form, and neither form's helper takes it.
+    const unwired = accepted("probe", targetText({ wiring: null }));
+    assert.equal(render.wiringForm(unwired.wiring), "none");
+    assert.throws(() => render.wiringLine(unwired, "/s"), /has wiring form none/);
+    assert.throws(() => render.entryLinks(unwired, "/s"), /has wiring form none/);
+
+    // A reload argument names the state directory; `@@{` stays a literal.
+    // `always` alone makes a hook due on every apply.
+    const hooked = accepted("probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } }));
+    assert.deepEqual(render.reloadCommand(hooked, "/s/vgs/theme"), ["probe", "--file=/s/vgs/theme/probe.conf", "@{x}"]);
+    assert.deepEqual(render.reloadCommand(target("hex6"), "/s"), ["probe", "--reload"]);
+    assert.equal(render.reloadAlways(hooked), true);
+    assert.equal(render.reloadAlways(target("hex6")), false);
+    assert.equal(render.reloadAlways(accepted("probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } }))), false);
+    const hookless = accepted("probe", targetText({ reload: null }));
+    assert.equal(render.reloadAlways(hookless), false);
+    assert.throws(() => render.reloadCommand(hookless, "/s"), /has no reload/);
 }
 verify(require(rendererFile));
 
@@ -336,7 +363,16 @@ const CONTROLS = [
     ["wiring line placeholder", "if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return", "if (false) return"],
     ["wiring line is one line", "if (!isLine(wiring.line)) return", "if (typeof wiring.line !== \"string\") return"],
     ["wiring create", "if (typeof wiring.create !== \"boolean\") return", "if (false) return"],
-    ["reload keys", "if (!hasExactKeys(logic, reload, RELOAD_KEYS)) return", "if (!logic.isPlainObject(reload)) return"],
+    ["reload required keys", "!RELOAD_KEYS.every(key => logic.hasOwn(reload, key)) ||", "false ||"],
+    ["reload unknown key", "!Object.keys(reload).every(key => RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)", "false"],
+    ["reload always admitted", "RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)", "RELOAD_KEYS.includes(key))"],
+    ["reload always boolean", "typeof reload.always !== \"boolean\"", "false"],
+    ["reload argument placeholder", "list.some(name => name !== STATE_PLACEHOLDER)", "false"],
+    ["reload argument unterminated", "list === null ||", "false ||"],
+    ["reload argument state", "target.reload.command.map(arg => withState(arg, state,", "target.reload.command.map(arg => String(arg,"],
+    ["reload always read", "target.reload.always === true", "target.reload.always !== undefined"],
+    ["wiring none form", "if (wiring === null) return \"none\";", "if (false) return \"none\";"],
+    ["wiring null accepted", "document.wiring === null ? \"\"", "document.wiring === undefined ? \"\""],
     ["reload command", "if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return", "if (false) return"],
     ["reload timeout", "if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return", "if (false) return"],
     ["wiring line state", "        return state;\n", "        return \"@{state}\";\n"],
