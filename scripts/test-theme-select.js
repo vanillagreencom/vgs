@@ -328,7 +328,7 @@ const CONTROLS = [
     [S, "if (key.length === 1) return appended(entry);", ""],
     [S, 'appended(map + ":" + cr + "\\n  " + name', 'appended(map + ":" + cr + "\\n" + name'],
     [S, '" ".repeat(key.length === 2 && indent === 0 ? 2 : indent)', '" ".repeat(indent)'],
-    [R, "if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY) return", "if (!TARGET_KEYS.includes(key)) return"],
+    [R, "if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY && key !== SETUP_KEY) return", "if (!TARGET_KEYS.includes(key) && key !== SETUP_KEY) return"],
     [R, "const select = logic.hasOwn(document, SELECT_KEY) ? selectError(logic, document.select) : \"\";", "const select = \"\";"],
     [R, 'if (!hasExactKeys(logic, select, SELECT_KEYS)) return "key=select";', 'if (!logic.isPlainObject(select)) return "key=select";'],
     [R, 'if (!ENTRY_BASES.includes(select.base)) return "key=select.base";', ""],
