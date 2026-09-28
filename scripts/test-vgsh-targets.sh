@@ -247,12 +247,40 @@ rm -- "$cfg/wezterm/wezterm.lua"
 tinst "an absent wezterm.lua skips wezterm" "$cfg" "$rt_empty" 0 "{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":$(terminals "$written" "$written" "$written" 'skipped "wiring-file-absent"'),\"theme\":\"nord\",\"reason\":null}" "" theme apply --json nord
 check "an absent wezterm.lua stays absent" test ! -e "$cfg/wezterm/wezterm.lua"
 
-# An import of the file's own in general would be a second import key,
-# which TOML refuses: alacritty fails and its file is left byte for byte.
-printf '[general]\nimport = ["~/.config/alacritty/mine.toml"]\n' >"$cfg/alacritty/alacritty.toml"
+# A one-line import array of the file's own in general takes the theme
+# first, the rest of the file kept byte for byte; a second apply leaves it,
+# and a disabled alacritty takes only its own entry back out.
+printf '[general]\nimport = ["~/.config/alacritty/mine.toml"] # mine\nlive_config_reload = true\n' >"$cfg/alacritty/alacritty.toml"
+cp -- "$cfg/alacritty/alacritty.toml" "$tmp/alacritty-own"
+merged=$'[general]\nimport = ["'"$live"$'/alacritty.toml", "~/.config/alacritty/mine.toml"] # mine\nlive_config_reload = true'
+apply_json "an alacritty.toml with its own import applies" 0 dusk
+check "alacritty with its own import is written" test "$(target_state alacritty)" == written
+check "the theme goes first in the file's own import array" test "$(cat "$cfg/alacritty/alacritty.toml")" == "$merged"
+check "the merged alacritty.toml is TOML importing the theme before its own" python3 -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); sys.exit(0 if c["general"] == {"import": [sys.argv[2], "~/.config/alacritty/mine.toml"], "live_config_reload": True} else 1)' "$cfg/alacritty/alacritty.toml" "$live/alacritty.toml"
+apply_json "a second apply over the merged import" 0 dusk
+check "a second apply leaves the merged import" test "$(cat "$cfg/alacritty/alacritty.toml")" == "$merged"
+printf '{ "disabledTargets": ["alacritty"] }\n' >"$cfg/vgs/shell.json"
+apply_json "a disabled alacritty over the merged import" 0 dusk
+check "the disabled alacritty is skipped" test "$(target_state alacritty)" == skipped
+check "a disabled alacritty leaves the file's own import byte for byte" cmp -s "$tmp/alacritty-own" "$cfg/alacritty/alacritty.toml"
+# The must-fail control: a judge copy that hands the removal no section
+# leaves the theme's entry in the file's own array.
+rm -- "$cfg/vgs/shell.json"
+apply_json "alacritty merged again" 0 dusk
+printf '{ "disabledTargets": ["alacritty"] }\n' >"$cfg/vgs/shell.json"
+judge_control unwire-sectionless 'live, render.unwiredText);' 'live, (text, line) => render.unwiredText(text, line));'
+apply_json "the sectionless-unwiring mutant applies" 0 dusk
+check "the sectionless-unwiring mutant keeps the theme's entry" test "$(cat "$cfg/alacritty/alacritty.toml")" == "$merged"
+unset THEME_BIN
+rm -- "$cfg/vgs/shell.json"
+
+# An import array that goes on past its line cannot take the theme without
+# a second import key, which TOML refuses: alacritty fails and its file is
+# left byte for byte.
+printf '[general]\nimport = [\n  "~/.config/alacritty/mine.toml",\n]\n' >"$cfg/alacritty/alacritty.toml"
 cp -- "$cfg/alacritty/alacritty.toml" "$tmp/alacritty-own"
 conflict="vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
-tinst "an alacritty.toml with its own import fails alacritty" "$cfg" "$rt_empty" 3 "$any_out" "$conflict" theme apply --json dusk
+tinst "an alacritty.toml with a multi-line import fails alacritty" "$cfg" "$rt_empty" 3 "$any_out" "$conflict" theme apply --json dusk
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
 check "the conflicting alacritty is failed wiring-conflict" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alacritty"] == [{"name": "alacritty", "state": "failed", "reason": "wiring-conflict"}]'
 check "a conflicting alacritty.toml is left byte for byte" cmp -s "$tmp/alacritty-own" "$cfg/alacritty/alacritty.toml"

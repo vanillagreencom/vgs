@@ -237,18 +237,39 @@ const WIRED_SECTION = [
     ["[general]\n[[general.x]]\nimport = [\"a\"]\n", '[general]\nimport = ["/s/alacritty.toml"]\n[[general.x]]\nimport = ["a"]\n'],
     ["[window]\ngeneral.x = 1\n", '[window]\ngeneral.x = 1\n[general]\nimport = ["/s/alacritty.toml"]\n'],
     ['[window]\n[general]\nimport = ["/s/alacritty.toml"]\n', null],
-    ['import = ["/s/alacritty.toml"]', null]
+    ['import = ["/s/alacritty.toml"]', null],
+    // The section's own one-line import array takes the theme first, so the
+    // file's own imports, read after it, override it.
+    ['[general]\nimport = ["~/.config/alacritty/theme.toml"]\n', '[general]\nimport = ["/s/alacritty.toml", "~/.config/alacritty/theme.toml"]\n'],
+    ['[general]\nimport = ["/old/state/alacritty.toml"]\n', '[general]\nimport = ["/s/alacritty.toml", "/old/state/alacritty.toml"]\n'],
+    ['[window]\n[general]\nlive = true\n  import=["a"] # mine\n[window]\n', '[window]\n[general]\nlive = true\n  import=["/s/alacritty.toml", "a"] # mine\n[window]\n'],
+    ["[general]\nimport = [ \"a\" , 'b', ]\t# ] mine\n", "[general]\nimport = [ \"/s/alacritty.toml\", \"a\" , 'b', ]\t# ] mine\n"],
+    ['[general]\nimport = []\n', '[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ['[general]\nimport = [ ]\n', '[general]\nimport = [ "/s/alacritty.toml"]\n'],
+    ['[general]\r\nimport = ["a"]\r\n', '[general]\r\nimport = ["/s/alacritty.toml", "a"]\r\n'],
+    ['[general]\nimport = ["~/q\\"].toml", "b"]\n', '[general]\nimport = ["/s/alacritty.toml", "~/q\\"].toml", "b"]\n'],
+    ["[general]\nimport = ['C:\\', \"b\"]\n", "[general]\nimport = [\"/s/alacritty.toml\", 'C:\\', \"b\"]\n"],
+    ['[general]\nimport = ["a", "/s/alacritty.toml"]\n', null]
 ];
 
 // A configuration file the wiring into `general` would give a key twice:
 // its text, the refusal's detail.
 const CONFLICTS = [
-    ['[general]\nimport = ["~/.config/alacritty/theme.toml"]\n', "section=general key=import"],
-    ['[general]\nimport = ["/old/state/alacritty.toml"]\n', "section=general key=import"],
-    ['[window]\n[general]\nlive = true\n  import=["a"] # mine\n[window]\n', "section=general key=import"],
+    ['[general]\nimport = [\n  "~/a.toml",\n]\n', "section=general key=import"],
+    ['[general]\nimport = "~/a.toml"\n', "section=general key=import"],
+    ["[general]\nimport = '\"a\"] #'\n", "section=general key=import"],
+    ['[general]\nimport = [1, 1]\n', "section=general key=import"],
+    ['[general]\nimport = ["a" "b"]\n', "section=general key=import"],
+    ['[general]\nimport = ["a"] x\n', "section=general key=import"],
+    ['[general]\nimport = ["a"]\nimport = ["b"]\n', "section=general key=import"],
+    ['[general]\nimport = [\"\"\"a\"\"\"]\n', "section=general key=import"],
     ["general.live = true\n[window]\n", "section=general key=general"],
     ["general = { live = true }\n", "section=general key=general"]
 ];
+
+// A wiring line that assigns no one-line array of one string, which a file
+// whose `general` assigns its key refuses.
+const CONFLICT_LINES = ['import = ["/s/x", "/s/y"]', 'import = "/s/x"'];
 
 // A configuration file's text before the line is removed, and after it, or
 // null when no line of it is the include line.
@@ -262,6 +283,24 @@ const UNWIRED = [
     ["include=/s/foot.ini\n", ""],
     ["font=x\ninclude=/s/foot.ini\n[colors]\ninclude=/s/foot.ini\n", "font=x\n[colors]\n"],
     ["[window]\n[general]\ninclude=/s/foot.ini\n", "[window]\n[general]\n"]
+];
+
+// A configuration file's text before the wiring into `general` is removed,
+// and after it, or null when neither the line nor its string stands there.
+const UNWIRED_SECTION = [
+    [undefined, null],
+    ['[general]\nimport = ["/s/alacritty.toml"]\nlive = true\n', '[general]\nlive = true\n'],
+    ['[general]\nimport = ["/s/alacritty.toml", "~/a.toml"]\n', '[general]\nimport = ["~/a.toml"]\n'],
+    ['[general]\nimport = ["a", "/s/alacritty.toml"]\n', '[general]\nimport = ["a"]\n'],
+    ['[general]\nimport = [ "/s/alacritty.toml"]\n', '[general]\nimport = [ ]\n'],
+    ['[general]\nimport = ["/s/alacritty.toml",]\n', '[general]\nimport = []\n'],
+    ['[general]\nimport = ["/s/alacritty.toml", "a", "/s/alacritty.toml"] # mine\n', '[general]\nimport = ["a"] # mine\n'],
+    ['[general]\nx = 1\n[window]\nimport = ["/s/alacritty.toml", "a"]\n', null],
+    ['[general]\nx = 1\n[general]\nimport = ["/s/alacritty.toml", "a"]\n', null],
+    ['[general]\nother = ["/s/alacritty.toml", "a"]\n', null],
+    ['[general]\nimport = ["/s/alacritty.toml.old", "a"]\n', null],
+    ['[general]\nimport = [\n  "/s/alacritty.toml",\n]\n', null],
+    ['import = ["/s/alacritty.toml", "a"]\n', null]
 ];
 
 // A Mozilla profiles.ini's text, and the profile directories it lists.
@@ -395,8 +434,12 @@ function verify(render) {
         assert.equal(render.wiredText(text, TOML_LINE, "general"), want, JSON.stringify(text));
     for (const [text, detail] of CONFLICTS)
         assert.deepEqual(render.wiredText(text, TOML_LINE, "general"), { ok: false, reason: "wiring-conflict", detail }, JSON.stringify(text));
+    for (const line of CONFLICT_LINES)
+        assert.deepEqual(render.wiredText('[general]\nimport = ["a"]\n', line, "general"), { ok: false, reason: "wiring-conflict", detail: "section=general key=import" }, line);
     for (const [text, want] of UNWIRED)
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
+    for (const [text, want] of UNWIRED_SECTION)
+        assert.equal(render.unwiredText(text, TOML_LINE, "general"), want, JSON.stringify(text));
     for (const [text, want] of PROFILES)
         assert.deepEqual(render.profileDirs(text), want, JSON.stringify(text));
     for (const [text, want] of VAULTS)
@@ -512,7 +555,21 @@ const CONTROLS = [
     ["section header form", "return m !== null && m[1] === section;", "return text === \"[\" + section + \"]\";"],
     ["section header whole name", "const SECTION_HEADER = /^\\s*\\[\\s*([^\\]]*?)\\s*\\]\\s*(?:#.*)?$/;", "const SECTION_HEADER = /^\\s*\\[+\\s*([^\\]]*?)\\s*\\]/;"],
     ["section header appended", "\"[\" + section + \"]\\n\" + line", "line"],
-    ["section key conflict", "if (key !== null && own.some(existing => assignedKey(existing) === key))", "if (false)"],
+    ["section key conflict", "if (key !== null && assignedKey(lines[index]) === key) assigning.push(index);", "if (false) assigning.push(index);"],
+    ["section array merged", "const array = assigning.length === 1 && element !== null ? stringArray(own) : null;", "const array = null;"],
+    ["section array assigned once", "const array = assigning.length === 1 && element !== null ?", "const array = element !== null ?"],
+    ["wiring line one string", "array === null || array.elements.length !== 1 ? null", "array === null || array.elements.length === 0 ? null"],
+    ["wiring line an array", "&& element !== null ? stringArray(own)", "? stringArray(own)"],
+    ["section array holds it already", "if (array.elements.some(held => own.slice(held.start, held.end) === element)) return null;", "if (false) return null;"],
+    ["section array theme first", "const into = array.elements.length === 0 ? array.close : array.elements[0].start;", "const into = array.close;"],
+    ["string array opens", 'if (text[at] !== "[") return null;', "if (false) return null;"],
+    ["string array blanks", 'while (text[at] === " " || text[at] === "\\t") at++;', "while (false) at++;"],
+    ["string array strings only", `if (quote !== "\\"" && quote !== "'") return null;`, "if (quote === undefined) return null;"],
+    ["string array basic escape", 'at += quote === "\\"" && text[at] === "\\\\" ? 2 : 1;', "at += 1;"],
+    ["string array literal no escape", 'at += quote === "\\"" && text[at] === "\\\\" ? 2 : 1;', 'at += text[at] === "\\\\" ? 2 : 1;'],
+    ["string array separator", 'else if (text[at] !== "]") return null;', "else if (false) return null;"],
+    ["string array comment after", "/^\\s*(?:#.*)?$/.test(text.slice(at + 1))", "/^\\s*$/.test(text.slice(at + 1))"],
+    ["string array nothing else after", "/^\\s*(?:#.*)?$/.test(text.slice(at + 1))", "/.*/.test(text.slice(at + 1))"],
     ["section ends at the next header", "index > at && ANY_HEADER.test(existing)", "false"],
     ["array of tables ends a section", "const ANY_HEADER = /^\\s*\\[/;", "const ANY_HEADER = /^\\s*\\[[^\\[]/;"],
     ["assigned key trimmed", "text.slice(0, at).trim();", "text.slice(0, at);"],
@@ -540,8 +597,16 @@ const CONTROLS = [
     ["entry link name", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!destinations.has(destination)) return"],
     ["entry link destination", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!logic.isPackageName(link)) return"],
     ["entry link target", "({ name, to: live + \"/\" + destination })", "({ name, to: destination })"],
-    ["unwiring whole line", "if (!lines.includes(line)) return null;", "if (!text.includes(line)) return null;"],
-    ["unwiring every line", "return lines.filter(existing => existing !== line).join(\"\\n\");", "return lines.filter((existing, at) => at !== lines.indexOf(line)).join(\"\\n\");"]
+    ["unwiring whole line", 'text.split("\\n").filter(existing => existing !== line)', 'text.split("\\n").map(existing => existing.split(line).join(""))'],
+    ["unwiring every line", 'text.split("\\n").filter(existing => existing !== line)', 'text.split("\\n").filter((existing, at, all) => at !== all.indexOf(line))'],
+    ["unwiring null when unchanged", "return next === text ? null : next;", "return next;"],
+    ["unwiring in its section", "const at = section === undefined ? -1 : sectionAt(lines, section);", "const at = -1;"],
+    ["unwiring the section's own lines", "end = at === -1 ? 0 : sectionEnd(lines, at)", "end = at === -1 ? 0 : lines.length"],
+    ["unwiring its key only", "assignedKey(lines[index]) !== key) continue;", "false) continue;"],
+    ["unwiring every copy", "array !== null; array = stringArray(lines[index])) {", "array !== null; array = null) {"],
+    ["unwiring the separator after", "[array.elements[k].start, array.elements[k + 1].start]", "[array.elements[k].start, array.elements[k].end]"],
+    ["unwiring the separator before the last", "[array.elements[k - 1].end, array.elements[k].end]", "[array.elements[k].start, array.elements[k].end]"],
+    ["unwiring a sole string to the bracket", "[array.elements[0].start, array.close]", "[array.elements[0].start, array.elements[0].end]"]
 ];
 
 const source = fs.readFileSync(rendererFile, "utf8");
@@ -563,4 +628,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + MODES.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length + VAULTS.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + MODES.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + CONFLICT_LINES.length + UNWIRED.length + UNWIRED_SECTION.length + PROFILES.length + VAULTS.length} controls=${CONTROLS.length}`);

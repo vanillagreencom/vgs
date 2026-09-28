@@ -453,6 +453,54 @@ function assignedKey(text) {
     return at === -1 ? null : text.slice(0, at).trim();
 }
 
+// The one-line TOML array of strings the `key = [...]` line TEXT assigns:
+// `close`, the offset of its `]`, and each element's { start, end } offsets,
+// quotes included. Null for any other value: an array that goes on past
+// this line, an element that is no basic or literal string, and anything
+// after the `]` but blanks and a `#` comment. A multi-line string's `"""`
+// reads as an empty string followed by a quote, and so as no array.
+function stringArray(text) {
+    let at = text.indexOf("=") + 1;
+    const blanks = () => { while (text[at] === " " || text[at] === "\t") at++; };
+    if (at === 0) return null;
+    blanks();
+    if (text[at] !== "[") return null;
+    at++;
+    const elements = [];
+    for (;;) {
+        blanks();
+        if (text[at] === "]") break;
+        const quote = text[at];
+        if (quote !== "\"" && quote !== "'") return null;
+        const start = at++;
+        while (at < text.length && text[at] !== quote) at += quote === "\"" && text[at] === "\\" ? 2 : 1;
+        elements.push({ start, end: ++at });
+        blanks();
+        if (text[at] === ",") at++;
+        else if (text[at] !== "]") return null;
+    }
+    return /^\s*(?:#.*)?$/.test(text.slice(at + 1)) ? { close: at, elements } : null;
+}
+
+// The text of the one element LINE's one-line string array holds, quotes
+// included, or null for a line that assigns no such array.
+function soleElement(line) {
+    const array = stringArray(line);
+    return array === null || array.elements.length !== 1 ? null : line.slice(array.elements[0].start, array.elements[0].end);
+}
+
+// The index of the first header of SECTION among LINES, or -1.
+function sectionAt(lines, section) {
+    return lines.findIndex(existing => isSectionHeader(existing, section));
+}
+
+// The index of the line that ends the section whose header is line AT of
+// LINES: the next header of any kind, or the line count.
+function sectionEnd(lines, at) {
+    const end = lines.findIndex((existing, index) => index > at && ANY_HEADER.test(existing));
+    return end === -1 ? lines.length : end;
+}
+
 // The text a configuration file holding TEXT takes so that LINE is one of its
 // lines, or null when it already is one; the rest of the text is kept byte
 // for byte. With SECTION undefined the line goes first, ahead of every
@@ -461,22 +509,33 @@ function assignedKey(text) {
 // undefined) becomes the line alone. With a SECTION the line goes right
 // after the first header of that section, or, with none, the header and the
 // line are added at the end, so a TOML file never declares the table twice.
-// A section that already assigns the line's key, or a file that defines the
-// section by dotted keys ahead of every header, would then hold a key twice,
-// which TOML refuses: that answers the refusal
+// A section that already assigns the line's key on one line of a one-line
+// string array, where LINE assigns a one-line array of one string, takes
+// that string first in its array instead, the rest of that line kept byte
+// for byte, or is left when the array already holds it. Any other assignment
+// of the key in the section, or a file that defines the section by dotted
+// keys ahead of every header, would then hold a key twice, which TOML
+// refuses: that answers the refusal
 // { ok: false, reason: "wiring-conflict", detail } and the file is left.
 function wiredText(text, line, section) {
     const lines = text === undefined ? [] : text.split("\n");
     if (lines.includes(line)) return null;
     if (section === undefined) return line + "\n" + (text === undefined ? "" : text);
     const key = assignedKey(line);
-    const at = lines.findIndex(existing => isSectionHeader(existing, section));
+    const at = sectionAt(lines, section);
     if (at !== -1) {
-        const end = lines.findIndex((existing, index) => index > at && ANY_HEADER.test(existing));
-        const own = lines.slice(at + 1, end === -1 ? lines.length : end);
-        if (key !== null && own.some(existing => assignedKey(existing) === key))
-            return refused("wiring-conflict", "section=" + section + " key=" + key);
-        return lines.slice(0, at + 1).concat(line, lines.slice(at + 1)).join("\n");
+        const assigning = [];
+        for (let index = at + 1, end = sectionEnd(lines, at); index < end; index++)
+            if (key !== null && assignedKey(lines[index]) === key) assigning.push(index);
+        if (assigning.length === 0) return lines.slice(0, at + 1).concat(line, lines.slice(at + 1)).join("\n");
+        const element = soleElement(line);
+        const own = lines[assigning[0]];
+        const array = assigning.length === 1 && element !== null ? stringArray(own) : null;
+        if (array === null) return refused("wiring-conflict", "section=" + section + " key=" + key);
+        if (array.elements.some(held => own.slice(held.start, held.end) === element)) return null;
+        const into = array.elements.length === 0 ? array.close : array.elements[0].start;
+        lines[assigning[0]] = own.slice(0, into) + element + (array.elements.length === 0 ? "" : ", ") + own.slice(into);
+        return lines.join("\n");
     }
     const first = lines.findIndex(existing => ANY_HEADER.test(existing));
     const root = lines.slice(0, first === -1 ? lines.length : first);
@@ -488,14 +547,33 @@ function wiredText(text, line, section) {
 
 // The text a configuration file holding TEXT takes once LINE is none of its
 // lines, or null when it is none already or the file is absent (TEXT
-// undefined). Every whole line equal to LINE goes, with its line break; the
-// rest of the text is kept byte for byte, so this undoes wiredText but for
-// a section header wiredText added, which stays.
-function unwiredText(text, line) {
+// undefined). Every whole line equal to LINE goes, with its line break; with
+// a SECTION, every copy of the one string LINE's one-line array holds goes
+// from the one-line string array that assigns LINE's key under the first
+// header of that section, with the separator after it, or the one before it
+// for the last of several. The rest of the text is kept byte for byte, so
+// this undoes wiredText but for a section header wiredText added, which
+// stays.
+function unwiredText(text, line, section) {
     if (text === undefined) return null;
-    const lines = text.split("\n");
-    if (!lines.includes(line)) return null;
-    return lines.filter(existing => existing !== line).join("\n");
+    const lines = text.split("\n").filter(existing => existing !== line);
+    const at = section === undefined ? -1 : sectionAt(lines, section);
+    const key = assignedKey(line);
+    const element = soleElement(line);
+    for (let index = at + 1, end = at === -1 ? 0 : sectionEnd(lines, at); index < end; index++) {
+        if (key === null || element === null || assignedKey(lines[index]) !== key) continue;
+        for (let array = stringArray(lines[index]); array !== null; array = stringArray(lines[index])) {
+            const own = lines[index];
+            const k = array.elements.findIndex(held => own.slice(held.start, held.end) === element);
+            if (k === -1) break;
+            const [from, to] = array.elements.length === 1 ? [array.elements[0].start, array.close]
+                : k < array.elements.length - 1 ? [array.elements[k].start, array.elements[k + 1].start]
+                : [array.elements[k - 1].end, array.elements[k].end];
+            lines[index] = own.slice(0, from) + own.slice(to);
+        }
+    }
+    const next = lines.join("\n");
+    return next === text ? null : next;
 }
 
 module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, wiredText, unwiredText };
