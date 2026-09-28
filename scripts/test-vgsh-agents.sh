@@ -36,10 +36,11 @@ for stub in $agents; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"
 done
-mkdir -p "$tmp/project"
+mkdir -p "$tmp/project" "$tmp/opencode-cwd/web"
 opencode_pids=()
-start_opencode_probe() { # LABEL
-  "$node_bin" -e "const fs = require('fs'); const label = process.argv[1]; const root = process.argv[2]; fs.writeFileSync(root + '/opencode-' + label + '-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync(root + '/opencode-' + label + '-signaled', label); process.exit(0); }); setInterval(() => {}, 10000);" "$1" "$tmp" &
+start_opencode_probe() { # LABEL [CWD]
+  local cwd="${2:-$PWD}"
+  ( cd "$cwd" && "$node_bin" -e "const fs = require('fs'); const label = process.argv[1]; const root = process.argv[2]; fs.writeFileSync(root + '/opencode-' + label + '-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync(root + '/opencode-' + label + '-signaled', label); process.exit(0); }); setInterval(() => {}, 10000);" "$1" "$tmp" ) &
   printf -v "opencode_$1" '%s' "$!"
   opencode_pids+=("$!")
 }
@@ -47,14 +48,15 @@ start_opencode_probe bare
 start_opencode_probe serve
 start_opencode_probe run
 start_opencode_probe option_serve
+start_opencode_probe web "$tmp/opencode-cwd"
 start_opencode_probe attach
 start_opencode_probe project
 trap 'kill "${opencode_pids[@]}" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  [[ -e $tmp/opencode-bare-ready && -e $tmp/opencode-serve-ready && -e $tmp/opencode-run-ready && -e $tmp/opencode-option_serve-ready && -e $tmp/opencode-attach-ready && -e $tmp/opencode-project-ready ]] && break
+  [[ -e $tmp/opencode-bare-ready && -e $tmp/opencode-serve-ready && -e $tmp/opencode-run-ready && -e $tmp/opencode-option_serve-ready && -e $tmp/opencode-web-ready && -e $tmp/opencode-attach-ready && -e $tmp/opencode-project-ready ]] && break
   sleep 0.1
 done
-printf '#!/bin/sh\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n"\n' "$opencode_bare" "$opencode_serve" "$opencode_run" "$opencode_option_serve" "$opencode_attach" "$opencode_project" >"$hook_tools/pgrep"
+printf '#!/bin/sh\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n"\n' "$opencode_bare" "$opencode_serve" "$opencode_run" "$opencode_option_serve" "$opencode_web" "$opencode_attach" "$opencode_project" >"$hook_tools/pgrep"
 cat >"$hook_tools/ps" <<EOF
 #!/bin/sh
 while [ "\$#" -gt 0 ]; do
@@ -68,6 +70,7 @@ case "\$pid" in
   $opencode_serve) printf 'opencode serve\\n';;
   $opencode_run) printf 'opencode run\\n';;
   $opencode_option_serve) printf 'opencode --log-level INFO serve\\n';;
+  $opencode_web) printf 'opencode web\\n';;
   $opencode_attach) printf 'opencode attach\\n';;
   $opencode_project) printf 'opencode $tmp/project\\n';;
   *) exit 1;;
@@ -139,7 +142,7 @@ apply_json "the agent targets land" 0 dusk
 check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;omp written None;opencode written None;pi written None;"
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
-check "opencode's hook signals only TUI invocations" test -f "$tmp/opencode-bare-signaled" -a -f "$tmp/opencode-attach-signaled" -a -f "$tmp/opencode-project-signaled" -a ! -e "$tmp/opencode-serve-signaled" -a ! -e "$tmp/opencode-run-signaled" -a ! -e "$tmp/opencode-option_serve-signaled"
+check "opencode's hook signals only TUI invocations" test -f "$tmp/opencode-bare-signaled" -a -f "$tmp/opencode-attach-signaled" -a -f "$tmp/opencode-project-signaled" -a ! -e "$tmp/opencode-serve-signaled" -a ! -e "$tmp/opencode-run-signaled" -a ! -e "$tmp/opencode-option_serve-signaled" -a ! -e "$tmp/opencode-web-signaled"
 check "opencode's hook disables globbing before splitting argv" grep -qF 'set -f; set -- $args' "$tree/themes/targets/opencode/target.json"
 
 # Each file parses as its CLI reads it and holds hex6 colours: dusk's accent
