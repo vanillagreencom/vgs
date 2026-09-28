@@ -247,6 +247,16 @@ expect "a silenced notification shows no toast" none key_of Quiet
 expect "the inbox opens under Silence" ok notes inbox
 notify smoke-app 0 "Quiet while open" "" '[]' '{}' 0 >/dev/null
 expect_poll "a silenced notification joins the open inbox" True has_row panel "Quiet while open"
+notify smoke-chat 0 "Quiet pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}" 0 >/dev/null
+expect_poll "a silenced notification with an image joins the open inbox" True has_row panel "Quiet pictured"
+expect_poll "its row draws the copy, made before the row showed" True shows_icon "Quiet pictured"
+# Clearing fades the panel's rows and removes them a moment later; one that
+# arrives in that moment stays.
+expect "clearing the history with the inbox open is allowed" ok notes clear-history
+notify smoke-app 0 "After clear" "" '[]' '{}' 0 >/dev/null
+expect_poll "the cleared rows go" '["After clear"]' row_summaries panel
+sleep 1
+expect "a notification that arrived while the panel cleared stays in it" '["After clear"]' row_summaries panel
 expect "the inbox closes under Silence" ok notes close
 expect_poll "the inbox under Silence closed" '""' read_notes panelMode
 notify notify-send 0 "Urgent CLI" "" '[]' '{"urgency": <byte 2>}' 0 >/dev/null
