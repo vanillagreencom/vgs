@@ -42,6 +42,17 @@ printf '%s\n' "$*" >"${STUB_ARGS:-/dev/null}"
 reply="${STUB_REPLY:-ok}"
 if [[ ${4:-} == call && ${5:-} == shell && ${6:-} == guarded ]]; then
   reply="${STUB_GUARDED:-true}"
+  if [[ -n ${STUB_GUARDED_FALSE_CALLS:-} ]]; then
+    count=0
+    [[ -r ${STUB_GUARDED_COUNT:?} ]] && IFS= read -r count <"$STUB_GUARDED_COUNT"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$STUB_GUARDED_COUNT"
+    if (( count <= STUB_GUARDED_FALSE_CALLS )); then
+      reply=false
+    else
+      reply=true
+    fi
+  fi
 fi
 printf '%s\n' "$reply"
 [[ -n ${STUB_STDERR:-} ]] && printf '%s\n' "$STUB_STDERR" >&2
@@ -303,6 +314,15 @@ if [[ "$(cat "$dispatch")" == "$lua_request" ]]; then ok "restart uses the Lua H
 if [[ -n $new_pid && "$(cat "$tmp/args-lua")" == "ipc --pid $new_pid call shell guarded" ]]; then ok "restart waits for the new guarded shell"; else fail "lua guarded check: $(cat "$tmp/args-lua" 2>/dev/null || echo absent)"; fi
 new_record="$(cat "$tmp/record-lua-new")"
 if [[ $(record_runner "$new_record") == "$new_pid" ]] && run_has_file_watcher_env "$new_record"; then ok "the relaunched shell gets the runner and watcher environment"; else fail "new shell record: $new_record"; fi
+
+rt_restart_guarded_retry="$tmp/rt-restart-guarded-retry"; dispatch="$tmp/dispatch-guarded-retry"; guarded_count="$tmp/guarded-count"
+start_fake_shell "restart guarded-retry fixture starts a shell" "$rt_restart_guarded_retry" "$tmp/record-guarded-retry-old"
+old_pid="$fake_pid"
+run_restart_capture "$rt_restart_guarded_retry" "$tmp/record-guarded-retry-new" "$dispatch" false STUB_GUARDED_FALSE_CALLS=2 STUB_GUARDED_COUNT="$guarded_count"
+wait "$old_pid" 2>/dev/null || true
+if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then guarded_retry_pid="${BASH_REMATCH[1]}"; started_pids+=("$guarded_retry_pid"); ok "restart waits through guarded=false replies"; else guarded_retry_pid=""; fail "guarded retry restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
+guarded_calls=0; [[ -r $guarded_count ]] && IFS= read -r guarded_calls <"$guarded_count"
+if (( guarded_calls >= 3 )); then ok "restart retries until guarded answers true"; else fail "guarded retry count: $guarded_calls"; fi
 
 rt_restart_classic="$tmp/rt-restart-classic"; dispatch="$tmp/dispatch-classic"
 start_fake_shell "restart classic fixture starts a shell" "$rt_restart_classic" "$tmp/record-classic-old"
