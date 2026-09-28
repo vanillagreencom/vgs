@@ -4,3 +4,4 @@ internal ThemeSource ThemeSource.qml
 singleton Paths 1.0 Paths.qml
 singleton Workspaces 1.0 Workspaces.qml
 singleton Time 1.0 Time.qml
+WatchedFile 1.0 WatchedFile.qml

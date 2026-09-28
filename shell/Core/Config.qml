@@ -13,8 +13,10 @@ import "PluginLogic.js" as Logic
 // blocks writes until it passes again, so a manager edit never overwrites
 // unread edits. Nothing is built before `ready`: the shipped file has
 // loaded once and the user file has settled, so a bar never draws from the
-// user file alone. One save is in flight at a time and later edits
-// coalesce behind it; a file notification is read once the save lands.
+// user file alone. Each file is a WatchedFile, so an edit that lands during
+// a read is read again. One operation on the user file is in flight at a
+// time and later edits coalesce behind it; a file notification is read once
+// the save lands.
 Singleton {
     id: root
 
@@ -59,12 +61,11 @@ Singleton {
         return { state: "loaded", value: value };
     }
 
-    FileView {
+    WatchedFile {
         id: shippedView
         path: root.shippedPath
-        watchChanges: true
-        onLoaded: {
-            const content = text();
+        onChanged: read()
+        onLoaded: content => {
             if (root.shippedState === "loaded" && content === root.shippedText) return;
             const r = root.judge(path, content);
             if (r.state === "loaded") {
@@ -77,20 +78,15 @@ Singleton {
             console.error("config: shipped defaults unreadable at " + path + ": " + error);
             root.shippedState = "unreadable";
         }
-        onFileChanged: reload()
     }
 
-    FileView {
+    WatchedFile {
         id: userView
         path: root.userPath
-        watchChanges: true
-        printErrors: false
         // A read that lands while an edit waits for its save updates only
         // what the disk is known to hold; the edit is written next and
         // wins, as the later of the two.
-        onLoaded: {
-            root.reloading = false;
-            const content = text();
+        onLoaded: content => {
             if (content === root.persistedUser.text && root.persistedUser.state === "loaded") {
                 // The disk holds what it held: a write's own notification,
                 // or a file readable again.
@@ -112,7 +108,6 @@ Singleton {
             Qt.callLater(root.flushSave);
         }
         onLoadFailed: error => {
-            root.reloading = false;
             if (error === FileViewError.FileNotFound) {
                 const settled = root.userText === root.persistedUser.text;
                 root.persistedUser = { value: null, text: null, state: "absent" };
@@ -127,7 +122,7 @@ Singleton {
             }
             Qt.callLater(root.flushSave);
         }
-        onFileChanged: root.reloadUser()
+        onChanged: root.reloadUser()
         onSaved: {
             root.persistedUser = { value: root.activeSave.value, text: root.activeSave.text, state: "loaded" };
             root.userState = "loaded";
@@ -153,22 +148,20 @@ Singleton {
     property var persistedUser: ({ value: null, text: null, state: "pending" })
     // The save in flight as { value, text }, or null.
     property var activeSave: null
-    // A read in flight, and a read wanted once the operation in flight ends.
-    property bool reloading: false
+    // A read wanted once the operation in flight ends.
     property bool reloadRequested: false
     property string lastSaveError: ""
-    // Run the one operation the file view may carry: FileView completes a
-    // write in flight synchronously inside a second setText, and a reload
-    // during a write starts nothing, so a read and a write never overlap.
-    // A wanted read goes first; then the latest edit, when it differs from
-    // what the disk holds. An edit that waits behind a file the shell can
-    // no longer read is dropped and logged, never written unread.
+    // Run the one operation the file may carry: FileView completes a write
+    // in flight synchronously inside a second setText, and a read during a
+    // write starts nothing, so a read and a write never overlap. A wanted
+    // read goes first; then the latest edit, when it differs from what the
+    // disk holds. An edit that waits behind a file the shell can no longer
+    // read is dropped and logged, never written unread.
     function flushSave() {
-        if (activeSave !== null || reloading) return;
+        if (userView.busy) return;
         if (reloadRequested) {
             reloadRequested = false;
-            reloading = true;
-            userView.reload();
+            userView.read();
             return;
         }
         if (userText === persistedUser.text) return;
@@ -179,7 +172,7 @@ Singleton {
             return;
         }
         activeSave = { value: user, text: userText };
-        userView.setText(userText);
+        userView.write(userText);
     }
 
     function reloadUser() {
@@ -210,7 +203,7 @@ Singleton {
     }
 
     function reload() {
-        shippedView.reload();
+        shippedView.read();
         reloadUser();
     }
 }

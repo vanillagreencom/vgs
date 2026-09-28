@@ -1,6 +1,6 @@
 # Configuration
 
-Covers: shell/Core/Config.qml, shell/Commons/Paths.qml, config/shell.json
+Covers: shell/Core/Config.qml, shell/Commons/Paths.qml, shell/Commons/WatchedFile.qml, config/shell.json
 
 The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both. `Paths.stateDir` is the directory `vgsh theme` keeps what it applied in, which the `vgs.background` plugin reads: [theme-backgrounds.md](theme-backgrounds.md).
 
@@ -31,6 +31,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 - Each layer retains its accepted text. A reload of identical text keeps the value object, so a manager write and its file notification produce one configuration change.
 - Every write is refused unless the user file is `loaded` or `absent`, so a file the shell could not read is never overwritten unread. A write the disk refuses restores the value in memory and refuses the next write once with the error; `ok` from a write means the save was queued.
 - One asynchronous save owns the confirmed value. Edits during that save update the screen at once and coalesce into the next save. A failed save restores the confirmed value, discards unsaved edits and reloads the file before another write. File notifications wait until saves settle.
+- An edit to either file that lands while the shell reads it is read again, so the last edit is the one the configuration holds.
 
 ## Theme
 
