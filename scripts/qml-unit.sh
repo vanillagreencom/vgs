@@ -11,12 +11,14 @@
 #   TEST           one or more test files to run instead of the directory
 #
 # The import root is built in a temporary directory: qs/Ui links to the
-# module under test; qs/Commons holds the shipped Theme.qml, Tokens.js and
-# ThemeLogic.js beside a stand-in ThemeSource that takes a document from the
-# UnitTheme singleton of the qs.Unit module and calls the shipped accept; a
-# stand-in Quickshell module supplies the Singleton type and a PopupWindow
-# that positions nothing, since the real module's plugin does not load
-# outside the shell. Nothing under the repository is written.
+# module under test; qs/Commons holds the shipped Theme.qml, Tokens.js,
+# ThemeLogic.js and WatchedFile.qml beside a stand-in ThemeSource that takes
+# a document from the UnitTheme singleton of the qs.Unit module and calls the
+# shipped accept; a stand-in Quickshell module supplies the Singleton and
+# Scope types and a PopupWindow that positions nothing, and a stand-in
+# Quickshell.Io a FileView the test finishes by hand, since the real
+# modules' plugins do not load outside the shell. Nothing under the
+# repository is written.
 #
 # QML_UNIT_RUNNER names the qmltestrunner binary; unset, the one on PATH
 # or under /usr/lib/qt6/bin is used. Exit 0 when every test passed, 1 when
@@ -55,25 +57,27 @@ fi
 root="$(mktemp -d)"
 trap 'rm -rf -- "${root:?}"' EXIT
 imports="$root/imports"
-mkdir -p "$imports/qs/Commons" "$imports/qs/Unit" "$imports/Quickshell" "$root/home" "$root/runtime"
+mkdir -p "$imports/qs/Commons" "$imports/qs/Unit" "$imports/Quickshell/Io" "$root/home" "$root/runtime"
 chmod 700 "$root/runtime"
 ln -s -- "$ui" "$imports/qs/Ui"
 # Theme.qml resolves the bundled font relative to its own directory.
 ln -s -- "$repo/shell/assets" "$imports/qs/assets"
-for file in Theme.qml Tokens.js ThemeLogic.js; do
+for file in Theme.qml Tokens.js ThemeLogic.js WatchedFile.qml; do
   [[ -f $commons/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$commons/$file" >&2; exit 2; }
   ln -s -- "$commons/$file" "$imports/qs/Commons/$file"
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
-printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\n' >"$imports/qs/Commons/qmldir"
+printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
 cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
 printf 'module qs.Unit\nsingleton UnitTheme 1.0 UnitTheme.qml\nUnitPaths 1.0 UnitPaths.js\n' >"$imports/qs/Unit/qmldir"
-for file in Singleton.qml PopupWindow.qml Edges.qml PopupAdjustment.qml; do
+for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
 done
-printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
+printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
+cp -- "$tests/stand-ins/FileView.qml" "$imports/Quickshell/Io/FileView.qml"
+printf 'module Quickshell.Io\nFileView 1.0 FileView.qml\n' >"$imports/Quickshell/Io/qmldir"
 
 if [[ ${#files[@]} -eq 0 ]]; then
   mapfile -t files < <(find "$tests" -maxdepth 1 -name 'tst_*.qml' | sort)

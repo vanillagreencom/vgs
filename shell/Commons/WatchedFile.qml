@@ -12,7 +12,10 @@ import Quickshell.Io
 // watches nothing. A change or a read() during a read marks that read
 // stale: its result is dropped unreported and the file is read again once
 // the handler returns, so `loaded` and `loadFailed` report only a read no
-// change overtook. The first read starts when the view is built.
+// change overtook. The first read starts when the view is built. The view
+// reports a result while it still holds that operation, and a reload or a
+// write asked from an owner's handler then starts nothing or is lost, so
+// every read and write reaches the view once the handler returns.
 //
 // A read asked during a write starts nothing either, so the owner sequences
 // the two: read() and write() are refused while a write is in flight, and a
@@ -39,8 +42,7 @@ Scope {
     function read() {
         switch (operation) {
         case "idle":
-            operation = "reading";
-            view.reload();
+            readLater();
             return;
         case "reading":
         case "stale":
@@ -62,14 +64,22 @@ Scope {
             return;
         }
         operation = "writing";
-        view.setText(content);
+        Qt.callLater(() => view.setText(content));
+    }
+
+    function readLater() {
+        operation = "reading";
+        Qt.callLater(reloadView);
+    }
+
+    function reloadView() {
+        view.reload();
     }
 
     // The read's result, or false when it was stale and a read follows.
     function settle() {
         if (operation === "stale") {
-            operation = "reading";
-            Qt.callLater(() => view.reload());
+            readLater();
             return false;
         }
         if (operation !== "reading") console.error("watched-file: read finished outside a read operation=" + operation + " path=" + path);

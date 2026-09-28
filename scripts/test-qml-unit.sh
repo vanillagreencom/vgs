@@ -119,6 +119,14 @@ mutations=(
   "a padded section header's lines overflow it|layout/SectionHeader.qml|readonly property real bodyWidth: width - leftPadding - rightPadding|readonly property real bodyWidth: width|tst_layout.qml"
   "a theme change does not reach a group|../Commons/Theme.qml|readonly property var color: published.color|readonly property var color: convert(source.defaults.values, []).color|tst_theme.qml"
   "an appearance reads the whole theme|../Commons/Theme.qml|return convertTree(table, accepted.values, accepted.values, []);|return convertTree(table, Object.assign({}, accepted.values, { card: Object.assign({}, accepted.values.card, { fill: source.values.color.surface }) }), accepted.values, []);|tst_appearance.qml"
+  "a read a change overtook is reported|../Commons/WatchedFile.qml|if (operation === \"stale\") {|if (false) {|tst_watched_file.qml"
+  "a change during a read is not marked stale|../Commons/WatchedFile.qml|if (file.operation === \"reading\" || file.operation === \"stale\") file.operation = \"stale\";|if (false) file.operation = \"stale\";|tst_watched_file.qml"
+  "a change during a write is lost|../Commons/WatchedFile.qml|if (file.operation === \"reading\" || file.operation === \"stale\") file.operation = \"stale\";|if (file.operation !== \"idle\") file.operation = \"stale\";|tst_watched_file.qml"
+  "a read asked during a read starts nothing more|../Commons/WatchedFile.qml|            operation = \"stale\";|            return;|tst_watched_file.qml"
+  "the reading view watches the file|../Commons/WatchedFile.qml|        id: view|        id: view; watchChanges: true|tst_watched_file.qml"
+  "the watching view reads the file|../Commons/WatchedFile.qml|        preload: false|        preload: true|tst_watched_file.qml"
+  "a read asked from a result handler is lost|../Commons/WatchedFile.qml|Qt.callLater(reloadView);|reloadView();|tst_watched_file.qml"
+  "a write asked from a result handler is lost|../Commons/WatchedFile.qml|Qt.callLater(() => view.setText(content));|view.setText(content);|tst_watched_file.qml"
   "an appearance never applies its light overrides|../Commons/Theme.qml|ThemeLogic.acceptAppearance(table, light, source.values)|ThemeLogic.acceptAppearance(table, light, Object.assign({}, source.values, { scheme: { mode: \"dark\" } }))|tst_appearance.qml"
 )
 
