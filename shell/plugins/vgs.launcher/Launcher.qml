@@ -89,7 +89,8 @@ Item {
     // ------------------------------------------------------------ the menu
 
     readonly property string shippedPath: decodeURIComponent(String(Qt.resolvedUrl("menu.json")).replace(/^file:\/\//, ""))
-    readonly property string userPath: Paths.configDir + "/launcher/menu.json"
+    readonly property string userDir: Paths.configDir + "/launcher"
+    readonly property string userPath: userDir + "/menu.json"
     property var shippedEntries: []
     property var userEntries: []
     // A menu file the judge refused, by source, shown as a notice row.
@@ -158,28 +159,51 @@ Item {
         }
     }
 
+    // A watcher adds only a directory that exists when it is built
+    // (docs/architecture/runtime-qml.md), so the user menu's directory is
+    // made before its watch starts: a menu first created there while the
+    // launcher is open is then read. A directory that could not be made is
+    // logged and the watch starts anyway, reading the menu as absent.
+    Process {
+        id: userDirProc
+        property var completion: null
+        property bool settled: false
+        command: ["mkdir", "-p", "--", root.userDir]
+        running: true
+        stderr: StdioCollector { id: userDirErr }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            if (completion === null || completion.code !== 0 || completion.status !== 0)
+                console.error("launcher: menu directory failed: dir=" + root.userDir + " " + JSON.stringify(completion) + "\n" + userDirErr.text.trim());
+            settled = true;
+        }
+    }
+
     // Read again on every change, a change that lands during a read
     // included. The first read ends after open(), so a route waits for
     // userSettled in pendingRoute.
-    WatchedFile {
-        id: userFile
-        path: root.userPath
-        onChanged: read()
-        onLoaded: content => {
-            root.readMenu("user", path, content);
-            root.userSettled = true;
-        }
-        onLoadFailed: error => {
-            if (error === FileViewError.FileNotFound) {
-                const errors = Object.assign({}, root.menuErrors);
-                delete errors.user;
-                root.menuErrors = errors;
-                root.userEntries = [];
-                root.rebuildItems();
-            } else {
-                root.readMenu("user", path, "");
+    LazyLoader {
+        active: userDirProc.settled
+        WatchedFile {
+            path: root.userPath
+            onChanged: read()
+            onLoaded: content => {
+                root.readMenu("user", path, content);
+                root.userSettled = true;
             }
-            root.userSettled = true;
+            onLoadFailed: error => {
+                if (error === FileViewError.FileNotFound) {
+                    const errors = Object.assign({}, root.menuErrors);
+                    delete errors.user;
+                    root.menuErrors = errors;
+                    root.userEntries = [];
+                    root.rebuildItems();
+                } else {
+                    root.readMenu("user", path, "");
+                }
+                root.userSettled = true;
+            }
         }
     }
 

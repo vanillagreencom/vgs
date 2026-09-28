@@ -107,6 +107,21 @@ expect_poll "a removed user menu clears its notice" False has_row notice "Your m
 type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes the launcher" 0 layer_count vgs:overlay
 
+# A menu first created while the launcher is open, its directory absent
+# when the launcher was summoned, is read: the launcher makes the directory
+# before its watch starts.
+rm -rf -- "${user_menu%/*}"
+expect "the launcher summons without a menu directory" ok ipc shell summon overlay vgs.launcher '{}'
+focused
+type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
+expect_poll "the shipped menu shows with no user menu" True has_row menu System
+expect_poll "the launcher made its menu directory" True bash -c '[[ -d $1 ]] && echo True' _ "${user_menu%/*}"
+write_menu '{ "schemaVersion": 1, "items": { "system": { "label": "Power" } } }'
+expect_poll "a menu created while the launcher is open is read" True has_row menu Power
+type_keys -k Escape || fail "sending Escape failed"
+expect_poll "Escape closes the launcher" 0 layer_count vgs:overlay
+rm -f -- "${user_menu:?}"
+
 # Controls: a sandbox copy with one rule of the user menu's read taken out
 # fails a check above that rests on it. The host builds the launcher from
 # the revision the last completed scan published.
@@ -160,6 +175,22 @@ if launcher_mutant "the ungated control" 'readonly property bool menusReady: shi
   expect "the ungated control ran no action" absent file_text "$home/ran-action"
   expect "the host hides the ungated control" ok ipc shell hide overlay vgs.launcher
   expect_poll "the ungated control closed" 0 layer_count vgs:overlay
+fi
+
+# A copy that makes no menu directory watches none when it is summoned
+# without one, and a menu created while it is open goes unread. It waits the
+# five seconds the real launcher had to read that menu above.
+rm -rf -- "${user_menu%/*}"
+if launcher_mutant "the undirected control" 'command: ["mkdir", "-p", "--", root.userDir]' 'command: ["true"]'; then
+  expect "the undirected control summons" ok ipc shell summon overlay vgs.launcher '{}'
+  focused "the undirected control holds the keyboard"
+  type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
+  expect_poll "the undirected control shows the shipped menu" True has_row menu System
+  write_menu '{ "schemaVersion": 1, "items": { "system": { "label": "Power" } } }'
+  sleep 5
+  expect "the undirected control never read the menu created while open" True has_row menu System
+  expect "the host hides the undirected control" ok ipc shell hide overlay vgs.launcher
+  expect_poll "the undirected control closed" 0 layer_count vgs:overlay
 fi
 rm -f -- "${user_menu:?}"
 launcher_source "the restored launcher" "$sandbox/Launcher.qml.real" || true

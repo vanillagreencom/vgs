@@ -35,7 +35,7 @@ until [[ -s $done ]]; do sleep 0.05; done
 
 ## Menu
 
-`menu.json` is the shipped menu. `~/.config/vgs/launcher/menu.json` merges over it by id and per key, so a user file can change one label without restating the row; the file is watched. Both are `{ "schemaVersion": 1, "items": { "<id>": { ... } } }`, and a dotted id names its parent. `MenuModel.ITEM_KEYS` lists the keys an item may set:
+`menu.json` is the shipped menu. `~/.config/vgs/launcher/menu.json` merges over it by id and per key, so a user file can change one label without restating the row; the file is watched, and the launcher makes `~/.config/vgs/launcher/` when it opens, so a file first created there while it is open is read. Both are `{ "schemaVersion": 1, "items": { "<id>": { ... } } }`, and a dotted id names its parent. `MenuModel.ITEM_KEYS` lists the keys an item may set:
 
 - `run`: an argument list the `run` capability starts, with no shell unless the list names one.
 - `target`: a link to another menu. `provider`: `apps` for installed applications, `themes` for the theme packages.
