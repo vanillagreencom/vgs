@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-27
 
-**Status**: Active
+**Status**: Active (application-directory writes → [D022](D022-theme-apply-keeps-managed-links-in-application-directories.md))
 
 **Research**: VGS-461
 
@@ -12,7 +12,7 @@
 
 **Context**: An apply now lands one file per enabled application target and keeps one include line in each application's own configuration file. Those files live in a dotfile manager's tree as often as not, reached through a symlink, and one target that cannot render must not cost the others or the shell.
 
-**Decision**: Every write is staged beside its destination and moved in by rename. Every enabled target renders in memory first. Its files join `theme.json` and `terminal.json` in `next-theme/`, the sibling of `theme/`, so the swap is one rename on one filesystem. After the swap and `theme.name`, the include line is kept in each landed target's configuration file. A symlink is resolved, and the file it names is replaced through a temporary file beside it, with its mode kept. The shell document is written last. Nothing else in an application's directory is written. A target that fails to render reports `failed`, and the apply is then `partial` and exits 3.
+**Decision**: Every write is staged beside its destination and moved in by rename. Every enabled target renders in memory first. Its files join `theme.json` and `terminal.json` in `next-theme/`, the sibling of `theme/`, so the swap is one rename on one filesystem. After the swap and `theme.name`, the include line is kept in each landed target's configuration file. A symlink is resolved, and the file it names is replaced through a temporary file beside it, with its mode kept. The shell document is written last. Nothing else in an application's directory is written, but for the managed links [D022](D022-theme-apply-keeps-managed-links-in-application-directories.md) adds. A target that fails to render reports `failed`, and the apply is then `partial` and exits 3.
 
 No include line is left naming a file the swap drops. A target disabled after it landed has its include line removed the same way the line is kept, and its files leave `theme/`; a removal that cannot be made fails the target and keeps its files. Every other target that renders nothing, failed or skipped, carries the files it landed before into the stage, so its application keeps its last theme.
 

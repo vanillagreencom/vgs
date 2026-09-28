@@ -14,9 +14,18 @@
 // Every key target.json carries, each required. `reload` may be null.
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 const FILE_KEYS = ["template", "destination"];
+// The two wiring forms. An include wiring keeps one line in the
+// application's configuration file; its one optional key is the section the
+// line goes into. An entry wiring keeps links to the target's files in the
+// application's theme or extension directory and edits no file. `links`
+// tells them apart.
 const WIRING_KEYS = ["file", "line", "create"];
-// The one optional key: the section a wiring line goes into.
 const SECTION_KEY = "section";
+const ENTRY_KEYS = ["base", "dir", "owned", "links"];
+const ENTRY_KEY = "links";
+// The directories an entry's `dir` is relative to: the user's configuration
+// home, ${XDG_CONFIG_HOME:-~/.config}, or the home directory.
+const ENTRY_BASES = ["config", "home"];
 const RELOAD_KEYS = ["command", "timeoutMs"];
 
 // A target name holds no dot, so a destination named `<target>.<ext>` names
@@ -33,6 +42,10 @@ const TERMINAL_PREFIX = "terminal.";
 
 // The one placeholder a wiring line holds: the stable state directory.
 const STATE_PLACEHOLDER = "state";
+
+// One segment of an entry's `dir`: a directory name, a leading dot allowed
+// so `.vscode` can be named, never `.` or `..`.
+const DIR_SEGMENT_PATTERN = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // A wiring section is one bare name, as an INI section or a TOML table
 // header writes it between brackets.
@@ -121,6 +134,34 @@ function wiringError(logic, wiring) {
     return "";
 }
 
+// The form of an accepted target's WIRING, `include` or `entry`, which each
+// caller matches exhaustively.
+function wiringForm(wiring) {
+    return Object.prototype.hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include";
+}
+
+// The first defect of an entry `wiring`, or "". `dir` is relative to its
+// `base`, one directory name per segment; `links` maps each link's file
+// name in `dir` to one of DESTINATIONS, the target's own files.
+function entryError(logic, wiring, destinations) {
+    if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return "key=wiring";
+    if (!ENTRY_BASES.includes(wiring.base)) return "key=wiring.base";
+    if (typeof wiring.dir !== "string" || !wiring.dir.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment))) return "key=wiring.dir";
+    if (typeof wiring.owned !== "boolean") return "key=wiring.owned";
+    if (!logic.isPlainObject(wiring.links) || Object.keys(wiring.links).length === 0) return "key=wiring.links";
+    for (const [link, destination] of Object.entries(wiring.links))
+        if (!logic.isPackageName(link) || !destinations.has(destination)) return "key=wiring.links." + link;
+    return "";
+}
+
+// The links an accepted entry TARGET keeps in its `dir`, in the order
+// target.json names them: each link's file `name` and the path it points
+// at, `to`, its destination in LIVE, the state directory's `theme/` path.
+function entryLinks(target, live) {
+    if (wiringForm(target.wiring) !== "entry") throw new Error("theme-render: entryLinks: target " + target.name + " has an include wiring");
+    return Object.entries(target.wiring.links).map(([name, destination]) => ({ name, to: live + "/" + destination }));
+}
+
 // The first defect of `reload`, or "": null, or an argv and a timeout in
 // whole milliseconds.
 function reloadError(logic, reload) {
@@ -158,7 +199,9 @@ function acceptTarget(logic, name, text) {
         destinations.add(document.files[at].destination);
     }
     if (!Array.isArray(document.detect) || !document.detect.every(logic.isPackageName)) return refused("target-schema", "key=detect");
-    const wiring = wiringError(logic, document.wiring);
+    const wiring = logic.isPlainObject(document.wiring) && wiringForm(document.wiring) === "entry"
+        ? entryError(logic, document.wiring, destinations)
+        : wiringError(logic, document.wiring);
     if (wiring !== "") return refused("target-schema", wiring);
     const reload = reloadError(logic, document.reload);
     if (reload !== "") return refused("target-schema", reload);
@@ -230,6 +273,7 @@ function renderTarget(logic, tokens, target, templates, input) {
 // configuration file, with `@{state}` written as STATE, the state
 // directory's `theme/` path. acceptTarget admits no other placeholder.
 function wiringLine(target, state) {
+    if (wiringForm(target.wiring) !== "include") throw new Error("theme-render: wiringLine: target " + target.name + " has an entry wiring");
     const line = parseTemplate(target.wiring.line);
     if (!line.ok) throw new Error("theme-render: wiringLine: target " + target.name + " has an unterminated wiring line");
     return line.parts.map(part => {
@@ -276,4 +320,4 @@ function unwiredText(text, line) {
     return lines.filter(existing => existing !== line).join("\n");
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringLine, wiredText, unwiredText };
+module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, wiredText, unwiredText };

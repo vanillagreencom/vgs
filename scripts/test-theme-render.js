@@ -41,6 +41,11 @@ const own = logic.acceptPackage(TOKENS, {
 for (const pkg of [probe, defaults, own]) assert.equal(pkg.ok, true, pkg.ok ? "" : logic.refusalLine(pkg));
 
 const wiring = { file: "probe/probe.conf", line: "include=@{state}/probe.conf", create: true };
+// An entry wiring: links in the application's own directory, never a file
+// edit. Two files so a link can name either.
+const entry = { base: "config", dir: "probe/themes", owned: false, links: { "vgs.conf": "probe.conf" } };
+const twoFiles = [{ template: "a.conf", destination: "probe.conf" }, { template: "b.json", destination: "probe.pkg.json" }];
+const entryText = (fields = {}) => targetText({ files: twoFiles, wiring: Object.assign({}, entry, fields) });
 const targetText = (fields = {}) => JSON.stringify(Object.assign({
     app: "Probe",
     encoder: "hex6",
@@ -56,7 +61,9 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ reload: null, detect: [], wiring: Object.assign({}, wiring, { create: false }) })],
     ["probe-2", targetText({ files: [{ template: "a.conf", destination: "probe-2.conf" }, { template: "a.conf", destination: "probe-2.extra.ini" }] })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general" }) })],
-    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })]
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })],
+    ["probe", entryText()],
+    ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -92,6 +99,18 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "colors.primary" }) }), "target-schema", "key=wiring.section"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "[general]" }) }), "target-schema", "key=wiring.section"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: null }) }), "target-schema", "key=wiring.section"],
+    ["probe", entryText({ line: "include=@{state}/probe.conf" }), "target-schema", "key=wiring"],
+    ["probe", targetText({ files: twoFiles, wiring: { base: "config", dir: "probe", links: { "vgs.conf": "probe.conf" } } }), "target-schema", "key=wiring"],
+    ["probe", entryText({ base: "state" }), "target-schema", "key=wiring.base"],
+    ["probe", entryText({ dir: "../probe" }), "target-schema", "key=wiring.dir"],
+    ["probe", entryText({ dir: "probe/./themes" }), "target-schema", "key=wiring.dir"],
+    ["probe", entryText({ dir: "/etc/probe" }), "target-schema", "key=wiring.dir"],
+    ["probe", entryText({ dir: 3 }), "target-schema", "key=wiring.dir"],
+    ["probe", entryText({ owned: "no" }), "target-schema", "key=wiring.owned"],
+    ["probe", entryText({ links: {} }), "target-schema", "key=wiring.links"],
+    ["probe", entryText({ links: ["probe.conf"] }), "target-schema", "key=wiring.links"],
+    ["probe", entryText({ links: { "../vgs.conf": "probe.conf" } }), "target-schema", "key=wiring.links.../vgs.conf"],
+    ["probe", entryText({ links: { "vgs.conf": "other.conf" } }), "target-schema", "key=wiring.links.vgs.conf"],
     ["probe", targetText({ reload: { command: ["probe"] } }), "target-schema", "key=reload"],
     ["probe", targetText({ reload: { command: [], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 0 } }), "target-schema", "key=reload.timeoutMs"],
@@ -253,6 +272,15 @@ function verify(render) {
         assert.equal(render.wiredText(text, TOML_LINE, "general"), want, JSON.stringify(text));
     for (const [text, want] of UNWIRED)
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
+
+    // An entry target's links point at its files in the state directory's
+    // theme/, in target.json's order; each form refuses the other's helper.
+    const linked = accepted("probe", entryText({ links: { "vgs.conf": "probe.conf", "package.json": "probe.pkg.json" } }));
+    assert.equal(render.wiringForm(linked.wiring), "entry");
+    assert.equal(render.wiringForm(target("hex6").wiring), "include");
+    assert.deepEqual(render.entryLinks(linked, "/s/vgs/theme"), [{ name: "vgs.conf", to: "/s/vgs/theme/probe.conf" }, { name: "package.json", to: "/s/vgs/theme/probe.pkg.json" }]);
+    assert.throws(() => render.wiringLine(linked, "/s"), /has an entry wiring/);
+    assert.throws(() => render.entryLinks(target("hex6"), "/s"), /has an include wiring/);
 }
 verify(require(rendererFile));
 
@@ -307,6 +335,15 @@ const CONTROLS = [
     ["section header whole name", "const SECTION_HEADER = /^\\s*\\[\\s*([^\\]]*?)\\s*\\]\\s*(?:#.*)?$/;", "const SECTION_HEADER = /^\\s*\\[+\\s*([^\\]]*?)\\s*\\]/;"],
     ["section header appended", "\"[\" + section + \"]\\n\" + line", "line"],
     ["section appended on its own line", "(before === \"\" || before.endsWith(\"\\n\") ? \"\" : \"\\n\")", "\"\""],
+    ["entry form", 'hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include"', 'hasOwnProperty.call(wiring, "nope") ? "entry" : "include"'],
+    ["entry keys", "if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return", "if (!logic.isPlainObject(wiring)) return"],
+    ["entry base", "if (!ENTRY_BASES.includes(wiring.base)) return", "if (false) return"],
+    ["entry dir segment", "const DIR_SEGMENT_PATTERN = /^\\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;", "const DIR_SEGMENT_PATTERN = /^[.A-Za-z0-9_-]+$/;"],
+    ["entry owned", "if (typeof wiring.owned !== \"boolean\") return", "if (false) return"],
+    ["entry links present", "|| Object.keys(wiring.links).length === 0) return", ") return"],
+    ["entry link name", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!destinations.has(destination)) return"],
+    ["entry link destination", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!logic.isPackageName(link)) return"],
+    ["entry link target", "({ name, to: live + \"/\" + destination })", "({ name, to: destination })"],
     ["unwiring whole line", "if (!lines.includes(line)) return null;", "if (!text.includes(line)) return null;"],
     ["unwiring every line", "return lines.filter(existing => existing !== line).join(\"\\n\");", "return lines.filter((existing, at) => at !== lines.indexOf(line)).join(\"\\n\");"]
 ];

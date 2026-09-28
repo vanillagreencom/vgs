@@ -756,7 +756,7 @@ check "an unremoved include line keeps its file in theme/" cmp -s "$tmp/foot-lan
 check "an unremoved include line stays" grep -qxF -- "$foot_line" "$tmp/dotfiles/foot.ini"
 # The must-fail control: a judge copy that never removes the line leaves it
 # naming the file the swap drops.
-judge_control keeps-line 'editWiring(entry.name, entry.target, configHome, live, render.unwiredText)' 'null'
+judge_control keeps-line 'editWiring(name, target, configHome, live, render.unwiredText)' 'null'
 THEME_PATH="$with_stubs" tinst "the line-keeping mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 check "the line-keeping mutant leaves the include line" grep -qxF -- "$foot_line" "$tmp/dotfiles/foot.ini"
 check "the line-keeping mutant's line names a dropped file" test ! -e "$live/foot.ini"

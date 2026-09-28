@@ -1,8 +1,7 @@
-# The assertion library the bin/vgsh suites source, scripts/test-vgsh.sh and
-# scripts/test-vgsh-reload.sh: the scratch directory, the child environment,
-# the row helpers and the theme tree fixture. It sets `set -euo pipefail`,
-# `repo`, `tmp` (removed on exit), `rt_empty`, `node_bin`, `base_path`,
-# `base_env` and `failures`.
+# The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
+# the scratch directory, the child environment, the row helpers and the
+# theme tree fixture. It sets `set -euo pipefail`, `repo`, `tmp` (removed on
+# exit), `rt_empty`, `node_bin`, `base_path`, `base_env` and `failures`.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"

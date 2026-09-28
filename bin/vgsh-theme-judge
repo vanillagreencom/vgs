@@ -45,6 +45,7 @@
 // renderer is bin/lib/theme-render.js.
 "use strict";
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
@@ -391,9 +392,10 @@ function reading(name, dir, read, failed) {
 // any file moves. `state` is `skipped` or `failed` with its `reason`, a
 // failed one carrying `failure`, its keyed line; a rendered one is `pending`
 // with its `target` and `files` until the stage compares their bytes. A
-// disabled target keeps its `target`, whose include line apply removes.
-// SLOTS are the terminal slots terminalSource chose.
-function planTarget(dir, row, slots, disabled, configHome) {
+// disabled target keeps its `target`, whose wiring apply removes.
+// SLOTS are the terminal slots terminalSource chose; LIVE is the state
+// directory's theme/, which an entry target's links point into.
+function planTarget(dir, row, slots, disabled, configHome, live) {
     const name = path.basename(dir);
     const skipped = reason => ({ name, state: "skipped", reason });
     const failed = (reason, failure) => ({ name, state: "failed", reason, failure });
@@ -405,8 +407,15 @@ function planTarget(dir, row, slots, disabled, configHome) {
     if (disabled.includes(name)) return { name, state: "skipped", reason: "disabled", target };
     const found = reading(name, dir, () => {
         if (!target.detect.every(onPath)) return "not-detected";
-        if (!target.wiring.create && fs.statSync(path.join(configHome, target.wiring.file), { throwIfNoEntry: false }) === undefined) return "wiring-file-absent";
-        return null;
+        switch (render.wiringForm(target.wiring)) {
+        case "include":
+            if (!target.wiring.create && fs.statSync(path.join(configHome, target.wiring.file), { throwIfNoEntry: false }) === undefined) return "wiring-file-absent";
+            return null;
+        case "entry":
+            return entryOccupied(target, configHome, live) === null ? null : "entry-occupied";
+        default:
+            throw new Error("vgsh-theme-judge: planTarget: target " + name + " has no known wiring form");
+        }
     }, failed);
     if (!found.ok) return found.entry;
     if (found.value !== null) return skipped(found.value);
@@ -427,7 +436,7 @@ function planTarget(dir, row, slots, disabled, configHome) {
 // Every shipped target under themes/targets/, planned by planTarget, in
 // name order. KEY leads the refusal for a targets directory that cannot be
 // listed; an absent one holds no target.
-function planTargets(row, slots, disabled, configHome, key) {
+function planTargets(row, slots, disabled, configHome, live, key) {
     const base = path.join(SHIPPED, TARGETS);
     let names;
     try {
@@ -435,7 +444,7 @@ function planTargets(row, slots, disabled, configHome, key) {
     } catch (e) {
         refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
     }
-    return (names || []).map(name => planTarget(path.join(base, name), row, slots, disabled, configHome));
+    return (names || []).map(name => planTarget(path.join(base, name), row, slots, disabled, configHome, live));
 }
 
 // Whether every file of a rendered target already stands in LIVE with the
@@ -463,7 +472,7 @@ const PACKAGE_FILES = ["theme.json", "terminal.json"];
 // name holds no dot, so the text before a file's first dot names its target,
 // whether or not target.json can still be read. An absent LIVE holds none;
 // KEY leads the refusal for one that cannot be read, since a file left out
-// would leave its include line naming nothing.
+// would leave its include line or link naming nothing.
 function landedFiles(live, name, key) {
     let names;
     try {
@@ -525,22 +534,127 @@ function editWiring(name, target, configHome, live, edit) {
     return null;
 }
 
-// Keep a landed ENTRY's include line in its configuration file. Answers
-// ENTRY, or its failed entry.
+// The directory an entry TARGET's links stand in: its `dir` under the
+// configuration home or the home directory, as its `base` names.
+function entryDir(target, configHome) {
+    switch (target.wiring.base) {
+    case "config": return path.join(configHome, target.wiring.dir);
+    case "home": return path.join(os.homedir(), target.wiring.dir);
+    default: throw new Error("vgsh-theme-judge: entryDir: target " + target.name + " has no known base");
+    }
+}
+
+// What stands at FILE, where a link to TO belongs: `absent`, `managed`, a
+// symlink whose target is TO, or `occupied` by anything else. The link is
+// never followed, so a managed link whose file is gone is still managed. A
+// symlink is the proof: apply writes no other kind of entry, and its target
+// names the state directory's theme/, which nothing else points into.
+function linkState(file, to) {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat === undefined) return "absent";
+    return stat.isSymbolicLink() && fs.readlinkSync(file) === to ? "managed" : "occupied";
+}
+
+// The first path that stops entry TARGET from keeping its links in place,
+// or null: a `dir` that is no directory, or a link's path something other
+// than its managed link holds. A symlinked `dir` counts as the directory it
+// names, so a dotfile manager's link serves. Throws the fs error of a path
+// that cannot be read.
+function entryOccupied(target, configHome, live) {
+    const dir = entryDir(target, configHome);
+    const stat = fs.statSync(dir, { throwIfNoEntry: false });
+    if (stat === undefined) return null;
+    if (!stat.isDirectory()) return dir;
+    const occupied = render.entryLinks(target, live).find(link => linkState(path.join(dir, link.name), link.to) === "occupied");
+    return occupied === undefined ? null : path.join(dir, occupied.name);
+}
+
+// Keep entry TARGET's links in its `dir`, created with its parents when
+// absent. A managed link is left as it is, so a later apply changes nothing
+// there, and nothing but the links is written. Answers null, or the failure's
+// { reason, failure } for target NAME: `entry-occupied` when a path came to
+// be taken after the plan judged it free, else what the write met.
+function keepLinks(name, target, configHome, live) {
+    const key = "target=" + name + " reason";
+    const dir = entryDir(target, configHome);
+    try {
+        writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));
+        for (const link of render.entryLinks(target, live)) {
+            const file = path.join(dir, link.name);
+            let state;
+            writing(file, key, () => { state = linkState(file, link.to); });
+            if (state === "occupied") return { reason: "entry-occupied", failure: key + "=entry-occupied path=" + file };
+            if (state === "absent") writing(file, key, () => fs.symlinkSync(link.to, file));
+        }
+    } catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        return { reason: e.reason, failure: e.first };
+    }
+    return null;
+}
+
+// Remove entry TARGET's managed links from its `dir`, and an `owned` dir
+// once it is empty. A path something else holds is not the target's and
+// stays, and so does an owned dir holding anything else. Answers null, or
+// the failure's { reason, failure } for target NAME.
+function dropLinks(name, target, configHome, live) {
+    const key = "target=" + name + " reason";
+    const dir = entryDir(target, configHome);
+    try {
+        for (const link of render.entryLinks(target, live)) {
+            const file = path.join(dir, link.name);
+            writing(file, key, () => {
+                if (linkState(file, link.to) === "managed") fs.unlinkSync(file);
+            });
+        }
+        if (target.wiring.owned) writing(dir, key, () => {
+            const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+            if (stat === undefined || !stat.isDirectory()) return;
+            try {
+                fs.rmdirSync(dir);
+            } catch (e) {
+                if (e.code !== "ENOTEMPTY" && e.code !== "EEXIST") throw e;
+            }
+        });
+    } catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        return { reason: e.reason, failure: e.first };
+    }
+    return null;
+}
+
+// Keep a landed ENTRY's wiring: its include line in its configuration file,
+// or its links in its application's directory. Answers ENTRY, or its failed
+// entry.
 function wire(entry, configHome, live) {
-    const failure = editWiring(entry.name, entry.target, configHome, live, render.wiredText);
+    let failure;
+    switch (render.wiringForm(entry.target.wiring)) {
+    case "include": failure = editWiring(entry.name, entry.target, configHome, live, render.wiredText); break;
+    case "entry": failure = keepLinks(entry.name, entry.target, configHome, live); break;
+    default: throw new Error("vgsh-theme-judge: wire: target " + entry.name + " has no known wiring form");
+    }
     return failure === null ? entry : Object.assign({ name: entry.name, state: "failed" }, failure);
 }
 
+// Undo a disabled TARGET's wiring: remove its include line or its links.
+// Answers null, or the failure's { reason, failure } for target NAME.
+function unwire(name, target, configHome, live) {
+    switch (render.wiringForm(target.wiring)) {
+    case "include": return editWiring(name, target, configHome, live, render.unwiredText);
+    case "entry": return dropLinks(name, target, configHome, live);
+    default: throw new Error("vgsh-theme-judge: unwire: target " + name + " has no known wiring form");
+    }
+}
+
 // Settle every target that does not land its own render this apply, before
-// the stage, so no include line is left naming a file the swap drops. A
-// disabled target's include line is removed and its files dropped; a
-// removal that fails keeps them and fails the target. Every other target,
+// the stage, so no include line or link is left naming a file the swap
+// drops. A disabled target's include line or links are removed and its files
+// dropped; a removal that fails keeps them and fails the target. Every other target,
 // failed or skipped, carries the files it landed before into the stage, so
 // its application keeps its last theme.
 function settle(entry, configHome, live, key) {
     if (entry.state === "skipped" && entry.reason === "disabled") {
-        const failure = editWiring(entry.name, entry.target, configHome, live, render.unwiredText);
+        const failure = unwire(entry.name, entry.target, configHome, live);
         if (failure === null) return entry;
         entry = Object.assign({ name: entry.name, state: "failed" }, failure);
     }
@@ -549,7 +663,7 @@ function settle(entry, configHome, live, key) {
 
 // Render the package and every enabled target into <state-dir>/next-theme/,
 // with the files settle carries, move it over theme/, write theme.name,
-// keep each landed target's include line, then copy theme.json's bytes to the theme file, which the shell
+// keep each landed target's wiring, then copy theme.json's bytes to the theme file, which the shell
 // watches, so the shell restyles only after every application file is in
 // place. RESULT's `shell` follows the theme file and its `targets` are set
 // once the swap has landed them; FAILURES takes each failed target's keyed
@@ -571,9 +685,9 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     // The configuration home is the parent of the vgs configuration directory;
     // a target's wiring file is relative to it.
     const configHome = path.dirname(configDir);
-    const targets = planTargets(row, source.terminal, disabledTargets(configDir, key), configHome, key);
-
     const live = path.join(stateDir, "theme");
+    const targets = planTargets(row, source.terminal, disabledTargets(configDir, key), configHome, live, key);
+
     const stage = path.join(stateDir, "next-theme");
     const aside = path.join(stateDir, "old-theme");
     const settled = targets.map(entry => {
