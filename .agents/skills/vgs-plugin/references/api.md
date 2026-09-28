@@ -150,6 +150,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | `Theme.appearance(TOKENS, LIGHT)` | function: a plugin-owned look, the plugin's own table resolved against the theme's `scheme.mode`, `palette.accent` and `motion.scale` alone, frozen and converted as the groups are; null after a logged refusal. Only for a plugin whose manifest names `appearance`: [`docs/architecture/appearance.md`](../../../../docs/architecture/appearance.md) |
 | `Theme.name`, `Theme.revision`, `Theme.fileState` | string, int, string: the accepted theme's name, a counter that rises after every group holds a new theme, and the theme file's state (`pending`, `loaded`, `absent`, `refused`, `unreadable`), which a refused edit moves without a new revision |
 | `Paths.configDir` | string: the directory `shell.json` and `theme.json` are read from |
+| `Paths.stateDir` | string: `${XDG_STATE_HOME:-~/.local/state}/vgs`, where `vgsh theme` keeps what it applied |
 | `Workspaces.ids`, `Workspaces.focusedId` | list of int, int |
 | `Time.now` | date: the shared wall clock, ticking once a minute |
 | `Time.holdSeconds(item, wanted)` | function: while any item holds it, `Time.now` ticks once a second; release on destruction |

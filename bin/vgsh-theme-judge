@@ -25,6 +25,11 @@
 //   vgsh-theme-judge reload <text|json> <config-dir> <state-dir> <held|busy|failed>
 //       run the hook of every target <state-dir>/reload-pending.json lists
 //       again, under the same lock verdict.
+//   vgsh-theme-judge background-next <config-dir> <state-dir> <held|busy|failed>
+//       make the next image of the applied package's backgrounds/ the
+//       current background and remember it for that package, under the
+//       same lock verdict; prints `ok background=<file> theme=<name>
+//       path=<image>`.
 //   vgsh-theme-judge accept <dir> [<name>]
 //       judge the package in DIR as an installed package, for `vgsh theme
 //       add` (no NAME: it lands under its document's own name) and `vgsh
@@ -35,15 +40,16 @@
 //       print the directory of installed package NAME under
 //       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
 //
-// list, apply, reload and installed refuse with one line on stderr, `vgsh:
-// refused: <key>=...`, through bin/lib/judge-files.js: exit 1, or 75 for
-// `reason=busy`. Under `json`, apply prints its structured result on stdout
+// list, apply, reload, background-next and installed refuse with one line
+// on stderr, `vgsh: refused: <key>=...`, through bin/lib/judge-files.js:
+// exit 1, or 75 for `reason=busy`. Under `json`, apply prints its structured result on stdout
 // first, refusals included, and so does reload. A partial apply or reload
 // prints one such line per failed or reload-pending target and exits 3. A
 // malformed invocation exits 2.
-// docs/architecture/themes.md § Runner and § Install, theme-apply.md and
-// theme-targets.md hold the rules this file implements; the target
-// renderer is bin/lib/theme-render.js.
+// docs/architecture/themes.md § Runner and § Install, theme-apply.md,
+// theme-targets.md and theme-backgrounds.md hold the rules this file
+// implements; the target renderer is bin/lib/theme-render.js and the
+// background state bin/lib/theme-backgrounds.js.
 "use strict";
 const fs = require("fs");
 const os = require("os");
@@ -57,6 +63,7 @@ const pluginLogic = load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 const { spawnSync } = require("child_process");
 const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
+const backgrounds = require(path.join(__dirname, "lib", "theme-backgrounds.js"));
 
 const SHIPPED = path.join(repo, "themes");
 const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
@@ -809,6 +816,10 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     const configHome = path.dirname(configDir);
     const live = path.join(stateDir, "theme");
     const targets = planTargets(row, source.terminal, disabledTargets(configDir, key), configHome, live, key);
+    // Chosen before anything moves, so a background state or directory that
+    // cannot be read refuses the apply whole.
+    const shown = backgrounds.read(logic, stateDir, key);
+    const background = backgrounds.choose(backgrounds.images(row.path, key), shown.themes[name]);
 
     const stage = path.join(stateDir, "next-theme");
     const aside = path.join(stateDir, "old-theme");
@@ -861,6 +872,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
         throw e;
     }
     replaceFile(path.join(stateDir, "theme.name"), name + "\n", key);
+    backgrounds.land(stateDir, row.path, background, shown.themes, shown, key);
     // Asserted on every apply, unchanged bytes included, so a line removed
     // by hand comes back.
     const landed = settled.map(entry => entry.state === "written" || entry.state === "unchanged" ? wire(entry, configHome, live) : entry);
@@ -1066,6 +1078,36 @@ function reload(format, configDir, stateDir, lock) {
     report(format, result, failures => reloadAll(result, failures, configDir, stateDir, lock), r => "reload state=" + r.state);
 }
 
+// --- backgrounds
+
+// The file theme.name, which apply writes after the swap, names the
+// applied package; `next` cycles that package's images in name order from
+// the one it shows, remembers the new one for it and makes it current.
+function backgroundNext(configDir, stateDir, lock) {
+    const key = "background=next reason";
+    if (lock === "busy") refuse("background=next reason=busy", "busy", 75);
+    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    const shown = backgrounds.read(logic, stateDir, key);
+    const file = path.join(stateDir, "theme.name");
+    let name;
+    try {
+        name = fs.readFileSync(file, "utf8");
+    } catch (e) {
+        if (e.code === "ENOENT") refuse(key + "=not-applied path=" + file, "not-applied");
+        refuse(key + "=unreadable path=" + file + " error=" + e.code, "unreadable");
+    }
+    name = name.endsWith("\n") ? name.slice(0, -1) : name;
+    if (!logic.isPackageName(name)) refuse(key + "=malformed path=" + file, "malformed");
+    const row = packageSet(configDir, key).resolved.get(name);
+    if (row === undefined) refuse(key + "=unknown theme=" + name, "unknown");
+    if (row.state !== "ok") refuse(key + "=" + row.reason + " theme=" + name + " path=" + row.path, row.reason);
+    const list = backgrounds.images(row.path, key);
+    if (list.length === 0) refuse(key + "=no-backgrounds theme=" + name + " path=" + path.join(row.path, backgrounds.DIR), "no-backgrounds");
+    const next = list[(list.indexOf(backgrounds.choose(list, shown.themes[name])) + 1) % list.length];
+    const current = backgrounds.land(stateDir, row.path, next, Object.assign({}, shown.themes, { [name]: next }), shown, key);
+    console.log("ok background=" + next + " theme=" + name + " path=" + current);
+}
+
 // --- install
 
 // The judge's verdict on the package in DIR as an installed package named
@@ -1156,6 +1198,10 @@ main(() => {
     case "reload":
         if (args.length !== 4 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
         reload(...args);
+        break;
+    case "background-next":
+        if (args.length !== 3 || !LOCK_VERDICTS.includes(args[2])) usage("arguments=" + command);
+        backgroundNext(...args);
         break;
     case "accept":
         if (args.length < 1 || args.length > 2) usage("arguments=" + command);

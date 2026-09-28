@@ -2,7 +2,7 @@
 
 Covers: shell/Core/Config.qml, shell/Commons/Paths.qml, config/shell.json
 
-The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both.
+The shell's configuration files: two layers of `shell.json` merged by entry id, and the theme file. `shell/Core/Config.qml` reads the first two, `shell/Commons/ThemeSource.qml` the third, and `shell/Commons/Paths.qml` derives the user directory once for both. `Paths.stateDir` is the directory `vgsh theme` keeps what it applied in, which the `vgs.background` plugin reads: [theme-backgrounds.md](theme-backgrounds.md).
 
 ## Layers
 

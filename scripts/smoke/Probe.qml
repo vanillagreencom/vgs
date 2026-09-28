@@ -282,6 +282,18 @@ Scope {
             const found = root.descendants(item).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
             return root.geometry(found === undefined ? null : found);
         }
+        // Every Image under an instance, in tree order, as the local path it
+        // draws ("" for none), its status (`null`, `ready`, `loading` or
+        // `error`), its box's size and the size it decoded the file to, so
+        // a row reads what a background draws.
+        function images(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const states = { [Image.Null]: "null", [Image.Ready]: "ready", [Image.Loading]: "loading", [Image.Error]: "error" };
+            const local = url => url === "" ? "" : decodeURIComponent(url.replace(/^file:\/\//, ""));
+            return JSON.stringify(root.descendants(item).filter(child => child instanceof Image).map(image =>
+                [local(image.source.toString()), states[image.status], [image.width, image.height], [image.implicitWidth, image.implicitHeight]]));
+        }
         function hasWorkspaceAction(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
             if (item === null || !item.bar || !item.bar.shell) return false;

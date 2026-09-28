@@ -7,7 +7,8 @@
 # package and reads one colour of each gallery section back as a property,
 # then applies vgs so later rows start from the defaults. The Hyprland
 # block after it wires the shipped target and runs its hook on the nested
-# instance, and leaves vgs applied.
+# instance, and leaves vgs applied. The vgs.themes and vgs.background blocks
+# close the file, each delimited by its own markers.
 set -euo pipefail
 installed="$home/.config/vgs/themes"
 # What the fixture's last apply callback received: state, shell, theme and
@@ -426,3 +427,86 @@ expect_poll "the themes panel closes" closed panel_open
 expect "vgsh plugin disable takes the themes widget off the bar" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin disable vgs.themes
 expect_poll "the themes widget is gone" False record_exists vgs.themes
 # ---- end vgs.themes ---------------------------------------------------------
+
+# ---- vgs.background: the theme's background image -------------------------
+# The first-party background plugin, which the harness seeds disabled so the
+# host rows see only their fixture's surface. An installed package ships two
+# generated images: a.png, larger than any nested screen, and b.png. What
+# the plugin draws is read back from its Image on the first screen through
+# the probe's `images`. A copy of the plugin that never reloads the state
+# file is the block's control. The block leaves vgs applied and the plugin
+# disabled.
+bg_state="$home/.local/state/vgs"
+scenic="$installed/scenic"
+mkdir -p -- "$scenic/backgrounds"
+printf '%s\n' '{ "schemaVersion": 1, "name": "scenic", "tokens": {} }' >"$scenic/theme.json"
+python3 - "$scenic/backgrounds" <<'PY'
+import os, struct, sys, zlib
+def png(name, w, h, rgb):
+    def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = zlib.compress(b"".join(b"\x00" + bytes(rgb) * w for _ in range(h)))
+    with open(os.path.join(sys.argv[1], name), "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", rows) + chunk(b"IEND", b""))
+png("a.png", 4000, 2000, (200, 40, 40))
+png("b.png", 64, 36, (40, 40, 200))
+PY
+vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
+# What the first screen's background draws: `<path> <status>`, `-` for no
+# image. background_covers: whether the image decoded to cover its box and
+# smaller than the 4000x2000 file.
+background_image() { ipc smoke images "background:$screen_name" vgs.background | python3 -c 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
+background_covers() { ipc smoke images "background:$screen_name" vgs.background | python3 -c 'import json,sys; _,_,box,size=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
+background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
+
+expect "the background plugin is disabled before its block" False plugin_enabled vgs.background
+expect "a package with backgrounds applies" "ok theme=scenic state=applied shell=applied" vgsh_theme apply scenic
+expect "the apply links the package's first image" "$scenic/backgrounds/a.png" background_link
+expect "vgsh plugin enable turns the background plugin on" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin enable vgs.background
+expect_poll "the background host draws one surface per screen for it" "$monitors" layer_count vgs:background
+expect_poll "the plugin draws the applied package's first image" "$scenic/backgrounds/a.png ready" background_image
+expect "the image is decoded to cover the screen, not at the file's size" True background_covers
+expect "next moves to the package's second image" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
+expect_poll "the plugin follows next" "$scenic/backgrounds/b.png ready" background_image
+expect "a package without backgrounds applies" "ok theme=vgs state=applied shell=applied" vgsh_theme apply vgs
+expect "the link goes with a package without backgrounds" absent background_link
+expect_poll "the plugin draws no image for it" "- null" background_image
+expect "the host surface stays, drawing the theme's colour" "$monitors" layer_count vgs:background
+expect "the package with backgrounds applies again" "ok theme=scenic state=applied shell=applied" vgsh_theme apply scenic
+expect_poll "the plugin draws the image next remembered" "$scenic/backgrounds/b.png ready" background_image
+
+# A state file the runner did not write is logged and draws nothing.
+expected_errors+=('background: .*/backgrounds\.json malformed')
+printf '{ nope\n' >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"
+expect_poll "a malformed state file draws no image" "- null" background_image
+expect_log "the plugin logs the malformed state file" 1 'background: .*/backgrounds\.json malformed'
+rm -- "$bg_state/backgrounds.json"
+expect "the package applies over a removed state file" "ok theme=scenic state=unchanged shell=unchanged" vgsh_theme apply scenic
+expect_poll "the rewritten state file draws the first image again" "$scenic/backgrounds/a.png ready" background_image
+
+# Control: a sandbox copy whose FileView never reloads keeps drawing the
+# image it read when it was built after next moves on. The real plugin
+# followed next within expect_poll's first polls above, so two seconds is
+# ample for it.
+plugin_qml="$repo/shell/plugins/vgs.background/Background.qml"
+cp -p -- "$plugin_qml" "$sandbox/Background.qml.real"
+if [[ $(grep -c -F 'onFileChanged: reload()' -- "$plugin_qml") == 1 ]]; then
+  python3 -c 'import sys; p, q = sys.argv[1:]; open(q, "w").write(open(p).read().replace("onFileChanged: reload()", "onFileChanged: {}"))' "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+  control_builds="$(builds)" || { fail "buildCount unreadable before the unwatched control"; control_builds=0; }
+  expect "a rescan builds the unwatched control" ok ipc shell rescanPlugins
+  expect_poll "the control is built on every screen" "$((control_builds + monitors))" builds
+  expect "the control draws the current image when built" "$scenic/backgrounds/a.png ready" background_image
+  expect "next moves on under the control" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
+  sleep 2
+  expect "the unwatched control keeps drawing the image it was built with" "$scenic/backgrounds/a.png ready" background_image
+  cp -p -- "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+  expect "a rescan restores the plugin" ok ipc shell rescanPlugins
+  expect_poll "the restored plugin draws the current image" "$scenic/backgrounds/b.png ready" background_image
+else
+  fail "the unwatched control's text occurs once in $plugin_qml"
+fi
+
+expect "vgs applies after the background rows" "ok theme=vgs state=applied shell=applied" vgsh_theme apply vgs
+expect "vgsh plugin disable turns the background plugin off" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin disable vgs.background
+expect_poll "the background surface is gone" 0 layer_count vgs:background
+rm -r -- "$scenic"
+# ---- end vgs.background -----------------------------------------------------

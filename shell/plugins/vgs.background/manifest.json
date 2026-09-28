@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.background",
+  "name": "Background",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "The applied theme's background image on every screen, under every window, following vgsh theme apply and vgsh theme background next.",
+  "license": "MIT",
+  "kinds": [
+    "background"
+  ],
+  "entryPoints": {
+    "background": "Background.qml"
+  },
+  "capabilities": [],
+  "settings": {}
+}

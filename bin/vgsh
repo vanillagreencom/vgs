@@ -16,6 +16,7 @@
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
 #   vgsh theme reload [--json]     run every pending reload hook again
+#   vgsh theme background next     show the applied package's next background image and remember it
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -52,6 +53,11 @@
 # fails or times out leaves the target reload-pending in
 # ${XDG_STATE_HOME:-~/.local/state}/vgs/reload-pending.json. `theme reload`
 # holds the same lock and runs every pending hook again, and nothing else.
+# Apply also makes the package's remembered background image, else its
+# first, the current one: the ${XDG_STATE_HOME:-~/.local/state}/vgs/background
+# symlink and backgrounds.json beside it. `theme background next` holds the
+# same lock and moves to the applied package's next image, remembering it:
+# docs/architecture/theme-backgrounds.md.
 # `--json` prints the list, the apply's result `{ state, shell, targets,
 # theme, reason }` or the reload's `{ state, targets, reason }`, refusals
 # included, as one JSON line on stdout. `theme` commands never contact the
@@ -484,6 +490,13 @@ PY
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
         theme_lock_verdict
         exec node "$theme_judge" reload "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
+        ;;
+      background)
+        [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
+        if [[ ${1:-} != next ]]; then printf 'vgsh: refused: background-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        theme_lock_verdict
+        exec node "$theme_judge" background-next "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       add|update|remove)
         arg="${1:-}"

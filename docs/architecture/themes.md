@@ -11,6 +11,7 @@ A theme package is one directory. It holds the shell document and the applicatio
 | `theme.json` | yes | The shell document from [design-system.md § The shell document](design-system.md#the-shell-document). |
 | `terminal.json` | no | `{ "schemaVersion": 1, "slots": { "color0": "#...", ... "color15": "#..." } }`. |
 | `targets/<target>.<ext>` | no | A curated file, taken verbatim in place of the target file the renderer writes to that name, where the target accepts it: [theme-targets.md § Templates](theme-targets.md#templates). |
+| `backgrounds/<image>` | no | Background images, which apply makes current: [theme-backgrounds.md](theme-backgrounds.md). |
 
 The directory name is the package name and must equal `theme.json`'s `name`; `ThemeLogic.isPackageName` bounds it to a letter or digit followed by letters, digits, `.`, `_` and `-`. The name `vgs` is reserved for the shipped defaults, so an installed package cannot hide the revert package. A package without `terminal.json` is valid; apply renders the shipped `vgs` terminal slots in its place.
 
@@ -47,7 +48,7 @@ The shipped packages are `vgs`, the dark defaults and the revert, and `light`, t
 
 ## Apply
 
-`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md).
+`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md). Apply also makes one of the package's background images current, and `vgsh theme background next` moves to the next: [theme-backgrounds.md](theme-backgrounds.md).
 
 ## Trust
 
@@ -65,3 +66,4 @@ Applying a third-party package carries plugin-level trust. A curated target file
 8. The apply and reload rules: [theme-apply.md § Invariants](theme-apply.md#invariants).
 9. The `theme` capability rules: [theme-capability.md § Invariants](theme-capability.md#invariants).
 10. Add lands a package under its document name from a staging directory and refuses a package the judge refuses, the reserved `vgs` and `targets`, a source without `theme.json` and an occupied name, leaving nothing behind; update fast-forwards, refuses a modified checkout and a rewritten history, and rolls back a refused or renamed version; remove deletes only an installed directory; none runs a git hook; each is refused busy while the theme lock is held; and no git call inherits the lock's descriptor. Enforced by `scripts/test-vgsh.sh`, with copies of `bin/vgsh` whose install verbs take no lock and whose git calls keep the descriptor as its controls.
+11. The background rules: [theme-backgrounds.md § Invariants](theme-backgrounds.md#invariants).
