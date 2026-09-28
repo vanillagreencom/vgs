@@ -21,9 +21,10 @@ Singleton {
     // is handed, so it is keyed by a value and looks the entry up.
     readonly property var serials: entries.map(e => e.serial)
 
-    // Emitted before an entry leaves `entries`, so the host destroys its
-    // content while the plugin that declared the component still exists.
-    signal released(var entry)
+    // Emitted with an entry's serial before it leaves `entries`, so the host
+    // destroys its content while the plugin that declared the component
+    // still exists.
+    signal released(int serial)
 
     // Show `component` on every screen for the instance `ctx` belongs to;
     // answers the disposer. A component that cannot be built now is refused.
@@ -44,7 +45,7 @@ Singleton {
 
     function remove(entry) {
         if (entries.indexOf(entry) === -1) return;
-        released(entry);
+        released(entry.serial);
         entries = entries.filter(e => e !== entry);
     }
 

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# The notifications' image helper, shell/plugins/vgs.notifications/images.sh,
+# against a throwaway directory: preparing the directories, copying a
+# sender's files with every skip reason but one, the refusal of a copy that
+# would land outside the images directory, a sweep that keeps what is owned
+# and removes the rest and every half-written copy, and the usage refusals.
+# A read that outlasts its five seconds is not exercised: only a device
+# that never answers reaches it, and planting one costs more than the case
+# is worth, so `reason=timeout` is unexercised.
+#
+# The controls at the end edit a copy of the helper, one rule at a time, and
+# require the suite to fail on each copy.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+helper="$repo/shell/plugins/vgs.notifications/images.sh"
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+for tool in timeout head stat mkfifo; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'test-notifications-images: status=not-measured missing=%s\n' "$tool"
+    exit 77
+  fi
+done
+
+# run HELPER ARGS...: the helper under a clean environment; prints its
+# stdout, then `stderr=<first line>` and `exit=<status>`.
+run() {
+  local script="$1" out err status=0
+  shift
+  out="$(env -i PATH="$PATH" bash "$script" "$@" 2>"$TMP_ROOT/err")" || status=$?
+  err="$(head -n 1 "$TMP_ROOT/err")"
+  printf '%s\nstderr=%s\nexit=%s\n' "$out" "$err" "$status"
+}
+
+failures=0
+check() { # LABEL WANT GOT
+  if [[ $2 == "$3" ]]; then return 0; fi
+  failures=$((failures + 1))
+  printf '  FAIL  %s\n        want %q\n        got  %q\n' "$1" "$2" "$3"
+}
+
+suite() {
+  local script="$1" before=$failures got world="$TMP_ROOT/world"
+  rm -rf -- "${world:?}"
+  mkdir -p "$world/sender"
+  local state="$world/state" images="$world/state/images"
+  printf 'avatar' >"$world/sender/avatar.png"
+  head -c 5242880 /dev/zero >"$world/sender/edge.png"
+  head -c 5242881 /dev/zero >"$world/sender/huge.png"
+  mkfifo "$world/sender/pipe"
+
+  check "prepare makes both directories" $'\nstderr=\nexit=0' "$(run "$script" prepare "$state" "$images")"
+  check "the images directory exists" yes "$([[ -d $images ]] && echo yes || echo no)"
+
+  got="$(run "$script" copy "$images" "$world/sender/avatar.png" "$images/1-7-image" "$world/sender/gone.png" "$images/1-7-appIcon" "$world/sender/pipe" "$images/2-7-image" "$world/sender/huge.png" "$images/3-7-image" "$world/sender/edge.png" "$images/4-7-image")"
+  check "each copy answers one line" "copied $images/1-7-image
+skipped $images/1-7-appIcon reason=missing
+skipped $images/2-7-image reason=missing
+skipped $images/3-7-image reason=too-large
+copied $images/4-7-image
+stderr=
+exit=0" "$got"
+  check "a copy holds the sender's bytes" avatar "$(cat "$images/1-7-image" 2>/dev/null || echo absent)"
+  check "a file at the size bound is copied whole" 5242880 "$(stat -c %s -- "$images/4-7-image" 2>/dev/null || echo absent)"
+  check "a file past the bound leaves no copy and no half" "" "$(cd "$images" && ls -1 3-7-image* 2>/dev/null || true)"
+  check "a missing file leaves no copy" no "$([[ -e $images/1-7-appIcon ]] && echo yes || echo no)"
+  check "a copy outside the images directory is refused" "
+stderr=notifications-images: refused: outside=$world/elsewhere dir=$images
+exit=3" "$(run "$script" copy "$images" "$world/sender/avatar.png" "$world/elsewhere")"
+  check "a copy climbing out of the images directory is refused" "
+stderr=notifications-images: refused: outside=$images/../x dir=$images
+exit=3" "$(run "$script" copy "$images" "$world/sender/avatar.png" "$images/../x")"
+  check "an odd number of copy paths is refused" $'\nstderr=notifications-images: refused: usage\nexit=2' "$(run "$script" copy "$images" "$world/sender/avatar.png")"
+
+  printf 'half' >"$images/1-7-image.tmp"
+  printf 'orphan' >"$images/9-9-image"
+  check "a sweep removes what no entry owns and every half copy" $'removed 3\nstderr=\nexit=0' "$(run "$script" sweep "$images" 1-7-image)"
+  check "the sweep keeps what is owned" "1-7-image" "$(cd "$images" && ls -1A)"
+  check "a sweep of a directory that is not there removes nothing" $'removed 0\nstderr=\nexit=0' "$(run "$script" sweep "$world/none")"
+  check "a sweep owning nothing empties the directory" $'removed 1\nstderr=\nexit=0' "$(run "$script" sweep "$images")"
+  check "an unknown verb is refused" $'\nstderr=notifications-images: refused: usage\nexit=2' "$(run "$script" move "$images")"
+  check "no arguments are refused" $'\nstderr=notifications-images: refused: usage\nexit=2' "$(run "$script")"
+  [[ $failures -eq $before ]]
+}
+
+if ! suite "$helper"; then
+  echo "test-notifications-images: failing=$failures"
+  exit 1
+fi
+
+# One control per rule: a copy with that rule removed and the text around it
+# kept. The suite must fail on each.
+mkdir -p "$TMP_ROOT/controls"
+python3 - "$helper" "$TMP_ROOT/controls" <<'CONTROLS'
+import os, sys
+source, out = sys.argv[1:]
+text = open(source).read()
+controls = [
+    ("regular files only", "if [[ ! -f $from ]]; then", "if [[ ! -e $from ]]; then"),
+    ("size bound", "if [[ $size -gt $max_bytes ]]; then", "if false; then"),
+    ("inside the images directory", 'if [[ $to != "$dir/$name" || -z $name || $name == . || $name == .. ]]; then', 'if [[ -z $name ]]; then'),
+    ("sweep keeps owned", 'if [[ -n ${keep[$name]:-} ]]; then continue; fi', 'if false; then continue; fi'),
+    ("sweep removes orphans", 'rm -f -- "$file" ||', 'true ||'),
+    ("paired copy paths", "[[ $(( $# % 2 )) -eq 0 ]] || usage", "true"),
+]
+for n, (label, needle, replacement) in enumerate(controls):
+    assert text.count(needle) == 1, "control needle must occur once: " + label
+    with open(os.path.join(out, "%02d.sh" % n), "w") as fh:
+        fh.write(text.replace(needle, replacement))
+    with open(os.path.join(out, "%02d.label" % n), "w") as fh:
+        fh.write(label)
+CONTROLS
+passed=0
+for copy in "$TMP_ROOT"/controls/*.sh; do
+  label="$(<"${copy%.sh}.label")"
+  saved=$failures
+  if suite "$copy" >/dev/null 2>&1; then
+    echo "  FAIL  control \"$label\": the suite passed on a helper without that rule"
+    exit 1
+  fi
+  failures=$saved
+  passed=$((passed + 1))
+done
+if [[ $passed -ne 6 ]]; then
+  echo "test-notifications-images: controls=$passed want 6; the control table is broken"
+  exit 1
+fi
+echo "test-notifications-images: ok controls=$passed"

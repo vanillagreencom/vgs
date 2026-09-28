@@ -65,7 +65,7 @@ Scope {
 
                     Connections {
                         target: Layers
-                        function onReleased(released) { if (released === win.entry) win.drop(); }
+                        function onReleased(serial) { if (serial === win.modelData) win.drop(); }
                     }
 
                     function build() {

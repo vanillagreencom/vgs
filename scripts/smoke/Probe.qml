@@ -168,6 +168,36 @@ Scope {
                 }
             return JSON.stringify(out);
         }
+        // Every item of a type in a plugin's layer copies, sorted by screen:
+        // [screen, [x, y, width, height] in its window, { property: value }]
+        // for each property named in the comma list.
+        function layerItems(id: string, type: string, properties: string): string {
+            const names = properties === "" ? [] : properties.split(",");
+            const out = [];
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const screen of Object.keys(entry.screens).sort())
+                    for (const item of root.descendants(entry.screens[screen]).filter(i => root.typeName(i) === type)) {
+                        const at = item.mapToGlobal(0, 0);
+                        const values = {};
+                        // A colour reads as its #aarrggbb name, not its channels.
+                        for (const name of names) values[name] = item[name] !== null && typeof item[name] === "object" && "hslHue" in item[name] ? item[name].toString() : item[name];
+                        out.push([screen, [Math.round(at.x), Math.round(at.y), Math.round(item.width), Math.round(item.height)], values]);
+                    }
+            return JSON.stringify(out);
+        }
+        // A service's ListModel property as a list of rows, each the roles
+        // named in the comma list.
+        function modelRows(id: string, property: string, roles: string): string {
+            const model = root.instance("service", id);
+            if (model === null) return "absent";
+            const list = model[property];
+            const out = [];
+            for (let i = 0; i < list.count; i++) {
+                const row = list.get(i);
+                out.push(roles.split(",").map(r => row[r]));
+            }
+            return JSON.stringify(out);
+        }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
         // The components of qs.Ui, read from its qmldir, that the gallery
         // draws no instance of; an empty list is the pass. A QML-defined

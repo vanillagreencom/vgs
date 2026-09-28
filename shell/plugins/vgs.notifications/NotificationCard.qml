@@ -1,0 +1,181 @@
+import QtQuick
+import QtQuick.Layouts
+import Quickshell
+import "NotificationLogic.js" as Logic
+
+// One notification as a glass capsule: its image or application icon, its
+// summary and its body, and the hover actions over its right end. It draws
+// no fill of its own: the GlassSurface under it paints the glass and the
+// slot drives its size, its content fade and its lifetime. It holds no
+// notification object, only the values it draws.
+Item {
+    id: card
+
+    required property var look
+    property string app: ""
+    property string appIcon: ""
+    property string summary: ""
+    property string body: ""
+    property string image: ""
+    // The slot fades the content during its morph. The content keeps its
+    // full-size layout and stays centred while the card is narrower, so the
+    // text never reflows.
+    property real contentOpacity: 1
+    // [{ id, label }] shown as pills at the right edge while `showActions`.
+    property var actions: []
+    property bool showActions: false
+    readonly property bool hovered: hoverTracker.hovered
+    readonly property real radius: look.radius.full
+    signal actionTriggered(string id)
+    signal closeRequested()
+    signal cardClicked()
+
+    readonly property real fullWidth: look.card.width
+    readonly property real fullHeight: content.implicitHeight + 2 * padY
+    readonly property real inset: look.card.inset + fullHeight * look.card.insetShare
+    readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
+    readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
+    readonly property bool singleLine: sanitizedBody.length === 0
+    readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
+    readonly property real padY: singleLine ? look.card.padYSingle : look.card.padY
+    readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
+
+    // An icon value as an image source: a URL as it is, a path as a file
+    // URL, a themed name through the icon theme, and nothing for a name the
+    // theme lacks, so no placeholder is drawn.
+    function iconPath(icon) {
+        const value = String(icon || "");
+        if (value.length === 0) return "";
+        if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value;
+        if (value.charAt(0) === "/") return "file://" + value;
+        return Quickshell.iconPath(value, true);
+    }
+
+    implicitWidth: fullWidth
+    implicitHeight: fullHeight
+    clip: true
+
+    HoverHandler { id: hoverTracker }
+
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: mouse => {
+            if (mouse.button === Qt.RightButton) card.closeRequested();
+            else card.cardClicked();
+        }
+    }
+
+    RowLayout {
+        id: content
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: card.fullWidth - 2 * Math.max(card.look.card.inset, card.inset)
+        opacity: card.contentOpacity
+        spacing: card.showsIcon ? card.look.card.gapIcon : 0
+
+        Item {
+            id: iconSlot
+            Layout.preferredWidth: card.showsIcon ? card.look.card.icon : 0
+            Layout.preferredHeight: card.showsIcon ? card.look.card.icon : 0
+            Layout.alignment: Qt.AlignVCenter
+            visible: card.showsIcon
+
+            Image {
+                id: iconImage
+                anchors.fill: parent
+                source: card.iconInSummary ? "" : card.iconSource
+                sourceSize.width: card.look.card.icon * Screen.devicePixelRatio
+                sourceSize.height: card.look.card.icon * Screen.devicePixelRatio
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                smooth: true
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            spacing: card.look.card.lineGap
+
+            Text {
+                // The specification makes the summary one line of plain
+                // text, so it is never read as markup.
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                visible: card.summary.length > 0
+                text: card.summary
+                color: card.look.text.foreground
+                font.family: card.look.font.family
+                font.pixelSize: card.look.text.title.size
+                font.weight: card.look.text.title.weight
+                style: Text.Raised
+                styleColor: card.look.text.summaryShadow
+                wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                maximumLineCount: card.look.card.summaryLines
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: card.look.card.lineGap
+                visible: !card.singleLine
+                // StyledText, since the server advertises body markup;
+                // NotificationLogic strips every image tag first.
+                text: Logic.styledBody(card.body, card.app, card.appIcon)
+                textFormat: Text.StyledText
+                color: card.look.text.foreground
+                opacity: card.look.text.subtitle.opacity
+                font.family: card.look.font.family
+                font.pixelSize: card.look.text.subtitle.size
+                wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                maximumLineCount: card.look.card.bodyLines
+            }
+        }
+    }
+
+    // The hover actions float over the right end of the text; a fade of the
+    // glass under them keeps the text from colliding with them.
+    Item {
+        id: tray
+        anchors.right: parent.right
+        anchors.rightMargin: Math.max(card.look.tray.inset, card.inset * card.look.tray.insetShare)
+        anchors.verticalCenter: parent.verticalCenter
+        width: actionRow.width
+        height: actionRow.height
+        visible: opacity > 0
+        opacity: card.showActions && card.actions.length > 0 && card.contentOpacity >= 1 ? 1 : 0
+        Behavior on opacity { Anim { duration: card.look.motion.duration.short4; curve: card.look.motion.curve.standard } }
+        transform: Translate { x: (1 - tray.opacity) * card.look.tray.slide }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.rightMargin: -card.look.tray.fadeOverhang
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width + card.look.tray.fadeReach
+            height: card.height
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0; color: card.look.tray.fadeStart }
+                GradientStop { position: card.look.tray.fadeStop; color: card.look.tray.fadeEnd }
+            }
+        }
+
+        Row {
+            id: actionRow
+            spacing: card.look.tray.spacing
+            Repeater {
+                model: card.actions
+                PillButton {
+                    required property var modelData
+                    look: card.look
+                    text: modelData.label
+                    emphasized: modelData.id !== "dismiss"
+                    onClicked: card.actionTriggered(modelData.id)
+                }
+            }
+        }
+    }
+}

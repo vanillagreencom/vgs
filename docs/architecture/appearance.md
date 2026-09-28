@@ -1,8 +1,8 @@
 # Plugin-owned appearance
 
-Covers: scripts/qml-tests/tst_appearance.qml, scripts/smoke/rows/launcher.sh
+Covers: scripts/qml-tests/tst_appearance.qml, scripts/smoke/rows/launcher.sh, scripts/smoke/rows/notifications.sh
 
-Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D023](../decisions/D023-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher` is the first such plugin.
+Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D023](../decisions/D023-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher` and `shell/plugins/vgs.notifications` are such plugins.
 
 ## The contract
 
@@ -30,6 +30,6 @@ No plugin id is exempt, and no rule is bypassed by moving a value into settings.
 
 ## Invariants
 
-1. No shell token but `scheme.mode`, `palette.accent` and `motion.scale` changes a plugin-owned look. Enforced by `scripts/test-theme-logic.js` and `scripts/qml-tests/tst_appearance.qml`, which move every other token and read the values back unchanged, and by `scripts/smoke/rows/launcher.sh` against a running launcher.
+1. No shell token but `scheme.mode`, `palette.accent` and `motion.scale` changes a plugin-owned look. Enforced by `scripts/test-theme-logic.js` and `scripts/qml-tests/tst_appearance.qml`, which move every other token and read the values back unchanged, and by `scripts/smoke/rows/launcher.sh` and `scripts/smoke/rows/notifications.sh` against the running plugins.
 2. Every rule of the judge refuses its defect. Enforced by the appearance rows and controls of `scripts/test-theme-logic.js`.
 3. Every appearance rule of the style check fires on its planted defect. Enforced by `scripts/test-check-design-tokens.py`.
