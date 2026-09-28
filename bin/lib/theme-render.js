@@ -56,6 +56,10 @@ const SECTION_PATTERN = /^[A-Za-z0-9_-]+$/;
 // no header of `name`.
 const SECTION_HEADER = /^\s*\[\s*([^\]]*?)\s*\]\s*(?:#.*)?$/;
 
+// A line that opens a section, a TOML array of tables included: the end of
+// the section before it.
+const ANY_HEADER = /^\s*\[/;
+
 // `@@{` is a literal `@{`, `@{name}` a placeholder and a `@{` with no `}`
 // after it unterminated. Every other character is literal text, so `#{...}`
 // and `${...}` pass through.
@@ -290,6 +294,13 @@ function isSectionHeader(text, section) {
     return m !== null && m[1] === section;
 }
 
+// The key a `key = value` line TEXT assigns, trimmed, or null for a line
+// that assigns none.
+function assignedKey(text) {
+    const at = text.indexOf("=");
+    return at === -1 ? null : text.slice(0, at).trim();
+}
+
 // The text a configuration file holding TEXT takes so that LINE is one of its
 // lines, or null when it already is one; the rest of the text is kept byte
 // for byte. With SECTION undefined the line goes first, ahead of every
@@ -298,12 +309,27 @@ function isSectionHeader(text, section) {
 // undefined) becomes the line alone. With a SECTION the line goes right
 // after the first header of that section, or, with none, the header and the
 // line are added at the end, so a TOML file never declares the table twice.
+// A section that already assigns the line's key, or a file that defines the
+// section by dotted keys ahead of every header, would then hold a key twice,
+// which TOML refuses: that answers the refusal
+// { ok: false, reason: "wiring-conflict", detail } and the file is left.
 function wiredText(text, line, section) {
     const lines = text === undefined ? [] : text.split("\n");
     if (lines.includes(line)) return null;
     if (section === undefined) return line + "\n" + (text === undefined ? "" : text);
+    const key = assignedKey(line);
     const at = lines.findIndex(existing => isSectionHeader(existing, section));
-    if (at !== -1) return lines.slice(0, at + 1).concat(line, lines.slice(at + 1)).join("\n");
+    if (at !== -1) {
+        const end = lines.findIndex((existing, index) => index > at && ANY_HEADER.test(existing));
+        const own = lines.slice(at + 1, end === -1 ? lines.length : end);
+        if (key !== null && own.some(existing => assignedKey(existing) === key))
+            return refused("wiring-conflict", "section=" + section + " key=" + key);
+        return lines.slice(0, at + 1).concat(line, lines.slice(at + 1)).join("\n");
+    }
+    const first = lines.findIndex(existing => ANY_HEADER.test(existing));
+    const root = lines.slice(0, first === -1 ? lines.length : first);
+    if (root.some(existing => { const name = assignedKey(existing); return name === section || (name !== null && name.startsWith(section + ".")); }))
+        return refused("wiring-conflict", "section=" + section + " key=" + section);
     const before = text === undefined ? "" : text;
     return before + (before === "" || before.endsWith("\n") ? "" : "\n") + "[" + section + "]\n" + line + "\n";
 }

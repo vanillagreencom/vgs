@@ -174,8 +174,21 @@ const WIRED_SECTION = [
     ["[window]\n  [ general ]  # mine\nlive = true", '[window]\n  [ general ]  # mine\nimport = ["/s/alacritty.toml"]\nlive = true'],
     ["[general]\n[general]\n", '[general]\nimport = ["/s/alacritty.toml"]\n[general]\n'],
     ["[general.more]\n[[general]]\n# [general]\n[generalx]\n", '[general.more]\n[[general]]\n# [general]\n[generalx]\n[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ["[general]\nlive = true\n[window]\nimport = [\"a\"]\n", '[general]\nimport = ["/s/alacritty.toml"]\nlive = true\n[window]\nimport = ["a"]\n'],
+    ["[general]\n[[general.x]]\nimport = [\"a\"]\n", '[general]\nimport = ["/s/alacritty.toml"]\n[[general.x]]\nimport = ["a"]\n'],
+    ["[window]\ngeneral.x = 1\n", '[window]\ngeneral.x = 1\n[general]\nimport = ["/s/alacritty.toml"]\n'],
     ['[window]\n[general]\nimport = ["/s/alacritty.toml"]\n', null],
     ['import = ["/s/alacritty.toml"]', null]
+];
+
+// A configuration file the wiring into `general` would give a key twice:
+// its text, the refusal's detail.
+const CONFLICTS = [
+    ['[general]\nimport = ["~/.config/alacritty/theme.toml"]\n', "section=general key=import"],
+    ['[general]\nimport = ["/old/state/alacritty.toml"]\n', "section=general key=import"],
+    ['[window]\n[general]\nlive = true\n  import=["a"] # mine\n[window]\n', "section=general key=import"],
+    ["general.live = true\n[window]\n", "section=general key=general"],
+    ["general = { live = true }\n", "section=general key=general"]
 ];
 
 // A configuration file's text before the line is removed, and after it, or
@@ -270,6 +283,8 @@ function verify(render) {
         assert.equal(render.wiredText(text, LINE), want, JSON.stringify(text));
     for (const [text, want] of WIRED_SECTION)
         assert.equal(render.wiredText(text, TOML_LINE, "general"), want, JSON.stringify(text));
+    for (const [text, detail] of CONFLICTS)
+        assert.deepEqual(render.wiredText(text, TOML_LINE, "general"), { ok: false, reason: "wiring-conflict", detail }, JSON.stringify(text));
     for (const [text, want] of UNWIRED)
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
 
@@ -328,12 +343,19 @@ const CONTROLS = [
     ["wiring whole line", "if (lines.includes(line)) return null;", "if (text !== undefined && text.includes(line)) return null;"],
     ["wiring line first", "return line + \"\\n\" + (text === undefined ? \"\" : text);", "return (text === undefined ? \"\" : text) + line + \"\\n\";"],
     ["wiring creates", "const lines = text === undefined ? [] : text.split(\"\\n\");", "if (text === undefined) return null;\n    const lines = text.split(\"\\n\");"],
-    ["wiring into its section", "if (at !== -1) return", "if (false) return"],
+    ["wiring into its section", "if (at !== -1) {", "if (false) {"],
     ["wiring after the header", "lines.slice(0, at + 1).concat(line, lines.slice(at + 1))", "lines.slice(0, at).concat(line, lines.slice(at))"],
-    ["wiring the first header", "lines.findIndex(existing =>", "lines.findLastIndex(existing =>"],
+    ["wiring the first header", "lines.findIndex(existing => isSectionHeader(existing, section))", "lines.findLastIndex(existing => isSectionHeader(existing, section))"],
     ["section header form", "return m !== null && m[1] === section;", "return text === \"[\" + section + \"]\";"],
     ["section header whole name", "const SECTION_HEADER = /^\\s*\\[\\s*([^\\]]*?)\\s*\\]\\s*(?:#.*)?$/;", "const SECTION_HEADER = /^\\s*\\[+\\s*([^\\]]*?)\\s*\\]/;"],
     ["section header appended", "\"[\" + section + \"]\\n\" + line", "line"],
+    ["section key conflict", "if (key !== null && own.some(existing => assignedKey(existing) === key))", "if (false)"],
+    ["section ends at the next header", "index > at && ANY_HEADER.test(existing)", "false"],
+    ["array of tables ends a section", "const ANY_HEADER = /^\\s*\\[/;", "const ANY_HEADER = /^\\s*\\[[^\\[]/;"],
+    ["assigned key trimmed", "text.slice(0, at).trim();", "text.slice(0, at);"],
+    ["dotted root conflict", "if (root.some(existing =>", "if (false && root.some(existing =>"],
+    ["dotted key prefix", "name === section || (name !== null && name.startsWith(section + \".\"))", "name === section"],
+    ["dotted keys at the root only", "const root = lines.slice(0, first === -1 ? lines.length : first);", "const root = lines;"],
     ["section appended on its own line", "(before === \"\" || before.endsWith(\"\\n\") ? \"\" : \"\\n\")", "\"\""],
     ["entry form", 'hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include"', 'hasOwnProperty.call(wiring, "nope") ? "entry" : "include"'],
     ["entry keys", "if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return", "if (!logic.isPlainObject(wiring)) return"],
@@ -367,4 +389,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + UNWIRED.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length} controls=${CONTROLS.length}`);

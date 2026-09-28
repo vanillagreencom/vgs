@@ -150,4 +150,21 @@ rm -- "$cfg/wezterm/wezterm.lua"
 tinst "an absent wezterm.lua skips wezterm" "$cfg" "$rt_empty" 0 "{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":$(terminals "$written" "$written" "$written" 'skipped "wiring-file-absent"'),\"theme\":\"nord\",\"reason\":null}" "" theme apply --json nord
 check "an absent wezterm.lua stays absent" test ! -e "$cfg/wezterm/wezterm.lua"
 
+# An import of the file's own in general would be a second import key,
+# which TOML refuses: alacritty fails and its file is left byte for byte.
+printf '[general]\nimport = ["~/.config/alacritty/mine.toml"]\n' >"$cfg/alacritty/alacritty.toml"
+cp -- "$cfg/alacritty/alacritty.toml" "$tmp/alacritty-own"
+conflict="vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
+tinst "an alacritty.toml with its own import fails alacritty" "$cfg" "$rt_empty" 3 "$any_out" "$conflict" theme apply --json dusk
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the conflicting alacritty is failed wiring-conflict" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alacritty"] == [{"name": "alacritty", "state": "failed", "reason": "wiring-conflict"}]'
+check "a conflicting alacritty.toml is left byte for byte" cmp -s "$tmp/alacritty-own" "$cfg/alacritty/alacritty.toml"
+# The must-fail control: a judge copy that takes the refusal for a file
+# already wired reports alacritty landed.
+judge_control conflict-swallowed 'if (typeof next !== "string") return {' 'if (typeof next !== "string") return null; if (false) return {'
+tinst "the conflict-swallowing mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json nord
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the conflict-swallowing mutant reports alacritty landed" test "$(target_state alacritty)" == written
+unset THEME_BIN
+
 rows_done test-vgsh-targets
