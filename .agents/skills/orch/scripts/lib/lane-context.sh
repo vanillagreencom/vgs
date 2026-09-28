@@ -184,6 +184,45 @@ lane_context_reading() { # HARNESS [WINDOW] [DIR]
   esac
 }
 
+# lane_context_transcript_owned HARNESS PATH SESSION HOME — whether PATH is
+# the transcript HARNESS writes for the session SESSION under the launch home
+# HOME, by the path shape that harness's adapter states. SESSION is the id the
+# harness's Stop payload names and HOME the launch home the fleet record's
+# `.overseer.home` names, written by lib/overseer-launch.sh
+# (../../schemas/workflow-state.md § Oversee state). The overseer turn-end path of
+# hooks/lane-mail-check.sh
+# asks here before it reads the overseer's transcript, so that session is not
+# judged on a file another session wrote: a newer transcript beside it, a
+# predecessor's in the same pane, or one under another account's home. The
+# lane path reads its payload's transcript unbound. 0 where PATH is that file;
+# 1 with the word for what failed in LANE_CONTEXT_OWNED_REASON, `binding-missing`
+# where PATH or SESSION is empty, `home-unnamed` where HOME is, and the
+# adapter's own `session-mismatch` or `home-mismatch`; 3 with `harness-unlisted`,
+# ahead of every other answer, for a harness no adapter states a shape for, an
+# empty one included; the hook passes that answer on, so the list of harnesses
+# with a shape lives here alone. Whether the bound file can be read is the
+# reader's question, answered where the file is opened.
+LANE_CONTEXT_OWNED_REASON=""
+lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
+  LANE_CONTEXT_OWNED_REASON=""
+  case "${1:-}" in
+    claude | codex) ;;
+    *) LANE_CONTEXT_OWNED_REASON=harness-unlisted; return 3 ;;
+  esac
+  if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    LANE_CONTEXT_OWNED_REASON=binding-missing
+    return 1
+  fi
+  if [ -z "${4:-}" ]; then
+    LANE_CONTEXT_OWNED_REASON=home-unnamed
+    return 1
+  fi
+  if ! "lane_adapter_${1}_transcript_owned" "$2" "$3" "$4"; then
+    LANE_CONTEXT_OWNED_REASON="$LANE_ADAPTER_OWNED_REASON"
+    return 1
+  fi
+}
+
 # Normalize the requested handoff percentage for the judge and its reports.
 # A larger setting cannot weaken the mandatory remaining-capacity mark.
 lane_context_handoff_pct() { # PCT
