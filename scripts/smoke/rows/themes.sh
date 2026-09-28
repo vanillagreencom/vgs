@@ -495,14 +495,14 @@ rm -- "$bg_state/backgrounds.json"
 expect "the package applies over a removed state file" "ok theme=scenic state=unchanged shell=unchanged" vgsh_theme apply scenic
 expect_poll "the rewritten state file draws the first image again" "$scenic/backgrounds/a.png ready" background_image
 
-# Control: a sandbox copy whose FileView never reloads keeps drawing the
+# Control: a sandbox copy that never reads on a change keeps drawing the
 # image it read when it was built after next moves on. The real plugin
 # followed next within expect_poll's first polls above, so two seconds is
 # ample for it.
 plugin_qml="$repo/shell/plugins/vgs.background/Background.qml"
 cp -p -- "$plugin_qml" "$sandbox/Background.qml.real"
-if [[ $(grep -c -F 'onFileChanged: root.changed()' -- "$plugin_qml") == 1 ]]; then
-  python3 -c 'import sys; p, q = sys.argv[1:]; open(q, "w").write(open(p).read().replace("onFileChanged: root.changed()", "onFileChanged: {}"))' "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+if [[ $(grep -c -F 'onChanged: read()' -- "$plugin_qml") == 1 ]]; then
+  python3 -c 'import sys; p, q = sys.argv[1:]; open(q, "w").write(open(p).read().replace("onChanged: read()", "onChanged: {}"))' "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
   control_builds="$(builds)" || { fail "buildCount unreadable before the unwatched control"; control_builds=0; }
   expect "a rescan builds the unwatched control" ok ipc shell rescanPlugins
   expect_poll "the control is built on every screen" "$((control_builds + monitors))" builds
