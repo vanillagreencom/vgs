@@ -502,23 +502,42 @@ function landedFiles(live, name, key) {
 
 // The configuration files include TARGET keeps its line in: its `file`
 // under CONFIG_HOME, or, with `profiles`, under every profile directory
-// that Mozilla profiles.ini, relative to the home directory, lists, a
-// relative one under the ini's own directory. An absent ini lists none.
-// Throws the fs error of an ini that cannot be read, its `path` the ini's:
+// the first of those profiles.ini paths under the home directory that
+// exists lists, a relative one under the ini's own directory. A listed
+// profile whose directory does not exist is left out, so a stale entry
+// never makes apply create a profile; no ini lists none. Throws the fs
+// error of an ini or a profile that cannot be read, its `path` the file's:
 // a read error such as EISDIR carries none of its own.
 function includeFiles(target, configHome) {
     const wiring = target.wiring;
     if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];
-    const ini = path.join(os.homedir(), wiring.profiles);
-    let bytes;
+    for (const relative of wiring.profiles) {
+        const ini = path.join(os.homedir(), relative);
+        let bytes;
+        try {
+            bytes = readIfPresent(ini);
+        } catch (e) {
+            if (typeof e.code === "string") e.path = ini;
+            throw e;
+        }
+        if (bytes === undefined) continue;
+        return render.profileDirs(bytes.toString("utf8"))
+            .map(dir => dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path)
+            .filter(isDirectory)
+            .map(dir => path.join(dir, wiring.file));
+    }
+    return [];
+}
+
+// Whether DIR is a directory, a symlink to one included. A path that is
+// absent, or under a file, is none; any other stat failure throws.
+function isDirectory(dir) {
     try {
-        bytes = readIfPresent(ini);
+        return fs.statSync(dir).isDirectory();
     } catch (e) {
-        if (typeof e.code === "string") e.path = ini;
+        if (e.code === "ENOENT" || e.code === "ENOTDIR") return false;
         throw e;
     }
-    if (bytes === undefined) return [];
-    return render.profileDirs(bytes.toString("utf8")).map(dir => path.join(dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path, wiring.file));
 }
 
 // Edit every configuration file of TARGET, includeFiles' list, as editFile

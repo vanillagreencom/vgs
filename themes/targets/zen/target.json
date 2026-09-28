@@ -1,0 +1,8 @@
+{
+  "app": "Zen Browser",
+  "encoder": "hex6",
+  "files": [{ "template": "zen.css", "destination": "zen.css" }],
+  "detect": ["zen-browser"],
+  "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\"file://@{state}/zen.css\");", "create": true, "profiles": [".zen/profiles.ini", ".config/zen/profiles.ini"] },
+  "reload": null
+}

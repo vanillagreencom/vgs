@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-27
 
-**Status**: Active
+**Status**: Revisited
 
 **Research**: VGS-468
 
@@ -12,7 +12,7 @@
 
 **Context**: D021 lets an apply write one include line in an application's configuration file and nothing else in the application's directory. Helix, Zed and VS Code read no include line. Helix and Zed find a theme by name in a themes directory of their own, and VS Code finds one in an extension directory under `~/.vscode/extensions/`. A target for any of them needs a file in that directory.
 
-**Decision**: A target's `wiring` takes a second form, `{ base, dir, owned, links }`. It keeps one symlink per link in `dir`, under the configuration home or the home directory, and the symlink names the target's file in the state directory's `theme/`. The apply never edits the application's configuration, and the user selects the theme once in the application. The proof that a link is managed is the link itself: a symlink whose target is exactly its file in `theme/`. A path holding anything else skips the target with `entry-occupied` and is never replaced. A disabled target removes only its managed links, then its `owned` directory once it is empty. D021's other rules stand: every file the application reads is still written by the stage and swap into `theme/`, and the include form is unchanged.
+**Decision**: A target's `wiring` takes a second form, `{ base, dir, owned, links }`. It keeps one symlink per link in `dir`, under the `base` it names: `config`, the configuration home; `home`, the home directory; or `cache`, the cache home, `${XDG_CACHE_HOME:-~/.cache}`. The symlink names the target's file in the state directory's `theme/`. The apply never edits the application's configuration, and the user selects the theme once in the application. The proof that a link is managed is the link itself: a symlink whose target is exactly its file in `theme/`. A path holding anything else skips the target with `entry-occupied` and is never replaced. A disabled target removes only its managed links, then its `owned` directory once it is empty. D021's other rules stand: every file the application reads is still written by the stage and swap into `theme/`, and the include form is unchanged.
 
 **Rationale**:
 
@@ -31,6 +31,10 @@
 
 **Revisit When**: An application refuses to follow a symlink in its theme or extension directory, or a target needs a file the application reads that is not one of its files in `theme/`.
 
-**Verification**: `scripts/test-theme-render.js` covers the form's schema with a control per rule. `scripts/test-vgsh-entries.sh` covers the links, the symlinked directory, the occupied paths and the removal. Its controls are judge copies that take any symlink as managed, skip the occupancy check, never remove or recursively remove the owned directory, remove any path at a link's name and misplace a `home` directory.
+**Verification**: `scripts/test-theme-render.js` covers the form's schema with a control per rule. `scripts/test-vgsh-entries.sh` covers the links, the symlinked directory, the occupied paths and the removal. Its controls are judge copies that take any symlink as managed, skip the occupancy check, never remove or recursively remove the owned directory, remove any path at a link's name, misplace a `home` directory and ignore `XDG_CACHE_HOME` for a `cache` one.
+
+## Revisit Outcome (2026-09-27)
+
+The decision stands. VGS-470 adds the entry base `cache`, `${XDG_CACHE_HOME:-~/.cache}`, resolved by the apply from `XDG_CACHE_HOME` as `home` is from the home directory. Its first user is the `pywalfox` target, whose native host reads pywal's `colors.json` from `wal/` there: [theme-browsers.md](../architecture/theme-browsers.md).
 
 **References**: [D021](D021-theme-apply-writes-beside-each-destination.md), [D019](D019-theme-packages-carry-plugin-trust.md)

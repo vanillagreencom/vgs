@@ -1,0 +1,27 @@
+{
+  "wallpaper": "",
+  "alpha": "100",
+  "special": {
+    "background": "#@{color.background}",
+    "foreground": "#@{color.text}",
+    "cursor": "#@{color.text}"
+  },
+  "colors": {
+    "color0": "#@{terminal.color0}",
+    "color1": "#@{terminal.color1}",
+    "color2": "#@{terminal.color2}",
+    "color3": "#@{terminal.color3}",
+    "color4": "#@{terminal.color4}",
+    "color5": "#@{terminal.color5}",
+    "color6": "#@{terminal.color6}",
+    "color7": "#@{terminal.color7}",
+    "color8": "#@{terminal.color8}",
+    "color9": "#@{terminal.color9}",
+    "color10": "#@{terminal.color10}",
+    "color11": "#@{terminal.color11}",
+    "color12": "#@{terminal.color12}",
+    "color13": "#@{terminal.color13}",
+    "color14": "#@{terminal.color14}",
+    "color15": "#@{terminal.color15}"
+  }
+}

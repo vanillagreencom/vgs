@@ -20,8 +20,8 @@ const FILE_KEYS = ["template", "destination"];
 const CURATED_KEYS_KEY = "curatedKeys";
 // The two wiring forms. An include wiring keeps one line in the
 // application's configuration file; its optional keys are the section the
-// line goes into and the Mozilla profiles.ini whose profile directories the
-// file is relative to. An entry wiring keeps links to the target's files in
+// line goes into and the Mozilla profiles.ini paths, the first that exists
+// read, whose profile directories the file is relative to. An entry wiring keeps links to the target's files in
 // the application's theme or extension directory and edits no file; its
 // optional key is the Obsidian vault registry whose vaults the directory is
 // relative to. `links` tells them apart. A null wiring keeps nothing: the
@@ -166,8 +166,8 @@ function withState(text, state, what) {
 // configuration home, or to each profile directory when `profiles` is
 // present, one directory name per segment; `line` holds the state
 // directory's placeholder and no other; `section`, when present, is one bare
-// section name; `profiles`, when present, is a path relative to the home
-// directory, one name per segment.
+// section name; `profiles`, when present, is one or more paths relative to
+// the home directory, one name per segment, in the order they are tried.
 function wiringError(logic, wiring) {
     if (!logic.isPlainObject(wiring) || !WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||
         !Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))) return "key=wiring";
@@ -177,7 +177,8 @@ function wiringError(logic, wiring) {
     if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return "key=wiring.line";
     if (typeof wiring.create !== "boolean") return "key=wiring.create";
     if (logic.hasOwn(wiring, "section") && (typeof wiring.section !== "string" || !SECTION_PATTERN.test(wiring.section))) return "key=wiring.section";
-    if (logic.hasOwn(wiring, "profiles") && (typeof wiring.profiles !== "string" || !wiring.profiles.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment)))) return "key=wiring.profiles";
+    if (logic.hasOwn(wiring, "profiles") && (!Array.isArray(wiring.profiles) || wiring.profiles.length === 0 ||
+        !wiring.profiles.every(ini => typeof ini === "string" && ini.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment))))) return "key=wiring.profiles";
     return "";
 }
 

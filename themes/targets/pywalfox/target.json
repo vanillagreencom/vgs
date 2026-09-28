@@ -1,0 +1,8 @@
+{
+  "app": "Pywalfox",
+  "encoder": "hex6",
+  "files": [{ "template": "pywalfox.json", "destination": "pywalfox.json" }],
+  "detect": ["pywalfox"],
+  "wiring": { "base": "cache", "dir": "wal", "owned": false, "links": { "colors.json": "pywalfox.json" } },
+  "reload": { "command": ["pywalfox", "update"], "timeoutMs": 5000 }
+}

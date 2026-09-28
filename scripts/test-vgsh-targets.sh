@@ -54,38 +54,50 @@ check "the section-dropping mutant puts the line first" test "$(head -n 1 "$cfg/
 unset THEME_BIN
 rm -r -- "$tree/themes/targets/sect"
 
-# Profiles: `file` is relative to each profile directory the ini under HOME
-# lists, a relative Path under the ini's own directory and an absolute one
-# where it names; every listed profile is wired and unwired, and a section
-# that names no profile is not one.
-home="$tmp/home"; ini="$home/.moz/profiles.ini"; p0="$home/.moz/p0.default"; p1="$tmp/elsewhere/p1"
+# Profiles: `file` is relative to each profile directory the first of the
+# inis under HOME that exists lists, a relative Path under the ini's own
+# directory and an absolute one where it names; every listed profile whose
+# directory exists is wired and unwired, and a section that names no profile
+# is not one. The second ini is under HOME's .config while XDG_CONFIG_HOME
+# names $cfg, so it is found by HOME alone.
+home="$tmp/home"; ini="$home/.moz/profiles.ini"; ini2="$home/.config/moz/profiles.ini"
+p0="$home/.moz/p0.default"; p1="$tmp/elsewhere/p1"; p2="$tmp/elsewhere/p2"
 moz_target() { # CREATE
   mkdir -p "$tree/themes/targets/moz"
-  printf '{ "app": "moz", "encoder": "hex6", "files": [{ "template": "moz.css", "destination": "moz.css" }], "detect": [], "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\\"file://@{state}/moz.css\\");", "create": %s, "profiles": ".moz/profiles.ini" }, "reload": null }\n' "$1" >"$tree/themes/targets/moz/target.json"
+  printf '{ "app": "moz", "encoder": "hex6", "files": [{ "template": "moz.css", "destination": "moz.css" }], "detect": [], "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\\"file://@{state}/moz.css\\");", "create": %s, "profiles": [".moz/profiles.ini", ".config/moz/profiles.ini"] }, "reload": null }\n' "$1" >"$tree/themes/targets/moz/target.json"
   printf ':root { --accent: #@{palette.accent}; }\n' >"$tree/themes/targets/moz/moz.css"
 }
-moz_ini() { # the ini: a relative profile, an absolute one and an install section
+moz_ini() { # the first ini: a relative profile, an absolute one and an install section
   mkdir -p "$home/.moz"
   printf '[General]\nVersion=2\n\n[Profile0]\nName=default\nIsRelative=1\nPath=p0.default\n\n[Profile1]\nName=work\nIsRelative=0\nPath=%s\n\n[Install4F96D1932A9F858E]\nDefault=p0.default\nPath=%s\n' "$p1" "$tmp/install" >"$ini"
 }
+mkdir -p "$home/.config/moz"; printf '[Profile0]\nPath=%s\n' "$p2" >"$ini2"
 moz_target true
 moz_line="@import url(\"file://$live/moz.css\");"
-apply_json "a profiles target without its ini" 0 dusk
-check "a profiles target without its ini is skipped" test "$(target_verdict moz)" == "skipped wiring-file-absent"
-check "a profiles target without its ini writes no file" test ! -e "$live/moz.css" -a ! -e "$cfg/chrome"
+apply_json "a profiles target whose one ini lists only absent profiles" 0 dusk
+check "a profiles target with no listed profile directory is skipped" test "$(target_verdict moz)" == "skipped wiring-file-absent"
+check "a skipped profiles target creates no profile" test ! -e "$p2" -a ! -e "$live/moz.css" -a ! -e "$cfg/chrome"
+mkdir -p "$p2"
+apply_json "a profiles target read from its second ini" 0 dusk
+check "the second ini is read when the first is absent" test "$(cat "$p2/chrome/userChrome.css")" == "$moz_line"
+rm -- "${p2:?}/chrome/userChrome.css"
 mkdir -p "$p1/chrome"; printf '#nav-bar { order: 1 }\n' >"$p1/chrome/userChrome.css"
 moz_ini
-apply_json "a profiles target with its ini" 0 dusk
+apply_json "a profiles target with its first ini" 0 nord
 check "the profiles target is written" test "$(target_verdict moz)" == "written None"
-check "a relative profile's file is created holding the line" test "$(cat "$p0/chrome/userChrome.css")" == "$moz_line"
+check "a listed profile whose directory is absent is not created" test ! -e "$p0"
 check "an absolute profile's file takes the line first and keeps its own text" test "$(cat "$p1/chrome/userChrome.css")" == "$moz_line"$'\n#nav-bar { order: 1 }'
+check "the second ini is not read once the first exists" test ! -e "$p2/chrome/userChrome.css"
 check "a section that names no profile is not wired" test ! -e "$tmp/install"
 check "nothing is wired under the configuration home" test ! -e "$cfg/chrome"
+mkdir -p "$p0"
+apply_json "a profiles target once its relative profile exists" 0 nord
+check "a relative profile's file is created holding the line" test "$(cat "$p0/chrome/userChrome.css")" == "$moz_line"
 printf '{ "disabledTargets": ["moz"] }\n' >"$cfg/vgs/shell.json"
-apply_json "disabling the profiles target" 0 nord
+apply_json "disabling the profiles target" 0 dusk
 check "a disabled profiles target leaves every profile's file without the line" test "$(cat "$p0/chrome/userChrome.css")" == "" -a "$(cat "$p1/chrome/userChrome.css")" == "#nav-bar { order: 1 }"
-rm -- "$cfg/vgs/shell.json"
-moz_target false; rm -- "$p0/chrome/userChrome.css"
+rm -- "${cfg:?}/vgs/shell.json"
+moz_target false; rm -- "${p0:?}/chrome/userChrome.css"
 apply_json "a profiles target with create false and one profile's file absent" 0 dusk
 check "a profiles target with one file absent is skipped" test "$(target_verdict moz)" == "skipped wiring-file-absent"
 check "a skipped profiles target leaves the other profile's file alone" test "$(cat "$p1/chrome/userChrome.css")" == "#nav-bar { order: 1 }"
@@ -95,18 +107,18 @@ check "an unreadable profiles ini fails its target" test "$(target_verdict moz)"
 printf '{ "disabledTargets": ["moz"] }\n' >"$cfg/vgs/shell.json"
 apply_json "disabling a profiles target whose ini cannot be read" 3 dusk "vgsh: refused: target=moz reason=unreadable path=$ini error=EISDIR"
 check "a disabled profiles target whose ini cannot be read fails" test "$(target_verdict moz)" == "failed unreadable"
-rm -- "$cfg/vgs/shell.json"
+rm -- "${cfg:?}/vgs/shell.json"
 rmdir -- "$ini"; mv -- "$ini.saved" "$ini"
 # Controls: each judge copy drops one rule, and the row that pins it turns.
-# Each starts with no profile file wired and no state directory.
+# Each starts with no profile file wired.
 moz_fresh() {
-  rm -f -- "$p0/chrome/userChrome.css" "$p1/chrome/userChrome.css" "$home/p0.default/chrome/userChrome.css" "$cfg/chrome/userChrome.css"
+  rm -f -- "${p0:?}/chrome/userChrome.css" "${p1:?}/chrome/userChrome.css" "${p2:?}/chrome/userChrome.css" "${home:?}/p0.default/chrome/userChrome.css" "${cfg:?}/chrome/userChrome.css"
 }
 moz_fresh
 judge_control profiles-ignored 'if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];' 'return [path.join(configHome, wiring.file)];'
 apply_json "the profiles-ignored mutant applies" 0 dusk
 check "the profiles-ignored mutant wires the file under the configuration home" test -e "$cfg/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
-moz_fresh
+moz_fresh; mkdir -p "$home/p0.default"
 judge_control relative-under-home 'dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path' 'dir.relative ? path.join(os.homedir(), dir.path) : dir.path'
 apply_json "the relative-under-home mutant applies" 0 dusk
 check "the relative-under-home mutant misses the ini's directory" test -e "$home/p0.default/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
@@ -114,11 +126,19 @@ moz_fresh
 judge_control first-profile-only 'for (const file of files) {' 'for (const file of files.slice(0, 1)) {'
 apply_json "the first-profile-only mutant applies" 0 dusk
 check "the first-profile-only mutant leaves the second profile unwired" test -e "$p0/chrome/userChrome.css" -a ! -e "$p1/chrome/userChrome.css"
-moz_fresh; mv -- "$ini" "$ini.saved"
+moz_fresh
+judge_control last-ini-first 'for (const relative of wiring.profiles) {' 'for (const relative of wiring.profiles.slice().reverse()) {'
+apply_json "the last-ini-first mutant applies" 0 dusk
+check "the last-ini-first mutant wires the second ini's profile" test -e "$p2/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
+moz_fresh; rmdir -- "$p0/chrome" "$p0"
+judge_control stale-profile-created '.filter(isDirectory)' '.filter(dir => dir !== "")'
+apply_json "the stale-profile-created mutant applies" 0 dusk
+check "the stale-profile-created mutant creates an absent profile" test -e "$p0/chrome/userChrome.css"
+moz_fresh; mv -- "$ini" "$ini.saved"; mv -- "$ini2" "$ini2.saved"
 judge_control absent-ini-lands 'if (files.length === 0) return "wiring-file-absent";' 'if (false) return "wiring-file-absent";'
 apply_json "the absent-ini-lands mutant applies" 0 nord
 check "the absent-ini-lands mutant lands a target it wires nowhere" test "$(target_verdict moz)" == "written None"
-mv -- "$ini.saved" "$ini"; moz_target false; printf 'x\n' >"$p1/chrome/userChrome.css"
+mv -- "$ini.saved" "$ini"; mv -- "$ini2.saved" "$ini2"; moz_target false; printf 'x\n' >"$p1/chrome/userChrome.css"
 judge_control every-file-absent 'files.some(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)' 'files.every(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)'
 apply_json "the every-file-absent mutant applies" 3 dusk "vgsh: refused: target=moz reason=wiring-file-absent path=$p0/chrome/userChrome.css"
 check "the every-file-absent mutant fails the target instead of skipping it" test "$(target_verdict moz)" == "failed wiring-file-absent"

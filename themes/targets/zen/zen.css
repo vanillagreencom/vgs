@@ -1,0 +1,123 @@
+/* The vgs theme for Zen, imported first from each profile's chrome/userChrome.css by vgsh theme apply. */
+:root {
+  --zen-primary-color: #@{color.accentPressed} !important;
+  --toolbarbutton-icon-fill: #@{color.accent} !important;
+  --toolbar-field-color: #@{color.text} !important;
+  --tab-selected-textcolor: #@{color.accent} !important;
+  --toolbar-color: #@{color.text} !important;
+  --arrowpanel-color: #@{color.text} !important;
+  --arrowpanel-background: #@{color.surface} !important;
+  --sidebar-text-color: #@{color.text} !important;
+  --zen-main-browser-background: #@{color.background} !important;
+  --zen-main-browser-background-toolbar: #@{color.background} !important;
+}
+
+#zen-browser-background {
+  --zen-main-browser-background: #@{color.background} !important;
+  --zen-background-opacity: 1 !important;
+}
+
+#zen-toolbar-background {
+  --zen-main-browser-background-toolbar: #@{color.background} !important;
+  --zen-background-opacity: 1 !important;
+}
+
+.sidebar-placesTree {
+  background-color: #@{color.surface} !important;
+}
+
+#zen-workspaces-button {
+  background-color: #@{color.surface} !important;
+}
+
+#TabsToolbar {
+  background-color: #@{color.background} !important;
+}
+
+.urlbar-background {
+  background-color: #@{color.surface} !important;
+}
+
+.urlbar-input::selection {
+  color: #@{color.onAccent} !important;
+  background-color: #@{color.accent} !important;
+}
+
+.urlbarView-url {
+  color: #@{color.textMuted} !important;
+}
+
+toolbar .toolbarbutton-1 {
+  &:not([disabled]) {
+    &:is([open], [checked])
+      > :is(
+        .toolbarbutton-icon,
+        .toolbarbutton-text,
+        .toolbarbutton-badge-stack
+      ) {
+      fill: #@{color.accent}
+    }
+  }
+}
+
+.identity-color-blue {
+  --identity-tab-color: #@{terminal.color12} !important;
+  --identity-icon-color: #@{terminal.color12} !important;
+}
+
+.identity-color-turquoise {
+  --identity-tab-color: #@{terminal.color6} !important;
+  --identity-icon-color: #@{terminal.color6} !important;
+}
+
+.identity-color-green {
+  --identity-tab-color: #@{terminal.color10} !important;
+  --identity-icon-color: #@{terminal.color10} !important;
+}
+
+.identity-color-yellow {
+  --identity-tab-color: #@{terminal.color11} !important;
+  --identity-icon-color: #@{terminal.color11} !important;
+}
+
+.identity-color-orange {
+  --identity-tab-color: #@{terminal.color3} !important;
+  --identity-icon-color: #@{terminal.color3} !important;
+}
+
+.identity-color-red {
+  --identity-tab-color: #@{terminal.color9} !important;
+  --identity-icon-color: #@{terminal.color9} !important;
+}
+
+.identity-color-pink {
+  --identity-tab-color: #@{terminal.color13} !important;
+  --identity-icon-color: #@{terminal.color13} !important;
+}
+
+.identity-color-purple {
+  --identity-tab-color: #@{terminal.color5} !important;
+  --identity-icon-color: #@{terminal.color5} !important;
+}
+
+#zen-appcontent-navbar-container {
+  background-color: #@{color.background} !important;
+}
+
+#PanelUI-menu-button .toolbarbutton-icon,
+#downloads-button .toolbarbutton-icon,
+#unified-extensions-button .toolbarbutton-icon {
+  fill: #@{color.accent} !important;
+  color: #@{color.accent} !important;
+}
+
+#PanelUI-menu-button .toolbarbutton-badge-stack,
+#downloads-button .toolbarbutton-badge-stack,
+#unified-extensions-button .toolbarbutton-badge-stack {
+  fill: #@{color.accent} !important;
+  color: #@{color.accent} !important;
+}
+
+toolbar .toolbarbutton-1 > .toolbarbutton-icon {
+  fill: #@{color.accent} !important;
+}
