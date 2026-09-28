@@ -2,7 +2,7 @@
 
 VGS-495. This report compares everything V2 has shipped with how the latest Omarchy solves the same problem, area by area, and gives each area a verdict.
 
-- VGS: `origin/main` at `18b6a7fa` (2026-09-28), which includes VGS-491.
+- VGS: `origin/main` at `513cc411` (2026-09-28), which includes VGS-491, VGS-493 and VGS-494.
 - Omarchy: `basecamp/omarchy` `main` at `b18ab49` (version `4.0.0.alpha`), read from a read-only clone.
 - Quickshell: `0.3.1` source at `1a4716c`, read only to confirm the session-lock reload behaviour in § IPC, CLI and runner.
 
@@ -36,7 +36,7 @@ The findings that change something:
 | 8 | Plugin manager | adopt | Confirm after the diff in `vgsh plugin update`; refuse without a terminal unless `--yes` | 3 |
 | 9 | Theme targets | adopt | Read user targets from `~/.config/vgs/themes/targets/` | 4 |
 | 10 | Theme packages | third way | Derive the sixteen terminal slots from the palette when a package ships no `terminal.json` | 4 |
-| 11 | Backgrounds | third way | Pick a specific wallpaper from thumbnails in the themes panel, after VGS-493 | 4 |
+| 11 | Backgrounds | third way | Pick a specific wallpaper from thumbnails in the themes panel's Wallpaper section | 4 |
 | 12 | Plugin model | adopt | Rescan when a file under the user plugin directory changes | 4 |
 | 13 | Plugin manager | third way | `vgsh plugin clone <id>` copies a bundled plugin under the same id | 4 |
 
@@ -92,7 +92,7 @@ The findings that change something:
 
 **Omarchy.** The current image is the symlink `~/.local/state/omarchy/current/background`. `bin/omarchy-theme-bg-next` steps through the theme's `backgrounds/` and the user's `~/.config/omarchy/backgrounds/<theme>/`; `omarchy-theme-set` remembers one image per theme. Because the theme directory is replaced on each switch, `omarchy-theme-set` hardlinks the old and new images into a transition cache and sends a `background prepare` call early. `shell/plugins/background/Background.qml` (448 lines) reads the symlink at startup and on IPC only, decodes at `width * devicePixelRatio` after probing each image's native size with `magick identify`, and runs a 420 ms masked wipe timed with the palette change. It accepts WebP and video; 79 of its 92 shipped wallpapers are WebP.
 
-**VGS.** `bin/lib/theme-backgrounds.js` (130 lines) is the one writer of `backgrounds.json` and the `background` symlink, both replaced by rename. `current` points into the package's own `backgrounds/`, so nothing is copied. The `vgs.background` plugin watches the JSON file ([theme-backgrounds.md](../architecture/theme-backgrounds.md) explains why a symlink watch misses changes) and draws one `Image` per screen with `PreserveAspectCrop` and `retainWhileLoading`. It sets `sourceSize` to `screen.width` and `screen.height` (`shell/plugins/vgs.background/Background.qml`), which are logical pixels.
+**VGS.** `bin/lib/theme-backgrounds.js` is the one writer of `backgrounds.json` and the `background` symlink, both replaced by rename. `current` points into the package's own `backgrounds/`, so nothing is copied. Since VGS-493, `vgs.themes` declares the `background` kind: `shell/plugins/vgs.themes/WallpaperState.qml` watches the JSON file ([theme-backgrounds.md](../architecture/theme-backgrounds.md) explains why a symlink watch misses changes), and `shell/plugins/vgs.themes/Background.qml` draws one `Image` per screen with `PreserveAspectCrop` and `retainWhileLoading`. It sets `sourceSize` to `screen.width` and `screen.height`, which are logical pixels.
 
 **Verdict: keep the state and the hard cut, adopt the device-pixel decode (finding 5).** One writer and one watched file catch up even when an IPC call is lost; Omarchy's symlink is read only on IPC, and its comments claim a poll that does not exist. The wipe needs a prepare call, snapshot hardlinks, a pending-theme payload and a fallback timer across two processes, which fails the owner's bar for a cosmetic gain. The decode size is a defect: on a screen scaled 2x the wallpaper decodes at half resolution and looks soft, while the launcher and notifications already multiply by `devicePixelRatio`. Multiply `sourceSize` by `screen.devicePixelRatio`, and run the background row once at a scale above 1. Omarchy's native-size probe is not worth taking; VGS ships no oversized stock images.
 
@@ -100,9 +100,9 @@ The findings that change something:
 
 **Omarchy.** A key or the menu summons `omarchy.image-picker` in theme mode. `bin/omarchy-theme-switcher` (130 lines) builds a preview per theme from its hand-made `preview.png`, else its first background, and `bin/omarchy-menu-images` (382 lines) builds cached thumbnails. The picker has a filter box and keyboard navigation. Choosing a theme runs `omarchy-theme-set` and neither waits for nor shows the result. Background picking reuses the same overlay through a file round trip: the caller creates a selection file and a done file, then loops on `sleep 0.01` with no timeout until the done file exists.
 
-**VGS.** `vgs.themes` is a bar widget and a panel on the `theme` capability. `ThemesPanel.qml` lists packages through `shell.theme.list`, with a palette swatch and state badges per row (displayed, modified, applying, shadowed, refused). The last apply's failed targets stay on the package's row, because the result lives in `ThemeRunner`. `scripts/smoke/rows/themes.sh` covers it ([theme-capability.md](../architecture/theme-capability.md)). There is no preview image, filter or default key. Backgrounds change only through `vgsh theme background next`; VGS-493 adds next and previous to this panel.
+**VGS.** `vgs.themes` is a bar widget and a panel on the `theme` capability. `ThemesPanel.qml` lists packages through `shell.theme.list`, with a palette swatch and state badges per row (displayed, modified, applying, shadowed, refused). The last apply's failed targets stay on the package's row, because the result lives in `ThemeRunner`. `scripts/smoke/rows/themes.sh` covers it ([theme-capability.md](../architecture/theme-capability.md)). There is no preview image, filter or default key. Since VGS-493 the panel's Wallpaper section names the current image and steps it with Previous and Next, through the `theme` capability and `vgsh theme background previous` and `next`.
 
-**Verdict: keep the panel, third way for picking a background (finding 11).** Showing each apply's state and failures matters because a VGS apply is judged and can partly fail, and a judged swatch costs nothing to maintain where a preview screenshot is a hand-kept asset. Omarchy's round trip exists because a bash caller must read a value back from the shell; VGS has no such caller. After VGS-493, add `vgsh theme background list --json` and `vgsh theme background set <file>` beside `next`, expose them on the `theme` capability, and show the applied package's images as a thumbnail strip in the themes panel, each an `Image` with a small `sourceSize`. Add no generic picker and no thumbnail cache until a measurement asks for one.
+**Verdict: keep the panel, third way for picking a background (finding 11).** Showing each apply's state and failures matters because a VGS apply is judged and can partly fail, and a judged swatch costs nothing to maintain where a preview screenshot is a hand-kept asset. Omarchy's round trip exists because a bash caller must read a value back from the shell; VGS has no such caller. Add `vgsh theme background list --json` and `vgsh theme background set <file>` beside `previous` and `next`, expose them on the `theme` capability, and show the applied package's images as a thumbnail strip in the Wallpaper section, each an `Image` with a small `sourceSize`. Add no generic picker and no thumbnail cache until a measurement asks for one.
 
 ## Gallery
 
@@ -214,7 +214,7 @@ Quickshell 0.3.1 carries the session lock across a reload: `WlSessionLock::onRel
 
 **Omarchy.** `test/` runs node tests of JS models and CLI tests, 2 `qmltestrunner` files, and 17 runtime tests that start a second Quickshell on the user's live compositor and skip without one (`test/shell.d/runtime-smoke-test.sh`). Acceptance runs in a disposable VM from a separate repository.
 
-**VGS.** `scripts/validate` selects checks from the diff. `scripts/qml-smoke.sh` runs 21 rows in a nested Hyprland sandbox; `scripts/qml-unit.sh` runs 15 offscreen QML test files; 37 `scripts/test-*` suites cover the CLI and judges ([D008](../decisions/D008-validation-row-per-change.md)).
+**VGS.** `scripts/validate` selects checks from the diff. `scripts/qml-smoke.sh` runs 21 rows in a nested Hyprland sandbox; `scripts/qml-unit.sh` runs 15 offscreen QML test files; 38 `scripts/test-*` suites cover the CLI and judges ([D008](../decisions/D008-validation-row-per-change.md)).
 
 **Verdict: keep.** The sandbox checks geometry, reserved space, layer lifecycle and the instance guard without the live seat, which is what Omarchy's runtime tests use and VGS forbids.
 
@@ -232,8 +232,8 @@ Quickshell 0.3.1 carries the session lock across a reload: `WlSessionLock::onRel
 - **VGS-490, theme follows package.** Agree. It closes the one gap D025 leaves. Omarchy stages a copy of the package on every apply, so a shipped theme's fix reaches a user only when a migration re-applies it (`migrations/1787481315.sh` runs `omarchy-theme-refresh`); following the package automatically is simpler.
 - **VGS-491, Chromium policy writer.** Landed as `62fc36fc` with [D029](../decisions/D029-chromium-policy-writer.md) superseding D027; agree, it follows Omarchy's narrow root-owned writer.
 - **VGS-492, agent CLI targets.** Agree. Writing the theme file atomically into the CLI's own watched directory and setting its theme key is exactly Omarchy's `bin/omarchy-theme-set-claude` and `-pi`.
-- **VGS-493, wallpaper in themes.** Agree that one plugin should own themes and wallpapers. Two points for it: VGS accepts only PNG and JPEG (`bin/lib/theme-backgrounds.js`), while most wallpapers a user brings are WebP, which Qt reads through `qt6-imageformats`; and a user directory of extra backgrounds per theme, as Omarchy's `~/.config/omarchy/backgrounds/<theme>/`, fits its next and previous controls. Finding 11 builds on it.
-- **VGS-494, sandbox screenshots.** Agree. It is VGS's version of Omarchy's VM acceptance screenshots, without the VM.
+- **VGS-493, wallpaper in themes.** Landed as `513cc411`; agree that one plugin should own themes and wallpapers. Two points it leaves open, listed under § Gaps: VGS accepts only PNG and JPEG (`bin/lib/theme-backgrounds.js`), while most wallpapers a user brings are WebP, which Qt reads through `qt6-imageformats`; and a user directory of extra backgrounds per theme, as Omarchy's `~/.config/omarchy/backgrounds/<theme>/`, fits its Previous and Next controls. Finding 11 builds on it.
+- **VGS-494, sandbox screenshots.** Landed as `ab0b7319` and `547e9bcf`; agree. It is VGS's version of Omarchy's VM acceptance screenshots, without the VM.
 
 ## Gaps
 
@@ -253,7 +253,7 @@ Omarchy has these; VGS has not built them. Each is a scope choice, not a defect,
 ## Risks and unknowns
 
 - The session-lock finding comes from reading Quickshell 0.3.1's source and VGS's QML; no sandbox row reproduced it. The fix, one environment variable, does not depend on reproducing it.
-- The wallpaper softness follows from `ShellScreen.width` being logical pixels; no screenshot at scale 2 confirms it. VGS-494 can supply one.
+- The wallpaper softness follows from `ShellScreen.width` being logical pixels; no screenshot at scale 2 confirms it. VGS-494's sandbox screenshots can supply one.
 - The reload-hook lock time and the cost of `Lucide.js` (330 KB loaded whole) were not measured.
 - Line counts are `wc -l` at the commits above and drift with both trees.
 
