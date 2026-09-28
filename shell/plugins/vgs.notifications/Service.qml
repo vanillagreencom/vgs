@@ -297,7 +297,8 @@ Item {
         silencedRefs = next;
         const stored = Logic.persistable(entry, store.imagesDir);
         store.archive([stored.entry]);
-        syncPanel();
+        // An open panel shows it once its copies exist, so the row never
+        // points at an image still being copied.
         store.copy(stored.copies, () => {
             const fields = root.fieldsOf(n);
             const updated = fields === null ? null : Logic.updatedEntry(entry, fields);
@@ -305,6 +306,7 @@ Item {
                 root.silence(n, updated);
                 return;
             }
+            root.syncPanel();
             root.releaseSilenced(entry.key);
         });
     }
@@ -531,19 +533,26 @@ Item {
 
     // Keep an open panel's rows the history's: a notification that enters
     // the history while it is open, silenced or off the screen, joins it in
-    // its place, and a row past the panel's limit goes. A key the model
-    // holds already, a toast still leaving among them, is not added twice;
-    // the toast joins once its exit has played.
+    // its place, a row whose stored entry changed draws the change, and a row
+    // past the panel's limit goes. A key the model holds as a toast, one
+    // still leaving among them, is not added twice; the toast joins once its
+    // exit has played.
     function syncPanel() {
         if (!panelOpen) return;
         const present = {};
-        for (let i = 0; i < rowModel.count; i++) present[rowModel.get(i).key] = true;
+        for (let i = 0; i < rowModel.count; i++) present[rowModel.get(i).key] = rowModel.get(i).origin;
         const wanted = Logic.panelRows(store.history, panelMode, store.readBefore);
         const keep = {};
         for (const entry of wanted) keep[entry.key] = true;
         for (const key of rowKeys(r => r.origin === "panel" && !keep[r.key])) removeRow(key);
         for (const entry of wanted) {
-            if (present[entry.key]) continue;
+            if (present[entry.key] === "panel") {
+                const at = indexOf(entry.key);
+                for (const role of Logic.ENTRY_ROLES)
+                    if (rowModel.get(at)[role] !== entry[role]) rowModel.setProperty(at, role, entry[role]);
+                continue;
+            }
+            if (present[entry.key] !== undefined) continue;
             let at = rowModel.count;
             for (let i = 0; i < rowModel.count; i++) {
                 const row = rowModel.get(i);
@@ -566,16 +575,23 @@ Item {
     }
 
     // Panel rows fade in place and then all go in one step, so the stack is
-    // laid out once instead of shifting as each row leaves.
+    // laid out once instead of shifting as each row leaves; a row that
+    // joined an open panel meanwhile stays.
     Timer {
         id: panelCloseTimer
         interval: root.look === null ? 1 : root.look.motion.staggerRows * root.look.motion.duration.stagger + root.look.motion.duration.short4 + root.look.motion.settle
-        onTriggered: root.removePanelRows()
+        onTriggered: {
+            root.removePanelRows(true);
+            root.syncPanel();
+        }
     }
 
-    function removePanelRows() {
-        for (let i = rowModel.count - 1; i >= 0; i--)
-            if (rowModel.get(i).origin === "panel") removeRow(rowModel.get(i).key);
+    // Every panel row, or with `fadedOnly` those that faded out.
+    function removePanelRows(fadedOnly) {
+        for (let i = rowModel.count - 1; i >= 0; i--) {
+            const row = rowModel.get(i);
+            if (row.origin === "panel" && (!fadedOnly || row.leaving === "fade")) removeRow(row.key);
+        }
     }
 
     // Mark read: everything so far is read, and the panel closes.

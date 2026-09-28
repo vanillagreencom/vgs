@@ -46,6 +46,15 @@ first_id="$(notify smoke-app 0 "First toast" "A body with <b>markup</b> and <img
 expect_poll "a notification becomes a live toast" '["First toast"]' row_summaries live
 expect_poll "its layer surface shows on every screen" "$monitors" layer_count vgs:layer
 expect_poll "the toast is in the state file as on screen" '["First toast"]' live_summaries
+# The edge light loads its shader from the plugin's published revision, and
+# the shader compiled. Qt compiles a shader once per process and marks only
+# the effect that compiled it, so the row reads the first toast's, the first
+# edge light this shell draws (read in the sandbox on 2026-09-28: a later
+# card's effect stayed Uncompiled while it drew).
+edge_shaders_ok() { ipc smoke layerShaders vgs.notifications | python3 -c 'import json,re,sys
+edges = [(u, ok) for _, u, ok in json.load(sys.stdin) if u.endswith("/edgelight.frag.qsb")]
+print(len(edges) >= 1 and all(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", u) for u, _ in edges) and any(ok for _, ok in edges))'; }
+render expect_poll "the edge light's shader compiled from the published revision" True edge_shaders_ok
 key_of() { ipc smoke modelRows vgs.notifications rows key,summary | python3 -c 'import json,sys; print(next((k for k, s in json.load(sys.stdin) if s == sys.argv[1]), "none"))' "$1"; }
 clock_of() { read_notes clocks | python3 -c 'import json,sys; c=json.load(sys.stdin).get(sys.argv[1]); print("none" if c is None else ("running" if c["since"] is not None else "paused") + " " + str(c["remaining"]))' "$1"; }
 # A card's centre on the screen: its rectangle in its window plus the
@@ -123,15 +132,6 @@ edge_active() { ipc smoke layerItems vgs.notifications EdgeLight active,lit | py
 notify smoke-app 0 "Calm" "" '[]' '{}' 0 >/dev/null
 expect_poll "a normal toast shows beside it" True has_row live Calm
 expect_poll "only the critical toast's edge light is active" '[False, True]' edge_active
-# Every edge light, one per card, loads its shader from the plugin's
-# published revision, and the shader compiled. Qt compiles a shader once and
-# marks only the effect that compiled it, so one compiled effect is the pass
-# (read in the sandbox on 2026-09-28: the second card's effect stayed
-# Uncompiled while it drew).
-edge_shaders_ok() { ipc smoke layerShaders vgs.notifications | python3 -c 'import json,re,sys
-edges = [(u, ok) for _, u, ok in json.load(sys.stdin) if u.endswith("/edgelight.frag.qsb")]
-print(len(edges) >= 2 and all(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", u) for u, _ in edges) and any(ok for _, ok in edges))'; }
-render expect_poll "the edge lights' shader compiled from the published revision" True edge_shaders_ok
 
 # Hover actions: the sender's own, then Dismiss; one runs on a click.
 signals="$sandbox/notification-signals.log"
