@@ -187,6 +187,10 @@ widget_placed() { bar_widget_ids | python3 -c 'import json,sys; print(all("vgs.l
 expect_poll "the bar entry is placed" True widget_placed
 click_centre "$(bar_key)" vgs.launcher || fail "the click on the bar entry failed"
 expect_poll "the bar entry opened the launcher" 1 layer_count vgs:overlay
+# A mapped layer takes input once the compositor has configured it and
+# handed it the keyboard; a click before that reaches no launcher surface.
+expect_poll "the bar entry's launcher is open" true read_launcher opened
+focused "the bar entry's launcher holds the keyboard"
 # The press on the bar entry holds the pointer on the bar's surface; a
 # motion moves it onto the launcher's before the click.
 hover 10 "$((mon_h - 10))" || fail "moving the pointer off the card failed"
