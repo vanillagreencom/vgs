@@ -69,7 +69,15 @@ if queue_limit="$(node -e 'process.stdout.write(String(require("./scripts/qml-li
   expected_errors+=('compositor: refused: dispatch-queue=full ')
   overflow() { probe flood "$((queue_limit + 2)) focusWorkspace 1" | sed 's/ request=.*//'; }
   expect "the request past the queue bound is refused" "refused: dispatch-queue=full limit=$queue_limit" overflow
-  expect "a request after the overflow is accepted" ok probe dispatch "focusWorkspace 2"
+  # The overflow leaves the queue full until the request running at the
+  # time finishes, and a request refused as full is not queued, so the
+  # request is repeated until one is accepted. Under 40 busy loops on the
+  # owner's machine (host cachy, AMD Ryzen 9 9950X, 32 threads) on
+  # 2026-09-27, eleven runs of an instrumented copy of this row under
+  # scripts/qml-smoke.sh saw acceptance within 187 ms after at most one
+  # refusal, and the queue drain behind it within 1693 ms; expect_poll
+  # polls both at 0.2 s for up to 5 s.
+  expect_poll "a request after the overflow is accepted" ok probe dispatch "focusWorkspace 2"
   expect_poll "the queue drains after the overflow" 2 active_ws
   reset_workspace
 else
