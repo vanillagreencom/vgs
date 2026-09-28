@@ -381,6 +381,9 @@ INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$
 # XDG_STATE_HOME is unset, so the state directory is the $HOME fallback.
 tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons"
 cp -R -- "$repo/bin" "$repo/themes" "$tree/"
+# The targets directory beside the shipped packages is no package: the exact
+# package rows below list none for it.
+mkdir -p "$tree/themes/targets"
 cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
 cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
 tinst() { INST_BIN="${THEME_BIN:-$tree/bin/vgsh}" inst "$@"; }

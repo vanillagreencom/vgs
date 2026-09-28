@@ -5,9 +5,12 @@
 //
 //   vgsh-theme-judge packages [DIR]
 //       judge every package directly under DIR (default: the shipped
-//       themes/) as shipped; one line per package. Exit 0 when every
-//       package is accepted, 1 when any is refused, 2 when DIR, a package
-//       directory or a required file cannot be read.
+//       themes/) as shipped, then render every target under DIR/targets
+//       against DIR's `vgs` package; one line per package and per target.
+//       Exit 0 when every package and target is accepted, 1 when any is
+//       refused, 2 when DIR, a package or target directory or a required
+//       file cannot be read, or when targets exist and DIR holds no
+//       accepted `vgs` package with terminal slots.
 //   vgsh-theme-judge list <text|json> <config-dir>
 //       every shipped package and every package under <config-dir>/themes,
 //       and the state of <config-dir>/theme.json.
@@ -20,7 +23,8 @@
 // through bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under
 // `json`, apply prints its structured result on stdout first, refusals
 // included. A malformed invocation exits 2. docs/architecture/themes.md
-// § Runner holds the rules this file implements.
+// § Runner and § Targets hold the rules this file implements; the target
+// renderer is bin/lib/theme-render.js.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -30,8 +34,12 @@ const { load } = require(path.join(repo, "scripts", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
 const { Refusal, refuse, main, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const render = require(path.join(__dirname, "lib", "theme-render.js"));
 
 const SHIPPED = path.join(repo, "themes");
+// The directory of a themes directory that holds targets; it is never a
+// package.
+const TARGETS = "targets";
 const FORMATS = ["text", "json"];
 const LOCK_VERDICTS = ["held", "busy", "failed"];
 
@@ -54,6 +62,13 @@ function childDirs(base) {
     const isDir = entry => entry.isDirectory() ||
         (entry.isSymbolicLink() && fs.statSync(path.join(base, entry.name), { throwIfNoEntry: false })?.isDirectory() === true);
     return entries.filter(isDir).map(entry => entry.name).sort();
+}
+
+// The package directory names under BASE, as childDirs answers them, less
+// the targets directory.
+function packageDirs(base) {
+    const names = childDirs(base);
+    return names === null ? null : names.filter(name => name !== TARGETS);
 }
 
 // The bytes of FILE, or undefined when it is absent; any other failure
@@ -107,13 +122,14 @@ function checkPackages(dirArg) {
     const base = path.resolve(dirArg || SHIPPED);
     let names;
     try {
-        names = childDirs(base);
+        names = packageDirs(base);
     } catch (e) {
         unreadable(base, e.code);
     }
     if (names === null) unreadable(base, "ENOENT");
     if (names.length === 0) unreadable(base, "no theme packages");
     let refused = 0;
+    let defaults = null;
     for (const name of names) {
         const dir = path.join(base, name);
         let judged;
@@ -124,12 +140,14 @@ function checkPackages(dirArg) {
         }
         if (judged.files !== null && judged.files.theme === undefined) unreadable(path.join(dir, "theme.json"), "ENOENT");
         if (judged.verdict.ok) {
+            if (judged.verdict.name === logic.DEFAULT_NAME) defaults = judged.verdict;
             console.log("ok       " + judged.verdict.name);
             continue;
         }
         console.log("refused  " + dir + ": " + logic.refusalLine(judged.verdict));
         refused += 1;
     }
+    refused += checkTargets(path.join(base, TARGETS), defaults);
     if (refused > 0) {
         console.log("vgsh-theme-judge: refused=" + refused);
         process.exit(1);
@@ -137,15 +155,62 @@ function checkPackages(dirArg) {
     console.log("vgsh-theme-judge: ok");
 }
 
+// A target directory's judged target.json and the text of every template
+// it names, or `templates` null for a refused target. Any read failure
+// throws the fs error.
+function readTarget(dir) {
+    const verdict = render.acceptTarget(logic, path.basename(dir), fs.readFileSync(path.join(dir, render.TARGET_FILE), "utf8"));
+    if (!verdict.ok) return { verdict, templates: null };
+    const templates = new Map();
+    for (const file of verdict.target.files)
+        if (!templates.has(file.template)) templates.set(file.template, fs.readFileSync(path.join(dir, file.template), "utf8"));
+    return { verdict, templates };
+}
+
+// Render every target under BASE against DEFAULTS, the accepted `vgs`
+// verdict of the same themes directory or null, and answer how many were
+// refused. Every template is rendered whatever a package curates, so this
+// judges every placeholder of every target. An absent BASE holds no target.
+function checkTargets(base, defaults) {
+    let names;
+    try {
+        names = childDirs(base);
+    } catch (e) {
+        unreadable(base, e.code);
+    }
+    if (names === null || names.length === 0) return 0;
+    if (defaults === null || defaults.terminal === null) unreadable(path.join(path.dirname(base), logic.DEFAULT_NAME), "no accepted package with terminal slots");
+    let refused = 0;
+    for (const name of names) {
+        const dir = path.join(base, name);
+        let judged;
+        try {
+            judged = readTarget(dir);
+        } catch (e) {
+            unreadable(e.path || dir, e.code);
+        }
+        const verdict = judged.verdict.ok
+            ? render.renderTarget(logic, tokens, judged.verdict.target, judged.templates, { values: defaults.values, slots: defaults.terminal, curated: new Map() })
+            : judged.verdict;
+        if (verdict.ok) {
+            console.log("ok       " + TARGETS + "/" + name);
+            continue;
+        }
+        console.log("refused  " + dir + ": " + render.refusalLine(name, verdict));
+        refused += 1;
+    }
+    return refused;
+}
+
 // --- the package set list and apply share
 
 // One package: `state` is `ok`, `refused` with its `reason`, or `shadowed`
 // by an installed package of its name, which is never read. `palette` is
-// the resolved palette group of an accepted package. `files` stays in
-// this process.
+// the resolved palette group of an accepted package. `files` and
+// `terminal`, the judge's slots or null, stay in this process.
 function packageRow(base, name, source) {
     const dir = path.join(base, name);
-    const row = { name, source, path: dir, state: "refused", reason: null, palette: null, files: null };
+    const row = { name, source, path: dir, state: "refused", reason: null, palette: null, files: null, terminal: null };
     let judged;
     try {
         judged = readPackage(dir, source === "shipped");
@@ -160,6 +225,7 @@ function packageRow(base, name, source) {
     }
     row.state = "ok";
     row.palette = judged.verdict.values.palette;
+    row.terminal = judged.verdict.terminal;
     return row;
 }
 
@@ -173,7 +239,7 @@ function packageSet(configDir, key) {
     const dirs = (base, required) => {
         let names;
         try {
-            names = childDirs(base);
+            names = packageDirs(base);
         } catch (e) {
             refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
         }
@@ -190,7 +256,7 @@ function packageSet(configDir, key) {
     }
     for (const name of dirs(SHIPPED, true)) {
         if (resolved.has(name)) {
-            rows.push({ name, source: "shipped", path: path.join(SHIPPED, name), state: "shadowed", reason: null, palette: null, files: null });
+            rows.push({ name, source: "shipped", path: path.join(SHIPPED, name), state: "shadowed", reason: null, palette: null, files: null, terminal: null });
             continue;
         }
         const row = packageRow(SHIPPED, name, "shipped");
@@ -267,13 +333,10 @@ function applyTo(result, configDir, stateDir, lock, name) {
     const row = resolved.get(name);
     if (row === undefined) refuse(key + "=unknown", "unknown");
     if (row.state !== "ok") refuse(key + "=" + row.reason + " path=" + row.path, row.reason);
-    let terminal = row.files.terminal;
-    if (terminal === undefined) {
-        const defaults = rows.find(r => r.source === "shipped" && r.name === logic.DEFAULT_NAME);
-        if (defaults === undefined || defaults.state !== "ok" || defaults.files.terminal === undefined)
-            refuse(key + "=terminal-fallback path=" + path.join(SHIPPED, logic.DEFAULT_NAME), "terminal-fallback");
-        terminal = defaults.files.terminal;
-    }
+    const defaults = rows.find(r => r.source === "shipped" && r.name === logic.DEFAULT_NAME && r.state === "ok");
+    const source = render.terminalSource(row, defaults === undefined ? null : defaults);
+    if (source === null) refuse(key + "=terminal-fallback path=" + path.join(SHIPPED, logic.DEFAULT_NAME), "terminal-fallback");
+    const terminal = source.files.terminal;
 
     const live = path.join(stateDir, "theme");
     const stage = path.join(stateDir, "next-theme");

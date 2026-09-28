@@ -1,6 +1,6 @@
 # Themes
 
-Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, scripts/test-vgsh-theme-judge.js, shell/Core/ThemeRunner.qml
+Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, bin/lib/theme-render.js, scripts/test-vgsh-theme-judge.js, scripts/test-theme-render.js, shell/Core/ThemeRunner.qml
 
 A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the directory walk, the list and the apply.
 
@@ -10,7 +10,7 @@ A theme package is one directory. It holds the shell document and the applicatio
 |---|---|---|
 | `theme.json` | yes | The shell document from [design-system.md § The shell document](design-system.md#the-shell-document). |
 | `terminal.json` | no | `{ "schemaVersion": 1, "slots": { "color0": "#...", ... "color15": "#..." } }`. |
-| Application target files | no | Curated files a target later writes verbatim for its application. |
+| `targets/<target>.<ext>` | no | A curated file, taken verbatim in place of the target file the renderer writes to that name: [§ Templates](#templates). |
 
 The directory name is the package name and must equal `theme.json`'s `name`; `ThemeLogic.isPackageName` bounds it to a letter or digit followed by letters, digits, `.`, `_` and `-`. The name `vgs` is reserved for the shipped defaults, so an installed package cannot hide the revert package. A package without `terminal.json` is valid; apply renders the shipped `vgs` terminal slots in its place.
 
@@ -18,6 +18,7 @@ The directory name is the package name and must equal `theme.json`'s `name`; `Th
 
 - `ThemeLogic.acceptPackage` takes the token table and file texts. It performs no I/O. It judges `theme.json` through `ThemeLogic.accept`, judges terminal slot names and colours, checks the directory/document name match, and applies the `vgs` reservation.
 - `bin/vgsh-theme-judge` walks the package directories, reads `theme.json` and `terminal.json` and the theme file, and makes every decision through `ThemeLogic.js` and `Tokens.js`, loaded through `scripts/qml-library.js`. Its refusal and its file writes are `bin/lib/judge-files.js`, shared with `bin/vgsh-plugin-judge`.
+- `bin/lib/theme-render.js` judges `target.json`, renders templates and chooses the terminal slots. It performs no I/O: the judge reads every file and passes its text or bytes, with `ThemeLogic.js` and the token table as arguments, so a token path means what it means to the shell.
 - `shell/Core/ThemeRunner.qml` owns the apply process when the theme capability lands. It starts runner commands and reports their structured result; it does not judge package files itself.
 - `shell/plugins/vgs.themes/**` belongs to [plugins.md](plugins.md). This topic covers package and core runner contracts only.
 
@@ -34,6 +35,44 @@ The directory name is the package name and must equal `theme.json`'s `name`; `Th
 
 [D020](../decisions/D020-theme-apply-swaps-state-and-writes-the-shell-file-last.md) records the lock, the swap and the shadowing rule.
 
+## Targets
+
+A target is one application's colour files: the directory `themes/targets/<target>/`, holding `target.json` and its templates. A target name is lower-case letters, digits and `-`, with no dot. `targets` under a themes directory holds targets and is never read as a package.
+
+`acceptTarget` in `bin/lib/theme-render.js` judges `target.json`. Every key is required and any other key is refused with `reason=target-schema`:
+
+| Key | Holds |
+|---|---|
+| `app` | The application's name, one line. |
+| `encoder` | The encoder every colour placeholder of the target is written with: [§ Templates](#templates). |
+| `files` | One or more `{ template, destination }`. `template` is a file name in the target directory other than `target.json`. `destination` is the file name the render takes under the state directory's `theme/`: `<target>.<ext>`, unique in the target, so no two targets write one file. |
+| `detect` | Command names; a target whose command is absent is skipped. An empty list is always detected. |
+| `wiring` | `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. |
+| `reload` | `null`, or `{ command, timeoutMs }`: the argv that makes a running application re-read its files, and its bound in whole milliseconds. |
+
+`bin/vgsh-theme-judge packages themes`, the offline row, renders every target under `themes/targets/` against the shipped `vgs` package and prints one line per target, `ok       targets/<target>` or `refused  <dir>: target=<target> reason=<key> <detail>`. A template or `target.json` that cannot be read, or targets without an accepted `vgs` package holding terminal slots, exit 2.
+
+## Templates
+
+`renderTarget` renders every file of an accepted target from the package's resolved token values, the terminal slots and the package's curated files.
+
+- **Placeholders.** `@{<path>}` is a token of the table and `@{terminal.color<N>}` a terminal slot, `color0` to `color15`. `@@{` is a literal `@{`. Every other character passes through, so `#{pane_id}` and `${HOME}` render whole.
+- **Refusal.** A placeholder that names no token and no slot, a group included, refuses the target with `reason=placeholder template=<file> placeholder="<name>"`; a `@{` with no `}` after it refuses with `unterminated=<offset>`. The target renders no file.
+- **Values.** A colour token and a slot are written through the target's encoder. Any other token is written as its resolved value: `@{space.sm}` is `6`.
+- **Curated files.** A package's `targets/<destination>` is taken byte for byte in place of the rendered file of that destination. The template is rendered all the same, so a curated file never hides a bad placeholder.
+- **Terminal slots.** `terminalSource` takes the package's own `terminal.json`, else the shipped `vgs` package's. `apply` writes the same package's `terminal.json` into the state directory.
+
+Encoders, each shown for `#ff5a3659`:
+
+| Encoder | Writes | Example |
+|---|---|---|
+| `hex6` | `rrggbb`, alpha dropped | `ff5a36` |
+| `hex8` | `rrggbbaa` | `ff5a3659` |
+| `rgba` | `rgba(r, g, b, a)`, channels 0 to 255, alpha 0 to 1 to three decimals | `rgba(255, 90, 54, 0.349)` |
+| `hyprland` | `rgba(rrggbbaa)` | `rgba(ff5a3659)` |
+
+No encoder writes `#`: a template writes it where its application wants one, as `#@{palette.accent}`.
+
 ## Trust
 
 Applying a third-party package carries plugin-level trust. A curated target file is written verbatim into a path an application includes, so package application has the same user-privilege impact as enabling a plugin. [D019](../decisions/D019-theme-packages-carry-plugin-trust.md) records the boundary.
@@ -47,3 +86,5 @@ Applying a third-party package carries plugin-level trust. A curated target file
 5. The list reports a refused package with its reason, the theme file's state from disk and `modified` by a byte comparison; apply refuses a refused package. Enforced by `scripts/test-vgsh.sh`.
 6. Apply copies `theme.json` byte for byte, renders `terminal.json` or the shipped slots, and leaves no `next-theme/`, a stale one included; `apply vgs` writes the shipped defaults. Enforced by `scripts/test-vgsh.sh`, with a re-serialising judge copy as its control.
 7. A second apply is refused with `reason=busy` while the lock is held. Enforced by `scripts/test-vgsh.sh`, with a lockless `bin/vgsh` copy as its control.
+8. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence and the terminal fallback hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer.
+9. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.
