@@ -107,6 +107,63 @@ expect_poll "a removed user menu clears its notice" False has_row notice "Your m
 type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes the launcher" 0 layer_count vgs:overlay
 
+# Controls: a sandbox copy with one rule of the user menu's read taken out
+# fails a check above that rests on it. The host builds the launcher from
+# the revision the last completed scan published.
+launcher_qml="$repo/shell/plugins/vgs.launcher/Launcher.qml"
+cp -p -- "$launcher_qml" "$sandbox/Launcher.qml.real"
+# launcher_source LABEL FILE: install FILE as the plugin's source and wait
+# for the scan that publishes it; false when it could not be installed.
+launcher_source() {
+  local scans
+  cp -p -- "$2" "$launcher_qml.tmp" && mv -T -- "$launcher_qml.tmp" "$launcher_qml" || { fail "$1: $2 could not be installed"; return 1; }
+  scans="$(log_lines 'plugins: scan complete ')" || { fail "$1: instance log unreadable"; return 1; }
+  expect "a rescan publishes $1" ok ipc shell rescanPlugins
+  expect_log "$1 is published" "$((scans + 1))" 'plugins: scan complete '
+}
+# launcher_mutant LABEL OLD NEW: install the real source with OLD, which
+# must occur once, replaced by NEW.
+launcher_mutant() {
+  if [[ $(grep -c -F -- "$2" "$sandbox/Launcher.qml.real") != 1 ]]; then
+    fail "$1: its text occurs once in $launcher_qml"
+    return 1
+  fi
+  python3 -c 'import sys; p, q, old, new = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, new))' "$sandbox/Launcher.qml.real" "$sandbox/Launcher.qml.mutant" "$2" "$3" || { fail "$1: the mutant could not be written"; return 1; }
+  launcher_source "$1" "$sandbox/Launcher.qml.mutant"
+}
+
+# A copy that never reads on a change keeps the menu it read when it was
+# built. It waits the five seconds of sleep in expect_poll's 25 polls, the
+# window the real launcher had to show the refused menu's notice above.
+if launcher_mutant "the unwatched control" 'onChanged: read()' 'onChanged: {}'; then
+  write_menu '{ "schemaVersion": 1, "items": { "system": { "label": "Power" } } }'
+  expect "the unwatched control summons" ok ipc shell summon overlay vgs.launcher '{}'
+  focused "the unwatched control holds the keyboard"
+  type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
+  expect_poll "the unwatched control read the user menu it was built with" True has_row menu Power
+  write_menu '{ "schemaVersion": 1, "items": { "bad-item": { "action": "omarchy-menu" } } }'
+  sleep 5
+  expect "the unwatched control keeps the menu it was built with" True has_row menu Power
+  expect "the host hides the unwatched control" ok ipc shell hide overlay vgs.launcher
+  expect_poll "the unwatched control closed" 0 layer_count vgs:overlay
+fi
+
+# A copy whose menus count as read from the start routes in open(), before
+# either file's first read ends: a route to a user action opens the menu
+# instead of running it. Which of the two reads ends first is not fixed,
+# so the control takes the whole gate out rather than the user file's half.
+rm -f -- "${home:?}/ran-action"
+if launcher_mutant "the ungated control" 'readonly property bool menusReady: shippedSettled && userSettled' 'readonly property bool menusReady: true'; then
+  write_menu "{ \"schemaVersion\": 1, \"items\": { \"smoke-run\": { \"label\": \"Smoke run\", \"run\": [\"touch\", \"$home/ran-action\"] } } }"
+  expect "the ungated control is summoned with the action route" ok ipc shell summon overlay vgs.launcher '{"menu":"smoke-run"}'
+  expect_poll "the ungated control opened a menu instead" true read_launcher opened
+  expect "the ungated control ran no action" absent file_text "$home/ran-action"
+  expect "the host hides the ungated control" ok ipc shell hide overlay vgs.launcher
+  expect_poll "the ungated control closed" 0 layer_count vgs:overlay
+fi
+rm -f -- "${user_menu:?}"
+launcher_source "the restored launcher" "$sandbox/Launcher.qml.real" || true
+
 # A payload the judge refuses throws out of open(), and the host refuses the
 # summon and takes the surface down.
 expected_errors+=('summon host: vgs\.launcher open\(\) failed: launcher: refused: payload=')
