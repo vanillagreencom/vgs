@@ -25,6 +25,9 @@ Scope {
     // The file: `pending` until its first read, then `loaded`, `absent`,
     // `refused` or `unreadable`.
     property string state: "pending"
+    // The view's read: `running` from the first, which the view starts when
+    // `path` is set; `stale` when the file changed during it; `idle`.
+    property string readState: "running"
 
     function publish(accepted) {
         name = accepted.name;
@@ -32,11 +35,25 @@ Scope {
         revision += 1;
     }
 
+    // FileView starts no second read of a path while one is in flight, the
+    // handlers of its result included, and that read reports the file as it
+    // was. A change seen during a read is read again once the handler
+    // returns, and the result it overtook is dropped unpublished.
+    function readAgain() {
+        if (readState !== "stale") return false;
+        readState = "running";
+        Qt.callLater(() => view.reload());
+        return true;
+    }
+
     FileView {
+        id: view
         path: source.path
         watchChanges: true
         printErrors: false
         onLoaded: {
+            if (source.readAgain()) return;
+            source.readState = "idle";
             const accepted = ThemeLogic.accept(Tokens.TOKENS, text());
             if (!accepted.ok) {
                 console.error(ThemeLogic.refusalLine(accepted) + " file=" + path);
@@ -47,6 +64,8 @@ Scope {
             source.state = "loaded";
         }
         onLoadFailed: error => {
+            if (source.readAgain()) return;
+            source.readState = "idle";
             if (error === FileViewError.FileNotFound) {
                 if (source.values !== source.defaults.values) source.publish(source.defaults);
                 source.state = "absent";
@@ -55,6 +74,13 @@ Scope {
             console.error("theme: " + path + " unreadable: " + error);
             source.state = "unreadable";
         }
-        onFileChanged: reload()
+        onFileChanged: {
+            if (source.readState !== "idle") {
+                source.readState = "stale";
+                return;
+            }
+            source.readState = "running";
+            reload();
+        }
     }
 }
