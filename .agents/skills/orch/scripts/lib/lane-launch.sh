@@ -19,8 +19,8 @@
 # shellcheck source=lane-claims.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
 
-# lane_codex_trust_prepare below reads a codex config.toml for one key and
-# writes it back without one table. That reading is shared with `spawn-adapter`,
+# The codex arm of lane_trust_prepare below reads a codex config.toml for one
+# key and writes it back without one table. That reading is shared with `spawn-adapter`,
 # which asks the same file a different question, so it lives in its own library
 # and both callers source it rather than each carrying a scanner of its own.
 # shellcheck source=toml.sh
@@ -43,14 +43,43 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # cannot go on being prefixed with the other harness's variable, which starts it
 # on whatever account that harness defaults to with nothing on screen saying so.
 #
-# Codex is named and every other harness takes the Claude variable, which is
-# what a local `--lane` launch on a further harness has always done; `lanes`
-# measures claude and codex only and produces no third value here. A harness
-# added to this repository adds its arm HERE.
-lane_env_prefix() { # HARNESS DIR
+# Codex and Copilot are named. A Pi launch on the Copilot pool
+# (lane_pick_harness below) takes Pi's own variable, PI_CODING_AGENT_DIR, the
+# directory whose Pi login spends that pool, as lane-host-ssh gives a hosted Pi
+# lane. Every other harness takes the Claude variable, which is what a local
+# `--lane` launch on a further harness has always done, a Pi launch on any
+# other model included, so a Pi lane named on a Claude config dir is never
+# handed that dir as its Pi root. `lanes` measures no Copilot CLI account, so a
+# copilot value reaches here from a lane the caller named and never from a
+# pick. A harness added to this repository adds its arm HERE.
+#
+# COPILOT_HOME is Copilot's one account variable: it moves the whole config
+# root, settings, state and login list alike, so the directory IS the account
+# there as it is for the other two.
+lane_env_prefix() { # HARNESS DIR [MODEL]
   local var=CLAUDE_CONFIG_DIR
-  [[ "$1" != codex ]] || var=CODEX_HOME
+  case "$1" in
+    codex) var=CODEX_HOME ;;
+    copilot) var=COPILOT_HOME ;;
+  esac
+  [[ "$(lane_pick_harness "$1" "${3:-}")" != pi ]] || var=PI_CODING_AGENT_DIR
   printf '%s=%s\n' "$var" "$2"
+}
+
+# The harness `lanes pick` judges a launch of HARNESS on MODEL under, empty where
+# `lanes` holds no reading of what that launch spends. Claude and codex spend
+# their own accounts' windows, whatever the model. A Pi launch on a
+# `github-copilot/` model spends the Copilot pool, which `lanes pick --harness
+# pi` reads; a Pi launch on any other model has no reading here. One answer for
+# the launcher deciding whether a named lane is judged, for `lanes` refusing a
+# pick it cannot judge and for the variable lane_env_prefix names, so the three
+# cannot disagree about which launches a reading covers. MODEL is the one
+# launch_choice_launch_model reads, provider included.
+lane_pick_harness() { # HARNESS MODEL
+  case "$1" in
+    claude | codex) printf '%s\n' "$1" ;;
+    pi) [[ "$2" != github-copilot/* ]] || printf '%s\n' pi ;;
+  esac
 }
 
 # How each harness spells the two choices a lane launch must make, for every
@@ -99,7 +128,9 @@ lane_env_prefix() { # HARNESS DIR
 # from --settings. Codex defers normal compaction to its reported usable-window
 # cap; it can still compact between external handoff checks or on other paths.
 # references/skill-rules.md, Compaction, cites the verified runtime contract.
-# Pi uses its settings file, which open-terminal reads instead.
+# Pi uses its settings file, which open-terminal reads instead. Copilot's
+# flags and `copilot help config` (1.0.88) name no switch that turns its
+# automatic compaction off, so its row has none.
 #
 # The FIRST spelling of each list is the one written; the rest are further
 # spellings a caller may have typed, which launch_choice_value reads.
@@ -123,6 +154,22 @@ lane_env_prefix() { # HARNESS DIR
 #             field: `--model sonnet:high` names the level pi will run at, so a
 #             launch passing it has made the effort choice and is not asked for
 #             it again.
+#   copilot   `copilot --help` (1.0.88): `--model <model>`, `--reasoning-effort
+#             <level>` with none, minimal, low, medium, high, xhigh and max;
+#             `--allow-all` and `--yolo` each equal `--allow-all-tools
+#             --allow-all-paths --allow-all-urls`, and `--allow-all-tools`
+#             alone is the permission the non-interactive mode requires. Only
+#             the two full spellings transfer: the tools-only word leaves paths
+#             and URLs asking. `--autopilot` starts the session in autopilot
+#             mode, which sends the session continuation messages of its own,
+#             as many as `--max-autopilot-continues <count>` allows, 5 by
+#             default. Both are launch settings, carried by every command built
+#             here, a resume included: nobody sits at a lane's pane to answer a
+#             turn that stopped short, and 3 bounds what such a stop, or a turn
+#             ended to wait on the lane's mailbox monitor, spends of the
+#             account's pool. `-i <prompt>` starts the interactive session and
+#             submits the prompt, and `--resume=<id>` resumes a session by its
+#             id; open-terminal's start_cmd renders both.
 # The question-tool words, measured on the same installs:
 #   claude    `claude --help`: `--disallowedTools <tools...>`, comma or space
 #             separated. Variadic, so the words are one `=` token: a bare
@@ -143,11 +190,14 @@ lane_env_prefix() { # HARNESS DIR
 #             switch its docs name is the OPENCODE_PERMISSION environment
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
+#   copilot   `copilot --help`: `--no-ask-user` disables the ask_user tool, the
+#             clarifying question the CLI otherwise asks at the pane.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
+  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--autopilot --max-autopilot-continues 3|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -352,6 +402,23 @@ launch_choice_value() { # SPELLINGS TEXT...
   # `i=$((i + 1))` above for the same reason: `(( i++ ))` answers 1 on the
   # first token and errexit would end the run inside this substitution.
   return 0
+}
+
+# The MODEL one launch of HARNESS names, empty where it names none, read with
+# that harness's model spellings (the whole table's where HARNESS is empty).
+# Pi also takes the provider on a flag of its own, `pi --help`: `--provider
+# <name>` beside a bare `--model <id>` names the model `<name>/<id>` does, so
+# the value carries the provider exactly as the one-token spelling would, and a
+# judge reading `github-copilot/` sees a Copilot launch whichever way it was
+# typed. A model already naming a provider keeps its own.
+launch_choice_launch_model() { # HARNESS TEXT
+  local model provider
+  model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2")"
+  if [[ "$1" == pi && -n "$model" && "$model" != */* ]]; then
+    provider="$(launch_choice_value --provider "$2")"
+    [[ -z "$provider" ]] || model="$provider/$model"
+  fi
+  printf '%s\n' "$model"
 }
 
 # The EFFORT one launch names, empty where it names none or where the harness has
@@ -698,28 +765,40 @@ lane_single_quote() { # VALUE
   printf "'%s'" "${1//\'/$escaped}"
 }
 
-# The trust record a Codex launch reads BEFORE it reads the arguments it was
-# launched with: `[projects."<dir>"] trust_level = "trusted"` in the config.toml
-# the launch's CODEX_HOME names. Without it the harness opens on `Do you trust
-# the contents of this directory?` and stays there, and an unattended launch —
-# an overseer succession, a lane opened into a worktree nothing has trusted yet
-# — has nobody at the pane to answer, so the whole launch is spent on a
-# question.
+# The trust record a harness reads BEFORE it reads the arguments it was
+# launched with. Codex reads `[projects."<dir>"] trust_level = "trusted"` in
+# the config.toml its CODEX_HOME names; Claude reads
+# `projects.<dir>.hasTrustDialogAccepted` in the `.claude.json` of the config
+# dir it runs under. Without it the harness opens on `Do you trust the
+# contents of this directory?`, or `Do you trust the files in this folder?`,
+# and stays there, and an unattended launch — an overseer succession, a lane
+# opened into a worktree nothing has trusted yet — has nobody at the pane to
+# answer, so the whole launch is spent on a question.
 #
 # A sandboxed lane gets this from the provider's pre-approval step
 # (../../schemas/lane-host.md § Provider protocol). A control-host launch has
-# no such step and cannot be given one by editing the account: a numbered
-# account's config.toml is a link the account shim points at the shared fleet
-# render on every launch, so an entry written there is gone by the next launch
-# and is visible to no fixture. The launch therefore builds a CODEX_HOME OF ITS OWN
-# under the account, holding the account's own files by link and one config.toml
-# of its own carrying the account's config plus the entry.
+# no such step. For codex it cannot be given one by editing the account: a
+# numbered account's config.toml is a link the account shim points at the
+# shared fleet render on every launch, so an entry written there is gone by the
+# next launch and is visible to no fixture. The launch therefore builds a
+# CODEX_HOME OF ITS OWN under the account, holding the account's own files by
+# link and one config.toml of its own carrying the account's config plus the
+# entry. For claude the config dir's `.claude.json` is the account's own
+# state, the file the harness itself writes the answer given at the pane
+# into, so the entry is written there, in the pair the harness records for
+# that answer: the same pair tools/harness-smoke seeds a harness home with,
+# and the one the lane-host provider merges key by key from the
+# operator-staged ACCOUNT/lane-host/.claude.json for a hosted lane.
 #
-# lane_codex_trust_prepare's answer, read by the caller that reports the route
+# lane_trust_prepare's answer, read by the caller that reports the route
 # beside its own launch line and refuses when the entry could not be made.
+# LANE_TRUST_DETAIL is the dependency's own words behind a refusal, jq's
+# parse position for a claude config that does not parse, for the caller to
+# print under its keyed line; empty where the refusal has none.
 LANE_TRUST_ROUTE=""
 LANE_TRUST_HOME=""
 LANE_TRUST_REASON=""
+LANE_TRUST_DETAIL=""
 
 # lane_codex_trusted CONFIG DIR — what CONFIG says about opening into DIR.
 #
@@ -769,39 +848,130 @@ lane_codex_recorded() { # DIR CONFIG...
 #
 #   LANE_TRUST_ROUTE   `none` for a harness that asks no such question,
 #                      `preapproved` where the account's own config already
-#                      trusts the directory, `launch-home` where this built a
-#                      private home carrying the entry
-#   LANE_TRUST_HOME    the CODEX_HOME the launch must run under
+#                      trusts the directory, `launch-home` where the codex arm
+#                      built a private home carrying the entry, and
+#                      `account-config` where the claude arm wrote the entry
+#                      into the config dir's own `.claude.json`
+#   LANE_TRUST_HOME    the CODEX_HOME or CLAUDE_CONFIG_DIR the launch must run
+#                      under
 #   LANE_TRUST_REASON  set on a non-zero return, naming what could not be done
 #
 # HARNESS is taken rather than tested by each caller, the way lane_launch_form
 # beside it takes one: a caller then makes one unconditional call and handles
 # one refusal, instead of repeating a harness test, a call, a swap and a
-# refusal around it.
+# refusal around it. Each harness's arm is its own function below, so a suite
+# can call the arm for the file shape it is about.
 #
 # Status 1 is the LAUNCH READINESS answer, and the caller refuses on it rather
-# than opening a pane on a dialog. The closing step reads back the entry the
-# launch needs from the config that was just written: a home another launch
-# rewrote between the write and the read, a write that reported success and
-# produced nothing, and a path that broke the header across lines all end
-# there. A path carrying a quote or a backslash does NOT: the reader here
-# matches the header this wrote, while the harness reads both characters as
-# TOML string syntax and takes the file, or the key, to say something else.
-# Neither reaches here from a path kendex builds.
-lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
-  local harness="$1" lane dir="$3" config home entry name staged rc=0
+# than opening a pane on a dialog. An answer already recorded for the
+# directory that is not trust refuses as `trust-refused` on both arms: it is a
+# decision somebody gave in the harness's own spelling, and overwriting it
+# would run the launch at full trust against that answer.
+lane_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
   LANE_TRUST_ROUTE=""
   LANE_TRUST_HOME="$2"
   LANE_TRUST_REASON=""
-  if [ "$harness" != codex ]; then
-    LANE_TRUST_ROUTE=none
-    return 0
+  LANE_TRUST_DETAIL=""
+  case "$1" in
+    codex) lane_codex_trust_prepare "$2" "$3" ;;
+    claude) lane_claude_trust_prepare "$2" "$3" ;;
+    *) LANE_TRUST_ROUTE=none; return 0 ;;
+  esac
+}
+
+# The claude arm: `projects.<LAUNCH_DIR>.hasTrustDialogAccepted` in
+# LANE_DIR/.claude.json beside `hasCompletedOnboarding`, the pair the harness
+# itself records when the dialog is answered at the pane. The file is the
+# account's own state and the one the harness writes its own answer into, so
+# the entry goes there and the launch runs under LANE_DIR itself: this arm
+# never builds a private home. Every other key the file holds stays, since the
+# harness keeps its account, its per-project tool allowances and its
+# onboarding marks in the same file.
+#
+# A file that exists and cannot be read or parsed refuses rather than being
+# rebuilt from nothing, because the rebuild would drop the account the
+# harness keeps there. The closing step reads the entry back off the written
+# file, so a write that reported success and produced nothing ends here
+# rather than at the pane.
+lane_claude_trust_prepare() { # LANE_DIR LAUNCH_DIR
+  local lane="$1" dir="$2" config="$1/.claude.json" answer staged input detail
+  if { [ -e "$config" ] || [ -L "$config" ]; } && { [ ! -f "$config" ] || [ ! -r "$config" ]; }; then
+    LANE_TRUST_REASON=config-unreadable
+    return 1
   fi
+  answer=absent
+  if [ -f "$config" ]; then
+    # Both streams: on a refusal the capture is jq's own words, the parse
+    # position the operator repairs the file by.
+    if ! answer="$(jq -r --arg dir "$dir" '
+      .projects[$dir].hasTrustDialogAccepted
+      | if . == null then "absent" elif . == true then "trusted" else "refused" end' \
+      < "$config" 2>&1)"
+    then
+      LANE_TRUST_DETAIL="$answer"
+      LANE_TRUST_REASON=config-unreadable
+      return 1
+    fi
+  fi
+  case "$answer" in
+    trusted) LANE_TRUST_ROUTE=preapproved; return 0 ;;
+    refused) LANE_TRUST_REASON=trust-refused; return 1 ;;
+    absent) ;;
+    *)
+      LANE_TRUST_DETAIL="the trust reader answered: $answer"
+      LANE_TRUST_REASON=config-unreadable
+      return 1 ;;
+  esac
+  # The config dir holds the account's credentials and the file its address,
+  # user id and every per-project tool allowance, so a dir this creates is
+  # private and the file it writes is private too, whatever the caller's
+  # umask: the harness itself makes the file 0600, and the write below
+  # creates the staged copy under 077, inside the capture's own subshell. mv
+  # keeps the staged file's mode.
+  ( umask 077 && mkdir -p -- "$lane" ) || { LANE_TRUST_REASON=home-create; return 1; }
+  # Staged under this shell's own pid and renamed over the target, so a
+  # harness reading the file while this writes it meets the whole previous
+  # file or the whole new one; every arm from here takes the staged file away
+  # before it refuses.
+  staged="$config.$$"
+  # One filter for both shapes: an absent file reads as no input, which
+  # `first(inputs) // {}` takes as the empty object the entry is merged into.
+  input=/dev/null
+  [ ! -f "$config" ] || input="$config"
+  if ! detail="$(umask 077 && jq -n --arg dir "$dir" '
+      (first(inputs) // {})
+      | .hasCompletedOnboarding = true
+      | .projects[$dir] = ((.projects[$dir] // {}) + {hasTrustDialogAccepted: true})' \
+      < "$input" 2>&1 > "$staged")"
+  then
+    rm -f -- "${staged:?}"
+    LANE_TRUST_DETAIL="$detail"
+    LANE_TRUST_REASON=config-write
+    return 1
+  fi
+  mv -f -- "$staged" "$config" \
+    || { rm -f -- "${staged:?}"; LANE_TRUST_REASON=config-install; return 1; }
+  jq -e --arg dir "$dir" '.projects[$dir].hasTrustDialogAccepted == true' < "$config" >/dev/null 2>&1 \
+    || { LANE_TRUST_REASON=entry-unreadable; return 1; }
+  LANE_TRUST_ROUTE=account-config
+  return 0
+}
+
+# The codex arm. The closing step reads back the entry the launch needs from
+# the config that was just written: a home another launch rewrote between the
+# write and the read, a write that reported success and produced nothing, and
+# a path that broke the header across lines all end there. A path carrying a
+# quote or a backslash does NOT: the reader here matches the header this
+# wrote, while the harness reads both characters as TOML string syntax and
+# takes the file, or the key, to say something else. Neither reaches here from
+# a path kendex builds.
+lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
+  local lane dir="$2" config home entry name staged rc=0
   # The ACCOUNT, never a private home. A caller inside a launched session reads
   # its own CODEX_HOME to name its lane, and a home taken raw here would hold
   # the next home inside it, one level deeper per launch, each level linking
   # the level above rather than the account.
-  lane="$(lane_launch_home_account "$2")" || { LANE_TRUST_REASON=home-path; return 1; }
+  lane="$(lane_launch_home_account "$1")" || { LANE_TRUST_REASON=home-path; return 1; }
   [ -n "$lane" ] || { LANE_TRUST_REASON=home-path; return 1; }
   LANE_TRUST_HOME="$lane"
   config="$lane/config.toml"
@@ -941,11 +1111,13 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 # render `1codex` running claude's arguments. Both fall through to the prefix
 # form, which selected these lanes correctly all along.
 #
-# Local claude and codex launches only, which the caller establishes before it
-# asks: a launch on another machine answers about the wrong PATH, and
-# CLAUDE_CONFIG_DIR and CODEX_HOME are those two harnesses' own variables. A
-# rendered command that does not open on the harness word has no first word to
-# replace, so it keeps the prefix — which the account check still verifies.
+# Local claude, codex and copilot launches only, which the caller establishes
+# before it asks: a launch on another machine answers about the wrong PATH,
+# and CLAUDE_CONFIG_DIR, CODEX_HOME and COPILOT_HOME are those harnesses' own
+# variables. A rendered command that does not open on the harness word has no
+# first word to replace, so it keeps the prefix — which the account check
+# still verifies. A Copilot launcher such as `1copilot` exports COPILOT_HOME
+# for its own name exactly as the others do.
 #
 # TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
 # template, whose first word is not ours to replace. It is an input to this
@@ -955,7 +1127,7 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 # whatever its caller initialised the form to, and is read back by nothing.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
+  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
