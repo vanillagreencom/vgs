@@ -1,6 +1,6 @@
 # Themes
 
-Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, scripts/test-vgsh-theme-judge.js
+Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, scripts/test-vgsh-theme-judge.js, scripts/test-judge-files.js
 
 A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the directory walk, the list, the apply and the reload.
 
@@ -68,3 +68,4 @@ Applying a third-party package carries plugin-level trust. A curated target file
 9. The `theme` capability rules: [theme-capability.md § Invariants](theme-capability.md#invariants).
 10. Add lands a package under its document name from a staging directory and refuses a package the judge refuses, the reserved `vgs` and `targets`, a source without `theme.json` and an occupied name, leaving nothing behind; update fast-forwards, refuses a modified checkout and a rewritten history, and rolls back a refused or renamed version; remove deletes only an installed directory; none runs a git hook; each is refused busy while the theme lock is held; and no git call inherits the lock's descriptor. Enforced by `scripts/test-vgsh.sh`, with copies of `bin/vgsh` whose install verbs take no lock and whose git calls keep the descriptor as its controls.
 11. The background rules: [theme-backgrounds.md § Invariants](theme-backgrounds.md#invariants).
+12. `replaceFile` in `bin/lib/judge-files.js` creates the staging copy of a file kept with a mode owner-only, a stale one of its process removed first, and gives it that mode only once it is full. Enforced by `scripts/test-judge-files.js`, whose controls drop the owner-only creation, the stale removal and the kept mode from a copy of the helper.

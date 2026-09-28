@@ -79,15 +79,23 @@ function writing(file, key, write) {
 
 // Replace a file by rename, so a shell watching it never reads half of it.
 // DATA is a string or a Buffer, written as it is; MODE, when given, is the
-// permission bits the new file takes. A failure leaves no temporary file and
+// permission bits the new file takes. With a MODE the file kept may be
+// private, such as a CLI's settings holding credentials, so the staging copy
+// is created afresh and owner-only before any byte is written, and takes
+// MODE only once it holds DATA. A failure leaves no temporary file and
 // refuses as `writing` does.
 function replaceFile(file, data, key, mode) {
     const tmp = file + ".vgsh-" + process.pid;
     writing(file, key, () => {
         try {
             fs.mkdirSync(path.dirname(file), { recursive: true });
-            fs.writeFileSync(tmp, data);
-            if (mode !== undefined) fs.chmodSync(tmp, mode);
+            if (mode === undefined) {
+                fs.writeFileSync(tmp, data);
+            } else {
+                fs.rmSync(tmp, { force: true });
+                fs.writeFileSync(tmp, data, { flag: "wx", mode: 0o600 });
+                fs.chmodSync(tmp, mode);
+            }
             fs.renameSync(tmp, file);
         } catch (e) {
             fs.rmSync(tmp, { force: true });
