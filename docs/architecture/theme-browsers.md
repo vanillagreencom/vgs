@@ -9,7 +9,7 @@ The browser targets, beside the others of [theme-targets.md § Targets](theme-ta
 | `pywalfox` | `hex6` | `pywalfox` | Link `colors.json` in `${XDG_CACHE_HOME:-~/.cache}/wal`, naming `pywalfox.json`, not owned: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-wiring). | `pywalfox update`, 5000 ms. |
 | `zen` | `hex6` | `zen-browser` | `@import url("file://@{state}/zen.css");` first in `chrome/userChrome.css` of every profile of `~/.zen/profiles.ini`, else `~/.config/zen/profiles.ini`, created when absent: [theme-wiring.md § Profile wiring](theme-wiring.md#profile-wiring). | None: Zen reads the file at startup. |
 
-Chromium is not a target: its only theme-colour input is `BrowserThemeColor`, a root-owned managed policy. Chromium in its GTK theme mode follows the GTK target's colours: [theme-toolkits.md](theme-toolkits.md).
+Chromium, Google Chrome and Brave follow the theme in GTK mode only, and no target writes their colour: [D027](../decisions/D027-chromium-follows-gtk-mode.md). The user picks GTK once under the browser's Appearance settings. In GTK mode the browser reads its colours from GTK when it starts, and GTK reads the `gtk3` and `gtk4` targets' import: [theme-toolkits.md](theme-toolkits.md). In Classic mode the browser keeps the colour the user picks inside it, since its one outside colour input is the managed policy `BrowserThemeColor`, a root-owned file under `/etc`. Theme apply runs unprivileged and writes nothing under `/etc`.
 
 ## Zen
 
