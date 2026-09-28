@@ -449,6 +449,7 @@ def png(name, w, h, rgb):
         f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", rows) + chunk(b"IEND", b""))
 png("a.png", 4000, 2000, (200, 40, 40))
 png("b.png", 64, 36, (40, 40, 200))
+png("c.png", 48, 48, (40, 200, 40))
 PY
 vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
 # What the first screen's background draws: `<path> <status>`, `-` for no
@@ -457,6 +458,10 @@ vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
 background_image() { ipc smoke images "background:$screen_name" vgs.background | python3 -c 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
 background_covers() { ipc smoke images "background:$screen_name" vgs.background | python3 -c 'import json,sys; _,_,box,size=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
 background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
+# The drawn image's decoded width over its height, to one decimal place.
+background_ratio() { ipc smoke images "background:$screen_name" vgs.background | python3 -c 'import json,sys; size=json.load(sys.stdin)[0][3]; print("%.1f" % (size[0] / size[1]))'; }
+# Replace the state file whole with one naming image PATH.
+bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }
 
 expect "the background plugin is disabled before its block" False plugin_enabled vgs.background
 expect "a package with backgrounds applies" "ok theme=scenic state=applied shell=applied" vgsh_theme apply scenic
@@ -489,8 +494,8 @@ expect_poll "the rewritten state file draws the first image again" "$scenic/back
 # ample for it.
 plugin_qml="$repo/shell/plugins/vgs.background/Background.qml"
 cp -p -- "$plugin_qml" "$sandbox/Background.qml.real"
-if [[ $(grep -c -F 'onFileChanged: reload()' -- "$plugin_qml") == 1 ]]; then
-  python3 -c 'import sys; p, q = sys.argv[1:]; open(q, "w").write(open(p).read().replace("onFileChanged: reload()", "onFileChanged: {}"))' "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+if [[ $(grep -c -F 'onFileChanged: root.changed()' -- "$plugin_qml") == 1 ]]; then
+  python3 -c 'import sys; p, q = sys.argv[1:]; open(q, "w").write(open(p).read().replace("onFileChanged: root.changed()", "onFileChanged: {}"))' "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
   control_builds="$(builds)" || { fail "buildCount unreadable before the unwatched control"; control_builds=0; }
   expect "a rescan builds the unwatched control" ok ipc shell rescanPlugins
   expect_poll "the control is built on every screen" "$((control_builds + monitors))" builds
@@ -504,6 +509,19 @@ if [[ $(grep -c -F 'onFileChanged: reload()' -- "$plugin_qml") == 1 ]]; then
 else
   fail "the unwatched control's text occurs once in $plugin_qml"
 fi
+
+# Two state changes that land back to back draw the later one. The row
+# does not force the second change into the first one's read; it pins that
+# the last state wins.
+bg_state_names "$scenic/backgrounds/a.png"; bg_state_names "$scenic/backgrounds/c.png"
+expect_poll "back-to-back state changes draw the later image" "$scenic/backgrounds/c.png ready" background_image
+# An image replaced under its name is decoded again once its package
+# applies again: the 2:1 a.png becomes a 16:9 image.
+expect "the package applies over the hand-written state" "ok theme=scenic state=unchanged shell=unchanged" vgsh_theme apply scenic
+expect_poll "the package's first image is drawn at its 2:1 shape" 2.0 background_ratio
+cp -- "$scenic/backgrounds/b.png" "$scenic/backgrounds/a.png.tmp" && mv -T -- "$scenic/backgrounds/a.png.tmp" "$scenic/backgrounds/a.png"
+expect "the package applies over its replaced image" "ok theme=scenic state=unchanged shell=unchanged" vgsh_theme apply scenic
+expect_poll "the replaced image is decoded again at its 16:9 shape" 1.8 background_ratio
 
 expect "vgs applies after the background rows" "ok theme=vgs state=applied shell=applied" vgsh_theme apply vgs
 expect "vgsh plugin disable turns the background plugin off" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin disable vgs.background

@@ -23,7 +23,16 @@ printf 'c' >"$tmp/c-target"; ln -s -- "$tmp/c-target" "$images/c.png"; ln -s -- 
 
 links_to() { [[ -L $link && "$(readlink -- "$link")" == "$images/$1" ]]; }
 no_link() { [[ ! -e $link && ! -L $link ]]; }
-doc_is() { [[ -f $doc && "$(cat -- "$doc")" == "{\"schemaVersion\":1,\"current\":$1,\"themes\":$2}" ]]; }
+# doc_is CURRENT THEMES: the state file's `current` and `themes` as JSON,
+# its keys in the runner's order, and a stamp that leads with the current
+# image's size, null for no image.
+doc_is() {
+  [[ -f $doc ]] && python3 -c 'import json,os,sys
+d, cur, themes = json.load(open(sys.argv[1])), json.loads(sys.argv[2]), json.loads(sys.argv[3])
+stamp = None if cur is None else "%d:" % os.stat(cur).st_size
+sys.exit(0 if list(d) == ["schemaVersion", "current", "stamp", "themes"] and d["schemaVersion"] == 1 and d["current"] == cur and d["themes"] == themes and (d["stamp"] is None if stamp is None else d["stamp"].startswith(stamp)) else 1)' "$doc" "$1" "$2"
+}
+stamp_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stamp"])' "$doc"; }
 no_doc() { [[ ! -e $doc && ! -L $doc ]]; }
 at() { printf '"%s/%s"' "$images" "$1"; }
 next_line() { printf 'ok background=%s theme=dusk path=%s/%s' "$1" "$images" "$1"; }
@@ -49,6 +58,15 @@ mv -- "$images/b.png" "$tmp/b.png"
 tinst "an apply whose remembered image is gone is accepted" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
 check "a remembered image that is gone falls back to the first" links_to a.JPG
 mv -- "$tmp/b.png" "$images/b.png"
+# An image replaced under its name gives the state file a new stamp, so the
+# plugin decodes it again.
+tinst "an apply whose remembered image is back is accepted" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "the remembered image is shown again once it is back" links_to b.png
+before_stamp="$(stamp_of)"; before_inode="$(stat -c %i -- "$doc")"
+printf 'b2' >"$images/b.png.new" && mv -T -- "$images/b.png.new" "$images/b.png"
+tinst "an apply over a replaced image is accepted" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+check "a replaced image replaces the state file with a new stamp" test "$(stamp_of)" != "$before_stamp" -a "$(stat -c %i -- "$doc")" != "$before_inode"
+check "the rewritten state file names the replaced image" doc_is "$(at b.png)" '{"dusk":"b.png"}'
 # An empty state is no file: nothing current and nothing remembered.
 rm -- "$doc"
 tinst "nord applies over no state file" "$cfg" "$rt_empty" 0 "ok theme=nord state=applied shell=applied" "" theme apply nord
@@ -57,7 +75,7 @@ check "no current image and nothing remembered writes no state file" no_doc
 # A state file or a backgrounds/ the judge cannot use refuses the apply
 # before anything moves, so the theme file keeps nord.
 nord_bytes="$tmp/nord.json"; cp -- "$file" "$nord_bytes"
-printf '{ "schemaVersion": 1, "current": null, "themes": { "dusk": "../x.png" } }\n' >"$doc"
+printf '{ "schemaVersion": 1, "current": null, "stamp": null, "themes": { "dusk": "../x.png" } }\n' >"$doc"
 tinst "an apply over a malformed state file is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=dusk reason=malformed path=$doc" theme apply dusk
 tinst "next over a malformed state file is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: background=next reason=malformed path=$doc" theme background next
 printf '{ nope\n' >"$doc"
@@ -111,8 +129,15 @@ tinst "the wrap control moves to b.png" "$cfg" "$rt_empty" 0 "$(next_line b.png)
 tinst "the wrap control reaches the last image" "$cfg" "$rt_empty" 0 "$(next_line c.png)" "" theme background next
 judge_control wrap '(list.indexOf(backgrounds.choose(list, shown.themes[name])) + 1) % list.length' 'Math.min(list.indexOf(backgrounds.choose(list, shown.themes[name])) + 1, list.length - 1)'
 tinst "the wrap mutant stays on the last image" "$cfg" "$rt_empty" 0 "$(next_line c.png)" "" theme background next
+reset_dusk "stamp control"
+bg_control stamp '            stamp = stat.size + ":" + stat.mtimeMs;' '            stamp = "fixed";'
+tinst "the stamp mutant applies dusk" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+before_inode="$(stat -c %i -- "$doc")"
+printf 'a3' >"$images/a.JPG.new" && mv -T -- "$images/a.JPG.new" "$images/a.JPG"
+tinst "the stamp mutant applies over a replaced image" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
+check "the stamp mutant leaves the state file in place for a replaced image" test "$(stat -c %i -- "$doc")" == "$before_inode"
 reset_dusk "refusal control"
-printf '{ "schemaVersion": 1, "current": null, "themes": { "dusk": "../x.png" } }\n' >"$doc"
+printf '{ "schemaVersion": 1, "current": null, "stamp": null, "themes": { "dusk": "../x.png" } }\n' >"$doc"
 bg_control refusal 'if (!shaped) refuse(key + "=malformed path=" + file, "malformed");' ''
 tinst "the refusal mutant applies over a malformed state file" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 unset THEME_BIN

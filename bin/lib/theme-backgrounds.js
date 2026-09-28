@@ -4,12 +4,14 @@
 // state directory as backgrounds.json and the `background` symlink.
 //
 // backgrounds.json is `{ "schemaVersion": 1, "current": <path|null>,
-// "themes": { "<theme>": "<file>" } }`: `current` is the absolute path of
-// the image the `background` symlink names, which the vgs.background
-// plugin draws, and `themes` the image `next` last chose for each theme.
-// An absent file is no current image and nothing remembered; a state that
-// is both is written as no file. The judge is this file's only writer:
-// docs/architecture/theme-backgrounds.md.
+// "stamp": <string|null>, "themes": { "<theme>": "<file>" } }`: `current`
+// is the absolute path of the image the `background` symlink names, which
+// the vgs.background plugin draws, `stamp` that file's size and
+// modification time, so an image replaced under its name rewrites the file
+// and the plugin decodes it again, and `themes` the image `next` last chose
+// for each theme. An absent file is no current image and nothing
+// remembered; a state that is both is written as no file. The judge is
+// this file's only writer: docs/architecture/theme-backgrounds.md.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -46,19 +48,20 @@ function images(pkg, key) {
     }
 }
 
-// The state STATE_DIR's backgrounds.json holds, as { current, themes },
+// The state STATE_DIR's backgrounds.json holds, as { current, stamp, themes },
 // `themes` in name order, judged with LOGIC, shell/Commons/ThemeLogic.js.
 // KEY leads the refusal for a file that cannot be read or parsed, or is not
 // the shape the header states.
 function read(logic, stateDir, key) {
     const file = path.join(stateDir, STATE_FILE);
     const doc = readJson(file, key, true);
-    if (doc === null) return { current: null, themes: {} };
-    const shaped = logic.isPlainObject(doc) && Object.keys(doc).length === 3 && doc.schemaVersion === 1 &&
-        (doc.current === null || (typeof doc.current === "string" && path.isAbsolute(doc.current))) &&
+    if (doc === null) return { current: null, stamp: null, themes: {} };
+    const shaped = logic.isPlainObject(doc) && Object.keys(doc).length === 4 && doc.schemaVersion === 1 &&
+        ((doc.current === null && doc.stamp === null) ||
+            (typeof doc.current === "string" && path.isAbsolute(doc.current) && typeof doc.stamp === "string")) &&
         logic.isPlainObject(doc.themes) && Object.values(doc.themes).every(isImageName);
     if (!shaped) refuse(key + "=malformed path=" + file, "malformed");
-    return { current: doc.current, themes: sortedKeys(doc.themes) };
+    return { current: doc.current, stamp: doc.stamp, themes: sortedKeys(doc.themes) };
 }
 
 function sortedKeys(object) {
@@ -78,10 +81,20 @@ function choose(list, remembered) {
 // current background: the `background` symlink first, replaced by rename,
 // then backgrounds.json with THEMES, the remembered images, when it differs
 // from BEFORE, the state `read` answered. Answers the image's path or null.
-// Each write that fails refuses under KEY.
+// An image that cannot be read refuses under KEY, as does each write that
+// fails.
 function land(stateDir, pkg, file, themes, before, key) {
     const link = path.join(stateDir, LINK);
     const current = file === null ? null : path.resolve(pkg, DIR, file);
+    let stamp = null;
+    if (current !== null) {
+        try {
+            const stat = fs.statSync(current);
+            stamp = stat.size + ":" + stat.mtimeMs;
+        } catch (e) {
+            refuse(key + "=unreadable path=" + current + " error=" + e.code, "unreadable");
+        }
+    }
     writing(link, key, () => {
         let named = null;
         try {
@@ -106,11 +119,11 @@ function land(stateDir, pkg, file, themes, before, key) {
         }
     });
     const sorted = sortedKeys(themes);
-    const after = { current, themes: sorted };
+    const after = { current, stamp, themes: sorted };
     if (JSON.stringify(after) === JSON.stringify(before)) return current;
     const state = path.join(stateDir, STATE_FILE);
     if (current === null && Object.keys(sorted).length === 0) writing(state, key, () => fs.rmSync(state, { force: true }));
-    else replaceFile(state, JSON.stringify({ schemaVersion: 1, current, themes: sorted }) + "\n", key);
+    else replaceFile(state, JSON.stringify(Object.assign({ schemaVersion: 1 }, after)) + "\n", key);
     return current;
 }
 
