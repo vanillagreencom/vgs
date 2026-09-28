@@ -127,6 +127,7 @@ check "every agent target is written" all_state "claude written None;codex writt
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
 check "opencode's hook signals only the interactive process" test -f "$tmp/opencode-plain-signaled" -a ! -e "$tmp/opencode-serve-signaled"
+check "opencode's hook disables globbing before splitting argv" grep -qF 'set -f; set -- $args' "$tree/themes/targets/opencode/target.json"
 
 # Each file parses as its CLI reads it and holds hex6 colours: dusk's accent
 # is #111111, the table's background #000000 and the shipped slot color5

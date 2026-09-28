@@ -32,7 +32,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-28 | D027 | VGS-487 | Chromium-family browsers follow the theme through their GTK mode alone | Their one external colour input is a root-owned, machine-wide managed policy | Chromium reads a user-owned colour input, or the owner accepts a privileged apply step | Superseded by D029 | [Full](D027-chromium-follows-gtk-mode.md) |
 | 2026-09-28 | D029 | VGS-491 | Chromium-family browsers take the theme colour from a managed policy one narrow writer keeps | The policy is their one outside colour input; a hex-only NOPASSWD rule grants a colour and nothing else | Chromium reads a user-owned colour input, or a second policy key needs writing | Active | [Full](D029-chromium-policy-writer.md) |
 
-| 2026-09-28 | D029 | VGS-492 | Managed copies serve watched theme directories | Directory watchers need a changed file | Atomic copies fail to hot-reload | Active | [Full](D029-managed-copies-for-watched-theme-directories.md) |
+| 2026-09-28 | D030 | VGS-492 | Managed copies serve watched theme directories | Directory watchers need a changed file | Atomic copies fail to hot-reload | Active | [Full](D030-managed-copies-for-watched-theme-directories.md) |
 
 ---
 

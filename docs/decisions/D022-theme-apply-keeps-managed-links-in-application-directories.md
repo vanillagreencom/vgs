@@ -43,6 +43,6 @@ The decision stands for links. VGS-471 adds [D024](D024-theme-apply-sets-one-the
 
 ## Revisit Outcome (2026-09-28, VGS-492)
 
-The decision stands for applications that follow symlinks at read time. [D029](D029-managed-copies-for-watched-theme-directories.md) adds managed copies for applications whose running sessions watch their own theme directory or active theme file. The entry wiring form now carries exactly one of `links` or `copies`.
+The decision stands for applications that follow symlinks at read time. [D030](D030-managed-copies-for-watched-theme-directories.md) adds managed copies for applications whose running sessions watch their own theme directory or active theme file. The entry wiring form now carries exactly one of `links` or `copies`.
 
 **References**: [D021](D021-theme-apply-writes-beside-each-destination.md), [D019](D019-theme-packages-carry-plugin-trust.md)

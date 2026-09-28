@@ -34,7 +34,7 @@ An include target with `fallbacks` first tries `file` under the configuration ho
 
 Helix, Zed and VS Code take their theme through this form; any target whose application finds its theme in a directory of its own may.
 
-An application that reads no include line from its configuration finds its themes by name in a directory of its own, such as Helix's `~/.config/helix/themes/`. The entry form keeps entries there instead: managed links from [D022](../decisions/D022-theme-apply-keeps-managed-links-in-application-directories.md), or managed copies from [D029](../decisions/D029-managed-copies-for-watched-theme-directories.md) when the application watches that directory for file writes. The user selects the theme once in the application, or the target's `select` key sets it.
+An application that reads no include line from its configuration finds its themes by name in a directory of its own, such as Helix's `~/.config/helix/themes/`. The entry form keeps entries there instead: managed links from [D022](../decisions/D022-theme-apply-keeps-managed-links-in-application-directories.md), or managed copies from [D030](../decisions/D030-managed-copies-for-watched-theme-directories.md) when the application watches that directory for file writes. The user selects the theme once in the application, or the target's `select` key sets it.
 
 | Key | Holds |
 |---|---|
@@ -49,6 +49,7 @@ An application that reads no include line from its configuration finds its theme
 
 - **Managed.** A link is the target's when it is a symlink whose target is exactly its `to`. Apply writes no other kind of entry, and nothing else points into the state directory's `theme/`, so a symlink to it proves the link is managed without a marker file. A managed link whose file is gone is still managed.
 - **Managed copy.** A copy is the target's when it is a regular file whose bytes equal either the target file in `theme/` read before the swap or the new render, or when it is the old managed link form for that target. Apply replaces a managed copy whose bytes differ by rename from a file staged beside it, with mode `0644`. A copy already holding the new bytes is not written.
+- **Interrupted copy update.** If an apply swaps `theme/` and then dies or fails before wiring updates a copy, that copy can hold bytes that match neither the previous render nor the new one. The next apply treats it as `entry-occupied`; remove the stale copy and apply again.
 - **Occupied.** A `dir` that exists and is no directory, or an entry path holding anything but its managed form, skips the target with reason `entry-occupied`. Nothing at that path is replaced.
 - **Vaults.** `vaultDirs` reads the registry's `vaults.<id>.path`, each absolute one once, in its order. A vault whose first `dir` segment is no directory, one that is gone or was never opened, takes no entries. An absent registry, or one listing no such vault, skips the target with `wiring-file-absent`; one that cannot be read, or that is no JSON object with an object `vaults`, fails it with `unreadable`, on apply and on disable. Apply keeps the entries in every such vault, and a disabled target's removal takes them from every one.
 - **Symlinked directories.** `dir` and its parents are followed where they stand, so a dotfile manager's link to a directory serves, and the link is created in the directory it names.
