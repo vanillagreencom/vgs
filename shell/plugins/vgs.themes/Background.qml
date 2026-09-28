@@ -25,11 +25,10 @@ Item {
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         retainWhileLoading: true
-        // Decoded at the size that covers the screen, never the file's own,
-        // and sized from the screen, since the item has no size while the
-        // host maps no surface: https://doc.qt.io/qt-6/qml-qtquick-image.html#sourceSize-prop
-        sourceSize.width: root.screen === null ? 0 : root.screen.width
-        sourceSize.height: root.screen === null ? 0 : root.screen.height
+        // Decode at device pixels, sized from the screen because the item
+        // has no size while the host maps no surface.
+        sourceSize.width: root.screen === null ? 0 : Math.ceil(root.screen.width * root.screen.devicePixelRatio)
+        sourceSize.height: root.screen === null ? 0 : Math.ceil(root.screen.height * root.screen.devicePixelRatio)
         // Each screen holds its own decode.
         cache: false
         onStatusChanged: {

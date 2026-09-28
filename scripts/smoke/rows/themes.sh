@@ -476,11 +476,15 @@ vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
 # What the first screen's background draws: `<path> <status>`, `-` for no
 # image. background_covers: whether the image decoded to cover its box and
 # smaller than the 4000x2000 file.
-background_image() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
-background_covers() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; _,_,box,size=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
+background_image_on() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
+background_image() { background_image_on "$screen_name"; }
+background_covers() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; _,_,box,size,*_=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
 background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
 # The drawn image's decoded width over its height, to one decimal place.
 background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; size=json.load(sys.stdin)[0][3]; print("%.1f" % (size[0] / size[1]))'; }
+background_source_size() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
+background_device_size() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,math,sys; r=json.load(sys.stdin); box=r[0][2]; print("%dx%d" % (math.ceil(box[0] * float(sys.argv[1])), math.ceil(box[1] * float(sys.argv[1]))))' "$2"; }
+screen_listed() { hypr -j monitors | python3 -c 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
 # Replace the state file whole with one naming image PATH.
 bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }
 # The state file's current image and the image it remembers for scenic, as
@@ -512,6 +516,42 @@ expect "the apply links the package's first image" "$scenic/backgrounds/a.png" b
 expect_poll "the background draws the applied package's first image" "$scenic/backgrounds/a.png ready" background_image
 expect_poll "the host maps one surface per screen once the image is drawn" "$monitors" layer_count vgs:background
 expect "the image is decoded to cover the screen, not at the file's size" True background_covers
+expect_poll "the scale-1 screen requests its logical size" "$(background_device_size "$screen_name" 1)" background_source_size "$screen_name"
+
+hidpi_output=SMOKE-HIDPI
+expect "the nested compositor adds a scale-2 monitor" ok hypr output create headless "$hidpi_output"
+expect_poll "the scale-2 monitor is listed" True screen_listed "$hidpi_output"
+expect_poll "the scale-2 monitor gets a background" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
+expect_poll "the host maps the scale-2 background with the others" "$((monitors + 1))" layer_count vgs:background
+expect_poll "the scale-2 background requests device pixels" "$(background_device_size "$hidpi_output" 2)" background_source_size "$hidpi_output"
+
+plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"
+cp -p -- "$plugin_qml" "$sandbox/Background.qml.device-pixels.real"
+python3 - "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" <<'PY'
+import pathlib, sys
+src, dst = map(pathlib.Path, sys.argv[1:])
+text = src.read_text()
+replacements = {
+    "Math.ceil(root.screen.width * root.screen.devicePixelRatio)": "root.screen.width",
+    "Math.ceil(root.screen.height * root.screen.devicePixelRatio)": "root.screen.height",
+}
+for old in replacements:
+    assert text.count(old) == 1, f"device-pixel control must match once: {old}"
+for old, new in replacements.items():
+    text = text.replace(old, new)
+assert text != src.read_text(), "device-pixel control must change the file"
+dst.write_text(text)
+PY
+mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+expect "a rescan builds the logical-pixel control" ok ipc shell rescanPlugins
+expect_poll "the logical-pixel control decodes the scale-2 screen at logical pixels" "$(background_device_size "$hidpi_output" 1)" background_source_size "$hidpi_output"
+cp -p -- "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
+expect "a rescan restores the device-pixel background" ok ipc shell rescanPlugins
+expect_poll "the restored scale-2 background requests device pixels" "$(background_device_size "$hidpi_output" 2)" background_source_size "$hidpi_output"
+expect "the follow after the device-pixel rescan queued ends" idle theme_idle
+expect "the nested compositor removes the scale-2 monitor" ok hypr output remove "$hidpi_output"
+expect_poll "the scale-2 background surface is gone" "$monitors" layer_count vgs:background
+expect_poll "the removed scale-2 monitor is gone" False screen_listed "$hidpi_output"
 expect "next moves to the package's second image" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
 expect_poll "the background follows next" "$scenic/backgrounds/b.png ready" background_image
 expect "previous moves back to the package's first image" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background previous

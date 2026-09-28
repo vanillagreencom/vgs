@@ -121,6 +121,7 @@ repo="$sandbox/repo"
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+hl.monitor({ output = "SMOKE-HIDPI", mode = "1280x720", position = "auto", scale = 2 })
 hl.config({
     misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_autoreload = true },
     animations = { enabled = false },
