@@ -22,6 +22,7 @@ The shipped packages are `vgs`, the dark defaults and the revert, and `light`, t
 - `ThemeLogic.acceptPackage` takes the token table and file texts. It performs no I/O. It judges `theme.json` through `ThemeLogic.accept`, judges terminal slot names and colours, checks the directory/document name match, and applies the `vgs` reservation.
 - `bin/vgsh-theme-judge` walks the package and target directories, reads every file an apply needs, and makes every decision through `ThemeLogic.js`, `Tokens.js` and, for `shell.json`, `PluginLogic.js`, loaded through `scripts/qml-library.js`. Its refusal and its file writes are `bin/lib/judge-files.js`, shared with `bin/vgsh-plugin-judge`.
 - `bin/lib/theme-render.js` judges `target.json`, renders templates and chooses the terminal slots. It performs no I/O: the judge reads every file and passes its text or bytes, with `ThemeLogic.js` and the token table as arguments, so a token path means what it means to the shell.
+- `bin/lib/theme-select.js` decides the text a settings file takes when a target's `select` sets its theme key. It performs no I/O either.
 - `shell/Core/ThemeRunner.qml` owns the `vgsh theme` process behind the `theme` capability: [theme-capability.md](theme-capability.md). It starts runner commands and reports their structured result; it judges no package file itself.
 - `shell/plugins/vgs.themes/**` belongs to [theme-capability.md § Plugin](theme-capability.md#plugin). This topic covers package and core runner contracts only.
 

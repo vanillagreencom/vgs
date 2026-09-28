@@ -26,6 +26,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-27 | D021 | VGS-461 | Theme apply stages every write beside its destination, edits wiring through symlinks, writes the shell document last | Renames stay atomic on one filesystem; dotfile links survive | An application reads its configuration through a hard link | Active (application-directory writes → D022) | [Full](D021-theme-apply-writes-beside-each-destination.md) |
 | 2026-09-27 | D022 | VGS-468 | Theme apply keeps managed symlinks in an application's own theme or extension directory | Helix, Zed and VS Code read no include line; a symlink into theme/ proves ownership | An application refuses a symlinked theme or extension entry | Revisited | [Full](D022-theme-apply-keeps-managed-links-in-application-directories.md) |
 | 2026-09-27 | D023 | VGS-475 | A plugin may own its look, a judged table taking the theme's mode, accent and motion scale alone | The owner's glass designs must not restyle with unrelated theme values, and every value stays judged | A plugin needs a third theme input, or qs.Ui gains parameterized components such plugins share | Active | [Full](D023-plugin-owned-appearance.md) |
+| 2026-09-28 | D024 | VGS-471 | Theme apply sets one theme key in a CLI's own settings file | The key alone makes the CLI read the linked theme; a line edit keeps every other byte | A CLI names its theme in a file shape the edit refuses | Active | [Full](D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md) |
 
 ---
 

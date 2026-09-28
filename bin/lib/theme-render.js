@@ -14,6 +14,18 @@
 // Every key target.json carries, each required. `wiring` and `reload` may
 // be null.
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
+// The one optional top-level key: the theme selection apply keeps in the
+// application's own settings file, `{ base, file, format, key, value }`,
+// beside any wiring form. bin/lib/theme-select.js makes the edit.
+const SELECT_KEY = "select";
+const SELECT_KEYS = ["base", "file", "format", "key", "value"];
+const SELECT_FORMATS = ["json", "toml", "yaml"];
+// The longest `key` a line-exact format takes: a root key, or a key in one
+// table or top-level mapping. JSON takes any depth.
+const SELECT_LINE_DEPTH = 2;
+// A character a selection value may not hold, since a TOML basic string
+// refuses it raw.
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 const FILE_KEYS = ["template", "destination"];
 // The one optional key of a `files` entry: the top-level JSON keys, one of
 // which a package's curated file of that destination must hold to be taken.
@@ -32,9 +44,9 @@ const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];
 const ENTRY_KEYS = ["base", "dir", "owned", "links"];
 const ENTRY_OPTIONAL_KEYS = ["vaults"];
 const ENTRY_KEY = "links";
-// The directories an entry's `dir` is relative to: the user's configuration
-// home, ${XDG_CONFIG_HOME:-~/.config}, the home directory, or the user's
-// cache home, ${XDG_CACHE_HOME:-~/.cache}.
+// The directories an entry's `dir` and a selection's `file` are relative
+// to: the user's configuration home, ${XDG_CONFIG_HOME:-~/.config}, the home
+// directory, or the user's cache home, ${XDG_CACHE_HOME:-~/.cache}.
 const ENTRY_BASES = ["config", "home", "cache"];
 const RELOAD_KEYS = ["command", "timeoutMs"];
 // The one optional reload key: `true` makes the hook due on every apply that
@@ -58,8 +70,8 @@ const TERMINAL_PREFIX = "terminal.";
 const CASE_SEPARATOR = "|";
 const CASE_PATTERN = /^([^=]+)=(.+)$/;
 
-// The one placeholder a wiring line and a reload argument hold: the stable
-// state directory.
+// The one placeholder a wiring line, a reload argument and a selection
+// value hold: the stable state directory.
 const STATE_PLACEHOLDER = "state";
 
 // One segment of an entry's `dir` or `vaults` or of a wiring's `profiles`:
@@ -68,7 +80,8 @@ const STATE_PLACEHOLDER = "state";
 const DIR_SEGMENT_PATTERN = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // A wiring section is one bare name, as an INI section or a TOML table
-// header writes it between brackets.
+// header writes it between brackets; so is each segment of a selection's
+// `key`.
 const SECTION_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // A section header line: the name between brackets, whitespace around it
@@ -254,6 +267,24 @@ function detected(detect, onPath) {
     return detect.every(entry => Array.isArray(entry) ? entry.some(onPath) : onPath(entry));
 }
 
+// The first defect of `select`, or "": a settings file under one of the
+// entry bases, one name per segment, its format, the key path the theme is
+// named at, one bare name per segment and at most SELECT_LINE_DEPTH of them
+// for a line-exact format, and one line of value whose only placeholder is
+// `@{state}`.
+function selectError(logic, select) {
+    if (!hasExactKeys(logic, select, SELECT_KEYS)) return "key=select";
+    if (!ENTRY_BASES.includes(select.base)) return "key=select.base";
+    if (!isRelativePath(select.file)) return "key=select.file";
+    if (!SELECT_FORMATS.includes(select.format)) return "key=select.format";
+    if (!Array.isArray(select.key) || select.key.length === 0 || !select.key.every(segment => typeof segment === "string" && SECTION_PATTERN.test(segment)) ||
+        (select.format !== "json" && select.key.length > SELECT_LINE_DEPTH)) return "key=select.key";
+    if (!isLine(select.value) || CONTROL_CHARACTER.test(select.value)) return "key=select.value";
+    const names = placeholderNames(select.value);
+    if (names === null || names.some(name => name !== STATE_PLACEHOLDER)) return "key=select.value";
+    return "";
+}
+
 // Judge the target.json TEXT of the target directory NAME. Answers
 // { ok: true, target } with `target` the document and its `name`, or one
 // refusal.
@@ -267,7 +298,7 @@ function acceptTarget(logic, name, text) {
     }
     if (!logic.isPlainObject(document)) return refused("target-schema", "key=document");
     for (const key of Object.keys(document))
-        if (!TARGET_KEYS.includes(key)) return refused("target-schema", "unknown=" + key);
+        if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY) return refused("target-schema", "unknown=" + key);
     for (const key of TARGET_KEYS)
         if (!logic.hasOwn(document, key)) return refused("target-schema", "missing=" + key);
     if (!isLine(document.app)) return refused("target-schema", "key=app");
@@ -287,6 +318,8 @@ function acceptTarget(logic, name, text) {
     if (wiring !== "") return refused("target-schema", wiring);
     const reload = reloadError(logic, document.reload);
     if (reload !== "") return refused("target-schema", reload);
+    const select = logic.hasOwn(document, SELECT_KEY) ? selectError(logic, document.select) : "";
+    if (select !== "") return refused("target-schema", select);
     return { ok: true, target: Object.assign({ name }, document) };
 }
 
@@ -401,6 +434,13 @@ function reloadCommand(target, state) {
     return target.reload.command.map(arg => withState(arg, state, "reloadCommand: a reload argument of target " + target.name));
 }
 
+// The value an accepted TARGET's `select` names its theme with, `@{state}`
+// written as STATE, the state directory's `theme/` path.
+function selectValue(target, state) {
+    if (target.select === undefined) throw new Error("theme-render: selectValue: target " + target.name + " has no select");
+    return withState(target.select.value, state, "selectValue: the selection value of target " + target.name);
+}
+
 // Whether an accepted TARGET's hook is due on every apply that lands it,
 // not only on changed bytes or a pending reload.
 function reloadAlways(target) {
@@ -454,10 +494,16 @@ function vaultDirs(logic, text) {
     return dirs;
 }
 
-// Whether the line TEXT is the header of SECTION.
+// Whether the line TEXT is the header of SECTION. bin/lib/theme-select.js
+// takes the same judgement for a TOML table.
 function isSectionHeader(text, section) {
     const m = SECTION_HEADER.exec(text);
     return m !== null && m[1] === section;
+}
+
+// Whether the line TEXT opens a section, a TOML array of tables included.
+function opensSection(text) {
+    return ANY_HEADER.test(text);
 }
 
 // The key a `key = value` line TEXT assigns, trimmed, or null for a line
@@ -590,4 +636,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, wiredText, unwiredText };
+module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };

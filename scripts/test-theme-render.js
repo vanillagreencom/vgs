@@ -531,7 +531,7 @@ const CONTROLS = [
     ["own terminal first", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [defaults, pkg]) {"],
     ["terminal fallback", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [pkg]) {"],
     ["target name", "if (typeof name !== \"string\" || !TARGET_NAME_PATTERN.test(name))", "if (false)"],
-    ["unknown key", "if (!TARGET_KEYS.includes(key)) return", "if (false) return"],
+    ["unknown key", "if (!TARGET_KEYS.includes(key) && key !== SELECT_KEY) return", "if (false) return"],
     ["missing key", "if (!logic.hasOwn(document, key)) return", "if (false) return"],
     ["app", "if (!isLine(document.app)) return", "if (false) return"],
     ["encoder name", "if (!logic.hasOwn(ENCODERS, document.encoder)) return", "if (false) return"],

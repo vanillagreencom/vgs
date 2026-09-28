@@ -48,8 +48,9 @@
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner and § Install, theme-apply.md,
 // theme-targets.md and theme-backgrounds.md hold the rules this file
-// implements; the target renderer is bin/lib/theme-render.js and the
-// background state bin/lib/theme-backgrounds.js.
+// implements; the target renderer is bin/lib/theme-render.js, the
+// background state bin/lib/theme-backgrounds.js, and the edit a target's
+// `select` keeps in its application's settings file bin/lib/theme-select.js.
 "use strict";
 const fs = require("fs");
 const os = require("os");
@@ -64,6 +65,7 @@ const { spawnSync } = require("child_process");
 const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 const backgrounds = require(path.join(__dirname, "lib", "theme-backgrounds.js"));
+const select = require(path.join(__dirname, "lib", "theme-select.js"));
 
 const SHIPPED = path.join(repo, "themes");
 const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
@@ -114,6 +116,11 @@ function readIfPresent(file) {
 
 function text(bytes) {
     return bytes === undefined ? undefined : bytes.toString("utf8");
+}
+
+// BYTES as latin1 text, one character per byte, or undefined for undefined.
+function latin1(bytes) {
+    return bytes === undefined ? undefined : bytes.toString("latin1");
 }
 
 // A package's two files as bytes, absent ones undefined, and the judge's
@@ -402,7 +409,8 @@ function reading(name, dir, read, failed) {
 // with its `target` and `files` until the stage compares their bytes. A
 // disabled target keeps its `target`, whose wiring apply removes.
 // SLOTS are the terminal slots terminalSource chose; LIVE is the state
-// directory's theme/, which an entry target's links point into.
+// directory's theme/, which an entry target's links point into and a
+// selection's value may name.
 function planTarget(dir, row, slots, disabled, configHome, live) {
     const name = path.basename(dir);
     const skipped = reason => ({ name, state: "skipped", reason });
@@ -435,6 +443,17 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
     }, failed);
     if (!found.ok) return found.entry;
     if (found.value !== null) return skipped(found.value);
+    // A settings file that is absent, or whose key the edit refuses, skips
+    // the target before anything lands, so its application keeps its theme.
+    if (target.select !== undefined) {
+        const selected = reading(name, dir, () => {
+            const selection = selectionEdit(target, configHome, live);
+            const verdict = selection.edit(latin1(readIfPresent(selection.file)));
+            return verdict === null || typeof verdict === "string" ? null : verdict.reason;
+        }, failed);
+        if (!selected.ok) return selected.entry;
+        if (selected.value !== null) return skipped(selected.value);
+    }
     const curated = reading(name, dir, () => {
         const files = new Map();
         for (const file of target.files) {
@@ -548,8 +567,10 @@ function isDirectory(dir) {
 }
 
 // Edit every configuration file of TARGET, includeFiles' list, as editFile
-// edits one, stopping at the first failure. Answers null, or the failure's
-// { reason, failure } for target NAME.
+// edits one, stopping at the first failure. EDIT maps a file's text, or
+// undefined for an absent file, the include line pointing at LIVE and the
+// wiring's section, undefined when it names none, to what editFile takes.
+// Answers null, or the failure's { reason, failure } for target NAME.
 function editWiring(name, target, configHome, live, edit) {
     const key = "target=" + name + " reason";
     let files;
@@ -559,24 +580,24 @@ function editWiring(name, target, configHome, live, edit) {
         if (typeof e.code !== "string") throw e;
         return { reason: "unreadable", failure: key + "=unreadable path=" + e.path + " error=" + e.code };
     }
+    const edited = text => edit(text, Buffer.from(render.wiringLine(target, live), "utf8").toString("latin1"), target.wiring.section);
     for (const file of files) {
-        const failure = editFile(key, target, file, live, edit);
+        const failure = editFile(key, file, target.wiring.create, edited);
         if (failure !== null) return failure;
     }
     return null;
 }
 
-// Edit TARGET's configuration file FILE where it stands: a
-// symlink is resolved and the file it names is replaced with its mode kept,
-// so a dotfile manager's link stays a link. EDIT maps the file's text, or
-// undefined for an absent file, the include line pointing at LIVE and the
-// wiring's section, undefined when it names none, to the new text, null to
-// leave the file as it is, or a renderer refusal, which fails the target and
-// leaves the file. The bytes are read and written as latin1, one character
-// per byte, so every byte EDIT keeps is kept. An absent file is created only when the target's wiring says so, and
-// never through a dangling symlink. Answers null, or the failure's
-// { reason, failure }, its line led by KEY.
-function editFile(key, target, file, live, edit) {
+// Edit the file FILE where it stands: a symlink is resolved and the file it
+// names is replaced with its mode kept, so a dotfile manager's link stays a
+// link. EDIT maps the file's text, or undefined for an absent file, to the
+// new text, null to leave the file as it is, or a refusal, which fails the
+// target and leaves the file. The bytes are read and written as latin1, one
+// character per byte, so every byte EDIT keeps is kept. An absent file EDIT
+// does not refuse is created only when CREATE is true, and never through a
+// dangling symlink. Answers null, or the failure's { reason, failure }, its
+// line led by KEY.
+function editFile(key, file, create, edit) {
     let real = null;
     let text;
     try {
@@ -586,10 +607,10 @@ function editFile(key, target, file, live, edit) {
         if (e.code !== "ENOENT") return { reason: "unreadable", failure: key + "=unreadable path=" + file + " error=" + e.code };
         real = null;
     }
-    const next = edit(text, Buffer.from(render.wiringLine(target, live), "utf8").toString("latin1"), target.wiring.section);
+    const next = edit(text);
     if (next === null) return null;
-    if (typeof next !== "string") return { reason: next.reason, failure: key + "=" + next.reason + " path=" + file + " " + next.detail };
-    if (real === null && !target.wiring.create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
+    if (typeof next !== "string") return { reason: next.reason, failure: key + "=" + next.reason + " path=" + file + (next.detail === "" ? "" : " " + next.detail) };
+    if (real === null && !create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
     try {
         if (real === null) {
             writing(file, key, () => {
@@ -608,15 +629,15 @@ function editFile(key, target, file, live, edit) {
     return null;
 }
 
-// The directory an entry TARGET's `dir` or `vaults` is relative to: the
-// configuration home, the home directory or the cache home,
-// ${XDG_CACHE_HOME:-~/.cache}, as its `base` names.
-function entryBase(target, configHome) {
-    switch (target.wiring.base) {
+// The directory BASE names, which an entry's `dir` or `vaults` and a
+// selection's `file` are relative to: the configuration home, CONFIG_HOME,
+// the home directory or the cache home, ${XDG_CACHE_HOME:-~/.cache}.
+function baseDir(base, configHome) {
+    switch (base) {
     case "config": return configHome;
     case "home": return os.homedir();
     case "cache": return process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
-    default: throw new Error("vgsh-theme-judge: entryBase: target " + target.name + " has no known base");
+    default: throw new Error("vgsh-theme-judge: baseDir: base " + base + " is none of config, home, cache");
     }
 }
 
@@ -629,7 +650,7 @@ function entryBase(target, configHome) {
 // registry vaultDirs cannot read a vault list from.
 function entryDirs(target, configHome) {
     const wiring = target.wiring;
-    const base = entryBase(target, configHome);
+    const base = baseDir(wiring.base, configHome);
     if (wiring.vaults === undefined) return [path.join(base, wiring.dir)];
     const registry = path.join(base, wiring.vaults);
     let bytes;
@@ -750,9 +771,22 @@ function dropLinks(name, target, configHome, live) {
     return null;
 }
 
+// The settings file TARGET's `select` names, under its base, and the edit
+// theme-select.js makes in that file's latin1 text, the value's `@{state}`
+// written as LIVE.
+function selectionEdit(target, configHome, live) {
+    const selection = target.select;
+    const value = latin1(Buffer.from(render.selectValue(target, live), "utf8"));
+    return {
+        file: path.join(baseDir(selection.base, configHome), selection.file),
+        edit: text => select.selectedText(selection.format, text, selection.key, value)
+    };
+}
+
 // Keep a landed ENTRY's wiring: its include line in its configuration file,
-// or its links in its application's directory. Answers ENTRY, or its failed
-// entry.
+// or its links in its application's directory, and then its selection in
+// its application's settings file, which is never created. Answers ENTRY,
+// or its failed entry.
 function wire(entry, configHome, live) {
     let failure;
     switch (render.wiringForm(entry.target.wiring)) {
@@ -760,6 +794,10 @@ function wire(entry, configHome, live) {
     case "entry": failure = keepLinks(entry.name, entry.target, configHome, live); break;
     case "none": failure = null; break;
     default: throw new Error("vgsh-theme-judge: wire: target " + entry.name + " has no known wiring form");
+    }
+    if (failure === null && entry.target.select !== undefined) {
+        const selection = selectionEdit(entry.target, configHome, live);
+        failure = editFile("target=" + entry.name + " reason", selection.file, false, selection.edit);
     }
     return failure === null ? entry : Object.assign({ name: entry.name, state: "failed" }, failure);
 }

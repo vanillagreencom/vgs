@@ -37,4 +37,8 @@
 
 The decision stands. VGS-470 adds the entry base `cache`, `${XDG_CACHE_HOME:-~/.cache}`, resolved by the apply from `XDG_CACHE_HOME` as `home` is from the home directory. Its first user is the `pywalfox` target, whose native host reads pywal's `colors.json` from `wal/` there: [theme-browsers.md](../architecture/theme-browsers.md).
 
+## Revisit Outcome (2026-09-28)
+
+The decision stands for links. VGS-471 adds [D024](D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md): a target with a `select` key also sets one theme key in its application's own settings file, so the user no longer selects that theme by hand. Every other target still edits no application configuration.
+
 **References**: [D021](D021-theme-apply-writes-beside-each-destination.md), [D019](D019-theme-packages-carry-plugin-trust.md)

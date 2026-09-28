@@ -1,0 +1,9 @@
+{
+  "app": "opencode",
+  "encoder": "hex6",
+  "files": [{ "template": "opencode.json", "destination": "opencode.json" }],
+  "detect": ["opencode"],
+  "wiring": { "base": "config", "dir": "opencode/themes", "owned": false, "links": { "vgs.json": "opencode.json" } },
+  "select": { "base": "config", "file": "opencode/tui.json", "format": "json", "key": ["theme"], "value": "vgs" },
+  "reload": null
+}

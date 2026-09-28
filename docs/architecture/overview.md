@@ -80,5 +80,6 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [theme-toolkits.md](theme-toolkits.md): read before touching the GTK, Qt, KDE or icon theme target.
 - [theme-tool-targets.md](theme-tool-targets.md): read before touching a Discord client's, btop's, fastfetch's, tmux's, Oh My Posh's or Obsidian's target.
 - [theme-browsers.md](theme-browsers.md): read before touching the Zen or pywalfox target, or a target's `profiles` wiring.
+- [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

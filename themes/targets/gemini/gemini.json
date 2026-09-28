@@ -1,0 +1,28 @@
+{
+  "name": "vgs",
+  "type": "custom",
+  "background": {
+    "primary": "#@{color.background}"
+  },
+  "text": {
+    "primary": "#@{color.text}",
+    "secondary": "#@{color.textMuted}",
+    "link": "#@{color.info}",
+    "accent": "#@{color.accent}",
+    "response": "#@{color.text}"
+  },
+  "border": {
+    "default": "#@{color.border}",
+    "focused": "#@{color.accent}"
+  },
+  "status": {
+    "success": "#@{color.success}",
+    "warning": "#@{color.warning}",
+    "error": "#@{color.danger}"
+  },
+  "ui": {
+    "comment": "#@{color.textFaint}",
+    "symbol": "#@{terminal.color6}",
+    "gradient": ["#@{color.accent}", "#@{terminal.color5}", "#@{terminal.color4}"]
+  }
+}

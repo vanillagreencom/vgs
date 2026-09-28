@@ -1,0 +1,9 @@
+{
+  "app": "Claude Code",
+  "encoder": "hex6",
+  "files": [{ "template": "claude.json", "destination": "claude.json" }],
+  "detect": ["claude"],
+  "wiring": { "base": "home", "dir": ".claude/themes", "owned": false, "links": { "vgs.json": "claude.json" } },
+  "select": { "base": "home", "file": ".claude/settings.json", "format": "json", "key": ["theme"], "value": "custom:vgs" },
+  "reload": { "command": ["sh", "-c", "touch -h -c -- \"$HOME/.claude/themes/vgs.json\""], "timeoutMs": 5000 }
+}

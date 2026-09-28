@@ -8,7 +8,7 @@ A target is one application's colour files: the directory `themes/targets/<targe
 
 A target name is lower-case letters, digits and `-`, with no dot. `targets` under a themes directory holds targets and is never read as a package.
 
-`acceptTarget` judges `target.json`. Every key but `wiring.section`, `wiring.profiles`, `wiring.vaults` and `reload.always` is required and any other key is refused with `reason=target-schema`. `wiring` takes one of two forms, told apart by `links`, or is `null`, and `wiringForm` names which, `include`, `entry` or `none`:
+`acceptTarget` judges `target.json`. Every key but `select`, `wiring.section`, `wiring.profiles`, `wiring.vaults` and `reload.always` is required and any other key is refused with `reason=target-schema`. `wiring` takes one of two forms, told apart by `links`, or is `null`, and `wiringForm` names which, `include`, `entry` or `none`:
 
 | Key | Holds |
 |---|---|
@@ -18,6 +18,7 @@ A target name is lower-case letters, digits and `-`, with no dot. `targets` unde
 | `detect` | Command names, each required, or lists of command names, each met by any one of its names: `[["helix", "hx"]]` detects either. A list holds one or more names and no list. A target is skipped unless each entry is met by an executable file in an absolute directory of `PATH`; an empty `detect` is always met. `detected` answers it for both apply and reload. Detection never runs the command. |
 | `wiring` | The include form, `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. An optional `section`, one bare name of letters, digits, `_` and `-`, is the INI section or TOML table the line belongs in: [theme-wiring.md § Wiring text](theme-wiring.md#wiring-text). An optional `profiles` is one or more Mozilla `profiles.ini` paths relative to the home directory, each segment a name that may start with a dot, and makes `file` relative to each profile directory the first that exists lists: [theme-wiring.md § Profile wiring](theme-wiring.md#profile-wiring). The entry form, `{ base, dir, owned, links }`, edits no configuration file: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-wiring). `null` keeps nothing outside the state directory, for a target whose hook asserts the setting its application reads the files through; apply adds and removes nothing for it. |
 | `reload` | `null`, or `{ command, timeoutMs }`: the argv that makes a running application re-read its files, and its bound in whole milliseconds. `command[0]` is looked up on `PATH`. An argument's only placeholder is `@{state}`, the state directory's `theme/` path, which `reloadCommand` writes; `@@{` is a literal `@{`. Apply runs it after the theme file when the target's bytes changed or its reload is pending. An optional `always: true` also runs it on every apply that lands the target, unchanged bytes included, for a hook that asserts a setting no file carries: [theme-apply.md § Reload](theme-apply.md#reload). |
+| `select` | Optional, beside any wiring: `{ base, file, format, key, value }`, the one theme key apply sets in the application's own settings file, which it never creates: [theme-agents.md § Selection](theme-agents.md#selection). |
 
 `bin/vgsh-theme-judge packages themes`, the offline row, renders every target under `themes/targets/` against the shipped `vgs` package and prints one line per target, `ok       targets/<target>` or `refused  <dir>: target=<target> reason=<key> <detail>`. A template or `target.json` that cannot be read, or targets without an accepted `vgs` package holding terminal slots, exit 2.
 
@@ -46,6 +47,8 @@ The GTK, Qt, KDE colour scheme and icon theme targets: [theme-toolkits.md](theme
 The chat and tool targets: [theme-tool-targets.md](theme-tool-targets.md).
 
 The browser targets, Zen and pywalfox, and why Chromium is none: [theme-browsers.md](theme-browsers.md).
+
+The agent CLI targets and the `select` key: [theme-agents.md](theme-agents.md).
 
 ## Templates
 
