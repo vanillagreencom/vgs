@@ -452,7 +452,9 @@ expect_poll "the themes panel closes" closed panel_open
 # first screen through the probe's `images`, and the surface the host maps
 # from the compositor: none while no image is drawn, one per screen while
 # one is. The panel is read back through the labels it draws and clicked
-# through its icon buttons. A copy of the shared state reader that never
+# through its icon buttons. A headless monitor at scale 2 reads the
+# requested sourceSize back in device pixels. A copy of the background that
+# decodes at logical pixels, a copy of the shared state reader that never
 # reloads the state file and a copy of the background that is always shown
 # are the block's controls. The block leaves vgs applied with no current
 # image and the plugin disabled, so later rows see the bar they saw before
