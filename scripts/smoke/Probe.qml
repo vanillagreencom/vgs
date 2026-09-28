@@ -241,6 +241,17 @@ Scope {
             }
             return JSON.stringify(out);
         }
+        // Scrolls the first Flickable under an instance to `y`, held inside
+        // its content, so scripts/sandbox-shots.sh captures each page of a
+        // scrolling panel. Answers [contentY, contentHeight, height].
+        function scrollTo(hostKey: string, id: string, y: int): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const flick = root.descendants(item).find(child => child.contentY !== undefined && typeof child.flick === "function");
+            if (flick === undefined) return "none";
+            flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+            return JSON.stringify([flick.contentY, flick.contentHeight, flick.height]);
+        }
         function galleryHeadings(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.examples === undefined) return "absent";

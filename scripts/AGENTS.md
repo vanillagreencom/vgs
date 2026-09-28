@@ -7,5 +7,6 @@ Validation and measurement scripts. A script here reads the repository and the n
 - What a memory figure may claim and how the sampler finds the shell: `docs/architecture/memory.md`.
 - Use `scripts/validate --list` to inspect the affected checks, then omit `--list` to run them once. Selection defaults to the default branch's merge base; `--changed BASE` narrows a fix round, and `--full` explicitly requests every row. The input globs beside each manifest row include its shared dependencies. An unmapped source input selects the full area; docs and harness-only changes do not start the product smoke.
 
+- `sandbox-shots.sh` captures the sandbox's surfaces as PNGs under `tmp/` for visual evidence. It is a runner like `qml-smoke.sh`; its capture guards in `smoke/shot.sh` have their control.
 - Smoke rows live under `scripts/smoke/rows/`. The runner fixes their order because later rows use earlier state. Only `scripts/smoke/harness.sh` owns the sandbox lifetime.
 - Smoke fixtures live under `scripts/smoke/fixtures/plugins/`. Offline validation checks every fixture. Runtime refusal fixtures belong to the rows that assert their refusal.

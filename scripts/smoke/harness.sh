@@ -79,17 +79,24 @@ rt_dir="$(mktemp -d "$XDG_RUNTIME_DIR/vs.XXXXXX")"
 home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 
 # Add the observer to a copy; the live checkout never imports test code.
-python3 - "$repo" "$sandbox/repo" <<'PY'
+# A caller may set source_tree to another export of the shell, bin, config
+# and themes, such as scripts/sandbox-shots.sh --rev; the scripts, the probe
+# and the fixtures always come from this checkout.
+python3 - "$repo" "$sandbox/repo" "${source_tree:-$repo}" <<'PY'
 import pathlib, shutil, sys
-source, target = map(pathlib.Path, sys.argv[1:])
-for directory in ("shell", "bin", "config", "scripts", "themes"):
-    shutil.copytree(source / directory, target / directory)
+source, target, tree = map(pathlib.Path, sys.argv[1:])
+for directory in ("shell", "bin", "config", "themes"):
+    shutil.copytree(tree / directory, target / directory)
+shutil.copytree(source / "scripts", target / "scripts")
 # The copy ships no target: each would detect the host's own application on
 # PATH, and its reload hook would signal that application in the live
 # session. The rows add the fixture targets they read. The shipped targets
 # wait beside the copy, so a row whose hook reaches only the nested session
-# copies its one target in.
-shutil.move(target / "themes/targets", target.parent / "shipped-targets")
+# copies its one target in. A tree older than the targets has none to move.
+if tree == source or (target / "themes/targets").exists():
+    shutil.move(target / "themes/targets", target.parent / "shipped-targets")
+else:
+    (target.parent / "shipped-targets").mkdir()
 (target / "themes/targets").mkdir()
 shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
 path = target / "shell/shell.qml"
