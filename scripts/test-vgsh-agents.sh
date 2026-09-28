@@ -25,8 +25,8 @@ theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": {
 
 # Each CLI is detected by a stub of its command, which records a run and
 # exits 1, so detection never runs it. opencode's hook runs a real sh and
-# id, with pgrep and ps stubs naming two child processes: one interactive
-# opencode and one `opencode serve`, which must not be signalled.
+# id, with pgrep and ps stubs naming process shapes that do and do not mount
+# the TUI theme handler.
 hook_tools="$tmp/hook-tools"; mkdir -p "$hook_tools"
 for tool in sh id; do
   tool_bin="$(command -v "$tool")" || { echo "test-vgsh-agents: status=not-measured missing=$tool"; exit 77; }
@@ -36,16 +36,25 @@ for stub in $agents; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"
 done
-"$node_bin" -e "const fs = require('fs'); fs.writeFileSync('$tmp/opencode-plain-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync('$tmp/opencode-plain-signaled', 'plain'); process.exit(0); }); setInterval(() => {}, 10000);" &
-opencode_plain=$!
-"$node_bin" -e "const fs = require('fs'); fs.writeFileSync('$tmp/opencode-serve-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync('$tmp/opencode-serve-signaled', 'serve'); process.exit(0); }); setInterval(() => {}, 10000);" &
-opencode_serve=$!
-trap 'kill "$opencode_plain" "$opencode_serve" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
+mkdir -p "$tmp/project"
+opencode_pids=()
+start_opencode_probe() { # LABEL
+  "$node_bin" -e "const fs = require('fs'); const label = process.argv[1]; const root = process.argv[2]; fs.writeFileSync(root + '/opencode-' + label + '-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync(root + '/opencode-' + label + '-signaled', label); process.exit(0); }); setInterval(() => {}, 10000);" "$1" "$tmp" &
+  printf -v "opencode_$1" '%s' "$!"
+  opencode_pids+=("$!")
+}
+start_opencode_probe bare
+start_opencode_probe serve
+start_opencode_probe run
+start_opencode_probe option_serve
+start_opencode_probe attach
+start_opencode_probe project
+trap 'kill "${opencode_pids[@]}" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  [[ -e $tmp/opencode-plain-ready && -e $tmp/opencode-serve-ready ]] && break
+  [[ -e $tmp/opencode-bare-ready && -e $tmp/opencode-serve-ready && -e $tmp/opencode-run-ready && -e $tmp/opencode-option_serve-ready && -e $tmp/opencode-attach-ready && -e $tmp/opencode-project-ready ]] && break
   sleep 0.1
 done
-printf '#!/bin/sh\nprintf "%s\\n%s\\n"\n' "$opencode_plain" "$opencode_serve" >"$hook_tools/pgrep"
+printf '#!/bin/sh\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n"\n' "$opencode_bare" "$opencode_serve" "$opencode_run" "$opencode_option_serve" "$opencode_attach" "$opencode_project" >"$hook_tools/pgrep"
 cat >"$hook_tools/ps" <<EOF
 #!/bin/sh
 while [ "\$#" -gt 0 ]; do
@@ -55,8 +64,12 @@ while [ "\$#" -gt 0 ]; do
   esac
 done
 case "\$pid" in
-  $opencode_plain) printf 'opencode\\n';;
+  $opencode_bare) printf 'opencode\\n';;
   $opencode_serve) printf 'opencode serve\\n';;
+  $opencode_run) printf 'opencode run\\n';;
+  $opencode_option_serve) printf 'opencode --log-level INFO serve\\n';;
+  $opencode_attach) printf 'opencode attach\\n';;
+  $opencode_project) printf 'opencode $tmp/project\\n';;
   *) exit 1;;
 esac
 EOF
@@ -126,7 +139,7 @@ apply_json "the agent targets land" 0 dusk
 check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;omp written None;opencode written None;pi written None;"
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
-check "opencode's hook signals only the interactive process" test -f "$tmp/opencode-plain-signaled" -a ! -e "$tmp/opencode-serve-signaled"
+check "opencode's hook signals only TUI invocations" test -f "$tmp/opencode-bare-signaled" -a -f "$tmp/opencode-attach-signaled" -a -f "$tmp/opencode-project-signaled" -a ! -e "$tmp/opencode-serve-signaled" -a ! -e "$tmp/opencode-run-signaled" -a ! -e "$tmp/opencode-option_serve-signaled"
 check "opencode's hook disables globbing before splitting argv" grep -qF 'set -f; set -- $args' "$tree/themes/targets/opencode/target.json"
 
 # Each file parses as its CLI reads it and holds hex6 colours: dusk's accent
