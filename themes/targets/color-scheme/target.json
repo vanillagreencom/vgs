@@ -1,0 +1,8 @@
+{
+  "app": "color-scheme",
+  "encoder": "hex6",
+  "files": [{ "template": "color-scheme.mode", "destination": "color-scheme.mode" }],
+  "detect": ["gsettings"],
+  "wiring": null,
+  "reload": {"command": ["sh", "-c", "mode=$(cat -- \"$1\") || exit 1; [ \"$(gsettings get org.gnome.desktop.interface color-scheme)\" = \"'$mode'\" ] && exit 0; exec gsettings set org.gnome.desktop.interface color-scheme \"$mode\"", "sh", "@{state}/color-scheme.mode"], "timeoutMs": 5000, "always": true}
+}

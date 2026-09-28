@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# The toolkit targets under themes/targets/, gtk3, gtk4, icons,
-# kcolorscheme, qt5ct and qt6ct, through `vgsh theme apply`: each renders
+# The toolkit targets under themes/targets/, color-scheme, gtk3, gtk4,
+# icons, kcolorscheme, qt5ct and qt6ct, through `vgsh theme apply`: each renders
 # its colours with its encoder, is skipped when its command is not on PATH,
 # keeps its include line or its link where its toolkit reads it, takes a
-# package's curated file byte for byte, the qt targets run their reload hook
-# and icons asserts the package's icon theme on every apply. Every detect
+# package's curated file byte for byte, the qt targets run their reload hook,
+# and icons and color-scheme assert the package's icon theme and colour mode
+# on every apply. Every detect
 # command and gsettings are stubs on the rows' PATH, and the hooks' `sh`,
 # `cat` and `touch` act only under the temporary HOME and XDG_CONFIG_HOME, so
 # no row reaches a toolkit, dconf or the developer's session. The controls at the end apply
@@ -13,7 +14,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree gtk3 gtk4 icons kcolorscheme qt5ct qt6ct
+theme_tree color-scheme gtk3 gtk4 icons kcolorscheme qt5ct qt6ct
 live="$state/theme"; home="$tmp/home"
 
 # Detection never runs a command: each detect stub records a run and exits 1.
@@ -26,15 +27,17 @@ for tool in sh cat touch; do
   tool_bin="$(command -v "$tool")" || { echo "test-vgsh-toolkits: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$tool_bin" "$stubs/$tool"
 done
-# gsettings answers `get` with $gs_current and appends each `set`'s
-# arguments, one line per call, to $gs_sets. Detection never runs it.
-gs_current="$tmp/gsettings-current"; gs_sets="$tmp/gsettings-sets"
-printf "'Adwaita'\n" >"$gs_current"
+# gsettings answers `get SCHEMA KEY` with $gs/KEY and appends each `set`'s
+# arguments, one line per call, to $gs/sets-KEY. Detection never runs it.
+gs="$tmp/gsettings"; mkdir -p "$gs"
+gs_current="$gs/icon-theme"; gs_sets="$gs/sets-icon-theme"
+cs_current="$gs/color-scheme"; cs_sets="$gs/sets-color-scheme"
+printf "'Adwaita'\n" >"$gs_current"; printf "'default'\n" >"$cs_current"
 cat >"$stubs/gsettings" <<EOF
 #!/bin/sh
 case "\$1" in
-  get) cat -- "$gs_current" ;;
-  set) printf '%s\n' "\$*" >>"$gs_sets" ;;
+  get) cat -- "$gs/\$3" ;;
+  set) printf '%s\n' "\$*" >>"$gs/sets-\$3" ;;
   *) : >"$tmp/ran-gsettings"; exit 1 ;;
 esac
 EOF
@@ -98,7 +101,7 @@ PY
 mtime() { stat -c %Y -- "$1"; }
 
 tinst "an apply with no toolkit on PATH" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
-check "an apply with no toolkit on PATH skips every toolkit" test "$(states)" == "gtk3=skipped gtk4=skipped icons=skipped kcolorscheme=skipped qt5ct=skipped qt6ct=skipped"
+check "an apply with no toolkit on PATH skips every toolkit" test "$(states)" == "color-scheme=skipped gtk3=skipped gtk4=skipped icons=skipped kcolorscheme=skipped qt5ct=skipped qt6ct=skipped"
 check "an undetected toolkit gets no file" test ! -e "$cfg/gtk-3.0" -a ! -e "$cfg/gtk-4.0" -a ! -e "$cfg/qt5ct" -a ! -e "$cfg/qt6ct" -a ! -e "$home/.local/share"
 
 # gtk-3.0/gtk.css holds the user's own rules; gtk-4.0/gtk.css is absent.
@@ -108,7 +111,7 @@ printf 'window { padding: 0; }\n' >"$cfg/gtk-3.0/gtk.css"
 printf '[Appearance]\nstyle=Fusion\n' >"$cfg/qt6ct/qt6ct.conf"
 touch -d @0 -- "$cfg/qt6ct/qt6ct.conf"
 THEME_PATH="$with_stubs" tinst "every toolkit on PATH applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
-check "every detected toolkit is written" test "$(states)" == "gtk3=written gtk4=written icons=written kcolorscheme=written qt5ct=written qt6ct=written"
+check "every detected toolkit is written" test "$(states)" == "color-scheme=written gtk3=written gtk4=written icons=written kcolorscheme=written qt5ct=written qt6ct=written"
 check "the gtk3 import goes first and the user's rules stay" file_is "$cfg/gtk-3.0/gtk.css" "@import url(\"file://$live/gtk3.css\");"$'\nwindow { padding: 0; }\n'
 check "an absent gtk-4.0/gtk.css is created holding the import" file_is "$cfg/gtk-4.0/gtk.css" "@import url(\"file://$live/gtk4.css\");"$'\n'
 check "gtk3 takes the accent as rgba" grep -qxF '@define-color accent_bg_color rgba(17, 17, 17, 1);' "$live/gtk3.css"
@@ -136,7 +139,7 @@ check "qt6ct's changed bytes run its hook again" test "$(mtime "$cfg/qt6ct/qt6ct
 
 printf '{ "disabledTargets": ["gtk3", "kcolorscheme", "qt6ct"] }\n' >"$cfg/vgs/shell.json"
 THEME_PATH="$with_stubs" tinst "disabled toolkits" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
-check "the disabled toolkits are skipped" test "$(states)" == "gtk3=skipped gtk4=written icons=unchanged kcolorscheme=skipped qt5ct=written qt6ct=skipped"
+check "the disabled toolkits are skipped" test "$(states)" == "color-scheme=unchanged gtk3=skipped gtk4=written icons=unchanged kcolorscheme=skipped qt5ct=written qt6ct=skipped"
 check "a disabled gtk3 leaves only the user's rules in gtk.css" file_is "$cfg/gtk-3.0/gtk.css" $'window { padding: 0; }\n'
 check "a disabled qt6ct loses its link and keeps its colors directory" test ! -e "$cfg/qt6ct/colors/vgs.conf" -a ! -L "$cfg/qt6ct/colors/vgs.conf" -a -d "$cfg/qt6ct/colors"
 check "a disabled KDE scheme loses its link and keeps color-schemes" test ! -L "$home/.local/share/color-schemes/Vgs.colors" -a -d "$home/.local/share/color-schemes"
@@ -163,14 +166,14 @@ mkdir -p "$home/.local/share/icons/Papirus-Dark"
 set_line="set org.gnome.desktop.interface icon-theme Papirus-Dark"
 sets_are() { [[ "$(cat -- "$gs_sets" 2>/dev/null)" == "$1" ]]; }
 THEME_PATH="$with_stubs" tinst "a package's icon theme applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json iconic
-check "the curated icon theme is written" test "$(states)" == "gtk3=written gtk4=written icons=written kcolorscheme=written qt5ct=written qt6ct=written"
+check "the curated icon theme is written" test "$(states)" == "color-scheme=unchanged gtk3=written gtk4=written icons=written kcolorscheme=written qt5ct=written qt6ct=written"
 check "the installed icon theme is set" sets_are "$set_line"
 printf "'Papirus-Dark'\n" >"$gs_current"; : >"$gs_sets"
 THEME_PATH="$with_stubs" tinst "an icon theme already set" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json iconic
 check "an icon theme already set is not set again" sets_are ""
 printf "'Adwaita'\n" >"$gs_current"
 THEME_PATH="$with_stubs" tinst "an icon theme changed by hand" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json iconic
-check "unchanged bytes keep icons unchanged" test "$(states)" == "gtk3=unchanged gtk4=unchanged icons=unchanged kcolorscheme=unchanged qt5ct=unchanged qt6ct=unchanged"
+check "unchanged bytes keep icons unchanged" test "$(states)" == "color-scheme=unchanged gtk3=unchanged gtk4=unchanged icons=unchanged kcolorscheme=unchanged qt5ct=unchanged qt6ct=unchanged"
 check "unchanged bytes assert the icon theme again" sets_are "$set_line"
 : >"$gs_sets"
 THEME_PATH="$with_stubs" tinst "an icon theme that is not installed" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json uninstalled
@@ -179,6 +182,27 @@ THEME_PATH="$with_stubs" tinst "an icon theme name holding a path" "$cfg" "$rt_e
 check "an icon theme name holding a path is reload-pending" python3 -c 'import json,sys; t = {x["name"]: x for x in json.loads(sys.argv[1])["targets"]}; sys.exit(0 if t["icons"]["state"] == "reload-pending" else 1)' "$(tail -n 1 "$tmp/out")"
 check "an icon theme name holding a path is not set" sets_are ""
 THEME_PATH="$with_stubs" tinst "a package without an icon theme clears the pending icons" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
+
+# color-scheme: the package's scheme.mode, asserted as GTK's colour scheme
+# through gsettings on every apply unless the value already holds.
+dark_line="set org.gnome.desktop.interface color-scheme prefer-dark"
+light_line="set org.gnome.desktop.interface color-scheme prefer-light"
+scheme_sets_are() { [[ "$(cat -- "$cs_sets" 2>/dev/null)" == "$1" ]]; }
+: >"$cs_sets"
+THEME_PATH="$with_stubs" tinst "a dark package" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
+check "a dark package sets prefer-dark" scheme_sets_are "$dark_line"
+check "the dark package's mode file is prefer-dark" file_is "$live/color-scheme.mode" $'prefer-dark\n'
+: >"$cs_sets"
+THEME_PATH="$with_stubs" tinst "a light package" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json light
+check "a light package's mode is written" test "$(states)" == "color-scheme=written gtk3=written gtk4=written icons=unchanged kcolorscheme=written qt5ct=written qt6ct=written"
+check "a light package sets prefer-light" scheme_sets_are "$light_line"
+printf "'prefer-light'\n" >"$cs_current"; : >"$cs_sets"
+THEME_PATH="$with_stubs" tinst "a colour scheme already set" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json light
+check "a colour scheme already set is not set again" scheme_sets_are ""
+printf "'prefer-dark'\n" >"$cs_current"
+THEME_PATH="$with_stubs" tinst "a colour scheme changed by hand" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json light
+check "unchanged bytes keep color-scheme unchanged" test "$(states)" == "color-scheme=unchanged gtk3=unchanged gtk4=unchanged icons=unchanged kcolorscheme=unchanged qt5ct=unchanged qt6ct=unchanged"
+check "unchanged bytes assert the colour scheme again" scheme_sets_are "$light_line"
 
 # Controls: each mutant target.json drops one rule, and the assertion that
 # pins it must turn. The rows above use the same assertions.
@@ -215,6 +239,17 @@ tree_control icons-installed themes/targets/icons/target.json '[ -n \"$found\" ]
 control_cfg icons-installed
 THEME_PATH="$with_stubs" tinst "the installed-check mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply uninstalled
 check "the installed-check mutant sets an icon theme that is not installed" sets_are "set org.gnome.desktop.interface icon-theme vgs-no-such-icons"
+tree_control color-scheme-skip themes/targets/color-scheme/target.json '[ \"$(gsettings get org.gnome.desktop.interface color-scheme)\" = \"'"'"'$mode'"'"'\" ] && exit 0; ' ''
+control_cfg color-scheme-skip
+printf "'prefer-light'\n" >"$cs_current"; : >"$cs_sets"
+THEME_PATH="$with_stubs" tinst "the no-skip colour scheme mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+check "the no-skip colour scheme mutant sets a colour scheme already set" scheme_sets_are "$light_line"
+tree_control color-scheme-always themes/targets/color-scheme/target.json '"always": true' '"always": false'
+control_cfg color-scheme-always
+THEME_PATH="$with_stubs" tinst "the changed-only colour scheme mutant lands light" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+printf "'prefer-dark'\n" >"$cs_current"; : >"$cs_sets"
+THEME_PATH="$with_stubs" tinst "the changed-only colour scheme mutant applies unchanged bytes" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+check "the changed-only colour scheme mutant never asserts the colour scheme again" scheme_sets_are ""
 unset THEME_BIN
 
 rows_done test-vgsh-toolkits

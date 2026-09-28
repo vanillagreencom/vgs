@@ -43,7 +43,7 @@ The Hyprland file defines `$vgs_` colour variables a user's own settings can nam
 
 The editor targets, their table and their one-time steps are in [theme-editors.md](theme-editors.md).
 
-The GTK, Qt, KDE colour scheme and icon theme targets: [theme-toolkits.md](theme-toolkits.md).
+The GTK, Qt, KDE colour scheme, icon theme and light or dark mode targets: [theme-toolkits.md](theme-toolkits.md).
 
 The chat and tool targets: [theme-tool-targets.md](theme-tool-targets.md).
 
