@@ -214,7 +214,7 @@ Quickshell 0.3.1 carries the session lock across a reload: `WlSessionLock::onRel
 
 **Omarchy.** `test/` runs node tests of JS models and CLI tests, 2 `qmltestrunner` files, and 17 runtime tests that start a second Quickshell on the user's live compositor and skip without one (`test/shell.d/runtime-smoke-test.sh`). Acceptance runs in a disposable VM from a separate repository.
 
-**VGS.** `scripts/validate` selects checks from the diff. `scripts/qml-smoke.sh` runs 21 rows in a nested Hyprland sandbox; `scripts/qml-unit.sh` runs 15 offscreen QML test files; 36 `scripts/test-*` suites cover the CLI and judges ([D008](../decisions/D008-validation-row-per-change.md)).
+**VGS.** `scripts/validate` selects checks from the diff. `scripts/qml-smoke.sh` runs 21 rows in a nested Hyprland sandbox; `scripts/qml-unit.sh` runs 15 offscreen QML test files; 37 `scripts/test-*` suites cover the CLI and judges ([D008](../decisions/D008-validation-row-per-change.md)).
 
 **Verdict: keep.** The sandbox checks geometry, reserved space, layer lifecycle and the instance guard without the live seat, which is what Omarchy's runtime tests use and VGS forbids.
 
