@@ -247,6 +247,8 @@ function verify(judge) {
     const packageRefusals = [
         [{ directoryName: "vgs", themeJson: JSON.stringify({ schemaVersion: 1, name: "vgs", tokens: {} }), shipped: false }, "reserved-name", ""],
         [{ directoryName: "other", themeJson: document({}), shipped: false }, "name-mismatch", ""],
+        [{ directoryName: "my theme", themeJson: JSON.stringify({ schemaVersion: 1, name: "my theme", tokens: {} }), shipped: false }, "package-name", ""],
+        [{ directoryName: ".probe", themeJson: JSON.stringify({ schemaVersion: 1, name: ".probe", tokens: {} }), shipped: false }, "package-name", ""],
         [{ directoryName: "probe", themeJson: document({}), terminalJson: JSON.stringify({ schemaVersion: 1, slots: Object.assign({ colour0: "#000000" }, TERMINAL_SLOTS) }), shipped: false }, "terminal-slot", "terminal"],
         [{ directoryName: "probe", themeJson: document({}), terminalJson: JSON.stringify({ schemaVersion: 1, slots: Object.assign({}, TERMINAL_SLOTS, { color3: "red" }) }), shipped: false }, "terminal-colour", "terminal.color3"]
     ];
@@ -256,6 +258,11 @@ function verify(judge) {
         assert.equal(result.reason, reason, JSON.stringify(files));
         assert.equal(result.token, token, JSON.stringify(files));
     }
+
+    for (const name of ["vgs", "tokyo-night", "Nord2", "a.b_c"])
+        assert.equal(judge.isPackageName(name), true, name);
+    for (const name of ["", ".", "..", "../x", "a/b", "a b", "-x", ".x", "x\n", 7, undefined])
+        assert.equal(judge.isPackageName(name), false, JSON.stringify(name));
 
     assert.equal(judge.refusalLine(judge.accept(TOKENS, document({ palette: { acent: "#fff" } }))), "theme: refused: token=palette.acent reason=unknown-token");
     assert.equal(judge.refusalLine(judge.accept(TOKENS, JSON.stringify({ foreground: "#123456" }))), "theme: refused: document reason=unknown-key key=foreground");
@@ -300,6 +307,8 @@ const CONTROLS = [
     ["table name", "if (!NAME_PATTERN.test(keys[i]))", "if (false)"],
     ["table empty group", "if (keys.length === 0)", "if (false)"],
     ["table defect throws", "if (defect !== \"\")\n        throw new Error(\"theme: token table: \"", "if (false)\n        throw new Error(\"theme: token table: \""],
+    ["package name", "if (!isPackageName(files.directoryName))", "if (false)"],
+    ["package name pattern", "PACKAGE_NAME_PATTERN.test(name)", "true"],
     ["package reserved name", "if (files.directoryName === DEFAULT_NAME && files.shipped !== true)", "if (false)"],
     ["package name mismatch", "if (shell.name !== files.directoryName)", "if (false)"],
     ["terminal slot name", "if (!hasOwn(expected, keys[i]))", "if (false)"],

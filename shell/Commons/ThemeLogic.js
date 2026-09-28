@@ -506,6 +506,15 @@ function accept(tokens, text) {
 // may not take. The shipped package with this name is the revert.
 var DEFAULT_NAME = "vgs";
 
+// A package name is a directory name the runner can join to a themes
+// directory without leaving it and print in a keyed line without quoting:
+// no separator, no leading dot, no space.
+var PACKAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function isPackageName(name) {
+    return typeof name === "string" && PACKAGE_NAME_PATTERN.test(name);
+}
+
 var TERMINAL_SCHEMA_VERSION = 1;
 var TERMINAL_SLOT_PREFIX = "color";
 var TERMINAL_SLOT_COUNT = 16;
@@ -568,7 +577,7 @@ function acceptTerminal(text) {
 function acceptPackage(tokens, files) {
     if (!isPlainObject(files))
         return refusal("package", "", "got=" + JSON.stringify(files));
-    if (typeof files.directoryName !== "string" || files.directoryName.trim() === "")
+    if (!isPackageName(files.directoryName))
         return refusal("package-name", "", "got=" + JSON.stringify(files.directoryName));
     if (files.directoryName === DEFAULT_NAME && files.shipped !== true)
         return refusal("reserved-name", "", "name=" + DEFAULT_NAME);

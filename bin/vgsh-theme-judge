@@ -1,13 +1,26 @@
 #!/usr/bin/env node
-// Judge theme packages through the shell's own theme logic under node.
+// The decisions `vgsh theme list` and `vgsh theme apply` need, made by the
+// shell's own theme judge, shell/Commons/ThemeLogic.js, loaded here under
+// node with the token table, shell/Commons/Tokens.js.
 //
 //   vgsh-theme-judge packages [DIR]
+//       judge every package directly under DIR (default: the shipped
+//       themes/) as shipped; one line per package. Exit 0 when every
+//       package is accepted, 1 when any is refused, 2 when DIR, a package
+//       directory or a required file cannot be read.
+//   vgsh-theme-judge list <text|json> <config-dir>
+//       every shipped package and every package under <config-dir>/themes,
+//       and the state of <config-dir>/theme.json.
+//   vgsh-theme-judge apply <text|json> <config-dir> <state-dir> <held|busy|failed> <name>
+//       apply one package; the fourth argument is the caller's verdict on
+//       the flock of <config-dir>/theme.lock, which it holds for as long as
+//       this process runs when the verdict is `held`.
 //
-// With DIR omitted it checks every shipped package under themes/. A package is
-// one direct child directory. The script reads theme.json and optional
-// terminal.json, then asks ThemeLogic.acceptPackage. It prints one line per
-// package and exits 0 when every package is accepted, 1 when any package is
-// refused, or 2 when a directory or required file cannot be read.
+// list and apply refuse with one line on stderr, `vgsh: refused: <key>=...`,
+// through bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under
+// `json`, apply prints its structured result on stdout first, refusals
+// included. A malformed invocation exits 2. docs/architecture/themes.md
+// § Runner holds the rules this file implements.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -16,67 +29,317 @@ const repo = path.join(__dirname, "..");
 const { load } = require(path.join(repo, "scripts", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
+const { Refusal, refuse, main, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+
+const SHIPPED = path.join(repo, "themes");
+const FORMATS = ["text", "json"];
+const LOCK_VERDICTS = ["held", "busy", "failed"];
+
+function usage(first) {
+    console.error("vgsh-theme-judge: refused: " + first);
+    process.exit(2);
+}
+
+// The names of the directories directly under BASE, sorted; a symlink to
+// a directory is one. Null when BASE is absent; any other failure throws
+// the fs error.
+function childDirs(base) {
+    let entries;
+    try {
+        entries = fs.readdirSync(base, { withFileTypes: true });
+    } catch (e) {
+        if (e.code === "ENOENT") return null;
+        throw e;
+    }
+    const isDir = entry => entry.isDirectory() ||
+        (entry.isSymbolicLink() && fs.statSync(path.join(base, entry.name), { throwIfNoEntry: false })?.isDirectory() === true);
+    return entries.filter(isDir).map(entry => entry.name).sort();
+}
+
+// The bytes of FILE, or undefined when it is absent; any other failure
+// throws the fs error.
+function readIfPresent(file) {
+    try {
+        return fs.readFileSync(file);
+    } catch (e) {
+        if (e.code === "ENOENT") return undefined;
+        throw e;
+    }
+}
+
+function text(bytes) {
+    return bytes === undefined ? undefined : bytes.toString("utf8");
+}
+
+// A package's two files as bytes, absent ones undefined, and the judge's
+// verdict on their text. `acceptPackage` is the only judge of a package.
+function readPackage(dir, shipped) {
+    const files = { theme: readIfPresent(path.join(dir, "theme.json")), terminal: readIfPresent(path.join(dir, "terminal.json")) };
+    const verdict = logic.acceptPackage(tokens, {
+        directoryName: path.basename(dir),
+        themeJson: text(files.theme),
+        terminalJson: text(files.terminal),
+        shipped: shipped
+    });
+    return { files, verdict };
+}
+
+// --- packages
 
 function unreadable(where, cause) {
     console.log("vgsh-theme-judge: unreadable: " + where + ": " + cause);
     process.exit(2);
 }
 
-function usage() {
-    console.error("vgsh-theme-judge: refused: command=" + (process.argv[2] || "missing"));
-    process.exit(2);
-}
-
-function readRequired(file) {
+function checkPackages(dirArg) {
+    const base = path.resolve(dirArg || SHIPPED);
+    let names;
     try {
-        return fs.readFileSync(file, "utf8");
-    } catch (e) {
-        unreadable(file, e.code);
-    }
-}
-
-function readOptional(file) {
-    try {
-        return fs.readFileSync(file, "utf8");
-    } catch (e) {
-        if (e.code === "ENOENT") return undefined;
-        unreadable(file, e.code);
-    }
-}
-
-function packageDirs(base) {
-    let entries;
-    try {
-        entries = fs.readdirSync(base, { withFileTypes: true });
+        names = childDirs(base);
     } catch (e) {
         unreadable(base, e.code);
     }
-    const dirs = entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)).sort();
-    if (dirs.length === 0) unreadable(base, "no theme packages");
-    return dirs;
-}
-
-const [command, dirArg, ...extra] = process.argv.slice(2);
-if (command !== "packages" || extra.length > 0) usage();
-const base = path.resolve(dirArg || path.join(repo, "themes"));
-
-let refused = 0;
-for (const dir of packageDirs(base)) {
-    const result = logic.acceptPackage(tokens, {
-        directoryName: path.basename(dir),
-        themeJson: readRequired(path.join(dir, "theme.json")),
-        terminalJson: readOptional(path.join(dir, "terminal.json")),
-        shipped: true
-    });
-    if (result.ok) {
-        console.log("ok       " + result.name);
-        continue;
+    if (names === null) unreadable(base, "ENOENT");
+    if (names.length === 0) unreadable(base, "no theme packages");
+    let refused = 0;
+    for (const name of names) {
+        const dir = path.join(base, name);
+        let judged;
+        try {
+            judged = readPackage(dir, true);
+        } catch (e) {
+            unreadable(e.path || dir, e.code);
+        }
+        if (judged.files.theme === undefined) unreadable(path.join(dir, "theme.json"), "ENOENT");
+        if (judged.verdict.ok) {
+            console.log("ok       " + judged.verdict.name);
+            continue;
+        }
+        console.log("refused  " + dir + ": " + logic.refusalLine(judged.verdict));
+        refused += 1;
     }
-    console.log("refused  " + dir + ": " + logic.refusalLine(result));
-    refused += 1;
+    if (refused > 0) {
+        console.log("vgsh-theme-judge: refused=" + refused);
+        process.exit(1);
+    }
+    console.log("vgsh-theme-judge: ok");
 }
-if (refused > 0) {
-    console.log("vgsh-theme-judge: refused=" + refused);
-    process.exit(1);
+
+// --- the package set list and apply share
+
+// One package: `state` is `ok`, `refused` with its `reason`, or `shadowed`
+// by an installed package of its name, which is never read. `palette` is
+// the resolved palette group of an accepted package. `files` stays in
+// this process.
+function packageRow(base, name, source) {
+    const dir = path.join(base, name);
+    const row = { name, source, path: dir, state: "refused", reason: null, palette: null, files: null };
+    let judged;
+    try {
+        judged = readPackage(dir, source === "shipped");
+    } catch (e) {
+        row.reason = "unreadable";
+        return row;
+    }
+    row.files = judged.files;
+    if (!judged.verdict.ok) {
+        row.reason = judged.verdict.reason;
+        return row;
+    }
+    row.state = "ok";
+    row.palette = judged.verdict.values.palette;
+    return row;
 }
-console.log("vgsh-theme-judge: ok");
+
+// Every package under the shipped and the installed directory, and the
+// one each name resolves to. An installed package hides the shipped
+// package of its name, which is listed as shadowed, unless the judge
+// refused it for its reserved name: the shipped defaults are always
+// what `apply vgs` takes. KEY leads a refusal for a directory that
+// cannot be read.
+function packageSet(configDir, key) {
+    const dirs = (base, required) => {
+        let names;
+        try {
+            names = childDirs(base);
+        } catch (e) {
+            refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
+        }
+        if (names === null && required) refuse(key + "=unreadable path=" + base + " error=ENOENT", "unreadable");
+        return names || [];
+    };
+    const installedBase = path.join(configDir, "themes");
+    const rows = [];
+    const resolved = new Map();
+    for (const name of dirs(installedBase, false)) {
+        const row = packageRow(installedBase, name, "installed");
+        rows.push(row);
+        if (row.reason !== "reserved-name") resolved.set(name, row);
+    }
+    for (const name of dirs(SHIPPED, true)) {
+        if (resolved.has(name)) {
+            rows.push({ name, source: "shipped", path: path.join(SHIPPED, name), state: "shadowed", reason: null, palette: null, files: null });
+            continue;
+        }
+        const row = packageRow(SHIPPED, name, "shipped");
+        rows.push(row);
+        resolved.set(name, row);
+    }
+    rows.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : a.source === "installed" ? -1 : 1);
+    return { rows, resolved };
+}
+
+// The theme file as the shell reads it: `absent`, `unreadable`, `refused`
+// by ThemeLogic.accept, or `loaded` with the document's name.
+function themeFile(file) {
+    let bytes;
+    try {
+        bytes = fs.readFileSync(file);
+    } catch (e) {
+        return { path: file, state: e.code === "ENOENT" ? "absent" : "unreadable", name: null, bytes: null };
+    }
+    const accepted = logic.accept(tokens, bytes.toString("utf8"));
+    return { path: file, state: accepted.ok ? "loaded" : "refused", name: accepted.ok ? accepted.name : null, bytes };
+}
+
+// Whether the file's bytes differ from its named package's theme.json. An
+// absent file is the defaults, unmodified; a refused one is no accepted
+// package's bytes; an unreadable one cannot be compared, so null.
+function modified(file, resolved) {
+    switch (file.state) {
+    case "absent": return false;
+    case "unreadable": return null;
+    case "refused": return true;
+    case "loaded": {
+        const row = resolved.get(file.name);
+        return !(row !== undefined && row.state === "ok" && row.files.theme.equals(file.bytes));
+    }
+    default: throw new Error("vgsh-theme-judge: file state " + file.state + " is none of absent, unreadable, refused, loaded");
+    }
+}
+
+// --- list
+
+function list(format, configDir) {
+    const { rows, resolved } = packageSet(configDir, "themes");
+    const file = themeFile(path.join(configDir, "theme.json"));
+    const current = file.state === "loaded" ? resolved.get(file.name) : undefined;
+    const packages = rows.map(row => ({ name: row.name, source: row.source, path: row.path, state: row.state, reason: row.reason, current: row === current, palette: row.palette }));
+    const report = { file: { path: file.path, state: file.state, name: file.name, modified: modified(file, resolved) }, packages };
+    if (format === "json") {
+        process.stdout.write(JSON.stringify(report) + "\n");
+        return;
+    }
+    console.log("file path=" + file.path + " state=" + file.state + " name=" + (file.name === null ? "-" : file.name) + " modified=" + report.file.modified);
+    for (const p of packages) {
+        let line = "theme=" + p.name + " source=" + p.source + " state=" + p.state;
+        if (p.reason !== null) line += " reason=" + p.reason;
+        line += " current=" + p.current;
+        if (p.palette !== null) line += " palette=" + Object.keys(p.palette).map(k => k + ":" + p.palette[k]).join(",");
+        console.log(line);
+    }
+}
+
+// --- apply
+
+// Render the package into <state-dir>/next-theme/, move it over theme/,
+// write theme.name, then copy theme.json's bytes to the theme file, which
+// the shell watches, so the shell restyles only after the state directory
+// holds the theme. RESULT's `shell` follows the theme file.
+function applyTo(result, configDir, stateDir, lock, name) {
+    if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
+    const key = "theme=" + name + " reason";
+    if (lock === "busy") refuse(key + "=busy", "busy", 75);
+    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    const { rows, resolved } = packageSet(configDir, key);
+    const row = resolved.get(name);
+    if (row === undefined) refuse(key + "=unknown", "unknown");
+    if (row.state !== "ok") refuse(key + "=" + row.reason + " path=" + row.path, row.reason);
+    let terminal = row.files.terminal;
+    if (terminal === undefined) {
+        const defaults = rows.find(r => r.source === "shipped" && r.name === logic.DEFAULT_NAME);
+        if (defaults === undefined || defaults.state !== "ok" || defaults.files.terminal === undefined)
+            refuse(key + "=terminal-fallback path=" + path.join(SHIPPED, logic.DEFAULT_NAME), "terminal-fallback");
+        terminal = defaults.files.terminal;
+    }
+
+    const live = path.join(stateDir, "theme");
+    const stage = path.join(stateDir, "next-theme");
+    const aside = path.join(stateDir, "old-theme");
+    try {
+        // A stage or an aside copy left by an apply that died is stale:
+        // the lock proves no apply is running.
+        writing(stage, key, () => {
+            fs.rmSync(stage, { recursive: true, force: true });
+            fs.rmSync(aside, { recursive: true, force: true });
+            fs.mkdirSync(stage, { recursive: true });
+            fs.writeFileSync(path.join(stage, "theme.json"), row.files.theme);
+            fs.writeFileSync(path.join(stage, "terminal.json"), terminal);
+        });
+        // A rename cannot replace a non-empty directory: the old render
+        // moves aside first, so theme/ is absent between the two renames.
+        writing(live, key, () => {
+            try {
+                fs.renameSync(live, aside);
+            } catch (e) {
+                if (e.code !== "ENOENT") throw e;
+            }
+            try {
+                fs.renameSync(stage, live);
+            } catch (e) {
+                if (fs.existsSync(aside)) fs.renameSync(aside, live);
+                throw e;
+            }
+        });
+        writing(aside, key, () => fs.rmSync(aside, { recursive: true, force: true }));
+    } finally {
+        fs.rmSync(stage, { recursive: true, force: true });
+    }
+    replaceFile(path.join(stateDir, "theme.name"), name + "\n", key);
+
+    const file = themeFile(path.join(configDir, "theme.json"));
+    if (file.bytes !== null && file.bytes.equals(row.files.theme)) {
+        result.state = "unchanged";
+        return;
+    }
+    result.shell = "failed";
+    replaceFile(file.path, row.files.theme, key);
+    result.shell = "applied";
+    result.state = "applied";
+}
+
+function apply(format, configDir, stateDir, lock, name) {
+    const result = { state: "failed", shell: "unchanged", targets: [], theme: name, reason: null };
+    try {
+        applyTo(result, configDir, stateDir, lock, name);
+    } catch (e) {
+        if (e instanceof Refusal && format === "json") {
+            result.state = "failed";
+            result.reason = e.reason;
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }
+        throw e;
+    }
+    if (format === "json") process.stdout.write(JSON.stringify(result) + "\n");
+    else console.log("ok theme=" + name + " state=" + result.state + " shell=" + result.shell);
+}
+
+const [command, ...args] = process.argv.slice(2);
+main(() => {
+    switch (command) {
+    case "packages":
+        if (args.length > 1) usage("arguments=" + command);
+        checkPackages(args[0]);
+        break;
+    case "list":
+        if (args.length !== 2 || !FORMATS.includes(args[0])) usage("arguments=" + command);
+        list(args[0], args[1]);
+        break;
+    case "apply":
+        if (args.length !== 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
+        apply(...args);
+        break;
+    default:
+        usage("command=" + (command || "missing"));
+    }
+});

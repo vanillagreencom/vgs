@@ -8,7 +8,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 
 - `scripts/validate [AREA]`: run only checks affected by changes from the default branch's merge base, including uncommitted files. `--changed BASE` selects a fix round; `--list` previews commands; `--full` opts into the whole area. `unit` needs Qt and no Wayland session; `qml` needs the nested sandbox. Exit 77 means a check could not run and is not a pass.
 - `scripts/qml-smoke.sh`: the nested sandbox row alone. It needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment.
-- `bin/vgsh`: the runner and plugin manager. Run it with no arguments for the command list.
+- `bin/vgsh`: the runner, the plugin manager and the theme commands (`theme list`, `theme apply <name>`; `theme apply vgs` restores the defaults). Run it with no arguments for the command list.
 
 ## Conventions
 

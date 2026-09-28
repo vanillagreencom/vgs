@@ -52,19 +52,31 @@ function readJson(file, key) {
     }
 }
 
-// Replace a file by rename, so a shell watching it never reads half of it.
-// DATA is a string or a Buffer, written as it is. KEY leads the refusal
-// line: `KEY=unwritable path=<file> error=<code>`.
-function replaceFile(file, data, key) {
-    const tmp = file + ".vgsh-" + process.pid;
+// Run WRITE, a change to FILE through fs calls; a failed call is the
+// refusal `KEY=unwritable path=<file> error=<code>`.
+function writing(file, key, write) {
     try {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(tmp, data);
-        fs.renameSync(tmp, file);
+        write();
     } catch (e) {
-        fs.rmSync(tmp, { force: true });
         refuse(key + "=unwritable path=" + file + " error=" + e.code, "unwritable");
     }
 }
 
-module.exports = { Refusal, refuse, main, readJson, replaceFile };
+// Replace a file by rename, so a shell watching it never reads half of it.
+// DATA is a string or a Buffer, written as it is; a failure leaves no
+// temporary file and refuses as `writing` does.
+function replaceFile(file, data, key) {
+    const tmp = file + ".vgsh-" + process.pid;
+    writing(file, key, () => {
+        try {
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(tmp, data);
+            fs.renameSync(tmp, file);
+        } catch (e) {
+            fs.rmSync(tmp, { force: true });
+            throw e;
+        }
+    });
+}
+
+module.exports = { Refusal, refuse, main, readJson, writing, replaceFile };

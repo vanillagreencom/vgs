@@ -179,7 +179,8 @@ source_repo broken "$(manifest acme.broken 0.1.0 ', "requires": []')"
 source_repo taken "$(manifest vgs.bar 0.1.0)"
 
 # inst NAME CONFIG_HOME RUNTIME_DIR WANT_EXIT WANT_LAST_STDOUT WANT_FIRST_STDERR ARGS...
-# Stdout lands in $tmp/out for rows that read more than its last line.
+# Stdout lands in $tmp/out for rows that read more than its last line;
+# WANT_LAST_STDOUT is $any_out for a row whose checks after it read that.
 # INST_BIN names the vgsh under test; the mutation control runs its copy.
 inst() {
   local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
@@ -192,8 +193,10 @@ inst() {
   err=""
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
   local last="${out##*$'\n'}"
+  [[ $want_out == "$any_out" ]] && want_out="$last"
   if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
 }
+any_out=$'\x01any'
 check() { # NAME CMD...
   local name="$1"; shift
   if "$@"; then ok "$name"; else fail "$name"; fi
@@ -371,6 +374,128 @@ check "a refused id mismatch leaves the directory" test -f "$cfg/vgs/plugins/acm
 cfg="$tmp/cfg-live"
 inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin remove acme.probe
 INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$rt_live" 0 "shell=rescan-queued" "" plugin add "$tmp/src/probe.git"
+
+# Theme list and apply. They read the shipped packages beside bin/, so the
+# rows run a copy of the tree the theme commands load, holding one more
+# shipped package; production code has no knob for its themes directory.
+# XDG_STATE_HOME is unset, so the state directory is the $HOME fallback.
+tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons"
+cp -R -- "$repo/bin" "$repo/themes" "$tree/"
+cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
+cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
+tinst() { INST_BIN="${THEME_BIN:-$tree/bin/vgsh}" inst "$@"; }
+theme_pkg() { # DIR THEME_JSON_TEXT [TERMINAL_JSON_TEXT]
+  mkdir -p "$1"
+  printf '%s' "$2" >"$1/theme.json"
+  [[ -z ${3:-} ]] || printf '%s' "$3" >"$1/terminal.json"
+}
+slots_json() { # COLOUR: all sixteen slots
+  local i out=""
+  for i in $(seq 0 15); do out+="${out:+, }\"color$i\": \"$1\""; done
+  printf '{ "schemaVersion": 1, "slots": { %s } }\n' "$out"
+}
+cfg="$tmp/cfg-theme"; themes="$cfg/vgs/themes"; state="$tmp/home/.local/state/vgs"; file="$cfg/vgs/theme.json"
+theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'
+# Key order and whitespace no serialiser writes, so only a byte copy keeps them.
+theme_pkg "$themes/dusk" $'{"tokens" :{"palette":{"accent":"#222222"}},\n\n    "name":"dusk",   "schemaVersion":1}\n\n'
+theme_pkg "$themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": {} }' "$(slots_json '#010203')"
+theme_pkg "$themes/broken" '{ "schemaVersion": 1, "name": "other", "tokens": {} }'
+theme_pkg "$themes/vgs" '{ "schemaVersion": 1, "name": "vgs", "tokens": { "palette": { "accent": "#333333" } } }'
+# The shipped defaults sort last in every list here, with the table's palette.
+vgs_row="theme=vgs source=shipped state=ok current=false palette=background:#000000ff,foreground:#d7d7d9ff,accent:#ff5a36ff,success:#b4c96fff,warning:#ffb000ff,danger:#f43f5eff,info:#74a7f7ff"
+has_line() { grep -qxF -- "$1" "$tmp/out"; }
+has_prefix() { grep -q "^$1" "$tmp/out"; }
+
+tinst "theme list succeeds with no theme file" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "theme list reports an absent theme file as unmodified" has_line "file path=$file state=absent name=- modified=false"
+check "an installed package is listed with its resolved palette" has_prefix "theme=dusk source=installed state=ok current=false palette=background:#000000ff,foreground:#d7d7d9ff,accent:#222222ff,"
+check "an installed package shadows the shipped package of its name" has_line "theme=dusk source=shipped state=shadowed current=false"
+check "a refused package is listed with its reason" has_line "theme=broken source=installed state=refused reason=name-mismatch current=false"
+check "an installed vgs is refused for its reserved name" has_line "theme=vgs source=installed state=refused reason=reserved-name current=false"
+tinst "theme list --json succeeds" "$cfg" "$rt_empty" 0 "$any_out" "" theme list --json
+tail -n 1 "$tmp/out" >"$tmp/list.json"
+check "theme list --json carries the same rows" json_is "$tmp/list.json" 'd["file"] == {"path": "'"$file"'", "state": "absent", "name": None, "modified": False} and [(p["name"], p["source"], p["state"], p["reason"]) for p in d["packages"]] == [("broken", "installed", "refused", "name-mismatch"), ("dusk", "installed", "ok", None), ("dusk", "shipped", "shadowed", None), ("nord", "installed", "ok", None), ("vgs", "installed", "refused", "reserved-name"), ("vgs", "shipped", "ok", None)] and d["packages"][1]["palette"]["accent"] == "#222222ff" and d["packages"][2]["palette"] is None'
+
+tinst "theme apply takes the installed package over the shipped one" "$cfg" "$rt_empty" 0 "ok theme=dusk state=applied shell=applied" "" theme apply dusk
+check "apply copies the package's theme.json to the theme file byte for byte" cmp -s "$themes/dusk/theme.json" "$file"
+check "apply renders the package's theme.json into the state directory" cmp -s "$themes/dusk/theme.json" "$state/theme/theme.json"
+check "a package without terminal.json takes the shipped vgs slots" cmp -s "$repo/themes/vgs/terminal.json" "$state/theme/terminal.json"
+check "apply writes theme.name" test "$(cat "$state/theme.name")" == dusk
+check "the swap leaves no next-theme/ behind" test ! -e "$state/next-theme"
+tinst "theme list after an apply" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "the byte copy reads back as the named package, unmodified" has_line "file path=$file state=loaded name=dusk modified=false"
+check "the applied package is the file's named theme" has_prefix "theme=dusk source=installed state=ok current=true "
+tinst "applying the file's own package again changes nothing" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
+printf '\n' >>"$file"
+tinst "theme list after a hand edit" "$cfg" "$rt_empty" 0 "$any_out" "" theme list --json
+tail -n 1 "$tmp/out" >"$tmp/list.json"
+check "a hand edit of the theme file reports it modified" json_is "$tmp/list.json" 'd["file"]["state"] == "loaded" and d["file"]["name"] == "dusk" and d["file"]["modified"] is True'
+
+tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[],"theme":"nord","reason":null}' "" theme apply --json nord
+check "a package's own terminal.json is rendered as it is" cmp -s "$themes/nord/terminal.json" "$state/theme/terminal.json"
+
+# A stage a crashed apply left behind is removed, never carried into theme/.
+mkdir -p "$state/next-theme"; : >"$state/next-theme/stale"
+tinst "theme apply vgs restores the shipped defaults over a reserved installed vgs" "$cfg" "$rt_empty" 0 "ok theme=vgs state=applied shell=applied" "" theme apply vgs
+check "apply vgs writes the shipped defaults' bytes" cmp -s "$repo/themes/vgs/theme.json" "$file"
+check "apply vgs writes theme.name vgs" test "$(cat "$state/theme.name")" == vgs
+check "apply removes a stale next-theme/" test ! -e "$state/next-theme"
+check "the state directory's theme/ holds the two rendered files and nothing stale" test "$(find "$state/theme" -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ')" == "terminal.json theme.json "
+
+tinst "theme apply refuses a refused package" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=broken reason=name-mismatch path=$themes/broken" theme apply broken
+tinst "theme apply --json prints a refusal's result" "$cfg" "$rt_empty" 1 '{"state":"failed","shell":"unchanged","targets":[],"theme":"broken","reason":"name-mismatch"}' "vgsh: refused: theme=broken reason=name-mismatch path=$themes/broken" theme apply --json broken
+tinst "theme apply refuses an unknown name" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=absent reason=unknown" theme apply absent
+tinst "theme apply refuses a name that is no directory name" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme="../dusk" reason=malformed-name' theme apply ../dusk
+check "refused applies leave the theme file alone" cmp -s "$repo/themes/vgs/theme.json" "$file"
+tinst "theme apply without a name is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: name=missing" theme apply
+tinst "theme apply with a second name is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=nord" theme apply dusk nord
+tinst "theme list with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=dusk" theme list dusk
+tinst "an unknown theme subcommand is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: theme-subcommand=frobnicate" theme frobnicate
+
+# The lock: held here the way a concurrent apply holds it.
+lockfile="$cfg/vgs/theme.lock"
+check "apply leaves the theme lock file in place" test -f "$lockfile"
+exec 7>>"$lockfile"
+flock 7
+tinst "a concurrent theme apply is refused as busy" "$cfg" "$rt_empty" 75 '{"state":"failed","shell":"unchanged","targets":[],"theme":"dusk","reason":"busy"}' "vgsh: refused: theme=dusk reason=busy" theme apply --json dusk
+check "a busy apply leaves the theme file alone" cmp -s "$repo/themes/vgs/theme.json" "$file"
+# The must-fail control: a copy of vgsh that never takes the lock applies
+# under the held lock.
+mutant="$tmp/tree-nolock"; cp -R -- "$tree" "$mutant"
+take='flock -n -E 75 9 || status=$?'
+check "the theme lock is taken once in bin/vgsh" test "$(grep -o -F -- "$take" "$repo/bin/vgsh" | wc -l)" == 1
+sed -i "s/$take/true/" "$mutant/bin/vgsh"
+check "the lockless mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
+THEME_BIN="$mutant/bin/vgsh" tinst "the lockless mutant applies while the lock is held" "$cfg" "$rt_empty" 0 "ok theme=dusk state=applied shell=applied" "" theme apply dusk
+exec 7>&-
+cfg_ro="$tmp/cfg-theme-ro"; mkdir -p "$cfg_ro/vgs"; chmod 500 "$cfg_ro/vgs"
+tinst "theme apply refuses when the lock file cannot be made" "$cfg_ro" "$rt_empty" 1 "" "vgsh: refused: theme=vgs reason=lock-failed path=$cfg_ro/vgs/theme.lock" theme apply vgs
+chmod 700 "$cfg_ro/vgs"
+
+# The byte copy's must-fail control: a judge copy that re-serialises the
+# document reports its own apply as modified.
+mutant="$tmp/tree-reserialise"; cp -R -- "$tree" "$mutant"
+copy='replaceFile(file.path, row.files.theme, key);'
+check "the theme file is written once in bin/vgsh-theme-judge" test "$(grep -o -F -- "$copy" "$repo/bin/vgsh-theme-judge" | wc -l)" == 1
+sed -i "s/$copy/replaceFile(file.path, JSON.stringify(JSON.parse(row.files.theme)), key);/" "$mutant/bin/vgsh-theme-judge"
+check "the re-serialising mutant differs from bin/vgsh-theme-judge" test "$(cmp -s "$repo/bin/vgsh-theme-judge" "$mutant/bin/vgsh-theme-judge"; echo $?)" == 1
+cfg="$tmp/cfg-theme-mutant"; mkdir -p "$cfg/vgs"; cp -R -- "$themes" "$cfg/vgs/themes"
+THEME_BIN="$mutant/bin/vgsh" tinst "the re-serialising mutant applies" "$cfg" "$rt_empty" 0 "ok theme=dusk state=applied shell=applied" "" theme apply dusk
+tinst "theme list after the mutant's apply" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "the re-serialising mutant's apply reads back as modified" has_line "file path=$cfg/vgs/theme.json state=loaded name=dusk modified=true"
+
+# The file's state, read from disk with the shell's own judge.
+cfg="$tmp/cfg-theme-file"; file="$cfg/vgs/theme.json"; mkdir -p "$cfg/vgs"
+printf '{ "schemaVersion": 1, "name": "mine", "tokens": {} }\n' >"$file"
+tinst "theme list with a file no package names" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "a file naming no package is loaded and modified" has_line "file path=$file state=loaded name=mine modified=true"
+printf '{ "schemaVersion": 1, "name": "vgs", "tokens": { "palette": { "acent": "#fff" } } }\n' >"$file"
+tinst "theme list with a refused file" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "a file the judge refuses is refused and modified" has_line "file path=$file state=refused name=- modified=true"
+chmod 000 "$file"
+tinst "theme list with an unreadable file" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "an unreadable file is unreadable and not compared" has_line "file path=$file state=unreadable name=- modified=null"
+chmod 600 "$file"
 
 # --help prints the header comment of the script itself on stderr and exits
 # 0; the expected first line is read from the script, not restated here.

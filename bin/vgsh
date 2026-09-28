@@ -12,6 +12,9 @@
 #   vgsh plugin add <git url>      clone, validate and install one plugin, disabled
 #   vgsh plugin update <id>        fetch, show the diff and fast-forward an installed plugin
 #   vgsh plugin remove <id>        delete an installed plugin's directory
+#   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
+#   vgsh theme apply [--json] <name>
+#                                  apply one theme package to the shell; `apply vgs` restores the defaults
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
@@ -27,10 +30,23 @@
 # when a shell runs (the scan's result is in `vgsh plugin list`), or
 # `shell=not-running` when none does and the next start reads the change.
 #
+# Theme packages are the shipped themes/<name>/ and the installed
+# ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>/; an installed package
+# hides a shipped one of its name, except the reserved `vgs`. `theme apply`
+# holds flock on ${XDG_CONFIG_HOME:-~/.config}/vgs/theme.lock for the whole
+# apply, so a second apply from any caller is refused with reason=busy. It
+# renders the package into ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/,
+# writes theme.name beside it, then copies the package's theme.json byte
+# for byte to theme.json beside the lock, the file the shell watches. `--json`
+# prints the list, or the apply's result `{ state, shell, targets, theme,
+# reason }` with refusals included, as one JSON line on stdout. `theme`
+# commands never contact the shell: docs/architecture/themes.md § Runner.
+#
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when another
-# shell holds the lock, 69 when the shell is not running. The usage text is
-# this header; `vgsh --help` prints it and exits 0.
+# shell holds the lock or another theme apply holds the theme lock, 69 when
+# the shell is not running. The usage text is this header; `vgsh --help`
+# prints it and exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -83,6 +99,11 @@ ipc() {
 
 user_plugins="$config_home/vgs/plugins"
 judge="$root/bin/vgsh-plugin-judge"
+theme_judge="$root/bin/vgsh-theme-judge"
+# Beside the file it guards, so callers with different runtime dirs still
+# take the same lock. Created once and never removed.
+theme_lock="$config_home/vgs/theme.lock"
+state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
 
 refuse() { # STATUS FIRST_LINE [ENGLISH...]
   local status="$1"
@@ -310,6 +331,39 @@ PY
         ;;
       *)
         printf 'vgsh: refused: plugin-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
+        ;;
+    esac
+    ;;
+  theme)
+    sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    format=text
+    if [[ ${1:-} == --json ]]; then format=json; shift; fi
+    case "$sub" in
+      list)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        exec node "$theme_judge" list "$format" "$config_home/vgs"
+        ;;
+      apply)
+        name="${1:-}"
+        if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        # The judge runs under this process's descriptor 9, so it holds the
+        # lock until it exits. It prints every refusal, busy included, so a
+        # --json caller reads a result on every path.
+        verdict=failed
+        if mkdir -p -- "$config_home/vgs" 2>/dev/null && { exec 9>>"$theme_lock"; } 2>/dev/null; then
+          status=0
+          flock -n -E 75 9 || status=$?
+          case "$status" in
+            0) verdict=held ;;
+            75) verdict=busy ;;
+          esac
+        fi
+        exec node "$theme_judge" apply "$format" "$config_home/vgs" "$state_home/vgs" "$verdict" "$name"
+        ;;
+      *)
+        printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
         ;;
     esac
     ;;

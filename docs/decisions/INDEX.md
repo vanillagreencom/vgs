@@ -22,6 +22,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-26 | D017 | — | Controls extend QtQuick.Templates; icons are Lucide path data drawn with Shapes | Keyboard, focus and checked state come from Qt; the stroke is a token constant across sizes | Templates cost more than measured, or the pixel tests show a drawing defect the icon font lacks | Active | [Full](D017-templates-and-path-icons.md) |
 | 2026-09-26 | D018 | — | Overlays are Quickshell popup windows anchored to their item, not Qt window popups | Qt places a Wayland window popup once inside the parent's bounds and never moves it | Qt repositions window popups by the screen, or Quickshell offers a popup Qt templates accept | Active | [Full](D018-overlays-are-quickshell-popups.md) |
 | 2026-09-27 | D019 | VGS-457 | Theme packages are directories with plugin trust; terminal slots are package files | Curated target files are included verbatim by applications | Package signatures or marketplace change trust | Active | [Full](D019-theme-packages-carry-plugin-trust.md) |
+| 2026-09-27 | D020 | VGS-458 | Theme apply swaps one state directory under a lock beside the theme file and writes the shell file last | Callers with different runtime dirs must serialise; the shell restyles after application files exist | Applications need theme/ present at every instant | Active | [Full](D020-theme-apply-swaps-state-and-writes-the-shell-file-last.md) |
 
 ---
 
