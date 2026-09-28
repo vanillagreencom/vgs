@@ -302,7 +302,39 @@ g -C "$control" merge -q --ff-only '@{upstream}'
 check "a plain fast-forward under the fixture configuration runs the post-merge hook" test -e "$hooks/post-merge.marker"
 rm -f -- "${hooks:?}/post-merge.marker"
 before="$(head_of "$plugin")"
-inst "update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin update acme.probe
+inst "update without a terminal refuses after the diff" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: no-terminal=acme.probe" plugin update acme.probe
+check "the unconfirmed update prints the incoming diff" grep -q '^+.*"version": "0.2.0"' "$tmp/out"
+check "an update without a terminal leaves the checkout at its commit" test "$(head_of "$plugin")" == "$before"
+on_terminal n plugin update acme.probe
+check "an update declined on a terminal is refused" test "$term_status" == 1
+check "the declined update names its refusal" grep -qF "vgsh: refused: declined=acme.probe" "$tmp/out"
+check "a declined update leaves the checkout at its commit" test "$(head_of "$plugin")" == "$before"
+check "a declined update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
+
+# The must-fail control: a copy of vgsh that never asks fast-forwards both
+# without a terminal and on a terminal that answers no.
+ask='  confirm_update "$label"'
+check "the update asks once in bin/vgsh" test "$(grep -c -x -F -- "$ask" "$repo/bin/vgsh")" == 1
+noask="$tmp/noask"; mkdir -p "$noask/bin"
+grep -v -x -F -- "$ask" "$repo/bin/vgsh" >"$noask/bin/vgsh" || true
+chmod +x "$noask/bin/vgsh"
+check "the never-asking mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$noask/bin/vgsh"; echo $?)" == 1
+for sibling in shell config scripts; do ln -s "$repo/$sibling" "$noask/$sibling"; done
+for tool in vgsh-scan vgsh-plugin-judge; do ln -s "$repo/bin/$tool" "$noask/bin/$tool"; done
+cfg="$tmp/cfg-noask"
+inst "add installs a plugin for the never-asking control" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
+g -C "$cfg/vgs/plugins/acme.probe" reset -q --hard HEAD~1
+INST_BIN="$noask/bin/vgsh" inst "the never-asking mutant updates without a terminal" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin update acme.probe
+g -C "$cfg/vgs/plugins/acme.probe" reset -q --hard HEAD~1
+INST_BIN="$noask/bin/vgsh" on_terminal n plugin update acme.probe
+check "the never-asking mutant updates on a terminal that answers no" test "$term_status" == 0
+g -C "$cfg/vgs/plugins/acme.probe" reset -q --hard HEAD~1
+on_terminal yes plugin update acme.probe
+check "an update confirmed on a terminal succeeds" test "$term_status" == 0
+check "a confirmed update fast-forwards to the source" test "$(head_of "$cfg/vgs/plugins/acme.probe")" == "$(head_of "$tmp/src/probe")"
+
+cfg="$tmp/cfg-add"
+inst "update --yes fast-forwards a new commit" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin update --yes acme.probe
 check "update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
 after="$(head_of "$plugin")"
 check "update reports both commits" grep -qx "ok updated=acme.probe from=${before:0:12} to=${after:0:12}" "$tmp/out"
@@ -317,11 +349,11 @@ rm -f -- "$plugin/notes.txt"
 diff_last() { local d; d="$(g -C "$tmp/src/probe" diff "$good" HEAD)" || return 1; printf '%s\n' "${d##*$'\n'}"; }
 good="$(head_of "$plugin")"
 source_commit probe "$(manifest acme.probe 0.3.0 ', "requires": []')"
-inst "update refuses a new manifest the judge refuses" "$cfg" "$rt_empty" 1 "$(diff_last)" "vgsh: refused: manifest=acme.probe rolled-back=${good:0:12}" plugin update acme.probe
+inst "update refuses a new manifest the judge refuses" "$cfg" "$rt_empty" 1 "$(diff_last)" "vgsh: refused: manifest=acme.probe rolled-back=${good:0:12}" plugin update --yes acme.probe
 check "a refused manifest rolls the checkout back" test "$(head_of "$plugin")" == "$good"
 check "a refused manifest leaves the accepted version in place" json_is "$plugin/manifest.json" 'd["version"] == "0.2.0"'
 source_commit probe "$(manifest acme.renamed 0.3.0)"
-inst "update refuses a new manifest naming another id" "$cfg" "$rt_empty" 1 "$(diff_last)" "vgsh: refused: manifest-id=acme.renamed want=acme.probe rolled-back=${good:0:12}" plugin update acme.probe
+inst "update refuses a new manifest naming another id" "$cfg" "$rt_empty" 1 "$(diff_last)" "vgsh: refused: manifest-id=acme.renamed want=acme.probe rolled-back=${good:0:12}" plugin update --yes acme.probe
 check "a renamed id rolls the checkout back" test "$(head_of "$plugin")" == "$good"
 
 # Rewrite the installed commit itself, so the installed head is no ancestor.
@@ -333,7 +365,7 @@ check "a refused rewrite leaves the checkout alone" test "$(head_of "$plugin")" 
 
 cfg="$tmp/cfg-live"
 source_commit probe "$(manifest acme.probe 0.4.0)"
-inst "update rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin update acme.probe
+inst "update rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin update --yes acme.probe
 
 # A checkout add did not make: no .git, or a branch with no upstream. Each
 # refusal names git's own cause after its key.
@@ -352,6 +384,7 @@ check "the upstream refusal carries git's cause" grep -q '^fatal: no upstream co
 cfg="$tmp/cfg-add"
 inst "remove refuses a bundled id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: bundled=vgs.bar" plugin remove vgs.bar
 inst "update refuses a bundled id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: bundled=vgs.bar" plugin update vgs.bar
+inst "update refuses --yes after the id" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--yes" plugin update acme.probe --yes
 inst "remove refuses an unknown id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: unknown=acme.absent" plugin remove acme.absent
 inst "remove refuses a path that leaves the plugin directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: outside=$cfg/vgs" plugin remove ..
 inst "remove deletes the installed plugin" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin remove acme.probe
@@ -592,7 +625,9 @@ check "the descriptor-keeping mutant's git holds descriptor 9" test -e "$spy/fd9
 before="$(head_of "$moss")"
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123456" } }')"
 after="$(head_of "$src/moss")"
-tinst "theme update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "ok follow=none theme=- state=unchanged" "" theme update moss
+tinst "theme update without a terminal refuses after the diff" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: no-terminal=moss" theme update moss
+check "an unconfirmed theme update leaves the checkout at its commit" test "$(head_of "$moss")" == "$before"
+tinst "theme update --yes fast-forwards a new commit" "$cfg" "$rt_empty" 0 "ok follow=none theme=- state=unchanged" "" theme update --yes moss
 check "theme update reports both commits" has_line "ok updated=moss from=${before:0:12} to=${after:0:12}"
 check "theme update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
 check "theme update prints the incoming diff" grep -q '^+.*#123456' "$tmp/out"
@@ -603,12 +638,12 @@ tinst "theme update refuses a checkout with an untracked file" "$cfg" "$rt_empty
 rm -f -- "$moss/notes.txt"
 good="$(head_of "$moss")"
 theme_commit moss terminal.json "$(slots_json '#nothex')"
-tinst "theme update refuses a new version the judge refuses" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=terminal-colour token=terminal.color0 value=\"#nothex\" rolled-back=${good:0:12}" theme update moss
+tinst "theme update refuses a new version the judge refuses" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=terminal-colour token=terminal.color0 value=\"#nothex\" rolled-back=${good:0:12}" theme update --yes moss
 check "a refused version rolls the checkout back" test "$(head_of "$moss")" == "$good"
 check "a refused version leaves no file of it" test ! -e "$moss/terminal.json"
 theme_commit moss terminal.json "$(slots_json '#010203')"
 theme_commit moss theme.json "$(doc renamed)"
-tinst "theme update refuses a new version naming another package" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=name-mismatch directory=moss document=renamed rolled-back=${good:0:12}" theme update moss
+tinst "theme update refuses a new version naming another package" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=name-mismatch directory=moss document=renamed rolled-back=${good:0:12}" theme update --yes moss
 check "a renamed package rolls the checkout back" test "$(head_of "$moss")" == "$good"
 g -C "$src/moss" reset -q --hard "$good"
 g -C "$src/moss" commit -q --amend -m rewritten

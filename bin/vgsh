@@ -10,7 +10,8 @@
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
 #   vgsh plugin add <git url>      clone, validate and install one plugin, disabled
-#   vgsh plugin update <id>        fetch, show the diff and fast-forward an installed plugin
+#   vgsh plugin update [--yes] <id>
+#                                  fetch, show the diff, ask, and fast-forward an installed plugin
 #   vgsh plugin remove <id>        delete an installed plugin's directory
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
@@ -20,7 +21,8 @@
 #   vgsh theme background [--json] next|previous
 #                                  show the applied package's next or previous background image and remember it
 #   vgsh theme add <git url>       clone, judge and install one theme package
-#   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package, then follow it
+#   vgsh theme update [--yes] <name>
+#                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
@@ -35,9 +37,14 @@
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/plugins/<id>. add lands the plugin
-# disabled. Each ends with `shell=rescan-started` or `shell=rescan-queued`
-# when a shell runs (the scan's result is in `vgsh plugin list`), or
-# `shell=not-running` when none does and the next start reads the change.
+# disabled. update prints the incoming diff, then asks
+# `vgsh: update <id>? [y/N]` on stderr and fast-forwards only on y or yes;
+# any other answer refuses with declined=<id>. With no terminal on stdin it
+# refuses with no-terminal=<id> instead, unless --yes gives the answer.
+# Either refusal leaves the checkout at its old commit. Each ends with
+# `shell=rescan-started` or `shell=rescan-queued` when a shell runs (the
+# scan's result is in `vgsh plugin list`), or `shell=not-running` when none
+# does and the next start reads the change.
 #
 # Theme packages are the shipped themes/<name>/ and the installed
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>/; an installed package
@@ -78,12 +85,13 @@
 # `theme add`, `update` and `remove` follow the plugin rules above for
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
 # lands it under its theme.json name once the theme judge accepts it and
-# refuses an occupied name and the reserved `vgs`; update refuses a
-# modified checkout and rolls back a version the judge refuses, and a
-# version it accepts follows as `theme follow` does for that package, its
-# line last and its exit status update's; remove deletes only an installed
-# package, never a shipped one. Each holds the theme lock while it changes
-# the package; a held lock is reason=busy.
+# refuses an occupied name and the reserved `vgs`; update asks, and takes
+# --yes, as plugin update does, refuses a modified checkout and rolls back
+# a version the judge refuses, and a version it accepts follows as
+# `theme follow` does for that package, its line last and its exit status
+# update's; remove deletes only an installed package, never a shipped one.
+# Each holds the theme lock while it changes the package, update through
+# its question too; a held lock is reason=busy.
 # docs/architecture/themes.md § Install.
 #
 # `theme browser-policy install` is the one command that asks for a
@@ -251,11 +259,30 @@ rollback() { # DIR COMMIT
   git_or_refuse "rollback=failed path=$1 to=$2" -C "$1" reset --quiet --hard "$2"
 }
 
-# Fetch checkout DIR's upstream and, when it is new, print the incoming diff
-# and fast-forward to it. Sets ff_old and ff_new, the commits before and
-# after, equal when DIR was already up to date. LABEL names DIR in the
-# refusals: a directory that is not its own checkout, a modified checkout,
-# a failed fetch, no upstream, and a source that rewrote its history.
+# 1 when --yes stands for the answer to confirm_update's question.
+assume_yes=0
+
+# The review step between the incoming diff and the fast-forward: new
+# plugin or package code runs as soon as it lands, so a person answers on
+# the terminal, or the caller passes --yes. LABEL names the checkout.
+confirm_update() { # LABEL
+  local answer=""
+  [[ $assume_yes == 1 ]] && return 0
+  [[ -t 0 ]] || refuse 1 "no-terminal=$1" "no terminal on stdin to confirm the diff above; run on a terminal or pass --yes"
+  printf 'vgsh: update %s? [y/N] ' "$1" >&2
+  read -r answer || answer=""
+  case "$answer" in
+    [yY] | [yY][eE][sS]) ;;
+    *) refuse 1 "declined=$1" "the checkout stays at ${ff_old:0:12}" ;;
+  esac
+}
+
+# Fetch checkout DIR's upstream and, when it is new, print the incoming diff,
+# confirm it and fast-forward to it. Sets ff_old and ff_new, the commits
+# before and after, equal when DIR was already up to date. LABEL names DIR
+# in the refusals: a directory that is not its own checkout, a modified
+# checkout, a failed fetch, no upstream, a source that rewrote its history,
+# and an update nobody confirmed.
 fast_forward() { # DIR LABEL
   local dir="$1" label="$2" top dirty err rc=0
   top="$(git_or_refuse "not-a-checkout=$dir" -C "$dir" rev-parse --show-toplevel)" || exit 1
@@ -273,6 +300,7 @@ fast_forward() { # DIR LABEL
     *) refuse 1 "git=merge-base exit=$rc path=$dir" "$err" ;;
   esac
   git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$ff_old" "$ff_new"
+  confirm_update "$label"
   git_or_refuse "git=merge path=$dir" -C "$dir" merge --quiet --ff-only "$ff_new"
 }
 
@@ -484,8 +512,10 @@ PY
         plugin_add "$url"
         ;;
       update|remove)
+        if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
         id="${1:-}"
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
+        if [[ $sub == update && $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         "plugin_$sub" "$id"
         ;;
       validate)
@@ -539,8 +569,9 @@ PY
         exec "$root/bin/vgsh-browser-policy" install
         ;;
       add|update|remove)
-        arg="${1:-}"
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
+        if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
+        arg="${1:-}"
         if [[ -z $arg ]]; then
           missing=name; [[ $sub == add ]] && missing=url
           printf 'vgsh: refused: %s=missing\n' "$missing" >&2; usage; exit 2

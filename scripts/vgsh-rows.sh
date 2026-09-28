@@ -28,12 +28,13 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 # Stdout lands in $tmp/out for rows that read more than its last line;
 # WANT_LAST_STDOUT is $any_out for a row whose checks after it read that.
 # INST_BIN names the vgsh under test; the mutation control runs its copy.
-# INST_PATH replaces the rows' PATH.
+# INST_PATH replaces the rows' PATH. Stdin is /dev/null, so no row reads
+# the terminal the suite runs on; on_terminal hands vgsh one.
 inst() {
   local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
   shift 6
   set +e
-  out="$("${base_env[@]}" PATH="${INST_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err")"
+  out="$("${base_env[@]}" PATH="${INST_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err" </dev/null)"
   status=$?
   set -e
   printf '%s\n' "$out" >"$tmp/out"
@@ -53,6 +54,17 @@ json_is() { # FILE PYTHON_EXPR_ON_d: the expression must be true
 }
 has_line() { grep -qxF -- "$1" "$tmp/out"; }
 has_prefix() { grep -q "^$1" "$tmp/out"; }
+# on_terminal ANSWER ARGS...: vgsh against $cfg on a pseudo-terminal that
+# script(1) opens, with ANSWER typed on it. Stdout and stderr together land
+# in $tmp/out and the exit status in $term_status. INST_BIN names the vgsh
+# under test, as for inst.
+on_terminal() {
+  local answer="$1"
+  shift
+  command -v script >/dev/null || { echo "$(basename -- "$0" .sh): status=not-measured missing=script"; exit 77; }
+  term_status=0
+  "${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" script -qec "$(printf '%q ' "${INST_BIN:-$repo/bin/vgsh}" "$@")" /dev/null <<<"$answer" >"$tmp/out" 2>&1 || term_status=$?
+}
 
 # The theme commands read the shipped packages and targets beside bin/, so
 # theme rows run a copy of the tree they load, $tree, whose themes/ a row

@@ -111,16 +111,16 @@ tinst "moss installs" "$cfg" "$rt_empty" 0 "ok added=moss path=$themes/moss" "" 
 tinst "reed installs" "$cfg" "$rt_empty" 0 "ok added=reed path=$themes/reed" "" theme add "$tmp/tsrc/reed.git"
 tinst "moss applies" "$cfg" "$rt_empty" 0 "ok theme=moss state=applied shell=applied" "" theme apply moss
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123456" } }')"
-tinst "update re-applies the applied, unedited package" "$cfg" "$rt_empty" 0 "$(follow_line reapplied moss applied)" "" theme update moss
+tinst "update re-applies the applied, unedited package" "$cfg" "$rt_empty" 0 "$(follow_line reapplied moss applied)" "" theme update --yes moss
 check "update reports the fast-forward before the follow" has_prefix "ok updated=moss from="
 check "update's re-apply writes the new version's bytes" cmp -s "$themes/moss/theme.json" "$file"
 check "the updated file is unmodified" test "$(modified_of "$cfg")" == false
 theme_commit reed theme.json "$(doc reed '{ "palette": { "accent": "#654321" } }')"
-tinst "update of a package that is not applied follows nothing" "$cfg" "$rt_empty" 0 "$(follow_line none - unchanged)" "" theme update reed
+tinst "update of a package that is not applied follows nothing" "$cfg" "$rt_empty" 0 "$(follow_line none - unchanged)" "" theme update --yes reed
 check "an update of another package leaves the theme file" cmp -s "$themes/moss/theme.json" "$file"
 printf '\n' >>"$file"; cp -- "$file" "$tmp/edited.json"
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123457" } }')"
-tinst "update leaves a hand-edited file" "$cfg" "$rt_empty" 0 "$(follow_line edited moss unchanged)" "" theme update moss
+tinst "update leaves a hand-edited file" "$cfg" "$rt_empty" 0 "$(follow_line edited moss unchanged)" "" theme update --yes moss
 check "update keeps the hand edit byte for byte" cmp -s "$tmp/edited.json" "$file"
 check "the hand-edited file stays modified after an update" test "$(modified_of "$cfg")" == true
 
@@ -128,7 +128,7 @@ check "the hand-edited file stays modified after an update" test "$(modified_of 
 tinst "moss applies over the hand edit" "$cfg" "$rt_empty" 0 "ok theme=moss state=applied shell=applied" "" theme apply moss
 target_dir fails "$(target_json fails hex6 '[]' 'include=@{state}/fails.conf' true)" 'x=@{palette.nope}'
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123458" } }')"
-tinst "update whose follow is partial exits 3" "$cfg" "$rt_empty" 3 "partial follow=reapplied theme=moss state=partial" 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme update moss
+tinst "update whose follow is partial exits 3" "$cfg" "$rt_empty" 3 "partial follow=reapplied theme=moss state=partial" 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme update --yes moss
 rm -r -- "$tree/themes/targets/fails"
 
 # Must-fail controls, one per rule, each on a copy of the tree. Each starts
@@ -170,7 +170,7 @@ unset THEME_BIN
 tinst "moss applies for the update control" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply moss
 theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123459" } }')"
 tree_control update bin/vgsh '  exec node "$theme_judge" follow text "$config_home/vgs" "$state_home/vgs" held "$name"' ''
-tinst "the update mutant fast-forwards" "$cfg" "$rt_empty" 0 "$any_out" "" theme update moss
+tinst "the update mutant fast-forwards" "$cfg" "$rt_empty" 0 "$any_out" "" theme update --yes moss
 check "the update mutant's last line is the fast-forward" has_prefix "ok updated=moss from="
 check "the update mutant leaves the old version's bytes" test "$(cmp -s "$themes/moss/theme.json" "$file"; echo $?)" == 1
 unset THEME_BIN
