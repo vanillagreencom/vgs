@@ -42,7 +42,7 @@ Each editor needs one step from the user, named below, before it draws the theme
   - While VS Code runs, it adds a new folder in the extensions directory to the default profile as an extension from another source. The folder's name does not matter; `package.json` gives the extension its identity.
   - When VS Code starts, it deletes every extension folder no profile lists. An apply that wrote the folder while VS Code was closed has its folder deleted at the next start. The deletion removes the links, never the files in `theme/`, and the next apply writes the folder again.
 - **One-time step.** Run `vgsh theme apply` while VS Code is running, then choose `vgs` with `Preferences: Color Theme`. `Developer: Install Extension from Location...` also registers the folder where it stands, but only while the folder exists and VS Code is running.
-- **Curated file.** `vscode.json` takes `curatedKeys` `colors`, `tokenColors` and `semanticTokenColors` ([theme-targets.md § Templates](theme-targets.md#templates)). A package's colour theme is therefore taken, while Omarchy's `vscode.json` is not: it names a marketplace extension, so the target draws the token render in its place.
+- **Curated file.** `vscode.json` takes `curatedKeys` `colors`, `tokenColors` and `semanticTokenColors` ([theme-targets.md § Templates](theme-targets.md#templates)). A shipped package's colour theme is therefore taken, while Omarchy's `vscode.json` is not: it names a marketplace extension, so the target draws the token render in its place. `vscode` runs code, so an installed package's `vscode.json` is dropped whatever it holds: [theme-targets.md § Templates](theme-targets.md#templates).
 - **Reload.** None. VS Code reads an extension's colour theme when a window loads. A later apply changes the linked file, and VS Code shows it after `Developer: Reload Window`.
 - **Detect.** `code` is Microsoft's VS Code. Code - OSS, the command Arch's `code` package installs, and VSCodium read `~/.vscode-oss/extensions` instead (`dataFolderName` in `product.json`). On those, the target writes a folder that nothing reads.
 
@@ -50,12 +50,12 @@ The entry form's rules: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-
 
 ## Invariants
 
-1. The `neovim` and `emacs` targets render their colours as `#rrggbb` from the package's tokens and slots, are skipped when their command is not on `PATH` or, for `neovim`, when the spec file is absent, keep their include line in the file their application reads, take a package's curated file byte for byte, and `emacs` runs its hook with its pinned argv. A disabled `neovim` leaves the user's spec file as it was. Enforced by `scripts/test-vgsh-editors.sh` under a PATH of stub commands, with target copies that write `hex8`, drop `-a true` and create the spec file as its controls.
+1. The `neovim` and `emacs` targets render their colours as `#rrggbb` from the package's tokens and slots, are skipped when their command is not on `PATH` or, for `neovim`, when the spec file is absent, keep their include line in the file their application reads, take a shipped package's curated file byte for byte, and `emacs` runs its hook with its pinned argv. A disabled `neovim` leaves the user's spec file as it was. Enforced by `scripts/test-vgsh-editors.sh` under a PATH of stub commands, with target copies that write `hex8`, drop `-a true` and create the spec file as its controls.
 2. The `helix`, `zed` and `vscode` targets are covered by `scripts/test-vgsh-editor-entries.sh` under a PATH of stub commands, `sh` included. The suite checks that each target:
    - renders its colours as `#rrggbb` into TOML Helix parses, or as `#rrggbbaa` into JSON Zed and VS Code parse;
    - is skipped when its command is not on `PATH`, and detected by `hx` alone for `helix` and `zed` alone for `zed`;
    - keeps its links in its editor's directory, VS Code's owned directory included;
-   - takes a package's curated file byte for byte;
+   - takes a shipped package's curated file byte for byte;
    - skips itself when a file of the user's stands at the link path, and keeps that file.
 
    It also checks that the shipped `vgs` package marks the Zed theme and the VS Code colour theme `dark` on the `vs-dark` base, and `light` marks them `light` on the `vs` base.

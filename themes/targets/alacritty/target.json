@@ -1,5 +1,6 @@
 {
   "app": "Alacritty",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "alacritty.toml", "destination": "alacritty.toml" }],
   "detect": ["alacritty"],

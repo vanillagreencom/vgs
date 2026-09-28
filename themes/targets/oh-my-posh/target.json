@@ -1,5 +1,6 @@
 {
   "app": "Oh My Posh",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "oh-my-posh.json", "destination": "oh-my-posh.json" }],
   "detect": ["oh-my-posh"],

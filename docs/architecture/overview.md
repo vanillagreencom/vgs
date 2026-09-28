@@ -64,6 +64,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D023](../decisions/D023-plugin-owned-appearance.md): a plugin may own its look, taking the theme's mode, accent and motion scale alone.
 - [D026](../decisions/D026-passive-layers-are-a-capability.md): a passive layer is a capability that draws a plugin's component on every screen, not a kind.
 - [D030](../decisions/D030-managed-copies-for-watched-theme-directories.md): managed copies serve watched theme directories.
+- [D031](../decisions/D031-installed-themes-render-code-targets.md): an installed theme's curated file is dropped on a target whose files run code.
 
 ## Topics
 

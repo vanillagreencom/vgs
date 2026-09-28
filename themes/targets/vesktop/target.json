@@ -1,5 +1,6 @@
 {
   "app": "Vesktop",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "vesktop.css", "destination": "vesktop.css" }],
   "detect": ["vesktop"],

@@ -1,5 +1,6 @@
 {
   "app": "color-scheme",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "color-scheme.mode", "destination": "color-scheme.mode" }],
   "detect": ["gsettings"],

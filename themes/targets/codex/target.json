@@ -1,5 +1,6 @@
 {
   "app": "Codex",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "codex.tmTheme", "destination": "codex.tmTheme" }],
   "detect": ["codex"],

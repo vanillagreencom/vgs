@@ -166,6 +166,7 @@ const REFUSED_KEYS = [
 const select = { base: "home", file: ".claude/settings.json", format: "json", key: ["theme"], value: "custom:vgs" };
 const targetText = fields => JSON.stringify({
     app: "Probe",
+    runsCode: false,
     encoder: "hex6",
     files: [{ template: "probe.conf", destination: "probe.conf" }],
     detect: ["probe"],

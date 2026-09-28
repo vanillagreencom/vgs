@@ -32,7 +32,7 @@ apply_json() { # NAME WANT_EXIT PACKAGE [WANT_FIRST_STDERR]: apply with --json i
 # without one takes the header and the line at its end, and the file's own
 # text is kept.
 mkdir -p "$tree/themes/targets/sect" "$cfg/sect"
-printf '%s\n' '{ "app": "sect", "encoder": "hex6", "files": [{ "template": "sect.toml", "destination": "sect.toml" }], "detect": [], "wiring": { "file": "sect/sect.toml", "line": "import = [\"@{state}/sect.toml\"]", "create": true, "section": "general" }, "reload": null }' >"$tree/themes/targets/sect/target.json"
+printf '%s\n' '{ "app": "sect", "runsCode": false, "encoder": "hex6", "files": [{ "template": "sect.toml", "destination": "sect.toml" }], "detect": [], "wiring": { "file": "sect/sect.toml", "line": "import = [\"@{state}/sect.toml\"]", "create": true, "section": "general" }, "reload": null }' >"$tree/themes/targets/sect/target.json"
 printf 'accent = "#@{palette.accent}"\n' >"$tree/themes/targets/sect/sect.toml"
 sect_line="import = [\"$live/sect.toml\"]"
 printf '[window]\nx = 1\n[general]\nlive = true\n' >"$cfg/sect/sect.toml"
@@ -64,7 +64,7 @@ home="$tmp/home"; ini="$home/.moz/profiles.ini"; ini2="$home/.config/moz/profile
 p0="$home/.moz/p0.default"; p1="$tmp/elsewhere/p1"; p2="$tmp/elsewhere/p2"
 moz_target() { # CREATE
   mkdir -p "$tree/themes/targets/moz"
-  printf '{ "app": "moz", "encoder": "hex6", "files": [{ "template": "moz.css", "destination": "moz.css" }], "detect": [], "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\\"file://@{state}/moz.css\\");", "create": %s, "profiles": [".moz/profiles.ini", ".config/moz/profiles.ini"] }, "reload": null }\n' "$1" >"$tree/themes/targets/moz/target.json"
+  printf '{ "app": "moz", "runsCode": false, "encoder": "hex6", "files": [{ "template": "moz.css", "destination": "moz.css" }], "detect": [], "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\\"file://@{state}/moz.css\\");", "create": %s, "profiles": [".moz/profiles.ini", ".config/moz/profiles.ini"] }, "reload": null }\n' "$1" >"$tree/themes/targets/moz/target.json"
   printf ':root { --accent: #@{palette.accent}; }\n' >"$tree/themes/targets/moz/moz.css"
 }
 moz_ini() { # the first ini: a relative profile, an absolute one and an install section
@@ -181,7 +181,7 @@ wezterm_home_own=$'return { font_size = 13 }'
 printf '%s\n' "$wezterm_own" >"$cfg/wezterm/wezterm.lua"
 mkdir -p "$home"; printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
 terminals() { # ALACRITTY GHOSTTY KITTY WEZTERM: each a state and a JSON reason
-  printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
+  printf '[{"name":"alacritty","state":"%s","reason":%s,"dropped":[]},{"name":"foot","state":"skipped","reason":"not-detected","dropped":[]},{"name":"ghostty","state":"%s","reason":%s,"dropped":[]},{"name":"kitty","state":"%s","reason":%s,"dropped":[]},{"name":"wezterm","state":"%s","reason":%s,"dropped":[]}]' $1 $2 $3 $4
 }
 written="written null"
 signalled() { # WANT: the signal command's argument lines since the last `: >"$signals"`
@@ -348,7 +348,7 @@ cp -- "$cfg/alacritty/alacritty.toml" "$tmp/alacritty-own"
 conflict="vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
 tinst "an alacritty.toml with a multi-line import fails alacritty" "$cfg" "$rt_empty" 3 "$any_out" "$conflict" theme apply --json dusk
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
-check "the conflicting alacritty is failed wiring-conflict" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alacritty"] == [{"name": "alacritty", "state": "failed", "reason": "wiring-conflict"}]'
+check "the conflicting alacritty is failed wiring-conflict" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alacritty"] == [{"name": "alacritty", "state": "failed", "reason": "wiring-conflict", "dropped": []}]'
 check "a conflicting alacritty.toml is left byte for byte" cmp -s "$tmp/alacritty-own" "$cfg/alacritty/alacritty.toml"
 # The must-fail control: a judge copy that takes the refusal for a file
 # already wired reports alacritty landed.
@@ -361,7 +361,7 @@ unset THEME_BIN
 # A null wiring keeps nothing outside the state directory: the target lands
 # its file, and disabled it only leaves theme/.
 mkdir -p "$tree/themes/targets/bare"
-printf '%s\n' '{ "app": "bare", "encoder": "hex6", "files": [{ "template": "bare.conf", "destination": "bare.conf" }], "detect": [], "wiring": null, "reload": null }' >"$tree/themes/targets/bare/target.json"
+printf '%s\n' '{ "app": "bare", "runsCode": false, "encoder": "hex6", "files": [{ "template": "bare.conf", "destination": "bare.conf" }], "detect": [], "wiring": null, "reload": null }' >"$tree/themes/targets/bare/target.json"
 printf 'accent=@{palette.accent}\n' >"$tree/themes/targets/bare/bare.conf"
 rm -- "$cfg/alacritty/alacritty.toml"
 apply_json "a target with a null wiring applies" 0 nord
@@ -380,5 +380,86 @@ apply_json "the none-skipping mutant applies" 0 nord
 check "the none-skipping mutant skips the unwired target" test "$(target_state bare)" == skipped
 unset THEME_BIN
 rm -r -- "$tree/themes/targets/bare"
+
+# Every shipped target here runs code. An installed package's curated file
+# on each is dropped, its template rendered in its place, and the result
+# names the drop on the target's row, which keeps it when the target's
+# wiring or reload then fails; a shipped package's curated file is taken.
+# neovim joins the terminals, detected by a stub, with its spec file present.
+cp -R -- "$repo/themes/targets/neovim" "$tree/themes/targets/"
+printf '#!/bin/sh\n: >"%s/ran-nvim"\nexit 1\n' "$tmp" >"$stubs/nvim"; chmod +x "$stubs/nvim"
+mkdir -p "$cfg/nvim/lua/plugins"; : >"$cfg/nvim/lua/plugins/vgs-theme.lua"
+curated_lua=$'-- curated\nos.execute("true")'
+for pkg in "$cfg/vgs/themes/mossy" "$tree/themes/fenlua"; do
+  theme_pkg "$pkg" "{ \"schemaVersion\": 1, \"name\": \"${pkg##*/}\", \"tokens\": { \"palette\": { \"accent\": \"#333333\" } } }"
+  mkdir -p "$pkg/targets"
+  printf '%s\n' "$curated_lua" >"$pkg/targets/neovim.lua"
+  printf 'shell /bin/sh\n' >"$pkg/targets/kitty.conf"
+  printf '[terminal.shell]\nprogram = "/bin/sh"\n' >"$pkg/targets/alacritty.toml"
+done
+# ROW: NAME STATE REASON DROPPED, each of the last three as Python.
+row_is() { json_is "$tmp/apply.json" "[t for t in d['targets'] if t['name'] == '$1'] == [{'name': '$1', 'state': $2, 'reason': $3, 'dropped': $4}]"; }
+apply_json "an installed package with curated files on code targets applies" 0 mossy
+check "the installed neovim.lua is dropped and named" row_is neovim "'written'" None "['neovim.lua']"
+check "the installed kitty.conf is dropped and named" row_is kitty "'written'" None "['kitty.conf']"
+check "a target the package curates nothing for names no drop" row_is ghostty "'written'" None "[]"
+check "a skipped target names no drop" row_is foot "'skipped'" "'not-detected'" "[]"
+check "neovim takes its render, not the installed file" grep -qF 'hl("Search", { fg = "#' "$live/neovim.lua"
+# Grep's 1 alone is a pass: 2, an unreadable file, is not.
+holds_none() { local st=0; grep -q -e 'os.execute' -e '/bin/sh' -- "$@" || st=$?; [[ $st == 1 ]]; }
+check "no installed curated file lands" holds_none "$live/neovim.lua" "$live/kitty.conf" "$live/alacritty.toml"
+tinst "text output names the dropped file" "$cfg" "$rt_empty" 0 "ok theme=mossy state=unchanged shell=unchanged" "" theme apply mossy
+check "the text row names the drop" has_line "target=neovim state=unchanged dropped=neovim.lua"
+check "a text row without a drop names none" has_line "target=ghostty state=unchanged"
+# A wiring that fails and a reload that fails keep the row's drop.
+printf '[general]\nimport = [\n  "~/mine.toml",\n]\n' >"$cfg/alacritty/alacritty.toml"
+printf '2\n' >"$tmp/signal-exit"
+apply_json "a shipped package changes every target's bytes first" 3 dusk "vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
+apply_json "the installed package again, wiring and reload failing" 3 mossy "vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
+check "a failed wiring keeps the drop" row_is alacritty "'failed'" "'wiring-conflict'" "['alacritty.toml']"
+check "a failed reload keeps the drop" row_is kitty "'reload-pending'" "'reload-failed'" "['kitty.conf']"
+rm -- "$tmp/signal-exit" "$cfg/alacritty/alacritty.toml"
+apply_json "a shipped package with curated files on code targets applies" 0 fenlua
+check "the shipped neovim.lua is taken and names no drop" row_is neovim "'written'" None "[]"
+check "the shipped neovim.lua lands byte for byte" cmp -s -- "$tree/themes/fenlua/targets/neovim.lua" "$live/neovim.lua"
+# The must-fail controls: a judge copy that takes every package as shipped
+# lands the installed file; one that reports no drop, on the row or in text,
+# leaves the row or the line without it.
+judge_control installed-as-shipped 'installed: row.source === "installed" });' 'installed: false });'
+apply_json "the installed-as-shipped mutant applies" 0 mossy
+check "the installed-as-shipped mutant lands the installed neovim.lua" cmp -s -- "$cfg/vgs/themes/mossy/targets/neovim.lua" "$live/neovim.lua"
+judge_control drop-unreported 'dropped: entry.dropped === undefined ? [] : entry.dropped }));' 'dropped: [] }));'
+apply_json "the drop-unreported mutant applies" 0 mossy
+check "the drop-unreported mutant names no drop" row_is neovim "'written'" None "[]"
+judge_control drop-untold 't.dropped.length === 0 ? "" :' 'true ? "" :'
+tinst "the drop-untold mutant applies" "$cfg" "$rt_empty" 0 "ok theme=mossy state=unchanged shell=unchanged" "" theme apply mossy
+check "the drop-untold mutant's text row names no drop" has_line "target=neovim state=unchanged"
+printf '2\n' >"$tmp/signal-exit"
+judge_control reload-drops 'return Object.assign({}, row, { state: "reload-pending", reason });' 'return { name, state: "reload-pending", reason };'
+apply_json "the reload-drops mutant applies" 3 fenlua "vgsh: refused: target=kitty reason=reload-failed command=sh status=1"
+apply_json "the reload-drops mutant applies the installed package" 3 mossy "vgsh: refused: target=kitty reason=reload-failed command=sh status=1"
+check "the reload-drops mutant's failed reload loses the drop" test "$(target_verdict kitty)" == "reload-pending reload-failed" -a "$(python3 -c 'import json,sys; print([t.get("dropped") for t in json.load(open(sys.argv[1]))["targets"] if t["name"] == "kitty"][0])' "$tmp/apply.json")" == None
+rm -- "$tmp/signal-exit"
+printf '[general]\nimport = [\n  "~/mine.toml",\n]\n' >"$cfg/alacritty/alacritty.toml"
+judge_control wire-drops 'state: "failed", dropped: entry.dropped }, failure);' 'state: "failed" }, failure);'
+apply_json "the wire-drops mutant applies" 3 mossy "vgsh: refused: target=alacritty reason=wiring-conflict path=$cfg/alacritty/alacritty.toml section=general key=import"
+check "the wire-drops mutant's failed wiring loses the drop" test "$(python3 -c 'import json,sys; print([t["dropped"] for t in json.load(open(sys.argv[1]))["targets"] if t["name"] == "alacritty"][0])' "$tmp/apply.json")" == "[]"
+unset THEME_BIN
+rm -- "$cfg/alacritty/alacritty.toml"
+
+# A target that does not say whether its files run code is refused.
+mkdir -p "$tree/themes/targets/loose"
+printf '%s\n' '{ "app": "loose", "encoder": "hex6", "files": [{ "template": "loose.conf", "destination": "loose.conf" }], "detect": [], "wiring": null, "reload": null }' >"$tree/themes/targets/loose/target.json"
+printf 'accent=@{palette.accent}\n' >"$tree/themes/targets/loose/loose.conf"
+apply_json "an unclassified target fails" 3 dusk "vgsh: refused: target=loose reason=target-schema missing=runsCode"
+check "the unclassified target is failed target-schema" row_is loose "'failed'" "'target-schema'" "[]"
+check "the unclassified target's file never lands" test ! -e "$live/loose.conf"
+# The must-fail control: a renderer copy that does not require the key
+# reaches the target only through its value, so the missing key goes
+# unnamed.
+tree_control unclassified bin/lib/theme-render.js 'if (!logic.hasOwn(document, key)) return' 'if (!logic.hasOwn(document, key) && key !== "runsCode") return'
+apply_json "the unclassified mutant names no missing key" 3 dusk "vgsh: refused: target=loose reason=target-schema key=runsCode"
+unset THEME_BIN
+rm -r -- "$tree/themes/targets/loose" "$tree/themes/targets/neovim"
 
 rows_done test-vgsh-targets

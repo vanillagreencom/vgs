@@ -1,5 +1,6 @@
 {
   "app": "kcolorscheme",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "kcolorscheme.colors", "destination": "kcolorscheme.colors" }],
   "detect": ["kreadconfig6"],

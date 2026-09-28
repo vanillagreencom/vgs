@@ -1,5 +1,6 @@
 {
   "app": "Zen Browser",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "zen.css", "destination": "zen.css" }],
   "detect": ["zen-browser"],

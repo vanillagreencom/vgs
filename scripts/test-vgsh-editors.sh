@@ -36,7 +36,7 @@ printf ';; curated\n(deftheme vgs)\n(provide-theme (quote vgs))\n' >"$tree/theme
 cfg="$tmp/cfg-editors"; mkdir -p "$cfg/vgs"
 nvim_file="$cfg/nvim/lua/plugins/vgs-theme.lua"
 result() { # EMACS_STATE EMACS_REASON NEOVIM_STATE NEOVIM_REASON THEME
-  printf '{"state":"applied","shell":"applied","targets":[{"name":"emacs","state":"%s","reason":%s},{"name":"neovim","state":"%s","reason":%s}],"theme":"%s","reason":null}' "$@"
+  printf '{"state":"applied","shell":"applied","targets":[{"name":"emacs","state":"%s","reason":%s,"dropped":[]},{"name":"neovim","state":"%s","reason":%s,"dropped":[]}],"theme":"%s","reason":null}' "$@"
 }
 # Every quoted colour of FILE is `#rrggbb`, the one form both editors read.
 colours_are_hex6() {

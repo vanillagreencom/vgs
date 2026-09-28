@@ -1,5 +1,6 @@
 {
   "app": "tmux",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "tmux.conf", "destination": "tmux.conf" }],
   "detect": ["tmux"],

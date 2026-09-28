@@ -1,5 +1,6 @@
 {
   "app": "gtk4",
+  "runsCode": false,
   "encoder": "rgba",
   "files": [{ "template": "gtk4.css", "destination": "gtk4.css" }],
   "detect": ["gtk4-launch"],

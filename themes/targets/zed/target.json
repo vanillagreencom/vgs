@@ -1,5 +1,6 @@
 {
   "app": "Zed",
+  "runsCode": false,
   "encoder": "hex8",
   "files": [{ "template": "zed.json", "destination": "zed.json" }],
   "detect": [["zeditor", "zed"]],

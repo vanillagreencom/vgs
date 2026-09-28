@@ -38,7 +38,7 @@ apply_json() {
 # result_is STATE SHELL HYPRLAND_STATE HYPRLAND_REASON: the kept result's
 # state, shell and hyprland entry; every other shipped target is undetected.
 result_is() {
-  json_is "$tmp/apply.json" 'd["state"] == "'"$1"'" and d["shell"] == "'"$2"'" and [t for t in d["targets"] if t["name"] == "hyprland"] == [{"name": "hyprland", "state": "'"$3"'", "reason": '"$4"'}] and all(t["state"] == "skipped" for t in d["targets"] if t["name"] != "hyprland")'
+  json_is "$tmp/apply.json" 'd["state"] == "'"$1"'" and d["shell"] == "'"$2"'" and [t for t in d["targets"] if t["name"] == "hyprland"] == [{"name": "hyprland", "state": "'"$3"'", "reason": '"$4"', "dropped": []}] and all(t["state"] == "skipped" for t in d["targets"] if t["name"] != "hyprland")'
 }
 source_first() { # CONF OWN_TEXT_FILE
   [[ "$(head -n 1 -- "$1")" == "source = $live/hyprland.conf" ]] && tail -n +2 -- "$1" | cmp -s - "$2"

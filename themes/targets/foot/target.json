@@ -1,5 +1,6 @@
 {
   "app": "foot",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "foot.ini", "destination": "foot.ini" }],
   "detect": ["foot"],

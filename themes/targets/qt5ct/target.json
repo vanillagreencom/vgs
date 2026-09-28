@@ -1,5 +1,6 @@
 {
   "app": "qt5ct",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "qt5ct.conf", "destination": "qt5ct.conf" }],
   "detect": ["qt5ct"],

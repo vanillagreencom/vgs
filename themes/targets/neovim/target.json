@@ -1,5 +1,6 @@
 {
   "app": "Neovim",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "neovim.lua", "destination": "neovim.lua" }],
   "detect": ["nvim"],

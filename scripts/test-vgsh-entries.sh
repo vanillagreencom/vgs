@@ -23,7 +23,7 @@ theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": {
 # editor extension is laid out.
 entry_target() { # NAME WIRING_JSON FILES_JSON
   mkdir -p "$tree/themes/targets/$1"
-  printf '{ "app": "%s", "encoder": "hex6", "files": %s, "detect": [], "wiring": %s, "reload": null }\n' "$1" "$3" "$2" >"$tree/themes/targets/$1/target.json"
+  printf '{ "app": "%s", "runsCode": false, "encoder": "hex6", "files": %s, "detect": [], "wiring": %s, "reload": null }\n' "$1" "$3" "$2" >"$tree/themes/targets/$1/target.json"
 }
 for name in lnk occ; do
   entry_target "$name" "{ \"base\": \"config\", \"dir\": \"$name/themes\", \"owned\": false, \"links\": { \"vgs.toml\": \"$name.toml\" } }" "[{ \"template\": \"$name.toml\", \"destination\": \"$name.toml\" }]"

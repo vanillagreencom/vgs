@@ -1,5 +1,6 @@
 {
   "app": "Claude Code",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "claude.json", "destination": "claude.json" }],
   "detect": ["claude"],

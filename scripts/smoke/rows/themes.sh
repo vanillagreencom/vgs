@@ -98,7 +98,7 @@ expect "a malformed name queues nothing" '[]' theme_jobs
 fixture_targets="$repo/themes/targets"
 fixture_target() { # NAME TEMPLATE_TEXT
   mkdir -p -- "$fixture_targets/$1"
-  printf '{ "app": "%s", "encoder": "hex8", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": [], "wiring": { "file": "%s/%s.conf", "line": "include=@{state}/%s.conf", "create": true }, "reload": null }\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$fixture_targets/$1/target.json"
+  printf '{ "app": "%s", "runsCode": false, "encoder": "hex8", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": [], "wiring": { "file": "%s/%s.conf", "line": "include=@{state}/%s.conf", "create": true }, "reload": null }\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$fixture_targets/$1/target.json"
   printf '%s\n' "$2" >"$fixture_targets/$1/$1.conf"
 }
 fixture_target smoke-fails 'accent=@{palette.nope}'

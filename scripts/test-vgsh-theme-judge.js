@@ -26,7 +26,7 @@ function writePackage(base, name, themeName, terminalSlots = slots) {
         fs.writeFileSync(path.join(dir, "terminal.json"), JSON.stringify({ schemaVersion: 1, slots: terminalSlots }));
 }
 
-const target = { app: "Probe", encoder: "hex6", files: [{ template: "probe.conf", destination: "probe.conf" }], detect: ["probe"], wiring: { file: "probe/probe.conf", line: "include=@{state}/probe.conf", create: true }, reload: null };
+const target = { app: "Probe", runsCode: false, encoder: "hex6", files: [{ template: "probe.conf", destination: "probe.conf" }], detect: ["probe"], wiring: { file: "probe/probe.conf", line: "include=@{state}/probe.conf", create: true }, reload: null };
 
 function writeTarget(base, name, document, templates) {
     const dir = path.join(base, "targets", name);

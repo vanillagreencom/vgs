@@ -1,5 +1,6 @@
 {
   "app": "oh-my-pi",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "omp.json", "destination": "omp.json" }],
   "detect": ["omp"],

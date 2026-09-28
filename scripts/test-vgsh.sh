@@ -454,7 +454,7 @@ tinst "theme list after a hand edit" "$cfg" "$rt_empty" 0 "$any_out" "" theme li
 tail -n 1 "$tmp/out" >"$tmp/list.json"
 check "a hand edit of the theme file reports it modified" json_is "$tmp/list.json" 'd["file"]["state"] == "loaded" and d["file"]["name"] == "dusk" and d["file"]["modified"] is True'
 
-tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[{"name":"foot","state":"skipped","reason":"not-detected"}],"theme":"nord","reason":null}' "" theme apply --json nord
+tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[{"name":"foot","state":"skipped","reason":"not-detected","dropped":[]}],"theme":"nord","reason":null}' "" theme apply --json nord
 check "a package's own terminal.json is rendered as it is" cmp -s "$themes/nord/terminal.json" "$state/theme/terminal.json"
 
 # A stage a crashed apply left behind is removed, never carried into theme/.
@@ -713,7 +713,7 @@ target_dir off "$(target_json off hex6 '[]' 'include=@{state}/off.conf' true)" '
 with_stubs="$stubs:$theme_path"
 foot_line="include=$live/foot.ini"
 
-THEME_PATH="$with_stubs" tinst "an apply a target fails in is partial with exit 3" "$cfg" "$rt_empty" 3 '{"state":"partial","shell":"applied","targets":[{"name":"fails","state":"failed","reason":"placeholder"},{"name":"foot","state":"written","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"skipped","reason":"wiring-file-absent"}],"theme":"dusk","reason":null}' 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme apply --json dusk
+THEME_PATH="$with_stubs" tinst "an apply a target fails in is partial with exit 3" "$cfg" "$rt_empty" 3 '{"state":"partial","shell":"applied","targets":[{"name":"fails","state":"failed","reason":"placeholder","dropped":[]},{"name":"foot","state":"written","reason":null,"dropped":[]},{"name":"off","state":"skipped","reason":"disabled","dropped":[]},{"name":"probe","state":"skipped","reason":"wiring-file-absent","dropped":[]}],"theme":"dusk","reason":null}' 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme apply --json dusk
 check "the partial apply's shell took the theme" cmp -s "$cfg/vgs/themes/dusk/theme.json" "$file"
 check "foot's file lands in the state directory with the hex6 encoder" grep -qxF 'urls=222222' "$live/foot.ini"
 check "foot's file takes the shipped slots" grep -qxF 'regular1=f43f5e' "$live/foot.ini"
@@ -727,7 +727,7 @@ mkdir -p "$tmp/dotfiles" "$cfg/probe"
 printf '[general]\nx=1\n' >"$tmp/dotfiles/probe.conf"; chmod 640 "$tmp/dotfiles/probe.conf"
 ln -s -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
 rm -r -- "$tree/themes/targets/fails"
-THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"foot","state":"unchanged","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"written","reason":null}],"theme":"dusk","reason":null}' "" theme apply --json dusk
+THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"foot","state":"unchanged","reason":null,"dropped":[]},{"name":"off","state":"skipped","reason":"disabled","dropped":[]},{"name":"probe","state":"written","reason":null,"dropped":[]}],"theme":"dusk","reason":null}' "" theme apply --json dusk
 check "the probe's file is rendered with the hyprland encoder" test "$(cat "$live/probe.conf")" == "accent=rgba(222222ff) slot1=rgba(f43f5eff)"
 check "the wiring edits a symlinked file through its link" test -L "$cfg/probe/probe.conf"
 check "the include line goes first and the file's own text is kept" test "$(cat "$tmp/dotfiles/probe.conf")" == "source = $live/probe.conf"$'\n[general]\nx=1'
@@ -792,7 +792,7 @@ check "the symlinked foot.ini takes the include line first" test "$(head -n 1 "$
 disable_foot '"off", "foot"'
 THEME_PATH="$with_stubs" tinst "an apply with foot disabled after it landed" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json dusk
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
-check "the disabled foot is skipped" json_is "$tmp/apply.json" '[t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "skipped", "reason": "disabled"}]'
+check "the disabled foot is skipped" json_is "$tmp/apply.json" '[t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "skipped", "reason": "disabled", "dropped": []}]'
 check "disabling foot removes its include line and keeps the rest byte for byte" cmp -s "$tmp/foot-own" "$tmp/dotfiles/foot.ini"
 check "the unwired foot.ini stays a symlink" test -L "$cfg/foot/foot.ini"
 check "the unwired foot.ini keeps its mode" test "$(stat -c %a "$tmp/dotfiles/foot.ini")" == 640
@@ -806,7 +806,7 @@ chmod 500 "$tmp/dotfiles"
 THEME_PATH="$with_stubs" tinst "an unwritable removal fails the disabled target" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=foot reason=unwritable path=$tmp/dotfiles/foot.ini error=EACCES" theme apply --json dusk
 chmod 700 "$tmp/dotfiles"
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
-check "the unremoved target is failed unwritable" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "failed", "reason": "unwritable"}]'
+check "the unremoved target is failed unwritable" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "foot"] == [{"name": "foot", "state": "failed", "reason": "unwritable", "dropped": []}]'
 check "an unremoved include line keeps its file in theme/" cmp -s "$tmp/foot-landed" "$live/foot.ini"
 check "an unremoved include line stays" grep -qxF -- "$foot_line" "$tmp/dotfiles/foot.ini"
 # The must-fail control: a judge copy that never removes the line leaves it

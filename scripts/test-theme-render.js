@@ -57,6 +57,7 @@ const entryText = (fields = {}) => targetText({ files: twoFiles, wiring: Object.
 const copyEntryText = (fields = {}) => targetText({ files: twoFiles, wiring: Object.assign({}, copyEntry, fields) });
 const targetText = (fields = {}) => JSON.stringify(Object.assign({
     app: "Probe",
+    runsCode: false,
     encoder: "hex6",
     files: [{ template: "probe.conf", destination: "probe.conf" }],
     detect: ["probe"],
@@ -87,7 +88,8 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".probe.conf"] }), reload: { command: ["touch", "-c", "--", "@{wiring}", "@{state}", "@@{x}"], timeoutMs: 2000 } })],
     ["probe", entryText({ dir: ".obsidian/themes/vgs", owned: true, vaults: "obsidian/obsidian.json" })],
     ["probe", entryText({ base: "home", dir: ".probe", vaults: ".probe-vaults.json" })],
-    ["probe", targetText({ setup: "probe-setup", wiring: null })]
+    ["probe", targetText({ setup: "probe-setup", wiring: null })],
+    ["probe", targetText({ runsCode: true })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -97,9 +99,13 @@ const REFUSED_TARGETS = [
     ["probe", "{", "target-json", ""],
     ["probe", "[]", "target-schema", "key=document"],
     ["probe", targetText({ file: "probe.conf" }), "target-schema", "unknown=file"],
-    ["probe", JSON.stringify({ app: "Probe", encoder: "hex6", files: [], detect: [], wiring }), "target-schema", "missing=reload"],
+    ["probe", JSON.stringify({ app: "Probe", runsCode: false, encoder: "hex6", files: [], detect: [], wiring }), "target-schema", "missing=reload"],
     ["probe", targetText({ app: "" }), "target-schema", "key=app"],
     ["probe", targetText({ app: "Pro\nbe" }), "target-schema", "key=app"],
+    ["probe", JSON.stringify(Object.assign(JSON.parse(targetText()), { runsCode: undefined })), "target-schema", "missing=runsCode"],
+    ["probe", targetText({ runsCode: "yes" }), "target-schema", "key=runsCode"],
+    ["probe", targetText({ runsCode: null }), "target-schema", "key=runsCode"],
+    ["probe", targetText({ runsCode: 1 }), "target-schema", "key=runsCode"],
     ["probe", targetText({ encoder: "hex" }), "target-schema", "key=encoder"],
     ["probe", targetText({ files: [] }), "target-schema", "key=files"],
     ["probe", targetText({ files: [{ template: "probe.conf" }] }), "target-schema", "key=files[0]"],
@@ -416,7 +422,7 @@ function verify(render) {
     const target = (encoder, files) => accepted("probe", targetText(Object.assign({ encoder }, files === undefined ? {} : { files })));
     const one = (encoder, text, pkg = probe, curated = new Map()) => {
         const source = render.terminalSource(pkg, defaults);
-        return render.renderTarget(logic, TOKENS, target(encoder), new Map([["probe.conf", text]]), { values: pkg.values, slots: source.terminal, curated });
+        return render.renderTarget(logic, TOKENS, target(encoder), new Map([["probe.conf", text]]), { values: pkg.values, slots: source.terminal, curated, installed: false });
     };
     const rendered = (encoder, text, pkg, curated) => {
         const result = one(encoder, text, pkg, curated);
@@ -454,7 +460,7 @@ function verify(render) {
     // an extension included, leaves the render in place.
     const keyed = accepted("probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: ["colors", "tokenColors"] }] }));
     const keyedFile = bytes => {
-        const result = render.renderTarget(logic, TOKENS, keyed, new Map([["probe.conf", "a=@{palette.accent}"]]), { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.conf", Buffer.from(bytes)]]) });
+        const result = render.renderTarget(logic, TOKENS, keyed, new Map([["probe.conf", "a=@{palette.accent}"]]), { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.conf", Buffer.from(bytes)]]), installed: false });
         assert.equal(result.ok, true);
         return [result.files[0].bytes.toString("utf8"), result.files[0].curated];
     };
@@ -467,12 +473,44 @@ function verify(render) {
     // for its own destination only.
     const two = accepted("probe", targetText({ files: [{ template: "a.conf", destination: "probe.conf" }, { template: "b.ini", destination: "probe.extra.ini" }] }));
     const both = render.renderTarget(logic, TOKENS, two, new Map([["a.conf", "a=@{palette.accent}"], ["b.ini", "b=@{palette.accent}"]]),
-        { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.extra.ini", Buffer.from("mine")]]) });
+        { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.extra.ini", Buffer.from("mine")]]), installed: false });
     assert.equal(both.ok, true);
     assert.deepEqual(both.files.map(f => [f.destination, f.bytes.toString("utf8"), f.curated]), [["probe.conf", "a=123456", false], ["probe.extra.ini", "mine", true]]);
+    assert.deepEqual(both.dropped, []);
 
-    assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map(), { values: probe.values, slots: defaults.terminal, curated: new Map() }), /was not read/);
-    assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map([["probe.conf", ""]]), { values: probe.values, slots: null, curated: new Map() }), /without terminal slots/);
+    // On a runsCode target an installed package's curated file is dropped
+    // and named, the template rendered in its place, and never judged, so a
+    // file curatedKeys would refuse is named too; a shipped package's is
+    // taken, and so is an installed package's on any other target. ROW:
+    // runsCode, installed, curatedKeys, the curated files, then the bytes
+    // and curated flag of each file in order and the dropped destinations.
+    const DROPS = [
+        [true, true, undefined, [["probe.conf", "mine"]], [["a=123456", false], ["b=123456", false]], ["probe.conf"]],
+        [true, true, undefined, [["probe.conf", "mine"], ["probe.extra.ini", "also"]], [["a=123456", false], ["b=123456", false]], ["probe.conf", "probe.extra.ini"]],
+        [true, true, ["colors"], [["probe.conf", '{ "name": "x" }']], [["a=123456", false], ["b=123456", false]], ["probe.conf"]],
+        [true, true, undefined, [], [["a=123456", false], ["b=123456", false]], []],
+        [true, false, undefined, [["probe.conf", "mine"]], [["mine", true], ["b=123456", false]], []],
+        [false, true, undefined, [["probe.conf", "mine"]], [["mine", true], ["b=123456", false]], []],
+        [false, false, undefined, [["probe.extra.ini", "also"]], [["a=123456", false], ["also", true]], []]
+    ];
+    for (const [runsCode, installed, curatedKeys, curatedFiles, want, dropped] of DROPS) {
+        const first = Object.assign({ template: "a.conf", destination: "probe.conf" }, curatedKeys === undefined ? {} : { curatedKeys });
+        const flagged = accepted("probe", targetText({ runsCode, files: [first, { template: "b.ini", destination: "probe.extra.ini" }] }));
+        const result = render.renderTarget(logic, TOKENS, flagged, new Map([["a.conf", "a=@{palette.accent}"], ["b.ini", "b=@{palette.accent}"]]),
+            { values: probe.values, slots: defaults.terminal, curated: new Map(curatedFiles.map(([name, text]) => [name, Buffer.from(text)])), installed });
+        const row = JSON.stringify([runsCode, installed, curatedKeys, curatedFiles]);
+        assert.equal(result.ok, true, row);
+        assert.deepEqual(result.files.map(f => [f.bytes.toString("utf8"), f.curated]), want, row);
+        assert.deepEqual(result.dropped, dropped, row);
+    }
+    // A dropped file's template is judged all the same.
+    const flaggedBad = accepted("probe", targetText({ runsCode: true }));
+    assert.equal(render.renderTarget(logic, TOKENS, flaggedBad, new Map([["probe.conf", "@{palette.nope}"]]),
+        { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.conf", Buffer.from("mine")]]), installed: true }).reason, "placeholder");
+
+    assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map(), { values: probe.values, slots: defaults.terminal, curated: new Map(), installed: false }), /was not read/);
+    assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map([["probe.conf", ""]]), { values: probe.values, slots: null, curated: new Map(), installed: false }), /without terminal slots/);
+    assert.throws(() => render.renderTarget(logic, TOKENS, target("hex6"), new Map([["probe.conf", ""]]), { values: probe.values, slots: defaults.terminal, curated: new Map() }), /without the package's source/);
 
     // The wiring line names the state directory; `@@{` stays a literal.
     assert.equal(render.wiringLine(target("hex6"), "/s/vgs/theme"), "include=/s/vgs/theme/probe.conf");
@@ -563,7 +601,15 @@ const CONTROLS = [
     ["case option once", "!leaf.options.includes(m[1]) || texts.has(m[1])", "!leaf.options.includes(m[1])"],
     ["case every option", "return texts.size === leaf.options.length ? texts.get(value) : undefined;", "return texts.get(value);"],
     ["non-colour token", 'return leaf.type === "color" ? encode(value) : String(value);', "return encode(String(value));"],
-    ["curated precedence", "const curated = input.curated.has(file.destination) && curatedTaken(", "const curated = false && curatedTaken("],
+    ["curated precedence", "const curated = present && !drop && curatedTaken(", "const curated = false && curatedTaken("],
+    ["runsCode required", 'const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload", "runsCode"];', 'const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];'],
+    ["runsCode boolean", 'if (typeof document.runsCode !== "boolean") return', "if (false) return"],
+    ["drop only installed", "const drop = present && input.installed && target.runsCode;", "const drop = present && target.runsCode;"],
+    ["drop only runsCode", "const drop = present && input.installed && target.runsCode;", "const drop = present && input.installed;"],
+    ["dropped named", "if (drop) dropped.push(file.destination);", "if (false) dropped.push(file.destination);"],
+    ["dropped not taken", "const curated = present && !drop && curatedTaken(", "const curated = present && curatedTaken("],
+    ["dropped never judged", "const drop = present && input.installed && target.runsCode;", "const drop = present && input.installed && target.runsCode && curatedTaken(logic, file, input.curated.get(file.destination));"],
+    ["source required", 'if (typeof input.installed !== "boolean")', "if (false)"],
     ["curated keys admitted", "k => FILE_KEYS.includes(k) || k === CURATED_KEYS_KEY)", "k => FILE_KEYS.includes(k))"],
     ["curated keys shape", "(!Array.isArray(file.curatedKeys) || file.curatedKeys.length === 0 || !file.curatedKeys.every(isLine))", "false"],
     ["curated keys judged", "if (!logic.hasOwn(file, CURATED_KEYS_KEY)) return true;", "return true;"],

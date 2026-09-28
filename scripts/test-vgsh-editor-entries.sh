@@ -53,7 +53,7 @@ result() { # HELIX VSCODE ZED: each `state` or `state:reason`
   for t in helix:"$1" vscode:"$2" zed:"$3"; do
     s="${t#*:}"
     if [[ $s == *:* ]]; then s="\"state\":\"${s%%:*}\",\"reason\":\"${s#*:}\""; else s="\"state\":\"$s\",\"reason\":null"; fi
-    out+="${out:+,}{\"name\":\"${t%%:*}\",$s}"
+    out+="${out:+,}{\"name\":\"${t%%:*}\",$s,\"dropped\":[]}"
   done
   printf '{"state":"applied","shell":"applied","targets":[%s],"theme":"%s","reason":null}' "$out" "$4"
 }

@@ -1,5 +1,6 @@
 {
   "app": "kitty",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "kitty.conf", "destination": "kitty.conf" }],
   "detect": ["kitty"],

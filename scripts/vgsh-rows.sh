@@ -114,7 +114,7 @@ target_dir() { # NAME TARGET_JSON TEMPLATE_TEXT
   printf '%s' "$3" >"$tree/themes/targets/$1/$1.conf"
 }
 target_json() { # NAME ENCODER DETECT_JSON WIRING_LINE CREATE [RELOAD_JSON]
-  printf '{ "app": "%s", "encoder": "%s", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": %s, "wiring": { "file": "%s/%s.conf", "line": "%s", "create": %s }, "reload": %s }' "$1" "$2" "$1" "$1" "$3" "$1" "$1" "$4" "$5" "${6:-null}"
+  printf '{ "app": "%s", "runsCode": false, "encoder": "%s", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": %s, "wiring": { "file": "%s/%s.conf", "line": "%s", "create": %s }, "reload": %s }' "$1" "$2" "$1" "$1" "$3" "$1" "$1" "$4" "$5" "${6:-null}"
 }
 
 # A must-fail control on a copy of the tree whose FILE, relative to the

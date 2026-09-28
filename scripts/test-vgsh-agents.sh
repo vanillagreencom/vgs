@@ -285,7 +285,7 @@ for (const name of names) {
     const dir = path.join(root, "themes", "targets", name);
     const target = render.acceptTarget(logic, name, fs.readFileSync(path.join(dir, "target.json"), "utf8")).target;
     const templates = new Map(target.files.map(file => [file.template, fs.readFileSync(path.join(dir, file.template), "utf8")]));
-    const out = render.renderTarget(logic, tokens, Object.assign({}, target, { encoder: "hex8" }), templates, { values: pkg.values, slots: pkg.terminal, curated: new Map() });
+    const out = render.renderTarget(logic, tokens, Object.assign({}, target, { encoder: "hex8" }), templates, { values: pkg.values, slots: pkg.terminal, curated: new Map(), installed: false });
     const written = out.files.map(file => file.bytes.toString("utf8")).join("").match(/#[0-9a-f]{8}/g) || [];
     const placeholders = [...templates.values()].join("").split("#@{").length - 1;
     if (placeholders < 10 || written.length !== placeholders) {

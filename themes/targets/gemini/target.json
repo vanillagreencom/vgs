@@ -1,5 +1,6 @@
 {
   "app": "Gemini CLI",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "gemini.json", "destination": "gemini.json" }],
   "detect": ["gemini"],

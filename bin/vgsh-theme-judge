@@ -237,7 +237,7 @@ function checkTargets(base, defaults) {
             unreadable(e.path || dir, e.code);
         }
         const verdict = judged.verdict.ok
-            ? render.renderTarget(logic, tokens, judged.verdict.target, judged.templates, { values: defaults.values, slots: defaults.terminal, curated: new Map() })
+            ? render.renderTarget(logic, tokens, judged.verdict.target, judged.templates, { values: defaults.values, slots: defaults.terminal, curated: new Map(), installed: false })
             : judged.verdict;
         if (verdict.ok) {
             console.log("ok       " + TARGETS + "/" + name);
@@ -484,7 +484,8 @@ function reading(name, dir, read, failed) {
 // One shipped target judged and rendered for package ROW, in memory, before
 // any file moves. `state` is `skipped` or `failed` with its `reason`, a
 // failed one carrying `failure`, its keyed line; a rendered one is `pending`
-// with its `target` and `files` until the stage compares their bytes. A
+// with its `target`, `files` and `dropped`, the destinations whose curated
+// file the renderer dropped, until the stage compares their bytes. A
 // disabled target keeps its `target`, whose wiring apply removes.
 // SLOTS are the terminal slots terminalSource chose; LIVE is the state
 // directory's theme/, which an entry target's links point into and a
@@ -540,7 +541,8 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
         return files;
     }, failed);
     if (!curated.ok) return curated.entry;
-    const rendered = render.renderTarget(logic, tokens, target, judged.value.templates, { values: row.values, slots, curated: curated.value });
+    const rendered = render.renderTarget(logic, tokens, target, judged.value.templates,
+        { values: row.values, slots, curated: curated.value, installed: row.source === "installed" });
     if (!rendered.ok) return failed(rendered.reason, render.refusalLine(name, rendered));
     let entryPlan;
     if (render.wiringForm(target.wiring) === "entry") {
@@ -554,7 +556,7 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
         if (planned.value === "wiring-file-absent" || planned.value === "entry-occupied") return skipped(planned.value);
         entryPlan = planned.value;
     }
-    return { name, state: "pending", reason: null, target, files: rendered.files, entryPlan };
+    return { name, state: "pending", reason: null, target, files: rendered.files, dropped: rendered.dropped, entryPlan };
 }
 
 // Every shipped target under themes/targets/, planned by planTarget, in
@@ -938,7 +940,7 @@ function selectionEdit(target, configHome, live) {
 // Keep a landed ENTRY's wiring: its include line in its configuration file,
 // or its links in its application's directory, and then its selection in
 // its application's settings file, which is never created. Answers ENTRY,
-// or its failed entry.
+// or its failed entry, which keeps the files it landed and so its `dropped`.
 function wire(entry, configHome, live) {
     let failure;
     switch (render.wiringForm(entry.target.wiring)) {
@@ -951,7 +953,7 @@ function wire(entry, configHome, live) {
         const selection = selectionEdit(entry.target, configHome, live);
         failure = editFile("target=" + entry.name + " reason", selection.file, false, selection.edit);
     }
-    return failure === null ? entry : Object.assign({ name: entry.name, state: "failed" }, failure);
+    return failure === null ? entry : Object.assign({ name: entry.name, state: "failed", dropped: entry.dropped }, failure);
 }
 
 // Undo a disabled TARGET's wiring: remove its include line or its links.
@@ -1070,7 +1072,8 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     // Asserted on every apply, unchanged bytes included, so a line removed
     // by hand comes back.
     const landed = settled.map(entry => entry.state === "written" || entry.state === "unchanged" ? wire(entry, configHome, live) : entry);
-    result.targets = landed.map(entry => ({ name: entry.name, state: entry.state, reason: entry.reason }));
+    // Only a rendered entry carries `dropped`; every other target took no file.
+    result.targets = landed.map(entry => ({ name: entry.name, state: entry.state, reason: entry.reason, dropped: entry.dropped === undefined ? [] : entry.dropped }));
     for (const entry of landed) if (entry.state === "failed") failures.push(entry.failure);
 
     const file = themeFile(path.join(configDir, "theme.json"));
@@ -1119,7 +1122,9 @@ function report(format, result, run, tail) {
     if (format === "json") {
         process.stdout.write(JSON.stringify(result) + "\n");
     } else {
-        for (const t of result.targets) console.log("target=" + t.name + " state=" + t.state + (t.reason === null ? "" : " reason=" + t.reason));
+        // A reload row carries no `dropped`: reload renders nothing.
+        for (const t of result.targets) console.log("target=" + t.name + " state=" + t.state + (t.reason === null ? "" : " reason=" + t.reason) +
+            (t.dropped === undefined || t.dropped.length === 0 ? "" : " dropped=" + t.dropped.join(",")));
         console.log((result.state === "partial" ? "partial" : "ok") + " " + tail(result));
     }
     if (result.state === "partial") process.exitCode = PARTIAL_STATUS;
@@ -1244,14 +1249,14 @@ function reloadWiring(name, target, configHome, failures) {
 // Run target NAME's reload hook, the argv render.reloadCommand writes with
 // LIVE, the state directory's theme/, and WIRING, the file its include line
 // is kept in, bounded by its timeoutMs, with this process's environment.
-// Answers ROW when it exits 0, else a reload-pending row with its reason
+// Answers ROW when it exits 0, else ROW as reload-pending with its reason
 // and its keyed line pushed onto FAILURES. No stream is a pipe: the hook's
 // output never reaches the result on stdout, and spawnSync would wait past
 // the timeout for a pipe a hook's child holds.
 function reloadRow(name, target, configHome, live, row, failures) {
     const reload = target.reload;
     const wiring = reloadWiring(name, target, configHome, failures);
-    if (!wiring.ok) return { name, state: "reload-pending", reason: "reload-failed" };
+    if (!wiring.ok) return Object.assign({}, row, { state: "reload-pending", reason: "reload-failed" });
     const [command, ...args] = render.reloadCommand(target, live, wiring.path);
     const nul = fs.openSync("/dev/null", "r");
     let run;
@@ -1278,7 +1283,7 @@ function reloadRow(name, target, configHome, live, row, failures) {
         return row;
     }
     failures.push(key + reason + " " + failure);
-    return { name, state: "reload-pending", reason };
+    return Object.assign({}, row, { state: "reload-pending", reason });
 }
 
 // One pending target of a reload: `skipped` and dropped when it is no

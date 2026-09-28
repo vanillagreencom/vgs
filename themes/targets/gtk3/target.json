@@ -1,5 +1,6 @@
 {
   "app": "gtk3",
+  "runsCode": false,
   "encoder": "rgba",
   "files": [{ "template": "gtk3.css", "destination": "gtk3.css" }],
   "detect": ["gtk-launch"],

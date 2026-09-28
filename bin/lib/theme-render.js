@@ -12,8 +12,10 @@
 "use strict";
 
 // Every key target.json carries, each required. `wiring` and `reload` may
-// be null.
-const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
+// be null. `runsCode` is true when the application loads or runs code from
+// the target's files, so an installed package's curated file there is
+// dropped and the template rendered in its place: renderTarget.
+const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload", "runsCode"];
 // The one optional top-level key: the theme selection apply keeps in the
 // application's own settings file, `{ base, file, format, key, value }`,
 // beside any wiring form. `key` is one key path, or a list of two or more
@@ -368,6 +370,7 @@ function acceptTarget(logic, name, text) {
     for (const key of TARGET_KEYS)
         if (!logic.hasOwn(document, key)) return refused("target-schema", "missing=" + key);
     if (!isLine(document.app)) return refused("target-schema", "key=app");
+    if (typeof document.runsCode !== "boolean") return refused("target-schema", "key=runsCode");
     if (!logic.hasOwn(ENCODERS, document.encoder)) return refused("target-schema", "key=encoder");
     if (!Array.isArray(document.files) || document.files.length === 0) return refused("target-schema", "key=files");
     const destinations = new Set();
@@ -452,17 +455,24 @@ function curatedTaken(logic, file, bytes) {
 
 // Render every file of an accepted TARGET. TEMPLATES maps each template name
 // the target names to its text. INPUT carries the package's resolved token
-// `values`, the terminal `slots` terminalSource chose, and `curated`, a Map
-// from destination to the bytes of the package's `targets/<destination>`.
-// Every template is rendered, so a placeholder naming no token or slot
-// refuses the target even where a curated file stands in; a curated file
-// curatedTaken admits is then taken verbatim. Answers { ok: true, files: [{ destination, bytes,
-// curated }] } in the target's order, or one refusal.
+// `values`, the terminal `slots` terminalSource chose, `curated`, a Map
+// from destination to the bytes of the package's `targets/<destination>`,
+// and `installed`, true for a package under the configuration home's
+// themes/ and false for a shipped one. Every template is rendered, so a
+// placeholder naming no token or slot refuses the target even where a
+// curated file stands in. On a `runsCode` target an installed package's
+// curated file is dropped, never judged, and its destination listed in
+// `dropped`; any other curated file curatedTaken admits is taken verbatim.
+// Answers { ok: true, files: [{ destination, bytes, curated }], dropped }
+// in the target's order, or one refusal.
 function renderTarget(logic, tokens, target, templates, input) {
     if (input.slots === null || typeof input.slots !== "object")
         throw new Error("theme-render: renderTarget: target " + target.name + " rendered without terminal slots");
+    if (typeof input.installed !== "boolean")
+        throw new Error("theme-render: renderTarget: target " + target.name + " rendered without the package's source");
     const encode = ENCODERS[target.encoder];
     const files = [];
+    const dropped = [];
     for (const file of target.files) {
         const text = templates.get(file.template);
         if (typeof text !== "string")
@@ -479,10 +489,13 @@ function renderTarget(logic, tokens, target, templates, input) {
             if (value === undefined) return refused("placeholder", "template=" + file.template + " placeholder=" + JSON.stringify(part.name));
             out += value;
         }
-        const curated = input.curated.has(file.destination) && curatedTaken(logic, file, input.curated.get(file.destination));
+        const present = input.curated.has(file.destination);
+        const drop = present && input.installed && target.runsCode;
+        if (drop) dropped.push(file.destination);
+        const curated = present && !drop && curatedTaken(logic, file, input.curated.get(file.destination));
         files.push({ destination: file.destination, bytes: curated ? input.curated.get(file.destination) : Buffer.from(out, "utf8"), curated });
     }
-    return { ok: true, files };
+    return { ok: true, files, dropped };
 }
 
 // The include line an accepted TARGET keeps in its application's

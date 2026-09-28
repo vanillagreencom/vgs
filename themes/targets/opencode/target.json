@@ -1,5 +1,6 @@
 {
   "app": "opencode",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "opencode.json", "destination": "opencode.json" }],
   "detect": ["opencode"],

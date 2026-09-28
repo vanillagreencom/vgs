@@ -1,5 +1,6 @@
 {
   "app": "Obsidian",
+  "runsCode": false,
   "encoder": "hex6",
   "files": [{ "template": "obsidian.css", "destination": "obsidian.css" }, { "template": "manifest.json", "destination": "obsidian.manifest.json" }],
   "detect": ["obsidian"],

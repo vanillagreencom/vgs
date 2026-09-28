@@ -1,5 +1,6 @@
 {
   "app": "Emacs",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "emacs.el", "destination": "emacs.el" }],
   "detect": ["emacs"],

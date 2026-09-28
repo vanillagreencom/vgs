@@ -1,5 +1,6 @@
 {
   "app": "WezTerm",
+  "runsCode": true,
   "encoder": "hex6",
   "files": [{ "template": "wezterm.lua", "destination": "wezterm.lua" }],
   "detect": ["wezterm"],

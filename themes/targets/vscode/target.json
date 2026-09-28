@@ -1,5 +1,6 @@
 {
   "app": "Visual Studio Code",
+  "runsCode": true,
   "encoder": "hex8",
   "files": [
     { "template": "vscode.json", "destination": "vscode.json", "curatedKeys": ["colors", "tokenColors", "semanticTokenColors"] },
