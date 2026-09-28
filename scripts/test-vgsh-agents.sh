@@ -49,14 +49,15 @@ start_opencode_probe serve
 start_opencode_probe run
 start_opencode_probe option_serve
 start_opencode_probe web "$tmp/opencode-cwd"
+start_opencode_probe glob "$tmp/opencode-cwd"
 start_opencode_probe attach
 start_opencode_probe project
 trap 'kill "${opencode_pids[@]}" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  [[ -e $tmp/opencode-bare-ready && -e $tmp/opencode-serve-ready && -e $tmp/opencode-run-ready && -e $tmp/opencode-option_serve-ready && -e $tmp/opencode-web-ready && -e $tmp/opencode-attach-ready && -e $tmp/opencode-project-ready ]] && break
+  [[ -e $tmp/opencode-bare-ready && -e $tmp/opencode-serve-ready && -e $tmp/opencode-run-ready && -e $tmp/opencode-option_serve-ready && -e $tmp/opencode-web-ready && -e $tmp/opencode-glob-ready && -e $tmp/opencode-attach-ready && -e $tmp/opencode-project-ready ]] && break
   sleep 0.1
 done
-printf '#!/bin/sh\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n"\n' "$opencode_bare" "$opencode_serve" "$opencode_run" "$opencode_option_serve" "$opencode_web" "$opencode_attach" "$opencode_project" >"$hook_tools/pgrep"
+printf '#!/bin/sh\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n"\n' "$opencode_bare" "$opencode_serve" "$opencode_run" "$opencode_option_serve" "$opencode_web" "$opencode_glob" "$opencode_attach" "$opencode_project" >"$hook_tools/pgrep"
 cat >"$hook_tools/ps" <<EOF
 #!/bin/sh
 while [ "\$#" -gt 0 ]; do
@@ -71,6 +72,7 @@ case "\$pid" in
   $opencode_run) printf 'opencode run\\n';;
   $opencode_option_serve) printf 'opencode --log-level INFO serve\\n';;
   $opencode_web) printf 'opencode web\\n';;
+  $opencode_glob) printf 'opencode */\\n';;
   $opencode_attach) printf 'opencode attach\\n';;
   $opencode_project) printf 'opencode $tmp/project\\n';;
   *) exit 1;;
@@ -83,8 +85,13 @@ target_state() { # NAME: the target's state and reason in $tmp/apply.json
   python3 -c 'import json,sys; print(*[(t["state"], t["reason"]) for t in json.load(open(sys.argv[1]))["targets"] if t["name"] == sys.argv[2]][0])' "$tmp/apply.json" "$1"
 }
 apply_json() { # NAME WANT_EXIT PACKAGE [WANT_FIRST_STDERR]: apply with --json into $tmp/apply.json
-  tinst "$1" "$cfg" "$rt_empty" "$2" "$any_out" "${4:-}" theme apply --json "$3"
+  (cd "$tmp/opencode-cwd" && tinst "$1" "$cfg" "$rt_empty" "$2" "$any_out" "${4:-}" theme apply --json "$3")
   tail -n 1 "$tmp/out" >"$tmp/apply.json"
+}
+opencode_signals_only_tui() {
+  test -f "$tmp/opencode-bare-signaled" -a -f "$tmp/opencode-attach-signaled" -a -f "$tmp/opencode-project-signaled" \
+    -a ! -e "$tmp/opencode-serve-signaled" -a ! -e "$tmp/opencode-run-signaled" -a ! -e "$tmp/opencode-option_serve-signaled" \
+    -a ! -e "$tmp/opencode-web-signaled" -a ! -e "$tmp/opencode-glob-signaled"
 }
 all_state() { # WANT: every agent target's "name state reason;", in name order
   local name got=""
@@ -142,8 +149,18 @@ apply_json "the agent targets land" 0 dusk
 check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;omp written None;opencode written None;pi written None;"
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
-check "opencode's hook signals only TUI invocations" test -f "$tmp/opencode-bare-signaled" -a -f "$tmp/opencode-attach-signaled" -a -f "$tmp/opencode-project-signaled" -a ! -e "$tmp/opencode-serve-signaled" -a ! -e "$tmp/opencode-run-signaled" -a ! -e "$tmp/opencode-option_serve-signaled" -a ! -e "$tmp/opencode-web-signaled"
-check "opencode's hook disables globbing before splitting argv" grep -qF 'set -f; set -- $args' "$tree/themes/targets/opencode/target.json"
+check "opencode's hook signals only TUI invocations" opencode_signals_only_tui
+tree_control opencode-globbing themes/targets/opencode/target.json 'set -f; set -- $args;' 'set -- $args;'
+apply_json "the opencode globbing mutant applies" 0 nord
+check "the opencode globbing mutant signals the glob-shaped project argument" test -f "$tmp/opencode-glob-signaled"
+check "the opencode globbing mutant fails the TUI-only signal row" test "$(opencode_signals_only_tui; echo $?)" == 1
+unset THEME_BIN
+rm -f -- "$tmp/opencode-glob-signaled"
+tree_control opencode-filter-dropped themes/targets/opencode/target.json '[ \"$signal\" = 1 ] || continue;' ':;'
+apply_json "the opencode filter-dropping mutant applies" 0 dusk
+check "the opencode filter-dropping mutant signals a non-TUI invocation" test -f "$tmp/opencode-serve-signaled" -o -f "$tmp/opencode-run-signaled" -o -f "$tmp/opencode-web-signaled"
+check "the opencode filter-dropping mutant fails the TUI-only signal row" test "$(opencode_signals_only_tui; echo $?)" == 1
+unset THEME_BIN
 
 # Each file parses as its CLI reads it and holds hex6 colours: dusk's accent
 # is #111111, the table's background #000000 and the shipped slot color5
