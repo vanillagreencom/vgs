@@ -4,7 +4,7 @@ import Quickshell.Io
 
 // One file read again whenever it changes, and written through the same
 // view. Two Quickshell FileView behaviours drop a change otherwise
-// (docs/architecture/runtime.md § QML): a reload rebuilds the reloading
+// (docs/architecture/runtime-qml.md): a reload rebuilds the reloading
 // view's own watcher after its read has started, so a change landing in
 // between raises no notification; and a reload while a read is in flight
 // starts nothing, so the read reports the file as it was. One view holds

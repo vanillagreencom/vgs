@@ -9,9 +9,7 @@ import qs.Commons
 // program draws stays visible. The runner replaces backgrounds.json by
 // rename on every change, an image replaced under its name included, and
 // the image is loaded under its `stamp`, so each change decodes it again.
-// One view holds the watcher and another reads, since a reload rebuilds
-// the reloading view's watcher and starts no second read while one is in
-// flight: runtime.md § QML.
+// WatchedFile reads it, so a change that lands during a read is read again.
 Item {
     id: root
 
@@ -27,28 +25,6 @@ Item {
     // Whether the image drew its source; it stays true while a new source
     // loads, since the old image stays on screen until the new one is ready.
     property bool drawn: false
-    // The reader's read: `running` from the first, which the reader starts
-    // when its path is set; `stale` when the file changed during it; `idle`.
-    property string readState: "running"
-
-    function changed() {
-        if (readState !== "idle") {
-            readState = "stale";
-            return;
-        }
-        readState = "running";
-        reader.reload();
-    }
-
-    // Whether a change overtook the read that just ended; if so the read
-    // starts again once the handler returns and its result is dropped.
-    function readAgain() {
-        if (readState !== "stale") return false;
-        readState = "running";
-        Qt.callLater(() => reader.reload());
-        return true;
-    }
-
     // The image URL backgrounds.json's TEXT names, or "" when it names none
     // or is not the runner's; a document the runner did not write is
     // logged, not drawn. The stamp is a query a local file URL ignores.
@@ -66,26 +42,11 @@ Item {
         return "";
     }
 
-    FileView {
-        preload: false
+    WatchedFile {
         path: root.statePath
-        watchChanges: true
-        printErrors: false
-        onFileChanged: root.changed()
-    }
-
-    FileView {
-        id: reader
-        path: root.statePath
-        printErrors: false
-        onLoaded: {
-            if (root.readAgain()) return;
-            root.readState = "idle";
-            root.source = root.sourceOf(text());
-        }
+        onChanged: read()
+        onLoaded: content => { root.source = root.sourceOf(content); }
         onLoadFailed: error => {
-            if (root.readAgain()) return;
-            root.readState = "idle";
             if (error !== FileViewError.FileNotFound) console.error("background: " + path + " unreadable: " + error);
             root.source = "";
         }

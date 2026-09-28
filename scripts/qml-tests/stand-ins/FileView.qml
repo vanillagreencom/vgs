@@ -2,7 +2,7 @@ import QtQuick
 
 // Stands in for Quickshell.Io's FileView, whose plugin does not load outside
 // the shell, with the two behaviours WatchedFile works around
-// (docs/architecture/runtime.md § QML): a reload while the view's read or
+// (docs/architecture/runtime-qml.md): a reload while the view's read or
 // write is outstanding, a result handler included, starts nothing, and a
 // reload of a watching view builds its watcher again. A read or a write
 // that starts during a result handler's run is lost once the handler

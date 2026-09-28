@@ -87,7 +87,7 @@ Item {
 
     // Each helper Process records its exit in `completion` and is handled
     // once `running` falls, after its output is read; a helper that never
-    // started leaves `completion` null (docs/architecture/runtime.md § QML).
+    // started leaves `completion` null (docs/architecture/runtime-qml.md).
     function outcome(completion, errText) {
         if (completion === null) return "file-search: start=failed";
         if (completion.code !== 0 || completion.status !== 0) return failure(errText, completion.code);

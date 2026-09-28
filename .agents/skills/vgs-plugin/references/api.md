@@ -155,7 +155,7 @@ A name a component does not know is logged and drawn as the default. A control's
 | `Time.now` | date: the shared wall clock, ticking once a minute |
 | `Time.holdSeconds(item, wanted)` | function: while any item holds it, `Time.now` ticks once a second; release on destruction |
 
-`WatchedFile` in `qs.Commons` reads a file again whenever it changes, and an edit that lands during a read is read again: `path` (required, set once), `read()`, `write(content)`, `busy`, and the signals `loaded(content)`, `loadFailed(error)`, `saved()`, `saveFailed(error)` and `changed()`. The header of `shell/Commons/WatchedFile.qml` states the contract; [`runtime.md` § QML](../../../../docs/architecture/runtime.md#qml) states the Quickshell behaviour it works around.
+`WatchedFile` in `qs.Commons` reads a file again whenever it changes, and an edit that lands during a read is read again: `path` (required, set once), `read()`, `write(content)`, `busy`, and the signals `loaded(content)`, `loadFailed(error)`, `saved()`, `saveFailed(error)` and `changed()`. The header of `shell/Commons/WatchedFile.qml` states the contract; [`runtime-qml.md`](../../../../docs/architecture/runtime-qml.md) states the Quickshell behaviour it works around.
 
 ## IPC
 

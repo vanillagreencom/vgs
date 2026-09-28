@@ -1,0 +1,20 @@
+# Runtime: QML
+
+Covers: shell/Commons/WatchedFile.qml, scripts/qml-tests/stand-ins/FileView.qml
+
+The Quickshell 0.3.1 and Qt facts the shell's QML rests on, each with the source that establishes it. [runtime.md](runtime.md) holds the process, the runner, the measurement tools and the Hyprland facts.
+
+- `FolderListModel` treats a missing folder as the process working directory and reports the swap through its `folder` property. Compare `folder` with the folder asked for before reading the listing.
+- Restart a `Process` from `runningChanged` when `running` is false, as the [Process reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/Process/) requires. Its implementation clears the process before emitting `exited`, then emits `runningChanged`. A command that fails to start emits only `runningChanged`.
+- A `Process` stdout parser is attached before the process starts; a null parser closes the channel for good.
+- `Qt.resolvedUrl()` gives asset URLs. `Quickshell.shellDir` gives the filesystem path a subprocess needs.
+- A JS object handed to `createObject` as an initial property crosses a QVariant conversion: functions vanish and nested lists stop being arrays. Assign such properties after creation.
+- A dependent binding may still hold its old value when a property change handler runs. Read the source property inside the handler; [Qt specifies no binding evaluation order](https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html).
+- `Array.prototype.flatMap` is absent from this engine.
+- A `FileView.reload()` while a read of the same path is in flight starts no second read, and the read in flight reports the file as it was; the view emits `loaded` and `loadFailed` before it lets go of that read, so a reload from their handlers starts nothing either ([`fileview.cpp`](https://git.outfoxxed.me/quickshell/quickshell/src/commit/41651d7/src/io/fileview.cpp) `loadAsync`, `operationFinished`). A reload also deletes the view's own watcher and builds a new one after its read has started, so a change that lands in between raises no `fileChanged` (`updatePath`, `updateWatchedFiles`). A file read on change therefore takes two views: one with `preload: false` and `watchChanges: true` that is never reloaded holds the watcher, and one that watches nothing reads, tracks its read, and reads again with `Qt.callLater` once the handler returns when a change lands during one. `WatchedFile` in `qs.Commons` is that pair, and `Config`, `ThemeSource` and the background plugin read their files through it.
+- Qt reads an eight-digit colour string as `#aarrggbb`, alpha first. The design system's portable colours are `#rrggbbaa`; `Theme.toColor` is the one place that reorders them.
+- A frozen JavaScript object does not protect the channels of a QML colour value inside it: a write to `frozen.accent.r` changes the value read back. Publish a colour as a string.
+- A `ShapePath` with `scale` above one loses a stroke under one path unit; scale the `Shape` item with a transform instead. A file in a module subdirectory sees no sibling type of the module by directory alone and imports the module.
+- A Qt popup with `popupType: Popup.Window` is placed once on Wayland and never moved: Qt leaves repositioning to the server and sends no reposition, and its position is what the parent window's bounds allow, so a popup taller than a bar is pushed into the bar. A Quickshell `PopupWindow` anchored to the item places below the bar and moves on `anchor.updateAnchor()`; the overlays use it, with a negative bottom anchor margin as the gap.
+- A pointer handler declared with a `parent` binding crashes the engine while the parent is still null; make it with `createObject` once the parent is known. A popup of a fresh bar surface opens only after the surface has drawn and taken one pointer event, so a row clicks the widget before it opens a popup.
+- `ignoreWarning` in a QML test case catches warnings alone; a `console.error` is a critical message it does not catch.
