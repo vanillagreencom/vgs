@@ -240,6 +240,20 @@ function reloadError(logic, reload) {
     return "";
 }
 
+// A `detect` entry: a command name, required, or a non-empty list of command
+// names, any one of which stands for the entry. A list holds names only.
+function isDetectEntry(logic, entry) {
+    if (!Array.isArray(entry)) return logic.isPackageName(entry);
+    return entry.length > 0 && entry.every(logic.isPackageName);
+}
+
+// Whether the accepted DETECT list is met: every entry is a command ON_PATH
+// answers true for, a list entry through any one of its names. An empty
+// list is always met. Both of the judge's enablement checks ask this.
+function detected(detect, onPath) {
+    return detect.every(entry => Array.isArray(entry) ? entry.some(onPath) : onPath(entry));
+}
+
 // Judge the target.json TEXT of the target directory NAME. Answers
 // { ok: true, target } with `target` the document and its `name`, or one
 // refusal.
@@ -266,7 +280,7 @@ function acceptTarget(logic, name, text) {
         if (destinations.has(document.files[at].destination)) return refused("target-schema", "key=files[" + at + "].destination");
         destinations.add(document.files[at].destination);
     }
-    if (!Array.isArray(document.detect) || !document.detect.every(logic.isPackageName)) return refused("target-schema", "key=detect");
+    if (!Array.isArray(document.detect) || !document.detect.every(entry => isDetectEntry(logic, entry))) return refused("target-schema", "key=detect");
     const wiring = document.wiring === null ? ""
         : logic.isPlainObject(document.wiring) && wiringForm(document.wiring) === "entry" ? entryError(logic, document.wiring, destinations)
         : wiringError(logic, document.wiring);
@@ -576,4 +590,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, wiredText, unwiredText };
+module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, wiredText, unwiredText };

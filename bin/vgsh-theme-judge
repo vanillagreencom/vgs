@@ -414,7 +414,7 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
     const target = verdict.target;
     if (disabled.includes(name)) return { name, state: "skipped", reason: "disabled", target };
     const found = reading(name, dir, () => {
-        if (!target.detect.every(onPath)) return "not-detected";
+        if (!render.detected(target.detect, onPath)) return "not-detected";
         switch (render.wiringForm(target.wiring)) {
         case "include": {
             const files = includeFiles(target, configHome);
@@ -1041,7 +1041,7 @@ function reloadTarget(name, shipped, disabled, live, failures) {
     if (!judged.ok) return judged.entry;
     const verdict = judged.value.verdict;
     if (!verdict.ok) return failed(verdict.reason, render.refusalLine(name, verdict));
-    const found = reading(name, dir, () => verdict.target.detect.every(onPath), failed);
+    const found = reading(name, dir, () => render.detected(verdict.target.detect, onPath), failed);
     if (!found.ok) return found.entry;
     if (!found.value) return skipped("not-detected");
     if (verdict.target.reload === null) return skipped("no-reload");

@@ -15,15 +15,20 @@ source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
 theme_tree helix vscode zed
 home="$tmp/home"; live="$state/theme"; hook_args="$tmp/sh-args"
 
-# Detection never runs a command: helix, zeditor and code record a run and
-# exit 1. sh, the helix hook's command, records its arguments one per line.
-for stub in helix zeditor code; do
-  printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
-  chmod +x "$stubs/$stub"
+# Detection never runs a command: helix, zeditor and code, Arch's names,
+# and hx and zed, the upstream builds' names, record a run and exit 1. sh,
+# the helix hook's command, records its arguments one per line. $upstream
+# holds hx, zed and sh, and no Arch name.
+upstream="$tmp/stubs-upstream"; mkdir -p "$upstream"
+for stub in helix zeditor code hx zed; do
+  dir="$stubs"; [[ $stub == hx || $stub == zed ]] && dir="$upstream"
+  printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$dir/$stub"
+  chmod +x "$dir/$stub"
 done
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" >"%s"\n' "$hook_args" >"$stubs/sh"
 chmod +x "$stubs/sh"
-with_stubs="$stubs:$theme_path"
+ln -s -- "$stubs/sh" "$upstream/sh"
+with_stubs="$stubs:$theme_path"; with_upstream="$upstream:$theme_path"
 
 # `dusk` and `nord` carry no terminal.json, so every slot is the shipped vgs
 # slot: color1 #f43f5e, color2 #b4c96f. `curated` ships a file for each
@@ -31,6 +36,7 @@ with_stubs="$stubs:$theme_path"
 # packages do, naming an extension, which is no colour theme.
 theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'
 theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": { "palette": { "accent": "#222222" } } }'
+theme_pkg "$tree/themes/dawn" '{ "schemaVersion": 1, "name": "dawn", "tokens": { "palette": { "accent": "#333333" } } }'
 for pkg in curated omarchy; do
   theme_pkg "$tree/themes/$pkg" "{ \"schemaVersion\": 1, \"name\": \"$pkg\", \"tokens\": {} }"
   mkdir -p "$tree/themes/$pkg/targets"
@@ -125,6 +131,16 @@ check "the user's vgs.toml is kept" test "$(cat -- "$helix_link")" == mine
 check "a disabled vscode's extension directory is removed" test ! -e "$ext" -a -d "$home/.vscode/extensions"
 check "detection ran no editor" test ! -e "$tmp/ran-helix" -a ! -e "$tmp/ran-zeditor" -a ! -e "$tmp/ran-code"
 
+# An upstream build's command alone detects its editor: hx for helix, zed
+# for zed. `dawn` is new here, so helix's bytes change and its hook runs.
+cfg="$tmp/cfg-upstream"; mkdir -p "$cfg/vgs"; helix_link="$cfg/helix/themes/vgs.toml"; zed_link="$cfg/zed/themes/vgs.json"
+rm -f -- "$hook_args"
+THEME_PATH="$with_upstream" tinst "hx and zed alone detect helix and zed" "$cfg" "$rt_empty" 0 "$(result written skipped:not-detected written dawn)" "" theme apply --json dawn
+check "an hx-detected helix's link names its state file" links_to "$helix_link" "$live/helix.toml"
+check "a zed-detected zed's link names its state file" links_to "$zed_link" "$live/zed.json"
+check "an hx-detected helix's hook signals Helix" hook_ran_pinned
+check "detection ran no upstream editor" test ! -e "$tmp/ran-hx" -a ! -e "$tmp/ran-zed"
+
 # Controls: each mutant target.json drops one rule, and the assertion that
 # pins it must turn. The rows above use the same assertions.
 control_cfg() { cfg="$tmp/cfg-$1"; mkdir -p "$cfg/vgs"; rm -rf -- "$hook_args" "$home/.vscode"; helix_link="$cfg/helix/themes/vgs.toml"; zed_link="$cfg/zed/themes/vgs.json"; }
@@ -169,6 +185,18 @@ control_cfg vscode-ui-theme
 THEME_PATH="$with_stubs" tinst "the dark-base vscode mutant applies light" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
 check "the dark-base vscode mutant's manifest is linked" test -s "$ext/package.json"
 check "the dark-base vscode mutant does not put light on vs" turned json_value "$ext/package.json" 'd["contributes"]["themes"][0]["uiTheme"]' vs
+tree_control helix-arch-only themes/targets/helix/target.json '"detect": [["helix", "hx"]]' '"detect": ["helix"]'
+control_cfg helix-arch-only
+THEME_PATH="$with_upstream" tinst "the Arch-only helix mutant applies under hx" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dawn
+check "the Arch-only helix mutant links no theme under hx" turned links_to "$helix_link" "$live/helix.toml"
+tree_control zed-arch-only themes/targets/zed/target.json '"detect": [["zeditor", "zed"]]' '"detect": ["zeditor"]'
+control_cfg zed-arch-only
+THEME_PATH="$with_upstream" tinst "the Arch-only zed mutant applies under zed" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dawn
+check "the Arch-only zed mutant links no theme under zed" turned links_to "$zed_link" "$live/zed.json"
+judge_control apply-all-of 'render.detected(target.detect, onPath)' 'target.detect.flat().every(onPath)'
+control_cfg apply-all-of
+THEME_PATH="$with_upstream" tinst "the all-of apply mutant applies under hx" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dawn
+check "the all-of apply mutant links no theme under hx" turned links_to "$helix_link" "$live/helix.toml"
 tree_control helix-hook themes/targets/helix/target.json '; [ $? -le 1 ]' ''
 control_cfg helix-hook
 # The state directory is shared, so the package changes to change bytes.

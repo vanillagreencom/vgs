@@ -129,6 +129,22 @@ check "the disabled target's hook never ran and it is dropped" test -z "$(cat "$
 printf '{}\n' >"$cfg/vgs/shell.json"; hook 0
 tinst "alpha lands again" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 
+# A reload detects as apply does: a pending target whose one entry lists
+# alternatives is dropped when none is on PATH and reloaded through any one.
+alpha_any_of() { target_dir alpha "$(target_json alpha hex6 "[[$1]]" 'include=@{state}/alpha.conf' true '{ "command": ["vgs-hook", "alpha"], "timeoutMs": 3000 }')" 'a=@{palette.accent}'; }
+alpha_any_of '"vgs-absent"'; printf '%s\n' "$alpha_due" >"$pending"; fresh
+tinst "a reload drops a pending target none of whose commands is on PATH" "$cfg" "$rt_empty" 0 '{"state":"reloaded","targets":[{"name":"alpha","state":"skipped","reason":"not-detected"}],"reason":null}' "" theme reload --json
+check "an undetected target's hook never runs and it is dropped" test -z "$(cat "$runs")" -a ! -e "$pending"
+alpha_any_of '"vgs-absent", "vgs-hook"'; printf '%s\n' "$alpha_due" >"$pending"; fresh
+tinst "a reload runs a pending target one of whose commands is on PATH" "$cfg" "$rt_empty" 0 '{"state":"reloaded","targets":[{"name":"alpha","state":"reloaded","reason":null}],"reason":null}' "" theme reload --json
+check "the any-of target's hook ran once" ran "$(run_line "$alpha_due")"
+judge_control reload-all-of 'render.detected(verdict.target.detect, onPath)' 'verdict.target.detect.flat().every(onPath)'
+printf '%s\n' "$alpha_due" >"$pending"; fresh
+tinst "the all-of reload mutant reloads" "$cfg" "$rt_empty" 0 "$any_out" "" theme reload --json
+check "the all-of reload mutant runs no hook for one alternative on PATH" ran ""
+unset THEME_BIN
+alpha_hook vgs-hook 3000
+
 # The pending file is read before anything moves and never lost in silence.
 printf '{"schemaVersion":1,"targets":"alpha"}\n' >"$pending"
 cp -- "$file" "$tmp/theme-before"; fresh

@@ -2,7 +2,7 @@
   "app": "Helix",
   "encoder": "hex6",
   "files": [{ "template": "helix.toml", "destination": "helix.toml" }],
-  "detect": ["helix"],
+  "detect": [["helix", "hx"]],
   "wiring": { "base": "config", "dir": "helix/themes", "owned": false, "links": { "vgs.toml": "helix.toml" } },
   "reload": { "command": ["sh", "-c", "pkill -USR1 -x -u \"$(id -u)\" 'hx|helix'; [ $? -le 1 ]"], "timeoutMs": 5000 }
 }

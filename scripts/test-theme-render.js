@@ -66,6 +66,8 @@ const targetText = (fields = {}) => JSON.stringify(Object.assign({
 const ACCEPTED_TARGETS = [
     ["probe", targetText()],
     ["probe", targetText({ reload: null, detect: [], wiring: Object.assign({}, wiring, { create: false }) })],
+    ["probe", targetText({ detect: [["probe", "probe-bin"]] })],
+    ["probe", targetText({ detect: ["probe", ["probe-a", "probe-b"]] })],
     ["probe-2", targetText({ files: [{ template: "a.conf", destination: "probe-2.conf" }, { template: "a.conf", destination: "probe-2.extra.ini" }] })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general" }) })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })],
@@ -106,6 +108,10 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: [""] }] }), "target-schema", "key=files[0].curatedKeys"],
     ["probe", targetText({ detect: ["probe --version"] }), "target-schema", "key=detect"],
     ["probe", targetText({ detect: "probe" }), "target-schema", "key=detect"],
+    ["probe", targetText({ detect: [[]] }), "target-schema", "key=detect"],
+    ["probe", targetText({ detect: [["probe", "probe --version"]] }), "target-schema", "key=detect"],
+    ["probe", targetText({ detect: [["probe", ["probe-bin"]]] }), "target-schema", "key=detect"],
+    ["probe", targetText({ detect: [[["probe"]]] }), "target-schema", "key=detect"],
     ["probe", targetText({ wiring: { file: "probe/probe.conf", line: "include=@{state}/probe.conf" } }), "target-schema", "key=wiring"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { file: "../probe.conf" }) }), "target-schema", "key=wiring.file"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { file: "/etc/probe.conf" }) }), "target-schema", "key=wiring.file"],
@@ -338,6 +344,23 @@ const VAULTS = [
     ['{"vaults":"/n"}', null]
 ];
 
+// Detection: an accepted detect list, the commands on PATH, whether it is met.
+// A command entry is required; a list entry is met by any one of its names.
+const DETECTED = [
+    [[], [], true],
+    [["a"], ["a"], true],
+    [["a"], [], false],
+    [["a", "b"], ["a"], false],
+    [["a", "b"], ["a", "b"], true],
+    [[["a", "b"]], ["a"], true],
+    [[["a", "b"]], ["b"], true],
+    [[["a", "b"]], ["a", "b"], true],
+    [[["a", "b"]], [], false],
+    [[["a", "b"]], ["c"], false],
+    [["c", ["a", "b"]], ["b"], false],
+    [["c", ["a", "b"]], ["b", "c"], true]
+];
+
 function verify(render) {
     const accepted = (name, text) => {
         const result = render.acceptTarget(logic, name, text);
@@ -353,6 +376,8 @@ function verify(render) {
         const result = render.acceptTarget(logic, name, text);
         assert.deepEqual(result, { ok: false, reason, detail }, `${name} ${text}`);
     }
+    for (const [detect, found, want] of DETECTED)
+        assert.equal(render.detected(detect, command => found.includes(command)), want, `${JSON.stringify(detect)} with ${JSON.stringify(found)}`);
     assert.equal(render.refusalLine("probe", { ok: false, reason: "target-schema", detail: "key=app" }), "target=probe reason=target-schema key=app");
     assert.equal(render.refusalLine("probe", { ok: false, reason: "target-json", detail: "" }), "target=probe reason=target-json");
 
@@ -515,7 +540,13 @@ const CONTROLS = [
     ["template name", "if (!logic.isPackageName(file.template) || file.template === TARGET_FILE) return", "if (false) return"],
     ["destination prefix", "!file.destination.startsWith(name + \".\")", "false"],
     ["unique destination", "if (destinations.has(document.files[at].destination)) return", "if (false) return"],
-    ["detect", "if (!Array.isArray(document.detect) || !document.detect.every(logic.isPackageName)) return", "if (false) return"],
+    ["detect", "if (!Array.isArray(document.detect) || !document.detect.every(entry => isDetectEntry(logic, entry))) return", "if (false) return"],
+    ["detect command name", "if (!Array.isArray(entry)) return logic.isPackageName(entry);", "if (!Array.isArray(entry)) return true;"],
+    ["detect list admitted", "if (!Array.isArray(entry)) return logic.isPackageName(entry);", "if (!Array.isArray(entry) || true) return logic.isPackageName(entry);"],
+    ["detect list present", "return entry.length > 0 && entry.every(logic.isPackageName);", "return entry.every(logic.isPackageName);"],
+    ["detect list names", "return entry.length > 0 && entry.every(logic.isPackageName);", "return entry.length > 0;"],
+    ["detected any of a list", "Array.isArray(entry) ? entry.some(onPath) : onPath(entry)", "Array.isArray(entry) ? entry.every(onPath) : onPath(entry)"],
+    ["detected every entry", "return detect.every(entry => Array.isArray", "return detect.some(entry => Array.isArray"],
     ["wiring required keys", "!WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "false ||"],
     ["wiring unknown key", "!Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))", "false"],
     ["wiring section admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];', 'const INCLUDE_OPTIONAL_KEYS = ["profiles"];'],
