@@ -168,6 +168,11 @@ function verify(model) {
     assert.equal(model.isDescendantOf(cycle.items, "a", "root"), true);
     assert.equal(model.isDescendantOf(cycle.items, "a", "c"), false);
 
+    // Theme apply results.
+    for (const [state, want] of [["applied", true], ["unchanged", true], ["partial", false], ["failed", false], ["", false]])
+        assert.equal(model.applySucceeded({ state: state, shell: "unchanged", targets: [], theme: "vgs", reason: null }), want, "apply state " + state);
+    assert.equal(model.applySucceeded(null), false, "no result is no success");
+
     // Payloads.
     const bare = model.parsePayload("", RUNTIME);
     assert.equal(bare.ok, true);
@@ -244,7 +249,9 @@ const CONTROLS = [
     ["option glyph", 'var icon = parts.length > 1 ? parts.shift() : "";', 'var icon = "";'],
     ["newest first", "return b.mtime - a.mtime;", "return 0;"],
     ["malformed counted", 'if (parts.length < 3 || !/^[0-9]+$/.test(parts[0]) || path.charAt(0) !== "/") {', "if (parts.length < 3) {"],
-    ["default first", "return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);", "return 0;"]
+    ["default first", "return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);", "return 0;"],
+    ["unchanged apply succeeds", '(result.state === "applied" || result.state === "unchanged")', '(result.state === "applied")'],
+    ["only success succeeds", '(result.state === "applied" || result.state === "unchanged")', '(result.state !== "failed")']
 ];
 
 const source = fs.readFileSync(file, "utf8");

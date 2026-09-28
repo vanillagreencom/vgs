@@ -482,8 +482,7 @@ Item {
     function applyTheme(name) {
         if (shell === null || shell.theme === undefined) return;
         const reply = shell.theme.apply(name, result => {
-            // `unchanged` is the answer for the package already applied.
-            if (result.state !== "applied" && result.state !== "unchanged") console.error("launcher: theme " + name + " " + JSON.stringify(result));
+            if (!MenuModel.applySucceeded(result)) console.error("launcher: theme " + name + " " + JSON.stringify(result));
         });
         if (reply === "ok") dismiss();
         else {

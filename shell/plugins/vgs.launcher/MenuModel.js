@@ -415,6 +415,13 @@ function displayRow(items, itemOrder, entry, detail, score, section, missing) {
     };
 }
 
+// Whether a theme apply's structured result, as `vgsh theme apply --json`
+// answers it, is a success: `applied`, or `unchanged` for the package
+// already applied. `partial` and `failed`, and anything else, are not.
+function applySucceeded(result) {
+    return isPlainObject(result) && (result.state === "applied" || result.state === "unchanged");
+}
+
 // --- the summon payload
 
 var PAYLOAD_KEYS = ["menu", "query", "mode", "prompt", "options", "selectionFile", "doneFile", "width", "maxHeight"];
