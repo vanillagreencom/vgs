@@ -158,14 +158,15 @@ Item {
         }
     }
 
-    FileView {
+    // Read again on every change, a change that lands during a read
+    // included. The first read ends after open(), so a route waits for
+    // userSettled in pendingRoute.
+    WatchedFile {
         id: userFile
         path: root.userPath
-        blockLoading: true
-        watchChanges: true
-        printErrors: false
-        onLoaded: {
-            root.readMenu("user", path, text());
+        onChanged: read()
+        onLoaded: content => {
+            root.readMenu("user", path, content);
             root.userSettled = true;
         }
         onLoadFailed: error => {
@@ -180,7 +181,6 @@ Item {
             }
             root.userSettled = true;
         }
-        onFileChanged: reload()
     }
 
     // Every command any row requires, checked in one process per menu.
