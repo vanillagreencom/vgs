@@ -47,7 +47,6 @@ Where the shell's memory sits, how to measure it and the growth invariants are i
 - A Qt popup with `popupType: Popup.Window` is placed once on Wayland and never moved: Qt leaves repositioning to the server and sends no reposition, and its position is what the parent window's bounds allow, so a popup taller than a bar is pushed into the bar. A Quickshell `PopupWindow` anchored to the item places below the bar and moves on `anchor.updateAnchor()`; the overlays use it, with a negative bottom anchor margin as the gap.
 - A pointer handler declared with a `parent` binding crashes the engine while the parent is still null; make it with `createObject` once the parent is known. A popup of a fresh bar surface opens only after the surface has drawn and taken one pointer event, so a row clicks the widget before it opens a popup.
 - `ignoreWarning` in a QML test case catches warnings alone; a `console.error` is a critical message it does not catch.
-- A `FileView` watch on a symlink watches the symlink's target: its `QFileSystemWatcher` adds the path to inotify without `IN_DONT_FOLLOW` ([Qt's inotify engine](https://github.com/qt/qtbase/blob/6.11/src/corelib/io/qfilesystemwatcher_inotify.cpp)), and its directory watch emits `fileChanged` only for a path it no longer watches ([FileView's watcher](https://git.outfoxxed.me/quickshell/quickshell/src/tag/v0.3.1/src/io/fileview.cpp)). A symlink replaced or removed while its target stays emits nothing, so a surface follows a regular file the writer replaces by rename.
 
 ## Validation
 

@@ -40,6 +40,8 @@ Enabled means: the active bar, with every other kind it declares; a bar widget p
 
 Disabling the active bar hides every shown bar widget, named in the manager's reply; they return with the next bar. Enabling a bar makes it the active bar.
 
+A background instance may declare `shown`. `BackgroundHost` maps a screen's surface only while an instance there is shown, one without the property included, so a plugin with nothing to draw leaves the screen to whatever draws under it. A hidden layer-shell window deletes its Wayland window and keeps its items, which show it again ([`wlr_layershell.cpp`](https://git.outfoxxed.me/quickshell/quickshell/src/tag/v0.3.1/src/wayland/wlr_layershell/wlr_layershell.cpp) `deleteOnInvisible`, [`proxywindow.cpp`](https://git.outfoxxed.me/quickshell/quickshell/src/tag/v0.3.1/src/window/proxywindow.cpp) `setVisibleDirect`).
+
 ## What the core builds and hands over
 
 - `bin/vgsh-scan` reads every manifest and every source file under `shell/plugins/` and `~/.config/vgs/plugins/` in one process and reports every directory or file it could not read as an error, never as absence. The user directory wins an id collision and the hidden plugin is logged when the collision set changes. Each plugin carries a source revision, a hash of every file under its directory except `.git`, and the scan publishes the files of each revision once under `$XDG_RUNTIME_DIR/vgsh-sources-<shell pid>/<revision>/`; the shell loads entry points from there, [D014](../decisions/D014-source-revisions-are-published-snapshots.md). `shell/Core/Registry.qml` holds the manifest map, replaces it whole when the set or any revision changed, and logs `plugins: scan complete changed=<bool>` for every scan it applies; the smoke's no-op rescan row waits on that line.

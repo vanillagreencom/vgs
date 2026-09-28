@@ -9,7 +9,7 @@ What a plugin receives and may call. The core owns every table here; a value not
 | `bar-widget` | `bar-widget` | `BarWidget` from `qs.Ui` | the active bar's sections | placed in `bar.layout.<section>`, not in `disabledPlugins`, and a bar is active |
 | `bar` | `bar` | `Item` declaring the three section containers below | the bar host, one per screen | it is `bar.id` in the configuration and is not in `disabledPlugins` |
 | `service` | `service` | `Item` | the service host | enabled |
-| `background` | `background` | `Item` declaring `property var screen: null` | the background host, one per screen, under every window | enabled |
+| `background` | `background` | `Item` declaring `property var screen: null`, and optionally `property bool shown`: the host maps no surface on a screen while every instance there declares it false | the background host, one per screen, under every window | enabled |
 | `panel` | `panel` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the panel host: a popup under its anchor item with a focus grab, or a layer surface on the top layer without one | enabled and summoned, until hidden |
 | `overlay` | `overlay` | `Item` with `open(payloadJson)` and `close()` | the overlay host: an anchored popup, or a layer surface covering its screen without an anchor | enabled and summoned, until hidden |
 | `menu` | `menu` | `Item` with `open(payloadJson)` and `close()`, sized by `implicitWidth` and `implicitHeight` | the menu host: a popup under its anchor item with a focus grab, or a layer surface on the overlay layer without one | enabled and summoned, until hidden |

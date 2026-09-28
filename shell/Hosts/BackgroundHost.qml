@@ -9,7 +9,10 @@ import qs.Commons
 // it, stacked in id order, and receives the screen through its slot's
 // context. The surface exists only while some background plugin can be
 // built: a slot whose build failed is left out, and with none left the
-// surface is destroyed rather than shown empty.
+// surface is destroyed rather than shown empty. It is mapped only while an
+// instance on it is shown: one that declares `shown` false draws nothing,
+// and hiding a layer-shell window deletes its Wayland surface while the
+// instances stay to show it again.
 Item {
     id: host
 
@@ -51,8 +54,11 @@ Item {
             color: Theme.color.background
             WlrLayershell.namespace: "vgs:background"
             WlrLayershell.layer: WlrLayer.Background
+            // An instance without the property is shown.
+            visible: slots.instances.some(slot => slot.instance !== null && slot.instance.shown !== false)
 
             Variants {
+                id: slots
                 model: host.ids
 
                 PluginSlot {
