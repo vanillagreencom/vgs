@@ -1,0 +1,9 @@
+{
+  "app": "oh-my-pi",
+  "encoder": "hex6",
+  "files": [{ "template": "omp.json", "destination": "omp.json" }],
+  "detect": ["omp"],
+  "wiring": { "base": "home", "dir": ".omp/agent/themes", "owned": false, "links": { "vgs.json": "omp.json" } },
+  "select": { "base": "home", "file": ".omp/agent/config.yml", "format": "yaml", "key": [["theme", "dark"], ["theme", "light"]], "value": "vgs" },
+  "reload": null
+}

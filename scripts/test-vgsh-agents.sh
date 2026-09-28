@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Controls for the agent CLI targets of `vgsh theme apply`: Claude Code,
-# Codex, Gemini CLI, Hermes Agent, opencode and Pi. Each lands its file with
-# the hex6 encoder, keeps its link in the CLI's themes directory (Gemini
-# keeps none) and sets the one theme key its `select` names in the CLI's own
-# settings file, every other byte of that file kept. Every detect command is
+# Codex, Gemini CLI, Hermes Agent, oh-my-pi, opencode and Pi. Each lands its
+# file with the hex6 encoder, keeps its link in the CLI's themes directory
+# (Gemini keeps none) and sets each theme key its `select` names in the
+# CLI's own settings file, every other byte of that file kept. Every detect command is
 # a stub on the rows' PATH and Claude's hook runs a real sh and touch, under
 # a temporary HOME, XDG_CONFIG_HOME and XDG_RUNTIME_DIR, so no row reaches a
 # real CLI, a live settings file or the developer's session.
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-agents="claude codex gemini hermes opencode pi"
+agents="claude codex gemini hermes omp opencode pi"
 # shellcheck disable=SC2086
 theme_tree $agents
 live="$state/theme"; pending="$state/reload-pending.json"; home="$tmp/home"
@@ -56,9 +56,9 @@ disable() { printf '{ "disabledTargets": [%s] }\n' "$1" >"$cfg/vgs/shell.json"; 
 # The CLIs' own settings files, each holding keys of the user's beside the
 # one apply sets. Codex's is a dotfile manager's link to an owner-only file.
 cfg="$tmp/cfg-agents"; dotfiles="$tmp/dotfiles"
-mkdir -p "$cfg/vgs" "$cfg/opencode" "$home/.claude" "$home/.codex" "$home/.gemini" "$home/.hermes" "$home/.pi/agent" "$dotfiles"
+mkdir -p "$cfg/vgs" "$cfg/opencode" "$home/.claude" "$home/.codex" "$home/.gemini" "$home/.hermes" "$home/.omp/agent" "$home/.pi/agent" "$dotfiles"
 claude_settings="$home/.claude/settings.json"; codex_config="$home/.codex/config.toml"; gemini_settings="$home/.gemini/settings.json"
-hermes_config="$home/.hermes/config.yaml"; opencode_tui="$cfg/opencode/tui.json"; pi_settings="$home/.pi/agent/settings.json"
+hermes_config="$home/.hermes/config.yaml"; omp_config="$home/.omp/agent/config.yml"; opencode_tui="$cfg/opencode/tui.json"; pi_settings="$home/.pi/agent/settings.json"
 claude_text=$'{\n  "model": "opus",\n  "permissions": { "allow": ["Bash(ls)"] }\n}\n'
 claude_selected=$'{\n  "theme": "custom:vgs",\n  "model": "opus",\n  "permissions": { "allow": ["Bash(ls)"] }\n}\n'
 codex_text=$'model = "o3"\n\n[tui]\nanimations = false\n\n[mcp_servers.docs]\ncommand = "docs"\n'
@@ -67,11 +67,14 @@ gemini_text=$'{\n  "ui": {\n    "hideBanner": true\n  }\n}\n'
 gemini_selected=$'{\n  "ui": {\n    "theme": "'"$live"$'/gemini.json",\n    "hideBanner": true\n  }\n}\n'
 hermes_text=$'model: hermes-4\ndisplay:\n  compact: true  # mine\n'
 hermes_selected=$'model: hermes-4\ndisplay:\n  skin: vgs\n  compact: true  # mine\n'
+# oh-my-pi keeps one theme per terminal background, and both slots take vgs.
+omp_text=$'theme:\n  dark: titanium\n  light: light\nsymbolPreset: nerd  # mine\n'
+omp_selected=$'theme:\n  dark: vgs\n  light: vgs\nsymbolPreset: nerd  # mine\n'
 opencode_text=$'{\n  "$schema": "https://opencode.ai/tui.json"\n}\n'
 opencode_selected=$'{\n  "theme": "vgs",\n  "$schema": "https://opencode.ai/tui.json"\n}\n'
 pi_text=$'{"defaultModel":"x"}'
 pi_selected=$'{"theme": "vgs", "defaultModel":"x"}'
-settings=("$claude_settings" "$codex_config" "$gemini_settings" "$hermes_config" "$opencode_tui" "$pi_settings")
+settings=("$claude_settings" "$codex_config" "$gemini_settings" "$hermes_config" "$omp_config" "$opencode_tui" "$pi_settings")
 seed() { # each settings file as the user left it; a link a row left in its place goes first
   rm -f -- "${settings[@]}"
   printf '%s' "$claude_text" >"$claude_settings"; chmod 640 -- "$claude_settings"
@@ -79,17 +82,18 @@ seed() { # each settings file as the user left it; a link a row left in its plac
   ln -sfn -- "$dotfiles/codex.toml" "$codex_config"
   printf '%s' "$gemini_text" >"$gemini_settings"
   printf '%s' "$hermes_text" >"$hermes_config"
+  printf '%s' "$omp_text" >"$omp_config"
   printf '%s' "$opencode_text" >"$opencode_tui"
   printf '%s' "$pi_text" >"$pi_settings"
 }
 selected() { # every settings file holds its selection and the rest of its text
   has_text "$claude_settings" "$claude_selected" && has_text "$codex_config" "$codex_selected" && has_text "$gemini_settings" "$gemini_selected" &&
-    has_text "$hermes_config" "$hermes_selected" && has_text "$opencode_tui" "$opencode_selected" && has_text "$pi_settings" "$pi_selected"
+    has_text "$hermes_config" "$hermes_selected" && has_text "$omp_config" "$omp_selected" && has_text "$opencode_tui" "$opencode_selected" && has_text "$pi_settings" "$pi_selected"
 }
 seed
 
 apply_json "the agent targets land" 0 dusk
-check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;opencode written None;pi written None;"
+check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;omp written None;opencode written None;pi written None;"
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
 
@@ -103,6 +107,7 @@ check "Codex's theme is a TextMate plist whose foregrounds are all hex6" python3
 check "Gemini's theme is a custom JSON theme with the accent" python3 -c 'import json,sys; t = json.load(open(sys.argv[1])); sys.exit(0 if t["type"] == "custom" and t["text"]["accent"] == "#111111" and t["background"]["primary"] == "#000000" and t["ui"]["gradient"][1] == "#a855f7" else 1)' "$live/gemini.json"
 check "Hermes's skin names itself vgs" grep -qxF -- 'name: vgs' "$live/hermes.yaml"
 check "every Hermes colour is a double-quoted hex6" python3 -c 'import re,sys; l = open(sys.argv[1]).read().split("colors:\n")[1].splitlines(); sys.exit(0 if len(l) == 30 and all(re.fullmatch(r"  [a-z_]+: \"#[0-9a-f]{6}\"", x) for x in l) and "  banner_title: \"#111111\"" in l else 1)' "$live/hermes.yaml"
+check "oh-my-pi's theme holds its 67 colours and 3 export colours as hex6" python3 -c 'import json,re,sys; t = json.load(open(sys.argv[1])); c = t["colors"]; e = t["export"]; sys.exit(0 if t["name"] == "vgs" and len(c) == 67 and sorted(e) == ["cardBg", "infoBg", "pageBg"] and c["accent"] == "#111111" and c["statusLineModel"] == "#111111" and all(re.match(sys.argv[2], v) for v in list(c.values()) + list(e.values())) else 1)' "$live/omp.json" "$hex6"
 check "opencode's theme holds its 52 colours as hex6" python3 -c 'import json,re,sys; t = json.load(open(sys.argv[1])); c = t["theme"]; sys.exit(0 if t["$schema"] == "https://opencode.ai/theme.json" and len(c) == 52 and c["primary"] == "#111111" and all(re.match(sys.argv[2], v) for v in c.values()) else 1)' "$live/opencode.json" "$hex6"
 check "Pi's theme holds its 56 colours and 3 export colours as hex6" python3 -c 'import json,re,sys; t = json.load(open(sys.argv[1])); c = t["colors"]; e = t["export"]; sys.exit(0 if t["name"] == "vgs" and len(c) == 56 and sorted(e) == ["cardBg", "infoBg", "pageBg"] and c["accent"] == "#111111" and all(re.match(sys.argv[2], v) for v in list(c.values()) + list(e.values())) else 1)' "$live/pi.json" "$hex6"
 
@@ -111,6 +116,7 @@ check "Pi's theme holds its 56 colours and 3 export colours as hex6" python3 -c 
 check "Claude's theme link stands in its themes directory" links_to "$home/.claude/themes/vgs.json" "$live/claude.json"
 check "Codex's theme link stands in its themes directory" links_to "$home/.codex/themes/vgs.tmTheme" "$live/codex.tmTheme"
 check "Hermes's skin link stands in its skins directory" links_to "$home/.hermes/skins/vgs.yaml" "$live/hermes.yaml"
+check "oh-my-pi's theme link stands in its themes directory" links_to "$home/.omp/agent/themes/vgs.json" "$live/omp.json"
 check "opencode's theme link stands in its themes directory" links_to "$cfg/opencode/themes/vgs.json" "$live/opencode.json"
 check "Pi's theme link stands in its themes directory" links_to "$home/.pi/agent/themes/vgs.json" "$live/pi.json"
 check "Gemini keeps no link" test ! -e "$home/.gemini/themes"
@@ -125,7 +131,7 @@ check "the modes of Codex's dotfile and Claude's settings are kept" test "$(stat
 touch -d @1000 -- "${settings[@]}"
 before="$(stamp "${settings[@]}")"
 apply_json "an unchanged apply" 0 dusk
-check "an unchanged apply leaves every agent target unchanged" all_state "claude unchanged None;codex unchanged None;gemini unchanged None;hermes unchanged None;opencode unchanged None;pi unchanged None;"
+check "an unchanged apply leaves every agent target unchanged" all_state "claude unchanged None;codex unchanged None;gemini unchanged None;hermes unchanged None;omp unchanged None;opencode unchanged None;pi unchanged None;"
 check "an unchanged apply writes no settings file" test "$(stamp "${settings[@]}")" == "$before"
 
 # A changed theme runs Claude's hook, which changes only its link's own

@@ -16,7 +16,9 @@
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 // The one optional top-level key: the theme selection apply keeps in the
 // application's own settings file, `{ base, file, format, key, value }`,
-// beside any wiring form. bin/lib/theme-select.js makes the edit.
+// beside any wiring form. `key` is one key path, or a list of two or more
+// key paths that each take the value. bin/lib/theme-select.js makes the
+// edit.
 const SELECT_KEY = "select";
 const SELECT_KEYS = ["base", "file", "format", "key", "value"];
 const SELECT_FORMATS = ["json", "toml", "yaml"];
@@ -267,18 +269,34 @@ function detected(detect, onPath) {
     return detect.every(entry => Array.isArray(entry) ? entry.some(onPath) : onPath(entry));
 }
 
+// Whether KEY is a key path FORMAT takes: one bare name per segment, and
+// at most SELECT_LINE_DEPTH of them for a line-exact format.
+function isKeyPath(format, key) {
+    return Array.isArray(key) && key.length > 0 && key.every(segment => typeof segment === "string" && SECTION_PATTERN.test(segment)) &&
+        (format === "json" || key.length <= SELECT_LINE_DEPTH);
+}
+
+// Whether key path A is B or a table, mapping or object on B's path, so the
+// two cannot both hold a string.
+function isKeyPrefix(a, b) {
+    return a.every((segment, at) => segment === b[at]);
+}
+
 // The first defect of `select`, or "": a settings file under one of the
 // entry bases, one name per segment, its format, the key path the theme is
-// named at, one bare name per segment and at most SELECT_LINE_DEPTH of them
-// for a line-exact format, and one line of value whose only placeholder is
+// named at, or a list of two or more such paths none of which is another or
+// lies on another's path, and one line of value whose only placeholder is
 // `@{state}`.
 function selectError(logic, select) {
     if (!hasExactKeys(logic, select, SELECT_KEYS)) return "key=select";
     if (!ENTRY_BASES.includes(select.base)) return "key=select.base";
     if (!isRelativePath(select.file)) return "key=select.file";
     if (!SELECT_FORMATS.includes(select.format)) return "key=select.format";
-    if (!Array.isArray(select.key) || select.key.length === 0 || !select.key.every(segment => typeof segment === "string" && SECTION_PATTERN.test(segment)) ||
-        (select.format !== "json" && select.key.length > SELECT_LINE_DEPTH)) return "key=select.key";
+    if (!isKeyPath(select.format, select.key)) {
+        const keys = select.key;
+        if (!Array.isArray(keys) || keys.length < 2 || !keys.every(key => isKeyPath(select.format, key))) return "key=select.key";
+        if (keys.some((a, i) => keys.some((b, j) => i !== j && isKeyPrefix(a, b)))) return "key=select.key";
+    }
     if (!isLine(select.value) || CONTROL_CHARACTER.test(select.value)) return "key=select.value";
     const names = placeholderNames(select.value);
     if (names === null || names.some(name => name !== STATE_PLACEHOLDER)) return "key=select.value";
@@ -439,6 +457,13 @@ function reloadCommand(target, state) {
 function selectValue(target, state) {
     if (target.select === undefined) throw new Error("theme-render: selectValue: target " + target.name + " has no select");
     return withState(target.select.value, state, "selectValue: the selection value of target " + target.name);
+}
+
+// The key paths an accepted TARGET's `select` sets, in its order: its one
+// key, or each of its list.
+function selectKeys(target) {
+    if (target.select === undefined) throw new Error("theme-render: selectKeys: target " + target.name + " has no select");
+    return typeof target.select.key[0] === "string" ? [target.select.key] : target.select.key;
 }
 
 // Whether an accepted TARGET's hook is due on every apply that lands it,
@@ -636,4 +661,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };
+module.exports = { TARGET_FILE, acceptTarget, detected, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };

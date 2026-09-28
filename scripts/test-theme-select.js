@@ -20,6 +20,7 @@ const CLAUDE = ["theme"];
 const GEMINI = ["ui", "theme"];
 const CODEX = ["tui", "theme"];
 const HERMES = ["display", "skin"];
+const OMP = [["theme", "dark"], ["theme", "light"]];
 
 // Edits that land: the format, the file's text, the key, the value, the
 // text the file takes, or null when it already selects the value.
@@ -143,6 +144,25 @@ const REFUSED = [
     ["yaml", "display:\n  skin: a\n  skin: b\n", HERMES, "duplicate-key"]
 ];
 
+// Edits of several keys, each set in the text the one before it left: the
+// format, the file's text, the keys, the value and the text the file takes,
+// or null when every key already holds the value.
+const SELECTED_KEYS = [
+    ["yaml", "model: x\n", OMP, "vgs", "model: x\ntheme:\n  light: vgs\n  dark: vgs\n"],
+    ["yaml", "theme:\n  dark: titanium\n  light: light\n", OMP, "vgs", "theme:\n  dark: vgs\n  light: vgs\n"],
+    ["yaml", "theme:\n  dark: vgs\n  light: light\n", OMP, "vgs", "theme:\n  dark: vgs\n  light: vgs\n"],
+    ["yaml", "theme:\n  dark: titanium\n  light: vgs\n", OMP, "vgs", "theme:\n  dark: vgs\n  light: vgs\n"],
+    ["yaml", "theme:\n  dark: vgs\n  light: vgs\n", OMP, "vgs", null],
+    ["json", "{}", [["a"], ["b"]], "v", '{\n  "b": "v",\n  "a": "v"\n}']
+];
+
+// Several keys, one of which is refused: the format, the text, the keys and
+// the refused key's cause and dotted name. Any key refused refuses the edit.
+const REFUSED_KEYS = [
+    ["yaml", "theme:\n  dark: [a]\n", OMP, "not-a-string", "theme.dark"],
+    ["yaml", "theme:\n  dark: x\n  light: [a]\n", OMP, "not-a-string", "theme.light"]
+];
+
 const select = { base: "home", file: ".claude/settings.json", format: "json", key: ["theme"], value: "custom:vgs" };
 const targetText = fields => JSON.stringify({
     app: "Probe",
@@ -161,6 +181,8 @@ const ACCEPTED = [
     { base: "cache", file: "x/y.json", key: ["a", "b", "c", "d"] },
     { format: "toml", file: ".codex/config.toml", key: CODEX, value: "vgs" },
     { format: "yaml", file: ".hermes/config.yaml", key: ["skin"], value: "vgs" },
+    { format: "yaml", file: ".omp/agent/config.yml", key: OMP, value: "vgs" },
+    { key: [["a", "b", "c"], ["d"]] },
     { value: "@{state}/gemini.json" },
     { value: "@@{x}" }
 ];
@@ -181,6 +203,12 @@ const REFUSED_SCHEMA = [
     [targetText({ key: [1] }), "key=select.key"],
     [targetText({ format: "toml", key: ["a", "b", "c"] }), "key=select.key"],
     [targetText({ format: "yaml", key: ["a", "b", "c"] }), "key=select.key"],
+    [targetText({ key: [["theme"]] }), "key=select.key"],
+    [targetText({ key: [["a"], []] }), "key=select.key"],
+    [targetText({ key: [["a"], "b"] }), "key=select.key"],
+    [targetText({ format: "yaml", key: [["a", "b", "c"], ["d"]] }), "key=select.key"],
+    [targetText({ key: [["theme"], ["theme"]] }), "key=select.key"],
+    [targetText({ key: [["theme"], ["theme", "dark"]] }), "key=select.key"],
     [targetText({ value: "" }), "key=select.value"],
     [targetText({ value: 1 }), "key=select.value"],
     [targetText({ value: "a\nb" }), "key=select.value"],
@@ -192,14 +220,19 @@ const REFUSED_SCHEMA = [
 
 function verify(render, edit) {
     for (const [format, text, key, value, want] of SELECTED)
-        assert.equal(edit.selectedText(format, text, key, value), want, format + " " + JSON.stringify(text));
+        assert.equal(edit.selectedText(format, text, [key], value), want, format + " " + JSON.stringify(text));
     for (const [format, text, key, cause] of REFUSED)
-        assert.deepEqual(edit.selectedText(format, text, key, "vgs"),
+        assert.deepEqual(edit.selectedText(format, text, [key], "vgs"),
             { ok: false, reason: "selection-refused", detail: "format=" + format + " cause=" + cause + " key=" + key.join(".") }, format + " " + JSON.stringify(text));
+    for (const [format, text, keys, value, want] of SELECTED_KEYS)
+        assert.equal(edit.selectedText(format, text, keys, value), want, format + " " + JSON.stringify(text));
+    for (const [format, text, keys, cause, key] of REFUSED_KEYS)
+        assert.deepEqual(edit.selectedText(format, text, keys, "vgs"),
+            { ok: false, reason: "selection-refused", detail: "format=" + format + " cause=" + cause + " key=" + key }, format + " " + JSON.stringify(text));
     // An absent file is never created, whatever its format.
     for (const format of ["json", "toml", "yaml"])
-        assert.deepEqual(edit.selectedText(format, undefined, CLAUDE, "vgs"), { ok: false, reason: "selection-file-absent", detail: "" }, format);
-    assert.throws(() => edit.selectedText("ini", "", CLAUDE, "vgs"), /none of json, toml, yaml/);
+        assert.deepEqual(edit.selectedText(format, undefined, [CLAUDE], "vgs"), { ok: false, reason: "selection-file-absent", detail: "" }, format);
+    assert.throws(() => edit.selectedText("ini", "", [CLAUDE], "vgs"), /none of json, toml, yaml/);
 
     for (const fields of ACCEPTED) {
         const verdict = render.acceptTarget(logic, "probe", targetText(fields));
@@ -215,6 +248,12 @@ function verify(render, edit) {
     assert.equal(render.selectValue(valued("@@{x}"), "/s"), "@{x}");
     const unselected = render.acceptTarget(logic, "probe", JSON.stringify(Object.assign(JSON.parse(targetText({})), { select: undefined }))).target;
     assert.throws(() => render.selectValue(unselected, "/s"), /has no select/);
+
+    // One key is a list of one path; a list is kept in its order.
+    const keyed = key => render.acceptTarget(logic, "probe", targetText({ key })).target;
+    assert.deepEqual(render.selectKeys(keyed(CLAUDE)), [CLAUDE]);
+    assert.deepEqual(render.selectKeys(keyed(OMP)), OMP);
+    assert.throws(() => render.selectKeys(unselected), /has no select/);
 }
 
 const selectFile = path.join(lib, "theme-select.js");
@@ -295,10 +334,18 @@ const CONTROLS = [
     [R, 'if (!ENTRY_BASES.includes(select.base)) return "key=select.base";', ""],
     [R, 'if (!isRelativePath(select.file)) return "key=select.file";', ""],
     [R, 'if (!SELECT_FORMATS.includes(select.format)) return "key=select.format";', ""],
-    [R, "select.key.length === 0 ||", ""],
-    [R, 'select.key.every(segment => typeof segment === "string" && SECTION_PATTERN.test(segment))', "true"],
-    [R, '(select.format !== "json" && select.key.length > SELECT_LINE_DEPTH)', "false"],
-    [R, '(select.format !== "json" && select.key.length > SELECT_LINE_DEPTH)', "(select.key.length > SELECT_LINE_DEPTH)"],
+    [S, 'if (verdict !== null && typeof verdict !== "string") return verdict;', 'if (verdict !== null && typeof verdict !== "string") continue;'],
+    [S, "changed === null ? text : changed", "text"],
+    [S, "if (verdict !== null) changed = verdict;", "changed = verdict;"],
+    [R, "key.length > 0 && ", ""],
+    [R, 'key.every(segment => typeof segment === "string" && SECTION_PATTERN.test(segment))', "true"],
+    [R, '(format === "json" || key.length <= SELECT_LINE_DEPTH)', "true"],
+    [R, '(format === "json" || key.length <= SELECT_LINE_DEPTH)', "(key.length <= SELECT_LINE_DEPTH)"],
+    [R, "keys.length < 2 || ", ""],
+    [R, "!keys.every(key => isKeyPath(select.format, key))", "false"],
+    [R, 'if (keys.some((a, i) => keys.some((b, j) => i !== j && isKeyPrefix(a, b)))) return "key=select.key";', ""],
+    [R, "segment === b[at]", "segment === b[at] && a.length === b.length"],
+    [R, "? [target.select.key] : target.select.key", "? target.select.key : target.select.key"],
     [R, "if (!isLine(select.value) || CONTROL_CHARACTER.test(select.value))", "if (typeof select.value !== \"string\" || CONTROL_CHARACTER.test(select.value))"],
     [R, "if (!isLine(select.value) || CONTROL_CHARACTER.test(select.value))", "if (!isLine(select.value))"],
     [R, "const CONTROL_CHARACTER = /[\\u0000-\\u001f\\u007f]/;", "const CONTROL_CHARACTER = /[\\u0000-\\u001f]/;"],
@@ -328,4 +375,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-select: ok selected=${SELECTED.length} refused=${REFUSED.length} schema=${ACCEPTED.length + REFUSED_SCHEMA.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-select: ok selected=${SELECTED.length + SELECTED_KEYS.length} refused=${REFUSED.length + REFUSED_KEYS.length} schema=${ACCEPTED.length + REFUSED_SCHEMA.length} controls=${CONTROLS.length}`);

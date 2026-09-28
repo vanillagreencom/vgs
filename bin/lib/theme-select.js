@@ -1,5 +1,5 @@
 // The selection edit bin/vgsh-theme-judge keeps in an application's own
-// settings file: the one key a target's `select` names, set to its value,
+// settings file: each key a target's `select` names, set to its value,
 // with every other byte of the file kept. Nothing here reads or writes a
 // file. docs/architecture/theme-agents.md § Selection holds the rules.
 //
@@ -11,7 +11,7 @@
 // answers one: `selection-file-absent` for an absent file, which is never
 // created, or `selection-refused` with the detail
 // `format=<format> cause=<cause> key=<dotted key>` for a file whose key
-// cannot be set without reading it wrong.
+// cannot be set without reading it wrong, the first such key named.
 "use strict";
 const path = require("path");
 const render = require(path.join(__dirname, "theme-render.js"));
@@ -38,11 +38,24 @@ function terminated(text, lineEnd) {
 }
 
 // The text a settings file holding TEXT, or undefined when it is absent,
-// takes so that KEY, a path of bare names, holds VALUE in FORMAT, `json`,
-// `toml` or `yaml`: the new text, null when KEY already holds VALUE, or a
-// refusal.
-function selectedText(format, text, key, value) {
+// takes so that each of KEYS, a list of paths of bare names, holds VALUE in
+// FORMAT, `json`, `toml` or `yaml`: the new text, null when every key
+// already holds VALUE, or a refusal. Each key is set in order in the text
+// the key before it left, and any key refused refuses the whole edit.
+function selectedText(format, text, keys, value) {
     if (text === undefined) return { ok: false, reason: ABSENT, detail: "" };
+    let changed = null;
+    for (const key of keys) {
+        const verdict = keySelected(format, changed === null ? text : changed, key, value);
+        if (verdict !== null && typeof verdict !== "string") return verdict;
+        if (verdict !== null) changed = verdict;
+    }
+    return changed;
+}
+
+// The text TEXT takes so that KEY holds VALUE in FORMAT: the new text, null
+// when KEY already holds VALUE, or a refusal.
+function keySelected(format, text, key, value) {
     const refuse = cause => ({ ok: false, reason: REFUSED, detail: "format=" + format + " cause=" + cause + " key=" + key.join(".") });
     switch (format) {
     case "json": return jsonSelected(text, key, value, refuse);

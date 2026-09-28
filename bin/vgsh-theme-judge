@@ -779,7 +779,7 @@ function selectionEdit(target, configHome, live) {
     const value = latin1(Buffer.from(render.selectValue(target, live), "utf8"));
     return {
         file: path.join(baseDir(selection.base, configHome), selection.file),
-        edit: text => select.selectedText(selection.format, text, selection.key, value)
+        edit: text => select.selectedText(selection.format, text, render.selectKeys(target), value)
     };
 }
 
