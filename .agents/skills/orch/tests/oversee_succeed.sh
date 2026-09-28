@@ -1170,10 +1170,12 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "a count no successor settles does not fire the qualifying-set trigger"
 # The judgement walks the preference as a succession would: a codex entry whose
 # successor finds no other codex account above the trigger settles the same
-# count, and a preference the walk cannot read refuses the judgement.
+# count, a pi entry on a provider no lane measures reads no count and is passed
+# over, and a preference the walk cannot read refuses the judgement.
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 for pref_row in \
   "codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "pi:openai/gpt-5:high,codex:1:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
   "bogus|1|oversee-succeed: invalid-preference entry=bogus"; do
   IFS='|' read -r pref_value pref_rc pref_want <<<"$pref_row"
   new_caller "$UNDER_MARK"
@@ -1182,6 +1184,60 @@ for pref_row in \
   assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "$pref_rc|$pref_want" \
     "a qualifying judgement walks the preference $pref_value"
 done
+# A cross-harness entry no permission posture can cross, which a succession
+# skips, is skipped by the judgement too, though it is handed no flags: pi's
+# row writes no permission word and names none to transfer. A claude caller's
+# pi-claude entry on Fable would settle the count, the caller's account, whose
+# record names Sonnet, being walled for Fable alone; a pi caller's codex entry
+# would settle it as the claude caller's does above. Neither fires the mark.
+qualifying_cross_row() { # ROW PREFERENCE [SUCCEED_BIN]
+  SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES:$H/.codex" SUCCEED_BIN="${3:-}" \
+    run_succeed "$1" "$2" --check-marks
+}
+# caller_record HARNESS MODEL — this pane's launch record on .claude.
+caller_record() {
+  jq --arg server "$SERVER_PID" --arg pane "$CALLER_PANE" --arg account "$H/.claude" \
+    --arg harness "$1" --arg model "$2" \
+    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, harness: $harness,
+      account: $account, home: $account, model: $model, effort: "high"}' \
+    "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
+}
+cp -p -- "$FLEET_STATE" "$FLEET_STATE.held"
+claude_usage 60 20 99 "Fable 5.1" > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record claude claude-sonnet-5
+qualifying_cross_row qualifyingpi 'pi:pi-claude/claude-fable-5-1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40" \
+  "a claude caller's judgement skips a pi entry no permission posture crosses to"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record pi pi-claude/claude-fable-5-1
+qualifying_cross_row qualifyingpicaller 'codex:1:high'
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: context-below-mark tokens=100000 window=1000000 mark=50 headroom=40" \
+  "a pi caller's judgement skips a codex entry no permission posture crosses from pi to"
+# Their control: a judgement that leaves the transfer test to the succession
+# fires the mark on each entry that succession would skip.
+CROSSCTL="$(mutant_scripts crossctl oversee-succeed)" || exit 1
+mutate_file "$CROSSCTL/oversee-succeed" \
+  '      if [[ "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then' \
+  '      if [[ "$MODE" != check && "$harness" != "$CALLER_HARNESS" ]] && ! entry_transferable "$harness"; then'
+claude_usage 60 20 99 "Fable 5.1" > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record claude claude-sonnet-5
+qualifying_cross_row crossctlpi 'pi:pi-claude/claude-fable-5-1:high' "$CROSSCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "control: a judgement without the transfer test fires on the claude caller's pi entry"
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+new_caller "$UNDER_MARK"
+caller_record pi pi-claude/claude-fable-5-1
+qualifying_cross_row crossctlpicaller 'codex:1:high' "$CROSSCTL/oversee-succeed"
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "control: a judgement without the transfer test fires on the pi caller's codex entry"
+mv -- "$FLEET_STATE.held" "$FLEET_STATE"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" run_succeed qualifyingrefires ''
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
@@ -1376,7 +1432,7 @@ ROWS
 new_caller "$MARK"
 for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-context value=12" \
            "printcontext|--print-launch-line --context 12:100|1|oversee-succeed: mode-conflict mode=print context=12:100" \
-           "badharness|--print-launch-line --harness pi|1|oversee-succeed: invalid-harness value=pi"; do
+           "badharness|--print-launch-line --harness opencode|1|oversee-succeed: invalid-harness value=opencode"; do
   IFS='|' read -r row_name row_args row_rc row_first <<<"$row"
   # shellcheck disable=SC2086
   NO_CONTEXT=1 run_succeed "$row_name" '' $row_args
@@ -1471,7 +1527,7 @@ assert_eq "$RC|$OUT" \
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
 PRINTREC="$(mutant_scripts printrec oversee-succeed)" || exit 1
-mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="${OL_KNOWN_ACCOUNT:-$(lane_context_caller_cfg "$CALLER_HARNESS")}"' 'CALLER_CFG="$(lane_context_caller_cfg "$CALLER_HARNESS")"'
+mutate_file "$PRINTREC/oversee-succeed" 'CALLER_CFG="$OL_KNOWN_ACCOUNT"' 'CALLER_CFG=""'
 new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude
@@ -1507,9 +1563,9 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" "1|oversee-succeed: copilot-account-unkno
 # Controls, one per rule: the builder's copilot arm, the refusal of every
 # judging mode, and the refusal of a line with no account.
 COPILOTARM="$(mutant_scripts copilotarm lib/overseer-launch.sh)" || exit 1
-mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) OL_LANE_VAR=COPILOT_HOME; cmd="copilot"; brief_flag=" -i" ;;' '    copilot-x) ;;'
+mutate_file "$COPILOTARM/lib/overseer-launch.sh" '    copilot) cmd="copilot" brief_flag=" -i" ;;' '    copilot-x) ;;'
 copilot_row printcopilotctl "$COPILOTARM/oversee-succeed" --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^env CODEX_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
+assert_eq "$RC|$(grep -c "^env COPILOT_HOME='$H/.1copilot' codex " <<<"$OUT")" "0|1" \
   "control: without its arm the copilot line is built as codex's"
 COPILOTMODE="$(mutant_scripts copilotmode oversee-succeed)" || exit 1
 mutate_file "$COPILOTMODE/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || "$MODE" == print ]]' '[[ "$CALLER_HARNESS" != copilot || "$MODE" != print ]]'
@@ -1517,12 +1573,12 @@ copilot_row checkcopilotctl "$COPILOTMODE/oversee-succeed" --check-marks --harne
 assert_eq "$RC|$(grep -c '^oversee-succeed: copilot-unmeasured ' <<<"$OUT")" "0|0" \
   "control: without the refusal a copilot overseer's marks are judged on a reading lanes cannot make"
 COPILOTACCT="$(mutant_scripts copilotacct oversee-succeed)" || exit 1
-mutate_file "$COPILOTACCT/oversee-succeed" '[[ -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
+mutate_file "$COPILOTACCT/oversee-succeed" '[[ "$CALLER_HARNESS" != copilot || -n "$CALLER_CFG" ]] || die copilot-account-unknown' ': || die copilot-account-unknown'
 fleet_state
 new_caller "$UNDER_MARK"
 SUCCEED_BIN="$COPILOTACCT/oversee-succeed" run_succeed printcopilotnonectl '' --print-launch-line --harness copilot -- --allow-all
-assert_eq "$RC|$(grep -c "^env COPILOT_HOME='' copilot " <<<"$OUT")" "0|1" \
-  "control: without the refusal the line opens copilot on an empty COPILOT_HOME"
+assert_eq "$RC|$(grep -c "^copilot " <<<"$OUT")" "0|1" \
+  "control: without the refusal the line opens copilot on no account"
 fleet_state
 
 # The printed line is replayed verbatim into a DEAD pane, and nobody is at that
