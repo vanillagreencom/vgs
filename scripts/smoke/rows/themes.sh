@@ -238,15 +238,20 @@ expect_poll "revision rose after the vgs apply after the light package" rose rev
 # The hook is the real `hyprctl reload`, resolved through the shell's
 # stand-in directory, which records each run and execs the real binary;
 # it names no instance, so HYPRLAND_INSTANCE_SIGNATURE in the shell's
-# environment sends it to the nested one. A live session's borders
-# restyling is checked by hand on the developer's session, not measured here.
+# environment sends it to the nested one, and the sandbox's own
+# XDG_RUNTIME_DIR holds no socket of the live session. A live session's
+# borders restyling is checked by hand on the developer's session, not
+# measured here.
+# The copy ships no target, so the block copies the shipped hyprland target
+# in alone and removes it after, and every apply here lists it alone.
+cp -R -- "$sandbox/shipped-targets/hyprland" "$repo/themes/targets/hyprland"
 hypr_conf="$home/.config/hypr/hyprland.conf"
 hypr_theme="$home/.local/state/vgs/theme/hyprland.conf"
 hypr_runs="$sandbox/hyprctl-runs"
 cat >"$shim/hyprctl.recording" <<EOF
 #!/usr/bin/env bash
 reply="\$($(printf %q "$hyprctl_bin") "\$@")"; status=\$?
-printf '%s sig=%s status=%s reply=%s\n' "\$*" "\${HYPRLAND_INSTANCE_SIGNATURE:-}" "\$status" "\$reply" >>$(printf %q "$hypr_runs")
+printf '%s sig=%s rt=%s status=%s reply=%s\n' "\$*" "\${HYPRLAND_INSTANCE_SIGNATURE:-}" "\${XDG_RUNTIME_DIR:-}" "\$status" "\$reply" >>$(printf %q "$hypr_runs")
 printf '%s\n' "\$reply"
 exit "\$status"
 EOF
@@ -270,7 +275,7 @@ expect "the fixture applies the light package with a hyprland.conf present" ok p
 expect "the light apply with a hyprland.conf ends" idle theme_idle
 expect_poll "the light apply with a hyprland.conf reaches the fixture" 6 applies
 expect "the light apply with a hyprland.conf wrote the shell's file" "applied applied light None" applied
-expect "the Hyprland target is written" '[["hyprland", "written", null]]' applied_targets hyprland
+expect "the Hyprland target is written" '[["hyprland", "written", null]]' applied_targets ""
 if light_accent="$(resolved_token light palette.accent)"; then
   expect "the Hyprland file holds the light accent through the hyprland encoder" "\$vgs_accent = rgba(${light_accent#\#})" grep -xF -- "\$vgs_accent = rgba(${light_accent#\#})" "$hypr_theme"
 else
@@ -281,21 +286,22 @@ expect "the source line is first in the sandbox's hyprland.conf" "source = $hypr
 expect "the sandbox's own settings follow the source line byte for byte" same bash -c 'tail -n +2 -- "$1" | cmp -s - "$2" && echo same' _ "$hypr_conf" "$sandbox/hyprland-own.conf"
 expect "Hyprland parses the wired hyprland.conf and the file it sources" "config ok" verify_hypr_conf
 expect "the hook ran once" 1 reload_runs
-expect "the hook is hyprctl reload on the nested instance, which answers ok" "reload sig=$signature status=0 reply=ok" last_reload
+expect "the hook is hyprctl reload on the nested instance, which answers ok" "reload sig=$signature rt=$rt_dir status=0 reply=ok" last_reload
 expect "a hook that answered ok leaves nothing pending" absent pending_file
 
 expect "the fixture applies vgs over the light Hyprland file" ok probe theme-apply vgs
 expect "the vgs apply over the light Hyprland file ends" idle theme_idle
 expect_poll "the vgs apply over the light Hyprland file reaches the fixture" 7 applies
-expect "changed Hyprland bytes are written" '[["hyprland", "written", null]]' applied_targets hyprland
+expect "changed Hyprland bytes are written" '[["hyprland", "written", null]]' applied_targets ""
 expect "changed Hyprland bytes run the hook again" 2 reload_runs
 expect "the fixture applies vgs again" ok probe theme-apply vgs
 expect "the repeat vgs apply ends" idle theme_idle
 expect_poll "the repeat vgs apply reaches the fixture" 8 applies
-expect "unchanged Hyprland bytes are unchanged" '[["hyprland", "unchanged", null]]' applied_targets hyprland
+expect "unchanged Hyprland bytes are unchanged" '[["hyprland", "unchanged", null]]' applied_targets ""
 expect "unchanged Hyprland bytes run no hook" 2 reload_runs
 shim_hyprctl real
 rm -- "$hypr_conf" "$sandbox/hyprland-own.conf"
+rm -r -- "$repo/themes/targets/hyprland"
 
 expect "disabling the fixture after the theme rows is allowed" ok ipc shell setPluginEnabled acme.probe false
 
