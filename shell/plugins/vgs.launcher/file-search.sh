@@ -172,7 +172,8 @@ apps() {
     need xdg-mime
     mime=$(xdg-mime query filetype "$path") || { printf 'file-search: vanished=%s\n' "$path" >&2; exit 5; }
   fi
-  listing=$(gio mime "$mime") || { printf 'file-search: mime=%s error=gio-status-%s\n' "$mime" "$?" >&2; exit 6; }
+  # The `Default application` heading is translated; the parse reads C's.
+  listing=$(LC_ALL=C gio mime "$mime") || { printf 'file-search: mime=%s error=gio-status-%s\n' "$mime" "$?" >&2; exit 6; }
   declare -A seen=()
   while IFS= read -r line; do
     case $line in

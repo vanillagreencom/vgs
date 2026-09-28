@@ -7,12 +7,14 @@ for _ in $(seq 1 100); do
   if plugins_json="$(ipc shell listPlugins)" && python3 -c 'import json,sys; d=json.load(sys.stdin); ids={p["id"] for p in d["plugins"]}; sys.exit(0 if {"vgs.bar","acme.tick"} <= ids else 1)' <<<"$plugins_json"; then break; fi
   sleep 0.2
 done
-if python3 - "$plugins_json" <<'PY'
+# A bundled plugin is enabled unless the harness's user file disables it.
+if python3 - "$plugins_json" "$home/.config/vgs/shell.json" <<'PY'
 import json, sys
 d = json.loads(sys.argv[1])
+harness_disabled = json.load(open(sys.argv[2])).get("disabledPlugins", [])
 by = {p["id"]: p for p in d["plugins"]}
 missing = [i for i in ("vgs.bar", "acme.tick") if i not in by]
-disabled = [i for i in by if i.startswith("vgs.") and not by[i]["enabled"]]
+disabled = [i for i in by if i.startswith("vgs.") and not by[i]["enabled"] and i not in harness_disabled]
 if missing or disabled or d["errors"] or d["collisions"]:
     print("missing=%s disabled=%s errors=%s collisions=%s" % (missing, disabled, d["errors"], d["collisions"]))
     sys.exit(1)

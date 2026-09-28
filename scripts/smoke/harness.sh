@@ -2,7 +2,8 @@
 set -euo pipefail
 source "$repo/scripts/smoke/verdict.sh"
 missing=()
-for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype; do
+# fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs.
+for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists wayland-client; then missing+=("wayland-client.pc"); fi

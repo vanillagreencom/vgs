@@ -45,7 +45,7 @@ until [[ -s $done ]]; do sleep 0.05; done
 
 A file the judge refuses is logged as `launcher: menu refused: file=<path> <defect>` and shows as a notice row; the shipped menu stands.
 
-Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped menu maps what a Hyprland session has everywhere (lock, suspend, hibernate, log out, reboot, shut down, a terminal, a screenshot, the theme packages), and shows installing, removing and updating packages as unavailable. Delete on an application says removal is unavailable instead of removing it: the shell has no confirmed package removal action.
+Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped menu maps what a Hyprland session has everywhere (lock with `hyprlock`, since the shell ships no locker a logind lock request reaches; suspend, hibernate, log out, reboot, shut down; a terminal, a screenshot, the theme packages), and shows installing, removing and updating packages as unavailable. Delete on an application says removal is unavailable instead of removing it: the shell has no confirmed package removal action.
 
 ## Files
 

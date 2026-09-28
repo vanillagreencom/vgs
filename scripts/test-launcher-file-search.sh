@@ -87,6 +87,10 @@ suite() {
   check "an unknown type is a usage refusal" $'\nstderr=file-search: refused: usage\nexit=2' "$got"
   got="$(run "$script" apps "$home/nowhere")"
   check "open-with on a vanished path is refused" $'\nstderr=file-search: vanished='"$home"$'/nowhere\nexit=5' "$got"
+  # gio translates its heading; under a German caller the default must
+  # still lead, read from gio's C output.
+  got="$(env -i PATH="$stubs:$PATH" HOME="$home" LC_ALL=de_DE.UTF-8 XDG_DATA_HOME="$TMP_ROOT/data" XDG_DATA_DIRS="$TMP_ROOT/none" bash "$script" apps "$home/docs/b/report.txt" 2>"$TMP_ROOT/err")"
+  check "open-with names the default first under a translated locale" $'default\t'"$TMP_ROOT"$'/data/applications/b.desktop\nother\t'"$TMP_ROOT"$'/data/applications/a.desktop' "$got"
   rm -rf -- "${TMP_ROOT:?}/cache"
   mkdir -p "$TMP_ROOT/cache/vgs"
   touch "$TMP_ROOT/cache/vgs/launcher"
@@ -96,6 +100,15 @@ suite() {
   [[ $failures -eq $before ]]
 }
 
+# A gio that answers in the caller's language, as the real one does, and
+# an xdg-mime that names one type; two applications that open it.
+stubs="$TMP_ROOT/stubs"
+mkdir -p "$stubs" "$TMP_ROOT/data/applications"
+printf '#!/bin/bash\nif [[ ${LC_ALL:-} == C ]]; then echo "Default application for \\"text/plain\\": b.desktop"; echo "Registered applications:"; else echo "Standardanwendung f\\u00fcr \\"text/plain\\": b.desktop"; echo "Registrierte Anwendungen:"; fi\nprintf "\\ta.desktop\\n\\tb.desktop\\n"\n' >"$stubs/gio"
+printf '#!/bin/bash\necho text/plain\n' >"$stubs/xdg-mime"
+chmod 755 "$stubs/gio" "$stubs/xdg-mime"
+printf '[Desktop Entry]\nType=Application\nName=A\nExec=true\n' >"$TMP_ROOT/data/applications/a.desktop"
+printf '[Desktop Entry]\nType=Application\nName=B\nExec=true\n' >"$TMP_ROOT/data/applications/b.desktop"
 mkdir -p "$TMP_ROOT/nobin"
 ln -s "$(command -v bash)" "$TMP_ROOT/nobin/bash"
 ln -s "$(command -v env)" "$TMP_ROOT/nobin/env"
@@ -120,6 +133,7 @@ controls = [
     ("missing helpers", 'command -v -- "$command" >/dev/null 2>&1 || missing+=("$command")', "true"),
     ("hidden roots", 'for root in "${hidden_roots[@]}"; do [[ -d $root ]] && roots+=("$root"); done', "true"),
     ("cache place", 'cache="${XDG_CACHE_HOME:-$HOME/.cache}/vgs/launcher"', 'cache="$HOME/.launcher-cache"'),
+    ("gio read in C", 'listing=$(LC_ALL=C gio mime "$mime")', 'listing=$(gio mime "$mime")'),
 ]
 for n, (label, needle, replacement) in enumerate(controls):
     assert text.count(needle) == 1, "control needle must occur once: " + label
@@ -139,8 +153,8 @@ for copy in "$TMP_ROOT"/controls/*.sh; do
   failures=$saved
   passed=$((passed + 1))
 done
-if [[ $passed -ne 8 ]]; then
-  echo "test-launcher-file-search: controls=$passed want 8; the control table is broken"
+if [[ $passed -ne 9 ]]; then
+  echo "test-launcher-file-search: controls=$passed want 9; the control table is broken"
   exit 1
 fi
 echo "test-launcher-file-search: ok controls=$passed"

@@ -193,6 +193,31 @@ hover 10 "$((mon_h - 10))" || fail "moving the pointer off the card failed"
 click 10 "$((mon_h - 10))" || fail "the click outside the card failed"
 expect_poll "a click outside the card closed it" 0 layer_count vgs:overlay
 
+# The theme menu applies a package through the theme capability; picking the
+# one already applied answers `unchanged`, a success, and logs no error. The
+# first pick lands `vgs` whatever the rows before left applied; the second
+# is the reapply.
+theme_last() { ipc shell lent | python3 -c 'import json,sys; t=json.load(sys.stdin)["theme"]["last"]; r=t.get("result") if isinstance(t, dict) else None; print(json.dumps([r.get("theme"), r.get("state")] if isinstance(r, dict) else None))'; }
+theme_landed() { theme_last | python3 -c 'import json,sys; r=json.load(sys.stdin); print(bool(r) and r[0] == "vgs" and r[1] in ("applied", "unchanged"))'; }
+theme_idle() { ipc shell lent | python3 -c 'import json,sys; print(json.load(sys.stdin)["theme"]["jobs"] == [])'; }
+launcher_theme_errors() { log_lines 'launcher: theme '; }
+pick_vgs() {
+  expect "the launcher opens its theme menu" ok ipc shell summon overlay vgs.launcher '{"menu":"style.theme"}'
+  focused
+  expect_poll "the theme menu lists the vgs package" True has_row theme vgs
+  type_keys "vgs" || fail "typing into the theme menu failed"
+  expect_poll "the search ranks the vgs package first" '["theme", "vgs"]' first_row
+  type_keys -k Return || fail "sending Return failed"
+  expect_poll "the launcher closed after the pick" 0 layer_count vgs:overlay
+}
+expect_poll "no theme command is running before the pick" True theme_idle
+pick_vgs
+expect_poll "the first pick landed vgs" True theme_landed
+expect_poll "the first pick's command finished" True theme_idle
+pick_vgs
+expect_poll "reapplying the applied package answers unchanged" '["vgs", "unchanged"]' theme_last
+expect "an unchanged apply logs no launcher error" 0 launcher_theme_errors
+
 # The look: the theme reaches it through its mode and accent alone. Every
 # other token of the theme moves and the look stays; the accent moves the
 # accent; light mode applies the light glass.

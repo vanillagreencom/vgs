@@ -77,6 +77,11 @@ function verify(model) {
     assert.equal(alone.items["system.reboot"].kind, "action");
     assert.equal(alone.items["system.reboot"].parent, "system");
     assert.equal(alone.items.install.kind, "unavailable");
+    // Lock runs a real locker: loginctl only asks a logind listener the
+    // shell does not provide. Without hyprlock the row says so.
+    same(alone.items["system.lock"].run, ["hyprlock"]);
+    same(alone.items["system.lock"].requires, ["hyprlock"]);
+    same(model.menuRows(alone.items, alone.itemOrder, "system", ["hyprlock"]).filter(r => r.label === "Lock").map(r => [r.kind, r.detail]), [["unavailable", "needs hyprlock"]]);
 
     for (const [label, text, start] of MENU_REFUSED) {
         const result = model.parseMenu(text);
