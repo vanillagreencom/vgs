@@ -58,7 +58,7 @@ Item {
                 Column {
                     spacing: Theme.space.xxs
                     Repeater {
-                        model: ["display", "h1", "h2", "h3", "eyebrow", "subheading", "body", "bodyStrong", "label", "hint", "tooltip", "button", "code", "bar"]
+                        model: Object.keys(Theme.text)
                         Label { required property string modelData; role: modelData; text: modelData }
                     }
                 }

@@ -34,11 +34,12 @@ function neutral(amount) { return color("mix({palette.background}, {palette.fore
 // A text colour between the foreground and the background.
 function faded(amount) { return color("mix({palette.foreground}, {palette.background}, " + amount + ")"); }
 
-// One typography role. `letterSpacing` is in em; Label multiplies it by the
+// One typography role. `face` is `sans` or `mono`, the family of `font.family`
+// the role draws in. `letterSpacing` is in em; Label multiplies it by the
 // size, because QML takes letter spacing in pixels.
-function role(sizeFactor, fontWeight, letterSpacing, lineHeight, uppercase, colorRole) {
+function role(face, sizeFactor, fontWeight, letterSpacing, lineHeight, uppercase, colorRole) {
     return {
-        family: family("{font.family.mono}"),
+        family: family("{font.family." + face + "}"),
         size: scaled(sizeFactor),
         weight: weight(fontWeight),
         letterSpacing: number(letterSpacing, -0.2, 1),
@@ -190,33 +191,34 @@ var TOKENS = {
     },
 
     font: {
-        size: length(13),
+        size: length(15),
         family: {
             mono: family("JetBrains Mono"),
-            sans: family("{font.family.mono}")
+            sans: family("Inter Variable")
         }
     },
 
+    // Reading text draws in sans; chrome (labels, buttons, key caps, code,
+    // tips and the bar) draws in mono at 11 to 13 px. The reference rule each
+    // role is read from is docs/architecture/design-system.md § Reference
+    // values. A single-line chrome role takes line height 1, so its line box
+    // is the font's own height and centring the box centres the glyphs.
     text: {
-        display: role(2.3, 700, -0.02, 1.1, false, "textHeading"),
-        h1: role(1.7, 700, -0.01, 1.2, false, "textHeading"),
-        h2: role(1.4, 600, 0, 1.25, false, "textHeading"),
-        h3: role(1.15, 600, 0, 1.3, false, "textHeading"),
-        eyebrow: role(0.85, 600, 0.12, 1.2, true, "accent"),
-        subheading: role(1, 400, 0, 1.5, false, "textMuted"),
-        body: role(1, 400, 0, 1.45, false, "text"),
-        bodyStrong: role(1, 600, 0, 1.45, false, "text"),
-        label: role(0.85, 600, 0.08, 1.2, true, "textMuted"),
-        hint: role(0.85, 400, 0.01, 1.35, false, "textFaint"),
-        tooltip: role(0.85, 500, 0.02, 1.3, false, "text"),
-        button: role(0.85, 500, 0.08, 1, true, "text"),
-        code: role(0.92, 400, 0, 1.4, false, "text"),
-        // Bar chrome. The reference, plugins.omarchy.org (stylesheet read
-        // 2026-09-27), sets chrome in mono at 12 to 13 px with line height
-        // 1; 0.92 of the 13 px base is 12 px. A line height of 1 makes the
-        // line box the font's own height, so centring the box centres the
-        // glyphs.
-        bar: role(0.92, 500, 0.02, 1, false, "text")
+        display: role("sans", 2.27, 700, -0.02, 1.15, false, "textHeading"),
+        h1: role("sans", 1.6, 700, -0.01, 1.2, false, "textHeading"),
+        h2: role("sans", 1.33, 600, 0, 1.25, false, "textHeading"),
+        h3: role("sans", 1.07, 600, 0, 1.3, false, "textHeading"),
+        eyebrow: role("mono", 0.73, 700, 0.18, 1, true, "accent"),
+        subheading: role("sans", 1.07, 400, 0, 1.75, false, "textMuted"),
+        body: role("sans", 1, 400, 0, 1.55, false, "text"),
+        bodyStrong: role("sans", 1, 600, 0, 1.55, false, "text"),
+        label: role("mono", 0.73, 500, 0.08, 1, true, "textMuted"),
+        hint: role("sans", 0.87, 400, 0, 1.55, false, "textFaint"),
+        tooltip: role("mono", 0.73, 600, 0, 1.3, false, "text"),
+        button: role("mono", 0.73, 500, 0.08, 1, true, "text"),
+        kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
+        code: role("mono", 0.87, 500, 0, 1.65, false, "text"),
+        bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
     },
 
     surface: {

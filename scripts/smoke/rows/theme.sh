@@ -10,8 +10,10 @@ theme_value() { ipc smoke themeValue "$1"; }
 write_theme() { printf '%s\n' "$1" >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"; }
 
 expect "every top-level token group is published frozen" '[]' ipc smoke themeUnpublished
-expect "the bundled font family is available" true ipc smoke fontAvailable "JetBrains Mono"
-expect "body text draws the bundled family" '"JetBrains Mono"' theme_value text.body.family
+expect "the bundled mono family is available" true ipc smoke fontAvailable "JetBrains Mono"
+expect "the bundled sans family is available" true ipc smoke fontAvailable "Inter Variable"
+expect "body text draws the bundled sans family" '"Inter Variable"' theme_value text.body.family
+expect "label text draws the bundled mono family" '"JetBrains Mono"' theme_value text.label.family
 expect "the bar draws the default foreground with no theme file" '#d7d7d9' bar_foreground
 expect "the default theme is named" vgs ipc smoke themeName
 expect "a derived colour resolves from the palette, alpha first" '"#ff000000"' theme_value color.onAccent
@@ -44,12 +46,14 @@ expect_log "a value of the wrong type is refused by its token" 1 'theme: refused
 expect "the last accepted theme stands through every refusal" probe ipc smoke themeName
 expect "the revision did not move for a refused document" "$((revision_before + 1))" ipc smoke themeRevision
 
-# A family a theme names that Qt does not list is logged once and the
-# bundled family draws in its place.
+# A family a theme names that Qt does not list is logged once for each
+# bundled family drawn in its place: the one the token's default names.
 expected_errors+=('theme: font=No Such Family unavailable')
-write_theme '{ "schemaVersion": 1, "name": "fonts", "tokens": { "font": { "family": { "mono": "No Such Family" } } } }'
-expect_log "an unavailable family is logged once" 1 'theme: font=No Such Family unavailable; drawing JetBrains Mono'
-expect_poll "an unavailable family draws the bundled family" '"JetBrains Mono"' theme_value text.body.family
+write_theme '{ "schemaVersion": 1, "name": "fonts", "tokens": { "font": { "family": { "mono": "No Such Family", "sans": "No Such Family" } } } }'
+expect_log "an unavailable mono family is logged once" 1 'theme: font=No Such Family unavailable; drawing JetBrains Mono'
+expect_log "an unavailable sans family is logged once" 1 'theme: font=No Such Family unavailable; drawing Inter Variable'
+expect_poll "an unavailable mono family draws the bundled mono family" '"JetBrains Mono"' theme_value text.label.family
+expect_poll "an unavailable sans family draws the bundled sans family" '"Inter Variable"' theme_value text.body.family
 
 # A theme file removed while the shell runs publishes the defaults, so the
 # bar draws what a fresh start without the file would. The watcher keeps

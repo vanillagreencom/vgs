@@ -75,7 +75,7 @@ Nothing else is on it. A capability the manifest did not name is absent, not nul
 |---|---|---|
 | `foreground` | color | `Theme.bar.foreground` |
 | `background` | color | `Theme.bar.background` |
-| `fontFamily` | string | `Theme.text.body.family` |
+| `fontFamily` | string | `Theme.text.bar.family` |
 | `barSize` | int | `Theme.bar.height` |
 
 A widget reads its capabilities from its own `shell`, never from the bar.

@@ -84,6 +84,8 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the workspace pills, the clock and the manager share the bar's centre" '[]' bar_alignment
+bar_font_family() { ipc smoke readInstance "$(bar_key)" vgs.bar fontFamily; }
+expect "the bar API names the family of the bar role" '"JetBrains Mono"' bar_font_family
 expect "the core built the bar and its placed widget per screen, and no built-in" "$((2 * monitors))" builds
 
 # Disable only lists the id: the layout entry and its settings stay, so

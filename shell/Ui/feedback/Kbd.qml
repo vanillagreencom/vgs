@@ -2,7 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// A key cap: one key name in the code role inside a bordered chip.
+// A key cap: one key name in the kbd role inside a bordered chip.
 Rectangle {
     id: root
 
@@ -17,7 +17,7 @@ Rectangle {
 
     Label {
         id: label
-        role: "code"
+        role: "kbd"
         text: root.text
         color: Theme.kbd.foreground
         anchors.centerIn: parent

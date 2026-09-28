@@ -44,14 +44,40 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 - A control that takes a name (`variant`, `size`, `role`, `tone`, `level`) logs an error naming the component and the value for an unknown name and draws its default. A control draws `FocusRing` while `visualFocus` holds, so a keyboard user sees the ring and a pointer user does not. A control sets `Accessible.name` from its text; `IconButton` requires `label` and logs an error without one. A disabled control draws at `opacity.disabled`. Every animation reads a `motion` token, so `motion.scale` of 0 stills the shell.
 - `Label` draws one typography role and sets both `font.weight` and `font.variableAxes`, since a variable font moves on the axis alone and a static family on the weight alone. Letter spacing is stated in em and set in pixels.
-- The bar's built-ins draw their text in `text.bar`, a mono role with line height 1, so a label's line box is the font's own height and centring the box centres the glyphs. `bar.item` holds each item's `paddingX`, the `gap` between the items of one widget and the `radius`: a workspace pill is its label plus `paddingX` a side, never narrower than `size.control.sm`, and its label's line height plus `space.xs` tall. Every built-in sits on the bar's vertical centre; `scripts/smoke/rows/bar.sh` reads the pills, their labels, the clock and the manager button back and holds each to it within one pixel.
+- The bar's built-ins draw their text in `text.bar`, a mono chrome role with line height 1, so a label's line box is the font's own height and centring the box centres the glyphs. `bar.item` holds each item's `paddingX`, the `gap` between the items of one widget and the `radius`: a workspace pill is its label plus `paddingX` a side, never narrower than `size.control.sm`, and its label's line height plus `space.xs` tall. Every built-in sits on the bar's vertical centre; `scripts/smoke/rows/bar.sh` reads the pills, their labels, the clock and the manager button back and holds each to it within one pixel.
 - `Icon` draws Lucide path data from `shell/Ui/icons/Lucide.js`, written by `scripts/vendor-lucide` from the pinned `lucide-static` package with every primitive converted to path commands. The shape is drawn in the data's box and scaled as an item, so `icon.stroke` is the same number of pixels at every size.
 - Radios under one parent are exclusive, as the template makes them. `TextField` draws its action buttons as children of the field, not of its background, because the control puts the background under itself and the input takes every press on it.
 - An overlay (`Popover`, `Tooltip`, `Menu`, the list of `Select`) is a Quickshell `PopupWindow` anchored to the item that declares it, under its bottom-left edge with the theme's gap: its own surface, so it leaves a bar of any height. `Popover`, `Menu` and the list take a focus grab, so they hold the keys and close on a press outside and on Escape; `Tooltip` takes none, opens after `tooltip.delay` while the pointer rests, and stays closed while `OverlayState` counts an open overlay. `AnchorTracker` watches the anchor and its ancestors: a move updates the anchor and a hide closes the popup. `Menu` and `Select` hold their own keys, since the surface a control sits in may take no keyboard focus. [D018](../decisions/D018-overlays-are-quickshell-popups.md) records the choice.
 
+## Text stack
+
+Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `font.family.mono`, the bundled JetBrains Mono, at 11 to 13 px. The base `font.size` is the reference's body size, and every role's size is a factor of it. A single-line chrome role takes line height 1, so its line box is the font's own height. `scripts/qml-tests/tst_label.qml` restates every role's family and metrics and reads them back from a drawn `Label`; it fails when the table gains a role it does not restate.
+
+### Reference values
+
+Each role is read from one rule of the plugins.omarchy.org stylesheet, `assets/css/style.css?v=20260923-01`, fetched with curl. A value the rule does not set is the inherited one: `body` sets 15 px and line height 1.55, and an unstyled heading is bold. The last column names where the role departs from its rule.
+
+| Role | Reference rule | Reference value | Departs |
+|---|---|---|---|
+| `text.display` | `.page-header h1` | sans, 34 px, 700, -.02em, line height 1.15 | |
+| `text.h1` | `.market-contribute h2` | mono, 24 px, bold, line height 1.55 | sans, -.01em, line height 1.2 |
+| `text.h2` | `.detail-section h2` | sans, 20 px, bold, line height 1.55 | 600, line height 1.25 |
+| `text.h3` | `.plugin-title-line h3` | sans, 16 px, bold, line height 1.55 | 600, line height 1.3 |
+| `text.subheading` | `.intro` | sans, 16 px, 400, line height 1.75 | |
+| `text.body` | `body` | sans, 15 px, 400, line height 1.55 | |
+| `text.bodyStrong` | `.check-list strong` | sans, 15 px, 650, line height 1.55 | 600 |
+| `text.hint` | `.check-list small` | sans, 13 px, 400, line height 1.55 | |
+| `text.eyebrow` | `.page-eyebrow` | mono, 11 px, 700, .18em, uppercase, line height 1.55 | line height 1 |
+| `text.label` | `.code-head` | mono, 11 px, 500, .08em, uppercase, line height 1.55 | line height 1 |
+| `text.button` | `.button` | mono, 11 px, 400, .08em, uppercase, line height 1.55 | 500, line height 1; `Button` draws the variant's weight |
+| `text.kbd` | `.sidebar-search kbd` | mono, 11 px, 600, .02em, line height 1 | |
+| `text.code` | `.code-block pre` | mono, 13 px, 500, line height 1.65 | |
+| `text.tooltip` | `.control-tooltip` | sans, 11 px, 600, 0em, line height 1.3 | mono, with the rest of the chrome |
+| `text.bar` | `.sidebar-brand`, `.button` | mono, 12 px, 700, .04em, uppercase; `.button` .08em | 500, .08em, line height 1 |
+
 ## Gallery
 
-`shell/plugins/vgs.gallery` is a first-party panel that draws every component in every variant and state, and every role of `text` in its typography section, so a theme author previews a whole theme at once. It is built only while summoned; `scripts/smoke/rows/gallery.sh` summons it, reads its section and component counts back, shows a toast through its capability and hides it. A new component is added to the gallery in the same change.
+`shell/plugins/vgs.gallery` is a first-party panel that draws every component in every variant and state, and every role of `Theme.text` in its typography section, read from the group itself, so a theme author previews a whole theme at once. It is built only while summoned; `scripts/smoke/rows/gallery.sh` summons it, reads its section and component counts back, shows a toast through its capability and hides it. A new component is added to the gallery in the same change.
 
 ## Toasts
 
@@ -67,7 +93,7 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 - `Theme` publishes frozen objects of primitives through read-only properties. A write to `Theme.color.accent` or to a group from any file changes nothing. Enforced by `Object.freeze` in `Theme.convert` and by publishing no QML colour value, whose channels a frozen object cannot protect; `scripts/smoke/rows/theme.sh` reads every group back frozen and writes a token and a group.
 - Shipped QML (`shell/Ui`, `shell/Hosts`, `shell/plugins`) and the vgs-plugin skill templates hold no literal colour, font, metric, opacity or duration, every radius reads a token, and every `Theme.<path>` anywhere under `shell/`, the templates and the smoke fixtures names a token. Enforced by `scripts/check-design-tokens.py`, whose header names each rule; `scripts/test-check-design-tokens.py` plants one violation per rule. `shell/Commons` and `shell/Core` draw nothing and a fixture's fixed geometry is what a placement row measures, so those trees are under the token rule alone.
 - `vgs-plugin check` runs the same check on a third-party plugin: an unknown token fails it and a literal is a notice, since an author may choose one.
-- The bundled font is `shell/assets/fonts/JetBrainsMono-Variable.ttf` with its licence beside it. `tools/byte-ceiling-excludes` exempts `shell/assets/` from the commit-guards byte ceiling. A theme names families and ships no font file; a family Qt does not list is logged as `theme: font=<family> unavailable` and the bundled family draws in its place.
+- The bundled fonts are `shell/assets/fonts/InterVariable.ttf`, which Qt names `Inter Variable`, and `shell/assets/fonts/JetBrainsMono-Variable.ttf`, each with its licence beside it. `tools/byte-ceiling-excludes` exempts `shell/assets/` from the commit-guards byte ceiling. A theme names families and ships no font file; a family Qt does not list is logged as `theme: font=<family> unavailable; drawing <bundled>` and the bundled family the token's default names draws in its place, so a sans role stays sans and a chrome role stays mono.
 
 ## Invariants
 
@@ -80,6 +106,6 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 ## Decisions
 
 - Tokens are a JavaScript table judged by pure functions and published as frozen objects, never generated QML properties: [D015](../decisions/D015-tokens-are-a-judged-table.md).
-- One bundled variable font, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
+- Two bundled variable fonts, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).

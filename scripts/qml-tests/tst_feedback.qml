@@ -7,7 +7,7 @@ import qs.Unit
 // Spinner, ProgressBar, Badge and Kbd: the spinner turns only while the
 // theme's duration is above zero, the bar's fill follows its position and
 // slides while indeterminate, a badge draws its tone and logs an unknown
-// one, and a key cap sizes to its text.
+// one, and a key cap sizes to its text and draws it in the kbd role.
 Item {
     id: root
     width: 300
@@ -79,6 +79,13 @@ Item {
             compare(UnitTheme.override({ kbd: { paddingX: 12, background: "#00ff00" } }), "ok");
             compare(String(kbd.color), "#00ff00");
             verify(kbd.width > 24, "wider padding widens the cap");
+        }
+
+        function test_kbd_draws_the_kbd_role() {
+            const label = kbd.children[0];
+            compare(label.font.pixelSize, Theme.text.kbd.size);
+            compare(label.font.weight, Theme.text.kbd.weight);
+            compare(label.lineHeight, Theme.text.kbd.lineHeight);
         }
     }
 }

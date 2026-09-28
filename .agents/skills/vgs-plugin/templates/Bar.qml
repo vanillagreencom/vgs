@@ -15,7 +15,7 @@ Item {
 
     readonly property color foreground: Theme.bar.foreground
     readonly property color background: Theme.bar.background
-    readonly property string fontFamily: Theme.text.body.family
+    readonly property string fontFamily: Theme.text.bar.family
     readonly property int barSize: Theme.bar.height
 
     readonly property Item leftSection: left

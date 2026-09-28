@@ -42,7 +42,9 @@ fresh() {
 mutations=(
   "the label's role is not read|foundation/Label.qml|const found = Theme.text[name];|const found = undefined;|tst_label.qml"
   "the label's weight does not reach the axis|foundation/Label.qml|font.variableAxes: ({ wght: typography.weight })|font.variableAxes: ({ wght: 400 })|tst_label.qml"
-  "the bar role draws at the body metrics|../Commons/Tokens.js|bar: role(0.92, 500, 0.02, 1, false, \"text\")|bar: role(1, 400, 0, 1.45, false, \"text\")|tst_label.qml"
+  "the bar role draws at the body metrics|../Commons/Tokens.js|bar: role(\"mono\", 0.8, 500, 0.08, 1, true, \"text\")|bar: role(\"sans\", 1, 400, 0, 1.55, false, \"text\")|tst_label.qml"
+  "body text draws in the mono family|../Commons/Tokens.js|body: role(\"sans\", 1, 400, 0, 1.55, false, \"text\")|body: role(\"mono\", 1, 400, 0, 1.55, false, \"text\")|tst_label.qml"
+  "an absent family draws the mono family whatever its token|../Commons/Theme.qml|convertLeaf(table[key], node[key], defaults[key], loaded, families, missing)|convertLeaf(table[key], node[key], loaded[0], loaded, families, missing)|tst_label.qml"
   "the label's letter spacing is not scaled|foundation/Label.qml|font.letterSpacing: typography.letterSpacing * typography.size|font.letterSpacing: typography.letterSpacing|tst_label.qml"
   "the icon's stroke scales with its size|foundation/Icon.qml|strokeWidth: root.stroke / root.factor|strokeWidth: root.stroke|tst_icon.qml"
   "the icon's path is not scaled|foundation/Icon.qml|transform: Scale { xScale: root.factor; yScale: root.factor }|transform: Scale { xScale: 1; yScale: 1 }|tst_icon.qml"
@@ -95,12 +97,13 @@ mutations=(
   "the spinner turns under reduced motion|feedback/Spinner.qml|running: root.running && Theme.spinner.duration > 0|running: root.running|tst_feedback.qml"
   "the progress fill ignores the value|feedback/ProgressBar.qml|width: root.indeterminate ? span : root.position * parent.width|width: parent.width|tst_feedback.qml"
   "the mirrored progress fills from the left|feedback/ProgressBar.qml|x: root.mirrored && !root.indeterminate ? parent.width - width : 0|x: 0|tst_feedback.qml"
+  "the key cap draws the code role|feedback/Kbd.qml|role: \"kbd\"|role: \"code\"|tst_feedback.qml"
   "the badge ignores its tone|feedback/Badge.qml|const found = Theme.badge.tone[name];|const found = undefined;|tst_feedback.qml"
   "the tab does not check on click|layout/Tabs.qml|visible: tab.checked|visible: true|tst_layout.qml"
   "the list item ignores highlight|layout/ListItem.qml|root.highlighted ? Theme.listItem.selected :|false ? Theme.listItem.selected :|tst_layout.qml"
   "the surface ignores its level|foundation/Surface.qml|const found = Theme.surface.level[name];|const found = undefined;|tst_layout.qml"
   "the scroll area's content does not follow its children|layout/ScrollArea.qml|contentHeight: contentItem.childrenRect.height|contentHeight: height|tst_layout.qml"
-  "a theme change does not reach a group|../Commons/Theme.qml|readonly property var color: published.color|readonly property var color: convert(source.defaults.values, \"\").color|tst_theme.qml"
+  "a theme change does not reach a group|../Commons/Theme.qml|readonly property var color: published.color|readonly property var color: convert(source.defaults.values, []).color|tst_theme.qml"
 )
 
 copy="$tmp/ui"

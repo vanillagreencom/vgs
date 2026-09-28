@@ -12,9 +12,10 @@ import "ThemeLogic.js" as ThemeLogic
 // cannot protect. A theme change replaces the groups and rebuilds no component:
 // a binding on a group re-evaluates, and a handler that needs every group
 // from one theme runs on `revisionChanged`, which fires after the last
-// group holds the new theme. The bundled font loads here, so its family is
-// available before any component asks for it; a family a theme names that
-// Qt does not list is logged once and drawn with the bundled family.
+// group holds the new theme. The bundled fonts load here, so their families
+// are available before any component asks for them; a family a theme names
+// that Qt does not list is logged once and drawn with the bundled family the
+// token's default names.
 Singleton {
     id: root
 
@@ -59,9 +60,9 @@ Singleton {
     readonly property var bar: published.bar
 
     // The accepted values converted once, as one frozen tree. It follows
-    // the font too, so a family judged before the bundled font was ready
-    // is judged again.
-    readonly property var published: convert(source.values, bundled.status === FontLoader.Ready ? bundled.name : "")
+    // the fonts too, so a family judged before a bundled font was ready is
+    // judged again.
+    readonly property var published: convert(source.values, [mono, sans].filter(font => font.status === FontLoader.Ready).map(font => font.name))
 
     // A resolved colour is `#rrggbbaa`; Qt reads eight digits with alpha
     // first, so the alpha moves to the front here and nowhere else.
@@ -81,46 +82,55 @@ Singleton {
         return out;
     }
 
-    // The QML value of one resolved token. `available` is the bundled
-    // family once it is loaded, or "" while it is not; `families` lists the
-    // families Qt knows, read once per conversion.
-    function convertLeaf(leaf, value, available, families, missing) {
+    // The QML value of one resolved token. `fallback` is the token's
+    // default value, `loaded` the bundled families that are ready, and
+    // `families` the families Qt knows, read once per conversion. A family
+    // stands until the one its default names is loaded, so an unavailable
+    // family always has a bundled family to draw in its place.
+    function convertLeaf(leaf, value, fallback, loaded, families, missing) {
         switch (leaf.type) {
         case "color":
             return toColor(value);
         case "easing":
             return easings[value];
         case "family":
-            if (available === "" || value === available || families().indexOf(value) !== -1) return value;
-            if (missing.indexOf(value) === -1) {
-                missing.push(value);
-                console.warn("theme: font=" + value + " unavailable; drawing " + available);
+            if (loaded.indexOf(fallback) === -1 || loaded.indexOf(value) !== -1 || families().indexOf(value) !== -1) return value;
+            const substitution = value + "\n" + fallback;
+            if (missing.indexOf(substitution) === -1) {
+                missing.push(substitution);
+                console.warn("theme: font=" + value + " unavailable; drawing " + fallback);
             }
-            return available;
+            return fallback;
         default:
             return value;
         }
     }
 
-    function convert(values, available) {
+    function convert(values, loaded) {
         const missing = [];
         let known = null;
         const families = () => {
             if (known === null) known = Qt.fontFamilies();
             return known;
         };
-        const walk = (table, node) => {
+        const walk = (table, node, defaults) => {
             const out = {};
             for (const key of Object.keys(table))
-                out[key] = ThemeLogic.isLeaf(table[key]) ? convertLeaf(table[key], node[key], available, families, missing) : walk(table[key], node[key]);
+                out[key] = ThemeLogic.isLeaf(table[key]) ? convertLeaf(table[key], node[key], defaults[key], loaded, families, missing) : walk(table[key], node[key], defaults[key]);
             return Object.freeze(out);
         };
-        return walk(Tokens.TOKENS, values);
+        return walk(Tokens.TOKENS, values, source.defaults.values);
     }
 
     FontLoader {
-        id: bundled
+        id: mono
         source: Qt.resolvedUrl("../assets/fonts/JetBrainsMono-Variable.ttf")
+        onStatusChanged: if (status === FontLoader.Error) console.error("theme: bundled font failed to load: " + source)
+    }
+
+    FontLoader {
+        id: sans
+        source: Qt.resolvedUrl("../assets/fonts/InterVariable.ttf")
         onStatusChanged: if (status === FontLoader.Error) console.error("theme: bundled font failed to load: " + source)
     }
 
