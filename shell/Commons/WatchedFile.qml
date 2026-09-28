@@ -30,6 +30,7 @@ Scope {
     // read() landed during the read; `writing`; `idle`.
     property string operation: "reading"
     readonly property bool busy: operation !== "idle"
+    readonly property bool inRead: operation === "reading" || operation === "stale"
 
     signal loaded(string content)
     signal loadFailed(var error)
@@ -97,10 +98,7 @@ Scope {
         path: file.path
         watchChanges: true
         printErrors: false
-        onFileChanged: {
-            if (file.operation === "reading" || file.operation === "stale") file.operation = "stale";
-            else file.changed();
-        }
+        onFileChanged: file.inRead ? file.read() : file.changed()
     }
 
     FileView {

@@ -120,8 +120,8 @@ mutations=(
   "a theme change does not reach a group|../Commons/Theme.qml|readonly property var color: published.color|readonly property var color: convert(source.defaults.values, []).color|tst_theme.qml"
   "an appearance reads the whole theme|../Commons/Theme.qml|return convertTree(table, accepted.values, accepted.values, []);|return convertTree(table, Object.assign({}, accepted.values, { card: Object.assign({}, accepted.values.card, { fill: source.values.color.surface }) }), accepted.values, []);|tst_appearance.qml"
   "a read a change overtook is reported|../Commons/WatchedFile.qml|if (operation === \"stale\") {|if (false) {|tst_watched_file.qml"
-  "a change during a read is not marked stale|../Commons/WatchedFile.qml|if (file.operation === \"reading\" || file.operation === \"stale\") file.operation = \"stale\";|if (false) file.operation = \"stale\";|tst_watched_file.qml"
-  "a change during a write is lost|../Commons/WatchedFile.qml|if (file.operation === \"reading\" || file.operation === \"stale\") file.operation = \"stale\";|if (file.operation !== \"idle\") file.operation = \"stale\";|tst_watched_file.qml"
+  "a change during a read is not marked stale|../Commons/WatchedFile.qml|onFileChanged: file.inRead ? file.read() : file.changed()|onFileChanged: file.changed()|tst_watched_file.qml"
+  "a change during a write is lost|../Commons/WatchedFile.qml|onFileChanged: file.inRead ? file.read() : file.changed()|onFileChanged: file.busy ? file.read() : file.changed()|tst_watched_file.qml"
   "a read asked during a read starts nothing more|../Commons/WatchedFile.qml|            operation = \"stale\";|            return;|tst_watched_file.qml"
   "the reading view watches the file|../Commons/WatchedFile.qml|        id: view|        id: view; watchChanges: true|tst_watched_file.qml"
   "the watching view reads the file|../Commons/WatchedFile.qml|        preload: false|        preload: true|tst_watched_file.qml"
@@ -136,6 +136,9 @@ if out="$("$runner" --ui "$copy" 2>&1)"; then ok "the unmutated copy passes"; el
 
 for row in "${mutations[@]}"; do
   IFS='|' read -r label file needle replacement test <<<"$row"
+  # A `|` inside a field shifts the rest, and a runner handed a test that is
+  # not there fails, which would read as a red mutation.
+  if [[ ! -f $repo/scripts/qml-tests/$test ]]; then fail "$label: the row's test is not a file: $test"; continue; fi
   fresh "$copy"
   target="$copy/$file"
   commons_args=()
