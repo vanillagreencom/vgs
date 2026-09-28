@@ -18,13 +18,22 @@
 //       apply one package; the fourth argument is the caller's verdict on
 //       the flock of <config-dir>/theme.lock, which it holds for as long as
 //       this process runs when the verdict is `held`.
+//   vgsh-theme-judge accept <dir> [<name>]
+//       judge the package in DIR as an installed package, for `vgsh theme
+//       add` (no NAME: it lands under its document's own name) and `vgsh
+//       theme update` (NAME: it must still be that package). Prints the
+//       accepted name and exits 0; prints one verdict line on stdout,
+//       `reason=<key>[ token=<path>][ <detail>]`, and exits 1 on a refusal.
+//   vgsh-theme-judge installed <config-dir> <name>
+//       print the directory of installed package NAME under
+//       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
 //
-// list and apply refuse with one line on stderr, `vgsh: refused: <key>=...`,
-// through bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under
-// `json`, apply prints its structured result on stdout first, refusals
-// included. A malformed invocation exits 2. docs/architecture/themes.md
-// § Runner and § Targets hold the rules this file implements; the target
-// renderer is bin/lib/theme-render.js.
+// list, apply and installed refuse with one line on stderr, `vgsh: refused:
+// <key>=...`, through bin/lib/judge-files.js: exit 1, or 75 for
+// `reason=busy`. Under `json`, apply prints its structured result on stdout
+// first, refusals included. A malformed invocation exits 2.
+// docs/architecture/themes.md § Runner, § Install and § Targets hold the
+// rules this file implements; the target renderer is bin/lib/theme-render.js.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -406,6 +415,78 @@ function apply(format, configDir, stateDir, lock, name) {
     else console.log("ok theme=" + name + " state=" + result.state + " shell=" + result.shell);
 }
 
+// --- install
+
+// The judge's verdict on the package in DIR as an installed package named
+// NAME, or named by its document when NAME is undefined. The document's
+// name is ThemeLogic.accept's reading of it; acceptPackage then judges the
+// package under that name, the `vgs` reservation included. `targets` holds
+// a themes directory's targets and is never read as a package, so no
+// package lands under it.
+function acceptInstall(dir, name) {
+    // Files are named relative to DIR: add judges a staging directory the
+    // user never sees.
+    let theme, terminal;
+    try {
+        theme = text(readIfPresent(path.join(dir, "theme.json")));
+        terminal = text(readIfPresent(path.join(dir, "terminal.json")));
+    } catch (e) {
+        return logic.refusal("unreadable", "", "file=" + (e.path ? path.relative(dir, e.path) : ".") + " error=" + e.code);
+    }
+    if (theme === undefined) return logic.refusal("absent", "", "file=theme.json");
+    if (name === undefined) {
+        const document = logic.accept(tokens, theme);
+        if (!document.ok) return document;
+        name = document.name;
+    }
+    if (name === TARGETS) return logic.refusal("reserved-name", "", "name=" + TARGETS);
+    return logic.acceptPackage(tokens, { directoryName: name, themeJson: theme, terminalJson: terminal, shipped: false });
+}
+
+function acceptCommand(dir, name) {
+    const verdict = acceptInstall(dir, name);
+    if (!verdict.ok) {
+        console.log("reason=" + verdict.reason + (verdict.token === "" ? "" : " token=" + verdict.token) + (verdict.detail === "" ? "" : " " + verdict.detail));
+        process.exit(1);
+    }
+    console.log(verdict.name);
+}
+
+// The resolved directory of installed package NAME. Update and remove act
+// only on a directory `add` could have landed: a name the package judge
+// refuses, `targets`, a name no installed package has, a symlink and
+// anything but a directory are refused, and a name only a shipped package
+// has is refused as shipped.
+function installed(configDir, name) {
+    if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
+    const key = "theme=" + name + " reason";
+    if (name === TARGETS) refuse(key + "=reserved-name", "reserved-name");
+    const dir = path.join(configDir, "themes", name);
+    let stat;
+    try {
+        stat = fs.lstatSync(dir);
+    } catch (e) {
+        if (e.code !== "ENOENT") refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+        let shipped;
+        try {
+            shipped = packageDirs(SHIPPED);
+        } catch (e2) {
+            refuse(key + "=unreadable path=" + SHIPPED + " error=" + e2.code, "unreadable");
+        }
+        if (shipped !== null && shipped.includes(name)) refuse(key + "=shipped path=" + path.join(SHIPPED, name), "shipped");
+        refuse(key + "=unknown", "unknown");
+    }
+    if (stat.isSymbolicLink()) refuse(key + "=symlink path=" + dir, "symlink");
+    if (!stat.isDirectory()) refuse(key + "=not-a-directory path=" + dir, "not-a-directory");
+    let real;
+    try {
+        real = fs.realpathSync(dir);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+    }
+    console.log(real);
+}
+
 const [command, ...args] = process.argv.slice(2);
 main(() => {
     switch (command) {
@@ -420,6 +501,14 @@ main(() => {
     case "apply":
         if (args.length !== 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
         apply(...args);
+        break;
+    case "accept":
+        if (args.length < 1 || args.length > 2) usage("arguments=" + command);
+        acceptCommand(args[0], args[1]);
+        break;
+    case "installed":
+        if (args.length !== 2) usage("arguments=" + command);
+        installed(args[0], args[1]);
         break;
     default:
         usage("command=" + (command || "missing"));

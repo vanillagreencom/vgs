@@ -15,6 +15,9 @@
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell; `apply vgs` restores the defaults
+#   vgsh theme add <git url>       clone, judge and install one theme package
+#   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
+#   vgsh theme remove <name>       delete an installed theme package's directory
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
@@ -42,9 +45,18 @@
 # reason }` with refusals included, as one JSON line on stdout. `theme`
 # commands never contact the shell: docs/architecture/themes.md § Runner.
 #
+# `theme add`, `update` and `remove` follow the plugin rules above for
+# ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
+# lands it under its theme.json name once the theme judge accepts it and
+# refuses an occupied name and the reserved `vgs`; update refuses a
+# modified checkout and rolls back a version the judge refuses; remove
+# deletes only an installed package, never a shipped one. Each holds the
+# theme lock while it changes the package; a held lock is reason=busy.
+# docs/architecture/themes.md § Install.
+#
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when another
-# shell holds the lock or another theme apply holds the theme lock, 69 when
+# shell holds the lock or another theme command holds the theme lock, 69 when
 # the shell is not running. The usage text is this header; `vgsh --help`
 # prints it and exits 0.
 set -euo pipefail
@@ -197,39 +209,50 @@ rollback() { # DIR COMMIT
   git_or_refuse "rollback=failed path=$1 to=$2" -C "$1" reset --quiet --hard "$2"
 }
 
-plugin_update() { # ID
-  local id="$1" dir top dirty old upstream err verdict new_id rc=0
-  dir="$(installed_dir "$id")" || exit $?
+# Fetch checkout DIR's upstream and, when it is new, print the incoming diff
+# and fast-forward to it. Sets ff_old and ff_new, the commits before and
+# after, equal when DIR was already up to date. LABEL names DIR in the
+# refusals: a directory that is not its own checkout, a modified checkout,
+# a failed fetch, no upstream, and a source that rewrote its history.
+fast_forward() { # DIR LABEL
+  local dir="$1" label="$2" top dirty err rc=0
   top="$(git_or_refuse "not-a-checkout=$dir" -C "$dir" rev-parse --show-toplevel)" || exit 1
   [[ $top == "$dir" ]] || refuse 1 "not-a-checkout=$dir toplevel=$top"
   dirty="$(git_or_refuse "git=status path=$dir" -C "$dir" status --porcelain --untracked-files=all)" || exit 1
   [[ -z $dirty ]] || refuse 1 "modified=$dir" "commit or discard the local changes first"
-  git_or_refuse "fetch=$id" -C "$dir" fetch --quiet --no-recurse-submodules
-  upstream="$(git_or_refuse "upstream=missing path=$dir" -C "$dir" rev-parse --verify '@{upstream}')" || exit 1
-  old="$(git_or_refuse "git=rev-parse path=$dir" -C "$dir" rev-parse --verify HEAD)" || exit 1
-  if [[ $old == "$upstream" ]]; then
+  git_or_refuse "fetch=$label" -C "$dir" fetch --quiet --no-recurse-submodules
+  ff_new="$(git_or_refuse "upstream=missing path=$dir" -C "$dir" rev-parse --verify '@{upstream}')" || exit 1
+  ff_old="$(git_or_refuse "git=rev-parse path=$dir" -C "$dir" rev-parse --verify HEAD)" || exit 1
+  [[ $ff_old == "$ff_new" ]] && return 0
+  err="$(git_plain -C "$dir" merge-base --is-ancestor "$ff_old" "$ff_new" 2>&1)" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) refuse 1 "not-fast-forward=$label" "the source rewrote its history; remove and add it again" ;;
+    *) refuse 1 "git=merge-base exit=$rc path=$dir" "$err" ;;
+  esac
+  git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$ff_old" "$ff_new"
+  git_or_refuse "git=merge path=$dir" -C "$dir" merge --quiet --ff-only "$ff_new"
+}
+
+plugin_update() { # ID
+  local id="$1" dir verdict new_id
+  dir="$(installed_dir "$id")" || exit $?
+  fast_forward "$dir" "$id"
+  if [[ $ff_old == "$ff_new" ]]; then
     echo "ok up-to-date=$id"
     return 0
   fi
-  err="$(git_plain -C "$dir" merge-base --is-ancestor "$old" "$upstream" 2>&1)" || rc=$?
-  case "$rc" in
-    0) ;;
-    1) refuse 1 "not-fast-forward=$id" "the source rewrote its history; remove and add the plugin again" ;;
-    *) refuse 1 "git=merge-base exit=$rc path=$dir" "$err" ;;
-  esac
-  git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$old" "$upstream"
-  git_or_refuse "git=merge path=$dir" -C "$dir" merge --quiet --ff-only "$upstream"
   # A refused new version is undone before the refusal, so the installed
   # plugin is always one the judge accepted.
   if ! verdict="$(node "$manifest_check" -- "$dir")"; then
-    rollback "$dir" "$old"
-    refuse 1 "manifest=$id rolled-back=${old:0:12}" "$verdict"
+    rollback "$dir" "$ff_old"
+    refuse 1 "manifest=$id rolled-back=${ff_old:0:12}" "$verdict"
   fi
   if ! new_id="$(node "$judge" id "$dir")" || [[ $new_id != "$id" ]]; then
-    rollback "$dir" "$old"
-    refuse 1 "manifest-id=${new_id:-unreadable} want=$id rolled-back=${old:0:12}"
+    rollback "$dir" "$ff_old"
+    refuse 1 "manifest-id=${new_id:-unreadable} want=$id rolled-back=${ff_old:0:12}"
   fi
-  echo "ok updated=$id from=${old:0:12} to=${upstream:0:12}"
+  echo "ok updated=$id from=${ff_old:0:12} to=${ff_new:0:12}"
   rescan_if_running
 }
 
@@ -239,6 +262,80 @@ plugin_remove() { # ID
   rm -rf -- "${dir:?}" || refuse 1 "remove=$dir"
   echo "ok removed=$id"
   rescan_if_running
+}
+
+user_themes="$config_home/vgs/themes"
+
+# Hold the theme lock on descriptor 9 until this process exits, so no apply
+# reads a package while add, update or remove changes it, and no two of
+# them change one at once. A lock held elsewhere refuses with reason=busy.
+theme_lock_hold() { # NAME
+  local rc=0
+  mkdir -p -- "$config_home/vgs" 2>/dev/null && { exec 9>>"$theme_lock"; } 2>/dev/null ||
+    refuse 1 "theme=$1 reason=lock-failed path=$theme_lock"
+  flock -n -E 75 9 || rc=$?
+  case "$rc" in
+    0) ;;
+    75) refuse 75 "theme=$1 reason=busy" "a theme apply, add, update or remove is running" ;;
+    *) refuse 1 "theme=$1 reason=lock-failed path=$theme_lock" ;;
+  esac
+}
+
+# The theme judge's verdict on package DIR as installed, named NAME or by
+# its document. Sets `verdict` to the accepted name and returns 0, or to
+# the judge's `reason=...` line and returns 1; a judge that fails without
+# a verdict line is `reason=judge-failed exit=<status>`.
+accept_theme() { # DIR [NAME]
+  local rc=0
+  verdict="$(node "$theme_judge" accept "$@")" || rc=$?
+  [[ $rc == 0 ]] && return 0
+  [[ $rc == 1 && $verdict == reason=* && $verdict != *$'\n'* ]] || verdict="reason=judge-failed exit=$rc"
+  return 1
+}
+
+theme_add() { # URL
+  local url="$1" name target line
+  mkdir -p -- "$user_themes"
+  # Staged beside the themes directory, never inside it, so no list sees a
+  # half-cloned package and the final move is a rename on one filesystem.
+  stage="$(mktemp -d "$config_home/vgs/.vgsh-theme-add.XXXXXX")" || refuse 1 "staging=$config_home/vgs"
+  trap 'rm -rf -- "${stage:?}"' EXIT
+  git_or_refuse "clone=$url" clone --quiet --no-recurse-submodules -- "$url" "$stage/package"
+  accept_theme "$stage/package" || refuse 1 "package=$url $verdict"
+  name="$verdict"
+  target="$user_themes/$name"
+  theme_lock_hold "$name"
+  [[ -e $target || -L $target ]] && refuse 1 "theme=$name reason=exists path=$target"
+  mv -T -- "$stage/package" "$target" || refuse 1 "theme=$name reason=move path=$target"
+  line="ok added=$name path=$target"
+  [[ -d $root/themes/$name ]] && line+=" shadows=$root/themes/$name"
+  echo "$line"
+}
+
+theme_update() { # NAME
+  local name="$1" dir
+  dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
+  theme_lock_hold "$name"
+  fast_forward "$dir" "$name"
+  if [[ $ff_old == "$ff_new" ]]; then
+    echo "ok up-to-date=$name"
+    return 0
+  fi
+  # A refused new version is undone before the refusal, so the installed
+  # package is always one the judge accepted.
+  if ! accept_theme "$dir" "$name"; then
+    rollback "$dir" "$ff_old"
+    refuse 1 "theme=$name $verdict rolled-back=${ff_old:0:12}"
+  fi
+  echo "ok updated=$name from=${ff_old:0:12} to=${ff_new:0:12}"
+}
+
+theme_remove() { # NAME
+  local name="$1" dir
+  dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
+  theme_lock_hold "$name"
+  rm -rf -- "${dir:?}" || refuse 1 "theme=$name reason=remove path=$dir"
+  echo "ok removed=$name"
 }
 
 cmd="${1:-}"
@@ -361,6 +458,16 @@ PY
           esac
         fi
         exec node "$theme_judge" apply "$format" "$config_home/vgs" "$state_home/vgs" "$verdict" "$name"
+        ;;
+      add|update|remove)
+        arg="${1:-}"
+        [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
+        if [[ -z $arg ]]; then
+          missing=name; [[ $sub == add ]] && missing=url
+          printf 'vgsh: refused: %s=missing\n' "$missing" >&2; usage; exit 2
+        fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        "theme_$sub" "$arg"
         ;;
       *)
         printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2

@@ -522,6 +522,148 @@ chmod 700 "$state"
 check "the unwritable refusal is its one stderr line" test "$(wc -l <"$tmp/err")" == 1
 check "an unwritable state directory leaves the theme file alone" cmp -s "$repo/themes/vgs/theme.json" "$file"
 
+# Theme add, update and remove, from local bare repositories as the plugin
+# rows install, against the tree copy, whose shipped `dusk` an installed
+# package can shadow. The fixture home's hooks stay live.
+theme_source() { # NAME THEME_JSON_TEXT [TERMINAL_JSON_TEXT]: an empty THEME_JSON_TEXT writes none
+  local work="$tmp/tsrc/$1"
+  mkdir -p "$work"
+  printf 'fixture\n' >"$work/README"
+  [[ -z $2 ]] || theme_pkg "$work" "$2" "${3:-}"
+  g init -q "$work"
+  g -C "$work" add -A
+  g -C "$work" commit -q -m init
+  g init -q --bare "$work.git"
+  g -C "$work" push -q "$work.git" main
+}
+theme_commit() { # NAME FILE TEXT
+  printf '%s' "$3" >"$tmp/tsrc/$1/$2"
+  g -C "$tmp/tsrc/$1" add -A
+  g -C "$tmp/tsrc/$1" commit -q -m change
+  g -C "$tmp/tsrc/$1" push -q "$tmp/tsrc/$1.git" main
+}
+doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; }
+unstaged() { test -z "$(find "$1/vgs" -maxdepth 1 -name '.vgsh-theme-add.*' -print)"; }
+src="$tmp/tsrc"
+theme_source moss "$(doc moss)"
+theme_source dusk "$(doc dusk '{ "palette": { "accent": "#444444" } }')"
+theme_source fern "$(doc fern)"
+theme_source slotty "$(doc slotty)" "$(slots_json '#nothex')"
+theme_source reserved "$(doc vgs)"
+theme_source targets "$(doc targets)"
+theme_source spaced "$(doc 'My Theme')"
+theme_source typo "$(doc typo '{ "palette": { "acent": "#ffffff" } }')"
+theme_source bare ""
+
+cfg="$tmp/cfg-theme-add"; themes="$cfg/vgs/themes"; moss="$themes/moss"
+tinst "theme add installs a package under its document's name" "$cfg" "$rt_empty" 0 "ok added=moss path=$moss" "" theme add "$src/moss.git"
+check "theme add runs no post-checkout hook" test ! -e "$hooks/post-checkout.marker"
+check "theme add lands the package's files" cmp -s "$src/moss/theme.json" "$moss/theme.json"
+check "theme add leaves no staging directory" unstaged "$cfg"
+tinst "theme list after an add" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "the added package is listed as installed and accepted" has_prefix "theme=moss source=installed state=ok current=false "
+tinst "theme add of a shipped package's name shadows it" "$cfg" "$rt_empty" 0 "ok added=dusk path=$themes/dusk shadows=$tree/themes/dusk" "" theme add "$src/dusk.git"
+tinst "theme list after a shadowing add" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "the shipped package an add shadows is listed shadowed" has_line "theme=dusk source=shipped state=shadowed current=false"
+tinst "theme add refuses a name an installed package holds" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=moss reason=exists path=$moss" theme add "$src/moss.git"
+check "a refused occupied name leaves no staging directory" unstaged "$cfg"
+
+# Every refusal before landing leaves no staging directory and no package.
+cfg="$tmp/cfg-theme-refused"
+while IFS='|' read -r name source want; do
+  tinst "theme add refuses $name" "$cfg" "$rt_empty" 1 "" "vgsh: refused: $want" theme add "$src/$source" </dev/null
+  check "theme add of $name leaves nothing behind" test -z "$(find "$cfg/vgs" -mindepth 1 -maxdepth 2 \( -name '.vgsh-theme-add.*' -o -path "$cfg/vgs/themes/*" \) -print)"
+done <<EOF
+a package the judge refuses|slotty.git|package=$src/slotty.git reason=terminal-colour token=terminal.color0 value="#nothex"
+a document the judge refuses|typo.git|package=$src/typo.git reason=unknown-token token=palette.acent
+the reserved name vgs|reserved.git|package=$src/reserved.git reason=reserved-name name=vgs
+the targets directory's name|targets.git|package=$src/targets.git reason=reserved-name name=targets
+a document name that is no directory name|spaced.git|package=$src/spaced.git reason=package-name got="My Theme"
+a source without theme.json|bare.git|package=$src/bare.git reason=absent file=theme.json
+an unreachable source|absent.git|clone=$src/absent.git
+EOF
+tinst "theme add without a url is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: url=missing" theme add
+tinst "theme add with a second url is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=x" theme add "$src/fern.git" x
+tinst "theme add --json is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--json" theme add --json "$src/fern.git"
+
+# Update against the package the first add row installed.
+cfg="$tmp/cfg-theme-add"
+tinst "theme update with nothing new is up to date" "$cfg" "$rt_empty" 0 "ok up-to-date=moss" "" theme update moss
+before="$(head_of "$moss")"
+theme_commit moss theme.json "$(doc moss '{ "palette": { "accent": "#123456" } }')"
+after="$(head_of "$src/moss")"
+tinst "theme update fast-forwards a new commit" "$cfg" "$rt_empty" 0 "ok updated=moss from=${before:0:12} to=${after:0:12}" "" theme update moss
+check "theme update runs no post-merge hook" test ! -e "$hooks/post-merge.marker"
+check "theme update prints the incoming diff" grep -q '^+.*#123456' "$tmp/out"
+check "theme update leaves the new version installed" cmp -s "$src/moss/theme.json" "$moss/theme.json"
+
+printf 'local\n' >"$moss/notes.txt"
+tinst "theme update refuses a checkout with an untracked file" "$cfg" "$rt_empty" 1 "" "vgsh: refused: modified=$moss" theme update moss
+rm -f -- "$moss/notes.txt"
+good="$(head_of "$moss")"
+theme_commit moss terminal.json "$(slots_json '#nothex')"
+tinst "theme update refuses a new version the judge refuses" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=terminal-colour token=terminal.color0 value=\"#nothex\" rolled-back=${good:0:12}" theme update moss
+check "a refused version rolls the checkout back" test "$(head_of "$moss")" == "$good"
+check "a refused version leaves no file of it" test ! -e "$moss/terminal.json"
+theme_commit moss terminal.json "$(slots_json '#010203')"
+theme_commit moss theme.json "$(doc renamed)"
+tinst "theme update refuses a new version naming another package" "$cfg" "$rt_empty" 1 "$any_out" "vgsh: refused: theme=moss reason=name-mismatch directory=moss document=renamed rolled-back=${good:0:12}" theme update moss
+check "a renamed package rolls the checkout back" test "$(head_of "$moss")" == "$good"
+g -C "$src/moss" reset -q --hard "$good"
+g -C "$src/moss" commit -q --amend -m rewritten
+g -C "$src/moss" push -q --force "$src/moss.git" main
+tinst "theme update refuses a source that rewrote its history" "$cfg" "$rt_empty" 1 "" "vgsh: refused: not-fast-forward=moss" theme update moss
+check "a refused rewrite leaves the checkout alone" test "$(head_of "$moss")" == "$good"
+
+tinst "theme update refuses a shipped package" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=vgs reason=shipped path=$tree/themes/vgs" theme update vgs
+tinst "theme update refuses an unknown name" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=absent reason=unknown" theme update absent
+tinst "theme update refuses a name that is no directory name" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme="../moss" reason=malformed-name' theme update ../moss
+tinst "theme update refuses the targets directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=targets reason=reserved-name" theme update targets
+tinst "theme update without a name is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: name=missing" theme update
+
+# The lock, held the way a running apply holds it: add, update and remove
+# each refuse busy and change nothing.
+exec 7>>"$cfg/vgs/theme.lock"
+flock 7
+tinst "theme add while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=fern reason=busy" theme add "$src/fern.git"
+check "a busy add lands nothing" test ! -e "$themes/fern"
+check "a busy add leaves no staging directory" unstaged "$cfg"
+tinst "theme update while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=moss reason=busy" theme update moss
+tinst "theme remove while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=moss reason=busy" theme remove moss
+check "a busy remove leaves the package" test -f "$moss/theme.json"
+# The must-fail control: a copy of vgsh whose install verbs never take the
+# lock removes the package under the held lock.
+mutant="$tmp/tree-install-nolock"; cp -R -- "$tree" "$mutant"
+take='flock -n -E 75 9 || rc=$?'
+check "the install verbs take the theme lock once in bin/vgsh" test "$(grep -o -F -- "$take" "$repo/bin/vgsh" | wc -l)" == 1
+sed -i "s/$take/true/" "$mutant/bin/vgsh"
+check "the install lockless mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
+cfg_mutant="$tmp/cfg-theme-install-mutant"; mkdir -p "$cfg_mutant/vgs"; cp -R -- "$themes" "$cfg_mutant/vgs/themes"
+exec 6>>"$cfg_mutant/vgs/theme.lock"
+flock 6
+THEME_BIN="$mutant/bin/vgsh" tinst "the install lockless mutant removes under the held lock" "$cfg_mutant" "$rt_empty" 0 "ok removed=moss" "" theme remove moss
+exec 6>&-
+exec 7>&-
+
+# Remove.
+cfg_link="$tmp/cfg-theme-link"; mkdir -p "$cfg_link/vgs/themes" "$tmp/elsewhere-theme/moss"
+doc moss >"$tmp/elsewhere-theme/moss/theme.json"
+ln -s "$tmp/elsewhere-theme/moss" "$cfg_link/vgs/themes/moss"
+: >"$cfg_link/vgs/themes/plain-file"
+tinst "theme remove refuses a symlinked package directory" "$cfg_link" "$rt_empty" 1 "" "vgsh: refused: theme=moss reason=symlink path=$cfg_link/vgs/themes/moss" theme remove moss
+check "a refused symlink leaves its target" test -f "$tmp/elsewhere-theme/moss/theme.json"
+tinst "theme remove refuses a file that is no package directory" "$cfg_link" "$rt_empty" 1 "" "vgsh: refused: theme=plain-file reason=not-a-directory path=$cfg_link/vgs/themes/plain-file" theme remove plain-file
+tinst "theme remove refuses a shipped package" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=vgs reason=shipped path=$tree/themes/vgs" theme remove vgs
+tinst "theme remove deletes a shadowing package" "$cfg" "$rt_empty" 0 "ok removed=dusk" "" theme remove dusk
+tinst "theme list after removing a shadowing package" "$cfg" "$rt_empty" 0 "$vgs_row" "" theme list
+check "removing a shadowing package uncovers the shipped one" has_prefix "theme=dusk source=shipped state=ok current=false "
+theme_pkg "$themes/vgs" "$(doc vgs)"
+tinst "theme remove deletes an installed vgs, which hides nothing" "$cfg" "$rt_empty" 0 "ok removed=vgs" "" theme remove vgs
+check "removing an installed vgs leaves the shipped defaults" test -f "$tree/themes/vgs/theme.json" -a ! -e "$themes/vgs"
+tinst "theme remove deletes the installed package" "$cfg" "$rt_empty" 0 "ok removed=moss" "" theme remove moss
+check "theme remove leaves no package directory" test ! -e "$moss"
+tinst "theme remove refuses a removed package as unknown" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=moss reason=unknown" theme remove moss
+
 # --help prints the header comment of the script itself on stderr and exits
 # 0; the expected first line is read from the script, not restated here.
 set +e
