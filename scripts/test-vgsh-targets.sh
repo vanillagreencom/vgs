@@ -12,7 +12,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree alacritty foot ghostty hyprland kitty wezterm
+theme_tree alacritty foot ghostty kitty wezterm
 export THEME_PATH="$stubs:$theme_path"
 cfg="$tmp/cfg-targets"; mkdir -p "$cfg/vgs"; live="$state/theme"
 theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'
@@ -159,7 +159,7 @@ printf '[general]\nlive_config_reload = true\n\n[window]\nopacity = 0.9\n' >"$cf
 wezterm_own=$'local wezterm = require \'wezterm\'\nlocal config = wezterm.config_builder()\nconfig.font_size = 11\nreturn config'
 printf '%s\n' "$wezterm_own" >"$cfg/wezterm/wezterm.lua"
 terminals() { # ALACRITTY GHOSTTY KITTY WEZTERM: each a state and a JSON reason
-  printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
+  printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
 }
 written="written null"
 signalled() { # WANT: the signal command's argument lines since the last `: >"$signals"`

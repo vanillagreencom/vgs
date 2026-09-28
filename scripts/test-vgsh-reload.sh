@@ -7,7 +7,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree alacritty foot ghostty hyprland kitty wezterm
+theme_tree foot
 readlink_bin="$(command -v readlink)"; sleep_bin="$(command -v sleep)"
 pending="$state/reload-pending.json"; runs="$tmp/hook-runs"
 
@@ -50,7 +50,7 @@ one_line() { [[ "$(wc -l <"$tmp/out")" == 1 ]]; }
 run_line() { printf 'alpha fd9=/dev/null rt=%s pending=%s' "$rt_empty" "$1"; }
 alpha_due='{"schemaVersion":1,"targets":["alpha"]}'
 result() { # ALPHA_STATE ALPHA_REASON PLAIN_STATE: an apply's targets
-  printf '[{"name":"alacritty","state":"skipped","reason":"not-detected"},{"name":"alpha","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"skipped","reason":"not-detected"},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"skipped","reason":"not-detected"},{"name":"plain","state":"%s","reason":null},{"name":"wezterm","state":"skipped","reason":"not-detected"}]' "$1" "$2" "$3"
+  printf '[{"name":"alpha","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"plain","state":"%s","reason":null}]' "$1" "$2" "$3"
 }
 
 # Changed bytes run the hook once, after the pending file names it, with

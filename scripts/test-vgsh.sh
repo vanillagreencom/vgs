@@ -338,8 +338,9 @@ INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$
 # more shipped package. The targets directory beside the shipped packages
 # is no package: the exact package rows below list none for it. $stubs'
 # commands record a run and exit 1: detection never runs one. No
-# application of the host is found.
-theme_tree alacritty foot ghostty hyprland kitty wezterm
+# application of the host is found, and the tree holds foot alone of the
+# shipped targets.
+theme_tree foot
 for stub in foot vgs-probe-app; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"
@@ -384,7 +385,7 @@ tinst "theme list after a hand edit" "$cfg" "$rt_empty" 0 "$any_out" "" theme li
 tail -n 1 "$tmp/out" >"$tmp/list.json"
 check "a hand edit of the theme file reports it modified" json_is "$tmp/list.json" 'd["file"]["state"] == "loaded" and d["file"]["name"] == "dusk" and d["file"]["modified"] is True'
 
-tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[{"name":"alacritty","state":"skipped","reason":"not-detected"},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"skipped","reason":"not-detected"},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"skipped","reason":"not-detected"},{"name":"wezterm","state":"skipped","reason":"not-detected"}],"theme":"nord","reason":null}' "" theme apply --json nord
+tinst "theme apply --json prints the structured result" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"applied","targets":[{"name":"foot","state":"skipped","reason":"not-detected"}],"theme":"nord","reason":null}' "" theme apply --json nord
 check "a package's own terminal.json is rendered as it is" cmp -s "$themes/nord/terminal.json" "$state/theme/terminal.json"
 
 # A stage a crashed apply left behind is removed, never carried into theme/.
@@ -645,11 +646,10 @@ tinst "theme remove deletes the installed package" "$cfg" "$rt_empty" 0 "ok remo
 check "theme remove leaves no package directory" test ! -e "$moss"
 tinst "theme remove refuses a removed package as unknown" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=moss reason=unknown" theme remove moss
 
-# Targets in the apply: the shipped targets, of which foot alone is
-# detected, and fixture targets beside them in the tree copy. `fails` names
-# no token, `off` is listed in disabledTargets and `probe` wires a file it
-# never creates. `dusk` has no
-# terminal.json, so every slot is the shipped vgs slot: color1 is #f43f5e.
+# Targets in the apply: the shipped foot target, detected, and fixture
+# targets beside it in the tree copy. `fails` names no token, `off` is
+# listed in disabledTargets and `probe` wires a file it never creates.
+# `dusk` has no terminal.json, so every slot is the shipped vgs slot: color1 is #f43f5e.
 cfg="$tmp/cfg-targets"; file="$cfg/vgs/theme.json"; live="$state/theme"
 mkdir -p "$cfg/vgs"; cp -R -- "$tmp/cfg-theme/vgs/themes" "$cfg/vgs/themes"
 printf '{ "disabledTargets": ["off"] }\n' >"$cfg/vgs/shell.json"
@@ -659,7 +659,7 @@ target_dir off "$(target_json off hex6 '[]' 'include=@{state}/off.conf' true)" '
 with_stubs="$stubs:$theme_path"
 foot_line="include=$live/foot.ini"
 
-THEME_PATH="$with_stubs" tinst "an apply a target fails in is partial with exit 3" "$cfg" "$rt_empty" 3 '{"state":"partial","shell":"applied","targets":[{"name":"alacritty","state":"skipped","reason":"not-detected"},{"name":"fails","state":"failed","reason":"placeholder"},{"name":"foot","state":"written","reason":null},{"name":"ghostty","state":"skipped","reason":"not-detected"},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"skipped","reason":"not-detected"},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"skipped","reason":"wiring-file-absent"},{"name":"wezterm","state":"skipped","reason":"not-detected"}],"theme":"dusk","reason":null}' 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme apply --json dusk
+THEME_PATH="$with_stubs" tinst "an apply a target fails in is partial with exit 3" "$cfg" "$rt_empty" 3 '{"state":"partial","shell":"applied","targets":[{"name":"fails","state":"failed","reason":"placeholder"},{"name":"foot","state":"written","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"skipped","reason":"wiring-file-absent"}],"theme":"dusk","reason":null}' 'vgsh: refused: target=fails reason=placeholder template=fails.conf placeholder="palette.nope"' theme apply --json dusk
 check "the partial apply's shell took the theme" cmp -s "$cfg/vgs/themes/dusk/theme.json" "$file"
 check "foot's file lands in the state directory with the hex6 encoder" grep -qxF 'urls=222222' "$live/foot.ini"
 check "foot's file takes the shipped slots" grep -qxF 'regular1=f43f5e' "$live/foot.ini"
@@ -673,7 +673,7 @@ mkdir -p "$tmp/dotfiles" "$cfg/probe"
 printf '[general]\nx=1\n' >"$tmp/dotfiles/probe.conf"; chmod 640 "$tmp/dotfiles/probe.conf"
 ln -s -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
 rm -r -- "$tree/themes/targets/fails"
-THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"alacritty","state":"skipped","reason":"not-detected"},{"name":"foot","state":"unchanged","reason":null},{"name":"ghostty","state":"skipped","reason":"not-detected"},{"name":"hyprland","state":"skipped","reason":"not-detected"},{"name":"kitty","state":"skipped","reason":"not-detected"},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"written","reason":null},{"name":"wezterm","state":"skipped","reason":"not-detected"}],"theme":"dusk","reason":null}' "" theme apply --json dusk
+THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"foot","state":"unchanged","reason":null},{"name":"off","state":"skipped","reason":"disabled"},{"name":"probe","state":"written","reason":null}],"theme":"dusk","reason":null}' "" theme apply --json dusk
 check "the probe's file is rendered with the hyprland encoder" test "$(cat "$live/probe.conf")" == "accent=rgba(222222ff) slot1=rgba(f43f5eff)"
 check "the wiring edits a symlinked file through its link" test -L "$cfg/probe/probe.conf"
 check "the include line goes first and the file's own text is kept" test "$(cat "$tmp/dotfiles/probe.conf")" == "source = $live/probe.conf"$'\n[general]\nx=1'
@@ -716,7 +716,7 @@ cp -- "$live/probe.conf" "$tmp/probe-landed"
 printf 'x=@{palette.nope}' >"$tree/themes/targets/probe/probe.conf"
 THEME_PATH="$with_stubs" tinst "a landed target that fails to render is partial" "$cfg" "$rt_empty" 3 "$any_out" "$probe_error" theme apply --json nord
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
-check "the failing target is failed beside a written foot" json_is "$tmp/apply.json" 'd["state"] == "partial" and [(t["name"], t["state"], t["reason"]) for t in d["targets"]] == [("alacritty", "skipped", "not-detected"), ("foot", "written", None), ("ghostty", "skipped", "not-detected"), ("hyprland", "skipped", "not-detected"), ("kitty", "skipped", "not-detected"), ("off", "skipped", "disabled"), ("probe", "failed", "placeholder"), ("wezterm", "skipped", "not-detected")]'
+check "the failing target is failed beside a written foot" json_is "$tmp/apply.json" 'd["state"] == "partial" and [(t["name"], t["state"], t["reason"]) for t in d["targets"]] == [("foot", "written", None), ("off", "skipped", "disabled"), ("probe", "failed", "placeholder")]'
 check "the failing target's landed file is carried into theme/ byte for byte" cmp -s "$tmp/probe-landed" "$live/probe.conf"
 check "the failing target's include line stays" grep -qxF "source = $live/probe.conf" "$cfg/probe/probe.conf"
 # The must-fail control: a judge copy that carries nothing drops the file.

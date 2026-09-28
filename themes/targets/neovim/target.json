@@ -1,0 +1,8 @@
+{
+  "app": "Neovim",
+  "encoder": "hex6",
+  "files": [{ "template": "neovim.lua", "destination": "neovim.lua" }],
+  "detect": ["nvim"],
+  "wiring": { "file": "nvim/lua/plugins/vgs-theme.lua", "line": "do return dofile(\"@{state}/neovim.lua\") end", "create": false },
+  "reload": null
+}

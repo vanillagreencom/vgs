@@ -1,0 +1,8 @@
+{
+  "app": "Emacs",
+  "encoder": "hex6",
+  "files": [{ "template": "emacs.el", "destination": "emacs.el" }],
+  "detect": ["emacs"],
+  "wiring": { "file": "emacs/vgs-theme.el", "line": "(load \"@{state}/emacs.el\" nil t)", "create": true },
+  "reload": { "command": ["emacsclient", "-a", "true", "--eval", "(when (custom-theme-enabled-p 'vgs) (load-theme 'vgs t))"], "timeoutMs": 5000 }
+}
