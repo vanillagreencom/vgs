@@ -42,7 +42,7 @@ Singleton {
     // The settled copy of the exclusive holders moved.
     signal lendingChanged()
     // A scan attempt ended, with a result or with scanError; the first runs
-    // at start. ThemeRunner follows the applied theme package on it.
+    // at start. The guarded shell follows the applied theme package on it.
     signal scanFinished()
 
     function has(id) { return Logic.hasOwn(manifests, id); }

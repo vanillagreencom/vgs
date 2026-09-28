@@ -67,6 +67,15 @@ ShellRoot {
         LayerHost {}
     }
 
+    // Every scan ends with a follow of the applied theme package, which
+    // writes the theme and application files: the guarded instance alone
+    // asks for it. An unguarded one names no Registry here, so a read-only
+    // call is all that starts its scan.
+    Connections {
+        target: root.guarded ? Registry : null
+        function onScanFinished() { Capabilities.themes.follow(); }
+    }
+
     IpcHandler {
         target: "shell"
 

@@ -12,8 +12,9 @@ import "../Commons/ThemeLogic.js" as ThemeLogic
 // dropped and its job still runs. The runner judges no package; every
 // answer but an immediate busy, malformed name or malformed step is what
 // `vgsh` printed.
-// Every scan the Registry ends queues `vgsh theme follow`, which applies
-// the applied package again once it changed; no plugin reaches it.
+// shell.qml queues `vgsh theme follow` at the end of every scan in the
+// guarded instance, which applies the applied package again once it
+// changed; no plugin reaches it.
 Scope {
     id: root
 
@@ -100,11 +101,6 @@ Scope {
         const tail = jobs[jobs.length - 1];
         if (tail !== undefined && tail.verb === "follow" && !tail.started) return;
         enqueue({ verb: "follow", name: null, started: false, waiters: [] });
-    }
-
-    Connections {
-        target: Registry
-        function onScanFinished() { root.follow(); }
     }
 
     // One package's resolved palette from the last list, each colour as the

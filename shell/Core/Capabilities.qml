@@ -20,6 +20,7 @@ Singleton {
     SessionLock { id: sessionLock }
     ThemeRunner { id: themes }
     readonly property alias sessionLock: sessionLock
+    readonly property alias themes: themes
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
     readonly property bool polkitHeld: holderIds("polkit").length > 0
