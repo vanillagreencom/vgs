@@ -256,12 +256,18 @@ chmod 755 -- "$shim/hyprctl.recording"
 reload_runs() { grep -c '^reload ' -- "$hypr_runs" || true; }
 last_reload() { grep '^reload ' -- "$hypr_runs" | tail -n 1; }
 pending_file() { if [[ -e $home/.local/state/vgs/reload-pending.json ]]; then cat -- "$home/.local/state/vgs/reload-pending.json"; else echo absent; fi; }
+# An apply that runs the hook lasts up to the hook's 5000 ms timeout past
+# the judge's own run, beyond expect_poll's 5 s, so each apply here is
+# waited out, for up to 20 s polled every 200 ms, before its result is read.
+theme_idle() { local _; for _ in $(seq 1 100); do [[ $(theme_jobs) == '[]' ]] && { echo idle; return; }; sleep 0.2; done; theme_jobs; }
 verify_hypr_conf() { "${sandbox_env[@]}" Hyprland --verify-config --config "$hypr_conf" 2>&1 | tail -n 1; }
 printf '# The sandbox user'"'"'s own settings.\ngeneral {\n    border_size = 3\n}\n' >"$hypr_conf"
 cp -- "$hypr_conf" "$sandbox/hyprland-own.conf"
 shim_hyprctl recording
 
+expect "no theme job runs before the Hyprland rows" idle theme_idle
 expect "the fixture applies the light package with a hyprland.conf present" ok probe theme-apply light
+expect "the light apply with a hyprland.conf ends" idle theme_idle
 expect_poll "the light apply with a hyprland.conf reaches the fixture" 6 applies
 expect "the light apply with a hyprland.conf wrote the shell's file" "applied applied light None" applied
 expect "the Hyprland target is written" '[["hyprland", "written", null]]' applied_targets hyprland
@@ -279,10 +285,12 @@ expect "the hook is hyprctl reload on the nested instance, which answers ok" "re
 expect "a hook that answered ok leaves nothing pending" absent pending_file
 
 expect "the fixture applies vgs over the light Hyprland file" ok probe theme-apply vgs
+expect "the vgs apply over the light Hyprland file ends" idle theme_idle
 expect_poll "the vgs apply over the light Hyprland file reaches the fixture" 7 applies
 expect "changed Hyprland bytes are written" '[["hyprland", "written", null]]' applied_targets hyprland
 expect "changed Hyprland bytes run the hook again" 2 reload_runs
 expect "the fixture applies vgs again" ok probe theme-apply vgs
+expect "the repeat vgs apply ends" idle theme_idle
 expect_poll "the repeat vgs apply reaches the fixture" 8 applies
 expect "unchanged Hyprland bytes are unchanged" '[["hyprland", "unchanged", null]]' applied_targets hyprland
 expect "unchanged Hyprland bytes run no hook" 2 reload_runs
