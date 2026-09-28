@@ -34,8 +34,10 @@ expect_builtins "every bar registered its built-in workspaces, clock and plugin 
 # `bar.item.paddingX` a side with `size.control.sm` as its floor, and its
 # label's line height plus `space.xs` tall, with the label at its centre;
 # pills stand `bar.item.gap` apart. The manager's icon and text sit on its
-# button's centre. Read from the first bar's items, each within one pixel;
-# the answer is the list of misplaced items, so `[]` is the pass.
+# button's centre. The sandbox keeps workspaces 1, 2 and 100, so three pills
+# stand in a row and the last is wider than the floor. Read from the first
+# bar's items, each within one pixel; the answer is the list of misplaced
+# items, so `[]` is the pass.
 bar_alignment() {
   local key bar_box ws clock manager pad gap floor xs
   key="$(bar_key)" || return
@@ -62,7 +64,8 @@ for name, rows in (("workspaces", ws), ("clock", clock), ("manager", manager)):
     roles = sorted({str(r.get("role")) for r in rows if r["type"] == "Label"})
     if roles != ["bar"]: out.append("%s roles=%s" % (name, roles))
 pills = sorted(((r, children(ws, i, "Label")) for i, r in enumerate(ws) if r["type"] == "QQuickRectangle" and children(ws, i, "Label")), key=lambda p: p[0]["box"][0])
-if not pills: out.append("workspaces pills=0")
+if len(pills) != 3: out.append("workspaces pills=%d want=3" % len(pills))
+if not any(pill["box"][2] > floor + 1 for pill, _ in pills): out.append("workspaces wide=0")
 for n, (pill, (label,)) in enumerate(pills):
     check("pill%d.width" % n, pill["box"][2], max(floor, label["implicit"][0] + 2 * pad))
     check("pill%d.height" % n, pill["box"][3], label["implicit"][1] + xs)

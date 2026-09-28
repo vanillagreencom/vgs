@@ -107,6 +107,10 @@ hl.config({
     misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_autoreload = true },
     animations = { enabled = false },
 })
+-- Empty workspaces the compositor keeps alive, so the bar draws more than
+-- one workspace pill and one whose label is wider than the pill's floor.
+hl.workspace_rule({ workspace = "2", persistent = true })
+hl.workspace_rule({ workspace = "100", persistent = true })
 LUA
 
 # node on PATH may be a version-manager shim that reads the developer's own
