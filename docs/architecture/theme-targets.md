@@ -39,6 +39,8 @@ The Hyprland file defines `$vgs_` colour variables a user's own settings can nam
 - **Signals.** A `pkill -x -u` of the user's processes by exact name that matches none succeeds, so an application that is not running is not left pending. Ghostty reloads on `SIGUSR2` from 1.2.0; an older Ghostty is ended by it.
 - **Touch.** Alacritty watches the directory of each file it imports, which the swap replaces, and WezTerm watches no file its configuration reads with `dofile`. The hook changes only the time of the configuration file each one watches, so it reads its configuration and the theme again; both reload so only with their automatic reload on, the default.
 
+The GTK, Qt, KDE colour scheme and icon theme targets: [theme-toolkits.md](theme-toolkits.md).
+
 ## Templates
 
 `renderTarget` renders every file of an accepted target from the package's resolved token values, the terminal slots and the package's curated files.

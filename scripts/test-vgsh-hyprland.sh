@@ -8,7 +8,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree
+theme_tree hyprland
 runs="$tmp/hyprctl-runs"; pending="$state/reload-pending.json"; live="$state/theme"
 # The stub exits with the status $tmp/hyprctl-exit holds, 0 when absent.
 cat >"$stubs/hyprctl" <<EOF

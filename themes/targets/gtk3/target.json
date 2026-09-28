@@ -1,0 +1,8 @@
+{
+  "app": "gtk3",
+  "encoder": "rgba",
+  "files": [{ "template": "gtk3.css", "destination": "gtk3.css" }],
+  "detect": ["gtk-launch"],
+  "wiring": { "file": "gtk-3.0/gtk.css", "line": "@import url(\"file://@{state}/gtk3.css\");", "create": true },
+  "reload": null
+}

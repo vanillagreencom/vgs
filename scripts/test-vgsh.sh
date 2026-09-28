@@ -339,7 +339,7 @@ INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$
 # is no package: the exact package rows below list none for it. $stubs'
 # commands record a run and exit 1: detection never runs one. No
 # application of the host is found.
-theme_tree
+theme_tree alacritty foot ghostty hyprland kitty wezterm
 for stub in foot vgs-probe-app; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"

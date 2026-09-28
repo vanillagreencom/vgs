@@ -1,0 +1,8 @@
+{
+  "app": "gtk4",
+  "encoder": "rgba",
+  "files": [{ "template": "gtk4.css", "destination": "gtk4.css" }],
+  "detect": ["gtk4-launch"],
+  "wiring": { "file": "gtk-4.0/gtk.css", "line": "@import url(\"file://@{state}/gtk4.css\");", "create": true },
+  "reload": null
+}

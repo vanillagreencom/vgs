@@ -56,16 +56,23 @@ has_prefix() { grep -q "^$1" "$tmp/out"; }
 # The theme commands read the shipped packages and targets beside bin/, so
 # theme rows run a copy of the tree they load, $tree, whose themes/ a row
 # adds packages and targets to; production code has no knob for its themes
-# directory. A target is detected by its commands on PATH, so the rows run
-# under $theme_path, holding only the tools bin/vgsh and its judge call,
-# and a row that wants a target detected adds $stubs to it. XDG_STATE_HOME
-# is unset, so the state directory is the $HOME fallback, $state.
-theme_tree() {
-  tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/config"
-  cp -R -- "$repo/bin" "$repo/themes" "$tree/"
+# directory. The copy holds every shipped package and only the shipped
+# targets the suite names, so a result's target list is the suite's own and
+# a target added elsewhere changes no row. A target is detected by its
+# commands on PATH, so the rows run under $theme_path, holding only the
+# tools bin/vgsh and its judge call, and a row that wants a target detected
+# adds $stubs to it. XDG_STATE_HOME is unset, so the state directory is the
+# $HOME fallback, $state.
+theme_tree() { # SHIPPED_TARGET...
+  tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/config" "$tree/themes/targets"
+  cp -R -- "$repo/bin" "$tree/"
+  local entry target
+  for entry in "$repo"/themes/*; do
+    [[ ${entry##*/} == targets ]] || cp -R -- "$entry" "$tree/themes/"
+  done
+  for target in "$@"; do cp -R -- "$repo/themes/targets/$target" "$tree/themes/targets/"; done
   cp -- "$repo/config/shell.json" "$tree/config/"
   cp -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/"
-  mkdir -p "$tree/themes/targets"
   cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
   cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
   theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"

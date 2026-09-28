@@ -1,0 +1,8 @@
+{
+  "app": "icons",
+  "encoder": "hex6",
+  "files": [{ "template": "icons.theme", "destination": "icons.theme" }],
+  "detect": ["gsettings"],
+  "wiring": null,
+  "reload": {"command": ["sh", "-c", "name=$(cat -- \"$1\") || exit 1; [ -n \"$name\" ] || exit 0; case $name in */*|.*) exit 1;; esac; found=; for d in \"$HOME/.icons\" \"${XDG_DATA_HOME:-$HOME/.local/share}/icons\"; do [ -d \"$d/$name\" ] && found=1; done; IFS=:; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do [ -d \"$d/icons/$name\" ] && found=1; done; [ -n \"$found\" ] || exit 0; [ \"$(gsettings get org.gnome.desktop.interface icon-theme)\" = \"'$name'\" ] && exit 0; exec gsettings set org.gnome.desktop.interface icon-theme \"$name\"", "sh", "@{state}/icons.theme"], "timeoutMs": 5000, "always": true}
+}

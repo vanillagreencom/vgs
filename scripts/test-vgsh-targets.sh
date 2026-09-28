@@ -12,7 +12,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree
+theme_tree alacritty foot ghostty hyprland kitty wezterm
 export THEME_PATH="$stubs:$theme_path"
 cfg="$tmp/cfg-targets"; mkdir -p "$cfg/vgs"; live="$state/theme"
 theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'

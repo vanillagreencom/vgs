@@ -1,0 +1,8 @@
+{
+  "app": "qt5ct",
+  "encoder": "hex6",
+  "files": [{ "template": "qt5ct.conf", "destination": "qt5ct.conf" }],
+  "detect": ["qt5ct"],
+  "wiring": { "base": "config", "dir": "qt5ct/colors", "owned": false, "links": { "vgs.conf": "qt5ct.conf" } },
+  "reload": { "command": ["sh", "-c", "touch -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/qt5ct/qt5ct.conf\""], "timeoutMs": 2000 }
+}

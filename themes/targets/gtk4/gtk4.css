@@ -1,0 +1,72 @@
+/* The vgs theme for GTK 4, imported from gtk-4.0/gtk.css by vgsh theme apply.
+   libadwaita 1.6 and later read the CSS variables in :root; earlier
+   releases read the named colours. */
+@define-color accent_color @{color.accent};
+@define-color accent_bg_color @{color.accent};
+@define-color accent_fg_color @{color.onAccent};
+@define-color destructive_color @{color.danger};
+@define-color destructive_bg_color @{color.danger};
+@define-color destructive_fg_color @{color.onDanger};
+@define-color success_color @{color.success};
+@define-color success_bg_color @{color.success};
+@define-color success_fg_color @{color.onSuccess};
+@define-color warning_color @{color.warning};
+@define-color warning_bg_color @{color.warning};
+@define-color warning_fg_color @{color.onWarning};
+@define-color error_color @{color.danger};
+@define-color error_bg_color @{color.danger};
+@define-color error_fg_color @{color.onDanger};
+@define-color window_bg_color @{color.surface};
+@define-color window_fg_color @{color.text};
+@define-color view_bg_color @{color.background};
+@define-color view_fg_color @{color.text};
+@define-color headerbar_bg_color @{color.surfaceRaised};
+@define-color headerbar_fg_color @{color.text};
+@define-color headerbar_border_color @{color.border};
+@define-color headerbar_backdrop_color @{color.surface};
+@define-color sidebar_bg_color @{color.surfaceRaised};
+@define-color sidebar_fg_color @{color.text};
+@define-color sidebar_backdrop_color @{color.surface};
+@define-color sidebar_border_color @{color.border};
+@define-color card_bg_color @{color.surfaceRaised};
+@define-color card_fg_color @{color.text};
+@define-color dialog_bg_color @{color.surfaceRaised};
+@define-color dialog_fg_color @{color.text};
+@define-color popover_bg_color @{color.surfaceRaised};
+@define-color popover_fg_color @{color.text};
+
+:root {
+  --accent-color: @{color.accent};
+  --accent-bg-color: @{color.accent};
+  --accent-fg-color: @{color.onAccent};
+  --destructive-color: @{color.danger};
+  --destructive-bg-color: @{color.danger};
+  --destructive-fg-color: @{color.onDanger};
+  --success-color: @{color.success};
+  --success-bg-color: @{color.success};
+  --success-fg-color: @{color.onSuccess};
+  --warning-color: @{color.warning};
+  --warning-bg-color: @{color.warning};
+  --warning-fg-color: @{color.onWarning};
+  --error-color: @{color.danger};
+  --error-bg-color: @{color.danger};
+  --error-fg-color: @{color.onDanger};
+  --window-bg-color: @{color.surface};
+  --window-fg-color: @{color.text};
+  --view-bg-color: @{color.background};
+  --view-fg-color: @{color.text};
+  --headerbar-bg-color: @{color.surfaceRaised};
+  --headerbar-fg-color: @{color.text};
+  --headerbar-border-color: @{color.border};
+  --headerbar-backdrop-color: @{color.surface};
+  --sidebar-bg-color: @{color.surfaceRaised};
+  --sidebar-fg-color: @{color.text};
+  --sidebar-backdrop-color: @{color.surface};
+  --sidebar-border-color: @{color.border};
+  --card-bg-color: @{color.surfaceRaised};
+  --card-fg-color: @{color.text};
+  --dialog-bg-color: @{color.surfaceRaised};
+  --dialog-fg-color: @{color.text};
+  --popover-bg-color: @{color.surfaceRaised};
+  --popover-fg-color: @{color.text};
+}

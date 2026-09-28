@@ -1,0 +1,8 @@
+{
+  "app": "qt6ct",
+  "encoder": "hex6",
+  "files": [{ "template": "qt6ct.conf", "destination": "qt6ct.conf" }],
+  "detect": ["qt6ct"],
+  "wiring": { "base": "config", "dir": "qt6ct/colors", "owned": false, "links": { "vgs.conf": "qt6ct.conf" } },
+  "reload": { "command": ["sh", "-c", "touch -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/qt6ct/qt6ct.conf\""], "timeoutMs": 2000 }
+}

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
-theme_tree
+theme_tree alacritty foot ghostty hyprland kitty wezterm
 readlink_bin="$(command -v readlink)"; sleep_bin="$(command -v sleep)"
 pending="$state/reload-pending.json"; runs="$tmp/hook-runs"
 
