@@ -301,6 +301,13 @@ expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' the
 rm -r -- "$fixture_targets/smoke-fails"
 click_row smoke || fail "the second click on the smoke row failed"
 expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
+# A hand edit that keeps the package's name marks its row Modified while
+# the panel stays open, and a click on the row applies the package again
+# and clears the badge.
+write_theme '{ "schemaVersion": 1, "name": "smoke", "tokens": { "palette": { "accent": "#12ab36" } } }'
+expect_poll "a hand edit of the displayed package marks its row modified" '[["smoke", "installed", "Displayed", "Modified"]]' theme_row smoke
+click_row smoke || fail "the click reapplying the modified smoke row failed"
+expect_poll "reapplying the modified package clears its badge" '[["smoke", "installed", "Displayed"]]' theme_row smoke
 
 # The gate holds every theme command, polling every 50 ms for at most
 # 10 s, so the panel closes while its apply runs.
