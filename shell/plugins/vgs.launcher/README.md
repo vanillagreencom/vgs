@@ -53,7 +53,7 @@ Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped
 
 ## Look
 
-`Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D022](../../../docs/decisions/D022-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.
+`Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D023](../../../docs/decisions/D023-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.
 
 Hyprland blurs what is behind the glass only when a layer rule asks it to, for the host's namespace `vgs:overlay`:
 

@@ -61,7 +61,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D017](../decisions/D017-templates-and-path-icons.md): controls extend `QtQuick.Templates`; icons are Lucide path data drawn with `QtQuick.Shapes`.
 - [D019](../decisions/D019-theme-packages-carry-plugin-trust.md): theme packages are directories with plugin trust; terminal slots are package files.
 - [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md): a theme apply stages every write beside its destination and writes the shell document last.
-- [D022](../decisions/D022-plugin-owned-appearance.md): a plugin may own its look, taking the theme's mode, accent and motion scale alone.
+- [D023](../decisions/D023-plugin-owned-appearance.md): a plugin may own its look, taking the theme's mode, accent and motion scale alone.
 
 ## Topics
 

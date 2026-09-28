@@ -2,7 +2,7 @@
 
 Covers: scripts/qml-tests/tst_appearance.qml, scripts/smoke/rows/launcher.sh
 
-Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D022](../decisions/D022-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher` is the first such plugin.
+Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D023](../decisions/D023-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher` is the first such plugin.
 
 ## The contract
 

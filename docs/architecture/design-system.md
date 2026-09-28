@@ -93,4 +93,4 @@ Every one-line control is `size.control.md` tall, with `control.paddingX` a side
 - Two bundled variable fonts, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
-- A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D022](../decisions/D022-plugin-owned-appearance.md).
+- A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).

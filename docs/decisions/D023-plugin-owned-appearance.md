@@ -1,4 +1,4 @@
-# D022: A plugin may own its look, taking the theme's mode, accent and motion scale alone
+# D023: A plugin may own its look, taking the theme's mode, accent and motion scale alone
 
 [← Decision Index](INDEX.md)
 
