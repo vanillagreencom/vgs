@@ -3,7 +3,9 @@
 # Theme itself and from the core's lending record. rows/theme.sh leaves a
 # hand-written document active, so the first apply is the vgs package.
 # `done` can run before ThemeSource reloads the file, so `current` and
-# `revision` are polled after it.
+# `revision` are polled after it. The last block applies the shipped light
+# package and reads one colour of each gallery section back as a property,
+# then applies vgs so later rows start from the defaults.
 set -euo pipefail
 installed="$home/.config/vgs/themes"
 # What the fixture's last apply callback received: state, shell, theme and
@@ -56,7 +58,7 @@ printf '%s\n' '{ "schemaVersion": 1, "name": "smoke", "tokens": { "palette": { "
 printf '%s\n' '{ "schemaVersion": 1, "name": "other", "tokens": {} }' >"$installed/mismatch/theme.json"
 expect "the fixture asks for the list" ok probe theme-list
 expect_poll "the list reaches the fixture" 1 lists
-expect "the list names every package with its source and state" '[["mismatch", "installed", "refused", "name-mismatch"], ["smoke", "installed", "ok", null], ["vgs", "shipped", "ok", null]]' listed packages
+expect "the list names every package with its source and state" '[["light", "shipped", "ok", null], ["mismatch", "installed", "refused", "name-mismatch"], ["smoke", "installed", "ok", null], ["vgs", "shipped", "ok", null]]' listed packages
 expect "the list marks the vgs package current" '["vgs"]' listed current
 expect "the list reads the file loaded and unmodified" "loaded vgs False" listed file
 expect "modified follows the last list" false theme_member modified
@@ -140,4 +142,65 @@ mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 expect "the fixture applies vgs with the real runner again" ok probe theme-apply vgs
 expect_poll "the last apply's result reaches the fixture" 3 applies
 expect "the vgs package is applied again" "unchanged unchanged vgs None" applied
+
+# The shipped light package restyles every section of the gallery, not the
+# bar alone. Each section's example is read back as a property, never a
+# drawn frame, and compared with the token the shell's own judge resolves
+# from the package file under node, which must differ from the vgs
+# default, so a read that always matches fails. vgs is applied after it,
+# so later rows start from the defaults.
+# One example per section of the gallery: SECTION TYPE PROPERTY TOKEN.
+gallery_colours=(
+  "Surfaces Surface color surface.level.base.background"
+  "Typography Label color text.display.color"
+  "Buttons Button fill button.variant.primary.background"
+  "Choices Switch indicator.color toggle.off"
+  "Inputs TextField background.color textField.background"
+  "Feedback Badge color badge.tone.neutral.background"
+  "Lists Divider color divider.color"
+)
+# The colour ThemeLogic.accept resolves for TOKEN from shipped package
+# NAME, as `#rrggbbaa`.
+resolved_token() {
+  node -e '
+const fs = require("fs"), path = require("path");
+const [repo, name, token] = process.argv.slice(1);
+const { load } = require(path.join(repo, "scripts", "qml-library.js"));
+const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
+const { TOKENS } = load(path.join(repo, "shell", "Commons", "Tokens.js"));
+const result = logic.accept(TOKENS, fs.readFileSync(path.join(repo, "themes", name, "theme.json"), "utf8"));
+if (!result.ok) { process.stderr.write("resolved_token: " + logic.refusalLine(result) + "\n"); process.exit(1); }
+let value = result.values;
+for (const key of token.split(".")) value = value === undefined ? undefined : value[key];
+if (typeof value !== "string") { process.stderr.write("resolved_token: absent token=" + token + "\n"); process.exit(1); }
+console.log(value);' "$repo" "$1" "$2"
+}
+gallery_colour() { ipc smoke galleryColour panel vgs.gallery "$@"; }
+
+revision_before="$(theme_member revision)"
+expect "the fixture applies the light package" ok probe theme-apply light
+expect_poll "the light apply's result reaches the fixture" 4 applies
+expect "the light apply wrote the shell's file" "applied applied light None" applied
+expect_poll "current follows the light apply" '"light"' theme_member current
+expect_poll "revision rose after the light apply" rose revision_rose
+expect "the gallery summons under the light package" ok ipc shell summon panel vgs.gallery '{}'
+expect_poll "the light gallery maps one panel surface" 1 layer_count vgs:panel
+for row in "${gallery_colours[@]}"; do
+  read -r section type property token <<<"$row"
+  if ! light="$(resolved_token light "$token")" || ! default="$(resolved_token vgs "$token")"; then
+    fail "the judge resolves $token for the light and vgs packages"
+    continue
+  fi
+  if [[ $light == "$default" ]]; then fail "the light package's $token differs from vgs: both $light"; else ok "the light package's $token differs from vgs"; fi
+  expect_poll "the gallery's $section example draws the light package's $token" "$light" gallery_colour "$section" "$type" "$property"
+done
+expect "hiding the light gallery is allowed" ok ipc shell hide panel vgs.gallery
+expect_poll "the light gallery's surface is gone" 0 layer_count vgs:panel
+
+revision_before="$(theme_member revision)"
+expect "the fixture applies vgs after the light package" ok probe theme-apply vgs
+expect_poll "the vgs apply after the light package reaches the fixture" 5 applies
+expect "the vgs apply after the light package wrote the shell's file" "applied applied vgs None" applied
+expect_poll "current follows the vgs apply after the light package" '"vgs"' theme_member current
+expect_poll "revision rose after the vgs apply after the light package" rose revision_rose
 expect "disabling the fixture after the theme rows is allowed" ok ipc shell setPluginEnabled acme.probe false

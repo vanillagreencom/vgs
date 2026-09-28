@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Core
 import qs.Commons
 import "Commons/Tokens.js" as Tokens
+import "Commons/ThemeLogic.js" as ThemeLogic
 
 // Loaded only into the sandbox copy. It observes the shipped objects and
 // owns test setup, so tests add no callable methods to the shipped shell.
@@ -185,6 +186,30 @@ Scope {
             if (item === null || item.examples === undefined) return "absent";
             const drawn = root.descendants(item.examples).filter(child => /^SectionHeader_QMLTYPE_/.test(String(child)) && child.width > 0 && child.height > 0);
             return String(drawn.length);
+        }
+        // A colour one gallery example draws with, read as a property: the
+        // first item named `type` in the section under the SectionHeader
+        // reading `section`, through `property`, a dotted path. Written as
+        // ThemeLogic writes a resolved colour, `#rrggbbaa`, so a row compares
+        // it with the package's token without reading a frame.
+        function galleryColour(hostKey: string, id: string, section: string, type: string, property: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.examples === undefined) return "absent";
+            const typeOf = child => String(child).split("_QMLTYPE_")[0];
+            const header = root.descendants(item.examples).find(child => typeOf(child) === "SectionHeader" && child.text === section);
+            if (header === undefined) return "no-section";
+            const siblings = header.parent.children;
+            let at = 0;
+            while (siblings[at] !== header) at++;
+            for (at++; at < siblings.length && typeOf(siblings[at]) !== "SectionHeader"; at++) {
+                const example = root.descendants(siblings[at]).find(child => typeOf(child) === type);
+                if (example === undefined) continue;
+                let value = example;
+                for (const key of property.split(".")) value = value === null || value === undefined ? undefined : value[key];
+                if (value === null || value === undefined || typeof value.a !== "number") return "not-colour";
+                return ThemeLogic.formatColor(value);
+            }
+            return "no-example";
         }
         function themeWrite(path: string, value: string): string { return root.themeWrite(path, value); }
         function themeName(): string { return Theme.name; }

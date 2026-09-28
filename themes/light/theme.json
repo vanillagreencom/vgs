@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "light",
+  "tokens": {
+    "palette": {
+      "background": "#fafaf9",
+      "foreground": "#18181b",
+      "accent": "#a8330a",
+      "success": "#3f6212",
+      "warning": "#854d0e",
+      "danger": "#9f1239",
+      "info": "#1e40af"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.36)"
+    }
+  }
+}
