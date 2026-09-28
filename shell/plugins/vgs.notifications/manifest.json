@@ -20,5 +20,13 @@
     "shortcut"
   ],
   "settings": {},
-  "appearance": "Appearance.js"
+  "appearance": "Appearance.js",
+  "hyprland": {
+    "binds": [
+      { "shortcut": "inbox", "key": "SUPER+N" }
+    ],
+    "layerRules": [
+      { "namespace": "^vgs:layer$", "blur": true, "ignoreAlpha": 0.6 }
+    ]
+  }
 }

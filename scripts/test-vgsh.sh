@@ -707,7 +707,7 @@ tinst "theme remove refuses a removed package as unknown" "$cfg" "$rt_empty" 1 "
 cfg="$tmp/cfg-targets"; file="$cfg/vgs/theme.json"; live="$state/theme"
 mkdir -p "$cfg/vgs"; cp -R -- "$tmp/cfg-theme/vgs/themes" "$cfg/vgs/themes"
 printf '{ "disabledTargets": ["off"] }\n' >"$cfg/vgs/shell.json"
-target_dir probe "$(target_json probe hyprland '["vgs-probe-app"]' 'source = @{state}/probe.conf' false)" $'accent=@{palette.accent} slot1=@{terminal.color1}\n'
+target_dir probe "$(target_json probe hex8 '["vgs-probe-app"]' 'source = @{state}/probe.conf' false)" $'accent=@{palette.accent} slot1=@{terminal.color1}\n'
 target_dir fails "$(target_json fails hex6 '[]' 'include=@{state}/fails.conf' true)" 'x=@{palette.nope}'
 target_dir off "$(target_json off hex6 '[]' 'include=@{state}/off.conf' true)" 'x=@{palette.accent}'
 with_stubs="$stubs:$theme_path"
@@ -728,7 +728,7 @@ printf '[general]\nx=1\n' >"$tmp/dotfiles/probe.conf"; chmod 640 "$tmp/dotfiles/
 ln -s -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
 rm -r -- "$tree/themes/targets/fails"
 THEME_PATH="$with_stubs" tinst "a wired probe lands and unchanged foot bytes stay unchanged" "$cfg" "$rt_empty" 0 '{"state":"applied","shell":"unchanged","targets":[{"name":"foot","state":"unchanged","reason":null,"dropped":[]},{"name":"off","state":"skipped","reason":"disabled","dropped":[]},{"name":"probe","state":"written","reason":null,"dropped":[]}],"theme":"dusk","reason":null}' "" theme apply --json dusk
-check "the probe's file is rendered with the hyprland encoder" test "$(cat "$live/probe.conf")" == "accent=rgba(222222ff) slot1=rgba(f43f5eff)"
+check "the probe's file is rendered with the hex8 encoder" test "$(cat "$live/probe.conf")" == "accent=222222ff slot1=f43f5eff"
 check "the wiring edits a symlinked file through its link" test -L "$cfg/probe/probe.conf"
 check "the include line goes first and the file's own text is kept" test "$(cat "$tmp/dotfiles/probe.conf")" == "source = $live/probe.conf"$'\n[general]\nx=1'
 check "the edited file keeps its mode" test "$(stat -c %a "$tmp/dotfiles/probe.conf")" == 640
@@ -748,10 +748,11 @@ tinst "a user file the config judge refuses refuses the apply" "$cfg" "$rt_empty
 inst "plugin add refuses the same malformed user file" "$cfg" "$rt_empty" 1 "" "vgsh: refused: user-config=malformed path=$cfg/vgs/shell.json error=disabledTargets must be a list" plugin add "$tmp/src/probe.git"
 printf '{ "disabledTargets": ["off"] }\n' >"$cfg/vgs/shell.json"
 
-# Must-fail controls, each on a judge copy: one that replaces the symlink
-# instead of the file it names, and one that wires written targets only.
+# Must-fail controls: a copy of the shared file helper, bin/lib/judge-files.js,
+# that replaces the symlink instead of the file it names, and a judge copy
+# that wires written targets only.
 ln -sfn -- "$tmp/dotfiles/probe.conf" "$cfg/probe/probe.conf"
-judge_control symlink 'real = fs.realpathSync(file);' 'real = file;'
+tree_control symlink bin/lib/judge-files.js 'real = fs.realpathSync(file);' 'real = file;'
 printf 'x=1\n' >"$tmp/dotfiles/probe.conf"
 THEME_PATH="$with_stubs" tinst "the symlink-replacing mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
 check "the symlink-replacing mutant breaks the link" test ! -L "$cfg/probe/probe.conf"

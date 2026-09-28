@@ -84,6 +84,7 @@ run() { # LABEL CMD...
 # Command paths are also inputs.
 rows=(
   "logic|plugin logic table|node scripts/test-plugin-logic.js|shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "logic|Hyprland layer logic|node scripts/test-hyprland-layer.js|shell/Core/PluginLogic.js shell/Core/HyprlandLayer.js scripts/qml-library.js"
   "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js scripts/qml-library.js"
   "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js scripts/qml-library.js"
   "logic|library loader controls|node scripts/test-qml-library.js|scripts/qml-library.js"
@@ -103,7 +104,7 @@ rows=(
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|theme target controls|scripts/test-vgsh-targets.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|theme entry wiring controls|scripts/test-vgsh-entries.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
-  "cli|Hyprland target controls|scripts/test-vgsh-hyprland.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "cli|Hyprland layer wiring controls|scripts/test-vgsh-hypr.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|toolkit target controls|scripts/test-vgsh-toolkits.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|editor target controls|scripts/test-vgsh-editors.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|editor entry target controls|scripts/test-vgsh-editor-entries.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"

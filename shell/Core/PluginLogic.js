@@ -46,7 +46,27 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland"];
+
+// A name a plugin registers a shortcut, an IPC target or a built-in widget
+// under, and the name a manifest's Hyprland bind gives its shortcut.
+// Capabilities.checkName refuses any other.
+var NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+// What a manifest's `hyprland` key may hold: binds of the plugin's own
+// shortcuts and blur rules for the core's layer namespaces. Data only; the
+// core renders it (HyprlandLayer.js), so no plugin text reaches the
+// compositor's Lua.
+var HYPRLAND_KEYS = ["binds", "layerRules"];
+var HYPRLAND_BIND_KEYS = ["shortcut", "key"];
+var HYPRLAND_RULE_KEYS = ["namespace", "blur", "ignoreAlpha"];
+// The modifiers a Hyprland key may hold, in the order a normalised key
+// writes them, and the key name after them: a keysym name, which Hyprland
+// looks up without regard to case.
+var HYPRLAND_MODIFIERS = ["SUPER", "CTRL", "ALT", "SHIFT"];
+var HYPRLAND_KEY_NAME = /^[A-Za-z0-9_]+$/;
+// A layer rule matches one core host's namespace, anchored: `^vgs:<name>$`.
+var HYPRLAND_NAMESPACE = /^\^vgs:[a-z][a-z0-9-]*\$$/;
 
 function hasOwn(obj, key) {
     return obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
@@ -72,7 +92,8 @@ var CONFIG_VERSION = 1;
 
 // The first defect of a configuration file (shipped or user), or "". The
 // file is an object; `version`, when present, is CONFIG_VERSION; `plugins`
-// is a list of objects each with a string `id`; `disabledPlugins` and
+// is a list of objects each with a string `id`, and a row's `keys`, when
+// present, passes keysError; `disabledPlugins` and
 // `disabledTargets` are lists of strings; `bar` is an object whose `id` is
 // a string and whose `layout` holds, per section in SECTIONS, a list of
 // objects each with a string `id`.
@@ -96,6 +117,12 @@ function configError(config) {
     var bad;
     if (config.plugins !== undefined && (bad = rows(config.plugins, "plugins")) !== "")
         return bad;
+    if (config.plugins !== undefined) {
+        for (var p = 0; p < config.plugins.length; p++) {
+            if (config.plugins[p].keys !== undefined && (bad = keysError(config.plugins[p].keys, "plugins." + p + ".keys")) !== "")
+                return bad;
+        }
+    }
     var names = function (list, at) {
         if (!Array.isArray(list))
             return at + " must be a list";
@@ -182,11 +209,135 @@ function schemaError(schema, settings) {
     return "";
 }
 
+// A Hyprland key written `MOD+MOD+KEY`, such as `SUPER+SPACE`, normalised:
+// { ok: true, key } with every part upper case, the modifiers in
+// HYPRLAND_MODIFIERS order, each once, and the key name last, joined by
+// `+`; or { ok: false, error }. A manifest's bind and a shell.json `keys`
+// entry both pass through here, so two spellings of one key compare equal.
+function hyprlandKey(text) {
+    if (typeof text !== "string")
+        return { ok: false, error: "must be a string such as SUPER+SPACE" };
+    var parts = text.split("+").map(function (part) { return part.trim().toUpperCase(); });
+    if (parts.some(function (part) { return part.length === 0; }))
+        return { ok: false, error: "has an empty part: " + JSON.stringify(text) };
+    var name = parts[parts.length - 1];
+    if (HYPRLAND_MODIFIERS.indexOf(name) !== -1)
+        return { ok: false, error: "ends in the modifier " + name + " and names no key" };
+    if (!HYPRLAND_KEY_NAME.test(name))
+        return { ok: false, error: "names no key: " + JSON.stringify(name) };
+    var mods = parts.slice(0, -1);
+    for (var i = 0; i < mods.length; i++) {
+        if (HYPRLAND_MODIFIERS.indexOf(mods[i]) === -1)
+            return { ok: false, error: "has the unknown modifier " + JSON.stringify(mods[i]) + ", want one of " + HYPRLAND_MODIFIERS.join(", ") };
+        if (mods.indexOf(mods[i]) !== i)
+            return { ok: false, error: "repeats the modifier " + mods[i] };
+    }
+    var ordered = HYPRLAND_MODIFIERS.filter(function (mod) { return mods.indexOf(mod) !== -1; });
+    return { ok: true, key: ordered.concat([name]).join("+") };
+}
+
+// The first defect of a plugins row's `keys`, or "": an object whose names
+// are shortcut names and whose values are keys hyprlandKey accepts, or null
+// for a shortcut the user unbinds. A name the plugin binds nothing under is
+// no defect here; the Hyprland layer reports it (hyprlandSection).
+function keysError(keys, at) {
+    if (!isPlainObject(keys))
+        return at + " must be an object";
+    var names = Object.keys(keys);
+    for (var i = 0; i < names.length; i++) {
+        if (!NAME_PATTERN.test(names[i]))
+            return at + "." + names[i] + " is not a shortcut name";
+        if (keys[names[i]] === null)
+            continue;
+        var key = hyprlandKey(keys[names[i]]);
+        if (!key.ok)
+            return at + "." + names[i] + " " + key.error;
+    }
+    return "";
+}
+
+// The first defect of a manifest's `hyprland` key, or "". It holds `binds`,
+// a list of { shortcut, key }, and `layerRules`, a list of { namespace,
+// blur, ignoreAlpha }, at least one of them non-empty. A bind's shortcut is
+// a name the plugin registers through its `shortcut` capability, which the
+// manifest must name, so a plugin binds only its own shortcuts. A rule
+// matches `^vgs:<name>$` and sets blur, ignoreAlpha from 0 to 1, or both.
+// Neither a shortcut, a key nor a namespace appears twice.
+function hyprlandError(hyprland, capabilities) {
+    if (!isPlainObject(hyprland))
+        return "hyprland must be an object";
+    var keys = Object.keys(hyprland);
+    for (var u = 0; u < keys.length; u++) {
+        if (HYPRLAND_KEYS.indexOf(keys[u]) === -1)
+            return "hyprland has unknown key " + JSON.stringify(keys[u]);
+    }
+    var binds = hyprland.binds === undefined ? [] : hyprland.binds;
+    var rules = hyprland.layerRules === undefined ? [] : hyprland.layerRules;
+    if (!Array.isArray(binds))
+        return "hyprland.binds must be a list";
+    if (!Array.isArray(rules))
+        return "hyprland.layerRules must be a list";
+    if (binds.length === 0 && rules.length === 0)
+        return "hyprland declares no binds and no layer rules";
+    if (binds.length > 0 && capabilities.indexOf("shortcut") === -1)
+        return "hyprland.binds needs capability shortcut";
+    var shortcuts = [];
+    var boundKeys = [];
+    for (var b = 0; b < binds.length; b++) {
+        var bind = binds[b];
+        var at = "hyprland.binds." + b;
+        if (!isPlainObject(bind))
+            return at + " must be an object";
+        var bindKeys = Object.keys(bind);
+        for (var k = 0; k < bindKeys.length; k++) {
+            if (HYPRLAND_BIND_KEYS.indexOf(bindKeys[k]) === -1)
+                return at + " has unknown key " + JSON.stringify(bindKeys[k]);
+        }
+        if (typeof bind.shortcut !== "string" || !NAME_PATTERN.test(bind.shortcut))
+            return at + ".shortcut must be a shortcut name, got " + JSON.stringify(bind.shortcut);
+        if (shortcuts.indexOf(bind.shortcut) !== -1)
+            return at + ".shortcut " + bind.shortcut + " is bound twice";
+        shortcuts.push(bind.shortcut);
+        var key = hyprlandKey(bind.key);
+        if (!key.ok)
+            return at + ".key " + key.error;
+        if (boundKeys.indexOf(key.key) !== -1)
+            return at + ".key " + key.key + " is bound twice";
+        boundKeys.push(key.key);
+    }
+    var namespaces = [];
+    for (var r = 0; r < rules.length; r++) {
+        var rule = rules[r];
+        var where = "hyprland.layerRules." + r;
+        if (!isPlainObject(rule))
+            return where + " must be an object";
+        var ruleKeys = Object.keys(rule);
+        for (var q = 0; q < ruleKeys.length; q++) {
+            if (HYPRLAND_RULE_KEYS.indexOf(ruleKeys[q]) === -1)
+                return where + " has unknown key " + JSON.stringify(ruleKeys[q]);
+        }
+        if (typeof rule.namespace !== "string" || !HYPRLAND_NAMESPACE.test(rule.namespace))
+            return where + ".namespace must be ^vgs:<name>$, got " + JSON.stringify(rule.namespace);
+        if (namespaces.indexOf(rule.namespace) !== -1)
+            return where + ".namespace " + rule.namespace + " has a rule already";
+        namespaces.push(rule.namespace);
+        if (rule.blur === undefined && rule.ignoreAlpha === undefined)
+            return where + " sets neither blur nor ignoreAlpha";
+        if (rule.blur !== undefined && typeof rule.blur !== "boolean")
+            return where + ".blur must be a boolean";
+        if (rule.ignoreAlpha !== undefined && (typeof rule.ignoreAlpha !== "number" || !isFinite(rule.ignoreAlpha) || rule.ignoreAlpha < 0 || rule.ignoreAlpha > 1))
+            return where + ".ignoreAlpha must be a number from 0 to 1";
+    }
+    return "";
+}
+
 // Validate one manifest object. Returns { ok: true, manifest } with the
 // normalized manifest, or { ok: false, error } naming the first defect.
 // `sourceDir` is recorded on the manifest so entry points resolve later.
 // A normalized manifest always carries `capabilities` (array), `settings`
-// and `schema` (objects), and `defaultSection` only when declared.
+// and `schema` (objects), `defaultSection` only when declared, and
+// `hyprland` only when declared, as { binds, layerRules } with every bind's
+// key normalised by hyprlandKey.
 function validateManifest(raw, sourceDir) {
     if (!isPlainObject(raw))
         return { ok: false, error: "manifest is not a JSON object" };
@@ -250,6 +401,8 @@ function validateManifest(raw, sourceDir) {
         return { ok: false, error: "settings must be an object" };
     if (hasOwn(settings, "id"))
         return { ok: false, error: "settings must not carry an id key" };
+    if (hasOwn(settings, "keys"))
+        return { ok: false, error: "settings must not carry a keys key: a plugins row's keys are its Hyprland keys" };
     if (hasOwn(settings, "placement") && PLACEMENTS.indexOf(settings.placement) === -1)
         return { ok: false, error: "settings.placement must be one of " + PLACEMENTS.join(", ") + ", got " + JSON.stringify(settings.placement) };
     var schema = raw.schema === undefined ? {} : raw.schema;
@@ -264,10 +417,21 @@ function validateManifest(raw, sourceDir) {
         if (SECTIONS.indexOf(raw.defaultSection) === -1)
             return { ok: false, error: "defaultSection must be one of " + SECTIONS.join(", ") + ", got " + JSON.stringify(raw.defaultSection) };
     }
+    if (raw.hyprland !== undefined) {
+        var badHyprland = hyprlandError(raw.hyprland, capabilities);
+        if (badHyprland !== "")
+            return { ok: false, error: badHyprland };
+    }
     var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
+    if (raw.hyprland !== undefined) {
+        manifest.hyprland = {
+            binds: (raw.hyprland.binds || []).map(function (bind) { return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key }; }),
+            layerRules: clone(raw.hyprland.layerRules || [])
+        };
+    }
     manifest.__sourceDir = sourceDir;
     return { ok: true, manifest: manifest };
 }
@@ -357,8 +521,9 @@ function settingTargetOf(kind) {
 // "layout" the entry is `layoutEntry`, the widget's own layout entry the
 // caller passes; for "plugins" it is the plugins[] row with the plugin's
 // id, and `layoutEntry` is not read. A caller holding an instance's kind
-// passes settingTargetOf(kind). Keys the entry sets win. The result is a
-// fresh object with no `id` key.
+// passes settingTargetOf(kind). Keys the entry sets win, but for the keys
+// ENTRY_RESERVED_KEYS names, which are no setting. The result is a fresh
+// object with neither.
 function settingsFor(config, manifest, target, layoutEntry) {
     var out = {};
     Object.keys(manifest.settings).forEach(function (k) { out[k] = manifest.settings[k]; });
@@ -367,8 +532,43 @@ function settingsFor(config, manifest, target, layoutEntry) {
     else if (target === "plugins") entry = pluginRow(config, manifest.id);
     else throw new Error("settingsFor: target " + JSON.stringify(target) + " is not one of " + SETTING_TARGETS.join(", "));
     if (isPlainObject(entry))
-        Object.keys(entry).forEach(function (k) { if (k !== "id") out[k] = entry[k]; });
+        Object.keys(entry).forEach(function (k) { if (ENTRY_RESERVED_KEYS.indexOf(k) === -1) out[k] = entry[k]; });
     return clone(out);
+}
+
+// Keys of a configuration entry that are no setting: the plugin's `id`, and
+// a plugins row's Hyprland `keys`, which only the Hyprland layer reads.
+// validateManifest refuses a default setting under either name.
+var ENTRY_RESERVED_KEYS = ["id", "keys"];
+
+// What plugin MANIFEST asks of Hyprland under CONFIG: { id, version, binds,
+// layerRules, unknownKeys }. `binds` follows the manifest's `hyprland.binds`
+// in order, each { shortcut, key }: the key its plugins row's `keys` gives
+// that shortcut, normalised, null when the row gives it null (the user
+// unbinds it), else the manifest's. `unknownKeys` lists, sorted, each name
+// the row's `keys` gives that no bind declares. A manifest without
+// `hyprland` asks nothing: empty lists, and its row's names all unknown.
+// CONFIG passed configError, so every key it gives is well formed.
+function hyprlandSection(config, manifest) {
+    var row = pluginRow(config, manifest.id);
+    var keys = row !== undefined && isPlainObject(row.keys) ? row.keys : {};
+    var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [] } : manifest.hyprland;
+    var binds = declared.binds.map(function (bind) {
+        if (!hasOwn(keys, bind.shortcut)) return { shortcut: bind.shortcut, key: bind.key };
+        if (keys[bind.shortcut] === null) return { shortcut: bind.shortcut, key: null };
+        var key = hyprlandKey(keys[bind.shortcut]);
+        if (!key.ok)
+            throw new Error("hyprlandSection: plugins row " + manifest.id + " passed configError with keys." + bind.shortcut + " " + key.error);
+        return { shortcut: bind.shortcut, key: key.key };
+    });
+    var names = declared.binds.map(function (bind) { return bind.shortcut; });
+    return {
+        id: manifest.id,
+        version: manifest.version,
+        binds: binds,
+        layerRules: clone(declared.layerRules),
+        unknownKeys: Object.keys(keys).filter(function (name) { return names.indexOf(name) === -1; }).sort()
+    };
 }
 
 // The settings the plugin manager shows for a plugin: the ones its placed

@@ -222,7 +222,9 @@ Singleton {
         };
     })
 
-    function listJson() {
+    // `extra` is { dir, error } rows another core part reports beside the
+    // manifest errors: the Hyprland layer's problems.
+    function listJson(extra) {
         const rows = Object.keys(manifests).sort().map(id => ({
             id: id,
             version: manifests[id].version,
@@ -233,7 +235,7 @@ Singleton {
         }));
         // Before the first scan no id is known, so none is reported unknown.
         const unknown = scanned ? Logic.unknownIds(Config.effective, manifests) : [];
-        return JSON.stringify({ plugins: rows, errors: errors, collisions: collisions, unknown: unknown, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
+        return JSON.stringify({ plugins: rows, errors: errors.concat(extra), collisions: collisions, unknown: unknown, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
     }
 
     Component.onCompleted: rescan()

@@ -26,6 +26,9 @@
 #   vgsh theme remove <name>       delete an installed theme package's directory
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
+#   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
+#   vgsh hypr unwire               remove that line from hyprland.lua
+#   vgsh hypr render               have the running shell write the Hyprland layer again and reload Hyprland
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
@@ -101,6 +104,15 @@
 # target is skipped with reason=setup-absent, and its hook runs `sudo -n`.
 # docs/architecture/theme-browsers.md § Chromium.
 #
+# The shell writes the Hyprland layer, one Lua file, to
+# ${XDG_STATE_HOME:-~/.local/state}/vgs/hypr/vgs.lua. `hypr wire` keeps the
+# line `pcall(dofile, "<that file>")` first in
+# ${XDG_CONFIG_HOME:-~/.config}/hypr/hyprland.lua and `hypr unwire` removes
+# it; neither creates hyprland.lua, edits another line or needs a running
+# shell, and each prints `ok hypr=wired|unwired|unchanged path=<file>`.
+# `hypr render` asks the running shell to write the layer and run
+# `hyprctl reload` now. docs/architecture/hyprland.md.
+#
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
 # apply, follow or reload is partial (a target failed or its reload stays pending;
@@ -161,6 +173,7 @@ ipc() {
 user_plugins="$config_home/vgs/plugins"
 judge="$root/bin/vgsh-plugin-judge"
 theme_judge="$root/bin/vgsh-theme-judge"
+hypr_judge="$root/bin/vgsh-hypr-judge"
 # Beside the file it guards, so callers with different runtime dirs still
 # take the same lock. Created once and never removed.
 theme_lock="$config_home/vgs/theme.lock"
@@ -581,6 +594,26 @@ PY
         ;;
       *)
         printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
+        ;;
+    esac
+    ;;
+  hypr)
+    sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+    case "$sub" in
+      wire|unwire)
+        exec node "$hypr_judge" "$sub" "$config_home" "$state_home/vgs"
+        ;;
+      render)
+        reply="$(ipc shell renderHyprland)" || exit $?
+        case "$reply" in
+          ok) echo ok ;;
+          *) printf 'vgsh: refused: %s\n' "${reply#refused: }" >&2; exit 1 ;;
+        esac
+        ;;
+      *)
+        printf 'vgsh: refused: hypr-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
         ;;
     esac
     ;;

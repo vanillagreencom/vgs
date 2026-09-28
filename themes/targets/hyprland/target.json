@@ -1,9 +1,0 @@
-{
-  "app": "Hyprland",
-  "runsCode": true,
-  "encoder": "hyprland",
-  "files": [{ "template": "hyprland.conf", "destination": "hyprland.conf" }],
-  "detect": ["hyprctl"],
-  "wiring": { "file": "hypr/hyprland.conf", "line": "source = @{state}/hyprland.conf", "create": false },
-  "reload": { "command": ["hyprctl", "reload"], "timeoutMs": 5000 }
-}

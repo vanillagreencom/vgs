@@ -25,5 +25,13 @@
   ],
   "settings": {},
   "defaultSection": "left",
-  "appearance": "Appearance.js"
+  "appearance": "Appearance.js",
+  "hyprland": {
+    "binds": [
+      { "shortcut": "toggle", "key": "SUPER+SPACE" }
+    ],
+    "layerRules": [
+      { "namespace": "^vgs:overlay$", "blur": true, "ignoreAlpha": 0.6 }
+    ]
+  }
 }

@@ -6,7 +6,7 @@ The plugin contract: what a plugin is, what the core builds for it, what it may 
 
 ## Manifest
 
-A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `scripts/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
+A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `scripts/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text, the `hyprland` key's in `scripts/test-hyprland-layer.js`. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -17,10 +17,11 @@ A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogi
 | `kinds` | yes | One or more of the kinds `PluginLogic.KINDS` lists and [overview.md § Vocabulary](overview.md#vocabulary) defines, each once. |
 | `entryPoints` | yes | One QML file per declared kind, keyed by the kind name, relative to the plugin root and inside it. A key naming an undeclared kind is refused. |
 | `capabilities` | no | Core APIs the plugin uses beyond its kinds, from the table under § Capabilities. |
-| `settings` | no | The plugin's default settings, an object without an `id` key. The configuration entry for the plugin overrides them key by key. `placement` is reserved: the core reads it for a summoned panel or menu, and a value outside `PluginLogic.PLACEMENTS` refuses the manifest. |
+| `settings` | no | The plugin's default settings, an object without an `id` or a `keys` key. The configuration entry for the plugin overrides them key by key. `placement` is reserved: the core reads it for a summoned panel or menu, and a value outside `PluginLogic.PLACEMENTS` refuses the manifest. |
 | `schema` | no | The settings a user or the plugin itself may change, keyed by setting name: `type` (`string`, `number`, `boolean` or `enum`), `label`, optional `description`, and `options` for an `enum`. Every entry needs a default of its type in `settings`. Required with capability `configure`. |
 | `defaultSection` | no | `left`, `center` or `right`: where `vgsh plugin enable` places a bar widget that has no placement. Needs kind `bar-widget`; `center` when absent. |
 | `appearance` | no | A `.js` file inside the plugin holding the plugin's own look, which the theme reaches through its mode and accent alone: [appearance.md](appearance.md). |
+| `hyprland` | no | What the plugin asks of Hyprland, as data the core renders into the Hyprland layer: `binds`, a list of `{ shortcut, key }`, each a shortcut the plugin registers through capability `shortcut`, which the manifest must name, and its default key such as `SUPER+SPACE`; and `layerRules`, a list of `{ namespace, blur, ignoreAlpha }` for `^vgs:<name>$`, the core hosts' namespaces. At least one list is non-empty, and no shortcut, key or namespace appears twice: [hyprland.md](hyprland.md). |
 
 ## Kinds
 
@@ -48,7 +49,7 @@ A background instance may declare `shown`. `BackgroundHost` maps a screen's surf
 - `PluginSlot` in `shell/Hosts/` owns one instance of one kind: it asks the core to build, rebuilds when `Registry.slotKey` changes, and destroys before every rebuild and on its own destruction. The key is the plugin id and its source revision, so a change to one plugin's files moves that plugin's keys alone. A manifest or code failure is reported to the host, which takes the surface down, and is remembered for that host, kind and id until its revision changes or its screen goes away. Settings changes do not retry broken code. A slot retries a lending refusal when the holder leaves. Every host is a surface plus slots.
 - The core builds an entry point with `Qt.createComponent` on a `file://` URL and assigns its properties after creation, never as initial properties ([runtime-qml.md](runtime-qml.md) says why). A host hands the core the properties it owns (a bar's `screen`) through the slot's `context`; no host assigns a plugin property itself.
 - Every instance receives `shell`: its manifest, its settings, and one provider per capability its manifest names. A bar widget also receives `bar`, `moduleName` and `settings`. A bar also receives `screen`.
-- Settings are the manifest's `settings` under the configuration entry for the plugin: the layout entry for a bar widget, the `plugins` row for every other kind.
+- Settings are the manifest's `settings` under the configuration entry for the plugin: the layout entry for a bar widget, the `plugins` row for every other kind. A row's `keys` is no setting; the Hyprland layer alone reads it.
 - The core mounts bar widgets into the active bar's section containers, in layout order, and records every widget under the bar's host key. A bar never builds, destroys or interprets a plugin widget.
 - A bar may draw built-in widgets of its own in the same containers, ahead of the plugin widgets, and registers each through its `builtins` capability: [overview.md § Vocabulary](overview.md#vocabulary) defines the built-in widget and [D013](../decisions/D013-built-in-widgets-are-the-bar-plugins.md) records the choice. The core built none of it, so the build counter does not move.
 - `vgsh run` disables Quickshell's engine file watcher, so file edits do not reload the engine. `vgsh ipc call shell rescanPlugins` re-reads every plugin; a plugin whose files changed gets a new revision and is rebuilt from its new snapshot, and every other plugin keeps its instances. A rescan asked for while one runs is queued. The registry accepts output only after a successful scanner exit; a failed start, exit or parse keeps the last registry, reports `scanError` and starts no retry.

@@ -1,6 +1,6 @@
-// The file helpers and the refusal bin/vgsh-plugin-judge and
-// bin/vgsh-theme-judge share, so both write a watched file the same way and
-// refuse with the same line.
+// The file helpers and the refusal bin/vgsh-plugin-judge,
+// bin/vgsh-theme-judge and bin/vgsh-hypr-judge share, so each writes a
+// watched file the same way and refuses with the same line.
 //
 // A refusal is one line on stderr, `vgsh: refused: <first>`, and the exit
 // status the refusal carries, 1 unless it names another. A helper throws it
@@ -104,4 +104,46 @@ function replaceFile(file, data, key, mode) {
     });
 }
 
-module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile };
+// Edit the file FILE where it stands: a symlink is resolved and the file it
+// names is replaced with its mode kept, so a dotfile manager's link stays a
+// link. EDIT maps the file's text, or undefined for an absent file, to the
+// new text, null to leave the file as it is, or a refusal, which fails the
+// target and leaves the file. The bytes are read and written as latin1, one
+// character per byte, so every byte EDIT keeps is kept. An absent file EDIT
+// does not refuse is created only when CREATE is true, and never through a
+// dangling symlink. Answers null, or the failure's { reason, failure }, its
+// line led by KEY. A theme target's include line and the Hyprland layer's
+// line (bin/vgsh-hypr-judge) are both kept through here.
+function editFile(key, file, create, edit) {
+    let real = null;
+    let text;
+    try {
+        real = fs.realpathSync(file);
+        text = fs.readFileSync(real, "latin1");
+    } catch (e) {
+        if (e.code !== "ENOENT") return { reason: "unreadable", failure: key + "=unreadable path=" + file + " error=" + e.code };
+        real = null;
+    }
+    const next = edit(text);
+    if (next === null) return null;
+    if (typeof next !== "string") return { reason: next.reason, failure: key + "=" + next.reason + " path=" + file + (next.detail === "" ? "" : " " + next.detail) };
+    if (real === null && !create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
+    try {
+        if (real === null) {
+            writing(file, key, () => {
+                fs.mkdirSync(path.dirname(file), { recursive: true });
+                fs.writeFileSync(file, Buffer.from(next, "latin1"), { flag: "wx" });
+            });
+        } else {
+            let mode;
+            writing(real, key, () => { mode = fs.statSync(real).mode & 0o7777; });
+            replaceFile(real, Buffer.from(next, "latin1"), key, mode);
+        }
+    } catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        return { reason: e.reason, failure: e.first };
+    }
+    return null;
+}
+
+module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, editFile };

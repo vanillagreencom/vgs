@@ -1,0 +1,53 @@
+#!/usr/bin/env node
+// vgsh hypr wire and unwire: keep or remove the one line that loads the
+// Hyprland layer the shell writes (docs/architecture/hyprland.md).
+//
+//   vgsh-hypr-judge wire CONFIG_HOME STATE_DIR
+//   vgsh-hypr-judge unwire CONFIG_HOME STATE_DIR
+//
+// The line is `pcall(dofile, "<STATE_DIR>/hypr/vgs.lua")` and its file is
+// CONFIG_HOME/hypr/hyprland.lua. `wire` puts the line first unless the file
+// holds it as a whole line already, and `unwire` removes every whole line
+// equal to it: bin/lib/theme-render.js's wiredText and unwiredText, the
+// rule a theme target's include line follows. Through bin/lib/judge-files.js
+// a symlink is resolved and the file it names is replaced with its mode
+// kept, no other byte changes, and the file is never created.
+//
+// Prints `ok hypr=wired|unwired|unchanged path=<file>`. Every refusal is one
+// line on stderr and exit 1: `vgsh: refused: hypr=wiring-file-absent
+// path=<file>` for `wire` with no hyprland.lua, `hypr=unreadable` or
+// `hypr=unwritable` with the path and error code, and `hypr=unquotable
+// path=<layer>` for a STATE_DIR a Lua string cannot hold. Exit 2 on a bad
+// invocation.
+"use strict";
+const path = require("path");
+const { refuse, main, editFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const render = require(path.join(__dirname, "lib", "theme-render.js"));
+
+const EDITS = { wire: render.wiredText, unwire: render.unwiredText };
+const DONE = { wire: "wired", unwire: "unwired" };
+
+const [verb, configHome, stateDir, ...extra] = process.argv.slice(2);
+if (EDITS[verb] === undefined || typeof configHome !== "string" || typeof stateDir !== "string" || extra.length > 0) {
+    process.stderr.write("vgsh-hypr-judge: usage: vgsh-hypr-judge wire|unwire CONFIG_HOME STATE_DIR\n");
+    process.exit(2);
+}
+
+main(() => {
+    const layer = path.join(stateDir, "hypr", "vgs.lua");
+    // The path sits inside a double-quoted Lua string, which a quote, a
+    // backslash or a line break would end or change.
+    if (/["\\\n\r]/.test(layer)) refuse("hypr=unquotable path=" + layer, "unquotable");
+    const file = path.join(configHome, "hypr", "hyprland.lua");
+    // The file is read and written as latin1, one character per byte, so
+    // the line takes the same encoding of its UTF-8 bytes.
+    const line = Buffer.from("pcall(dofile, \"" + layer + "\")", "utf8").toString("latin1");
+    let changed = false;
+    const failure = editFile("hypr", file, false, text => {
+        const next = EDITS[verb](text, line, undefined);
+        changed = typeof next === "string";
+        return next;
+    });
+    if (failure !== null) refuse(failure.failure, failure.reason);
+    process.stdout.write("ok hypr=" + (changed ? DONE[verb] : "unchanged") + " path=" + file + "\n");
+});

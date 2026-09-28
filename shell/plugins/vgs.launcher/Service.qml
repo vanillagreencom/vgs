@@ -3,8 +3,8 @@ import QtQuick
 // The launcher's service: the global shortcut and the IPC functions that
 // open it. It draws nothing and owns nothing else; each registration's
 // disposer is the core's, so disabling the plugin releases them.
-//   shortcut vgs.launcher:toggle            bind it in Hyprland as
-//                                            `global, vgs.launcher:toggle`
+//   shortcut vgs.launcher:toggle            SUPER+SPACE from the manifest's
+//                                            `hyprland` binds (README)
 //   vgsh ipc call vgs.launcher invoke toggle '<payload>'
 //   vgsh ipc call vgs.launcher invoke summon '<payload>'
 // A payload is the overlay's (README); an empty argument is `{}`.

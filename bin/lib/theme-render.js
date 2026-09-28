@@ -117,8 +117,7 @@ const ENCODERS = {
     hex6: hex => hex.slice(1, 7),
     hex8: hex => hex.slice(1, 9),
     rgba: hex => "rgba(" + [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16)).join(", ") + ", " +
-        String(Math.round(parseInt(hex.slice(7, 9), 16) / 255 * 1000) / 1000) + ")",
-    hyprland: hex => "rgba(" + hex.slice(1, 9) + ")"
+        String(Math.round(parseInt(hex.slice(7, 9), 16) / 255 * 1000) / 1000) + ")"
 };
 
 function refused(reason, detail) {

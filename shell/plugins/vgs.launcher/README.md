@@ -6,7 +6,7 @@
 
 | Path | How |
 |---|---|
-| Shortcut | The service registers `vgs.launcher:toggle`. Bind it in Hyprland, for example `bind = SUPER, SPACE, global, vgs.launcher:toggle`. |
+| Shortcut | The service registers `vgs.launcher:toggle`, and the manifest binds it to `SUPER+SPACE` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` in place of the key unbinds it. |
 | Bar entry | `vgsh plugin enable vgs.launcher` places the magnifier in the bar's left section. A left click toggles the launcher on that screen; a right click runs `xdg-terminal-exec`. |
 | IPC | `vgsh ipc call vgs.launcher invoke toggle '<payload>'` or `... invoke summon '<payload>'`, or the host's own `vgsh ipc call shell summon overlay vgs.launcher '<payload>'`. |
 
@@ -55,11 +55,13 @@ Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped
 
 `Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D023](../../../docs/decisions/D023-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.
 
-Hyprland blurs what is behind the glass only when a layer rule asks it to, for the host's namespace `vgs:overlay`:
+Hyprland blurs what is behind the glass only when a layer rule asks it to, for the host's namespace `vgs:overlay`. The manifest declares that rule, and the Hyprland layer writes it as:
 
 ```lua
-hl.layer_rule({ match = { namespace = "^vgs:overlay$" }, blur = true, ignore_alpha = 0.6 })
+hl.layer_rule({ name = "vgs.launcher:overlay", match = { namespace = "^vgs:overlay$" }, blur = true, ignore_alpha = 0.6 })
 ```
+
+`hyprland.lua` runs the layer from the line `vgsh hypr wire` keeps first in it, so your own settings after that line win. To change the rule, call `hl.layer_rule` with its name and new values after the line; `enabled = false` turns it off.
 
 ## Shader
 

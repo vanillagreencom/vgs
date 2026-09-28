@@ -74,7 +74,7 @@ Singleton {
 
     // Registration names a plugin chooses: lower case, digits and dashes.
     function checkName(kind, name) {
-        if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(name))
+        if (typeof name !== "string" || !Logic.NAME_PATTERN.test(name))
             throw new Error("refused: " + kind + "=" + JSON.stringify(name) + " malformed");
     }
 

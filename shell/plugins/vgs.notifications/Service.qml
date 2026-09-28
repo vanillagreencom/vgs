@@ -16,8 +16,8 @@ import "NotificationLogic.js" as Logic
 // line. The service owns the rows, their clocks, the live notification
 // objects and the store; the stack its layer draws on each screen is only a
 // view of them. Everything it registers is the core's to release.
-//   shortcut vgs.notifications:inbox     bind it in Hyprland, for example
-//                                        `bind = SUPER, N, global, vgs.notifications:inbox`
+//   shortcut vgs.notifications:inbox     SUPER+N from the manifest's
+//                                        `hyprland` binds (README)
 //   vgsh ipc call vgs.notifications invoke <name> <arg>, names in the README
 Item {
     id: root

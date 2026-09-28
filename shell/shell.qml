@@ -76,12 +76,19 @@ ShellRoot {
         function onScanFinished() { Capabilities.themes.follow(); }
     }
 
+    // The Hyprland layer's one writer, in the runner's shell alone.
+    LazyLoader {
+        id: hyprland
+        active: root.guarded
+        HyprlandLayer {}
+    }
+
     IpcHandler {
         target: "shell"
 
         function ping(): string { return "ok"; }
         function guarded(): bool { return root.guarded; }
-        function listPlugins(): string { return Registry.listJson(); }
+        function listPlugins(): string { return Registry.listJson(hyprland.item === null ? [] : hyprland.item.problems); }
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
         function built(): string { return Plugins.builtJson(); }
         function lent(): string { return Capabilities.lentJson(); }
@@ -91,5 +98,6 @@ ShellRoot {
         function summon(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("summon", kind, id, payloadJson, null)); }
         function hide(kind: string, id: string): string { return root.ifGuarded(() => Plugins.route("hide", kind, id, "", null)); }
         function toggle(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("toggle", kind, id, payloadJson, null)); }
+        function renderHyprland(): string { return root.ifGuarded(() => hyprland.item === null ? "refused: hyprland=pending" : hyprland.item.render()); }
     }
 }

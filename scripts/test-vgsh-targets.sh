@@ -350,9 +350,10 @@ tinst "an alacritty.toml with a multi-line import fails alacritty" "$cfg" "$rt_e
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
 check "the conflicting alacritty is failed wiring-conflict" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "alacritty"] == [{"name": "alacritty", "state": "failed", "reason": "wiring-conflict", "dropped": []}]'
 check "a conflicting alacritty.toml is left byte for byte" cmp -s "$tmp/alacritty-own" "$cfg/alacritty/alacritty.toml"
-# The must-fail control: a judge copy that takes the refusal for a file
-# already wired reports alacritty landed.
-judge_control conflict-swallowed 'if (typeof next !== "string") return {' 'if (typeof next !== "string") return null; if (false) return {'
+# The must-fail control: a copy of the shared file helper,
+# bin/lib/judge-files.js, that takes the refusal for a file already wired
+# reports alacritty landed.
+tree_control conflict-swallowed bin/lib/judge-files.js 'if (typeof next !== "string") return {' 'if (typeof next !== "string") return null; if (false) return {'
 tinst "the conflict-swallowing mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json nord
 tail -n 1 "$tmp/out" >"$tmp/apply.json"
 check "the conflict-swallowing mutant reports alacritty landed" test "$(target_state alacritty)" == written

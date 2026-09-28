@@ -92,13 +92,10 @@ for directory in ("shell", "bin", "config", "themes"):
 shutil.copytree(source / "scripts", target / "scripts")
 # The copy ships no target: each would detect the host's own application on
 # PATH, and its reload hook would signal that application in the live
-# session. The rows add the fixture targets they read. The shipped targets
-# wait beside the copy, so a row whose hook reaches only the nested session
-# copies its one target in. A tree older than the targets has none to move.
-if tree == source or (target / "themes/targets").exists():
-    shutil.move(target / "themes/targets", target.parent / "shipped-targets")
-else:
-    (target.parent / "shipped-targets").mkdir()
+# session. The rows add the fixture targets they read. A tree older than the
+# targets has none to remove.
+if (target / "themes/targets").exists():
+    shutil.rmtree(target / "themes/targets")
 (target / "themes/targets").mkdir()
 shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
 path = target / "shell/shell.qml"
@@ -131,6 +128,9 @@ hl.config({
 hl.workspace_rule({ workspace = "2", persistent = true })
 hl.workspace_rule({ workspace = "100", persistent = true })
 LUA
+# The shell's first run wires this file (rows/hyprland.sh), so the rows
+# compare it with the harness's own text.
+cp -- "$home/.config/hypr/hyprland.lua" "$sandbox/hyprland-harness.lua"
 
 # node on PATH may be a version-manager shim that reads the developer's own
 # configuration and fails under the sandbox HOME; the sandbox PATH leads with

@@ -72,7 +72,7 @@ const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
 const pluginLogic = load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 const { spawnSync } = require("child_process");
-const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, editFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 const backgrounds = require(path.join(__dirname, "lib", "theme-backgrounds.js"));
 const select = require(path.join(__dirname, "lib", "theme-select.js"));
@@ -701,47 +701,6 @@ function editWiring(name, target, configHome, live, edit) {
     for (const file of files) {
         const failure = editFile(key, file, target.wiring.create, edited);
         if (failure !== null) return failure;
-    }
-    return null;
-}
-
-// Edit the file FILE where it stands: a symlink is resolved and the file it
-// names is replaced with its mode kept, so a dotfile manager's link stays a
-// link. EDIT maps the file's text, or undefined for an absent file, to the
-// new text, null to leave the file as it is, or a refusal, which fails the
-// target and leaves the file. The bytes are read and written as latin1, one
-// character per byte, so every byte EDIT keeps is kept. An absent file EDIT
-// does not refuse is created only when CREATE is true, and never through a
-// dangling symlink. Answers null, or the failure's { reason, failure }, its
-// line led by KEY.
-function editFile(key, file, create, edit) {
-    let real = null;
-    let text;
-    try {
-        real = fs.realpathSync(file);
-        text = fs.readFileSync(real, "latin1");
-    } catch (e) {
-        if (e.code !== "ENOENT") return { reason: "unreadable", failure: key + "=unreadable path=" + file + " error=" + e.code };
-        real = null;
-    }
-    const next = edit(text);
-    if (next === null) return null;
-    if (typeof next !== "string") return { reason: next.reason, failure: key + "=" + next.reason + " path=" + file + (next.detail === "" ? "" : " " + next.detail) };
-    if (real === null && !create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
-    try {
-        if (real === null) {
-            writing(file, key, () => {
-                fs.mkdirSync(path.dirname(file), { recursive: true });
-                fs.writeFileSync(file, Buffer.from(next, "latin1"), { flag: "wx" });
-            });
-        } else {
-            let mode;
-            writing(real, key, () => { mode = fs.statSync(real).mode & 0o7777; });
-            replaceFile(real, Buffer.from(next, "latin1"), key, mode);
-        }
-    } catch (e) {
-        if (!(e instanceof Refusal)) throw e;
-        return { reason: e.reason, failure: e.first };
     }
     return null;
 }

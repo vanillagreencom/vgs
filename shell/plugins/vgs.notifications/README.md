@@ -8,7 +8,7 @@ The core's notification server takes the `org.freedesktop.Notifications` name wh
 
 | Path | How |
 |---|---|
-| Shortcut | The service registers `vgs.notifications:inbox`. Bind it in Hyprland, for example `bind = SUPER, N, global, vgs.notifications:inbox`. |
+| Shortcut | The service registers `vgs.notifications:inbox`, and the manifest binds it to `SUPER+N` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.notifications", "keys": { "inbox": "SUPER+SHIFT+N" } }`; `null` in place of the key unbinds it. |
 | IPC | `vgsh ipc call vgs.notifications invoke <name> <arg>`, names below. |
 
 While a panel is open the toasts stay and do not expire, a press outside the stack closes it, and the header holds Silence, Mark read (the Inbox) or Clear history (the History), and the switch between the two. Mark read marks everything so far read and closes the panel; Clear history removes the kept notifications and leaves the panel open. The panel takes no keyboard.
@@ -48,11 +48,13 @@ The file is written whole at the end of each change. After a restart or a rebuil
 
 The glass, the edge light, the pills and the switch are the plugin's own files, drawn from its own table: a plugin imports no other plugin's files.
 
-The stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). Hyprland blurs what is behind the glass only when a layer rule asks it to:
+The stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
 
 ```lua
-hl.layer_rule({ match = { namespace = "^vgs:layer$" }, blur = true, ignore_alpha = 0.6 })
+hl.layer_rule({ name = "vgs.notifications:layer", match = { namespace = "^vgs:layer$" }, blur = true, ignore_alpha = 0.6 })
 ```
+
+`hyprland.lua` runs the layer from the line `vgsh hypr wire` keeps first in it, so your own settings after that line win. To change the rule, call `hl.layer_rule` with its name and new values after the line; `enabled = false` turns it off.
 
 ## Shader
 

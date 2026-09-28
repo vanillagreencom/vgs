@@ -14,6 +14,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 - A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
 - Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
 - A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
+- Hyprland keys and blur from plugins, and window borders in the theme's colours. Hyprland is configured in Lua only: the shell writes one Lua file, and one line in your `hyprland.lua` loads it. A classic `hyprland.conf` is not supported.
 
 ## Shipped plugins
 
@@ -28,12 +29,14 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 - The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
 - Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
 - `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.
+- The shell writes `~/.local/state/vgs/hypr/vgs.lua` with the theme's border colours and each enabled plugin's keys and blur rules, and reloads Hyprland when it changes. On its first run it adds `pcall(dofile, "…/vgs.lua")` as the first line of `~/.config/hypr/hyprland.lua` if that file exists; `bin/vgsh hypr wire` and `unwire` add and remove the line. Settings after that line win. See [docs/architecture/hyprland.md](docs/architecture/hyprland.md).
 
 ## Settings
 
 - `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
 - `~/.config/vgs/theme.json`: the theme, a document that overrides any design token every plugin reads: colours, fonts, spacing, radius and motion.
 - A widget's settings sit inline on its layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; every other plugin's sit on its row in `plugins`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`. A change reaches the running plugin without a restart.
+- A plugin's Hyprland keys sit in `keys` on its row in `plugins`, for example `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` unbinds a key.
 
 ## Writing a plugin
 

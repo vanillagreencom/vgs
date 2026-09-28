@@ -201,8 +201,7 @@ const REFUSED_TARGETS = [
 const ENCODED = [
     ["hex6", "ff5a36"],
     ["hex8", "ff5a3659"],
-    ["rgba", "rgba(255, 90, 54, 0.349)"],
-    ["hyprland", "rgba(ff5a3659)"]
+    ["rgba", "rgba(255, 90, 54, 0.349)"]
 ];
 
 // Templates under the hex6 encoder against the probe package and the
@@ -585,7 +584,6 @@ const CONTROLS = [
     ["hex6 encoder", "hex6: hex => hex.slice(1, 7)", "hex6: hex => hex.slice(0, 7)"],
     ["hex8 encoder", "hex8: hex => hex.slice(1, 9)", "hex8: hex => hex.slice(1, 7)"],
     ["rgba alpha", "String(Math.round(parseInt(hex.slice(7, 9), 16) / 255 * 1000) / 1000)", "String(parseInt(hex.slice(7, 9), 16))"],
-    ["hyprland encoder", 'hyprland: hex => "rgba(" + hex.slice(1, 9) + ")"', 'hyprland: hex => "rgba(" + hex.slice(1, 7) + ")"'],
     ["escape", 'if (m[0] === "@@{") {', "if (false) {"],
     ["pass-through", "const MARKER = /@@\\{|@\\{([^}]*)\\}|@\\{/g;", "const MARKER = /@@\\{|[@#$]\\{([^}]*)\\}|@\\{/g;"],
     ["unterminated", "if (m[1] === undefined) return { ok: false, at: m.index };", "if (m[1] === undefined) continue;"],
