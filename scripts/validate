@@ -104,6 +104,7 @@ rows=(
   "boundary|design token controls|python3 scripts/test-check-design-tokens.py|scripts/check-design-tokens.py bin/vgsh-scan scripts/qml_source.py scripts/qml-library.js shell/Commons/Tokens.js shell/Commons/ThemeLogic.js shell/Commons/Theme.qml"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
+  "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js bin/vgsh-scan scripts/smoke/fixtures/*"

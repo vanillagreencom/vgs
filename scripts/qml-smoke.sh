@@ -13,9 +13,13 @@
 # naming it; when the nested compositor still lists a monitor with no size
 # after 10 s, nested-monitor=unsized, since it configures no bar there;
 # or when a run whose only failures are geometry or render rows
-# met a sandbox fault: the nested compositor failed to allocate its output
-# buffers, or the host withheld frame callbacks so the shell never drew
-# again; that is not a pass. Exit 1 when a check failed.
+# met a sandbox fault: the nested window's output rejected a state because
+# its buffers could not be allocated, which the nested compositor logs as
+# `Output WAYLAND-<n>: pending state rejected: swapchain failed
+# reconfiguring` (a bare GBM allocation failure, which passing runs log for
+# the headless output, is not that fault), or the host withheld frame
+# callbacks so the shell never drew again; that is not a pass.
+# scripts/smoke/verdict.sh holds the verdict. Exit 1 when a check failed.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
 # the end of the run. It catches a startup allocation blow-up and nothing

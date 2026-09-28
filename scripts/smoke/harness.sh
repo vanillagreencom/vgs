@@ -1,5 +1,6 @@
 # Sourced by qml-smoke.sh; owns the sandbox and shared readers.
 set -euo pipefail
+source "$repo/scripts/smoke/verdict.sh"
 missing=()
 for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
@@ -428,23 +429,7 @@ if [[ $failures -gt 0 ]]; then
   echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true
   echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null || true
 fi
-# A nested compositor that cannot allocate its output buffers stops laying
-# out surfaces, so every geometry row after that reads zeros. A run whose
-# failures are all geometry rows and whose compositor logged that fault
-# measured the sandbox, not the shell: it reports not-measured, which is
-# never a pass, and names the cause. Any behaviour failure is a failure.
-if [[ $failures -gt 0 && $behaviour_failures -eq 0 && $stalled_render == true ]]; then
-  printf 'qml-smoke: status=not-measured nested-window=not-drawn failed=%s\n' "$failures"
-  echo "the nested window stopped drawing; enable render_unfocused for class aquamarine in the host Hyprland window rules, or keep the window visible, then run the smoke again"
-  exit 77
-fi
-if [[ $failures -gt 0 && $behaviour_failures -eq 0 ]] && grep -q -s 'Failed to allocate a GBM buffer' "$rt_dir"/hypr/*/hyprland.log; then
-  printf 'qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=%s\n' "$failures"
-  exit 77
-fi
-if [[ $failures -gt 0 ]]; then
-  echo "qml-smoke: failed=$failures"
-  exit 1
-fi
-echo "qml-smoke: ok"
+local status=0
+smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$rt_dir"/hypr/*/hyprland.log || status=$?
+[[ $status -eq 0 ]] || exit "$status"
 }
