@@ -1,6 +1,6 @@
 # Theme targets
 
-Covers: themes/targets/**, bin/lib/theme-render.js, scripts/test-theme-render.js
+Covers: themes/targets/**, bin/lib/theme-render.js, scripts/test-theme-render.js, scripts/test-vgsh-targets.sh
 
 A target is one application's colour files: the directory `themes/targets/<target>/`, holding `target.json` and its templates. The renderer, `bin/lib/theme-render.js`, is pure: [themes.md § Boundaries](themes.md#boundaries). [theme-apply.md § Apply](theme-apply.md#apply) says when a target renders and where its files land.
 
@@ -8,7 +8,7 @@ A target is one application's colour files: the directory `themes/targets/<targe
 
 A target name is lower-case letters, digits and `-`, with no dot. `targets` under a themes directory holds targets and is never read as a package.
 
-`acceptTarget` judges `target.json`. Every key is required and any other key is refused with `reason=target-schema`:
+`acceptTarget` judges `target.json`. Every key but `wiring.section` is required and any other key is refused with `reason=target-schema`:
 
 | Key | Holds |
 |---|---|
@@ -16,7 +16,7 @@ A target name is lower-case letters, digits and `-`, with no dot. `targets` unde
 | `encoder` | The encoder every colour placeholder of the target is written with: [§ Templates](#templates). |
 | `files` | One or more `{ template, destination }`. `template` is a file name in the target directory other than `target.json`. `destination` is the file name the render takes under the state directory's `theme/`: `<target>.<ext>`, unique in the target, so no two targets write one file. |
 | `detect` | Command names; a target whose command is not an executable file in an absolute directory of `PATH` is skipped. An empty list is always detected. Detection never runs the command. |
-| `wiring` | `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. |
+| `wiring` | `{ file, line, create }`. `file` is the application's configuration file, relative to `${XDG_CONFIG_HOME:-~/.config}`, each segment a plain directory name. `line` is the one include line kept in that file; its only placeholder is `@{state}`, the state directory's `theme/` path, which it must hold. `create` is `true` when an absent `file` is created holding the line, `false` when the target is then skipped with reason `wiring-file-absent`. An optional `section`, one bare name of letters, digits, `_` and `-`, is the INI section or TOML table the line belongs in: [§ Wiring text](#wiring-text). |
 | `reload` | `null`, or `{ command, timeoutMs }`: the argv that makes a running application re-read its files, and its bound in whole milliseconds. `command[0]` is looked up on `PATH`. Apply runs it after the theme file when the target's bytes changed or its reload is pending: [theme-apply.md § Reload](theme-apply.md#reload). |
 
 `bin/vgsh-theme-judge packages themes`, the offline row, renders every target under `themes/targets/` against the shipped `vgs` package and prints one line per target, `ok       targets/<target>` or `refused  <dir>: target=<target> reason=<key> <detail>`. A template or `target.json` that cannot be read, or targets without an accepted `vgs` package holding terminal slots, exit 2.
@@ -50,9 +50,14 @@ No encoder writes `#`: a template writes it where its application wants one, as 
 
 ## Wiring text
 
-`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme. The rest of the text is kept. `unwiredText` undoes it for a disabled target: every whole line equal to the include line goes, with its line break, and every other byte stays.
+`wiringLine` writes a target's `line` with `@{state}` replaced. `wiredText` decides the file's new text. A file that holds the line as one whole line is left alone; the line inside a comment or a longer line does not count. The rest of the text is kept.
+
+- **No section.** An absent file becomes the line alone. Otherwise the line goes first, ahead of every section: an INI file such as `foot.ini` reads it in its main section, and the file's own settings after it override the theme.
+- **A section.** The line goes right after the first header of that section, `[<section>]` with whitespace around the name and a `#` comment after it allowed; `[[<section>]]` is no header of it. A file without one, an absent file included, takes the header and the line at its end, so a TOML file never declares the table twice, which a dotted key ahead of its `[<section>]` header would.
+
+`unwiredText` undoes it for a disabled target: every whole line equal to the include line goes, with its line break, and every other byte stays, a header `wiredText` added included.
 
 ## Invariants
 
-1. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence, the terminal fallback, the wiring line's substitution and the wiring text's whole-line match, first-line placement and creation, and the removal's whole-line match of every copy hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer.
+1. Each encoder's output, the `@@{` escape, the pass-through of `#{pane_id}`, the refusal of a placeholder naming no token or slot, every `target.json` rule, the curated precedence, the terminal fallback, the wiring line's substitution and the wiring text's whole-line match, first-line placement, placement after the first header of its section or with the header at the end, and creation, and the removal's whole-line match of every copy hold. Enforced by `scripts/test-theme-render.js`, whose controls remove one rule each from a copy of the renderer, and, for the apply's placement in a section, by `scripts/test-vgsh-targets.sh`, with a judge copy that drops the section as its control.
 2. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.

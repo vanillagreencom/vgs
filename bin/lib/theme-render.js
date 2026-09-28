@@ -15,6 +15,8 @@
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 const FILE_KEYS = ["template", "destination"];
 const WIRING_KEYS = ["file", "line", "create"];
+// The one optional key: the section a wiring line goes into.
+const SECTION_KEY = "section";
 const RELOAD_KEYS = ["command", "timeoutMs"];
 
 // A target name holds no dot, so a destination named `<target>.<ext>` names
@@ -31,6 +33,15 @@ const TERMINAL_PREFIX = "terminal.";
 
 // The one placeholder a wiring line holds: the stable state directory.
 const STATE_PLACEHOLDER = "state";
+
+// A wiring section is one bare name, as an INI section or a TOML table
+// header writes it between brackets.
+const SECTION_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+// A section header line: the name between brackets, whitespace around it
+// and a `#` comment after it allowed. `[[name]]`, a TOML array of tables, is
+// no header of `name`.
+const SECTION_HEADER = /^\s*\[\s*([^\]]*?)\s*\]\s*(?:#.*)?$/;
 
 // `@@{` is a literal `@{`, `@{name}` a placeholder and a `@{` with no `}`
 // after it unterminated. Every other character is literal text, so `#{...}`
@@ -95,15 +106,18 @@ function fileError(logic, name, file, at) {
 
 // The first defect of `wiring`, or "". `file` is relative to the user's
 // configuration home, one directory name per segment; `line` holds the state
-// directory's placeholder and no other.
+// directory's placeholder and no other; `section`, when present, is one bare
+// section name.
 function wiringError(logic, wiring) {
-    if (!hasExactKeys(logic, wiring, WIRING_KEYS)) return "key=wiring";
+    if (!logic.isPlainObject(wiring) || !WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||
+        !Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || key === SECTION_KEY)) return "key=wiring";
     if (typeof wiring.file !== "string" || !wiring.file.split("/").every(logic.isPackageName)) return "key=wiring.file";
     if (!isLine(wiring.line)) return "key=wiring.line";
     const line = parseTemplate(wiring.line);
     const names = line.ok ? line.parts.filter(part => typeof part !== "string").map(part => part.name) : [];
     if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return "key=wiring.line";
     if (typeof wiring.create !== "boolean") return "key=wiring.create";
+    if (logic.hasOwn(wiring, SECTION_KEY) && (typeof wiring.section !== "string" || !SECTION_PATTERN.test(wiring.section))) return "key=wiring.section";
     return "";
 }
 
@@ -226,22 +240,35 @@ function wiringLine(target, state) {
     }).join("");
 }
 
+// Whether the line TEXT is the header of SECTION.
+function isSectionHeader(text, section) {
+    const m = SECTION_HEADER.exec(text);
+    return m !== null && m[1] === section;
+}
+
 // The text a configuration file holding TEXT takes so that LINE is one of its
-// lines, or null when it already is one. An absent file (TEXT undefined)
-// becomes the line alone. Otherwise the line goes first, ahead of every
+// lines, or null when it already is one; the rest of the text is kept byte
+// for byte. With SECTION undefined the line goes first, ahead of every
 // section, so an INI file reads it in its main section and the file's own
-// settings after it override the included theme; the rest of the text is
-// kept byte for byte.
-function wiredText(text, line) {
-    if (text === undefined) return line + "\n";
-    if (text.split("\n").includes(line)) return null;
-    return line + "\n" + text;
+// settings after it override the included theme, and an absent file (TEXT
+// undefined) becomes the line alone. With a SECTION the line goes right
+// after the first header of that section, or, with none, the header and the
+// line are added at the end, so a TOML file never declares the table twice.
+function wiredText(text, line, section) {
+    const lines = text === undefined ? [] : text.split("\n");
+    if (lines.includes(line)) return null;
+    if (section === undefined) return line + "\n" + (text === undefined ? "" : text);
+    const at = lines.findIndex(existing => isSectionHeader(existing, section));
+    if (at !== -1) return lines.slice(0, at + 1).concat(line, lines.slice(at + 1)).join("\n");
+    const before = text === undefined ? "" : text;
+    return before + (before === "" || before.endsWith("\n") ? "" : "\n") + "[" + section + "]\n" + line + "\n";
 }
 
 // The text a configuration file holding TEXT takes once LINE is none of its
 // lines, or null when it is none already or the file is absent (TEXT
 // undefined). Every whole line equal to LINE goes, with its line break; the
-// rest of the text is kept byte for byte, so this undoes wiredText.
+// rest of the text is kept byte for byte, so this undoes wiredText but for
+// a section header wiredText added, which stays.
 function unwiredText(text, line) {
     if (text === undefined) return null;
     const lines = text.split("\n");

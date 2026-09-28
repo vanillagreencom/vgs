@@ -54,7 +54,9 @@ const targetText = (fields = {}) => JSON.stringify(Object.assign({
 const ACCEPTED_TARGETS = [
     ["probe", targetText()],
     ["probe", targetText({ reload: null, detect: [], wiring: Object.assign({}, wiring, { create: false }) })],
-    ["probe-2", targetText({ files: [{ template: "a.conf", destination: "probe-2.conf" }, { template: "a.conf", destination: "probe-2.extra.ini" }] })]
+    ["probe-2", targetText({ files: [{ template: "a.conf", destination: "probe-2.conf" }, { template: "a.conf", destination: "probe-2.extra.ini" }] })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general" }) })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -84,6 +86,12 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { line: "include=@{palette.accent}" }) }), "target-schema", "key=wiring.line"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { line: "include=@{state}/a\ninclude=b" }) }), "target-schema", "key=wiring.line"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { create: "yes" }) }), "target-schema", "key=wiring.create"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { sections: "general" }) }), "target-schema", "key=wiring"],
+    ["probe", targetText({ wiring: { file: "probe/probe.conf", line: "include=@{state}/probe.conf", section: "general" } }), "target-schema", "key=wiring"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "" }) }), "target-schema", "key=wiring.section"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "colors.primary" }) }), "target-schema", "key=wiring.section"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "[general]" }) }), "target-schema", "key=wiring.section"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: null }) }), "target-schema", "key=wiring.section"],
     ["probe", targetText({ reload: { command: ["probe"] } }), "target-schema", "key=reload"],
     ["probe", targetText({ reload: { command: [], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 0 } }), "target-schema", "key=reload.timeoutMs"],
@@ -135,6 +143,22 @@ const WIRED = [
     ["include=/s/foot.ini.old\n", "include=/s/foot.ini\ninclude=/s/foot.ini.old\n"]
 ];
 
+// A configuration file's text before the wiring into the `general` section,
+// and after it, or null when the line already stands on a line of its own.
+const TOML_LINE = 'import = ["/s/alacritty.toml"]';
+const WIRED_SECTION = [
+    [undefined, '[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ["", '[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ["[window]\nx = 1\n", '[window]\nx = 1\n[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ["[window]\nx = 1", '[window]\nx = 1\n[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ["[general]\nlive = true\n[window]\n", '[general]\nimport = ["/s/alacritty.toml"]\nlive = true\n[window]\n'],
+    ["[window]\n  [ general ]  # mine\nlive = true", '[window]\n  [ general ]  # mine\nimport = ["/s/alacritty.toml"]\nlive = true'],
+    ["[general]\n[general]\n", '[general]\nimport = ["/s/alacritty.toml"]\n[general]\n'],
+    ["[general.more]\n[[general]]\n# [general]\n[generalx]\n", '[general.more]\n[[general]]\n# [general]\n[generalx]\n[general]\nimport = ["/s/alacritty.toml"]\n'],
+    ['[window]\n[general]\nimport = ["/s/alacritty.toml"]\n', null],
+    ['import = ["/s/alacritty.toml"]', null]
+];
+
 // A configuration file's text before the line is removed, and after it, or
 // null when no line of it is the include line.
 const UNWIRED = [
@@ -145,7 +169,8 @@ const UNWIRED = [
     ["include=/s/foot.ini\n[main]\nfont=x\n", "[main]\nfont=x\n"],
     ["include=/s/foot.ini\nfont=x", "font=x"],
     ["include=/s/foot.ini\n", ""],
-    ["font=x\ninclude=/s/foot.ini\n[colors]\ninclude=/s/foot.ini\n", "font=x\n[colors]\n"]
+    ["font=x\ninclude=/s/foot.ini\n[colors]\ninclude=/s/foot.ini\n", "font=x\n[colors]\n"],
+    ["[window]\n[general]\ninclude=/s/foot.ini\n", "[window]\n[general]\n"]
 ];
 
 function verify(render) {
@@ -224,6 +249,8 @@ function verify(render) {
     assert.equal(render.wiringLine(escaped, "/s"), "a=@{x} source /s/b /s/c");
     for (const [text, want] of WIRED)
         assert.equal(render.wiredText(text, LINE), want, JSON.stringify(text));
+    for (const [text, want] of WIRED_SECTION)
+        assert.equal(render.wiredText(text, TOML_LINE, "general"), want, JSON.stringify(text));
     for (const [text, want] of UNWIRED)
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
 }
@@ -258,7 +285,10 @@ const CONTROLS = [
     ["destination prefix", "!file.destination.startsWith(name + \".\")", "false"],
     ["unique destination", "if (destinations.has(document.files[at].destination)) return", "if (false) return"],
     ["detect", "if (!Array.isArray(document.detect) || !document.detect.every(logic.isPackageName)) return", "if (false) return"],
-    ["wiring keys", "if (!hasExactKeys(logic, wiring, WIRING_KEYS)) return", "if (!logic.isPlainObject(wiring)) return"],
+    ["wiring required keys", "!WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "false ||"],
+    ["wiring unknown key", "!Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || key === SECTION_KEY)", "false"],
+    ["wiring section admitted", "WIRING_KEYS.includes(key) || key === SECTION_KEY)", "WIRING_KEYS.includes(key))"],
+    ["wiring section name", "(typeof wiring.section !== \"string\" || !SECTION_PATTERN.test(wiring.section))", "false"],
     ["wiring file", "!wiring.file.split(\"/\").every(logic.isPackageName)", "false"],
     ["wiring line placeholder", "if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return", "if (false) return"],
     ["wiring line is one line", "if (!isLine(wiring.line)) return", "if (typeof wiring.line !== \"string\") return"],
@@ -267,9 +297,16 @@ const CONTROLS = [
     ["reload command", "if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return", "if (false) return"],
     ["reload timeout", "if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return", "if (false) return"],
     ["wiring line state", "        return state;\n", "        return \"@{state}\";\n"],
-    ["wiring whole line", "if (text.split(\"\\n\").includes(line)) return null;", "if (text.includes(line)) return null;"],
-    ["wiring line first", "return line + \"\\n\" + text;", "return text + \"\\n\" + line;"],
-    ["wiring creates", "if (text === undefined) return line + \"\\n\";", "if (text === undefined) return null;"],
+    ["wiring whole line", "if (lines.includes(line)) return null;", "if (text !== undefined && text.includes(line)) return null;"],
+    ["wiring line first", "return line + \"\\n\" + (text === undefined ? \"\" : text);", "return (text === undefined ? \"\" : text) + line + \"\\n\";"],
+    ["wiring creates", "const lines = text === undefined ? [] : text.split(\"\\n\");", "if (text === undefined) return null;\n    const lines = text.split(\"\\n\");"],
+    ["wiring into its section", "if (at !== -1) return", "if (false) return"],
+    ["wiring after the header", "lines.slice(0, at + 1).concat(line, lines.slice(at + 1))", "lines.slice(0, at).concat(line, lines.slice(at))"],
+    ["wiring the first header", "lines.findIndex(existing =>", "lines.findLastIndex(existing =>"],
+    ["section header form", "return m !== null && m[1] === section;", "return text === \"[\" + section + \"]\";"],
+    ["section header whole name", "const SECTION_HEADER = /^\\s*\\[\\s*([^\\]]*?)\\s*\\]\\s*(?:#.*)?$/;", "const SECTION_HEADER = /^\\s*\\[+\\s*([^\\]]*?)\\s*\\]/;"],
+    ["section header appended", "\"[\" + section + \"]\\n\" + line", "line"],
+    ["section appended on its own line", "(before === \"\" || before.endsWith(\"\\n\") ? \"\" : \"\\n\")", "\"\""],
     ["unwiring whole line", "if (!lines.includes(line)) return null;", "if (!text.includes(line)) return null;"],
     ["unwiring every line", "return lines.filter(existing => existing !== line).join(\"\\n\");", "return lines.filter((existing, at) => at !== lines.indexOf(line)).join(\"\\n\");"]
 ];
@@ -293,4 +330,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + UNWIRED.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + UNWIRED.length} controls=${CONTROLS.length}`);

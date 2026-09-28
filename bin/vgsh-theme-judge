@@ -485,8 +485,9 @@ function landedFiles(live, name, key) {
 // Edit TARGET's configuration file under CONFIG_HOME where it stands: a
 // symlink is resolved and the file it names is replaced with its mode kept,
 // so a dotfile manager's link stays a link. EDIT maps the file's text, or
-// undefined for an absent file, and the include line pointing at LIVE to the
-// new text, or null to leave the file as it is. The bytes are read and
+// undefined for an absent file, the include line pointing at LIVE and the
+// wiring's section, undefined when it names none, to the new text, or null
+// to leave the file as it is. The bytes are read and
 // written as latin1, one character per byte, so every byte EDIT keeps is
 // kept. An absent file is created only when the target's wiring says so, and
 // never through a dangling symlink. Answers null, or the failure's
@@ -503,7 +504,7 @@ function editWiring(name, target, configHome, live, edit) {
         if (e.code !== "ENOENT") return { reason: "unreadable", failure: key + "=unreadable path=" + file + " error=" + e.code };
         real = null;
     }
-    const next = edit(text, Buffer.from(render.wiringLine(target, live), "utf8").toString("latin1"));
+    const next = edit(text, Buffer.from(render.wiringLine(target, live), "utf8").toString("latin1"), target.wiring.section);
     if (next === null) return null;
     if (real === null && !target.wiring.create) return { reason: "wiring-file-absent", failure: key + "=wiring-file-absent path=" + file };
     try {
