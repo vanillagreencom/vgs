@@ -23,9 +23,10 @@
 # with the sha256 of its file and how it was proved current (shot.sh).
 #
 # Exit 0 when every shot was taken. Exit 77 when a prerequisite is missing
-# or the nested compositor drew no frame for grim (nested-window=not-drawn:
-# enable render_unfocused for class aquamarine in the host Hyprland window
-# rules, or keep the window visible). Exit 1 when a step or a shot failed.
+# or when every failure was a grim that got no frame from the nested
+# compositor (nested-window=not-drawn: enable render_unfocused for class
+# aquamarine in the host Hyprland window rules, or keep the window visible).
+# Exit 1 when any other step or shot failed.
 set -euo pipefail
 
 timeout_s=60
@@ -68,6 +69,9 @@ SHOT_DIR="$(shot_dir_under "$checkout" "$out")" || exit 2
 if [[ -e $SHOT_DIR/shots.tsv ]]; then printf 'sandbox-shots: refused: out-dir-used=%s\n' "$SHOT_DIR" >&2; exit 2; fi
 
 source_tree=""
+# The harness's own cleanup removes the export on every exit once it has
+# armed; this trap covers the prerequisite checks it makes before that.
+trap '[[ -z $source_tree ]] || rm -rf -- "$source_tree"' EXIT
 if [[ -n $rev ]]; then
   git -C "$checkout" rev-parse --verify --quiet "$rev^{commit}" >/dev/null || { printf 'sandbox-shots: refused: rev=%s\n' "$rev" >&2; exit 2; }
   source_tree="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-shots-tree.XXXXXX")"
@@ -93,13 +97,13 @@ ok "grim captures only $SHOT_SOCKET"
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
 read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])')
 
-not_drawn=false
+undrawn=0
 take() { # NAME
   local status=0
   shot "$1" || status=$?
   case $status in
     0) ;;
-    2) not_drawn=true; fail "grim got no frame from the nested compositor for $1" ;;
+    2) undrawn=$((undrawn + 1)); fail "grim got no frame from the nested compositor for $1" ;;
     *) fail "shot $1 failed" ;;
   esac
 }
@@ -241,7 +245,7 @@ for mode in "${mode_list[@]}"; do
 done
 
 echo "sandbox-shots: dir=$SHOT_DIR shots=$(wc -l <"$SHOT_DIR/shots.tsv" 2>/dev/null || echo 0) failures=$failures"
-if [[ $not_drawn == true ]]; then
+if [[ $failures -gt 0 && $failures -eq $undrawn ]]; then
   printf 'sandbox-shots: status=not-measured nested-window=not-drawn\n'
   exit 77
 fi

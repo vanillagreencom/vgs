@@ -70,6 +70,8 @@ cleanup() {
     [[ -z $sandbox ]] || rm -rf -- "$sandbox"
     [[ -z $rt_dir ]] || rm -rf -- "$rt_dir"
   fi
+  # A caller's export of another tree is read only by the copy below.
+  [[ -z ${source_tree:-} ]] || rm -rf -- "$source_tree"
 }
 trap cleanup EXIT
 
