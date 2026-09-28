@@ -185,6 +185,16 @@ Scope {
                     }
             return JSON.stringify(out);
         }
+        // Every shader effect in a plugin's layer copies: [screen, its
+        // fragment shader's URL, whether it compiled].
+        function layerShaders(id: string): string {
+            const out = [];
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const screen of Object.keys(entry.screens).sort())
+                    for (const item of root.descendants(entry.screens[screen]).filter(i => i instanceof ShaderEffect))
+                        out.push([screen, String(item.fragmentShader), item.status === ShaderEffect.Compiled]);
+            return JSON.stringify(out);
+        }
         // A service's ListModel property as a list of rows, each the roles
         // named in the comma list.
         function modelRows(id: string, property: string, roles: string): string {

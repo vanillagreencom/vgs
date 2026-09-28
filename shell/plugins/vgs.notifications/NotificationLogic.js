@@ -289,7 +289,7 @@ function entryError(value, where) {
     if (!isPlainObject(value)) return where + " want=object";
     var keys = Object.keys(value);
     for (var k = 0; k < keys.length; k++)
-        if (ENTRY_ROLES.indexOf(keys[k]) === -1 && keys[k] !== "deadline") return where + "." + keys[k] + " unknown";
+        if (ENTRY_ROLES.indexOf(keys[k]) === -1 && CLOCK_FIELDS.indexOf(keys[k]) === -1) return where + "." + keys[k] + " unknown";
     var strings = ["key", "app", "appIcon", "summary", "body", "image", "desktopEntry"];
     for (var s = 0; s < strings.length; s++)
         if (typeof value[strings[s]] !== "string") return where + "." + strings[s] + " want=string";
@@ -298,7 +298,9 @@ function entryError(value, where) {
         if (typeof value[numbers[n]] !== "number" || !isFinite(value[numbers[n]])) return where + "." + numbers[n] + " want=number";
     if ([URGENCY.low, URGENCY.normal, URGENCY.critical].indexOf(value.urgency) === -1) return where + ".urgency want=0|1|2";
     if (value.key !== keyOf(value.timestamp, value.originalId)) return where + ".key want=" + keyOf(value.timestamp, value.originalId);
-    if (value.deadline !== undefined && (typeof value.deadline !== "number" || !isFinite(value.deadline))) return where + ".deadline want=number";
+    for (var c = 0; c < CLOCK_FIELDS.length; c++)
+        if (value[CLOCK_FIELDS[c]] !== undefined && (typeof value[CLOCK_FIELDS[c]] !== "number" || !isFinite(value[CLOCK_FIELDS[c]]))) return where + "." + CLOCK_FIELDS[c] + " want=number";
+    if (value.deadline !== undefined && value.remaining !== undefined) return where + " deadline and remaining both set";
     return "";
 }
 
@@ -343,17 +345,31 @@ function emptyState() {
 
 // ------------------------------------------------------------ restart
 
+// A stored toast on screen carries its clock as the service last settled
+// it: `deadline`, when it runs out while running, or `remaining`, what was
+// left when the pointer or a panel paused it.
+var CLOCK_FIELDS = ["deadline", "remaining"];
+
+// The clock fields a toast's clock (NotificationLogic's clocks) stores.
+function clockFields(clock) {
+    return clock.since === null ? { remaining: clock.remaining } : { deadline: clock.since + clock.remaining };
+}
+
 // The stored toasts a start shows again and the ones whose time ran out
-// while the shell was down, which go into the history. A toast that had a
-// lifetime restarts with a whole one, recorded as an absolute deadline so a
-// second restart judges it by that clock and not by when it arrived.
+// while the shell was down, which go into the history. A running clock is
+// judged by its deadline and a paused one has not run out; a toast with no
+// clock stored is judged by when it arrived. A toast shown again restarts
+// with a whole lifetime, recorded as a deadline so a second restart judges
+// it by that clock and not by when it arrived.
 function restorePlan(live, now) {
     var show = [];
     var expired = [];
     for (var i = 0; i < live.length; i++) {
         var entry = live[i];
         var lifetime = lifetimeFor(entry.urgency, entry.expireTimeout);
-        var over = entry.deadline !== undefined ? now >= entry.deadline : lifetime > 0 && now - entry.timestamp >= lifetime;
+        var over = entry.remaining !== undefined ? false
+            : entry.deadline !== undefined ? now >= entry.deadline
+            : lifetime > 0 && now - entry.timestamp >= lifetime;
         if (over) {
             expired.push(withoutDeadline(entry));
             continue;

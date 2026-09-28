@@ -107,21 +107,31 @@ read -r hx hy < <(card_centre Held) || fail "the held toast has no card"
 hover "$hx" "$hy" || fail "the hover over the held toast failed"
 held_key="$(key_of Held)"
 expect_poll "the pointer on a toast pauses its clock" paused clock_state Held
+stored_clock() { python3 -c 'import json,sys; e=next((e for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), {}); print(" ".join(k for k in ("deadline", "remaining") if k in e) or "none")' "$note_state" "$1"; }
+expect_poll "the state file keeps the paused toast's time left" remaining stored_clock "$held_key"
 sleep 6
 expect "a paused toast outlives its lifetime" "$held_key" key_of Held
 hover "$((mon_w - 5))" "$((mon_h - 5))" || fail "moving the pointer off the toast failed"
+expect_poll "the state file keeps the running toast's deadline" deadline stored_clock "$held_key"
 wait_for "the toast expires once the pointer leaves" none 9 key_of Held
 
 # A critical notification stays until closed and lights its edge.
 alarm_id="$(notify smoke-app 0 "Alarm" "" '[]' '{"urgency": <byte 2>}' 0)"
 expect_poll "a critical toast shows" True has_row live "Alarm"
 expect "a critical toast has no clock" none clock_of "$(key_of Alarm)"
-lit_edges() { ipc smoke layerItems vgs.notifications CardSlot summary | python3 -c 'import json,sys; print(sum(1 for s, r, v in json.load(sys.stdin) if v["summary"] == "Alarm"))'; }
 edge_active() { ipc smoke layerItems vgs.notifications EdgeLight active,lit | python3 -c 'import json,sys; print(sorted(set(v["active"] for s, r, v in json.load(sys.stdin))))'; }
 notify smoke-app 0 "Calm" "" '[]' '{}' 0 >/dev/null
 expect_poll "a normal toast shows beside it" True has_row live Calm
 expect_poll "only the critical toast's edge light is active" '[False, True]' edge_active
-render expect_poll "the edge light's shader compiled from the published revision" True python3 -c 'import json,sys; print(True)'
+# Every edge light, one per card, loads its shader from the plugin's
+# published revision, and the shader compiled. Qt compiles a shader once and
+# marks only the effect that compiled it, so one compiled effect is the pass
+# (read in the sandbox on 2026-09-28: the second card's effect stayed
+# Uncompiled while it drew).
+edge_shaders_ok() { ipc smoke layerShaders vgs.notifications | python3 -c 'import json,re,sys
+edges = [(u, ok) for _, u, ok in json.load(sys.stdin) if u.endswith("/edgelight.frag.qsb")]
+print(len(edges) >= 2 and all(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", u) for u, _ in edges) and any(ok for _, ok in edges))'; }
+render expect_poll "the edge lights' shader compiled from the published revision" True edge_shaders_ok
 
 # Hover actions: the sender's own, then Dismiss; one runs on a click.
 signals="$sandbox/notification-signals.log"
@@ -234,6 +244,11 @@ expect_poll "Silence is stored" true state_at dnd
 notify smoke-app 0 "Quiet" "" '[]' '{}' 0 >/dev/null
 expect_poll "a silenced notification goes into the history" '"Quiet"' state_at history.0.summary
 expect "a silenced notification shows no toast" none key_of Quiet
+expect "the inbox opens under Silence" ok notes inbox
+notify smoke-app 0 "Quiet while open" "" '[]' '{}' 0 >/dev/null
+expect_poll "a silenced notification joins the open inbox" True has_row panel "Quiet while open"
+expect "the inbox closes under Silence" ok notes close
+expect_poll "the inbox under Silence closed" '""' read_notes panelMode
 notify notify-send 0 "Urgent CLI" "" '[]' '{"urgency": <byte 2>}' 0 >/dev/null
 expect_poll "a critical notification from the command line shows through Silence" True has_row live "Urgent CLI"
 notify notify-send 0 "Noise" "" '[]' '{}' 0 >/dev/null

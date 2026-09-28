@@ -143,6 +143,19 @@ Item {
         changed();
     }
 
+    // Record a toast's clock, as NotificationLogic.clockFields gives it, on
+    // its stored entry; a clock that did not move writes nothing.
+    function setClock(key, fields) {
+        const at = live.findIndex(e => e.key === key);
+        if (at === -1) return;
+        const current = live[at];
+        if (current.deadline === fields.deadline && current.remaining === fields.remaining) return;
+        const next = {};
+        for (const role of Logic.ENTRY_ROLES) next[role] = current[role];
+        live = live.slice(0, at).concat([Object.assign(next, fields)], live.slice(at + 1));
+        changed();
+    }
+
     // Take one toast off the screen; into the history unless `forget`.
     function dropLive(key, forget) {
         const entry = live.find(e => e.key === key);

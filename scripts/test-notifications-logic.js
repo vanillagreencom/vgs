@@ -66,6 +66,8 @@ const STATE_REFUSED = [
     ["an unknown urgency", stateText({ history: [stored(5, 1, { urgency: 7 })] }), "history.0.urgency want=0|1|2"],
     ["a key that is not its identity", stateText({ history: [stored(5, 1, { key: "6-1" })] }), "history.0.key want=5-1"],
     ["a deadline that is no number", stateText({ live: [stored(5, 1, { deadline: "9" })] }), "live.0.deadline want=number"],
+    ["a remaining time that is no number", stateText({ live: [stored(5, 1, { remaining: null })] }), "live.0.remaining want=number"],
+    ["a clock both running and paused", stateText({ live: [stored(5, 1, { deadline: 9, remaining: 3 })] }), "live.0 deadline and remaining both set"],
     ["a key twice", stateText({ live: [stored(5, 1)], history: [stored(5, 1)] }), "history.0.key duplicate"]
 ];
 
@@ -136,10 +138,14 @@ function verify(logic) {
         stored(now - 3000, 2),
         stored(now - 60000, 3, { urgency: U.critical }),
         stored(now - 60000, 4, { deadline: now + 500 }),
-        stored(now - 1000, 5, { deadline: now - 1 })
+        stored(now - 1000, 5, { deadline: now - 1 }),
+        stored(now - 60000, 6, { urgency: U.low, remaining: 2000 })
     ], now);
     same(plan.expired.map(e => e.key), [(now - 9000) + "-1", (now - 1000) + "-5"]);
-    same(plan.show.map(e => [e.key, e.deadline === undefined ? null : e.deadline]), [[(now - 3000) + "-2", now + 8000], [(now - 60000) + "-3", null], [(now - 60000) + "-4", now + 8000]]);
+    same(plan.show.map(e => [e.key, e.deadline === undefined ? null : e.deadline]), [[(now - 3000) + "-2", now + 8000], [(now - 60000) + "-3", null], [(now - 60000) + "-4", now + 8000], [(now - 60000) + "-6", now + 5000]], "a paused clock has not run out");
+    assert.equal("remaining" in plan.show[3], false, "a toast shown again keeps no paused time");
+    same(logic.clockFields({ remaining: 400, since: null }), { remaining: 400 });
+    same(logic.clockFields({ remaining: 400, since: 1000 }), { deadline: 1400 });
     assert.equal("deadline" in plan.expired[1], false, "an expired entry leaves its deadline behind");
 
     // History: newest first, each key once, a hundred at most.
@@ -215,8 +221,11 @@ const CONTROLS = [
     ["entry key identity", 'if (value.key !== keyOf(value.timestamp, value.originalId)) return where + ".key want="', 'if (false) return where + ".key want="'],
     ["duplicate key", 'if (seen[list[i].key]) return { ok: false, error: lists[l] + "." + i + ".key duplicate" };', ""],
     ["unknown state key", 'if (["version", "dnd", "readBefore", "live", "history"].indexOf(keys[k]) === -1) return', "if (false) return"],
-    ["deadline outranks arrival", "var over = entry.deadline !== undefined ? now >= entry.deadline : lifetime > 0 && now - entry.timestamp >= lifetime;", "var over = lifetime > 0 && now - entry.timestamp >= lifetime;"],
+    ["deadline outranks arrival", ": entry.deadline !== undefined ? now >= entry.deadline", ": false"],
     ["whole lifetime on restore", "if (lifetime > 0) kept.deadline = now + lifetime;", ""],
+    ["a paused clock survives", "var over = entry.remaining !== undefined ? false", "var over = entry.remaining !== undefined ? true"],
+    ["paused or running", 'if (value.deadline !== undefined && value.remaining !== undefined) return where + " deadline and remaining both set";', ""],
+    ["clock fields", "return clock.since === null ? { remaining: clock.remaining } : { deadline: clock.since + clock.remaining };", "return { deadline: clock.since + clock.remaining };"],
     ["history newest first", "merged.sort(function (a, b) { return b.timestamp - a.timestamp; });", ""],
     ["history cut", "return { history: merged.slice(0, HISTORY_MAX), dropped: merged.slice(HISTORY_MAX) };", "return { history: merged, dropped: [] };"],
     ["inbox cutoff", 'var rows = mode === "inbox" ? history.filter(function (e) { return e.timestamp > readBefore; }) : history.slice();', "var rows = history.slice();"],

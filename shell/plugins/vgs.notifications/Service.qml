@@ -297,6 +297,7 @@ Item {
         silencedRefs = next;
         const stored = Logic.persistable(entry, store.imagesDir);
         store.archive([stored.entry]);
+        syncPanel();
         store.copy(stored.copies, () => {
             const fields = root.fieldsOf(n);
             const updated = fields === null ? null : Logic.updatedEntry(entry, fields);
@@ -360,6 +361,9 @@ Item {
     function settle() {
         const now = Date.now();
         clocks = Logic.settleClocks(clocks, key => !root.panelOpen && !(root.hovers[key] > 0), now);
+        // The store keeps each toast's clock, so a restart judges it as it
+        // stood.
+        for (const key of Object.keys(clocks)) store.setClock(key, Logic.clockFields(clocks[key]));
         const first = Logic.nextExpiry(clocks, now);
         if (first === null) expiry.stop();
         else {
@@ -427,7 +431,10 @@ Item {
             delete next[key];
             exits = next;
         }
+        const origin = rowModel.get(at).origin;
         rowModel.remove(at);
+        // A toast that left while a panel is open is in the history now.
+        if (origin !== "panel" && panelOpen) Qt.callLater(syncPanel);
         if (Logic.hasOwn(hovers, key)) {
             const next = Object.assign({}, hovers);
             delete next[key];
@@ -519,10 +526,31 @@ Item {
         }
         panelMode = mode;
         removePanelRows();
-        const live = {};
-        for (let i = 0; i < rowModel.count; i++) live[rowModel.get(i).key] = true;
-        for (const entry of Logic.panelRows(store.history, mode, store.readBefore))
-            if (!live[entry.key]) rowModel.append(rowOf(entry, "panel"));
+        syncPanel();
+    }
+
+    // Keep an open panel's rows the history's: a notification that enters
+    // the history while it is open, silenced or off the screen, joins it in
+    // its place, and a row past the panel's limit goes. A key the model
+    // holds already, a toast still leaving among them, is not added twice;
+    // the toast joins once its exit has played.
+    function syncPanel() {
+        if (!panelOpen) return;
+        const present = {};
+        for (let i = 0; i < rowModel.count; i++) present[rowModel.get(i).key] = true;
+        const wanted = Logic.panelRows(store.history, panelMode, store.readBefore);
+        const keep = {};
+        for (const entry of wanted) keep[entry.key] = true;
+        for (const key of rowKeys(r => r.origin === "panel" && !keep[r.key])) removeRow(key);
+        for (const entry of wanted) {
+            if (present[entry.key]) continue;
+            let at = rowModel.count;
+            for (let i = 0; i < rowModel.count; i++) {
+                const row = rowModel.get(i);
+                if (row.origin === "panel" && row.timestamp < entry.timestamp) { at = i; break; }
+            }
+            rowModel.insert(at, rowOf(entry, "panel"));
+        }
         countShown();
     }
 
