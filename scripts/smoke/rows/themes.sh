@@ -229,3 +229,118 @@ expect "the vgs apply after the light package wrote the shell's file" "applied a
 expect_poll "current follows the vgs apply after the light package" '"vgs"' theme_member current
 expect_poll "revision rose after the vgs apply after the light package" rose revision_rose
 expect "disabling the fixture after the theme rows is allowed" ok ipc shell setPluginEnabled acme.probe false
+
+# ---- vgs.themes: the themes widget and panel ------------------------------
+# The first-party themes plugin, reached the way a user reaches it: `vgsh
+# plugin enable vgs.themes` places its widget in its default section, a
+# click on the widget opens the panel under it, and a click on a row
+# applies that package. The panel is read back through what it draws: each
+# ThemeRow's visible texts (name, source, badges, then one line per
+# problem of the last result) and its swatch colours. An installed copy of
+# `light` shadows the shipped one, beside the installed `smoke` and the
+# refused `mismatch` the rows above left. A fixture target that fails gives
+# the result a failed target, and a stand-in runner a target state the
+# panel names nowhere. The block leaves vgs applied and the plugin
+# disabled, so later rows see the bar they saw before it.
+layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
+theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
+# The rows whose name is NAME, in tree order.
+theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
+# The swatch of the one row named NAME whose secondary line is SECONDARY:
+# its chip count and whether a chip draws COLOUR, as `#rrggbbaa`.
+theme_swatch() {
+  local texts colours
+  texts="$(ipc smoke itemTexts panel vgs.themes ThemeRow)" && colours="$(ipc smoke itemColours panel vgs.themes ThemeRow Surface)" || return
+  python3 -c 'import json,sys; t,c=json.loads(sys.argv[1]),json.loads(sys.argv[2]); m=[c[i] for i,r in enumerate(t) if r[:2]==sys.argv[3:5]]; print(json.dumps([len(m[0]), sys.argv[5] in m[0]]) if len(m)==1 else "rows=%d" % len(m))' "$texts" "$colours" "$1" "$2" "$3"
+}
+# click_row NAME: one click on the centre of the enabled list item NAME,
+# polled for up to 5 s while a running apply disables the rows.
+click_row() {
+  local rect=absent
+  for _ in $(seq 1 25); do
+    rect="$(ipc smoke itemGeometry panel vgs.themes ListItem "$1")" && [[ $rect != absent ]] && break
+    sleep 0.2
+  done
+  [[ $rect != absent ]] || return 1
+  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
+  click "$cx" "$cy"
+}
+# Whether the panel draws a label reading TEXT: True or False.
+panel_label() { ipc smoke itemTexts panel vgs.themes Label | python3 -c 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
+panel_open() { [[ $(ipc smoke readInstance panel vgs.themes packages) != absent ]] && echo open || echo closed; }
+# A click the panel does not cover: the lower-left quarter of the screen,
+# away from the right section the panel opens under.
+click_outside() { click "$((mon_w / 4))" "$((mon_h * 3 / 4))"; }
+
+expect "the themes panel is enabled as first-party before any placement" True plugin_enabled vgs.themes
+expect "the themes panel summons before its widget is placed" ok ipc shell summon panel vgs.themes '{}'
+expect_poll "the unanchored themes panel maps one panel surface" 1 layer_count vgs:panel
+expect "hiding the unanchored themes panel is allowed" ok ipc shell hide panel vgs.themes
+expect_poll "the unanchored themes panel's surface is gone" 0 layer_count vgs:panel
+expect "the themes widget has no placement before it is enabled" none layout_section_of vgs.themes
+expect "vgsh plugin enable places the themes widget" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin enable vgs.themes
+expect_poll "the themes widget lands in its default section" right layout_section_of vgs.themes
+themes_key="$(bar_key)"
+expect_poll "the themes widget is built on the bar" '"vgs.themes"' ipc smoke readInstance "$themes_key" vgs.themes moduleName
+
+mkdir -p -- "$installed/light"
+cp -- "$repo/themes/light/theme.json" "$repo/themes/light/terminal.json" "$installed/light/"
+click_centre "$themes_key" vgs.themes || fail "the click on the themes widget failed"
+expect_poll "a click on the widget opens the themes panel" open panel_open
+expect_poll "the panel lists every package with its source and badges" '[["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
+expect "an accepted package's row draws its palette" '[7, true]' theme_swatch smoke installed '#12ab34ff'
+expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, name-mismatch" '#12ab34ff'
+expect "a shadowed package's row draws no swatch" '[0, false]' theme_swatch light shipped '#12ab34ff'
+
+fixture_target smoke-fails 'accent=@{palette.nope}'
+click_row smoke || fail "the click on the smoke row failed"
+expect_poll "a click on a row applies its package" '"smoke"' lent theme.last.result.theme
+expect_poll "the shell displays the package the row applied" smoke ipc smoke themeName
+expect_poll "the applied row is displayed and shows its failed target" '[["smoke", "installed", "Displayed", "smoke-fails failed: placeholder"]]' theme_row smoke
+expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' theme_row vgs
+rm -r -- "$fixture_targets/smoke-fails"
+click_row smoke || fail "the second click on the smoke row failed"
+expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
+
+# The gate holds every theme command, polling every 50 ms for at most
+# 10 s, so the panel closes while its apply runs.
+cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
+panel_gate="$sandbox/themes-panel-gate"
+stand_in_vgsh "for _ in \$(seq 1 200); do [[ -e $(printf %q "$panel_gate") ]] && break; sleep 0.05; done"
+click_row light || fail "the click on the installed light row failed"
+expect_poll "the row shows the apply running" '[["light", "installed", "Applying"], ["light", "shipped", "Shadowed"]]' theme_row light
+click_outside || fail "the click outside the themes panel failed"
+expect_poll "a click outside closes the panel during the apply" closed panel_open
+touch -- "$panel_gate"
+expect_poll "the apply completes with the panel closed" '[]' theme_jobs
+click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel failed"
+expect_poll "the reopened panel shows the apply's result" '[["light", "installed", "Displayed"], ["light", "shipped", "Shadowed"]]' theme_row light
+expect "the theme changed while the panel was closed" light ipc smoke themeName
+
+# A panel reopened while its apply runs reads the apply from last, and the
+# result it waits for carries a target state no code of the panel names.
+# The same gate holds the stand-in.
+novel_gate="$sandbox/themes-novel-gate"
+novel='{"state":"partial","shell":"unchanged","targets":[{"name":"smoke-novel","state":"smoke-state","reason":"smoke-reason"}],"theme":"vgs","reason":null}'
+stand_in_vgsh "for _ in \$(seq 1 200); do [[ -e $(printf %q "$novel_gate") ]] && break; sleep 0.05; done
+if [[ \${2:-} == apply ]]; then printf '%s\\n' $(printf %q "$novel"); exit 3; fi"
+click_row vgs || fail "the click on the vgs row failed"
+expect_poll "the vgs row shows its apply running" '[["vgs", "shipped", "Applying"]]' theme_row vgs
+click_outside || fail "the click outside the themes panel failed"
+expect_poll "the panel closes during the vgs apply" closed panel_open
+click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel during the apply failed"
+expect_poll "the panel reopened during the apply reads it from last" True panel_label "Applying vgs"
+touch -- "$novel_gate"
+expect_poll "the reopened panel shows a target state it names nowhere" '[["vgs", "shipped", "smoke-novel smoke-state: smoke-reason"]]' theme_row vgs
+expect "the panel drops the running apply once it ends" False panel_label "Applying vgs"
+
+mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
+click_row vgs || fail "the click on the vgs row with the real runner failed"
+expect_poll "the vgs row applied by the real runner is displayed with no problem" '[["vgs", "shipped", "Displayed"]]' theme_row vgs
+expect_poll "the vgs package is displayed again" vgs ipc smoke themeName
+rm -r -- "$installed/light"
+click_outside || fail "the click closing the themes panel failed"
+expect_poll "the themes panel closes" closed panel_open
+expect "vgsh plugin disable takes the themes widget off the bar" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin disable vgs.themes
+expect_poll "the themes widget is gone" False record_exists vgs.themes
+# ---- end vgs.themes ---------------------------------------------------------

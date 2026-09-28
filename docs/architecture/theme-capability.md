@@ -1,8 +1,8 @@
 # Theme capability
 
-Covers: shell/Core/ThemeRunner.qml, scripts/smoke/rows/themes.sh
+Covers: shell/Core/ThemeRunner.qml, scripts/smoke/rows/themes.sh, shell/plugins/vgs.themes/**
 
-The `theme` capability runs the `vgsh theme` commands of [themes.md](themes.md) for a plugin.
+The `theme` capability runs the `vgsh theme` commands of [themes.md](themes.md) for a plugin. The `vgs.themes` plugin is its first-party client: [§ Plugin](#plugin).
 
 ## Capability
 
@@ -13,7 +13,17 @@ The `theme` capability runs the `vgsh theme` commands of [themes.md](themes.md) 
 - **Lifetimes.** Each `done` is registered in its instance's lifetime: a destroyed instance's callback is dropped and its job still runs, so an apply always completes. `last` is `{ applying, result }`, `applying` the name of the apply running or waiting, or null. It lives in the runner, so a panel closed during an apply and reopened after it reads the result.
 - **Readings.** `swatch(name)` is the `ok` package's `palette` from the last list, each colour through `Theme.toColor`; a refused, shadowed or unknown package has none. `modified` is the last list's `file.modified`. Both are null before the first list and after a failed one. `current`, `revision` and `fileState` are `Theme.name`, `Theme.revision` and `Theme.fileState`. `done` can run before `ThemeSource` reloads the file, so a caller that needs the new theme waits on `revision`.
 
+## Plugin
+
+`shell/plugins/vgs.themes` declares `bar-widget` and `panel`, with the capabilities `theme` and `surfaces`, and composes `qs.Ui` only. The shipped bar layout does not place its widget. `vgsh plugin enable vgs.themes` places it in its `defaultSection`, `right`. The panel is enabled as a first-party plugin with no placement, so `summon panel vgs.themes` reaches it before the widget is placed.
+
+- **Widget.** One `IconButton` toggles the plugin's own panel through `surfaces`, anchored to the widget.
+- **Rows.** One `ListItem` per package the last list names shows its source, the palette `swatch` answers and badges: `Displayed` for the package `Theme.name` names, `Modified` for the file's named package when the list reports the file modified, `Shadowed` and `Refused` for those list states, `Applying` for the apply `last` names. A click on an `ok` row applies it; every row is disabled while an apply runs.
+- **Results.** A hidden panel is destroyed, so the panel keeps no result of its own: it reads `last` on open and after every answer. The row of the package `last.result` names shows the result's refusal reason and every target whose state is not `written`, `unchanged` or `skipped`, with the state and reason the runner wrote. Only those states are named, so a target state the runner adds shows with no panel change. The lines stay until a later apply replaces the result.
+- **Reopen.** A list asked for during an apply waits behind it. A panel opened during an apply shows `Applying <name>` from `last`, then the rows and the result once the apply ends.
+
 ## Invariants
 
 1. Through the `theme` capability a plugin applies a package and then reads `current` and `revision` move, lists every package with its state, reads a swatch alpha first and `modified` after a hand edit and `fileState` after a refused one; is refused busy and malformed at once; receives a refusal's non-zero exit and a partial apply's result, a fixture target failing beside one that lands, as its result, an unreadable result and a failed start as failures; and a destroyed instance's callbacks are dropped while its apply completes into `last`, which the rebuilt instance reads. Enforced by `scripts/smoke/rows/themes.sh` through the `acme.probe` fixture, with the sandbox's `vgsh` replaced by stand-ins for the held, unreadable and unstartable runs.
 2. Applying the shipped `light` package through the `theme` capability restyles every section of the gallery. One example per section is read back as a property through the probe's `galleryColour`, never a drawn frame. Each colour equals the token `ThemeLogic.accept` resolves from `themes/light/theme.json` and differs from the `vgs` default. Enforced by `scripts/smoke/rows/themes.sh`, which applies `vgs` after it.
+3. `vgsh plugin enable vgs.themes` places the widget in the right section. A click on it opens the panel, which lists every package with its source, swatch and badges. A click on a row applies the package, and the row shows a failed target until a later apply of the package succeeds. A panel closed during an apply and reopened after it shows the result; one reopened during an apply names it, then shows a target state the panel names nowhere. Enforced by `scripts/smoke/rows/themes.sh`, which clicks through the nested seat and reads what each `ThemeRow` draws through the probe's `itemTexts` and `itemColours`.

@@ -135,6 +135,7 @@ manifests["vgs.barpanel"] = ctx.validateManifest(Object.assign({}, bar, { id: "v
 const noSection = Object.assign({}, clock, { id: "acme.widget", settings: { size: 3, tags: ["a"] } });
 delete noSection.defaultSection;
 manifests["acme.widget"] = ctx.validateManifest(noSection, "/p").manifest;
+manifests["vgs.widgetpanel"] = ctx.validateManifest(Object.assign({}, clock, { id: "vgs.widgetpanel", kinds: ["bar-widget", "panel"], entryPoints: { "bar-widget": "W.qml", panel: "P.qml" }, defaultSection: "right" }), "/p").manifest;
 manifests["acme.both"] = ctx.validateManifest({ schemaVersion: 1, id: "acme.both", name: "B", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" }, defaultSection: "right", settings: { label: "probe" } }, "/p").manifest;
 for (const id of Object.keys(manifests)) if (manifests[id] === undefined) { console.log("fixture manifest refused: " + id); process.exit(1); }
 
@@ -157,6 +158,7 @@ const enabledRows = [
     ["an unplaced widget listed for its settings is not enabled", ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.widget", size: 1 }] }), "acme.widget", false],
     ["an inactive first-party bar with a panel kind is not enabled", ctx.effectiveConfig(shipped, { bar: { id: "acme.bar" } }), "vgs.barpanel", false],
     ["the active first-party bar with a panel kind is enabled", ctx.effectiveConfig(shipped, { bar: { id: "vgs.barpanel" } }), "vgs.barpanel", true],
+    ["a first-party widget with a panel kind is enabled unplaced", shipped, "vgs.widgetpanel", true],
 ];
 for (const [name, config, id, want] of enabledRows) {
     check("isEnabled: " + name, ctx.isEnabled(config, manifests[id], "vgs.bar"), want);
@@ -166,6 +168,8 @@ check("hiddenByDisabling the active bar names its enabled widgets", ctx.hiddenBy
 check("hiddenByDisabling ignores disabled widgets", ctx.hiddenByDisabling(manifests, ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.clock"] }), "vgs.bar", "vgs.bar"), ["vgs.workspaces"]);
 check("hiddenByDisabling an inactive bar is empty", ctx.hiddenByDisabling(manifests, ctx.effectiveConfig(shipped, { bar: { id: "other.bar" } }), "vgs.bar", "vgs.bar"), []);
 check("hiddenByDisabling a widget is empty", ctx.hiddenByDisabling(manifests, shipped, "vgs.clock", "vgs.bar"), []);
+check("hiddenByDisabling leaves out an enabled widget the layout does not place", ctx.hiddenByDisabling(manifests, shipped, "vgs.bar", "vgs.bar").indexOf("vgs.widgetpanel"), -1);
+check("hiddenByDisabling names a placed first-party widget with a panel kind", ctx.hiddenByDisabling(manifests, ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "vgs.widgetpanel" }] } } }), "vgs.bar", "vgs.bar"), ["vgs.widgetpanel"]);
 check("hiddenByDisabling sorts ids", ctx.hiddenByDisabling(manifests, ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [{ id: "vgs.workspaces" }], center: [{ id: "vgs.clock" }], right: [{ id: "acme.widget" }] } } }), "vgs.bar", "vgs.bar"), ["acme.widget", "vgs.clock", "vgs.workspaces"]);
 check("hiddenByDisabling ignores a prototype name", ctx.hiddenByDisabling(manifests, shipped, "constructor", "vgs.bar"), []);
 check("hasOwn rejects a prototype name", ctx.hasOwn(manifests, "toString"), false);

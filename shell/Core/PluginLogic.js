@@ -409,14 +409,17 @@ function effectiveLayout(config, manifests, defaultBarId) {
 
 // Enabled bar widgets that stop showing when `id`, the active bar, is
 // disabled. They stay enabled and keep every other kind they declare; the
-// manager reports them so the user knows what leaves the screen.
+// manager reports them so the user knows what leaves the screen. Only a
+// placed widget shows, so a plugin enabled for another kind while its
+// widget is unplaced hides nothing.
 function hiddenByDisabling(manifests, config, id, defaultBarId) {
     var m = hasOwn(manifests, id) ? manifests[id] : undefined;
     if (!m || m.kinds.indexOf("bar") === -1 || activeBarId(config, defaultBarId) !== id)
         return [];
+    var placed = layoutIds(config);
     return Object.keys(manifests).filter(function (other) {
         var o = manifests[other];
-        return other !== id && o.kinds.indexOf("bar-widget") !== -1 && isEnabled(config, o, defaultBarId);
+        return other !== id && o.kinds.indexOf("bar-widget") !== -1 && placed.indexOf(other) !== -1 && isEnabled(config, o, defaultBarId);
     }).sort();
 }
 

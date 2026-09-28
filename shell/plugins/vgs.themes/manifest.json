@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.themes",
+  "name": "Themes",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "A bar button that opens a panel listing every theme package; a click applies one, and the panel shows the targets the last apply could not land.",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "bar-widget": "Widget.qml",
+    "panel": "ThemesPanel.qml"
+  },
+  "capabilities": [
+    "surfaces",
+    "theme"
+  ],
+  "defaultSection": "right",
+  "settings": {
+    "placement": "top-right"
+  }
+}

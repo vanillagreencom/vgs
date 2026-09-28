@@ -80,6 +80,13 @@ Scope {
         return JSON.stringify([at.x, at.y, item.width, item.height]);
     }
 
+    // An item's type name, with the engine's suffixes for a QML-defined type
+    // and for one extended in place (a delegate that declares a property of
+    // its own) removed.
+    function typeName(item) {
+        return String(item).split("(")[0].replace(/(_QML(TYPE)?_\d+)+$/, "");
+    }
+
     function read(hostKey, id, property) {
         const item = instance(hostKey, id);
         if (item === null) return "absent";
@@ -226,12 +233,10 @@ Scope {
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
-        // its type name, with the engine's suffixes for a QML-defined type
-        // and for one extended in place (a delegate that declares a
-        // property of its own) removed, its box in screen coordinates, its
-        // implicit size, the index of its parent in the list and a Label's
-        // role. A row measures alignment from it, so the shipped item
-        // carries no readback of its own.
+        // its type name as typeName writes it, its box in screen
+        // coordinates, its implicit size, the index of its parent in the
+        // list and a Label's role. A row measures alignment from it, so the
+        // shipped item carries no readback of its own.
         function descendantGeometry(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
@@ -239,13 +244,43 @@ Scope {
             return JSON.stringify(items.map(child => {
                 const at = child.mapToGlobal(0, 0);
                 return {
-                    type: String(child).split("(")[0].replace(/(_QML(TYPE)?_\d+)+$/, ""),
+                    type: root.typeName(child),
                     box: [at.x, at.y, child.width, child.height],
                     implicit: [child.implicitWidth, child.implicitHeight],
                     parent: items.indexOf(child.parent),
                     role: child.role
                 };
             }));
+        }
+        // Every item named `type` under an instance, in tree order, as the
+        // texts it draws: its visible, non-empty Text items depth first, so
+        // a row reads a list item's title, its secondary line, its trailing
+        // badges and then whatever follows it, as drawn now.
+        function itemTexts(hostKey: string, id: string, type: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const texts = node => {
+                const own = node instanceof Text && node.visible && node.text !== "" ? [node.text] : [];
+                return own.concat(...Array.from(node.children || []).map(texts));
+            };
+            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(texts));
+        }
+        // Every item named `type` under an instance, in tree order, as the
+        // colours its visible descendants named `childType` fill with,
+        // written as ThemeLogic writes a resolved colour, `#rrggbbaa`.
+        function itemColours(hostKey: string, id: string, type: string, childType: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(found =>
+                root.descendants(found).filter(child => child !== found && child.visible && root.typeName(child) === childType).map(child => ThemeLogic.formatColor(child.color))));
+        }
+        // The box of the first visible, enabled item named `type` whose
+        // `text` is `text`, in screen coordinates, so a row can click it.
+        function itemGeometry(hostKey: string, id: string, type: string, text: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
+            return root.geometry(found === undefined ? null : found);
         }
         function hasWorkspaceAction(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
