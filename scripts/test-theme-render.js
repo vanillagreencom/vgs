@@ -80,6 +80,8 @@ const ACCEPTED_TARGETS = [
     ["probe", entryText({ base: "cache", dir: "wal" })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { file: "chrome/userChrome.css", profiles: [".zen/profiles.ini", ".config/zen/profiles.ini"] }) })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general", profiles: ["profiles.ini"] }) })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".config/probe/probe.conf", ".probe.conf"] }) })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".probe.conf"] }), reload: { command: ["touch", "-c", "--", "@{wiring}", "@{state}", "@@{x}"], timeoutMs: 2000 } })],
     ["probe", entryText({ dir: ".obsidian/themes/vgs", owned: true, vaults: "obsidian/obsidian.json" })],
     ["probe", entryText({ base: "home", dir: ".probe", vaults: ".probe-vaults.json" })]
 ];
@@ -133,7 +135,16 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: [".zen/profiles.ini", "../.zen/profiles.ini"] }) }), "target-schema", "key=wiring.profiles"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: [".zen//profiles.ini"] }) }), "target-schema", "key=wiring.profiles"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: [[".zen/profiles.ini"]] }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: ".probe.conf" }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [""] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: ["/home/u/.probe.conf"] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".config/probe.conf", "../.probe.conf"] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [".config//probe.conf"] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { fallbacks: [[".probe.conf"]] }) }), "target-schema", "key=wiring.fallbacks"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: ["profiles.ini"], fallbacks: [".probe.conf"] }) }), "target-schema", "key=wiring.fallbacks"],
     ["probe", entryText({ profiles: [".zen/profiles.ini"] }), "target-schema", "key=wiring"],
+    ["probe", entryText({ fallbacks: [".probe.conf"] }), "target-schema", "key=wiring"],
     ["probe", entryText({ line: "include=@{state}/probe.conf" }), "target-schema", "key=wiring"],
     ["probe", entryText({ vault: "obsidian/obsidian.json" }), "target-schema", "key=wiring"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { vaults: "obsidian/obsidian.json" }) }), "target-schema", "key=wiring"],
@@ -162,6 +173,9 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: "yes" } }), "target-schema", "key=reload.always"],
     ["probe", targetText({ reload: { command: ["probe", "@{palette.accent}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ reload: { command: ["probe", "@{state"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: ["profiles.ini"] }), reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
+    ["probe", targetText({ files: twoFiles, wiring: entry, reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
+    ["probe", targetText({ wiring: null, reload: { command: ["probe", "@{wiring}"], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ wiring: "none" }), "target-schema", "key=wiring"]
 ];
 
@@ -485,10 +499,14 @@ function verify(render) {
     assert.throws(() => render.wiringLine(unwired, "/s"), /has wiring form none/);
     assert.throws(() => render.entryLinks(unwired, "/s"), /has wiring form none/);
 
-    // A reload argument names the state directory; `@@{` stays a literal.
-    // `always` alone makes a hook due on every apply.
+    // A reload argument names the state directory and, for include targets
+    // without profiles, the wiring file; `@@{` stays a literal. `always`
+    // alone makes a hook due on every apply.
     const hooked = accepted("probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } }));
     assert.deepEqual(render.reloadCommand(hooked, "/s/vgs/theme"), ["probe", "--file=/s/vgs/theme/probe.conf", "@{x}"]);
+    const wiringHook = accepted("probe", targetText({ reload: { command: ["touch", "-c", "--", "@{wiring}", "@{state}", "@@{x}"], timeoutMs: 2000 } }));
+    assert.deepEqual(render.reloadCommand(wiringHook, "/s/vgs/theme", "/home/u/.wezterm.lua"), ["touch", "-c", "--", "/home/u/.wezterm.lua", "/s/vgs/theme", "@{x}"]);
+    assert.throws(() => render.reloadCommand(wiringHook, "/s/vgs/theme"), /names placeholder wiring/);
     assert.deepEqual(render.reloadCommand(target("hex6"), "/s"), ["probe", "--reload"]);
     assert.equal(render.reloadAlways(hooked), true);
     assert.equal(render.reloadAlways(target("hex6")), false);
@@ -549,11 +567,15 @@ const CONTROLS = [
     ["detected every entry", "return detect.every(entry => Array.isArray", "return detect.some(entry => Array.isArray"],
     ["wiring required keys", "!WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "false ||"],
     ["wiring unknown key", "!Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))", "false"],
-    ["wiring section admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];', 'const INCLUDE_OPTIONAL_KEYS = ["profiles"];'],
-    ["wiring profiles admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];', 'const INCLUDE_OPTIONAL_KEYS = ["section"];'],
+    ["wiring section admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles", "fallbacks"];', 'const INCLUDE_OPTIONAL_KEYS = ["profiles", "fallbacks"];'],
+    ["wiring profiles admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles", "fallbacks"];', 'const INCLUDE_OPTIONAL_KEYS = ["section", "fallbacks"];'],
+    ["wiring fallbacks admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles", "fallbacks"];', 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];'],
     ["wiring section name", "(typeof wiring.section !== \"string\" || !SECTION_PATTERN.test(wiring.section))", "false"],
     ["wiring profiles list", "(!Array.isArray(wiring.profiles) || wiring.profiles.length === 0 ||", "(!Array.isArray(wiring.profiles) ||"],
     ["wiring profiles path", "!wiring.profiles.every(ini => typeof ini === \"string\" && ini.split(\"/\").every(segment => DIR_SEGMENT_PATTERN.test(segment)))", "!wiring.profiles.every(ini => typeof ini === \"string\")"],
+    ["wiring fallbacks list", "(!Array.isArray(wiring.fallbacks) || wiring.fallbacks.length === 0 ||", "(!Array.isArray(wiring.fallbacks) ||"],
+    ["wiring fallbacks path", "!wiring.fallbacks.every(file => typeof file === \"string\" && file.split(\"/\").every(segment => DIR_SEGMENT_PATTERN.test(segment)))", "!wiring.fallbacks.every(file => typeof file === \"string\")"],
+    ["wiring fallbacks exclude profiles", 'if (logic.hasOwn(wiring, "fallbacks") && logic.hasOwn(wiring, "profiles")) return "key=wiring.fallbacks";', 'if (false) return "key=wiring.fallbacks";'],
     ["profile sections only", "PROFILE_SECTION.test(line.slice(1, -1).trim()) ? new Map() : null", "new Map()"],
     ["profile lines trimmed", "const line = raw.trim();", "const line = raw;"],
     ["profile value keeps its =", 'const at = line.indexOf("=");', 'const at = line.lastIndexOf("=");'],
@@ -568,15 +590,16 @@ const CONTROLS = [
     ["reload unknown key", "!Object.keys(reload).every(key => RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)", "false"],
     ["reload always admitted", "RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)", "RELOAD_KEYS.includes(key))"],
     ["reload always boolean", "typeof reload.always !== \"boolean\"", "false"],
-    ["reload argument placeholder", "list.some(name => name !== STATE_PLACEHOLDER)", "false"],
+    ["reload argument placeholder", "!allowed.includes(name)", "false"],
     ["reload argument unterminated", "list === null ||", "false ||"],
-    ["reload argument state", "target.reload.command.map(arg => withState(arg, state,", "target.reload.command.map(arg => String(arg,"],
+    ["reload wiring placeholder gate", 'if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logicHasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);', "names.push(WIRING_PLACEHOLDER);"],
+    ["reload argument state", "target.reload.command.map(arg => withValues(arg, values,", "target.reload.command.map(arg => String(arg,"],
     ["reload always read", "target.reload.always === true", "target.reload.always !== undefined"],
     ["wiring none form", "if (wiring === null) return \"none\";", "if (false) return \"none\";"],
     ["wiring null accepted", "document.wiring === null ? \"\"", "document.wiring === undefined ? \"\""],
     ["reload command", "if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return", "if (false) return"],
     ["reload timeout", "if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return", "if (false) return"],
-    ["wiring line state", "        return state;\n", "        return \"@{state}\";\n"],
+    ["wiring line state", "        return values[part.name];\n", "        return part.name === STATE_PLACEHOLDER ? \"@{state}\" : values[part.name];\n"],
     ["wiring whole line", "if (lines.includes(line)) return null;", "if (text !== undefined && text.includes(line)) return null;"],
     ["wiring line first", "return line + \"\\n\" + (text === undefined ? \"\" : text);", "return (text === undefined ? \"\" : text) + line + \"\\n\";"],
     ["wiring creates", "const lines = text === undefined ? [] : text.split(\"\\n\");", "if (text === undefined) return null;\n    const lines = text.split(\"\\n\");"],

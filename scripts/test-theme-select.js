@@ -350,7 +350,7 @@ const CONTROLS = [
     [R, "if (!isLine(select.value) || CONTROL_CHARACTER.test(select.value))", "if (!isLine(select.value))"],
     [R, "const CONTROL_CHARACTER = /[\\u0000-\\u001f\\u007f]/;", "const CONTROL_CHARACTER = /[\\u0000-\\u001f]/;"],
     [R, "if (names === null || names.some(name => name !== STATE_PLACEHOLDER)) return \"key=select.value\";", "if (names === null) return \"key=select.value\";"],
-    [R, "return withState(target.select.value, state,", "return String(target.select.value,"]
+    [R, "return withValues(target.select.value, { [STATE_PLACEHOLDER]: state },", "return String(target.select.value,"]
 ];
 
 const sources = { [S]: fs.readFileSync(selectFile, "utf8"), [R]: fs.readFileSync(renderFile, "utf8") };

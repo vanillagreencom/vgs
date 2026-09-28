@@ -186,7 +186,7 @@ rm -f -- "$every_args"
 judge_control every-apply 'if (entry.state === "unchanged" && render.reloadAlways(entry.target)) return true;' ''
 tinst "the every-apply-dropping mutant applies unchanged bytes" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
 check "the every-apply-dropping mutant runs no hook on unchanged bytes" test ! -e "$every_args"
-judge_control state-argument 'render.reloadCommand(target, live)' 'reload.command'
+judge_control state-argument 'render.reloadCommand(target, live, wiring.path)' 'target.reload.command'
 tinst "the literal-argument mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 check "the literal-argument mutant's hook takes @{state} unwritten" test "$(head -n 1 "$every_args")" == "--file=@{state}/every.conf"
 unset THEME_BIN

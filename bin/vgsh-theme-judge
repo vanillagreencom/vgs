@@ -526,33 +526,58 @@ function landedFiles(live, name, key) {
     });
 }
 
-// The configuration files include TARGET keeps its line in: its `file`
-// under CONFIG_HOME, or, with `profiles`, under every profile directory
-// the first of those profiles.ini paths under the home directory that
-// exists lists, a relative one under the ini's own directory. A listed
-// profile whose directory does not exist is left out, so a stale entry
-// never makes apply create a profile; no ini lists none. Throws the fs
-// error of an ini or a profile that cannot be read, its `path` the file's:
-// a read error such as EISDIR carries none of its own.
-function includeFiles(target, configHome) {
-    const wiring = target.wiring;
-    if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];
-    for (const relative of wiring.profiles) {
-        const ini = path.join(os.homedir(), relative);
-        let bytes;
+// The first of RELATIVES under the home directory whose READ answers a
+// value other than undefined. Only ENOENT is absence; any other fs failure
+// is the target's and names the path tried.
+function firstHomeRelative(relatives, read) {
+    for (const relative of relatives) {
+        const file = path.join(os.homedir(), relative);
+        let value;
         try {
-            bytes = readIfPresent(ini);
+            value = read(file);
         } catch (e) {
-            if (typeof e.code === "string") e.path = ini;
+            if (typeof e.code === "string") e.path = file;
             throw e;
         }
-        if (bytes === undefined) continue;
-        return render.profileDirs(bytes.toString("utf8"))
-            .map(dir => dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path)
-            .filter(isDirectory)
-            .map(dir => path.join(dir, wiring.file));
+        if (value !== undefined) return { file, value };
     }
-    return [];
+    return null;
+}
+
+// Whether FILE exists, following symlinks. A dangling symlink is absent.
+function existingPath(file) {
+    try {
+        fs.statSync(file);
+        return file;
+    } catch (e) {
+        if (e.code === "ENOENT") return undefined;
+        throw e;
+    }
+}
+
+// The configuration files include TARGET keeps its line in: its `file`
+// under CONFIG_HOME; with `fallbacks`, the first existing fallback path
+// under HOME when that file is absent; or, with `profiles`, under every
+// profile directory the first of those profiles.ini paths under the home
+// directory that exists lists, a relative one under the ini's own
+// directory. A listed profile whose directory does not exist is left out,
+// so a stale entry never makes apply create a profile; no ini lists none.
+// Throws the fs error of an ini, fallback or profile that cannot be read,
+// its `path` the file's: a read error such as EISDIR carries none of its own.
+function includeFiles(target, configHome) {
+    const wiring = target.wiring;
+    if (wiring.profiles === undefined) {
+        const configFile = path.join(configHome, wiring.file);
+        if (wiring.fallbacks === undefined || existingPath(configFile) !== undefined) return [configFile];
+        const fallback = firstHomeRelative(wiring.fallbacks, existingPath);
+        return [fallback === null ? configFile : fallback.value];
+    }
+    const selected = firstHomeRelative(wiring.profiles, readIfPresent);
+    if (selected === null) return [];
+    return render.profileDirs(selected.value.toString("utf8"))
+        .map(dir => dir.relative ? path.join(path.dirname(selected.file), dir.path) : dir.path)
+        .filter(isDirectory)
+        .map(dir => path.join(dir, wiring.file));
 }
 
 // Whether DIR is a directory, a symlink to one included. A path that is
@@ -925,7 +950,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     }
     // Last, so each application re-reads files that are all in place.
     result.targets = landed.map((entry, i) => entry.state !== "failed" && due.includes(entry.name)
-        ? reloadRow(entry.name, entry.target, live, result.targets[i], failures)
+        ? reloadRow(entry.name, entry.target, configHome, live, result.targets[i], failures)
         : result.targets[i]);
     writePending(stateDir, stillPending(result.targets, due), due, key);
     result.state = applyState(result.shell, result.targets);
@@ -1026,15 +1051,32 @@ function stillPending(rows, due) {
     return rows.filter(t => due.includes(t.name) && (t.state === "failed" || t.state === "reload-pending")).map(t => t.name);
 }
 
+// The one wiring file a reload argument can name, or undefined when TARGET
+// has no such placeholder. A lookup failure keeps the target pending; the
+// hook cannot be run with the wrong path.
+function reloadWiring(name, target, configHome, failures) {
+    if (render.wiringForm(target.wiring) !== "include" || target.wiring.profiles !== undefined) return { ok: true, path: undefined };
+    try {
+        return { ok: true, path: includeFiles(target, configHome)[0] };
+    } catch (e) {
+        if (typeof e.code !== "string") throw e;
+        failures.push("target=" + name + " reason=reload-failed path=" + e.path + " error=" + e.code);
+        return { ok: false };
+    }
+}
+
 // Run target NAME's reload hook, the argv render.reloadCommand writes with
-// LIVE, the state directory's theme/, bounded by its timeoutMs, with this
-// process's environment. Answers ROW when it exits 0, else a reload-pending
-// row with its reason and its keyed line pushed onto FAILURES. No stream is
-// a pipe: the hook's output never reaches the result on stdout, and
-// spawnSync would wait past the timeout for a pipe a hook's child holds.
-function reloadRow(name, target, live, row, failures) {
+// LIVE, the state directory's theme/, and WIRING, the file its include line
+// is kept in, bounded by its timeoutMs, with this process's environment.
+// Answers ROW when it exits 0, else a reload-pending row with its reason
+// and its keyed line pushed onto FAILURES. No stream is a pipe: the hook's
+// output never reaches the result on stdout, and spawnSync would wait past
+// the timeout for a pipe a hook's child holds.
+function reloadRow(name, target, configHome, live, row, failures) {
     const reload = target.reload;
-    const [command, ...args] = render.reloadCommand(target, live);
+    const wiring = reloadWiring(name, target, configHome, failures);
+    if (!wiring.ok) return { name, state: "reload-pending", reason: "reload-failed" };
+    const [command, ...args] = render.reloadCommand(target, live, wiring.path);
     const nul = fs.openSync("/dev/null", "r");
     let run;
     try {
@@ -1066,7 +1108,7 @@ function reloadRow(name, target, live, row, failures) {
 // One pending target of a reload: `skipped` and dropped when it is no
 // longer shipped, enabled or given a hook; `failed` and kept when its
 // target.json cannot be read or judged; else its hook's row, `reloaded`.
-function reloadTarget(name, shipped, disabled, live, failures) {
+function reloadTarget(name, shipped, disabled, configHome, live, failures) {
     const skipped = reason => ({ name, state: "skipped", reason });
     const failed = (reason, failure) => {
         failures.push(failure);
@@ -1083,7 +1125,7 @@ function reloadTarget(name, shipped, disabled, live, failures) {
     if (!found.ok) return found.entry;
     if (!found.value) return skipped("not-detected");
     if (verdict.target.reload === null) return skipped("no-reload");
-    return reloadRow(name, verdict.target, live, { name, state: "reloaded", reason: null }, failures);
+    return reloadRow(name, verdict.target, configHome, live, { name, state: "reloaded", reason: null }, failures);
 }
 
 // Run every pending reload hook again, in name order, and keep pending the
@@ -1105,8 +1147,9 @@ function reloadAll(result, failures, configDir, stateDir, lock) {
     } catch (e) {
         refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
     }
+    const configHome = path.dirname(configDir);
     const live = path.join(stateDir, "theme");
-    result.targets = before.map(name => reloadTarget(name, shipped, disabled, live, failures));
+    result.targets = before.map(name => reloadTarget(name, shipped, disabled, configHome, live, failures));
     writePending(stateDir, stillPending(result.targets, before), before, key);
     result.state = stillPending(result.targets, before).length > 0 ? "partial" : "reloaded";
 }

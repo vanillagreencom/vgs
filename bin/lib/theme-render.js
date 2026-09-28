@@ -34,15 +34,16 @@ const FILE_KEYS = ["template", "destination"];
 const CURATED_KEYS_KEY = "curatedKeys";
 // The two wiring forms. An include wiring keeps one line in the
 // application's configuration file; its optional keys are the section the
-// line goes into and the Mozilla profiles.ini paths, the first that exists
-// read, whose profile directories the file is relative to. An entry wiring keeps links to the target's files in
+// line goes into, the Mozilla profiles.ini paths whose profile directories
+// the file is relative to, and the fallback files under HOME tried when the
+// configuration-home file is absent. An entry wiring keeps links to the target's files in
 // the application's theme or extension directory and edits no file; its
 // optional key is the Obsidian vault registry whose vaults the directory is
 // relative to. `links` tells them apart. A null wiring keeps nothing: the
 // target's hook asserts the setting that makes its application read the
 // files.
 const WIRING_KEYS = ["file", "line", "create"];
-const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];
+const INCLUDE_OPTIONAL_KEYS = ["section", "profiles", "fallbacks"];
 const ENTRY_KEYS = ["base", "dir", "owned", "links"];
 const ENTRY_OPTIONAL_KEYS = ["vaults"];
 const ENTRY_KEY = "links";
@@ -72,9 +73,11 @@ const TERMINAL_PREFIX = "terminal.";
 const CASE_SEPARATOR = "|";
 const CASE_PATTERN = /^([^=]+)=(.+)$/;
 
-// The one placeholder a wiring line, a reload argument and a selection
-// value hold: the stable state directory.
+// The placeholders a wiring line, a reload argument and a selection value
+// hold: the stable state directory, which each of them may hold, and the one
+// wiring file, which only a reload argument may.
 const STATE_PLACEHOLDER = "state";
+const WIRING_PLACEHOLDER = "wiring";
 
 // One segment of an entry's `dir` or `vaults` or of a wiring's `profiles`:
 // a directory or file name, a leading dot allowed so `.vscode` can be
@@ -169,16 +172,16 @@ function placeholderNames(text) {
     return parsed.ok ? parsed.parts.filter(part => typeof part !== "string").map(part => part.name) : null;
 }
 
-// TEXT, which acceptTarget admits with no placeholder but `@{state}`, with
-// each written as STATE and `@@{` as `@{`. WHAT names the text in the error
-// an unexpected placeholder throws.
-function withState(text, state, what) {
+// TEXT, which acceptTarget admits with placeholders named by VALUES, with
+// each written and `@@{` as `@{`. WHAT names the text in the error an
+// unexpected placeholder throws.
+function withValues(text, values, what) {
     const parsed = parseTemplate(text);
     if (!parsed.ok) throw new Error("theme-render: " + what + " is unterminated");
     return parsed.parts.map(part => {
         if (typeof part === "string") return part;
-        if (part.name !== STATE_PLACEHOLDER) throw new Error("theme-render: " + what + " names placeholder " + part.name);
-        return state;
+        if (!Object.prototype.hasOwnProperty.call(values, part.name)) throw new Error("theme-render: " + what + " names placeholder " + part.name);
+        return values[part.name];
     }).join("");
 }
 
@@ -188,6 +191,8 @@ function withState(text, state, what) {
 // directory's placeholder and no other; `section`, when present, is one bare
 // section name; `profiles`, when present, is one or more paths relative to
 // the home directory, one name per segment, in the order they are tried.
+// `fallbacks`, when present, is the same path shape and is tried only after
+// the configuration-home file is absent.
 function wiringError(logic, wiring) {
     if (!logic.isPlainObject(wiring) || !WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||
         !Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))) return "key=wiring";
@@ -199,6 +204,9 @@ function wiringError(logic, wiring) {
     if (logic.hasOwn(wiring, "section") && (typeof wiring.section !== "string" || !SECTION_PATTERN.test(wiring.section))) return "key=wiring.section";
     if (logic.hasOwn(wiring, "profiles") && (!Array.isArray(wiring.profiles) || wiring.profiles.length === 0 ||
         !wiring.profiles.every(ini => typeof ini === "string" && ini.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment))))) return "key=wiring.profiles";
+    if (logic.hasOwn(wiring, "fallbacks") && (!Array.isArray(wiring.fallbacks) || wiring.fallbacks.length === 0 ||
+        !wiring.fallbacks.every(file => typeof file === "string" && file.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment))))) return "key=wiring.fallbacks";
+    if (logic.hasOwn(wiring, "fallbacks") && logic.hasOwn(wiring, "profiles")) return "key=wiring.fallbacks";
     return "";
 }
 
@@ -240,16 +248,28 @@ function entryLinks(target, live) {
     return Object.entries(target.wiring.links).map(([name, destination]) => ({ name, to: live + "/" + destination }));
 }
 
-// The first defect of `reload`, or "": null, or an argv whose only
-// placeholder is `@{state}`, a timeout in whole milliseconds and, when
+// The placeholders a reload command may name for TARGET.
+function reloadPlaceholders(target) {
+    const names = [STATE_PLACEHOLDER];
+    if (target.wiring !== null && wiringForm(target.wiring) === "include" && !logicHasOwn(target.wiring, "profiles")) names.push(WIRING_PLACEHOLDER);
+    return names;
+}
+
+function logicHasOwn(value, key) {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+// The first defect of `reload`, or "": null, or an argv whose placeholders
+// are admitted for TARGET, a timeout in whole milliseconds and, when
 // present, a boolean `always`.
-function reloadError(logic, reload) {
+function reloadError(logic, reload, target) {
     if (reload === null) return "";
     if (!logic.isPlainObject(reload) || !RELOAD_KEYS.every(key => logic.hasOwn(reload, key)) ||
         !Object.keys(reload).every(key => RELOAD_KEYS.includes(key) || key === ALWAYS_KEY)) return "key=reload";
     if (!Array.isArray(reload.command) || reload.command.length === 0 || !reload.command.every(isLine)) return "key=reload.command";
     const names = reload.command.map(placeholderNames);
-    if (names.some(list => list === null || list.some(name => name !== STATE_PLACEHOLDER))) return "key=reload.command";
+    const allowed = reloadPlaceholders(target);
+    if (names.some(list => list === null || list.some(name => !allowed.includes(name)))) return "key=reload.command";
     if (!Number.isInteger(reload.timeoutMs) || reload.timeoutMs <= 0) return "key=reload.timeoutMs";
     if (logic.hasOwn(reload, ALWAYS_KEY) && typeof reload.always !== "boolean") return "key=reload.always";
     return "";
@@ -334,7 +354,7 @@ function acceptTarget(logic, name, text) {
         : logic.isPlainObject(document.wiring) && wiringForm(document.wiring) === "entry" ? entryError(logic, document.wiring, destinations)
         : wiringError(logic, document.wiring);
     if (wiring !== "") return refused("target-schema", wiring);
-    const reload = reloadError(logic, document.reload);
+    const reload = reloadError(logic, document.reload, document);
     if (reload !== "") return refused("target-schema", reload);
     const select = logic.hasOwn(document, SELECT_KEY) ? selectError(logic, document.select) : "";
     if (select !== "") return refused("target-schema", select);
@@ -442,21 +462,24 @@ function renderTarget(logic, tokens, target, templates, input) {
 function wiringLine(target, state) {
     const form = wiringForm(target.wiring);
     if (form !== "include") throw new Error("theme-render: wiringLine: target " + target.name + " has wiring form " + form);
-    return withState(target.wiring.line, state, "wiringLine: the wiring line of target " + target.name);
+    return withValues(target.wiring.line, { [STATE_PLACEHOLDER]: state }, "wiringLine: the wiring line of target " + target.name);
 }
 
 // The argv an accepted TARGET's reload hook runs, with `@{state}` written as
-// STATE, the state directory's `theme/` path, in each argument.
-function reloadCommand(target, state) {
+// STATE, the state directory's `theme/` path, and `@{wiring}` written as
+// WIRING, the file its include line is kept in, in each argument.
+function reloadCommand(target, state, wiring) {
     if (target.reload === null) throw new Error("theme-render: reloadCommand: target " + target.name + " has no reload");
-    return target.reload.command.map(arg => withState(arg, state, "reloadCommand: a reload argument of target " + target.name));
+    const values = { [STATE_PLACEHOLDER]: state };
+    if (wiring !== undefined) values[WIRING_PLACEHOLDER] = wiring;
+    return target.reload.command.map(arg => withValues(arg, values, "reloadCommand: a reload argument of target " + target.name));
 }
 
 // The value an accepted TARGET's `select` names its theme with, `@{state}`
 // written as STATE, the state directory's `theme/` path.
 function selectValue(target, state) {
     if (target.select === undefined) throw new Error("theme-render: selectValue: target " + target.name + " has no select");
-    return withState(target.select.value, state, "selectValue: the selection value of target " + target.name);
+    return withValues(target.select.value, { [STATE_PLACEHOLDER]: state }, "selectValue: the selection value of target " + target.name);
 }
 
 // The key paths an accepted TARGET's `select` sets, in its order: its one

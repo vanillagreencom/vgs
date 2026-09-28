@@ -3,6 +3,6 @@
   "encoder": "hex6",
   "files": [{ "template": "wezterm.lua", "destination": "wezterm.lua" }],
   "detect": ["wezterm"],
-  "wiring": { "file": "wezterm/wezterm.lua", "line": "pcall(dofile, \"@{state}/wezterm.lua\")", "create": false },
-  "reload": { "command": ["sh", "-c", "touch -c -- \"${XDG_CONFIG_HOME:-$HOME/.config}/wezterm/wezterm.lua\""], "timeoutMs": 5000 }
+  "wiring": { "file": "wezterm/wezterm.lua", "line": "pcall(dofile, \"@{state}/wezterm.lua\")", "create": false, "fallbacks": [".config/wezterm/wezterm.lua", ".wezterm.lua"] },
+  "reload": { "command": ["touch", "-c", "--", "@{wiring}"], "timeoutMs": 5000 }
 }

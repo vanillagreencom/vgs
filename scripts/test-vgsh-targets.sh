@@ -115,11 +115,11 @@ moz_fresh() {
   rm -f -- "${p0:?}/chrome/userChrome.css" "${p1:?}/chrome/userChrome.css" "${p2:?}/chrome/userChrome.css" "${home:?}/p0.default/chrome/userChrome.css" "${cfg:?}/chrome/userChrome.css"
 }
 moz_fresh
-judge_control profiles-ignored 'if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];' 'return [path.join(configHome, wiring.file)];'
+judge_control profiles-ignored 'const selected = firstHomeRelative(wiring.profiles, readIfPresent);' 'return [path.join(configHome, wiring.file)];'
 apply_json "the profiles-ignored mutant applies" 0 dusk
 check "the profiles-ignored mutant wires the file under the configuration home" test -e "$cfg/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
 moz_fresh; mkdir -p "$home/p0.default"
-judge_control relative-under-home 'dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path' 'dir.relative ? path.join(os.homedir(), dir.path) : dir.path'
+judge_control relative-under-home 'dir.relative ? path.join(path.dirname(selected.file), dir.path) : dir.path' 'dir.relative ? path.join(os.homedir(), dir.path) : dir.path'
 apply_json "the relative-under-home mutant applies" 0 dusk
 check "the relative-under-home mutant misses the ini's directory" test -e "$home/p0.default/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
 moz_fresh
@@ -127,7 +127,7 @@ judge_control first-profile-only 'for (const file of files) {' 'for (const file 
 apply_json "the first-profile-only mutant applies" 0 dusk
 check "the first-profile-only mutant leaves the second profile unwired" test -e "$p0/chrome/userChrome.css" -a ! -e "$p1/chrome/userChrome.css"
 moz_fresh
-judge_control last-ini-first 'for (const relative of wiring.profiles) {' 'for (const relative of wiring.profiles.slice().reverse()) {'
+judge_control last-ini-first 'for (const relative of relatives) {' 'for (const relative of relatives.slice().reverse()) {'
 apply_json "the last-ini-first mutant applies" 0 dusk
 check "the last-ini-first mutant wires the second ini's profile" test -e "$p2/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
 moz_fresh; rmdir -- "$p0/chrome" "$p0"
@@ -149,7 +149,7 @@ rm -r -- "$tree/themes/targets/moz"
 # which records a run and exits 1, so detection never runs it. Their reload
 # hooks run a real sh, id and touch; the signal command is a stub recording
 # its arguments that exits with $tmp/signal-exit (1, no process matched,
-# when absent), and touch reaches only this suite's configuration home. The
+# when absent), and touch reaches only this suite's HOME and configuration home. The
 # targets are data: the judge rules these rows reach have their controls in
 # test-vgsh.sh, test-vgsh-reload.sh and the section control above.
 hook_tools="$tmp/hook-tools"; mkdir -p "$hook_tools"
@@ -177,7 +177,9 @@ cfg="$tmp/cfg-terminals"; mkdir -p "$cfg/vgs" "$cfg/kitty" "$cfg/alacritty" "$cf
 printf 'font_size 11\n' >"$cfg/kitty/kitty.conf"
 printf '[general]\nlive_config_reload = true\n\n[window]\nopacity = 0.9\n' >"$cfg/alacritty/alacritty.toml"
 wezterm_own=$'local wezterm = require \'wezterm\'\nlocal config = wezterm.config_builder()\nconfig.font_size = 11\nreturn config'
+wezterm_home_own=$'return { font_size = 13 }'
 printf '%s\n' "$wezterm_own" >"$cfg/wezterm/wezterm.lua"
+mkdir -p "$home"; printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
 terminals() { # ALACRITTY GHOSTTY KITTY WEZTERM: each a state and a JSON reason
   printf '[{"name":"alacritty","state":"%s","reason":%s},{"name":"foot","state":"skipped","reason":"not-detected"},{"name":"ghostty","state":"%s","reason":%s},{"name":"kitty","state":"%s","reason":%s},{"name":"wezterm","state":"%s","reason":%s}]' $1 $2 $3 $4
 }
@@ -211,17 +213,19 @@ check "an absent config.ghostty is created holding the config-file line" test "$
 check "alacritty.toml takes the import in its general table" test "$(cat "$cfg/alacritty/alacritty.toml")" == $'[general]\nimport = ["'"$live"$'/alacritty.toml"]\nlive_config_reload = true\n\n[window]\nopacity = 0.9'
 check "the wired alacritty.toml is TOML importing the theme" python3 -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); sys.exit(0 if c["general"] == {"import": [sys.argv[2]], "live_config_reload": True} and c["window"] == {"opacity": 0.9} else 1)' "$cfg/alacritty/alacritty.toml" "$live/alacritty.toml"
 check "wezterm.lua runs the theme first and keeps its own text" test "$(cat "$cfg/wezterm/wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_own"
+check "the config-home wezterm.lua wins over the HOME fallback" test "$(cat "$home/.wezterm.lua")" == "$wezterm_home_own" -a "$(stat -c %Y -- "$home/.wezterm.lua")" == 1000
 check "the landed hooks signal ghostty and kitty by exact name for this user" signalled "$both_signals"
 check "a signal that matched no process leaves nothing pending" test ! -e "$pending"
 check "detection never ran a terminal" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 
 # Changed bytes touch the files alacritty and wezterm watch, whose wiring
 # already stands; unchanged bytes touch and signal nothing.
-touch -d @1000 -- "$cfg/alacritty/alacritty.toml" "$cfg/wezterm/wezterm.lua"
+touch -d @1000 -- "$cfg/alacritty/alacritty.toml" "$cfg/wezterm/wezterm.lua" "$home/.wezterm.lua"
 : >"$signals"
 tinst "a changed theme reloads the terminals" "$cfg" "$rt_empty" 0 "ok theme=nord state=applied shell=applied" "" theme apply nord
 check "the alacritty hook touched alacritty.toml" test "$(stat -c %Y -- "$cfg/alacritty/alacritty.toml")" != 1000
 check "the wezterm hook touched wezterm.lua" test "$(stat -c %Y -- "$cfg/wezterm/wezterm.lua")" != 1000
+check "the wezterm hook left the HOME fallback untouched while config-home exists" test "$(stat -c %Y -- "$home/.wezterm.lua")" == 1000 -a "$(cat "$home/.wezterm.lua")" == "$wezterm_home_own"
 check "a changed theme signals ghostty and kitty again" signalled "$both_signals"
 touch -d @1000 -- "$cfg/alacritty/alacritty.toml" "$cfg/wezterm/wezterm.lua"
 : >"$signals"
@@ -242,10 +246,49 @@ tinst "reload signals the pending terminals" "$cfg" "$rt_empty" 0 "ok reload sta
 check "reload signalled ghostty and kitty" signalled "$both_signals"
 check "a reload that succeeds clears the pending terminals" test ! -e "$pending"
 
-# wezterm.lua is never created: WezTerm reads its defaults without one.
+# WezTerm loads the first existing configuration file: the config-home
+# wezterm.lua, HOME/.config/wezterm/wezterm.lua when XDG_CONFIG_HOME points
+# elsewhere, then HOME/.wezterm.lua.
 rm -- "$cfg/wezterm/wezterm.lua"
-tinst "an absent wezterm.lua skips wezterm" "$cfg" "$rt_empty" 0 "{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":$(terminals "$written" "$written" "$written" 'skipped "wiring-file-absent"'),\"theme\":\"nord\",\"reason\":null}" "" theme apply --json nord
-check "an absent wezterm.lua stays absent" test ! -e "$cfg/wezterm/wezterm.lua"
+printf '%s\n%s\n' "pcall(dofile, \"$live/wezterm.lua\")" "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
+apply_json "a HOME wezterm.lua fallback applies wezterm" 0 nord
+check "the HOME wezterm.lua fallback is written" test "$(target_state wezterm)" == written
+check "the include line goes into HOME/.wezterm.lua" test "$(cat "$home/.wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_home_own"
+check "a HOME wezterm.lua fallback leaves config-home absent" test ! -e "$cfg/wezterm/wezterm.lua"
+check "the HOME wezterm.lua fallback hook touched the watched file" test "$(stat -c %Y -- "$home/.wezterm.lua")" != 1000
+printf '{"schemaVersion":1,"targets":["wezterm"]}\n' >"$pending"
+touch -d @1000 -- "$home/.wezterm.lua"
+tinst "reload touches a pending HOME wezterm.lua" "$cfg" "$rt_empty" 0 "ok reload state=reloaded" "" theme reload
+check "reload touched the HOME wezterm.lua fallback" test "$(stat -c %Y -- "$home/.wezterm.lua")" != 1000
+check "reload cleared the pending wezterm hook" test ! -e "$pending"
+
+printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"
+judge_control fallbacks-ignored 'if (wiring.fallbacks === undefined || existingPath(configFile) !== undefined) return [configFile];' 'return [configFile]; if (false) return [configFile];'
+apply_json "the fallbacks-ignored mutant applies" 0 dusk
+check "the fallbacks-ignored mutant skips the HOME fallback" test "$(target_verdict wezterm)" == "skipped wiring-file-absent" -a ! -e "$cfg/wezterm/wezterm.lua"
+unset THEME_BIN
+
+printf '%s\n' "$wezterm_own" >"$cfg/wezterm/wezterm.lua"
+printf '%s\n' "$wezterm_home_own" >"$home/.wezterm.lua"
+judge_control fallback-before-file 'if (wiring.fallbacks === undefined || existingPath(configFile) !== undefined) return [configFile];' 'if (wiring.fallbacks === undefined) return [configFile];'
+apply_json "the fallback-before-file mutant applies" 0 nord
+check "the fallback-before-file mutant wires HOME instead of config-home" test "$(cat "$home/.wezterm.lua")" == "pcall(dofile, \"$live/wezterm.lua\")"$'\n'"$wezterm_home_own" -a "$(cat "$cfg/wezterm/wezterm.lua")" == "$wezterm_own"
+unset THEME_BIN
+rm -- "$cfg/wezterm/wezterm.lua"
+
+printf '%s\n%s\n' "pcall(dofile, \"$live/wezterm.lua\")" "$wezterm_home_own" >"$home/.wezterm.lua"; touch -d @1000 -- "$home/.wezterm.lua"
+touch -d @1000 -- "$live/wezterm.lua"
+printf '{"schemaVersion":1,"targets":["wezterm"]}\n' >"$pending"
+judge_control hook-not-wired-file 'render.reloadCommand(target, live, wiring.path);' 'render.reloadCommand(target, live, path.join(live, target.files[0].destination));'
+tinst "the hook-not-wired-file mutant reloads" "$cfg" "$rt_empty" 0 "ok reload state=reloaded" "" theme reload
+check "the hook-not-wired-file mutant touches the theme file instead of the wired HOME file" test "$(stat -c %Y -- "$home/.wezterm.lua")" == 1000 -a "$(stat -c %Y -- "$live/wezterm.lua")" != 1000
+unset THEME_BIN
+
+# With neither configuration file, wezterm.lua is never created: WezTerm
+# reads its defaults without one.
+rm -- "$home/.wezterm.lua"
+tinst "an absent wezterm.lua skips wezterm" "$cfg" "$rt_empty" 0 "{\"state\":\"unchanged\",\"shell\":\"unchanged\",\"targets\":$(terminals 'unchanged null' 'unchanged null' 'unchanged null' 'skipped "wiring-file-absent"'),\"theme\":\"nord\",\"reason\":null}" "" theme apply --json nord
+check "an absent wezterm.lua stays absent" test ! -e "$cfg/wezterm/wezterm.lua" -a ! -e "$home/.wezterm.lua"
 
 # A one-line import array of the file's own in general takes the theme
 # first, the rest of the file kept byte for byte; a second apply leaves it,
