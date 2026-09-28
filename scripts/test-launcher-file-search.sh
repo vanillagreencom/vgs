@@ -14,7 +14,11 @@ set -euo pipefail
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 helper="$repo/shell/plugins/vgs.launcher/file-search.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+# The EXIT trap is armed only on the directory mktemp made: an empty or
+# non-directory answer never reaches rm -rf.
+TMP_ROOT="$(mktemp -d)" || { echo "test-launcher-file-search: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "test-launcher-file-search: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 for tool in fd fzf file flock awk stat gio xdg-mime; do
   if ! command -v "$tool" >/dev/null 2>&1; then

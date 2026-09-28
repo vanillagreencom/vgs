@@ -13,7 +13,11 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 helper="$repo/scripts/smoke/shot.sh"
 
-tmp="$(cd "$(mktemp -d)" && pwd -P)"
+# The EXIT trap is armed only on the directory mktemp made: an empty or
+# non-directory answer never reaches rm -rf.
+tmp="$(mktemp -d)" || { echo "test-sandbox-shots: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $tmp && ! -L $tmp ]] || { echo "test-sandbox-shots: scratch=not-a-directory value=[$tmp]" >&2; exit 1; }
+tmp="$(cd -- "$tmp" && pwd -P)"
 trap 'rm -rf -- "${tmp:?}"' EXIT
 failures=0
 ok() { printf '  ok    %s\n' "$*"; }
