@@ -16,18 +16,20 @@
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 const FILE_KEYS = ["template", "destination"];
 // The two wiring forms. An include wiring keeps one line in the
-// application's configuration file; its one optional key is the section the
-// line goes into. An entry wiring keeps links to the target's files in the
-// application's theme or extension directory and edits no file. `links`
+// application's configuration file; its optional keys are the section the
+// line goes into and the Mozilla profiles.ini whose profile directories the
+// file is relative to. An entry wiring keeps links to the target's files in
+// the application's theme or extension directory and edits no file. `links`
 // tells them apart. A null wiring keeps nothing: the target's hook asserts
 // the setting that makes its application read the files.
 const WIRING_KEYS = ["file", "line", "create"];
-const SECTION_KEY = "section";
+const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];
 const ENTRY_KEYS = ["base", "dir", "owned", "links"];
 const ENTRY_KEY = "links";
 // The directories an entry's `dir` is relative to: the user's configuration
-// home, ${XDG_CONFIG_HOME:-~/.config}, or the home directory.
-const ENTRY_BASES = ["config", "home"];
+// home, ${XDG_CONFIG_HOME:-~/.config}, the home directory, or the user's
+// cache home, ${XDG_CACHE_HOME:-~/.cache}.
+const ENTRY_BASES = ["config", "home", "cache"];
 const RELOAD_KEYS = ["command", "timeoutMs"];
 // The one optional reload key: `true` makes the hook due on every apply that
 // lands the target, for a hook that asserts a setting no file carries.
@@ -49,8 +51,9 @@ const TERMINAL_PREFIX = "terminal.";
 // state directory.
 const STATE_PLACEHOLDER = "state";
 
-// One segment of an entry's `dir`: a directory name, a leading dot allowed
-// so `.vscode` can be named, never `.` or `..`.
+// One segment of an entry's `dir` or of a wiring's `profiles`: a directory
+// or file name, a leading dot allowed so `.vscode` can be named, never `.`
+// or `..`.
 const DIR_SEGMENT_PATTERN = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // A wiring section is one bare name, as an INI section or a TOML table
@@ -65,6 +68,9 @@ const SECTION_HEADER = /^\s*\[\s*([^\]]*?)\s*\]\s*(?:#.*)?$/;
 // A line that opens a section, a TOML array of tables included: the end of
 // the section before it.
 const ANY_HEADER = /^\s*\[/;
+// A profiles.ini section that names one profile: `[Profile0]`, `[Profile1]`.
+// The ini's `[General]` and `[Install<hash>]` sections name none of their own.
+const PROFILE_SECTION = /^Profile[0-9]+$/;
 
 // `@@{` is a literal `@{`, `@{name}` a placeholder and a `@{` with no `}`
 // after it unterminated. Every other character is literal text, so `#{...}`
@@ -148,18 +154,21 @@ function withState(text, state, what) {
 }
 
 // The first defect of `wiring`, or "". `file` is relative to the user's
-// configuration home, one directory name per segment; `line` holds the state
+// configuration home, or to each profile directory when `profiles` is
+// present, one directory name per segment; `line` holds the state
 // directory's placeholder and no other; `section`, when present, is one bare
-// section name.
+// section name; `profiles`, when present, is a path relative to the home
+// directory, one name per segment.
 function wiringError(logic, wiring) {
     if (!logic.isPlainObject(wiring) || !WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||
-        !Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || key === SECTION_KEY)) return "key=wiring";
+        !Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))) return "key=wiring";
     if (typeof wiring.file !== "string" || !wiring.file.split("/").every(logic.isPackageName)) return "key=wiring.file";
     if (!isLine(wiring.line)) return "key=wiring.line";
     const names = placeholderNames(wiring.line) || [];
     if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return "key=wiring.line";
     if (typeof wiring.create !== "boolean") return "key=wiring.create";
-    if (logic.hasOwn(wiring, SECTION_KEY) && (typeof wiring.section !== "string" || !SECTION_PATTERN.test(wiring.section))) return "key=wiring.section";
+    if (logic.hasOwn(wiring, "section") && (typeof wiring.section !== "string" || !SECTION_PATTERN.test(wiring.section))) return "key=wiring.section";
+    if (logic.hasOwn(wiring, "profiles") && (typeof wiring.profiles !== "string" || !wiring.profiles.split("/").every(segment => DIR_SEGMENT_PATTERN.test(segment)))) return "key=wiring.profiles";
     return "";
 }
 
@@ -327,6 +336,30 @@ function reloadAlways(target) {
     return target.reload !== null && target.reload.always === true;
 }
 
+// The profile directories a Mozilla profiles.ini holding TEXT lists, in its
+// order: each `[Profile<N>]` section's `Path`, as { path, relative }.
+// `relative` is true when the section's `IsRelative` is `1`, and `path` is
+// then under the ini's own directory; otherwise `path` is absolute. A
+// section with no `Path`, or one not relative whose `Path` does not start
+// with `/`, names no directory the browser opens and is left out. Keys and
+// values are trimmed, so a CRLF file reads as an LF one.
+function profileDirs(text) {
+    const sections = [];
+    let current = null;
+    for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (line.startsWith("[") && line.endsWith("]")) {
+            current = PROFILE_SECTION.test(line.slice(1, -1).trim()) ? new Map() : null;
+            if (current !== null) sections.push(current);
+            continue;
+        }
+        const at = line.indexOf("=");
+        if (current !== null && at !== -1) current.set(line.slice(0, at).trim(), line.slice(at + 1).trim());
+    }
+    return sections.map(keys => ({ path: keys.get("Path") || "", relative: keys.get("IsRelative") === "1" }))
+        .filter(dir => dir.relative ? dir.path !== "" : dir.path.startsWith("/"));
+}
+
 // Whether the line TEXT is the header of SECTION.
 function isSectionHeader(text, section) {
     const m = SECTION_HEADER.exec(text);
@@ -385,4 +418,4 @@ function unwiredText(text, line) {
     return lines.filter(existing => existing !== line).join("\n");
 }
 
-module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, reloadCommand, reloadAlways, wiredText, unwiredText };
+module.exports = { TARGET_FILE, acceptTarget, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, reloadCommand, reloadAlways, wiredText, unwiredText };

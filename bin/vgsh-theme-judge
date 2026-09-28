@@ -20,7 +20,8 @@
 //       <config-dir>/theme.lock, which it holds for as long as this process
 //       runs when the verdict is `held`. <config-dir> is the vgs directory
 //       of the configuration home, whose parent a target's wiring file is
-//       relative to. Each target whose reload is due runs its hook last.
+//       relative to unless its wiring names a profiles.ini. Each target
+//       whose reload is due runs its hook last.
 //   vgsh-theme-judge reload <text|json> <config-dir> <state-dir> <held|busy|failed>
 //       run the hook of every target <state-dir>/reload-pending.json lists
 //       again, under the same lock verdict.
@@ -408,9 +409,12 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
     const found = reading(name, dir, () => {
         if (!target.detect.every(onPath)) return "not-detected";
         switch (render.wiringForm(target.wiring)) {
-        case "include":
-            if (!target.wiring.create && fs.statSync(path.join(configHome, target.wiring.file), { throwIfNoEntry: false }) === undefined) return "wiring-file-absent";
+        case "include": {
+            const files = includeFiles(target, configHome);
+            if (files.length === 0) return "wiring-file-absent";
+            if (!target.wiring.create && files.some(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)) return "wiring-file-absent";
             return null;
+        }
         case "entry":
             return entryOccupied(target, configHome, live) === null ? null : "entry-occupied";
         case "none":
@@ -493,7 +497,47 @@ function landedFiles(live, name, key) {
     });
 }
 
-// Edit TARGET's configuration file under CONFIG_HOME where it stands: a
+// The configuration files include TARGET keeps its line in: its `file`
+// under CONFIG_HOME, or, with `profiles`, under every profile directory
+// that Mozilla profiles.ini, relative to the home directory, lists, a
+// relative one under the ini's own directory. An absent ini lists none.
+// Throws the fs error of an ini that cannot be read, its `path` the ini's:
+// a read error such as EISDIR carries none of its own.
+function includeFiles(target, configHome) {
+    const wiring = target.wiring;
+    if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];
+    const ini = path.join(os.homedir(), wiring.profiles);
+    let bytes;
+    try {
+        bytes = readIfPresent(ini);
+    } catch (e) {
+        if (typeof e.code === "string") e.path = ini;
+        throw e;
+    }
+    if (bytes === undefined) return [];
+    return render.profileDirs(bytes.toString("utf8")).map(dir => path.join(dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path, wiring.file));
+}
+
+// Edit every configuration file of TARGET, includeFiles' list, as editFile
+// edits one, stopping at the first failure. Answers null, or the failure's
+// { reason, failure } for target NAME.
+function editWiring(name, target, configHome, live, edit) {
+    const key = "target=" + name + " reason";
+    let files;
+    try {
+        files = includeFiles(target, configHome);
+    } catch (e) {
+        if (typeof e.code !== "string") throw e;
+        return { reason: "unreadable", failure: key + "=unreadable path=" + e.path + " error=" + e.code };
+    }
+    for (const file of files) {
+        const failure = editFile(key, target, file, live, edit);
+        if (failure !== null) return failure;
+    }
+    return null;
+}
+
+// Edit TARGET's configuration file FILE where it stands: a
 // symlink is resolved and the file it names is replaced with its mode kept,
 // so a dotfile manager's link stays a link. EDIT maps the file's text, or
 // undefined for an absent file, the include line pointing at LIVE and the
@@ -502,10 +546,8 @@ function landedFiles(live, name, key) {
 // leaves the file. The bytes are read and written as latin1, one character
 // per byte, so every byte EDIT keeps is kept. An absent file is created only when the target's wiring says so, and
 // never through a dangling symlink. Answers null, or the failure's
-// { reason, failure } for target NAME.
-function editWiring(name, target, configHome, live, edit) {
-    const file = path.join(configHome, target.wiring.file);
-    const key = "target=" + name + " reason";
+// { reason, failure }, its line led by KEY.
+function editFile(key, target, file, live, edit) {
     let real = null;
     let text;
     try {
@@ -538,11 +580,13 @@ function editWiring(name, target, configHome, live, edit) {
 }
 
 // The directory an entry TARGET's links stand in: its `dir` under the
-// configuration home or the home directory, as its `base` names.
+// configuration home, the home directory or the cache home,
+// ${XDG_CACHE_HOME:-~/.cache}, as its `base` names.
 function entryDir(target, configHome) {
     switch (target.wiring.base) {
     case "config": return path.join(configHome, target.wiring.dir);
     case "home": return path.join(os.homedir(), target.wiring.dir);
+    case "cache": return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), target.wiring.dir);
     default: throw new Error("vgsh-theme-judge: entryDir: target " + target.name + " has no known base");
     }
 }

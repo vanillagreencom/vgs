@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Controls for targets in `vgsh theme apply` beyond foot: a target whose
 # wiring names a section keeps its include line in that section of its
-# application's configuration file, and each shipped terminal target lands
-# its file, keeps its include line and runs its reload, and a target whose
-# wiring is null lands with nothing kept outside the state directory. Every
-# command a target detects with and the command a reload signals with are
-# stubs on the rows' PATH, under a temporary HOME, XDG_CONFIG_HOME and
-# XDG_RUNTIME_DIR, so no row reaches a real application or the developer's
-# session.
+# application's configuration file, one whose wiring names a Mozilla
+# profiles.ini keeps it in the file of every profile the ini lists, each
+# shipped terminal target lands its file, keeps its include line and runs its
+# reload, and a target whose wiring is null lands with nothing kept outside
+# the state directory. Every command a target detects with and the command a
+# reload signals with are stubs on the rows' PATH, under a temporary HOME,
+# XDG_CONFIG_HOME and XDG_RUNTIME_DIR, so no row reaches a real application
+# or the developer's session.
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
@@ -19,8 +20,11 @@ theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": {
 target_state() { # NAME: the target's state in $tmp/apply.json
   python3 -c 'import json,sys; print([t["state"] for t in json.load(open(sys.argv[1]))["targets"] if t["name"] == sys.argv[2]][0])' "$tmp/apply.json" "$1"
 }
-apply_json() { # NAME WANT_EXIT PACKAGE: apply with --json into $tmp/apply.json
-  tinst "$1" "$cfg" "$rt_empty" "$2" "$any_out" "" theme apply --json "$3"
+target_verdict() { # NAME: the target's state and reason in $tmp/apply.json
+  python3 -c 'import json,sys; print(*[(t["state"], t["reason"]) for t in json.load(open(sys.argv[1]))["targets"] if t["name"] == sys.argv[2]][0])' "$tmp/apply.json" "$1"
+}
+apply_json() { # NAME WANT_EXIT PACKAGE [WANT_FIRST_STDERR]: apply with --json into $tmp/apply.json
+  tinst "$1" "$cfg" "$rt_empty" "$2" "$any_out" "${4:-}" theme apply --json "$3"
   tail -n 1 "$tmp/out" >"$tmp/apply.json"
 }
 
@@ -49,6 +53,77 @@ tinst "the section-dropping mutant applies" "$cfg" "$rt_empty" 0 "ok theme=dusk 
 check "the section-dropping mutant puts the line first" test "$(head -n 1 "$cfg/sect/sect.toml")" == "$sect_line"
 unset THEME_BIN
 rm -r -- "$tree/themes/targets/sect"
+
+# Profiles: `file` is relative to each profile directory the ini under HOME
+# lists, a relative Path under the ini's own directory and an absolute one
+# where it names; every listed profile is wired and unwired, and a section
+# that names no profile is not one.
+home="$tmp/home"; ini="$home/.moz/profiles.ini"; p0="$home/.moz/p0.default"; p1="$tmp/elsewhere/p1"
+moz_target() { # CREATE
+  mkdir -p "$tree/themes/targets/moz"
+  printf '{ "app": "moz", "encoder": "hex6", "files": [{ "template": "moz.css", "destination": "moz.css" }], "detect": [], "wiring": { "file": "chrome/userChrome.css", "line": "@import url(\\"file://@{state}/moz.css\\");", "create": %s, "profiles": ".moz/profiles.ini" }, "reload": null }\n' "$1" >"$tree/themes/targets/moz/target.json"
+  printf ':root { --accent: #@{palette.accent}; }\n' >"$tree/themes/targets/moz/moz.css"
+}
+moz_ini() { # the ini: a relative profile, an absolute one and an install section
+  mkdir -p "$home/.moz"
+  printf '[General]\nVersion=2\n\n[Profile0]\nName=default\nIsRelative=1\nPath=p0.default\n\n[Profile1]\nName=work\nIsRelative=0\nPath=%s\n\n[Install4F96D1932A9F858E]\nDefault=p0.default\nPath=%s\n' "$p1" "$tmp/install" >"$ini"
+}
+moz_target true
+moz_line="@import url(\"file://$live/moz.css\");"
+apply_json "a profiles target without its ini" 0 dusk
+check "a profiles target without its ini is skipped" test "$(target_verdict moz)" == "skipped wiring-file-absent"
+check "a profiles target without its ini writes no file" test ! -e "$live/moz.css" -a ! -e "$cfg/chrome"
+mkdir -p "$p1/chrome"; printf '#nav-bar { order: 1 }\n' >"$p1/chrome/userChrome.css"
+moz_ini
+apply_json "a profiles target with its ini" 0 dusk
+check "the profiles target is written" test "$(target_verdict moz)" == "written None"
+check "a relative profile's file is created holding the line" test "$(cat "$p0/chrome/userChrome.css")" == "$moz_line"
+check "an absolute profile's file takes the line first and keeps its own text" test "$(cat "$p1/chrome/userChrome.css")" == "$moz_line"$'\n#nav-bar { order: 1 }'
+check "a section that names no profile is not wired" test ! -e "$tmp/install"
+check "nothing is wired under the configuration home" test ! -e "$cfg/chrome"
+printf '{ "disabledTargets": ["moz"] }\n' >"$cfg/vgs/shell.json"
+apply_json "disabling the profiles target" 0 nord
+check "a disabled profiles target leaves every profile's file without the line" test "$(cat "$p0/chrome/userChrome.css")" == "" -a "$(cat "$p1/chrome/userChrome.css")" == "#nav-bar { order: 1 }"
+rm -- "$cfg/vgs/shell.json"
+moz_target false; rm -- "$p0/chrome/userChrome.css"
+apply_json "a profiles target with create false and one profile's file absent" 0 dusk
+check "a profiles target with one file absent is skipped" test "$(target_verdict moz)" == "skipped wiring-file-absent"
+check "a skipped profiles target leaves the other profile's file alone" test "$(cat "$p1/chrome/userChrome.css")" == "#nav-bar { order: 1 }"
+moz_target true; mv -- "$ini" "$ini.saved"; mkdir -- "$ini"
+apply_json "a profiles ini that cannot be read" 3 dusk "vgsh: refused: target=moz reason=unreadable path=$ini error=EISDIR"
+check "an unreadable profiles ini fails its target" test "$(target_verdict moz)" == "failed unreadable"
+printf '{ "disabledTargets": ["moz"] }\n' >"$cfg/vgs/shell.json"
+apply_json "disabling a profiles target whose ini cannot be read" 3 dusk "vgsh: refused: target=moz reason=unreadable path=$ini error=EISDIR"
+check "a disabled profiles target whose ini cannot be read fails" test "$(target_verdict moz)" == "failed unreadable"
+rm -- "$cfg/vgs/shell.json"
+rmdir -- "$ini"; mv -- "$ini.saved" "$ini"
+# Controls: each judge copy drops one rule, and the row that pins it turns.
+# Each starts with no profile file wired and no state directory.
+moz_fresh() {
+  rm -f -- "$p0/chrome/userChrome.css" "$p1/chrome/userChrome.css" "$home/p0.default/chrome/userChrome.css" "$cfg/chrome/userChrome.css"
+}
+moz_fresh
+judge_control profiles-ignored 'if (wiring.profiles === undefined) return [path.join(configHome, wiring.file)];' 'return [path.join(configHome, wiring.file)];'
+apply_json "the profiles-ignored mutant applies" 0 dusk
+check "the profiles-ignored mutant wires the file under the configuration home" test -e "$cfg/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
+moz_fresh
+judge_control relative-under-home 'dir.relative ? path.join(path.dirname(ini), dir.path) : dir.path' 'dir.relative ? path.join(os.homedir(), dir.path) : dir.path'
+apply_json "the relative-under-home mutant applies" 0 dusk
+check "the relative-under-home mutant misses the ini's directory" test -e "$home/p0.default/chrome/userChrome.css" -a ! -e "$p0/chrome/userChrome.css"
+moz_fresh
+judge_control first-profile-only 'for (const file of files) {' 'for (const file of files.slice(0, 1)) {'
+apply_json "the first-profile-only mutant applies" 0 dusk
+check "the first-profile-only mutant leaves the second profile unwired" test -e "$p0/chrome/userChrome.css" -a ! -e "$p1/chrome/userChrome.css"
+moz_fresh; mv -- "$ini" "$ini.saved"
+judge_control absent-ini-lands 'if (files.length === 0) return "wiring-file-absent";' 'if (false) return "wiring-file-absent";'
+apply_json "the absent-ini-lands mutant applies" 0 nord
+check "the absent-ini-lands mutant lands a target it wires nowhere" test "$(target_verdict moz)" == "written None"
+mv -- "$ini.saved" "$ini"; moz_target false; printf 'x\n' >"$p1/chrome/userChrome.css"
+judge_control every-file-absent 'files.some(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)' 'files.every(file => fs.statSync(file, { throwIfNoEntry: false }) === undefined)'
+apply_json "the every-file-absent mutant applies" 3 dusk "vgsh: refused: target=moz reason=wiring-file-absent path=$p0/chrome/userChrome.css"
+check "the every-file-absent mutant fails the target instead of skipping it" test "$(target_verdict moz)" == "failed wiring-file-absent"
+unset THEME_BIN
+rm -r -- "$tree/themes/targets/moz"
 
 # The shipped terminal targets. Each is detected by a stub of its command,
 # which records a run and exits 1, so detection never runs it. Their reload

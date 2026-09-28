@@ -135,4 +135,22 @@ apply_json "the home-as-config mutant applies" 0 dusk
 check "the home-as-config mutant puts the owned directory under the configuration home" test -d "$cfg/.ext/extensions/vgs-theme" -a ! -e "$ext_dir"
 unset THEME_BIN
 
+# The cache base: `dir` is under ${XDG_CACHE_HOME:-~/.cache}, the fallback
+# when the variable is unset and the variable when it is set.
+entry_target cch '{ "base": "cache", "dir": "wal", "owned": false, "links": { "colors.json": "cch.json" } }' '[{ "template": "cch.json", "destination": "cch.json" }]'
+printf '{ "special": { "background": "#@{color.background}" } }\n' >"$tree/themes/targets/cch/cch.json"
+fresh cache
+apply_json "a cache target without XDG_CACHE_HOME" 0 dusk
+check "a cache target is written" test "$(target_state cch)" == "written None"
+check "a cache target's link stands under ~/.cache" links_to "$home/.cache/wal/colors.json" "$live/cch.json"
+xdg_cache="$tmp/xdg-cache"
+base_env+=(XDG_CACHE_HOME="$xdg_cache")
+apply_json "a cache target under XDG_CACHE_HOME" 0 nord
+check "a cache target's link stands under XDG_CACHE_HOME" links_to "$xdg_cache/wal/colors.json" "$live/cch.json"
+judge_control cache-as-home 'process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache")' 'path.join(os.homedir(), ".cache")'
+rm -r -- "$xdg_cache"
+apply_json "the cache-as-home mutant applies" 0 dusk
+check "the cache-as-home mutant ignores XDG_CACHE_HOME" test ! -e "$xdg_cache/wal/colors.json"
+unset THEME_BIN
+
 rows_done test-vgsh-entries

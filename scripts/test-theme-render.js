@@ -66,7 +66,10 @@ const ACCEPTED_TARGETS = [
     ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })],
     ["probe", targetText({ wiring: null })],
     ["probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } })],
-    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } })]
+    ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } })],
+    ["probe", entryText({ base: "cache", dir: "wal" })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { file: "chrome/userChrome.css", profiles: ".zen/profiles.ini" }) })],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general", profiles: "profiles.ini" }) })]
 ];
 
 // Refused targets: the name, the document text, the reason, the detail.
@@ -102,6 +105,13 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "colors.primary" }) }), "target-schema", "key=wiring.section"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "[general]" }) }), "target-schema", "key=wiring.section"],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: null }) }), "target-schema", "key=wiring.section"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profile: ".zen/profiles.ini" }) }), "target-schema", "key=wiring"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: "" }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: "/home/u/.zen/profiles.ini" }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: "../.zen/profiles.ini" }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: ".zen//profiles.ini" }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", targetText({ wiring: Object.assign({}, wiring, { profiles: [".zen/profiles.ini"] }) }), "target-schema", "key=wiring.profiles"],
+    ["probe", entryText({ profiles: ".zen/profiles.ini" }), "target-schema", "key=wiring"],
     ["probe", entryText({ line: "include=@{state}/probe.conf" }), "target-schema", "key=wiring"],
     ["probe", targetText({ files: twoFiles, wiring: { base: "config", dir: "probe", links: { "vgs.conf": "probe.conf" } } }), "target-schema", "key=wiring"],
     ["probe", entryText({ base: "state" }), "target-schema", "key=wiring.base"],
@@ -214,6 +224,24 @@ const UNWIRED = [
     ["[window]\n[general]\ninclude=/s/foot.ini\n", "[window]\n[general]\n"]
 ];
 
+// A Mozilla profiles.ini's text, and the profile directories it lists.
+const REL = path => ({ path, relative: true });
+const ABS = path => ({ path, relative: false });
+const PROFILES = [
+    ["", []],
+    ["[General]\nStartWithLastProfile=1\nVersion=2\n\n[Profile0]\nName=default\nIsRelative=1\nPath=a1b2.Default (release)\nDefault=1\n", [REL("a1b2.Default (release)")]],
+    ["[Profile1]\nIsRelative=0\nPath=/srv/zen/p1\n[Profile0]\nIsRelative=1\nPath=Profiles/p0\n", [ABS("/srv/zen/p1"), REL("Profiles/p0")]],
+    ["[Profile0]\r\nIsRelative=1\r\nPath=p0\r\n", [REL("p0")]],
+    [" [ Profile0 ] \n IsRelative = 1 \n Path = p0 \n", [REL("p0")]],
+    ["[Profile0]\nIsRelative=1\nPath=a=b\n", [REL("a=b")]],
+    ["[Profile0]\nPath=/srv/p0\n", [ABS("/srv/p0")]],
+    ["Path=/outside\n[Install4F96D1932A9F858E]\nDefault=p0\nPath=/install\n[General]\nPath=/general\n[ProfileX]\nPath=/x\n", []],
+    ["[Profile0]\nName=no-path\nIsRelative=1\n", []],
+    ["[Profile0]\nIsRelative=1\nPath=\n", []],
+    ["[Profile0]\nIsRelative=0\nPath=relative/p0\n", []],
+    ["[Profile0]\nIsRelative=true\nPath=relative/p0\n", []]
+];
+
 function verify(render) {
     const accepted = (name, text) => {
         const result = render.acceptTarget(logic, name, text);
@@ -296,6 +324,8 @@ function verify(render) {
         assert.deepEqual(render.wiredText(text, TOML_LINE, "general"), { ok: false, reason: "wiring-conflict", detail }, JSON.stringify(text));
     for (const [text, want] of UNWIRED)
         assert.equal(render.unwiredText(text, LINE), want, JSON.stringify(text));
+    for (const [text, want] of PROFILES)
+        assert.deepEqual(render.profileDirs(text), want, JSON.stringify(text));
 
     // An entry target's links point at its files in the state directory's
     // theme/, in target.json's order; each form refuses the other's helper.
@@ -356,9 +386,17 @@ const CONTROLS = [
     ["unique destination", "if (destinations.has(document.files[at].destination)) return", "if (false) return"],
     ["detect", "if (!Array.isArray(document.detect) || !document.detect.every(logic.isPackageName)) return", "if (false) return"],
     ["wiring required keys", "!WIRING_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "false ||"],
-    ["wiring unknown key", "!Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || key === SECTION_KEY)", "false"],
-    ["wiring section admitted", "WIRING_KEYS.includes(key) || key === SECTION_KEY)", "WIRING_KEYS.includes(key))"],
+    ["wiring unknown key", "!Object.keys(wiring).every(key => WIRING_KEYS.includes(key) || INCLUDE_OPTIONAL_KEYS.includes(key))", "false"],
+    ["wiring section admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];', 'const INCLUDE_OPTIONAL_KEYS = ["profiles"];'],
+    ["wiring profiles admitted", 'const INCLUDE_OPTIONAL_KEYS = ["section", "profiles"];', 'const INCLUDE_OPTIONAL_KEYS = ["section"];'],
     ["wiring section name", "(typeof wiring.section !== \"string\" || !SECTION_PATTERN.test(wiring.section))", "false"],
+    ["wiring profiles path", "(typeof wiring.profiles !== \"string\" || !wiring.profiles.split(\"/\").every(segment => DIR_SEGMENT_PATTERN.test(segment)))", "false"],
+    ["profile sections only", "PROFILE_SECTION.test(line.slice(1, -1).trim()) ? new Map() : null", "new Map()"],
+    ["profile lines trimmed", "const line = raw.trim();", "const line = raw;"],
+    ["profile value keeps its =", 'const at = line.indexOf("=");', 'const at = line.lastIndexOf("=");'],
+    ["profile relative flag", 'relative: keys.get("IsRelative") === "1"', 'relative: keys.has("IsRelative")'],
+    ["profile relative path present", 'dir.relative ? dir.path !== "" :', "dir.relative ? true :"],
+    ["profile absolute path", ': dir.path.startsWith("/"));', ': dir.path !== "");'],
     ["wiring file", "!wiring.file.split(\"/\").every(logic.isPackageName)", "false"],
     ["wiring line placeholder", "if (names.length === 0 || names.some(placeholder => placeholder !== STATE_PLACEHOLDER)) return", "if (false) return"],
     ["wiring line is one line", "if (!isLine(wiring.line)) return", "if (typeof wiring.line !== \"string\") return"],
@@ -396,6 +434,7 @@ const CONTROLS = [
     ["entry form", 'hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include"', 'hasOwnProperty.call(wiring, "nope") ? "entry" : "include"'],
     ["entry keys", "if (!hasExactKeys(logic, wiring, ENTRY_KEYS)) return", "if (!logic.isPlainObject(wiring)) return"],
     ["entry base", "if (!ENTRY_BASES.includes(wiring.base)) return", "if (false) return"],
+    ["entry cache base", 'const ENTRY_BASES = ["config", "home", "cache"];', 'const ENTRY_BASES = ["config", "home"];'],
     ["entry dir segment", "const DIR_SEGMENT_PATTERN = /^\\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;", "const DIR_SEGMENT_PATTERN = /^[.A-Za-z0-9_-]+$/;"],
     ["entry owned", "if (typeof wiring.owned !== \"boolean\") return", "if (false) return"],
     ["entry links present", "|| Object.keys(wiring.links).length === 0) return", ") return"],
@@ -425,4 +464,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length} controls=${CONTROLS.length}`);
