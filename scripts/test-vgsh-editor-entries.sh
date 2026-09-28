@@ -105,6 +105,17 @@ check "vscode takes a curated colour theme byte for byte" cmp -s -- "$tree/theme
 THEME_PATH="$with_stubs" tinst "a package whose vscode.json names an extension" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply --json omarchy
 check "vscode renders its own theme in place of an extension pointer" json_value "$ext/vgs-color-theme.json" 'd["colors"]["focusBorder"]' '#ff5a36ff'
 
+# Each shipped package marks both editors' themes with its scheme.mode:
+# vgs dark, light light, and VS Code's uiTheme vs-dark or vs.
+THEME_PATH="$with_stubs" tinst "the shipped light package lands" "$cfg" "$rt_empty" 0 "$(result written written written light)" "" theme apply --json light
+check "light marks zed's theme light" json_value "$zed_link" 'd["themes"][0]["appearance"]' light
+check "light marks vscode's colour theme light" json_value "$ext/vgs-color-theme.json" 'd["type"]' light
+check "light contributes vscode's theme on the vs base" json_value "$ext/package.json" 'd["contributes"]["themes"][0]["uiTheme"]' vs
+THEME_PATH="$with_stubs" tinst "the shipped vgs package lands" "$cfg" "$rt_empty" 0 "$(result written written written vgs)" "" theme apply --json vgs
+check "vgs marks zed's theme dark" json_value "$zed_link" 'd["themes"][0]["appearance"]' dark
+check "vgs marks vscode's colour theme dark" json_value "$ext/vgs-color-theme.json" 'd["type"]' dark
+check "vgs contributes vscode's theme on the vs-dark base" json_value "$ext/package.json" 'd["contributes"]["themes"][0]["uiTheme"]' vs-dark
+
 # A theme of the user's at helix's link path is kept and skips the target;
 # a disabled vscode loses its owned directory.
 rm -- "$helix_link"; printf 'mine\n' >"$helix_link"
@@ -143,6 +154,21 @@ control_cfg vscode-config-base
 THEME_PATH="$with_stubs" tinst "the config-base mutant applies" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
 check "the config-base mutant lands its links under the configuration home" test -L "$cfg/.vscode/extensions/vgs-theme/package.json"
 check "the config-base mutant misses VS Code's extensions directory" turned test -L "$ext/package.json"
+tree_control zed-appearance themes/targets/zed/zed.json '"appearance": "@{scheme.mode}"' '"appearance": "dark"'
+control_cfg zed-appearance
+THEME_PATH="$with_stubs" tinst "the fixed-appearance zed mutant applies light" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+check "the fixed-appearance zed mutant's theme is linked" test -s "$zed_link"
+check "the fixed-appearance zed mutant does not mark light light" turned json_value "$zed_link" 'd["themes"][0]["appearance"]' light
+tree_control vscode-type themes/targets/vscode/vscode.json '"type": "@{scheme.mode}"' '"type": "dark"'
+control_cfg vscode-type
+THEME_PATH="$with_stubs" tinst "the fixed-type vscode mutant applies light" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+check "the fixed-type vscode mutant's theme is linked" test -s "$ext/vgs-color-theme.json"
+check "the fixed-type vscode mutant does not mark light light" turned json_value "$ext/vgs-color-theme.json" 'd["type"]' light
+tree_control vscode-ui-theme themes/targets/vscode/package.json '|light=vs}' '|light=vs-dark}'
+control_cfg vscode-ui-theme
+THEME_PATH="$with_stubs" tinst "the dark-base vscode mutant applies light" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply light
+check "the dark-base vscode mutant's manifest is linked" test -s "$ext/package.json"
+check "the dark-base vscode mutant does not put light on vs" turned json_value "$ext/package.json" 'd["contributes"]["themes"][0]["uiTheme"]' vs
 tree_control helix-hook themes/targets/helix/target.json '; [ $? -le 1 ]' ''
 control_cfg helix-hook
 # The state directory is shared, so the package changes to change bytes.

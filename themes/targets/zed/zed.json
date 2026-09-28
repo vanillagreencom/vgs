@@ -5,7 +5,7 @@
   "themes": [
     {
       "name": "vgs",
-      "appearance": "dark",
+      "appearance": "@{scheme.mode}",
       "style": {
         "background": "#@{color.surface}",
         "border": "#@{color.border}",

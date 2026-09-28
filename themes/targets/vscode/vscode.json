@@ -1,7 +1,7 @@
 {
   "$schema": "vscode://schemas/color-theme",
   "name": "vgs",
-  "type": "dark",
+  "type": "@{scheme.mode}",
   "colors": {
     "foreground": "#@{color.text}",
     "descriptionForeground": "#@{color.textMuted}",

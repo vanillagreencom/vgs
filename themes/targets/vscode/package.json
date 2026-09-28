@@ -7,6 +7,6 @@
   "engines": { "vscode": "^1.74.0" },
   "categories": ["Themes"],
   "contributes": {
-    "themes": [{ "label": "vgs", "uiTheme": "vs-dark", "path": "./vgs-color-theme.json" }]
+    "themes": [{ "label": "vgs", "uiTheme": "@{scheme.mode|dark=vs-dark|light=vs}", "path": "./vgs-color-theme.json" }]
   }
 }

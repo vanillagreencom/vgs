@@ -53,6 +53,11 @@ const TARGET_FILE = "target.json";
 // names a token path. The token table holds no `terminal` group.
 const TERMINAL_PREFIX = "terminal.";
 
+// A placeholder's cases follow its token path, each `|<option>=<text>`, the
+// option before the first `=`: caseText.
+const CASE_SEPARATOR = "|";
+const CASE_PATTERN = /^([^=]+)=(.+)$/;
+
 // The one placeholder a wiring line and a reload argument hold: the stable
 // state directory.
 const STATE_PLACEHOLDER = "state";
@@ -284,16 +289,35 @@ function terminalSource(pkg, defaults) {
     return null;
 }
 
+// The text a `choice` token LEAF whose resolved value is VALUE takes under
+// CASES, each `<option>=<text>`, or undefined unless the cases name every
+// option of the token exactly once, so a template cannot leave an option
+// unwritten: `@{scheme.mode|dark=vs-dark|light=vs}` is VS Code's uiTheme.
+function caseText(leaf, cases, value) {
+    if (leaf.type !== "choice") return undefined;
+    const texts = new Map();
+    for (const item of cases) {
+        const m = CASE_PATTERN.exec(item);
+        if (m === null || !leaf.options.includes(m[1]) || texts.has(m[1])) return undefined;
+        texts.set(m[1], m[2]);
+    }
+    return texts.size === leaf.options.length ? texts.get(value) : undefined;
+}
+
 // The text placeholder NAME stands for, or undefined when it names no token
-// and no slot. A colour is written by ENCODE; any other token as its value.
+// and no slot. A colour is written by ENCODE; a token with cases as the case
+// of its value; any other token as its value.
 function placeholderText(logic, tokens, input, name, encode) {
-    if (name.startsWith(TERMINAL_PREFIX)) {
-        const slot = name.slice(TERMINAL_PREFIX.length);
+    const [path, ...cases] = name.split(CASE_SEPARATOR);
+    if (path.startsWith(TERMINAL_PREFIX)) {
+        if (cases.length > 0) return undefined;
+        const slot = path.slice(TERMINAL_PREFIX.length);
         return logic.terminalSlotNames().includes(slot) ? encode(input.slots[slot]) : undefined;
     }
-    const leaf = logic.nodeAt(tokens, name);
+    const leaf = logic.nodeAt(tokens, path);
     if (!logic.isLeaf(leaf)) return undefined;
-    const value = name.split(".").reduce((node, key) => node[key], input.values);
+    const value = path.split(".").reduce((node, key) => node[key], input.values);
+    if (cases.length > 0) return caseText(leaf, cases, value);
     return leaf.type === "color" ? encode(value) : String(value);
 }
 

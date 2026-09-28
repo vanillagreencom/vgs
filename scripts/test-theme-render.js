@@ -38,7 +38,14 @@ const own = logic.acceptPackage(TOKENS, {
     terminalJson: slotsJson(() => "#abcdef"),
     shipped: false
 });
-for (const pkg of [probe, defaults, own]) assert.equal(pkg.ok, true, pkg.ok ? "" : logic.refusalLine(pkg));
+// A package that states it is light; every other package here is dark.
+const lit = logic.acceptPackage(TOKENS, {
+    directoryName: "lit",
+    themeJson: JSON.stringify({ schemaVersion: 1, name: "lit", tokens: { scheme: { mode: "light" } } }),
+    terminalJson: undefined,
+    shipped: false
+});
+for (const pkg of [probe, defaults, own, lit]) assert.equal(pkg.ok, true, pkg.ok ? "" : logic.refusalLine(pkg));
 
 const wiring = { file: "probe/probe.conf", line: "include=@{state}/probe.conf", create: true };
 // An entry wiring: links in the application's own directory, never a file
@@ -173,8 +180,25 @@ const RENDERED = [
     ["", ""]
 ];
 
+// The mode, bare and through cases, under a dark and a light package: the
+// package, the template, the rendered text.
+const MODES = [
+    [probe, "@{scheme.mode}", "dark"],
+    [lit, "@{scheme.mode}", "light"],
+    [probe, "@{scheme.mode|dark=vs-dark|light=vs}", "vs-dark"],
+    [lit, "@{scheme.mode|dark=vs-dark|light=vs}", "vs"],
+    [lit, "@{scheme.mode|light=a=b|dark=c}", "a=b"]
+];
+
 // Templates that refuse the target: the template, the detail.
 const REFUSED_TEMPLATES = [
+    ["@{scheme.mode|dark=vs-dark}", 'template=probe.conf placeholder="scheme.mode|dark=vs-dark"'],
+    ["@{scheme.mode|dark=a|dim=c}", 'template=probe.conf placeholder="scheme.mode|dark=a|dim=c"'],
+    ["@{scheme.mode|dark=a|light=b|dark=c}", 'template=probe.conf placeholder="scheme.mode|dark=a|light=b|dark=c"'],
+    ["@{scheme.mode|dark=|light=b}", 'template=probe.conf placeholder="scheme.mode|dark=|light=b"'],
+    ["@{scheme.mode|dark|light=b}", 'template=probe.conf placeholder="scheme.mode|dark|light=b"'],
+    ["@{palette.accent|dark=a|light=b}", 'template=probe.conf placeholder="palette.accent|dark=a|light=b"'],
+    ["@{terminal.color1|dark=a|light=b}", 'template=probe.conf placeholder="terminal.color1|dark=a|light=b"'],
     ["@{palette.nope}", 'template=probe.conf placeholder="palette.nope"'],
     ["@{palette}", 'template=probe.conf placeholder="palette"'],
     ["@{}", 'template=probe.conf placeholder=""'],
@@ -320,6 +344,8 @@ function verify(render) {
     }
     for (const [text, want] of RENDERED)
         assert.equal(rendered("hex6", text).bytes.toString("utf8"), want, text);
+    for (const [pkg, text, want] of MODES)
+        assert.equal(rendered("hex6", text, pkg).bytes.toString("utf8"), want, `${pkg.values.scheme.mode} ${text}`);
     for (const [text, detail] of REFUSED_TEMPLATES)
         assert.deepEqual(one("hex6", text), { ok: false, reason: "placeholder", detail }, text);
 
@@ -418,6 +444,14 @@ const CONTROLS = [
     ["unknown placeholder", "if (value === undefined) return refused(", "if (false) return refused("],
     ["group placeholder", "if (!logic.isLeaf(leaf)) return undefined;", "if (leaf === undefined) return undefined;"],
     ["slot name", "return logic.terminalSlotNames().includes(slot) ? encode(input.slots[slot]) : undefined;", "return encode(input.slots[slot]);"],
+    ["case written", "if (cases.length > 0) return caseText(leaf, cases, value);", "if (false) return caseText(leaf, cases, value);"],
+    ["slot takes no case", "if (cases.length > 0) return undefined;", "if (false) return undefined;"],
+    ["case on a choice only", 'if (leaf.type !== "choice") return undefined;', 'if (!Array.isArray(leaf.options)) return "x";'],
+    ["case text present", "const CASE_PATTERN = /^([^=]+)=(.+)$/;", "const CASE_PATTERN = /^([^=]+)=(.*)$/;"],
+    ["case has its =", "if (m === null || !leaf.options", "if (m === null && false || !leaf.options"],
+    ["case option known", "!leaf.options.includes(m[1]) || texts.has(m[1])", "texts.has(m[1])"],
+    ["case option once", "!leaf.options.includes(m[1]) || texts.has(m[1])", "!leaf.options.includes(m[1])"],
+    ["case every option", "return texts.size === leaf.options.length ? texts.get(value) : undefined;", "return texts.get(value);"],
     ["non-colour token", 'return leaf.type === "color" ? encode(value) : String(value);', "return encode(String(value));"],
     ["curated precedence", "const curated = input.curated.has(file.destination) && curatedTaken(", "const curated = false && curatedTaken("],
     ["curated keys admitted", "k => FILE_KEYS.includes(k) || k === CURATED_KEYS_KEY)", "k => FILE_KEYS.includes(k))"],
@@ -529,4 +563,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length + VAULTS.length} controls=${CONTROLS.length}`);
+console.log(`test-theme-render: ok targets=${ACCEPTED_TARGETS.length + REFUSED_TARGETS.length} templates=${ENCODED.length + RENDERED.length + MODES.length + REFUSED_TEMPLATES.length} wiring=${WIRED.length + WIRED_SECTION.length + CONFLICTS.length + UNWIRED.length + PROFILES.length + VAULTS.length} controls=${CONTROLS.length}`);
