@@ -92,17 +92,18 @@ target_json() { # NAME ENCODER DETECT_JSON WIRING_LINE CREATE [RELOAD_JSON]
   printf '{ "app": "%s", "encoder": "%s", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": %s, "wiring": { "file": "%s/%s.conf", "line": "%s", "create": %s }, "reload": %s }' "$1" "$2" "$1" "$1" "$3" "$1" "$1" "$4" "$5" "${6:-null}"
 }
 
-# A must-fail control on a copy of the tree whose bin/vgsh-theme-judge has
-# NEEDLE, which must occur once, replaced by REPLACEMENT; THEME_BIN then
-# names the copy's vgsh until the caller unsets it.
-judge_control() { # NAME NEEDLE REPLACEMENT
+# A must-fail control on a copy of the tree whose FILE, relative to the
+# tree, has NEEDLE, which must occur once, replaced by REPLACEMENT;
+# THEME_BIN then names the copy's vgsh until the caller unsets it.
+tree_control() { # NAME FILE NEEDLE REPLACEMENT
   local copy="$tmp/tree-$1"
   cp -R -- "$tree" "$copy"
-  check "the $1 control's text occurs once in bin/vgsh-theme-judge" test "$(grep -c -F -- "$2" "$repo/bin/vgsh-theme-judge")" == 1
-  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/bin/vgsh-theme-judge" "$2" "$3"
-  check "the $1 mutant differs from bin/vgsh-theme-judge" test "$(cmp -s "$repo/bin/vgsh-theme-judge" "$copy/bin/vgsh-theme-judge"; echo $?)" == 1
+  check "the $1 control's text occurs once in $2" test "$(grep -c -F -- "$3" "$repo/$2")" == 1
+  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/$2" "$3" "$4"
+  check "the $1 mutant differs from $2" test "$(cmp -s "$repo/$2" "$copy/$2"; echo $?)" == 1
   THEME_BIN="$copy/bin/vgsh"
 }
+judge_control() { tree_control "$1" bin/vgsh-theme-judge "$2" "$3"; } # NAME NEEDLE REPLACEMENT
 
 rows_done() { # SUITE
   if [[ $failures -gt 0 ]]; then echo "$1: failed=$failures"; exit 1; fi

@@ -3,9 +3,11 @@
 # Theme itself and from the core's lending record. rows/theme.sh leaves a
 # hand-written document active, so the first apply is the vgs package.
 # `done` can run before ThemeSource reloads the file, so `current` and
-# `revision` are polled after it. The last block applies the shipped light
+# `revision` are polled after it. A later block applies the shipped light
 # package and reads one colour of each gallery section back as a property,
-# then applies vgs so later rows start from the defaults.
+# then applies vgs so later rows start from the defaults. The Hyprland
+# block after it wires the shipped target and runs its hook on the nested
+# instance, and leaves vgs applied.
 set -euo pipefail
 installed="$home/.config/vgs/themes"
 # What the fixture's last apply callback received: state, shell, theme and
@@ -228,6 +230,65 @@ expect_poll "the vgs apply after the light package reaches the fixture" 5 applie
 expect "the vgs apply after the light package wrote the shell's file" "applied applied vgs None" applied
 expect_poll "current follows the vgs apply after the light package" '"vgs"' theme_member current
 expect_poll "revision rose after the vgs apply after the light package" rose revision_rose
+
+# The shipped Hyprland target against the nested instance. The nested
+# Hyprland reads hyprland.lua with autoreload off, so it never sources the
+# hyprland.conf this block creates: the rows prove the rendered file, the
+# include line, that Hyprland parses the wired file, and the hook's run.
+# The hook is the real `hyprctl reload`, resolved through the shell's
+# stand-in directory, which records each run and execs the real binary;
+# it names no instance, so HYPRLAND_INSTANCE_SIGNATURE in the shell's
+# environment sends it to the nested one. A live session's borders
+# restyling is checked by hand on the developer's session, not measured here.
+hypr_conf="$home/.config/hypr/hyprland.conf"
+hypr_theme="$home/.local/state/vgs/theme/hyprland.conf"
+hypr_runs="$sandbox/hyprctl-runs"
+cat >"$shim/hyprctl.recording" <<EOF
+#!/usr/bin/env bash
+reply="\$($(printf %q "$hyprctl_bin") "\$@")"; status=\$?
+printf '%s sig=%s status=%s reply=%s\n' "\$*" "\${HYPRLAND_INSTANCE_SIGNATURE:-}" "\$status" "\$reply" >>$(printf %q "$hypr_runs")
+printf '%s\n' "\$reply"
+exit "\$status"
+EOF
+chmod 755 -- "$shim/hyprctl.recording"
+: >"$hypr_runs"
+# The shell's dispatches run through the stand-in too; only reloads count.
+reload_runs() { grep -c '^reload ' -- "$hypr_runs" || true; }
+last_reload() { grep '^reload ' -- "$hypr_runs" | tail -n 1; }
+pending_file() { if [[ -e $home/.local/state/vgs/reload-pending.json ]]; then cat -- "$home/.local/state/vgs/reload-pending.json"; else echo absent; fi; }
+verify_hypr_conf() { "${sandbox_env[@]}" Hyprland --verify-config --config "$hypr_conf" 2>&1 | tail -n 1; }
+printf '# The sandbox user'"'"'s own settings.\ngeneral {\n    border_size = 3\n}\n' >"$hypr_conf"
+cp -- "$hypr_conf" "$sandbox/hyprland-own.conf"
+shim_hyprctl recording
+
+expect "the fixture applies the light package with a hyprland.conf present" ok probe theme-apply light
+expect_poll "the light apply with a hyprland.conf reaches the fixture" 6 applies
+expect "the light apply with a hyprland.conf wrote the shell's file" "applied applied light None" applied
+expect "the Hyprland target is written" '[["hyprland", "written", null]]' applied_targets hyprland
+if light_accent="$(resolved_token light palette.accent)"; then
+  expect "the Hyprland file holds the light accent through the hyprland encoder" "\$vgs_accent = rgba(${light_accent#\#})" grep -xF -- "\$vgs_accent = rgba(${light_accent#\#})" "$hypr_theme"
+else
+  fail "the judge resolves palette.accent for the light package"
+fi
+expect "the Hyprland file colours the active border" '    col.active_border = $vgs_accent' grep -xF -- '    col.active_border = $vgs_accent' "$hypr_theme"
+expect "the source line is first in the sandbox's hyprland.conf" "source = $hypr_theme" head -n 1 -- "$hypr_conf"
+expect "the sandbox's own settings follow the source line byte for byte" same bash -c 'tail -n +2 -- "$1" | cmp -s - "$2" && echo same' _ "$hypr_conf" "$sandbox/hyprland-own.conf"
+expect "Hyprland parses the wired hyprland.conf and the file it sources" "config ok" verify_hypr_conf
+expect "the hook ran once" 1 reload_runs
+expect "the hook is hyprctl reload on the nested instance, which answers ok" "reload sig=$signature status=0 reply=ok" last_reload
+expect "a hook that answered ok leaves nothing pending" absent pending_file
+
+expect "the fixture applies vgs over the light Hyprland file" ok probe theme-apply vgs
+expect_poll "the vgs apply over the light Hyprland file reaches the fixture" 7 applies
+expect "changed Hyprland bytes are written" '[["hyprland", "written", null]]' applied_targets hyprland
+expect "changed Hyprland bytes run the hook again" 2 reload_runs
+expect "the fixture applies vgs again" ok probe theme-apply vgs
+expect_poll "the repeat vgs apply reaches the fixture" 8 applies
+expect "unchanged Hyprland bytes are unchanged" '[["hyprland", "unchanged", null]]' applied_targets hyprland
+expect "unchanged Hyprland bytes run no hook" 2 reload_runs
+shim_hyprctl real
+rm -- "$hypr_conf" "$sandbox/hyprland-own.conf"
+
 expect "disabling the fixture after the theme rows is allowed" ok ipc shell setPluginEnabled acme.probe false
 
 # ---- vgs.themes: the themes widget and panel ------------------------------

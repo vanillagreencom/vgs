@@ -1,6 +1,6 @@
 # Theme targets
 
-Covers: themes/targets/**, bin/lib/theme-render.js, scripts/test-theme-render.js, scripts/test-vgsh-targets.sh
+Covers: themes/targets/**, bin/lib/theme-render.js, scripts/test-theme-render.js, scripts/test-vgsh-targets.sh, scripts/test-vgsh-hyprland.sh
 
 A target is one application's colour files: the directory `themes/targets/<target>/`, holding `target.json` and its templates. The renderer, `bin/lib/theme-render.js`, is pure: [themes.md § Boundaries](themes.md#boundaries). [theme-apply.md § Apply](theme-apply.md#apply) says when a target renders and where its files land.
 
@@ -28,10 +28,11 @@ The shipped targets:
 | `alacritty` | `hex6` | `alacritty` | `import = ["@{state}/alacritty.toml"]` in the `general` table of `alacritty/alacritty.toml`, created when absent. | `touch -c` of `alacritty.toml`. |
 | `foot` | `hex6` | `foot` | `include=@{state}/foot.ini` in `foot/foot.ini`, created when absent. Both `[colors-dark]` and `[colors-light]` hold the theme. | None. |
 | `ghostty` | `hex6` | `ghostty` | `config-file = ?@{state}/ghostty.conf` in `ghostty/config.ghostty`, created when absent. | `SIGUSR2` to the user's `ghostty` processes. |
+| `hyprland` | `hyprland` | `hyprctl` | `source = @{state}/hyprland.conf` first in `hypr/hyprland.conf`, never created: Hyprland v0.56.2 reads `hyprland.lua` when it exists and falls back to `hyprland.conf` only without it (its log line `[cfg] Lua config not found, using legacy config`), so a session configured in Lua alone is skipped with `wiring-file-absent`. | `hyprctl reload` within 5000 ms. It names no instance: hyprctl takes the session's `HYPRLAND_INSTANCE_SIGNATURE`. |
 | `kitty` | `hex6` | `kitty` | `include @{state}/kitty.conf` in `kitty/kitty.conf`, created when absent. | `SIGUSR1` to the user's `kitty` processes. |
 | `wezterm` | `hex6` | `wezterm` | `pcall(dofile, "@{state}/wezterm.lua")` first in `wezterm/wezterm.lua`, never created. | `touch -c` of `wezterm.lua`. |
 
-Each terminal draws its foreground, background, selection, cursor and sixteen slots from the theme; kitty also its URL colour.
+The Hyprland file defines `$vgs_` colour variables a user's own settings can name, and colours the window, group and group bar borders with them; the file's own settings after the source line override it. Each terminal draws its foreground, background, selection, cursor and sixteen slots from the theme; kitty also its URL colour.
 
 - **Precedence.** Alacritty reads an import before the importing file, and kitty and foot read the include line where it stands, so the file's own settings override the theme. Ghostty reads a `config-file` after the whole configuration, so the theme overrides the file's own colours; its `?` makes a missing theme file no error.
 - **WezTerm.** It has no include directive. Its theme file wraps `wezterm.config_builder`, when that exists, so a config it builds starts on the `vgs` colour scheme, and a `color_scheme` or `colors` the file sets afterwards overrides it. A configuration not built by `config_builder` takes no theme, and neither does a `~/.wezterm.lua`, since the wiring file is relative to the configuration home. `pcall` keeps a missing theme file from failing the whole configuration.
@@ -91,3 +92,4 @@ An application that reads no include line from its configuration finds its theme
 2. Every placeholder of every target under `themes/targets/` names a token or a slot, and `targets/` is not listed as a package. Enforced by `bin/vgsh-theme-judge packages themes` and `scripts/test-vgsh-theme-judge.js`, and for list and apply by `scripts/test-vgsh.sh`.
 3. A wiring that would give a TOML key twice fails its target and leaves the file byte for byte. Enforced by `scripts/test-theme-render.js` and, through the apply, `scripts/test-vgsh-targets.sh`, with a judge copy that takes the refusal for a wired file as its control.
 4. Each shipped terminal target lands its file with its encoder, keeps its include line in its application's configuration file, in `general` for Alacritty, creates none for WezTerm, signals the user's kitty and Ghostty by exact name, a run matching no process succeeding, and touches the file Alacritty and WezTerm watch, only when its bytes change or its reload is pending. Enforced by `scripts/test-vgsh-targets.sh` under a PATH of stub detect and signal commands.
+5. The `hyprland` target writes its colours with the `hyprland` encoder, lands nothing and creates no file when `hyprland.conf` is absent, keeps its source line first in one that exists, and runs `hyprctl reload`, with no `-i` and the session's signature, on changed bytes and on a pending reload only. Enforced by `scripts/test-vgsh-hyprland.sh` under a PATH holding a stub `hyprctl`, with `target.json` copies that create the file, drop the hook and write `hex8` as its controls. The nested smoke's Hyprland block in `scripts/smoke/rows/themes.sh` runs the real hook on the nested instance and parses the wired file with `Hyprland --verify-config`; the nested compositor reads `hyprland.lua`, so a live session's borders restyling is checked by hand.

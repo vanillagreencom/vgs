@@ -98,6 +98,7 @@ rows=(
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|theme target controls|scripts/test-vgsh-targets.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|theme entry wiring controls|scripts/test-vgsh-entries.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
+  "cli|Hyprland target controls|scripts/test-vgsh-hyprland.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js scripts/qml-library.js config/shell.json"
   "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py|bin/vgsh-scan"
   "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py|.agents/skills/vgs-plugin/scripts/* .agents/skills/vgs-plugin/templates/* shell/Core/PluginLogic.js bin/vgsh-scan scripts/check-manifests.js scripts/check-plugin-boundary.py scripts/check-design-tokens.py scripts/qml_source.py scripts/qml-library.js shell/Commons/*"
   "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan scripts/qml_source.py"
