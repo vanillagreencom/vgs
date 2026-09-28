@@ -36,7 +36,7 @@ This personal project deliberately has no CI workflows, branch protection, merge
 
 Do not report findings on tracked files that the repo renders from an upstream package. Apply this exclusion to every bot and every review round. Fix the upstream package and render it again; a local edit is overwritten. Include the excluded paths with this block wherever the bot has no other way to receive them.
 
-Those paths here: .agents/skills/bot-instructions/**, .agents/skills/code-quality/**, .agents/skills/commit-guards/**, .agents/skills/decider/**, .agents/skills/deep-research/**, .agents/skills/dev/**, .agents/skills/doc-limits/**, .agents/skills/docs-writing/**, .agents/skills/github/**, .agents/skills/harness-ci/**, .agents/skills/linear/**, .agents/skills/orch/**, .agents/skills/preflight/**, .agents/skills/project-management/**, .agents/skills/reviewer/**, .agents/skills/second-opinion/**, .agents/skills/worktree/**, .claude/agents/**, .claude/hooks/**, .claude/skills/**, .codex/agents/**, .codex/hooks/**, .pi/agents/**, .pi/kendex/**.
+Those paths here: .agents/skills/bot-instructions/**, .agents/skills/code-quality/**, .agents/skills/commit-guards/**, .agents/skills/decider/**, .agents/skills/deep-research/**, .agents/skills/dev/**, .agents/skills/doc-limits/**, .agents/skills/docs-writing/**, .agents/skills/github/**, .agents/skills/harness-ci/**, .agents/skills/linear/**, .agents/skills/orch/**, .agents/skills/preflight/**, .agents/skills/project-management/**, .agents/skills/reviewer/**, .agents/skills/second-opinion/**, .agents/skills/worktree/**, .claude/agents/**, .claude/hooks/**, .claude/skills/**, .codex/agents/**, .codex/hooks/**, .github/agents/**, .github/hooks/**, .pi/agents/**, .pi/kendex/**.
 
 ## trust-model
 
