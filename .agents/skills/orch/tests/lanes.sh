@@ -1171,22 +1171,25 @@ assert_eq "$([[ "$SLOW_UNTIL" =~ ^[0-9]+$ && "$SLOW_UNTIL" -ge "$((SLOW_BEFORE +
   "the recorded deadline is the refusal's arrival plus its window, not the request's start"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
-echo "=== an answer other than 2xx or 429 is unreachable and its body never cached ==="
+echo "=== an answer other than 2xx or 429 is a refusal named by its class and its body never cached ==="
 # The endpoint's error bodies are JSON objects too, so only the status keeps
 # one from being parsed as usage and written to the cache for the next caller.
-# Each row takes a state directory of its own, so neither reads the refusal the
-# other recorded.
+# A 5xx is a read that never reached the account; a 4xx is the endpoint's own
+# answer through this credential, which a hosted pick must never mistake for
+# a read the provider never made. Each row takes a state directory of its own,
+# so neither reads the refusal the other recorded.
 new_home badstatus
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 for row in \
-  "a 500 with a JSON body is unreachable, and the body is not cached|500|$TMP_ROOT/badstatus-500-state" \
-  "a 401 with a JSON body is unreachable, and the body is not cached|401|$TMP_ROOT/badstatus-401-state"; do
-  IFS='|' read -r label code state <<<"$row"
+  "a 500 with a JSON body is unreachable, and the body is not cached|500|unreachable|$TMP_ROOT/badstatus-500-state" \
+  "a 401 with a JSON body is refused, and the body is not cached|401|refused|$TMP_ROOT/badstatus-401-state" \
+  "a 403 with a JSON body is refused too|403|refused|$TMP_ROOT/badstatus-403-state"; do
+  IFS='|' read -r label code status state <<<"$row"
   printf '%s \n' "$code" > "$FIXTURE_DIR/.claude.status"
   run_lanes "OVERSEE_WATCH_STATE_DIR=$state;ORCH_LANE_DIRS=$H/.claude" $LIST
   assert_eq "$(observe 'first.status= first.headroom_pct= fetched=') body=$(jq -r 'select(.usage) | "cached"' "$state"/usage/*.json 2>/dev/null)" \
-    "first.status=unreachable first.headroom_pct=null fetched=claude body=" "$label" "$ERR"
+    "first.status=$status first.headroom_pct=null fetched=claude body=" "$label" "$ERR"
 done
 rm -f -- "${FIXTURE_DIR:?}/.claude.status"
 
@@ -2013,6 +2016,131 @@ LANES="$TMP_ROOT/mutant-public-id/scripts/lanes"
 table \
   "control: a record keeping the match key hands it to a pick caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK|rc=0 hasid=true" \
   "control: a record keeping the match key hands it to a pick --lane caller|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-token.tsv|$PICK_LANE $H/.tclaude|rc=0 hasid=true"
+LANES="$LANES_PATCHED"
+
+echo "=== an unreachable host row gives way to this machine's fresh reading of the account ==="
+# The provider could not read its copy of fclaude, whose local copy this
+# machine measures fresh: a seat this machine measures is measured, so both
+# pick forms judge the local reading and say so. tclaude has no local
+# credentials, so nothing measures it and the unreachable row stays, as it does
+# for a local figure past the TTL: one a refused refresh served says nothing
+# about the window now. A provider status other than unreachable is the
+# provider's own reading of its copy and keeps standing in for the local one.
+new_home hosted-local
+make_lane "$H" fclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.fclaude.json"
+mkdir -p "$H/.tclaude"
+printf '{}\n' > "$H/.tclaude/.claude.json"
+LOCAL_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log;ORCH_LANES_CLAUDE_CLIENT_ID=client-1"
+printf 'account=%s\tharness=claude\tstatus=unreachable\n' "$H/.fclaude" > "$TMP_ROOT/local-fresh-dark.tsv"
+printf 'account=%s\tharness=claude\tstatus=unreachable\naccount=%s\tharness=claude\tstatus=unreachable\n' \
+  "$H/.fclaude" "$H/.tclaude" > "$TMP_ROOT/local-both-dark.tsv"
+printf 'account=%s\tharness=claude\tstatus=expired\n' "$H/.fclaude" > "$TMP_ROOT/local-fresh-expired.tsv"
+# The provider's usage read answered 401 through its own copy: a reading of
+# that copy, which the launch runs under, and never a read the provider
+# skipped.
+printf 'account=%s\tharness=claude\tstatus=refused\n' "$H/.fclaude" > "$TMP_ROOT/local-fresh-refused.tsv"
+# wclaude authenticates and its usage body carries no consumer window, the
+# enterprise shape: a fresh local reading that measures nothing, which no
+# unreachable row gives way to. Its row sits beside fclaude's refused one so
+# the chooser has nothing measured to pick.
+make_lane "$H" wclaude 3600 enterprise
+jq -n '{spend: {}}' > "$FIXTURE_DIR/.wclaude.json"
+printf 'account=%s\tharness=claude\tstatus=refused\naccount=%s\tharness=claude\tstatus=unreachable\n' \
+  "$H/.fclaude" "$H/.wclaude" > "$TMP_ROOT/local-windowless-dark.tsv"
+LOCAL_WINDOWLESS="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-windowless-dark.tsv"
+LOCAL_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-dark.tsv"
+LOCAL_BOTH_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-both-dark.tsv"
+LOCAL_READING="key=pick-local-reading,lane=$H/.fclaude,host=$HOST_FIXTURE,age-s=0"
+table \
+  "the chooser picks the account on this machine's fresh reading and says so|$LOCAL_DARK|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local hasid=false $LOCAL_READING" \
+  "the named form judges it on that same reading|$LOCAL_DARK|$PICK_LANE $H/.fclaude|rc=0 config_dir=$H/.fclaude measured_through=local $LOCAL_READING" \
+  "a TTL of 0 serves no cached figure, and the figure this run fetched still stands in|$LOCAL_DARK;ORCH_LANES_USAGE_TTL=0|$PICK_LANE $H/.fclaude|rc=0 measured_through=local $LOCAL_READING" \
+  "an account nothing measures keeps its unreachable row beside one the local reading stands for|$LOCAL_BOTH_DARK|$PICK_LANE $H/.tclaude|rc=5 status=unreachable measured_through=host" \
+  "and the chooser still picks the one this machine measured|$LOCAL_BOTH_DARK|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local" \
+  "a provider row read expired is the provider's own reading and still stands in for the fresh local one|$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-expired.tsv|$PICK_LANE $H/.fclaude|rc=5 status=expired measured_through=host" \
+  "a provider row read refused, a 401 through the provider's copy, stands in too and refuses the launch|$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-refused.tsv|$PICK_LANE $H/.fclaude|rc=5 status=refused measured_through=host" \
+  "and the chooser refuses on that row rather than picking the fresh local reading|$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/local-fresh-refused.tsv|$PICK|rc=3 considered.fclaude=host"
+# A local figure past the TTL: the first pick measures fclaude and leaves its
+# figure, which is then aged past the default TTL and the endpoint set to
+# refuse, so the refresh serves that old figure as rate_limited. Measured, but
+# not fresh, so the unreachable row stays and the refusal names it.
+STALE_STATE="$TMP_ROOT/hosted-local-stale"
+LOCAL_STALE="$LOCAL_DARK;OVERSEE_WATCH_STATE_DIR=$STALE_STATE"
+run_lanes "$LOCAL_STALE" $PICK
+assert_eq "$RC" "0" "warm-up: the first pick under the stale state measures fclaude fresh"
+age_usage_record "$STALE_STATE" "$H/.fclaude" 600
+printf '429 0\n' > "$FIXTURE_DIR/.fclaude.status"
+table \
+  "a local figure older than the TTL does not stand in: the chooser refuses on the unreachable row|$LOCAL_STALE|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.fclaude=host" \
+  "nor does it for the named form|$LOCAL_STALE|$PICK_LANE $H/.fclaude|rc=5 status=unreachable measured_through=host"
+# Control: a judge with no freshness bound picks the stale figure.
+lanes_mutant mutant-local-any-age lanes '\.usage_age_s < \$bound' 'true'
+LANES="$TMP_ROOT/mutant-local-any-age/scripts/lanes"
+table \
+  "control: with no freshness bound the chooser picks the stale local figure|$LOCAL_STALE|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local" \
+  "control: and so does the named form|$LOCAL_STALE|$PICK_LANE $H/.fclaude|rc=0 measured_through=local"
+LANES="$LANES_PATCHED"
+rm -f -- "${FIXTURE_DIR:?}/.fclaude.status"
+# The bound is the window a cached figure is served within, which --max-age
+# widens past the TTL: a figure aged past the TTL but inside the caller's
+# max-age is the one measure_lane serves as ok, and it stands in. The same
+# figure under the TTL alone is refetched, so only the widened caller reads
+# it at that age.
+MAXAGE_STATE="$TMP_ROOT/hosted-local-maxage"
+LOCAL_MAXAGE="$LOCAL_DARK;OVERSEE_WATCH_STATE_DIR=$MAXAGE_STATE"
+run_lanes "$LOCAL_MAXAGE" $PICK
+assert_eq "$RC" "0" "warm-up: the first pick under the max-age state measures fclaude fresh"
+age_usage_record "$MAXAGE_STATE" "$H/.fclaude" 400
+table \
+  "a figure past the TTL but inside the caller's max-age is served as current and stands in|$LOCAL_MAXAGE;ORCH_LANES_USAGE_MAX_AGE=600|$PICK|rc=0 config_dir=$H/.fclaude measured_through=local fetched=none" \
+  "and the named form judges it the same way|$LOCAL_MAXAGE;ORCH_LANES_USAGE_MAX_AGE=600|$PICK_LANE $H/.fclaude|rc=0 measured_through=local fetched=none"
+# A fresh local reading that measures nothing is no stand-in: the account's
+# unreachable row stays, and the refusal names the read the provider never
+# made rather than a window this machine could not parse. The first keyed
+# line pins that no pick-local-reading line was printed.
+table \
+  "a local reading with no window leaves the unreachable row for the named form|$LOCAL_WINDOWLESS|$PICK_LANE $H/.wclaude|rc=5 status=unreachable measured_through=host key=pick-lane-unmeasured,lane=$H/.wclaude,model=none" \
+  "and for the chooser|$LOCAL_WINDOWLESS|$PICK|rc=3 key=no-candidate-unmeasured,harness=claude,model=none,unmeasured=3 considered.wclaude=host"
+# Control: a judge that takes any local reading with an age lets the
+# window-less one stand in and names it.
+lanes_mutant mutant-local-unmeasured lanes '\.headroom_pct != null and ' ''
+LANES="$TMP_ROOT/mutant-local-unmeasured/scripts/lanes"
+table \
+  "control: with no figure required, the named form answers the window-less local reading|$LOCAL_WINDOWLESS|$PICK_LANE $H/.wclaude|rc=5 status=no_usage_data measured_through=local key=pick-local-reading,lane=$H/.wclaude,host=$HOST_FIXTURE,age-s=0" \
+  "control: and the chooser says it took that reading|$LOCAL_WINDOWLESS|$PICK|rc=3 key=pick-local-reading,lane=$H/.wclaude,host=$HOST_FIXTURE,age-s=0 considered.wclaude=local"
+LANES="$LANES_PATCHED"
+# Control: a judge that never reads a host row as unreachable refuses the
+# account this machine measured fresh.
+lanes_mutant mutant-host-row-always-stands lanes '!= unreachable \]\]' '!= never-unreachable ]]'
+LANES="$TMP_ROOT/mutant-host-row-always-stands/scripts/lanes"
+table \
+  "control: with every host row standing, the chooser refuses the fresh local account on the unreachable row|$LOCAL_DARK|$PICK|rc=3 considered.fclaude=host" \
+  "control: and the named form answers the unreachable row|$LOCAL_DARK|$PICK_LANE $H/.fclaude|rc=5 status=unreachable measured_through=host"
+LANES="$LANES_PATCHED"
+
+echo "=== the stand-in measurement keeps the one retry per run ==="
+# Two cold lanes whose provider rows both read unreachable, with the usage
+# endpoint refusing: the first local measurement spends the run's one retry
+# and the second reports its refusal at once, as the local loop's own
+# measurements do. A measurement forked into a command substitution would
+# spend a retry per lane, which the fetch log shows as a fourth request.
+new_home cold-dark
+make_lane "$H" fclaude 3600
+make_lane "$H" gclaude 3600
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.fclaude.json"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.gclaude.json"
+printf 'account=%s\tharness=claude\tstatus=unreachable\naccount=%s\tharness=claude\tstatus=unreachable\n' \
+  "$H/.fclaude" "$H/.gclaude" > "$TMP_ROOT/cold-both-dark.tsv"
+COLD_DARK="$LOCAL_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/cold-both-dark.tsv;FETCH_STATUS=429;FETCH_RETRY_AFTER=1"
+table \
+  "two cold lanes behind unreachable rows spend one retry between them|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude"
+# Control: the measurement forked into a subshell, which spends a retry per
+# lane.
+lanes_mutant mutant-stand-in-forked lanes 'measure_lane "\$1" "\$2" >&7' '(measure_lane "$1" "$2") >\&7'
+LANES="$TMP_ROOT/mutant-stand-in-forked/scripts/lanes"
+table \
+  "control: a forked measurement retries for every cold lane|$COLD_DARK|$PICK|rc=3 fetched=fclaude,fclaude,gclaude,gclaude"
 LANES="$LANES_PATCHED"
 
 echo "=== a renewal a ceiling lands on finishes, keeps the rotated token and releases the mutex ==="

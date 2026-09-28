@@ -26,6 +26,7 @@ ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/test-*.py scripts/test-*.sh"
 # key here: a repeated default goes stale when the class changes.
 
 # Target identities are model providers, not the harness that runs them.
+# In this repository, both targets always use 1copilot, never claude or codex CLIs.
 # Keep write tools denied and shell approval restricted; never grant all tools.
 SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5.5"
 SECOND_OPINION_CLAUDE_CMD = "env COPILOT_ALLOW_ALL=false 1copilot --model claude-opus-5.5 --reasoning-effort medium --silent --no-ask-user --disable-builtin-mcps --available-tools bash view rg glob --deny-tool write"

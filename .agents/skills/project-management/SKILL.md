@@ -28,18 +28,13 @@ VGS delivery policy overrides the shared workflow's mandatory review, CI-wait, b
 
 ## Linear projects
 
-Every new non-mirror issue gets exactly one project. The set (all team vgs):
+Every new issue, including manually mirrored GitHub intake, belongs to team vgs and the `V2 Shell` project.
 
 | Project | Scope |
 |---------|-------|
-| `Tech Debt & Bugs` | Hygiene and discovered pre-existing issues — bugs, cleanup, tooling/workflow debt that fits no feature area. |
-| `Shell Runtime & Widgets` | Quickshell runtime, modules, widget primitives, design language, idle/lock/greeter session surfaces. |
-| `Theme Engine & Wallpapers` | Themes, palettes, blueprints, generated app targets, wallpaper pipeline and upscaling. |
-| `Backend & System Services` | Go backend daemon, socket protocol/capability gating, system integrations (network, logind, BlueZ, CUPS), helper CLI. |
-| `Packaging & Install Channels` | install.sh, distro packages (Arch/Debian/Fedora/Gentoo/Void/Nix), release verification, channel upkeep. |
-| `Cloud Sync` | Supervised rclone, accounts/OAuth, sync modes and safety rails, watcher, FUSE mounts, Cloud Sync app/widget. |
+| `V2 Shell` | The plugin-first Hyprland shell on Quickshell: core, plugins, surfaces, configuration, themes, validation and repository tooling. |
 
-A bug inside a feature area goes to that area's project, not Tech Debt & Bugs; the hygiene project is for cross-cutting debt and pre-existing discoveries. Synced `nightly-ci:` mirrors arrive with no project — route them to `Tech Debt & Bugs` on first triage. Creating a new project is an owner decision: propose it, do not create it unprompted.
+V1 and its legacy projects are reference-only; do not route new work there. Creating a new project is an owner decision: propose it, do not create it unprompted.
 
 ## Project issue label taxonomy
 
