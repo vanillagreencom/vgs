@@ -1,0 +1,59 @@
+# The vgs theme for Helix, rendered by vgsh theme apply and linked as
+# themes/vgs.toml, so `theme = "vgs"` in config.toml selects it.
+"ui.background" = { bg = "#@{color.background}" }
+"ui.text" = "#@{color.text}"
+"ui.text.focus" = { fg = "#@{color.text}", modifiers = ["bold"] }
+"ui.text.inactive" = "#@{color.textMuted}"
+"ui.cursor" = { fg = "#@{color.background}", bg = "#@{color.textMuted}" }
+"ui.cursor.primary" = { fg = "#@{color.onAccent}", bg = "#@{color.accent}" }
+"ui.cursor.match" = { fg = "#@{color.accent}", modifiers = ["bold"] }
+"ui.cursorline.primary" = { bg = "#@{color.surfaceRaised}" }
+"ui.selection" = { bg = "#@{color.borderStrong}" }
+"ui.selection.primary" = { bg = "#@{color.borderStrong}" }
+"ui.linenr" = "#@{color.textFaint}"
+"ui.linenr.selected" = "#@{color.text}"
+"ui.gutter" = { bg = "#@{color.background}" }
+"ui.statusline" = { fg = "#@{color.text}", bg = "#@{color.surfaceRaised}" }
+"ui.statusline.inactive" = { fg = "#@{color.textMuted}", bg = "#@{color.surface}" }
+"ui.statusline.normal" = { fg = "#@{color.onAccent}", bg = "#@{color.accent}" }
+"ui.statusline.insert" = { fg = "#@{color.onSuccess}", bg = "#@{color.success}" }
+"ui.statusline.select" = { fg = "#@{color.onInfo}", bg = "#@{color.info}" }
+"ui.bufferline" = { fg = "#@{color.textMuted}", bg = "#@{color.surface}" }
+"ui.bufferline.active" = { fg = "#@{color.text}", bg = "#@{color.background}" }
+"ui.popup" = { fg = "#@{color.text}", bg = "#@{color.surfaceRaised}" }
+"ui.window" = "#@{color.border}"
+"ui.help" = { fg = "#@{color.text}", bg = "#@{color.surfaceRaised}" }
+"ui.menu" = { fg = "#@{color.text}", bg = "#@{color.surfaceRaised}" }
+"ui.menu.selected" = { fg = "#@{color.onAccent}", bg = "#@{color.accent}" }
+"ui.virtual" = "#@{color.textDisabled}"
+"ui.virtual.ruler" = { bg = "#@{color.surface}" }
+"ui.virtual.whitespace" = "#@{color.textDisabled}"
+"ui.virtual.indent-guide" = "#@{color.borderSubtle}"
+"ui.virtual.inlay-hint" = "#@{color.textFaint}"
+comment = { fg = "#@{color.textFaint}", modifiers = ["italic"] }
+constant = "#@{terminal.color6}"
+string = "#@{terminal.color2}"
+variable = "#@{color.text}"
+function = "#@{terminal.color4}"
+keyword = "#@{terminal.color5}"
+type = "#@{terminal.color3}"
+operator = "#@{color.textMuted}"
+punctuation = "#@{color.textMuted}"
+tag = "#@{terminal.color1}"
+attribute = "#@{terminal.color3}"
+namespace = "#@{terminal.color6}"
+special = "#@{color.accent}"
+"markup.heading" = { fg = "#@{color.accent}", modifiers = ["bold"] }
+"markup.link.url" = { fg = "#@{color.info}", underline = { style = "line" } }
+"markup.raw" = "#@{terminal.color2}"
+"diff.plus" = "#@{color.success}"
+"diff.delta" = "#@{color.warning}"
+"diff.minus" = "#@{color.danger}"
+error = "#@{color.danger}"
+warning = "#@{color.warning}"
+info = "#@{color.info}"
+hint = "#@{color.success}"
+"diagnostic.error" = { underline = { color = "#@{color.danger}", style = "curl" } }
+"diagnostic.warning" = { underline = { color = "#@{color.warning}", style = "curl" } }
+"diagnostic.info" = { underline = { color = "#@{color.info}", style = "curl" } }
+"diagnostic.hint" = { underline = { color = "#@{color.success}", style = "curl" } }

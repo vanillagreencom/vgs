@@ -15,6 +15,9 @@
 // be null.
 const TARGET_KEYS = ["app", "encoder", "files", "detect", "wiring", "reload"];
 const FILE_KEYS = ["template", "destination"];
+// The one optional key of a `files` entry: the top-level JSON keys, one of
+// which a package's curated file of that destination must hold to be taken.
+const CURATED_KEYS_KEY = "curatedKeys";
 // The two wiring forms. An include wiring keeps one line in the
 // application's configuration file; its optional keys are the section the
 // line goes into and the Mozilla profiles.ini whose profile directories the
@@ -127,9 +130,12 @@ function parseTemplate(text) {
 // The first defect of one `files` entry, or "".
 function fileError(logic, name, file, at) {
     const key = "files[" + at + "]";
-    if (!hasExactKeys(logic, file, FILE_KEYS)) return "key=" + key;
+    if (!logic.isPlainObject(file) || !FILE_KEYS.every(k => logic.hasOwn(file, k)) ||
+        !Object.keys(file).every(k => FILE_KEYS.includes(k) || k === CURATED_KEYS_KEY)) return "key=" + key;
     if (!logic.isPackageName(file.template) || file.template === TARGET_FILE) return "key=" + key + ".template";
     if (!logic.isPackageName(file.destination) || !file.destination.startsWith(name + ".")) return "key=" + key + ".destination";
+    if (logic.hasOwn(file, CURATED_KEYS_KEY) && (!Array.isArray(file.curatedKeys) || file.curatedKeys.length === 0 || !file.curatedKeys.every(isLine)))
+        return "key=" + key + ".curatedKeys";
     return "";
 }
 
@@ -279,13 +285,28 @@ function placeholderText(logic, tokens, input, name, encode) {
     return leaf.type === "color" ? encode(value) : String(value);
 }
 
+// Whether BYTES, a package's curated file for the accepted `files` entry
+// FILE, stand in for its render. With `curatedKeys` they must be a JSON
+// object holding one of those keys, so a package file of another shape at
+// that name, such as Omarchy's vscode.json naming an extension, is not taken.
+function curatedTaken(logic, file, bytes) {
+    if (!logic.hasOwn(file, CURATED_KEYS_KEY)) return true;
+    let document;
+    try {
+        document = JSON.parse(bytes.toString("utf8"));
+    } catch (e) {
+        return false;
+    }
+    return logic.isPlainObject(document) && file.curatedKeys.some(key => logic.hasOwn(document, key));
+}
+
 // Render every file of an accepted TARGET. TEMPLATES maps each template name
 // the target names to its text. INPUT carries the package's resolved token
 // `values`, the terminal `slots` terminalSource chose, and `curated`, a Map
 // from destination to the bytes of the package's `targets/<destination>`.
 // Every template is rendered, so a placeholder naming no token or slot
-// refuses the target even where a curated file stands in; a curated file is
-// then taken verbatim. Answers { ok: true, files: [{ destination, bytes,
+// refuses the target even where a curated file stands in; a curated file
+// curatedTaken admits is then taken verbatim. Answers { ok: true, files: [{ destination, bytes,
 // curated }] } in the target's order, or one refusal.
 function renderTarget(logic, tokens, target, templates, input) {
     if (input.slots === null || typeof input.slots !== "object")
@@ -308,7 +329,7 @@ function renderTarget(logic, tokens, target, templates, input) {
             if (value === undefined) return refused("placeholder", "template=" + file.template + " placeholder=" + JSON.stringify(part.name));
             out += value;
         }
-        const curated = input.curated.has(file.destination);
+        const curated = input.curated.has(file.destination) && curatedTaken(logic, file, input.curated.get(file.destination));
         files.push({ destination: file.destination, bytes: curated ? input.curated.get(file.destination) : Buffer.from(out, "utf8"), curated });
     }
     return { ok: true, files };

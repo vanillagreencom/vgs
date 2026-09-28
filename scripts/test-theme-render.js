@@ -62,6 +62,7 @@ const ACCEPTED_TARGETS = [
     ["probe-2", targetText({ files: [{ template: "a.conf", destination: "probe-2.conf" }, { template: "a.conf", destination: "probe-2.extra.ini" }] })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "general" }) })],
     ["probe", targetText({ wiring: Object.assign({}, wiring, { section: "Main_2-b" }) })],
+    ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: ["colors", "tokenColors"] }] })],
     ["probe", entryText()],
     ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })],
     ["probe", targetText({ wiring: null })],
@@ -90,6 +91,10 @@ const REFUSED_TARGETS = [
     ["probe", targetText({ files: [{ template: "probe.conf", destination: "other.conf" }] }), "target-schema", "key=files[0].destination"],
     ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.c/f" }] }), "target-schema", "key=files[0].destination"],
     ["probe", targetText({ files: [{ template: "a", destination: "probe.conf" }, { template: "b", destination: "probe.conf" }] }), "target-schema", "key=files[1].destination"],
+    ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curated: ["colors"] }] }), "target-schema", "key=files[0]"],
+    ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: [] }] }), "target-schema", "key=files[0].curatedKeys"],
+    ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: "colors" }] }), "target-schema", "key=files[0].curatedKeys"],
+    ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: [""] }] }), "target-schema", "key=files[0].curatedKeys"],
     ["probe", targetText({ detect: ["probe --version"] }), "target-schema", "key=detect"],
     ["probe", targetText({ detect: "probe" }), "target-schema", "key=detect"],
     ["probe", targetText({ wiring: { file: "probe/probe.conf", line: "include=@{state}/probe.conf" } }), "target-schema", "key=wiring"],
@@ -301,6 +306,20 @@ function verify(render) {
     assert.ok(curated.bytes.equals(curatedBytes));
     assert.deepEqual(one("hex6", "@{palette.nope}", probe, new Map([["probe.conf", curatedBytes]])).reason, "placeholder");
 
+    // With curatedKeys, a curated file is taken only as a JSON object holding
+    // one of them; any other file at that name, Omarchy's vscode.json naming
+    // an extension included, leaves the render in place.
+    const keyed = accepted("probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: ["colors", "tokenColors"] }] }));
+    const keyedFile = bytes => {
+        const result = render.renderTarget(logic, TOKENS, keyed, new Map([["probe.conf", "a=@{palette.accent}"]]), { values: probe.values, slots: defaults.terminal, curated: new Map([["probe.conf", Buffer.from(bytes)]]) });
+        assert.equal(result.ok, true);
+        return [result.files[0].bytes.toString("utf8"), result.files[0].curated];
+    };
+    for (const bytes of ['{ "tokenColors": [] }', '{ "colors": {}, "name": "x" }'])
+        assert.deepEqual(keyedFile(bytes), [bytes, true], bytes);
+    for (const bytes of ['{ "name": "Tokyo Night", "extension": "enkia.tokyo-night" }', '[{ "colors": {} }]', '{ "colors": {} ', "null", ""])
+        assert.deepEqual(keyedFile(bytes), ["a=123456", false], bytes);
+
     // Several files render in the target's order; a curated file stands in
     // for its own destination only.
     const two = accepted("probe", targetText({ files: [{ template: "a.conf", destination: "probe.conf" }, { template: "b.ini", destination: "probe.extra.ini" }] }));
@@ -370,7 +389,12 @@ const CONTROLS = [
     ["group placeholder", "if (!logic.isLeaf(leaf)) return undefined;", "if (leaf === undefined) return undefined;"],
     ["slot name", "return logic.terminalSlotNames().includes(slot) ? encode(input.slots[slot]) : undefined;", "return encode(input.slots[slot]);"],
     ["non-colour token", 'return leaf.type === "color" ? encode(value) : String(value);', "return encode(String(value));"],
-    ["curated precedence", "const curated = input.curated.has(file.destination);", "const curated = false;"],
+    ["curated precedence", "const curated = input.curated.has(file.destination) && curatedTaken(", "const curated = false && curatedTaken("],
+    ["curated keys admitted", "k => FILE_KEYS.includes(k) || k === CURATED_KEYS_KEY)", "k => FILE_KEYS.includes(k))"],
+    ["curated keys shape", "(!Array.isArray(file.curatedKeys) || file.curatedKeys.length === 0 || !file.curatedKeys.every(isLine))", "false"],
+    ["curated keys judged", "if (!logic.hasOwn(file, CURATED_KEYS_KEY)) return true;", "return true;"],
+    ["curated keys any key", "file.curatedKeys.some(key => logic.hasOwn(document, key))", "file.curatedKeys.every(key => logic.hasOwn(document, key))"],
+    ["curated keys object", "return logic.isPlainObject(document) && file.curatedKeys", "return true && file.curatedKeys"],
     ["curated file judges its template", "for (const part of template.parts) {", "for (const part of input.curated.has(file.destination) ? [] : template.parts) {"],
     ["own terminal first", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [defaults, pkg]) {"],
     ["terminal fallback", "for (const candidate of [pkg, defaults]) {", "for (const candidate of [pkg]) {"],
@@ -380,7 +404,7 @@ const CONTROLS = [
     ["app", "if (!isLine(document.app)) return", "if (false) return"],
     ["encoder name", "if (!logic.hasOwn(ENCODERS, document.encoder)) return", "if (false) return"],
     ["files list", "if (!Array.isArray(document.files) || document.files.length === 0) return", "if (!Array.isArray(document.files)) return"],
-    ["file keys", "if (!hasExactKeys(logic, file, FILE_KEYS)) return", "if (false) return"],
+    ["file keys", "!FILE_KEYS.every(k => logic.hasOwn(file, k)) ||", "false ||"],
     ["template name", "if (!logic.isPackageName(file.template) || file.template === TARGET_FILE) return", "if (false) return"],
     ["destination prefix", "!file.destination.startsWith(name + \".\")", "false"],
     ["unique destination", "if (destinations.has(document.files[at].destination)) return", "if (false) return"],

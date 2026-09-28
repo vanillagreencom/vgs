@@ -1,0 +1,11 @@
+{
+  "app": "Visual Studio Code",
+  "encoder": "hex8",
+  "files": [
+    { "template": "vscode.json", "destination": "vscode.json", "curatedKeys": ["colors", "tokenColors", "semanticTokenColors"] },
+    { "template": "package.json", "destination": "vscode.package.json" }
+  ],
+  "detect": ["code"],
+  "wiring": { "base": "home", "dir": ".vscode/extensions/vgs-theme", "owned": true, "links": { "package.json": "vscode.package.json", "vgs-color-theme.json": "vscode.json" } },
+  "reload": null
+}
