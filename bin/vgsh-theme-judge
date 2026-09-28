@@ -124,6 +124,23 @@ function readIfPresent(file) {
     }
 }
 
+// File RELATIVE, `/`-separated, of the package in PKG as the package
+// contributes it: `{ state: "file", bytes }`, `{ state: "absent" }`, or
+// `{ state: "linked" }` when it or a directory between it and PKG is a
+// symlink, which is never followed. No package contributes a symlink below
+// its own directory: D031. PKG itself may be one. Any other failure throws
+// the fs error.
+function packageFile(pkg, relative) {
+    let at = pkg;
+    for (const part of relative.split("/")) {
+        at = path.join(at, part);
+        const stat = fs.lstatSync(at, { throwIfNoEntry: false });
+        if (stat === undefined) return { state: "absent" };
+        if (stat.isSymbolicLink()) return { state: "linked" };
+    }
+    return { state: "file", bytes: fs.readFileSync(at) };
+}
+
 function text(bytes) {
     return bytes === undefined ? undefined : bytes.toString("utf8");
 }
@@ -137,8 +154,9 @@ function latin1(bytes) {
 // verdict on their text. `acceptPackage` is the only judge of a package.
 // It judges the name before the document, so a package it refuses by name
 // is refused, with `files` null, whether or not its files can be read: an
-// unreadable installed `vgs` stays reserved. Any other read failure throws
-// the fs error.
+// unreadable installed `vgs` stays reserved. A package whose theme.json or
+// terminal.json is a symlink is refused `symlink`, with `files` null. Any
+// other read failure throws the fs error.
 function readPackage(dir, shipped) {
     const judge = files => logic.acceptPackage(tokens, {
         directoryName: path.basename(dir),
@@ -146,16 +164,34 @@ function readPackage(dir, shipped) {
         terminalJson: text(files.terminal),
         shipped: shipped
     });
-    let files;
+    // `package-theme` is the judge reaching the document it was not given.
+    const byName = () => judge({});
+    let read;
     try {
-        files = { theme: readIfPresent(path.join(dir, "theme.json")), terminal: readIfPresent(path.join(dir, "terminal.json")) };
+        read = packageFiles(dir);
     } catch (e) {
-        const byName = judge({});
-        // `package-theme` is the judge reaching the document it was not given.
-        if (byName.reason === "package-theme") throw e;
-        return { files: null, verdict: byName };
+        if (byName().reason === "package-theme") throw e;
+        return { files: null, verdict: byName() };
     }
-    return { files, verdict: judge(files) };
+    if (read.linked !== null) {
+        const verdict = byName();
+        return { files: null, verdict: verdict.reason === "package-theme" ? logic.refusal("symlink", "", "file=" + read.linked) : verdict };
+    }
+    return { files: read.files, verdict: judge(read.files) };
+}
+
+// The package in DIR's theme.json and terminal.json as `{ files: { theme,
+// terminal }, linked }`: each file's bytes, undefined when absent, and
+// `linked`, the first of the two that is a symlink, or null. packageFile's
+// fs failure throws.
+function packageFiles(dir) {
+    const read = { files: { theme: undefined, terminal: undefined }, linked: null };
+    for (const [key, name] of [["theme", "theme.json"], ["terminal", "terminal.json"]]) {
+        const file = packageFile(dir, name);
+        if (file.state === "linked" && read.linked === null) read.linked = name;
+        if (file.state === "file") read.files[key] = file.bytes;
+    }
+    return read;
 }
 
 // --- packages
@@ -341,10 +377,11 @@ function sha256(bytes) {
 
 // The digest of package ROW's content as apply reads it: theme.json,
 // terminal.json, an absent one marked as absent, and each file directly
-// under its targets/, a symlink to a file included, in name order. Each
-// part is framed by its name and length, so no two contents share a
-// digest. Backgrounds are no colours and stay out. KEY leads the refusal
-// for a targets/ or a file in it that cannot be read.
+// under its targets/, in name order; a symlink, which apply never reads,
+// and a symlinked targets/ contribute nothing. Each part is framed by its
+// name and length, so no two contents share a digest. Backgrounds are no
+// colours and stay out. KEY leads the refusal for a targets/ or a file in
+// it that cannot be read.
 function packageDigest(row, key) {
     const hash = crypto.createHash("sha256");
     const part = (name, bytes) => {
@@ -356,7 +393,7 @@ function packageDigest(row, key) {
     const dir = path.join(row.path, TARGETS);
     let names;
     try {
-        names = fs.readdirSync(dir).sort();
+        names = fs.lstatSync(dir).isSymbolicLink() ? [] : fs.readdirSync(dir).sort();
     } catch (e) {
         if (e.code !== "ENOENT") refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
         names = [];
@@ -365,7 +402,7 @@ function packageDigest(row, key) {
         const file = path.join(dir, name);
         let bytes;
         try {
-            if (fs.statSync(file, { throwIfNoEntry: false })?.isFile() !== true) continue;
+            if (fs.lstatSync(file, { throwIfNoEntry: false })?.isFile() !== true) continue;
             bytes = fs.readFileSync(file);
         } catch (e) {
             refuse(key + "=unreadable path=" + file + " error=" + e.code, "unreadable");
@@ -485,7 +522,8 @@ function reading(name, dir, read, failed) {
 // any file moves. `state` is `skipped` or `failed` with its `reason`, a
 // failed one carrying `failure`, its keyed line; a rendered one is `pending`
 // with its `target`, `files` and `dropped`, the destinations whose curated
-// file the renderer dropped, until the stage compares their bytes. A
+// file was not taken because it is a symlink or the renderer dropped it,
+// until the stage compares their bytes. A
 // disabled target keeps its `target`, whose wiring apply removes.
 // SLOTS are the terminal slots terminalSource chose; LIVE is the state
 // directory's theme/, which an entry target's links point into and a
@@ -534,16 +572,22 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
     }
     const curated = reading(name, dir, () => {
         const files = new Map();
+        const linked = [];
         for (const file of target.files) {
-            const bytes = readIfPresent(path.join(row.path, TARGETS, file.destination));
-            if (bytes !== undefined) files.set(file.destination, bytes);
+            const read = packageFile(row.path, TARGETS + "/" + file.destination);
+            if (read.state === "linked") linked.push(file.destination);
+            if (read.state === "file") files.set(file.destination, read.bytes);
         }
-        return files;
+        return { files, linked };
     }, failed);
     if (!curated.ok) return curated.entry;
     const rendered = render.renderTarget(logic, tokens, target, judged.value.templates,
-        { values: row.values, slots, curated: curated.value, installed: row.source === "installed" });
+        { values: row.values, slots, curated: curated.value.files, installed: row.source === "installed" });
     if (!rendered.ok) return failed(rendered.reason, render.refusalLine(name, rendered));
+    // A symlinked curated file is never read, so the template renders in
+    // its place; the renderer drops the rest, on runsCode targets.
+    const dropped = target.files.map(file => file.destination)
+        .filter(destination => curated.value.linked.includes(destination) || rendered.dropped.includes(destination));
     let entryPlan;
     if (render.wiringForm(target.wiring) === "entry") {
         const planned = reading(name, dir, () => {
@@ -556,7 +600,7 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
         if (planned.value === "wiring-file-absent" || planned.value === "entry-occupied") return skipped(planned.value);
         entryPlan = planned.value;
     }
-    return { name, state: "pending", reason: null, target, files: rendered.files, dropped: rendered.dropped, entryPlan };
+    return { name, state: "pending", reason: null, target, files: rendered.files, dropped, entryPlan };
 }
 
 // Every shipped target under themes/targets/, planned by planTarget, in
@@ -1368,13 +1412,15 @@ function background(format, step, configDir, stateDir, lock) {
 function acceptInstall(dir, name) {
     // Files are named relative to DIR: add judges a staging directory the
     // user never sees.
-    let theme, terminal;
+    let read;
     try {
-        theme = text(readIfPresent(path.join(dir, "theme.json")));
-        terminal = text(readIfPresent(path.join(dir, "terminal.json")));
+        read = packageFiles(dir);
     } catch (e) {
         return logic.refusal("unreadable", "", "file=" + (e.path ? path.relative(dir, e.path) : ".") + " error=" + e.code);
     }
+    if (read.linked !== null) return logic.refusal("symlink", "", "file=" + read.linked);
+    const theme = text(read.files.theme);
+    const terminal = text(read.files.terminal);
     if (theme === undefined) return logic.refusal("absent", "", "file=theme.json");
     if (name === undefined) {
         const document = logic.accept(tokens, theme);

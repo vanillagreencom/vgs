@@ -12,15 +12,15 @@ theme_tree
 cfg="$tmp/cfg-bg"; mkdir -p "$cfg/vgs"; file="$cfg/vgs/theme.json"
 link="$state/background"; doc="$state/backgrounds.json"
 
-# dusk holds three images, a symlink to a file among them, beside what the
-# list skips: another extension, a hidden image, a directory with an image
-# name and a dangling link. nord holds none. Both are installed, so a
-# control's tree copy links the same image paths.
+# dusk holds three images beside what the list skips: another extension, a
+# hidden image, a directory with an image name, a symlink to an image, which
+# no package contributes, and a dangling link. nord holds none. Both are
+# installed, so a control's tree copy links the same image paths.
 theme_pkg "$cfg/vgs/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": { "palette": { "accent": "#111111" } } }'
 theme_pkg "$cfg/vgs/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": { "palette": { "accent": "#222222" } } }'
 images="$cfg/vgs/themes/dusk/backgrounds"; mkdir -p "$images/d.png"
 printf 'b' >"$images/b.png"; printf 'a' >"$images/a.JPG"; printf 't' >"$images/notes.txt"; printf 'h' >"$images/.hidden.png"
-printf 'c' >"$tmp/c-target"; ln -s -- "$tmp/c-target" "$images/c.png"; ln -s -- "$tmp/nowhere" "$images/e.png"
+printf 'c' >"$images/c.png"; printf 'l' >"$tmp/bb-target"; ln -s -- "$tmp/bb-target" "$images/bb.png"; ln -s -- "$tmp/nowhere" "$images/e.png"
 
 links_to() { [[ -L $link && "$(readlink -- "$link")" == "$images/$1" ]]; }
 no_link() { [[ ! -e $link && ! -L $link ]]; }
@@ -48,7 +48,7 @@ check "the state file names the image current and remembers nothing" doc_is "$(a
 tinst "next moves to the second image" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
 check "next links the second image" links_to b.png
 check "next remembers it for the applied package" doc_is "$(at b.png)" '{"dusk":"b.png"}'
-tinst "next reaches an image that is a symlink" "$cfg" "$rt_empty" 0 "$(step_line c.png)" "" theme background next
+tinst "next passes over a symlinked image to the third" "$cfg" "$rt_empty" 0 "$(step_line c.png)" "" theme background next
 tinst "next after the last image wraps to the first" "$cfg" "$rt_empty" 0 "$(step_line a.JPG)" "" theme background next
 tinst "next moves to the second image again" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
 tinst "previous moves back to the first image" "$cfg" "$rt_empty" 0 "$(step_line a.JPG)" "" theme background previous
@@ -84,6 +84,15 @@ check "the rewritten state file names the replaced image" doc_is "$(at b.png)" '
 rm -- "$doc"
 tinst "nord applies over no state file" "$cfg" "$rt_empty" 0 "ok theme=nord state=applied shell=applied" "" theme apply nord
 check "no current image and nothing remembered writes no state file" no_doc
+
+# A symlinked backgrounds/ holds no image, whatever it links to.
+theme_pkg "$cfg/vgs/themes/fen" '{ "schemaVersion": 1, "name": "fen", "tokens": { "palette": { "accent": "#333333" } } }'
+mkdir -p "$tmp/fen-images"; printf 'x' >"$tmp/fen-images/x.png"; ln -s -- "$tmp/fen-images" "$cfg/vgs/themes/fen/backgrounds"
+tinst "an apply of a package whose backgrounds/ is a symlink is accepted" "$cfg" "$rt_empty" 0 "ok theme=fen state=applied shell=applied" "" theme apply fen
+check "a symlinked backgrounds/ links no image" no_link
+tinst "next on a symlinked backgrounds/ is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: background=next reason=no-backgrounds theme=fen path=$cfg/vgs/themes/fen/backgrounds" theme background next
+tinst "nord applies after fen" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
+rm -f -- "$doc"
 
 # A state file or a backgrounds/ the judge cannot use refuses the apply
 # before anything moves, so the theme file keeps nord.
@@ -135,6 +144,14 @@ tinst "the images mutant applies dusk" "$cfg" "$rt_empty" 0 "$any_out" "" theme 
 tinst "the images mutant moves to b.png" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
 tinst "the images mutant moves to c.png" "$cfg" "$rt_empty" 0 "$(step_line c.png)" "" theme background next
 tinst "the images mutant's next reaches the text file" "$cfg" "$rt_empty" 0 "$(step_line notes.txt)" "" theme background next
+reset_dusk "linked image control"
+bg_control linked-image 'isImageName(entry.name) && entry.isFile())' 'isImageName(entry.name) && (entry.isFile() || entry.isSymbolicLink()))'
+tinst "the linked-image mutant moves to b.png" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
+tinst "the linked-image mutant reaches the symlinked bb.png" "$cfg" "$rt_empty" 0 "$(step_line bb.png)" "" theme background next
+reset_dusk "linked directory control"
+bg_control linked-dir '        if (fs.lstatSync(base).isSymbolicLink()) return [];' ''
+tinst "the linked-dir mutant applies fen" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply fen
+check "the linked-dir mutant links the image behind the symlinked backgrounds/" test "$(readlink -- "$link")" == "$cfg/vgs/themes/fen/backgrounds/x.png"
 reset_dusk "unlink control"
 bg_control unlink '            fs.rmSync(link, { force: true });' ''
 tinst "the unlink mutant applies nord" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord

@@ -31,15 +31,17 @@ function isImageName(name) {
 }
 
 // The image file names in package directory PKG's backgrounds/, sorted:
-// each a file, or a symlink to one, whose name isImageName accepts. An
-// absent directory holds none; KEY leads the refusal for one that cannot
-// be read, so no apply lands a background chosen from part of the list.
+// each a file, never a symlink, whose name isImageName accepts. No package
+// contributes a symlink below its own directory (D031), so a symlinked
+// backgrounds/ holds none, as an absent one does; KEY leads the refusal
+// for one that cannot be read, so no apply lands a background chosen from
+// part of the list.
 function images(pkg, key) {
     const base = path.join(pkg, DIR);
     try {
+        if (fs.lstatSync(base).isSymbolicLink()) return [];
         return fs.readdirSync(base, { withFileTypes: true })
-            .filter(entry => isImageName(entry.name) && (entry.isFile() ||
-                (entry.isSymbolicLink() && fs.statSync(path.join(base, entry.name), { throwIfNoEntry: false })?.isFile() === true)))
+            .filter(entry => isImageName(entry.name) && entry.isFile())
             .map(entry => entry.name)
             .sort();
     } catch (e) {
