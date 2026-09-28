@@ -15,6 +15,7 @@
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
+#   vgsh theme reload [--json]     run every pending reload hook again
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update <name>       fetch, show the diff and fast-forward an installed theme package
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -45,11 +46,16 @@
 # (a disabled target's is removed; one that renders nothing keeps the file it
 # landed before), then copies the package's theme.json byte for byte to
 # theme.json beside the lock, the file the shell watches. No other
-# application file is written.
-# `--json` prints the list, or the apply's result `{ state, shell, targets,
-# theme, reason }` with refusals included, as one JSON line on stdout.
-# `theme` commands never contact the shell: docs/architecture/themes.md
-# § Apply.
+# application file is written. Last, each landed target whose bytes changed
+# or whose reload is pending runs its target.json reload hook, bounded by
+# its timeout, with output discarded and no lock descriptor; a hook that
+# fails or times out leaves the target reload-pending in
+# ${XDG_STATE_HOME:-~/.local/state}/vgs/reload-pending.json. `theme reload`
+# holds the same lock and runs every pending hook again, and nothing else.
+# `--json` prints the list, the apply's result `{ state, shell, targets,
+# theme, reason }` or the reload's `{ state, targets, reason }`, refusals
+# included, as one JSON line on stdout. `theme` commands never contact the
+# shell: docs/architecture/theme-apply.md.
 #
 # `theme add`, `update` and `remove` follow the plugin rules above for
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
@@ -62,8 +68,8 @@
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
-# apply is partial (the shell took the theme and a target failed; each
-# failed target prints `vgsh: refused: target=<name> reason=<key>`), 75 when
+# apply or reload is partial (a target failed or its reload stays pending;
+# each prints `vgsh: refused: target=<name> reason=<key>`), 75 when
 # another shell holds the lock or another theme command holds the theme
 # lock, 69 when the shell is not running. The usage text is this header;
 # `vgsh --help` prints it and exits 0.
@@ -290,6 +296,23 @@ theme_lock_hold() { # NAME
   esac
 }
 
+# Take the theme lock on descriptor 9 for a judge that execs from here and
+# set `verdict` to held, busy or failed; the judge refuses on the last two.
+# The judge runs under this process's descriptor 9, so it holds the lock
+# until it exits, and it prints every refusal, busy included, so a --json
+# caller reads a result on every path. bin/vgsh-theme-judge's LOCK_FD names
+# the same number: no reload hook it runs holds the descriptor.
+theme_lock_verdict() {
+  local status=0
+  verdict=failed
+  mkdir -p -- "$config_home/vgs" 2>/dev/null && { exec 9>>"$theme_lock"; } 2>/dev/null || return 0
+  flock -n -E 75 9 || status=$?
+  case "$status" in
+    0) verdict=held ;;
+    75) verdict=busy ;;
+  esac
+}
+
 # The theme judge's verdict on package DIR as installed, named NAME or by
 # its document. Sets `verdict` to the accepted name and returns 0, or to
 # the judge's `reason=...` line and returns 1; a judge that fails without
@@ -454,19 +477,13 @@ PY
         name="${1:-}"
         if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
-        # The judge runs under this process's descriptor 9, so it holds the
-        # lock until it exits. It prints every refusal, busy included, so a
-        # --json caller reads a result on every path.
-        verdict=failed
-        if mkdir -p -- "$config_home/vgs" 2>/dev/null && { exec 9>>"$theme_lock"; } 2>/dev/null; then
-          status=0
-          flock -n -E 75 9 || status=$?
-          case "$status" in
-            0) verdict=held ;;
-            75) verdict=busy ;;
-          esac
-        fi
+        theme_lock_verdict
         exec node "$theme_judge" apply "$format" "$config_home/vgs" "$state_home/vgs" "$verdict" "$name"
+        ;;
+      reload)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        theme_lock_verdict
+        exec node "$theme_judge" reload "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       add|update|remove)
         arg="${1:-}"

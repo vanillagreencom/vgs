@@ -1,0 +1,111 @@
+# The assertion library the bin/vgsh suites source, scripts/test-vgsh.sh and
+# scripts/test-vgsh-reload.sh: the scratch directory, the child environment,
+# the row helpers and the theme tree fixture. It sets `set -euo pipefail`,
+# `repo`, `tmp` (removed on exit), `rt_empty`, `node_bin`, `base_path`,
+# `base_env` and `failures`.
+set -euo pipefail
+
+repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"
+tmp="$(cd -- "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf -- "${tmp:?}"' EXIT
+rt_empty="$tmp/rt-empty"; mkdir -p "$rt_empty"
+
+# node on PATH may be a version-manager shim that reads the developer's own
+# configuration; the rows put the binary it resolves to ahead of it.
+if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
+  echo "$(basename -- "$0" .sh): status=not-measured missing=node"
+  exit 77
+fi
+# $tmp first, so a suite's stub qs there answers every call.
+base_path="$tmp:$(dirname -- "$node_bin"):$PATH"
+base_env=(env -i PATH="$base_path" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$tmp")
+
+failures=0
+ok() { printf '  ok    %s\n' "$*"; }
+fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
+
+# inst NAME CONFIG_HOME RUNTIME_DIR WANT_EXIT WANT_LAST_STDOUT WANT_FIRST_STDERR ARGS...
+# Stdout lands in $tmp/out for rows that read more than its last line;
+# WANT_LAST_STDOUT is $any_out for a row whose checks after it read that.
+# INST_BIN names the vgsh under test; the mutation control runs its copy.
+# INST_PATH replaces the rows' PATH.
+inst() {
+  local name="$1" cfg="$2" rt="$3" want_exit="$4" want_out="$5" want_err="$6" out err status
+  shift 6
+  set +e
+  out="$("${base_env[@]}" PATH="${INST_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" STUB_ARGS="$tmp/args" STUB_REPLY="${INST_REPLY:-ok}" "${INST_BIN:-$repo/bin/vgsh}" "$@" 2>"$tmp/err")"
+  status=$?
+  set -e
+  printf '%s\n' "$out" >"$tmp/out"
+  err=""
+  [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
+  local last="${out##*$'\n'}"
+  [[ $want_out == "$any_out" ]] && want_out="$last"
+  if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
+}
+any_out=$'\x01any'
+check() { # NAME CMD...
+  local name="$1"; shift
+  if "$@"; then ok "$name"; else fail "$name"; fi
+}
+json_is() { # FILE PYTHON_EXPR_ON_d: the expression must be true
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$1" "$2"
+}
+has_line() { grep -qxF -- "$1" "$tmp/out"; }
+has_prefix() { grep -q "^$1" "$tmp/out"; }
+
+# The theme commands read the shipped packages and targets beside bin/, so
+# theme rows run a copy of the tree they load, $tree, whose themes/ a row
+# adds packages and targets to; production code has no knob for its themes
+# directory. A target is detected by its commands on PATH, so the rows run
+# under $theme_path, holding only the tools bin/vgsh and its judge call,
+# and a row that wants a target detected adds $stubs to it. XDG_STATE_HOME
+# is unset, so the state directory is the $HOME fallback, $state.
+theme_tree() {
+  tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/config"
+  cp -R -- "$repo/bin" "$repo/themes" "$tree/"
+  cp -- "$repo/config/shell.json" "$tree/config/"
+  cp -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/"
+  mkdir -p "$tree/themes/targets"
+  cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
+  cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
+  theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"
+  local tool tool_bin
+  for tool in bash readlink dirname mkdir flock awk git mktemp mv rm; do
+    tool_bin="$(command -v "$tool")" || { echo "$(basename -- "$0" .sh): status=not-measured missing=$tool"; exit 77; }
+    ln -s -- "$tool_bin" "$theme_path/$tool"
+  done
+  ln -s -- "$node_bin" "$theme_path/node"
+  state="$tmp/home/.local/state/vgs"
+}
+tinst() { INST_BIN="${THEME_BIN:-$tree/bin/vgsh}" INST_PATH="${THEME_PATH:-$theme_path}" inst "$@"; }
+theme_pkg() { # DIR THEME_JSON_TEXT [TERMINAL_JSON_TEXT]
+  mkdir -p "$1"
+  printf '%s' "$2" >"$1/theme.json"
+  [[ -z ${3:-} ]] || printf '%s' "$3" >"$1/terminal.json"
+}
+target_dir() { # NAME TARGET_JSON TEMPLATE_TEXT
+  mkdir -p "$tree/themes/targets/$1"
+  printf '%s\n' "$2" >"$tree/themes/targets/$1/target.json"
+  printf '%s' "$3" >"$tree/themes/targets/$1/$1.conf"
+}
+target_json() { # NAME ENCODER DETECT_JSON WIRING_LINE CREATE [RELOAD_JSON]
+  printf '{ "app": "%s", "encoder": "%s", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": %s, "wiring": { "file": "%s/%s.conf", "line": "%s", "create": %s }, "reload": %s }' "$1" "$2" "$1" "$1" "$3" "$1" "$1" "$4" "$5" "${6:-null}"
+}
+
+# A must-fail control on a copy of the tree whose bin/vgsh-theme-judge has
+# NEEDLE, which must occur once, replaced by REPLACEMENT; THEME_BIN then
+# names the copy's vgsh until the caller unsets it.
+judge_control() { # NAME NEEDLE REPLACEMENT
+  local copy="$tmp/tree-$1"
+  cp -R -- "$tree" "$copy"
+  check "the $1 control's text occurs once in bin/vgsh-theme-judge" test "$(grep -c -F -- "$2" "$repo/bin/vgsh-theme-judge")" == 1
+  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/bin/vgsh-theme-judge" "$2" "$3"
+  check "the $1 mutant differs from bin/vgsh-theme-judge" test "$(cmp -s "$repo/bin/vgsh-theme-judge" "$copy/bin/vgsh-theme-judge"; echo $?)" == 1
+  THEME_BIN="$copy/bin/vgsh"
+}
+
+rows_done() { # SUITE
+  if [[ $failures -gt 0 ]]; then echo "$1: failed=$failures"; exit 1; fi
+  echo "$1: ok"
+}

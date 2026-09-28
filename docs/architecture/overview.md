@@ -68,7 +68,8 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the manager's panel.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
-- [themes.md](themes.md): read before touching a theme package, package judge, the apply, or theme runner.
+- [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
+- [theme-apply.md](theme-apply.md): read before touching the apply, a reload hook or `vgsh theme reload`.
 - [theme-capability.md](theme-capability.md): read before touching `ThemeRunner` or the `theme` capability.
 - [theme-targets.md](theme-targets.md): read before touching a theme target, a template, an encoder or the wiring text.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.

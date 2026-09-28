@@ -2,7 +2,7 @@
 
 Covers: themes/**, bin/vgsh-theme-judge, bin/lib/judge-files.js, scripts/test-vgsh-theme-judge.js
 
-A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the directory walk, the list and the apply.
+A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the directory walk, the list, the apply and the reload.
 
 ## Package shape
 
@@ -26,11 +26,11 @@ The shipped packages are `vgs`, the dark defaults and the revert, and `light`, t
 
 ## Runner
 
-`vgsh theme list [--json]` and `vgsh theme apply [--json] <name>` work with no shell running and never contact one. `bin/vgsh` parses the command line and takes the lock; `bin/vgsh-theme-judge` does the rest.
+`vgsh theme list [--json]`, `vgsh theme apply [--json] <name>` and `vgsh theme reload [--json]` work with no shell running and never contact one. `bin/vgsh` parses the command line and takes the lock; `bin/vgsh-theme-judge` does the rest.
 
 - **Packages.** Shipped packages are `themes/<name>/`, installed ones `${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>/`; a symlink to a directory counts. An installed package hides the shipped package of its name, which is listed as `shadowed` and never read, even when the installed one is refused. An installed `vgs` is refused `reserved-name`, even when its files cannot be read, and hides nothing, so `apply vgs` always takes the shipped defaults.
 - **List.** One row per package: its source (`shipped`, `installed`), its state (`ok`, `refused` with the judge's reason key, or `shadowed`), whether it is the theme file's named package and, when `ok`, its resolved `palette` group. The theme file's state is read from disk with `ThemeLogic.accept`, in `ThemeSource`'s vocabulary: `loaded`, `absent`, `refused`, `unreadable`. `modified` compares the file's bytes with the named package's `theme.json`: `false` for an absent file, `true` for a refused file or one no accepted package names, `null` for an unreadable one. `--json` prints `{ file: { path, state, name, modified }, packages: [{ name, source, path, state, reason, current, palette }] }` as one line.
-- **Lock.** `apply` holds `flock` on `${XDG_CONFIG_HOME:-~/.config}/vgs/theme.lock`, beside the file it guards, so callers with different runtime directories serialise. The configuration directory is created first; the lock file is never removed. `bin/vgsh` holds it on a descriptor the judge inherits, so the lock lasts the whole apply. A second apply exits 75 with `reason=busy`; a lock that cannot be opened is `reason=lock-failed`.
+- **Lock.** `apply` and `reload` hold `flock` on `${XDG_CONFIG_HOME:-~/.config}/vgs/theme.lock`, beside the file it guards, so callers with different runtime directories serialise. The configuration directory is created first; the lock file is never removed. `bin/vgsh` holds it on a descriptor the judge inherits, so the lock lasts the whole command. A second apply or reload exits 75 with `reason=busy`; a lock that cannot be opened is `reason=lock-failed`.
 
 [D020](../decisions/D020-theme-apply-swaps-state-and-writes-the-shell-file-last.md) records the lock, the swap and the shadowing rule.
 
@@ -47,27 +47,7 @@ The shipped packages are `vgs`, the dark defaults and the revert, and `light`, t
 
 ## Apply
 
-`vgsh theme apply <name>` lands the package in the state directory, `${XDG_STATE_HOME:-~/.local/state}/vgs/`, and in every enabled target, then in the shell. Targets are the shipped `themes/targets/<target>/`: [theme-targets.md](theme-targets.md). The steps run in this order under the lock.
-
-1. **Enablement.** A target is enabled when every `detect` command is on `PATH` and the effective `shell.json`'s `disabledTargets` does not list it: [configuration.md § shell.json keys](configuration.md#shelljson-keys). Either layer that `PluginLogic.configError` refuses refuses the apply with `reason=malformed`, since no target's enablement is then known. A target whose `wiring.create` is `false` and whose wiring file is absent is skipped. A skipped target renders nothing.
-2. **Render.** Every enabled target renders in memory, with the package's curated files and terminal slots. A target that cannot be read or rendered is `failed`; the others go on.
-3. **Settle.** No include line is left naming a file the swap drops. A disabled target's include line is removed from its configuration file, edited in place as step 5 edits it, and its files leave `theme/`; a removal that cannot be made fails the target and keeps its files. Every other target that renders nothing, failed or skipped, carries the files it landed before, the `theme/` files whose name before the first dot is the target's, so its application keeps its last theme. A `theme/` that cannot be read refuses the apply.
-4. **Stage and swap.** Apply removes a `next-theme/` or `old-theme/` a crashed or refused apply left, then writes `theme.json`, `terminal.json` and every rendered or carried target file into `next-theme/`, the sibling of `theme/`. Each file is created exclusively. A rename cannot replace a non-empty directory, so `theme/` moves to `old-theme/`, `next-theme/` becomes `theme/` and `old-theme/` is removed. `theme/` is absent between the two renames; a failed second rename moves the old one back. Then `theme.name` holds the package name.
-5. **Wiring.** Each landed target's include line is kept in its application's configuration file, on every apply, unchanged bytes included, so a hand edit that drops it is repaired. A symlink is resolved and the file it names is replaced by rename with its mode kept, so a dotfile manager's link stays a link. An absent file is created only when `create` is `true`, never through a dangling symlink. A file that cannot be read or written fails its target. The include line, added here or removed in step 3, is the only write outside the state directory and the theme file.
-6. **Theme file.** Last, the package's `theme.json` bytes replace `${XDG_CONFIG_HOME:-~/.config}/vgs/theme.json` by rename, so the shell restyles after every application file is in place and never reads half a file. The copy is byte for byte: a re-serialised copy would report every apply as modified. A file already holding those bytes is not written.
-
-The result is `{ state, shell, targets, theme, reason }`.
-
-| Field | Values |
-|---|---|
-| `shell` | `applied`, `unchanged` when the file already held the bytes, or `failed` when writing it failed. |
-| `targets[]` | `{ name, state, reason }` per shipped target, in name order. `state` is `written`, `unchanged` when every file already held its bytes, `skipped` with `reason` `disabled`, `not-detected` or `wiring-file-absent`, or `failed` with the renderer's reason, `unreadable` or `unwritable`. |
-| `state` | `partial` when a target failed; else `applied` when the shell or a target took new bytes; else `unchanged`. A refusal is `failed`. |
-| `reason` | Null, or a refusal's key: `malformed-name`, `busy`, `lock-failed`, `unknown`, `unwritable`, `unreadable`, `unparseable`, `malformed`, `terminal-fallback` or the package's own. `targets` is `[]` for a refusal before the swap. |
-
-Text mode prints `target=<name> state=<state>[ reason=<key>]` per target, then `ok theme=<name> state=<state> shell=<shell>`, or `partial ...` for a partial apply. `--json` prints the result as one line, refusals included. Each refusal prints `vgsh: refused: theme=<name> reason=<key>` on stderr, a malformed name JSON-quoted, and each failed target `vgsh: refused: target=<name> reason=<key> <detail>`. Exit 0 for `applied` and `unchanged`, 3 for `partial`, 1 on a refusal, 75 when busy, 2 on a bad invocation.
-
-[D021](../decisions/D021-theme-apply-writes-beside-each-destination.md) records why every write is staged beside its destination and the shell document comes last.
+`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md).
 
 ## Trust
 
@@ -80,9 +60,8 @@ Applying a third-party package carries plugin-level trust. A curated target file
 3. The nested smoke sandbox contains the shipped packages beside `shell`, `bin`, `config` and `scripts`. Owned by `scripts/smoke/harness.sh`.
 4. An installed package shadows the shipped package of its name, and an installed `vgs` shadows nothing. Enforced by `scripts/test-vgsh.sh`.
 5. The list reports a refused package with its reason, the theme file's state from disk and `modified` by a byte comparison; apply refuses a refused package. Enforced by `scripts/test-vgsh.sh`.
-6. Apply copies `theme.json` byte for byte, renders `terminal.json` or the shipped slots, and leaves no `next-theme/`, a stale one included; `apply vgs` writes the shipped defaults. Enforced by `scripts/test-vgsh.sh`, with a re-serialising judge copy as its control.
-7. A second apply is refused with `reason=busy` while the lock is held. Enforced by `scripts/test-vgsh.sh`, with a lockless `bin/vgsh` copy as its control.
-8. Apply lands each enabled target's files in `theme/` with its encoder, skips a disabled, undetected or unwired target, and never runs a detect command; a target that fails to render costs only itself, carries the file it landed before, and the apply is `partial` with exit 3; a target disabled after it landed loses its include line, the rest of the file kept byte for byte through a symlink with its mode, and its file, and one whose line cannot be removed fails and keeps its file; the include line is kept first in the file, through a symlink with its mode, on unchanged bytes too; a `shell.json` the config judge refuses refuses the apply. Enforced by `scripts/test-vgsh.sh` under a PATH of stub commands, with symlink-replacing, written-only, no-carry and line-keeping judge copies as its controls.
-9. The target and template rules: [theme-targets.md § Invariants](theme-targets.md#invariants).
-10. The `theme` capability rules: [theme-capability.md § Invariants](theme-capability.md#invariants).
-11. Add lands a package under its document name from a staging directory and refuses a package the judge refuses, the reserved `vgs` and `targets`, a source without `theme.json` and an occupied name, leaving nothing behind; update fast-forwards, refuses a modified checkout and a rewritten history, and rolls back a refused or renamed version; remove deletes only an installed directory; none runs a git hook; each is refused busy while the theme lock is held; and no git call inherits the lock's descriptor. Enforced by `scripts/test-vgsh.sh`, with copies of `bin/vgsh` whose install verbs take no lock and whose git calls keep the descriptor as its controls.
+6. A second apply is refused with `reason=busy` while the lock is held. Enforced by `scripts/test-vgsh.sh`, with a lockless `bin/vgsh` copy as its control.
+7. The target and template rules: [theme-targets.md § Invariants](theme-targets.md#invariants).
+8. The apply and reload rules: [theme-apply.md § Invariants](theme-apply.md#invariants).
+9. The `theme` capability rules: [theme-capability.md § Invariants](theme-capability.md#invariants).
+10. Add lands a package under its document name from a staging directory and refuses a package the judge refuses, the reserved `vgs` and `targets`, a source without `theme.json` and an occupied name, leaving nothing behind; update fast-forwards, refuses a modified checkout and a rewritten history, and rolls back a refused or renamed version; remove deletes only an installed directory; none runs a git hook; each is refused busy while the theme lock is held; and no git call inherits the lock's descriptor. Enforced by `scripts/test-vgsh.sh`, with copies of `bin/vgsh` whose install verbs take no lock and whose git calls keep the descriptor as its controls.

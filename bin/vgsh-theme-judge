@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The decisions `vgsh theme list` and `vgsh theme apply` need, made by the
+// The decisions `vgsh theme list`, `apply` and `reload` need, made by the
 // shell's own theme judge, shell/Commons/ThemeLogic.js, loaded here under
 // node with the token table, shell/Commons/Tokens.js.
 //
@@ -20,7 +20,10 @@
 //       <config-dir>/theme.lock, which it holds for as long as this process
 //       runs when the verdict is `held`. <config-dir> is the vgs directory
 //       of the configuration home, whose parent a target's wiring file is
-//       relative to.
+//       relative to. Each target whose reload is due runs its hook last.
+//   vgsh-theme-judge reload <text|json> <config-dir> <state-dir> <held|busy|failed>
+//       run the hook of every target <state-dir>/reload-pending.json lists
+//       again, under the same lock verdict.
 //   vgsh-theme-judge accept <dir> [<name>]
 //       judge the package in DIR as an installed package, for `vgsh theme
 //       add` (no NAME: it lands under its document's own name) and `vgsh
@@ -31,14 +34,15 @@
 //       print the directory of installed package NAME under
 //       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
 //
-// list, apply and installed refuse with one line on stderr, `vgsh: refused:
-// <key>=...`, through bin/lib/judge-files.js: exit 1, or 75 for
+// list, apply, reload and installed refuse with one line on stderr, `vgsh:
+// refused: <key>=...`, through bin/lib/judge-files.js: exit 1, or 75 for
 // `reason=busy`. Under `json`, apply prints its structured result on stdout
-// first, refusals included. A partial apply prints one such line per failed
-// target and exits 3. A malformed invocation exits 2.
-// docs/architecture/themes.md § Runner, § Apply and § Install, and
-// docs/architecture/theme-targets.md, hold the rules this file implements;
-// the target renderer is bin/lib/theme-render.js.
+// first, refusals included, and so does reload. A partial apply or reload
+// prints one such line per failed or reload-pending target and exits 3. A
+// malformed invocation exits 2.
+// docs/architecture/themes.md § Runner and § Install, theme-apply.md and
+// theme-targets.md hold the rules this file implements; the target
+// renderer is bin/lib/theme-render.js.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -48,7 +52,8 @@ const { load } = require(path.join(repo, "scripts", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
 const pluginLogic = load(path.join(repo, "shell", "Core", "PluginLogic.js"));
-const { Refusal, refuse, main, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { spawnSync } = require("child_process");
+const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 
 const SHIPPED = path.join(repo, "themes");
@@ -553,6 +558,7 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
     const key = "theme=" + name + " reason";
     if (lock === "busy") refuse(key + "=busy", "busy", 75);
     if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    const before = readPending(stateDir, key);
     const { rows, resolved } = packageSet(configDir, key);
     const row = resolved.get(name);
     if (row === undefined) refuse(key + "=unknown", "unknown");
@@ -574,6 +580,10 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
         entry.state = sameBytes(live, entry.files) ? "unchanged" : "written";
         return entry;
     });
+    // Recorded before the swap, so an apply that dies after it still leaves
+    // every written target pending.
+    const due = settled.filter(entry => reloadDue(entry, before)).map(entry => entry.name);
+    writePending(stateDir, due, before, key);
     try {
         // A stage or an aside copy left by an apply that died is stale:
         // the lock proves no apply is running. Every file is created
@@ -626,23 +636,31 @@ function applyTo(result, failures, configDir, stateDir, lock, name) {
         replaceFile(file.path, row.files.theme, key);
         result.shell = "applied";
     }
+    // Last, so each application re-reads files that are all in place.
+    result.targets = landed.map((entry, i) => entry.state !== "failed" && due.includes(entry.name)
+        ? reloadRow(entry.name, entry.target.reload, result.targets[i], failures)
+        : result.targets[i]);
+    writePending(stateDir, stillPending(result.targets, due), due, key);
     result.state = applyState(result.shell, result.targets);
 }
 
 // The apply's state from its shell and target states: `partial` when a
-// target failed, `applied` when the shell or a target took new bytes,
-// otherwise `unchanged`.
+// target failed or its reload is pending, `applied` when the shell or a
+// target took new bytes, otherwise `unchanged`.
 function applyState(shell, targets) {
-    if (targets.some(t => t.state === "failed")) return "partial";
+    if (targets.some(t => t.state === "failed" || t.state === "reload-pending")) return "partial";
     if (shell === "applied" || targets.some(t => t.state === "written")) return "applied";
     return "unchanged";
 }
 
-function apply(format, configDir, stateDir, lock, name) {
-    const result = { state: "failed", shell: "unchanged", targets: [], theme: name, reason: null };
+// Run RUN, which fills RESULT and pushes each failed target's keyed line
+// onto its FAILURES, and print the result: under `json` one line on stdout,
+// a refusal's included; in text one line per target, then `ok` or `partial`
+// and TAIL's text. A partial result exits 3.
+function report(format, result, run, tail) {
     const failures = [];
     try {
-        applyTo(result, failures, configDir, stateDir, lock, name);
+        run(failures);
     } catch (e) {
         if (e instanceof Refusal && format === "json") {
             result.state = "failed";
@@ -656,9 +674,154 @@ function apply(format, configDir, stateDir, lock, name) {
         process.stdout.write(JSON.stringify(result) + "\n");
     } else {
         for (const t of result.targets) console.log("target=" + t.name + " state=" + t.state + (t.reason === null ? "" : " reason=" + t.reason));
-        console.log((result.state === "partial" ? "partial" : "ok") + " theme=" + name + " state=" + result.state + " shell=" + result.shell);
+        console.log((result.state === "partial" ? "partial" : "ok") + " " + tail(result));
     }
     if (result.state === "partial") process.exitCode = PARTIAL_STATUS;
+}
+
+function apply(format, configDir, stateDir, lock, name) {
+    const result = { state: "failed", shell: "unchanged", targets: [], theme: name, reason: null };
+    report(format, result, failures => applyTo(result, failures, configDir, stateDir, lock, name),
+        r => "theme=" + name + " state=" + r.state + " shell=" + r.shell);
+}
+
+// --- reload
+
+// The descriptor bin/vgsh holds the theme lock on, which this process
+// inherits; bin/vgsh opens it under the same number. A reload hook gets
+// /dev/null there instead, so an application a hook starts never holds the
+// lock after the runner exits. A spawn's `ignore` leaves a descriptor above
+// 2 as the parent has it, so only a descriptor of its own replaces it:
+// docs/architecture/runtime.md § Process.
+const LOCK_FD = 9;
+// Beside theme/, never in it, since the swap replaces theme/. This judge is
+// its only reader and writer; the core never reads it.
+const PENDING_FILE = "reload-pending.json";
+
+// The sorted target names <state-dir>/reload-pending.json lists: each
+// target whose application may hold files it has not re-read. An absent
+// file lists none. KEY leads the refusal for a file that cannot be read or
+// parsed, or is no `{ schemaVersion: 1, targets: [<name>...] }`.
+function readPending(stateDir, key) {
+    const file = path.join(stateDir, PENDING_FILE);
+    const doc = readJson(file, key, true);
+    if (doc === null) return [];
+    const shaped = logic.isPlainObject(doc) && Object.keys(doc).length === 2 && doc.schemaVersion === 1 &&
+        Array.isArray(doc.targets) && doc.targets.every(name => typeof name === "string");
+    if (!shaped) refuse(key + "=malformed path=" + file, "malformed");
+    return [...new Set(doc.targets)].sort();
+}
+
+// Record NAMES, sorted, as the pending set when they differ from BEFORE; an
+// empty set removes the file. A write that fails refuses, so a pending
+// reload is never dropped in silence.
+function writePending(stateDir, names, before, key) {
+    if (names.join("\n") === before.join("\n")) return;
+    const file = path.join(stateDir, PENDING_FILE);
+    if (names.length === 0) writing(file, key, () => fs.rmSync(file, { force: true }));
+    else replaceFile(file, JSON.stringify({ schemaVersion: 1, targets: names }) + "\n", key);
+}
+
+// Whether a settled ENTRY's reload is due once this apply lands: it has a
+// hook and its bytes change now or were pending before. A skipped target
+// drops its entry: its application no longer reads the files. A failed one
+// keeps whatever it had, since it is unknown whether it has a hook.
+function reloadDue(entry, before) {
+    if (entry.state === "skipped") return false;
+    if (entry.target !== undefined && entry.target.reload === null) return false;
+    return entry.state === "written" || before.includes(entry.name);
+}
+
+// The names of DUE whose row did not reload: failed or reload-pending.
+function stillPending(rows, due) {
+    return rows.filter(t => due.includes(t.name) && (t.state === "failed" || t.state === "reload-pending")).map(t => t.name);
+}
+
+// Run target NAME's RELOAD hook, bounded by its timeoutMs, with this
+// process's environment. Answers ROW when it exits 0, else a reload-pending
+// row with its reason and its keyed line pushed onto FAILURES. No stream is
+// a pipe: the hook's output never reaches the result on stdout, and
+// spawnSync would wait past the timeout for a pipe a hook's child holds.
+function reloadRow(name, reload, row, failures) {
+    const [command, ...args] = reload.command;
+    const nul = fs.openSync("/dev/null", "r");
+    let run;
+    try {
+        const stdio = new Array(LOCK_FD + 1).fill("ignore");
+        stdio[LOCK_FD] = nul;
+        run = spawnSync(command, args, { stdio, timeout: reload.timeoutMs, killSignal: "SIGKILL" });
+    } finally {
+        fs.closeSync(nul);
+    }
+    const key = "target=" + name + " reason=";
+    let reason = "reload-failed";
+    let failure;
+    if (run.error !== undefined && run.error.code === "ETIMEDOUT") {
+        reason = "reload-timeout";
+        failure = "command=" + command + " timeout-ms=" + reload.timeoutMs;
+    } else if (run.error !== undefined) {
+        failure = "command=" + command + " error=" + run.error.code;
+    } else if (run.signal !== null) {
+        failure = "command=" + command + " signal=" + run.signal;
+    } else if (run.status !== 0) {
+        failure = "command=" + command + " status=" + run.status;
+    } else {
+        return row;
+    }
+    failures.push(key + reason + " " + failure);
+    return { name, state: "reload-pending", reason };
+}
+
+// One pending target of a reload: `skipped` and dropped when it is no
+// longer shipped, enabled or given a hook; `failed` and kept when its
+// target.json cannot be read or judged; else its hook's row, `reloaded`.
+function reloadTarget(name, shipped, disabled, failures) {
+    const skipped = reason => ({ name, state: "skipped", reason });
+    const failed = (reason, failure) => {
+        failures.push(failure);
+        return { name, state: "failed", reason };
+    };
+    if (!shipped.includes(name)) return skipped("not-shipped");
+    if (disabled.includes(name)) return skipped("disabled");
+    const dir = path.join(SHIPPED, TARGETS, name);
+    const judged = reading(name, dir, () => readTarget(dir), failed);
+    if (!judged.ok) return judged.entry;
+    const verdict = judged.value.verdict;
+    if (!verdict.ok) return failed(verdict.reason, render.refusalLine(name, verdict));
+    const found = reading(name, dir, () => verdict.target.detect.every(onPath), failed);
+    if (!found.ok) return found.entry;
+    if (!found.value) return skipped("not-detected");
+    if (verdict.target.reload === null) return skipped("no-reload");
+    return reloadRow(name, verdict.target.reload, { name, state: "reloaded", reason: null }, failures);
+}
+
+// Run every pending reload hook again, in name order, and keep pending the
+// targets whose hook fails. Nothing is rendered, staged or wired.
+function reloadAll(result, failures, configDir, stateDir, lock) {
+    const key = "reload=pending reason";
+    if (lock === "busy") refuse(key + "=busy", "busy", 75);
+    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    const before = readPending(stateDir, key);
+    if (before.length === 0) {
+        result.state = "unchanged";
+        return;
+    }
+    const disabled = disabledTargets(configDir, key);
+    const base = path.join(SHIPPED, TARGETS);
+    let shipped;
+    try {
+        shipped = childDirs(base) || [];
+    } catch (e) {
+        refuse(key + "=unreadable path=" + base + " error=" + e.code, "unreadable");
+    }
+    result.targets = before.map(name => reloadTarget(name, shipped, disabled, failures));
+    writePending(stateDir, stillPending(result.targets, before), before, key);
+    result.state = stillPending(result.targets, before).length > 0 ? "partial" : "reloaded";
+}
+
+function reload(format, configDir, stateDir, lock) {
+    const result = { state: "failed", targets: [], reason: null };
+    report(format, result, failures => reloadAll(result, failures, configDir, stateDir, lock), r => "reload state=" + r.state);
 }
 
 // --- install
@@ -747,6 +910,10 @@ main(() => {
     case "apply":
         if (args.length !== 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
         apply(...args);
+        break;
+    case "reload":
+        if (args.length !== 4 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
+        reload(...args);
         break;
     case "accept":
         if (args.length < 1 || args.length > 2) usage("arguments=" + command);
