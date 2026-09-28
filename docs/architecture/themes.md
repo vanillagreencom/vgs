@@ -1,6 +1,6 @@
 # Themes
 
-Covers: themes/**, bin/vgsh-theme-judge, shell/Core/ThemeRunner.qml
+Covers: themes/**, bin/vgsh-theme-judge, scripts/test-vgsh-theme-judge.js, shell/Core/ThemeRunner.qml
 
 A theme package is one directory. It holds the shell document and the application files that later apply steps copy or render. The package judge is pure; callers read files and pass their text to `ThemeLogic.acceptPackage`, and `bin/vgsh-theme-judge` owns the shipped-package directory walk.
 

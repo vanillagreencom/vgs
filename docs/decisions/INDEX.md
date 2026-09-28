@@ -21,7 +21,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-26 | D016 | — | One bundled variable font; a theme names families and ships no font file | The default theme draws the same on every machine with every weight | A theme package ships fonts or the file is felt in the resident size | Active | [Full](D016-bundled-variable-font.md) |
 | 2026-09-26 | D017 | — | Controls extend QtQuick.Templates; icons are Lucide path data drawn with Shapes | Keyboard, focus and checked state come from Qt; the stroke is a token constant across sizes | Templates cost more than measured, or the pixel tests show a drawing defect the icon font lacks | Active | [Full](D017-templates-and-path-icons.md) |
 | 2026-09-26 | D018 | — | Overlays are Quickshell popup windows anchored to their item, not Qt window popups | Qt places a Wayland window popup once inside the parent's bounds and never moves it | Qt repositions window popups by the screen, or Quickshell offers a popup Qt templates accept | Active | [Full](D018-overlays-are-quickshell-popups.md) |
-| 2026-09-27 | D019 | VGS-457 | Theme packages carry plugin-level trust | Curated target files are included verbatim by applications | Package signatures or marketplace change trust | Active | [Full](D019-theme-packages-carry-plugin-trust.md) |
+| 2026-09-27 | D019 | VGS-457 | Theme packages are directories with plugin trust; terminal slots are package files | Curated target files are included verbatim by applications | Package signatures or marketplace change trust | Active | [Full](D019-theme-packages-carry-plugin-trust.md) |
 
 ---
 

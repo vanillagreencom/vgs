@@ -8,6 +8,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { load } = require("./qml-library.js");
 
@@ -295,8 +296,7 @@ const CONTROLS = [
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");
-fs.mkdirSync(path.join(repo, "tmp"), { recursive: true });
-const temp = fs.mkdtempSync(path.join(repo, "tmp", "theme-logic-control-"));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "theme-logic-control-"));
 try {
     for (const [label, needle, replacement] of CONTROLS) {
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);
