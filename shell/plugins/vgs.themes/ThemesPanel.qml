@@ -87,17 +87,23 @@ Item {
 
     // The lines the row of package `name` shows for the last result: the
     // result's own refusal reason, then every target that did not land and
-    // was not skipped, with its state and reason as the runner wrote them.
-    // Only the states that mean nothing went wrong are named here, so a
-    // state the runner adds is shown without a change to the panel.
+    // was not skipped, with its state and reason as the runner wrote them,
+    // and one line per file of the package the apply dropped in favour of
+    // the target's template, whatever the target's state. Only the states
+    // that mean nothing went wrong are named here, so a state the runner
+    // adds is shown without a change to the panel. A row with no `dropped`
+    // dropped nothing.
     function resultLines(name) {
         const result = last.result;
         if (result === null || result.theme !== name) return [];
         const quiet = ["written", "unchanged", "skipped"];
         const lines = result.reason === null ? [] : [result.state + ": " + result.reason];
-        for (const target of result.targets)
+        for (const target of result.targets) {
             if (quiet.indexOf(target.state) === -1)
                 lines.push(target.name + " " + target.state + (target.reason === null ? "" : ": " + target.reason));
+            for (const file of target.dropped === undefined ? [] : target.dropped)
+                lines.push(target.name + " dropped " + file);
+        }
         return lines;
     }
 

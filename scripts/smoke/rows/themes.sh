@@ -95,9 +95,9 @@ expect "a malformed name queues nothing" '[]' theme_jobs
 # theme, the other target lands, and the result and its exit 3 reach the
 # fixture whole.
 fixture_targets="$repo/themes/targets"
-fixture_target() { # NAME TEMPLATE_TEXT
+fixture_target() { # NAME TEMPLATE_TEXT [RUNS_CODE]
   mkdir -p -- "$fixture_targets/$1"
-  printf '{ "app": "%s", "runsCode": false, "encoder": "hex8", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": [], "wiring": { "file": "%s/%s.conf", "line": "include=@{state}/%s.conf", "create": true }, "reload": null }\n' "$1" "$1" "$1" "$1" "$1" "$1" >"$fixture_targets/$1/target.json"
+  printf '{ "app": "%s", "runsCode": %s, "encoder": "hex8", "files": [{ "template": "%s.conf", "destination": "%s.conf" }], "detect": [], "wiring": { "file": "%s/%s.conf", "line": "include=@{state}/%s.conf", "create": true }, "reload": null }\n' "$1" "${3:-false}" "$1" "$1" "$1" "$1" "$1" >"$fixture_targets/$1/target.json"
   printf '%s\n' "$2" >"$fixture_targets/$1/$1.conf"
 }
 fixture_target smoke-fails 'accent=@{palette.nope}'
@@ -264,8 +264,9 @@ expect "disabling the fixture after the theme rows is allowed" ok ipc shell setP
 # problem of the last result) and its swatch colours. An installed copy of
 # `light` shadows the shipped one, beside the installed `smoke` and the
 # refused `mismatch` the rows above left. A fixture target that fails gives
-# the result a failed target, and a stand-in runner a target state the
-# panel names nowhere. The block leaves vgs applied and the widget placed
+# the result a failed target, one that runs code a file the apply dropped
+# from `smoke`, and a stand-in runner a target state the panel names
+# nowhere. The block leaves vgs applied and the widget placed
 # for the wallpaper block after it, which disables the plugin.
 layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
 theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
@@ -326,6 +327,54 @@ expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' the
 rm -r -- "$fixture_targets/smoke-fails"
 click_row smoke || fail "the second click on the smoke row failed"
 expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
+
+# An installed package's own file for a target that runs code is dropped
+# and the template renders in its place: the target is written and the row
+# names the file.
+fixture_target smoke-drop 'accent=@{palette.accent}' true
+mkdir -p -- "$installed/smoke/targets"
+printf 'accent=hand\n' >"$installed/smoke/targets/smoke-drop.conf"
+click_row smoke || fail "the click applying the smoke row with a dropped file failed"
+expect_poll "the row names the file its apply dropped" '[["smoke", "installed", "Displayed", "smoke-drop dropped smoke-drop.conf"]]' theme_row smoke
+
+# Control: a sandbox copy of the panel that reads no `dropped` names no
+# file for the same result, which a panel built after the apply reads from
+# `last`; the restored panel names it again.
+# Every vgs.themes instance a rescan rebuilds with the panel closed: the
+# background and the placed widget on every screen.
+themes_instances=$((2 * monitors))
+panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
+drop_read='target.dropped === undefined ? [] : target.dropped'
+cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"
+# panel_source LABEL FILE: close the panel, install FILE as its source,
+# rescan, and open the panel the rescan built; false when any step failed.
+panel_source() {
+  local before
+  click_outside || { fail "$1: the click closing the themes panel failed"; return 1; }
+  expect_poll "the themes panel closes before $1" closed panel_open
+  cp -p -- "$2" "$panel_qml.tmp" && mv -T -- "$panel_qml.tmp" "$panel_qml" || { fail "$1: $2 could not be installed"; return 1; }
+  before="$(builds)" || { fail "$1: buildCount unreadable"; return 1; }
+  expect "a rescan builds $1" ok ipc shell rescanPlugins
+  expect_poll "$1 rebuilds every vgs.themes instance" "$((before + themes_instances))" builds
+  expect "the follow the rescan for $1 queued ends" idle theme_idle
+  click_centre "$themes_key" vgs.themes || { fail "$1: the click opening the themes panel failed"; return 1; }
+  expect_poll "$1 opens" open panel_open
+}
+if [[ $(grep -c -F -- "$drop_read" "$panel_qml") == 1 ]]; then
+  if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "[]"))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.mutant" "$drop_read"; then
+    panel_source "the dropless control" "$sandbox/ThemesPanel.qml.mutant" \
+      && expect_poll "the dropless control names no dropped file" '[["smoke", "installed", "Displayed"]]' theme_row smoke
+  else
+    fail "the dropless control could not be written"
+  fi
+  panel_source "the restored panel" "$sandbox/ThemesPanel.qml.real" \
+    && expect_poll "the restored panel names the dropped file from last" '[["smoke", "installed", "Displayed", "smoke-drop dropped smoke-drop.conf"]]' theme_row smoke
+else
+  fail "the dropless control's text occurs once in $panel_qml"
+fi
+rm -r -- "$fixture_targets/smoke-drop" "$installed/smoke/targets"
+click_row smoke || fail "the click applying the smoke row with nothing dropped failed"
+expect_poll "a later apply that drops nothing clears the line" '[["smoke", "installed", "Displayed"]]' theme_row smoke
 # A hand edit that keeps the package's name marks its row Modified while
 # the panel stays open, and a click on the row applies the package again
 # and clears the badge.
@@ -438,9 +487,6 @@ click_wallpaper() {
   read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
   click "$cx" "$cy"
 }
-# Every vgs.themes instance a rescan rebuilds with the panel closed: the
-# background and the placed widget on every screen.
-themes_instances=$((2 * monitors))
 
 expect "the vgs.themes background is built with vgs applied" "- null" background_image
 expect "the host maps no surface without an image" 0 layer_count vgs:background
