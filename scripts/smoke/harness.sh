@@ -216,15 +216,30 @@ shell_env=("${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" HYPRLAND_INSTANC
   DBUS_SESSION_BUS_ADDRESS="unix:path=$rt_dir/bus" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$rt_dir/system-bus")
 hypr() { "${shell_env[@]}" hyprctl -i "$signature" "$@"; }
 
-# The nested output can take a moment to appear. The shell starts after it
-# does, so no bar is built for the placeholder screen Qt invents when a
-# compositor has no output yet.
+# The nested output can take a moment to appear. The shell starts once the
+# compositor lists monitors and every one has a size, so no bar is built
+# for the placeholder screen Qt invents when a compositor has no output
+# yet, nor for the 0x0 FALLBACK monitor Hyprland lists when no output is
+# ready two seconds after launch, as when the host is slow to configure
+# the nested window. Hyprland configures no layer surface on a monitor
+# with no size, so a bar there would never lay out or reserve space.
+# sized_monitors prints the monitor count, or 0 while any listed monitor
+# has no size, then each monitor as NAME:WxH.
+sized_monitors() {
+  hypr -j monitors | python3 -c 'import json,sys; ms=json.load(sys.stdin); print(len(ms) if ms and all(m["width"] > 0 and m["height"] > 0 for m in ms) else 0, ",".join("%s:%dx%d" % (m["name"], m["width"], m["height"]) for m in ms))'
+}
 monitors=-1
+monitors_seen=""
 for _ in $(seq 1 50); do
-  if monitors="$(hypr -j monitors 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)" && [[ $monitors -gt 0 ]]; then break; fi
+  if read -r monitors monitors_seen < <(sized_monitors 2>/dev/null) && [[ $monitors -gt 0 ]]; then break; fi
   sleep 0.2
 done
-if [[ $monitors -gt 0 ]]; then ok "nested compositor lists $monitors monitor(s)"; else
+if [[ $monitors -gt 0 ]]; then ok "nested compositor lists $monitors monitor(s): $monitors_seen"
+elif [[ -n $monitors_seen ]]; then
+  printf 'qml-smoke: status=not-measured nested-monitor=unsized monitors=%s\n' "$monitors_seen"
+  echo "the nested compositor listed a monitor with no size for 10 s, so it would configure no bar; FALLBACK is Hyprland's placeholder while the host has not configured the nested window. Run the smoke again"
+  exit 77
+else
   printf 'qml-smoke: status=not-measured missing=nested-monitor\n'; exit 77
 fi
 # The shipped bar carries its clock and workspaces as built-ins, so the
