@@ -25,8 +25,12 @@ ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/test-*.py scripts/test-*.sh"
 # File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
 
-SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+# Target identities are model providers, not the harness that runs them.
+# Keep write tools denied and shell approval restricted; never grant all tools.
+SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5.5"
+SECOND_OPINION_CLAUDE_CMD = "env COPILOT_ALLOW_ALL=false 1copilot --model claude-opus-5.5 --reasoning-effort medium --silent --no-ask-user --disable-builtin-mcps --available-tools bash view rg glob --deny-tool write"
+SECOND_OPINION_CODEX_MODEL = "gpt-6-astra"
+SECOND_OPINION_CODEX_CMD = "env COPILOT_ALLOW_ALL=false 1copilot --model gpt-6-astra --reasoning-effort medium --silent --no-ask-user --disable-builtin-mcps --available-tools bash view rg glob --deny-tool write"
 SECOND_OPINION_TIMEOUT = "1080"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vgs"
 WORKTREE_COPIES = ""
@@ -179,6 +183,9 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 
 # Cross-model review selects an available roster entry distinct from this session.
 # See the second-opinion skill for selection rules.
+# Pi and Copilot callers must export SECOND_OPINION_CURRENT_MODEL with their
+# actual current model for each invocation, including after switching models.
+# Never put that session identity in a project settings file.
 
 # Priority-ordered roster, space/comma separated. Per entry:
 # SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
