@@ -83,6 +83,11 @@ import pathlib, shutil, sys
 source, target = map(pathlib.Path, sys.argv[1:])
 for directory in ("shell", "bin", "config", "scripts", "themes"):
     shutil.copytree(source / directory, target / directory)
+# The copy ships no target: each would detect the host's own application on
+# PATH, and its reload hook would signal that application in the live
+# session. The rows add the fixture targets they read.
+shutil.rmtree(target / "themes/targets")
+(target / "themes/targets").mkdir()
 shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
 path = target / "shell/shell.qml"
 text = path.read_text()

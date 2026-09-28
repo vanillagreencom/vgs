@@ -12,7 +12,7 @@ installed="$home/.config/vgs/themes"
 # reason, a null reason printed as None.
 applied() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["shell"], r["theme"], r["reason"])'; }
 # The [name, state, reason] rows of that result's targets whose name starts
-# with PREFIX, so a host's own detected application stays out of the reading.
+# with PREFIX.
 applied_targets() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(json.dumps([[t["name"], t["state"], t["reason"]] for t in r["targets"] if t["name"].startswith(sys.argv[1])]))' "$1"; }
 # What the fixture's last list callback received: `packages` as
 # [name, source, state, reason] rows, `current` the rows marked current,
@@ -52,6 +52,7 @@ revision_before="$(theme_member revision)"
 expect "the fixture applies the vgs package" ok probe theme-apply vgs
 expect_poll "the vgs apply's result reaches the fixture" 1 applies
 expect "the vgs apply wrote the shell's file" "applied applied vgs None" applied
+expect "the sandbox copy ships no target, so no hook reaches a host application" '[]' applied_targets ""
 expect_poll "current follows the vgs apply" '"vgs"' theme_member current
 expect_poll "revision rose after the vgs apply" rose revision_rose
 expect "last holds the vgs result with no apply running" '"applied"' last_part result.state
@@ -87,8 +88,8 @@ expect "the refusal's output is the result, not discarded" "failed unchanged nos
 expect "a malformed name is refused at once" 'refused: theme="../x" reason=malformed-name' probe theme-apply ../x
 expect "a malformed name queues nothing" '[]' theme_jobs
 
-# A real partial apply: two fixture targets beside the shipped ones in the
-# sandbox copy, always detected, one naming no token. The shell takes the
+# A real partial apply: two fixture targets in the sandbox copy, which ships
+# no target of its own, always detected, one naming no token. The shell takes the
 # theme, the other target lands, and the result and its exit 3 reach the
 # fixture whole.
 fixture_targets="$repo/themes/targets"
