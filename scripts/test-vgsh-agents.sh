@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Controls for the agent CLI targets of `vgsh theme apply`: Claude Code,
 # Codex, Gemini CLI, Hermes Agent, oh-my-pi, opencode and Pi. Each lands its
-# file with the hex6 encoder, keeps its link in the CLI's themes directory
+# file with the hex6 encoder, keeps its entry in the CLI's themes directory
 # (Gemini keeps none) and sets each theme key its `select` names in the
-# CLI's own settings file, every other byte of that file kept. Every detect command is
-# a stub on the rows' PATH and Claude's hook runs a real sh and touch, under
-# a temporary HOME, XDG_CONFIG_HOME and XDG_RUNTIME_DIR, so no row reaches a
-# real CLI, a live settings file or the developer's session.
+# CLI's own settings file, every other byte of that file kept. Every detect
+# command is a stub on the rows' PATH and opencode's reload probe reads stub
+# process lists, under a temporary HOME, XDG_CONFIG_HOME and XDG_RUNTIME_DIR,
+# so no row reaches a real CLI, a live settings file or the developer's
+# session.
 #
 # No judge copy creates an absent settings file: two rules stand between the
 # plan and a create, the plan's skip, whose control is below and whose row
@@ -23,10 +24,11 @@ theme_pkg "$tree/themes/dusk" '{ "schemaVersion": 1, "name": "dusk", "tokens": {
 theme_pkg "$tree/themes/nord" '{ "schemaVersion": 1, "name": "nord", "tokens": { "palette": { "accent": "#222222" } } }'
 
 # Each CLI is detected by a stub of its command, which records a run and
-# exits 1, so detection never runs it. Claude's hook runs a real sh and
-# touch.
+# exits 1, so detection never runs it. opencode's hook runs a real sh and
+# id, with pgrep and ps stubs naming two child processes: one interactive
+# opencode and one `opencode serve`, which must not be signalled.
 hook_tools="$tmp/hook-tools"; mkdir -p "$hook_tools"
-for tool in sh touch; do
+for tool in sh id; do
   tool_bin="$(command -v "$tool")" || { echo "test-vgsh-agents: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$tool_bin" "$hook_tools/$tool"
 done
@@ -34,6 +36,31 @@ for stub in $agents; do
   printf '#!/bin/sh\n: >"%s/ran-$(basename "$0")"\nexit 1\n' "$tmp" >"$stubs/$stub"
   chmod +x "$stubs/$stub"
 done
+"$node_bin" -e "const fs = require('fs'); fs.writeFileSync('$tmp/opencode-plain-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync('$tmp/opencode-plain-signaled', 'plain'); process.exit(0); }); setInterval(() => {}, 10000);" &
+opencode_plain=$!
+"$node_bin" -e "const fs = require('fs'); fs.writeFileSync('$tmp/opencode-serve-ready', 'ready'); process.on('SIGUSR2', () => { fs.writeFileSync('$tmp/opencode-serve-signaled', 'serve'); process.exit(0); }); setInterval(() => {}, 10000);" &
+opencode_serve=$!
+trap 'kill "$opencode_plain" "$opencode_serve" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -e $tmp/opencode-plain-ready && -e $tmp/opencode-serve-ready ]] && break
+  sleep 0.1
+done
+printf '#!/bin/sh\nprintf "%s\\n%s\\n"\n' "$opencode_plain" "$opencode_serve" >"$hook_tools/pgrep"
+cat >"$hook_tools/ps" <<EOF
+#!/bin/sh
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    -p) pid="\$2"; shift 2;;
+    *) shift;;
+  esac
+done
+case "\$pid" in
+  $opencode_plain) printf 'opencode\\n';;
+  $opencode_serve) printf 'opencode serve\\n';;
+  *) exit 1;;
+esac
+EOF
+chmod +x "$hook_tools/pgrep" "$hook_tools/ps"
 export THEME_PATH="$stubs:$hook_tools:$theme_path"
 
 target_state() { # NAME: the target's state and reason in $tmp/apply.json
@@ -49,8 +76,11 @@ all_state() { # WANT: every agent target's "name state reason;", in name order
   [[ $got == "$1" ]]
 }
 links_to() { [[ -L $1 && "$(readlink -- "$1")" == "$2" ]]; } # PATH TARGET
+regular_with() { [[ -f $1 && ! -L $1 && "$(cat -- "$1"; printf x)" == "$2"x ]]; } # PATH TEXT
+same_file() { [[ -f $1 && ! -L $1 ]] && cmp -s -- "$1" "$2"; } # COPY SOURCE
 has_text() { [[ "$(cat -- "$1"; printf x)" == "$2"x ]]; } # FILE TEXT: the file's bytes, trailing newlines included
 stamp() { stat -L -c '%i %Y' -- "$@" | tr '\n' ' '; } # PATH...: each file's inode and modification time
+entry_stamp() { stat -c '%i %Y' -- "$@" | tr '\n' ' '; } # PATH...
 disable() { printf '{ "disabledTargets": [%s] }\n' "$1" >"$cfg/vgs/shell.json"; }
 
 # The CLIs' own settings files, each holding keys of the user's beside the
@@ -96,6 +126,7 @@ apply_json "the agent targets land" 0 dusk
 check "every agent target is written" all_state "claude written None;codex written None;gemini written None;hermes written None;omp written None;opencode written None;pi written None;"
 check "detection never ran a CLI" test -z "$(find "$tmp" -maxdepth 1 -name 'ran-*' -print)"
 check "no hook is left pending" test ! -e "$pending"
+check "opencode's hook signals only the interactive process" test -f "$tmp/opencode-plain-signaled" -a ! -e "$tmp/opencode-serve-signaled"
 
 # Each file parses as its CLI reads it and holds hex6 colours: dusk's accent
 # is #111111, the table's background #000000 and the shipped slot color5
@@ -111,14 +142,15 @@ check "oh-my-pi's theme holds its 67 colours and 3 export colours as hex6" pytho
 check "opencode's theme holds its 52 colours as hex6" python3 -c 'import json,re,sys; t = json.load(open(sys.argv[1])); c = t["theme"]; sys.exit(0 if t["$schema"] == "https://opencode.ai/theme.json" and len(c) == 52 and c["primary"] == "#111111" and all(re.match(sys.argv[2], v) for v in c.values()) else 1)' "$live/opencode.json" "$hex6"
 check "Pi's theme holds its 56 colours and 3 export colours as hex6" python3 -c 'import json,re,sys; t = json.load(open(sys.argv[1])); c = t["colors"]; e = t["export"]; sys.exit(0 if t["name"] == "vgs" and len(c) == 56 and sorted(e) == ["cardBg", "infoBg", "pageBg"] and c["accent"] == "#111111" and all(re.match(sys.argv[2], v) for v in list(c.values()) + list(e.values())) else 1)' "$live/pi.json" "$hex6"
 
-# The links stand where each CLI reads its themes; Gemini reads its theme
-# by the path its setting names and takes none.
-check "Claude's theme link stands in its themes directory" links_to "$home/.claude/themes/vgs.json" "$live/claude.json"
+# The entries stand where each CLI reads its themes; Claude Code, Hermes,
+# oh-my-pi and Pi get watched copies, Codex and opencode keep links, and
+# Gemini reads its theme by the path its setting names and takes none.
+check "Claude's theme copy stands in its themes directory" same_file "$home/.claude/themes/vgs.json" "$live/claude.json"
 check "Codex's theme link stands in its themes directory" links_to "$home/.codex/themes/vgs.tmTheme" "$live/codex.tmTheme"
-check "Hermes's skin link stands in its skins directory" links_to "$home/.hermes/skins/vgs.yaml" "$live/hermes.yaml"
-check "oh-my-pi's theme link stands in its themes directory" links_to "$home/.omp/agent/themes/vgs.json" "$live/omp.json"
+check "Hermes's skin copy stands in its skins directory" same_file "$home/.hermes/skins/vgs.yaml" "$live/hermes.yaml"
+check "oh-my-pi's theme copy stands in its themes directory" same_file "$home/.omp/agent/themes/vgs.json" "$live/omp.json"
 check "opencode's theme link stands in its themes directory" links_to "$cfg/opencode/themes/vgs.json" "$live/opencode.json"
-check "Pi's theme link stands in its themes directory" links_to "$home/.pi/agent/themes/vgs.json" "$live/pi.json"
+check "Pi's theme copy stands in its themes directory" same_file "$home/.pi/agent/themes/vgs.json" "$live/pi.json"
 check "Gemini keeps no link" test ! -e "$home/.gemini/themes"
 
 # The selection: the one key set, every other byte kept; a symlinked file
@@ -129,18 +161,17 @@ check "the modes of Codex's dotfile and Claude's settings are kept" test "$(stat
 
 # Unchanged: a second apply writes no settings file.
 touch -d @1000 -- "${settings[@]}"
-before="$(stamp "${settings[@]}")"
+if ! before="$(stamp "${settings[@]}")"; then fail "the settings files can be read before the unchanged apply"; before=none; fi
+if ! entries_before="$(entry_stamp "$home/.claude/themes/vgs.json" "$home/.hermes/skins/vgs.yaml" "$home/.omp/agent/themes/vgs.json" "$home/.pi/agent/themes/vgs.json")"; then fail "the copied theme entries can be read before the unchanged apply"; entries_before=none; fi
 apply_json "an unchanged apply" 0 dusk
 check "an unchanged apply leaves every agent target unchanged" all_state "claude unchanged None;codex unchanged None;gemini unchanged None;hermes unchanged None;omp unchanged None;opencode unchanged None;pi unchanged None;"
 check "an unchanged apply writes no settings file" test "$(stamp "${settings[@]}")" == "$before"
+check "an unchanged apply writes no copied theme entry" test "$(entry_stamp "$home/.claude/themes/vgs.json" "$home/.hermes/skins/vgs.yaml" "$home/.omp/agent/themes/vgs.json" "$home/.pi/agent/themes/vgs.json")" == "$entries_before"
 
-# A changed theme runs Claude's hook, which changes only its link's own
-# time, the watch Claude Code keeps on its themes directory.
-touch -h -d @1000 -- "$home/.claude/themes/vgs.json"
+# A changed theme replaces each watched copy and writes no settings file.
 apply_json "a changed theme" 0 nord
-check "the Claude hook touched its link" test "$(stat -c %Y -- "$home/.claude/themes/vgs.json")" != 1000
-check "the touched link still names its state file" links_to "$home/.claude/themes/vgs.json" "$live/claude.json"
-check "the Claude hook wrote no settings file" test "$(stamp "${settings[@]}")" == "$before"
+check "the Claude copy takes the new render" same_file "$home/.claude/themes/vgs.json" "$live/claude.json"
+check "the changed apply wrote no settings file" test "$(stamp "${settings[@]}")" == "$before"
 
 # A key changed by hand comes back on the next apply, unchanged bytes and
 # all, and the rest of the file stays.
@@ -186,7 +217,7 @@ apply_json "the agent targets land again" 0 dusk
 disable '"claude"'
 apply_json "a disabled Claude" 0 nord
 check "a disabled Claude is skipped" test "$(target_state claude)" == "skipped disabled"
-check "a disabled Claude loses its link" test ! -e "$home/.claude/themes/vgs.json"
+check "a disabled Claude loses its copy" test ! -e "$home/.claude/themes/vgs.json"
 check "a disabled Claude leaves its theme key" has_text "$claude_settings" "$claude_selected"
 disable ''
 

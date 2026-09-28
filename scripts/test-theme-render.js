@@ -48,11 +48,13 @@ const lit = logic.acceptPackage(TOKENS, {
 for (const pkg of [probe, defaults, own, lit]) assert.equal(pkg.ok, true, pkg.ok ? "" : logic.refusalLine(pkg));
 
 const wiring = { file: "probe/probe.conf", line: "include=@{state}/probe.conf", create: true };
-// An entry wiring: links in the application's own directory, never a file
-// edit. Two files so a link can name either.
+// An entry wiring: links or copies in the application's own directory,
+// never a file edit. Two files so an entry can name either.
 const entry = { base: "config", dir: "probe/themes", owned: false, links: { "vgs.conf": "probe.conf" } };
+const copyEntry = { base: "config", dir: "probe/themes", owned: false, copies: { "vgs.conf": "probe.conf" } };
 const twoFiles = [{ template: "a.conf", destination: "probe.conf" }, { template: "b.json", destination: "probe.pkg.json" }];
 const entryText = (fields = {}) => targetText({ files: twoFiles, wiring: Object.assign({}, entry, fields) });
+const copyEntryText = (fields = {}) => targetText({ files: twoFiles, wiring: Object.assign({}, copyEntry, fields) });
 const targetText = (fields = {}) => JSON.stringify(Object.assign({
     app: "Probe",
     encoder: "hex6",
@@ -74,6 +76,7 @@ const ACCEPTED_TARGETS = [
     ["probe", targetText({ files: [{ template: "probe.conf", destination: "probe.conf", curatedKeys: ["colors", "tokenColors"] }] })],
     ["probe", entryText()],
     ["probe", entryText({ base: "home", dir: ".probe/extensions/vgs-theme", owned: true, links: { "package.json": "probe.pkg.json", "vgs-color-theme.json": "probe.conf" } })],
+    ["probe", copyEntryText()],
     ["probe", targetText({ wiring: null })],
     ["probe", targetText({ reload: { command: ["probe", "--file=@{state}/probe.conf", "@@{x}"], timeoutMs: 2000, always: true } })],
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 2000, always: false } })],
@@ -165,6 +168,10 @@ const REFUSED_TARGETS = [
     ["probe", entryText({ links: ["probe.conf"] }), "target-schema", "key=wiring.links"],
     ["probe", entryText({ links: { "../vgs.conf": "probe.conf" } }), "target-schema", "key=wiring.links.../vgs.conf"],
     ["probe", entryText({ links: { "vgs.conf": "other.conf" } }), "target-schema", "key=wiring.links.vgs.conf"],
+    ["probe", entryText({ links: { "vgs.conf": "probe.conf" }, copies: { "vgs-copy.conf": "probe.conf" } }), "target-schema", "key=wiring"],
+    ["probe", copyEntryText({ copies: {} }), "target-schema", "key=wiring.copies"],
+    ["probe", copyEntryText({ copies: { "../vgs.conf": "probe.conf" } }), "target-schema", "key=wiring.copies.../vgs.conf"],
+    ["probe", copyEntryText({ copies: { "vgs.conf": "other.conf" } }), "target-schema", "key=wiring.copies.vgs.conf"],
     ["probe", targetText({ reload: { command: ["probe"] } }), "target-schema", "key=reload"],
     ["probe", targetText({ reload: { command: [], timeoutMs: 2000 } }), "target-schema", "key=reload.command"],
     ["probe", targetText({ reload: { command: ["probe"], timeoutMs: 0 } }), "target-schema", "key=reload.timeoutMs"],
@@ -488,20 +495,23 @@ function verify(render) {
     for (const [text, want] of VAULTS)
         assert.deepEqual(render.vaultDirs(logic, text), want, JSON.stringify(text));
 
-    // An entry target's links point at its files in the state directory's
-    // theme/, in target.json's order; each form refuses the other's helper.
+    // An entry target's entries name its files in the state directory's
+    // theme/, in target.json's order, with their kind; each form refuses
+    // the other's helper.
     const linked = accepted("probe", entryText({ links: { "vgs.conf": "probe.conf", "package.json": "probe.pkg.json" } }));
+    const copied = accepted("probe", copyEntryText());
     assert.equal(render.wiringForm(linked.wiring), "entry");
     assert.equal(render.wiringForm(target("hex6").wiring), "include");
-    assert.deepEqual(render.entryLinks(linked, "/s/vgs/theme"), [{ name: "vgs.conf", to: "/s/vgs/theme/probe.conf" }, { name: "package.json", to: "/s/vgs/theme/probe.pkg.json" }]);
+    assert.deepEqual(render.entryItems(linked, "/s/vgs/theme"), [{ kind: "link", name: "vgs.conf", destination: "probe.conf", to: "/s/vgs/theme/probe.conf" }, { kind: "link", name: "package.json", destination: "probe.pkg.json", to: "/s/vgs/theme/probe.pkg.json" }]);
+    assert.deepEqual(render.entryItems(copied, "/s/vgs/theme"), [{ kind: "copy", name: "vgs.conf", destination: "probe.conf", to: "/s/vgs/theme/probe.conf" }]);
     assert.throws(() => render.wiringLine(linked, "/s"), /has wiring form entry/);
-    assert.throws(() => render.entryLinks(target("hex6"), "/s"), /has wiring form include/);
+    assert.throws(() => render.entryItems(target("hex6"), "/s"), /has wiring form include/);
 
     // A null wiring is its own form, and neither form's helper takes it.
     const unwired = accepted("probe", targetText({ wiring: null }));
     assert.equal(render.wiringForm(unwired.wiring), "none");
     assert.throws(() => render.wiringLine(unwired, "/s"), /has wiring form none/);
-    assert.throws(() => render.entryLinks(unwired, "/s"), /has wiring form none/);
+    assert.throws(() => render.entryItems(unwired, "/s"), /has wiring form none/);
 
     // A reload argument names the state directory and, for include targets
     // without profiles, the wiring file; `@@{` stays a literal. `always`
@@ -649,9 +659,10 @@ const CONTROLS = [
     ["dotted key prefix", "name === section || (name !== null && name.startsWith(section + \".\"))", "name === section"],
     ["dotted keys at the root only", "const root = lines.slice(0, first === -1 ? lines.length : first);", "const root = lines;"],
     ["section appended on its own line", "(before === \"\" || before.endsWith(\"\\n\") ? \"\" : \"\\n\")", "\"\""],
-    ["entry form", 'hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include"', 'hasOwnProperty.call(wiring, "nope") ? "entry" : "include"'],
-    ["entry required keys", "if (!ENTRY_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "if (false ||"],
-    ["entry unknown key", "!Object.keys(wiring).every(key => ENTRY_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return", "false) return"],
+    ["entry form", 'return entryItemKey(wiring) === "" ? "include" : "entry";', 'return "include";'],
+    ["entry item kind", "return present.length === 1 ? present[0] : \"\";", "return present[0] || \"links\";"],
+    ["entry required keys", "if (itemKey === \"\" || !ENTRY_BASE_KEYS.every(key => logic.hasOwn(wiring, key)) ||", "if (false ||"],
+    ["entry unknown key", "!Object.keys(wiring).every(key => ENTRY_BASE_KEYS.includes(key) || ENTRY_ITEM_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return", "false) return"],
     ["entry vaults admitted", 'const ENTRY_OPTIONAL_KEYS = ["vaults"];', "const ENTRY_OPTIONAL_KEYS = [];"],
     ["entry vaults path", 'if (logic.hasOwn(wiring, "vaults") && !isRelativePath(wiring.vaults)) return', "if (false) return"],
     ["vault registry parses", "        registry = JSON.parse(text);\n    } catch (e) {\n        return null;", "        registry = JSON.parse(text);\n    } catch (e) {\n        return [];"],
@@ -665,10 +676,10 @@ const CONTROLS = [
     ["entry cache base", 'const ENTRY_BASES = ["config", "home", "cache"];', 'const ENTRY_BASES = ["config", "home"];'],
     ["entry dir segment", "const DIR_SEGMENT_PATTERN = /^\\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;", "const DIR_SEGMENT_PATTERN = /^[.A-Za-z0-9_-]+$/;"],
     ["entry owned", "if (typeof wiring.owned !== \"boolean\") return", "if (false) return"],
-    ["entry links present", "|| Object.keys(wiring.links).length === 0) return", ") return"],
-    ["entry link name", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!destinations.has(destination)) return"],
-    ["entry link destination", "if (!logic.isPackageName(link) || !destinations.has(destination)) return", "if (!logic.isPackageName(link)) return"],
-    ["entry link target", "({ name, to: live + \"/\" + destination })", "({ name, to: destination })"],
+    ["entry item present", "if (!logic.isPlainObject(wiring[itemKey]) || Object.keys(wiring[itemKey]).length === 0) return", "if (!logic.isPlainObject(wiring[itemKey])) return"],
+    ["entry item name", "if (!logic.isPackageName(name)) return", "if (false) return"],
+    ["entry item destination", "if (!destinations.has(destination)) return", "if (false) return"],
+    ["entry link target", "({ kind, name, destination, to: live + \"/\" + destination })", "({ kind, name, destination, to: destination })"],
     ["unwiring whole line", 'text.split("\\n").filter(existing => existing !== line)', 'text.split("\\n").map(existing => existing.split(line).join(""))'],
     ["unwiring every line", 'text.split("\\n").filter(existing => existing !== line)', 'text.split("\\n").filter((existing, at, all) => at !== all.indexOf(line))'],
     ["unwiring null when unchanged", "return next === text ? null : next;", "return next;"],

@@ -40,17 +40,17 @@ const CURATED_KEYS_KEY = "curatedKeys";
 // application's configuration file; its optional keys are the section the
 // line goes into, the Mozilla profiles.ini paths whose profile directories
 // the file is relative to, and the fallback files under HOME tried when the
-// configuration-home file is absent. An entry wiring keeps links to the target's files in
-// the application's theme or extension directory and edits no file; its
-// optional key is the Obsidian vault registry whose vaults the directory is
-// relative to. `links` tells them apart. A null wiring keeps nothing: the
-// target's hook asserts the setting that makes its application read the
-// files.
+// configuration-home file is absent. An entry wiring keeps entries to the
+// target's files in the application's theme or extension directory and edits
+// no file; its optional key is the Obsidian vault registry whose vaults the
+// directory is relative to. Exactly one of `links` or `copies` tells which
+// entry kind it writes. A null wiring keeps nothing: the target's hook
+// asserts the setting that makes its application read the files.
 const WIRING_KEYS = ["file", "line", "create"];
 const INCLUDE_OPTIONAL_KEYS = ["section", "profiles", "fallbacks"];
-const ENTRY_KEYS = ["base", "dir", "owned", "links"];
+const ENTRY_BASE_KEYS = ["base", "dir", "owned"];
+const ENTRY_ITEM_KEYS = ["links", "copies"];
 const ENTRY_OPTIONAL_KEYS = ["vaults"];
-const ENTRY_KEY = "links";
 // The directories an entry's `dir` and a selection's `file` are relative
 // to: the user's configuration home, ${XDG_CONFIG_HOME:-~/.config}, the home
 // directory, or the user's cache home, ${XDG_CACHE_HOME:-~/.cache}.
@@ -218,7 +218,12 @@ function wiringError(logic, wiring) {
 // which each caller matches exhaustively.
 function wiringForm(wiring) {
     if (wiring === null) return "none";
-    return Object.prototype.hasOwnProperty.call(wiring, ENTRY_KEY) ? "entry" : "include";
+    return entryItemKey(wiring) === "" ? "include" : "entry";
+}
+
+function entryItemKey(wiring) {
+    const present = ENTRY_ITEM_KEYS.filter(key => Object.prototype.hasOwnProperty.call(wiring, key));
+    return present.length === 1 ? present[0] : "";
 }
 
 // Whether VALUE is a relative path of one name per segment.
@@ -228,28 +233,35 @@ function isRelativePath(value) {
 
 // The first defect of an entry `wiring`, or "". `dir` is relative to its
 // `base`, or, with `vaults`, to each vault the Obsidian registry at `vaults`
-// under `base` lists, one directory name per segment; `links` maps each
-// link's file name in `dir` to one of DESTINATIONS, the target's own files.
+// under `base` lists, one directory name per segment. Exactly one of
+// `links` or `copies` maps each entry's file name in `dir` to one of
+// DESTINATIONS, the target's own files.
 function entryError(logic, wiring, destinations) {
-    if (!ENTRY_KEYS.every(key => logic.hasOwn(wiring, key)) ||
-        !Object.keys(wiring).every(key => ENTRY_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return "key=wiring";
+    const itemKey = entryItemKey(wiring);
+    if (itemKey === "" || !ENTRY_BASE_KEYS.every(key => logic.hasOwn(wiring, key)) ||
+        !Object.keys(wiring).every(key => ENTRY_BASE_KEYS.includes(key) || ENTRY_ITEM_KEYS.includes(key) || ENTRY_OPTIONAL_KEYS.includes(key))) return "key=wiring";
     if (!ENTRY_BASES.includes(wiring.base)) return "key=wiring.base";
     if (!isRelativePath(wiring.dir)) return "key=wiring.dir";
     if (logic.hasOwn(wiring, "vaults") && !isRelativePath(wiring.vaults)) return "key=wiring.vaults";
     if (typeof wiring.owned !== "boolean") return "key=wiring.owned";
-    if (!logic.isPlainObject(wiring.links) || Object.keys(wiring.links).length === 0) return "key=wiring.links";
-    for (const [link, destination] of Object.entries(wiring.links))
-        if (!logic.isPackageName(link) || !destinations.has(destination)) return "key=wiring.links." + link;
+    if (!logic.isPlainObject(wiring[itemKey]) || Object.keys(wiring[itemKey]).length === 0) return "key=wiring." + itemKey;
+    for (const [name, destination] of Object.entries(wiring[itemKey])) {
+        if (!logic.isPackageName(name)) return "key=wiring." + itemKey + "." + name;
+        if (!destinations.has(destination)) return "key=wiring." + itemKey + "." + name;
+    }
     return "";
 }
 
-// The links an accepted entry TARGET keeps in its `dir`, in the order
-// target.json names them: each link's file `name` and the path it points
-// at, `to`, its destination in LIVE, the state directory's `theme/` path.
-function entryLinks(target, live) {
+// The entries an accepted entry TARGET keeps in its `dir`, in the order
+// target.json names them: each entry's `kind`, file `name`, destination and
+// path in LIVE, the state directory's `theme/` path. `link` entries are
+// symlinks to `to`; `copy` entries are atomic copies of it.
+function entryItems(target, live) {
     const form = wiringForm(target.wiring);
-    if (form !== "entry") throw new Error("theme-render: entryLinks: target " + target.name + " has wiring form " + form);
-    return Object.entries(target.wiring.links).map(([name, destination]) => ({ name, to: live + "/" + destination }));
+    if (form !== "entry") throw new Error("theme-render: entryItems: target " + target.name + " has wiring form " + form);
+    const itemKey = entryItemKey(target.wiring);
+    const kind = itemKey === "links" ? "link" : "copy";
+    return Object.entries(target.wiring[itemKey]).map(([name, destination]) => ({ kind, name, destination, to: live + "/" + destination }));
 }
 
 // The placeholders a reload command may name for TARGET.
@@ -701,4 +713,4 @@ function unwiredText(text, line, section) {
     return next === text ? null : next;
 }
 
-module.exports = { TARGET_FILE, acceptTarget, detected, setupDone, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryLinks, profileDirs, vaultDirs, reloadNamesWiring, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };
+module.exports = { TARGET_FILE, acceptTarget, detected, setupDone, renderTarget, terminalSource, refusalLine, wiringForm, wiringLine, entryItems, profileDirs, vaultDirs, reloadNamesWiring, reloadCommand, reloadAlways, selectKeys, selectValue, wiredText, unwiredText, isSectionHeader, opensSection, assignedKey };

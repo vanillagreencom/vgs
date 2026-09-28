@@ -3,7 +3,7 @@
   "encoder": "hex6",
   "files": [{ "template": "pi.json", "destination": "pi.json" }],
   "detect": ["pi"],
-  "wiring": { "base": "home", "dir": ".pi/agent/themes", "owned": false, "links": { "vgs.json": "pi.json" } },
+  "wiring": { "base": "home", "dir": ".pi/agent/themes", "owned": false, "copies": { "vgs.json": "pi.json" } },
   "select": { "base": "home", "file": ".pi/agent/settings.json", "format": "json", "key": ["theme"], "value": "vgs" },
   "reload": null
 }

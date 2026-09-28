@@ -63,6 +63,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md): a theme apply stages every write beside its destination and writes the shell document last.
 - [D023](../decisions/D023-plugin-owned-appearance.md): a plugin may own its look, taking the theme's mode, accent and motion scale alone.
 - [D026](../decisions/D026-passive-layers-are-a-capability.md): a passive layer is a capability that draws a plugin's component on every screen, not a kind.
+- [D029](../decisions/D029-managed-copies-for-watched-theme-directories.md): managed copies serve watched theme directories.
 
 ## Topics
 

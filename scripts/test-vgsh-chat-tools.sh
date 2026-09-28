@@ -228,13 +228,13 @@ judge_control unopened-vaults 'vaults.filter(vault => fs.statSync(path.join(vaul
 apply_json "the unopened-vaults mutant applies" 0 dusk
 check "the unopened-vaults mutant recreates a vault that is gone" test -d "$vaults/gone/.obsidian/themes/vgs"
 fresh_vaults
-judge_control first-vault-only 'writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));' 'if (dir !== dirs[0]) continue; writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));'
+judge_control first-vault-only 'writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));' 'if (dir !== plan.dirs[0]) continue; writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));'
 apply_json "the first-vault mutant applies" 0 nord
 check "the first-vault mutant leaves the second vault unlinked" test -L "$notes_theme/theme.css" -a ! -e "$work_theme"
 unset THEME_BIN
 apply_json "every vault linked again" 0 dusk
 disable '"obsidian"'
-judge_control first-vault-dropped 'if (linkState(file, link.to) === "managed") fs.unlinkSync(file);' 'if (dir === dirs[0] && linkState(file, link.to) === "managed") fs.unlinkSync(file);'
+judge_control first-vault-dropped 'if (entryState(file, item) === "managed") writing(file, key, () => fs.unlinkSync(file));' 'if (dir === plan.dirs[0] && entryState(file, item) === "managed") writing(file, key, () => fs.unlinkSync(file));'
 apply_json "the first-vault-dropping mutant disables Obsidian" 0 nord
 check "the first-vault-dropping mutant leaves the second vault's links" test ! -e "$notes_theme" -a -L "$work_theme/theme.css"
 disable ''

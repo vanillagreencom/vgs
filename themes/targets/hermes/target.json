@@ -3,7 +3,7 @@
   "encoder": "hex6",
   "files": [{ "template": "hermes.yaml", "destination": "hermes.yaml" }],
   "detect": ["hermes"],
-  "wiring": { "base": "home", "dir": ".hermes/skins", "owned": false, "links": { "vgs.yaml": "hermes.yaml" } },
+  "wiring": { "base": "home", "dir": ".hermes/skins", "owned": false, "copies": { "vgs.yaml": "hermes.yaml" } },
   "select": { "base": "home", "file": ".hermes/config.yaml", "format": "yaml", "key": ["display", "skin"], "value": "vgs" },
   "reload": null
 }

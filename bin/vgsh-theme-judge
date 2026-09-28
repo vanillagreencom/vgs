@@ -510,9 +510,7 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
             return null;
         }
         case "entry": {
-            const dirs = entryDirs(target, configHome);
-            if (dirs.length === 0) return "wiring-file-absent";
-            return entryOccupied(target, dirs, live) === null ? null : "entry-occupied";
+            return null;
         }
         case "none":
             return null;
@@ -544,7 +542,19 @@ function planTarget(dir, row, slots, disabled, configHome, live) {
     if (!curated.ok) return curated.entry;
     const rendered = render.renderTarget(logic, tokens, target, judged.value.templates, { values: row.values, slots, curated: curated.value });
     if (!rendered.ok) return failed(rendered.reason, render.refusalLine(name, rendered));
-    return { name, state: "pending", reason: null, target, files: rendered.files };
+    let entryPlan;
+    if (render.wiringForm(target.wiring) === "entry") {
+        const planned = reading(name, dir, () => {
+            const dirs = entryDirs(target, configHome);
+            if (dirs.length === 0) return "wiring-file-absent";
+            const plan = planEntries(target, dirs, live, rendered.files);
+            return entryOccupied(plan) === null ? plan : "entry-occupied";
+        }, failed);
+        if (!planned.ok) return planned.entry;
+        if (planned.value === "wiring-file-absent" || planned.value === "entry-occupied") return skipped(planned.value);
+        entryPlan = planned.value;
+    }
+    return { name, state: "pending", reason: null, target, files: rendered.files, entryPlan };
 }
 
 // Every shipped target under themes/targets/, planned by planTarget, in
@@ -780,84 +790,120 @@ function entryDirsFailure(key, e) {
     return { reason: "unreadable", failure: key + "=unreadable path=" + e.path + " error=" + e.code };
 }
 
-// What stands at FILE, where a link to TO belongs: `absent`, `managed`, a
-// symlink whose target is TO, or `occupied` by anything else. The link is
-// never followed, so a managed link whose file is gone is still managed. A
-// symlink is the proof: apply writes no other kind of entry, and its target
-// names the state directory's theme/, which nothing else points into.
-function linkState(file, to) {
-    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-    if (stat === undefined) return "absent";
-    return stat.isSymbolicLink() && fs.readlinkSync(file) === to ? "managed" : "occupied";
+// The entry items of TARGET with the bytes they are allowed to manage. A
+// copy may replace a file whose bytes equal the render the plan saw before
+// the swap, or the render this apply is landing.
+function planEntries(target, dirs, live, files) {
+    const bytes = new Map(files.map(file => [file.destination, file.bytes]));
+    const items = render.entryItems(target, live).map(item => {
+        const next = bytes.get(item.destination);
+        if (next === undefined) throw new Error("vgsh-theme-judge: planEntries: target " + target.name + " has no bytes for " + item.destination);
+        return Object.assign({}, item, { oldBytes: readIfPresent(item.to), newBytes: next });
+    });
+    return { dirs, items };
 }
 
-// The first path that stops entry TARGET from keeping its links in place,
-// or null: a directory of entryDirs that is no directory, or a link's path
-// something other than its managed link holds. A symlinked directory counts
+function currentEntries(target, dirs, live) {
+    const items = render.entryItems(target, live).map(item => {
+        const oldBytes = readIfPresent(item.to);
+        return Object.assign({}, item, { oldBytes, newBytes: oldBytes });
+    });
+    return { dirs, items };
+}
+
+// What stands at FILE for an entry ITEM: `absent`, `managed`, or
+// `occupied`. A link is managed only when it is a symlink whose target is
+// exactly ITEM.to. A copy is managed when it is that old link form, or a
+// regular file whose bytes equal either the old bytes the plan saw or the
+// new bytes this apply is landing.
+function entryState(file, item) {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat === undefined) return "absent";
+    switch (item.kind) {
+    case "link":
+        return stat.isSymbolicLink() && fs.readlinkSync(file) === item.to ? "managed" : "occupied";
+    case "copy":
+        if (stat.isSymbolicLink()) return fs.readlinkSync(file) === item.to ? "managed" : "occupied";
+        if (!stat.isFile()) return "occupied";
+        {
+            const bytes = fs.readFileSync(file);
+            if ((item.oldBytes !== undefined && bytes.equals(item.oldBytes)) || (item.newBytes !== undefined && bytes.equals(item.newBytes))) return "managed";
+            return "occupied";
+        }
+    default:
+        throw new Error("vgsh-theme-judge: entryState: entry kind " + item.kind + " is neither link nor copy");
+    }
+}
+
+function copyNeedsWrite(file, item) {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat === undefined || stat.isSymbolicLink()) return true;
+    if (!stat.isFile()) return false;
+    return !fs.readFileSync(file).equals(item.newBytes);
+}
+
+// The first path that stops an entry plan from keeping its entries in place,
+// or null: a directory of entryDirs that is no directory, or an entry's path
+// something other than its managed form holds. A symlinked directory counts
 // as the directory it names, so a dotfile manager's link serves. Throws the
 // fs error of a path that cannot be read.
-function entryOccupied(target, dirs, live) {
-    for (const dir of dirs) {
+function entryOccupied(plan) {
+    for (const dir of plan.dirs) {
         const stat = fs.statSync(dir, { throwIfNoEntry: false });
         if (stat === undefined) continue;
         if (!stat.isDirectory()) return dir;
-        const occupied = render.entryLinks(target, live).find(link => linkState(path.join(dir, link.name), link.to) === "occupied");
+        const occupied = plan.items.find(item => entryState(path.join(dir, item.name), item) === "occupied");
         if (occupied !== undefined) return path.join(dir, occupied.name);
     }
     return null;
 }
 
-// Keep entry TARGET's links in each of its directories, each created with
-// its parents when absent. A managed link is left as it is, so a later apply
-// changes nothing there, and nothing but the links is written. Answers null,
-// or the failure's { reason, failure } for target NAME: `entry-occupied`
-// when a path came to be taken after the plan judged it free, else what the
-// read or write met.
-function keepLinks(name, target, configHome, live) {
+// Keep entry TARGET's entries in each of its directories, each created with
+// its parents when absent. A managed link is left as it is. A managed copy is
+// replaced by rename only when its bytes differ or it is the old link form.
+// Answers null, or the failure's { reason, failure } for target NAME:
+// `entry-occupied` when a path came to be taken after the plan judged it
+// free, else what the read or write met.
+function keepEntries(name, target, configHome, live, plan) {
     const key = "target=" + name + " reason";
-    let dirs;
     try {
-        dirs = entryDirs(target, configHome);
-    } catch (e) {
-        return entryDirsFailure(key, e);
-    }
-    try {
-        for (const dir of dirs) {
+        if (plan === undefined) plan = currentEntries(target, entryDirs(target, configHome), live);
+        for (const dir of plan.dirs) {
             writing(dir, key, () => fs.mkdirSync(dir, { recursive: true }));
-            for (const link of render.entryLinks(target, live)) {
-                const file = path.join(dir, link.name);
-                let state;
-                writing(file, key, () => { state = linkState(file, link.to); });
+            for (const item of plan.items) {
+                const file = path.join(dir, item.name);
+                const state = entryState(file, item);
                 if (state === "occupied") return { reason: "entry-occupied", failure: key + "=entry-occupied path=" + file };
-                if (state === "absent") writing(file, key, () => fs.symlinkSync(link.to, file));
+                if (item.kind === "link" && state === "absent") writing(file, key, () => fs.symlinkSync(item.to, file));
+                else if (item.kind === "copy" && (state === "absent" || copyNeedsWrite(file, item))) replaceFile(file, item.newBytes, key, 0o644);
+                else if (item.kind !== "link" && item.kind !== "copy") throw new Error("vgsh-theme-judge: keepEntries: entry kind " + item.kind + " is neither link nor copy");
             }
         }
     } catch (e) {
-        if (!(e instanceof Refusal)) throw e;
-        return { reason: e.reason, failure: e.first };
+        if (e instanceof Refusal) return { reason: e.reason, failure: e.first };
+        if (typeof e.code !== "string") throw e;
+        return { reason: "unreadable", failure: key + "=unreadable path=" + (e.path || live) + " error=" + e.code };
     }
     return null;
 }
 
-// Remove entry TARGET's managed links from each of its directories, and an
-// `owned` one once it is empty. A path something else holds is not the
+// Remove entry TARGET's managed entries from each of its directories, and
+// an `owned` one once it is empty. A path something else holds is not the
 // target's and stays, and so does an owned directory holding anything else.
 // Answers null, or the failure's { reason, failure } for target NAME.
-function dropLinks(name, target, configHome, live) {
+function dropEntries(name, target, configHome, live) {
     const key = "target=" + name + " reason";
-    let dirs;
+    let plan;
     try {
-        dirs = entryDirs(target, configHome);
+        plan = currentEntries(target, entryDirs(target, configHome), live);
     } catch (e) {
         return entryDirsFailure(key, e);
     }
     try {
-        for (const dir of dirs) {
-            for (const link of render.entryLinks(target, live)) {
-                const file = path.join(dir, link.name);
-                writing(file, key, () => {
-                    if (linkState(file, link.to) === "managed") fs.unlinkSync(file);
-                });
+        for (const dir of plan.dirs) {
+            for (const item of plan.items) {
+                const file = path.join(dir, item.name);
+                if (entryState(file, item) === "managed") writing(file, key, () => fs.unlinkSync(file));
             }
             if (target.wiring.owned) writing(dir, key, () => {
                 const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
@@ -870,8 +916,9 @@ function dropLinks(name, target, configHome, live) {
             });
         }
     } catch (e) {
-        if (!(e instanceof Refusal)) throw e;
-        return { reason: e.reason, failure: e.first };
+        if (e instanceof Refusal) return { reason: e.reason, failure: e.first };
+        if (typeof e.code !== "string") throw e;
+        return { reason: "unreadable", failure: key + "=unreadable path=" + (e.path || live) + " error=" + e.code };
     }
     return null;
 }
@@ -896,7 +943,7 @@ function wire(entry, configHome, live) {
     let failure;
     switch (render.wiringForm(entry.target.wiring)) {
     case "include": failure = editWiring(entry.name, entry.target, configHome, live, render.wiredText); break;
-    case "entry": failure = keepLinks(entry.name, entry.target, configHome, live); break;
+    case "entry": failure = keepEntries(entry.name, entry.target, configHome, live, entry.entryPlan); break;
     case "none": failure = null; break;
     default: throw new Error("vgsh-theme-judge: wire: target " + entry.name + " has no known wiring form");
     }
@@ -912,7 +959,7 @@ function wire(entry, configHome, live) {
 function unwire(name, target, configHome, live) {
     switch (render.wiringForm(target.wiring)) {
     case "include": return editWiring(name, target, configHome, live, render.unwiredText);
-    case "entry": return dropLinks(name, target, configHome, live);
+    case "entry": return dropEntries(name, target, configHome, live);
     case "none": return null;
     default: throw new Error("vgsh-theme-judge: unwire: target " + name + " has no known wiring form");
     }
