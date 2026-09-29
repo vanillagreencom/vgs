@@ -139,6 +139,11 @@ Scope {
         return found;
     }
 
+    function shownScrollAreas(item) {
+        const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
+        return root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width);
+    }
+
     // The first visible, enabled item named `type` whose `text` is `text`
     // under an instance, or null.
     function textItem(hostKey, id, type, text) {
@@ -440,11 +445,6 @@ Scope {
             }
             return JSON.stringify(out);
         }
-        function shownScrollAreas(item) {
-            const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
-            return root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width);
-        }
-
         // Scrolls the one shown ScrollArea under an instance to `y`, held
         // inside its content, so scripts/sandbox-shots.sh captures each
         // page of a scrolling panel. Answers [contentY, contentHeight,
@@ -452,7 +452,7 @@ Scope {
         function scrollTo(hostKey: string, id: string, y: int): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            const areas = shownScrollAreas(item);
+            const areas = root.shownScrollAreas(item);
             if (areas.length !== 1) return "shown-scroll-areas=" + areas.length;
             const flick = areas[0];
             flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
@@ -728,7 +728,7 @@ Scope {
         function scrollAreas(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            return JSON.stringify(shownScrollAreas(item).map(area => ({
+            return JSON.stringify(root.shownScrollAreas(item).map(area => ({
                 contentY: area.contentY,
                 contentHeight: area.contentHeight,
                 height: area.height,
