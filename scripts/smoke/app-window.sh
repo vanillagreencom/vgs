@@ -5,32 +5,46 @@
 # `activewindow -j`, a pixel of its output and the toplevel helper's
 # keyboard log.
 
+# open_toplevel LOG APP_ID TITLE: the toplevel helper mapped as a window
+# of class APP_ID, its pid left in toplevel_pid; 1, with its log on
+# stderr, when it does not map within 5 s. Its log holds `mapped`, then
+# each keyboard event it receives. close_toplevel PID LABEL: that helper
+# stopped, LABEL passing when it exits 0 on SIGTERM.
+toplevel_pid=""
+open_toplevel() { # LOG APP_ID TITLE
+  spawn "$1" "${shell_env[@]}" "$sandbox/toplevel" "$2" "$3"
+  toplevel_pid="$spawn_pid"
+  for _ in $(seq 1 25); do
+    grep -qxF -- "mapped $2" "$1" && return 0
+    kill -0 -- "$toplevel_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  cat -- "$1" >&2
+  return 1
+}
+close_toplevel() { # PID LABEL
+  local status=0
+  kill -TERM -- "$1" 2>/dev/null || true
+  for _ in $(seq 1 25); do kill -0 -- "$1" 2>/dev/null || break; sleep 0.2; done
+  if kill -0 -- "$1" 2>/dev/null; then kill -KILL -- "$1" 2>/dev/null || true; fi
+  wait "$1" || status=$?
+  if [[ $status -eq 0 ]]; then ok "$2"; else fail "$2: exit=$status"; fi
+}
+
 # The toplevel helper beside a window, of a class no rule floats, so it
-# tiles under the floating window. Its log holds `mapped`, then each
-# keyboard event it receives.
+# tiles under the floating window.
 other_pid=""
 other_log=""
 open_other() { # LOG
   other_log="$1"
-  spawn "$other_log" "${shell_env[@]}" "$sandbox/toplevel" smoke.other "Other window"
-  other_pid="$spawn_pid"
-  for _ in $(seq 1 25); do
-    grep -qxF -- "mapped smoke.other" "$other_log" && return 0
-    kill -0 -- "$other_pid" 2>/dev/null || break
-    sleep 0.2
-  done
-  cat -- "$other_log" >&2
-  return 1
+  open_toplevel "$other_log" smoke.other "Other window" || return 1
+  other_pid="$toplevel_pid"
 }
-close_other() { # LABEL
-  local status=0
-  kill -TERM -- "$other_pid" 2>/dev/null || true
-  for _ in $(seq 1 25); do kill -0 -- "$other_pid" 2>/dev/null || break; sleep 0.2; done
-  if kill -0 -- "$other_pid" 2>/dev/null; then kill -KILL -- "$other_pid" 2>/dev/null || true; fi
-  wait "$other_pid" || status=$?
-  if [[ $status -eq 0 ]]; then ok "$1"; else fail "$1: exit=$status"; fi
-}
-other_address() { hypr -j clients | python3 -c 'import json,sys; cs=[c["address"] for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[1])]; print(cs[0] if len(cs) == 1 else "clients=%d" % len(cs))' "$other_pid"; }
+close_other() { close_toplevel "$other_pid" "$1"; } # LABEL
+# toplevel_address PID: the address of the one window PID maps, or
+# clients=<n>.
+toplevel_address() { hypr -j clients | python3 -c 'import json,sys; cs=[c["address"] for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[1])]; print(cs[0] if len(cs) == 1 else "clients=%d" % len(cs))' "$1"; }
+other_address() { toplevel_address "$other_pid"; }
 # How many lines of the helper's log match PATTERN, a grep -E pattern.
 other_events() { local status=0; grep -cE -- "$1" "$other_log" || status=$?; [[ $status -le 1 ]]; }
 

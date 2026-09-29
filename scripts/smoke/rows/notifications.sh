@@ -319,6 +319,130 @@ click_item vgs:layer vgs.notifications NotificationCard summary Clicked 30 - || 
 expect_poll "a click on the card runs its default action" 1 invoked default
 expect_poll "the clicked toast leaves" none key_of Clicked
 
+# Opening a notification delivers its sender's default action and raises
+# the sender's window, from a toast, from the default action's pill and
+# from the inbox row of a toast that expired, whose notification the
+# service still holds. The sender is a toplevel helper of class
+# smoke.sender and the notifications this row sends in its name; the
+# signals log above records what reaches it. Quickshell 0.3.1 sends no
+# ActivationToken, so the count of those stays 0. Another window takes the
+# focus before each click, so no raise reading passes on a focus that was
+# already there, and a Reply, which raises nothing, must leave it there.
+# The controls: the inbox rows of a notification its sender closed and of
+# one whose toast was dismissed deliver nothing, and still raise.
+sender_class=smoke.sender
+sender_focused="[\"$sender_class\", \"Sender window\"]"
+other_focused='["smoke.other", "Other window"]'
+# sender_note SUMMARY URGENCY: a notification in the sender's name with a
+# default action and a Reply, URGENCY a byte; prints its id.
+sender_note() { notify "$sender_class" 0 "$1" "" '["default", "Open", "reply", "Reply"]' "{\"desktop-entry\": <\"$sender_class\">, \"urgency\": <byte $2>}" 0; }
+# delivered ID ACTION: how many times ACTION reached notification ID.
+delivered() { grep -c "ActionInvoked (uint32 $1, '$2')" -- "$signals" || true; }
+closed_on_server() { grep -c "NotificationClosed (uint32 $1, " -- "$signals" || true; }
+activation_tokens() { grep -c "ActivationToken" -- "$signals" || true; }
+focus_other() {
+  expect "a focus dispatch gives the other window the focus" ok hypr dispatch "hl.dsp.focus({ window = \"address:$other_window\" })"
+  expect_poll "the other window has the focus before the click" "$other_focused" active_window
+}
+# click_card LABEL SUMMARY: the pointer onto the card SUMMARY, a check
+# that the other window kept the focus under it, then a click there.
+# click_pill LABEL SUMMARY PILL: the same on the card's pill PILL, once
+# the hover shows the sender's actions. Each waits a second first, since a
+# toast's entrance moves the card for less than that and the pointer must
+# land where the card rests.
+click_card() { # LABEL SUMMARY
+  local x y
+  sleep 1
+  read -r x y < <(card_left "$2") || { fail "$1: the card $2 is not drawn"; return; }
+  hover "$x" "$y" || fail "$1: the hover failed"
+  expect "$1: the pointer on the card leaves the focus where it was" "$other_focused" active_window
+  click "$x" "$y" || fail "$1: the click failed"
+}
+click_pill() { # LABEL SUMMARY PILL
+  local x y
+  sleep 1
+  read -r x y < <(card_centre "$2") || { fail "$1: the card $2 is not drawn"; return; }
+  hover "$x" "$y" || fail "$1: the hover failed"
+  expect_poll "$1: the hover reveals the sender's actions" '["Open", "Reply", "Dismiss"]' shown_pills "$2"
+  read -r x y < <(pill_centre "$3") || { fail "$1: the $3 pill is not drawn"; return; }
+  expect "$1: the pointer on the card leaves the focus where it was" "$other_focused" active_window
+  click "$x" "$y" || fail "$1: the click failed"
+}
+sender_pid=""
+if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" && sender_pid="$toplevel_pid" && open_other "$sandbox/toplevel-notifications.log"; then
+  other_window="$(other_address)"
+  # Low urgency: these two expire while the toasts below are clicked.
+  held_id="$(sender_note "Held for the inbox" 0)"
+  gone_id="$(sender_note "Closed by its sender" 0)"
+  focus_other
+  toast_id="$(sender_note "Opened from its toast" 1)"
+  expect_poll "the sender's toast shows" True has_row live "Opened from its toast"
+  click_card "the toast" "Opened from its toast"
+  expect_poll "a click on the toast delivers the default action once" 1 delivered "$toast_id" default
+  expect_poll "a click on the toast raises the sender's window" "$sender_focused" active_window
+  expect_poll "the opened toast leaves" none key_of "Opened from its toast"
+
+  focus_other
+  reply_id="$(sender_note "Answered with Reply" 1)"
+  expect_poll "the toast to answer shows" True has_row live "Answered with Reply"
+  click_pill "the Reply pill" "Answered with Reply" Reply
+  expect_poll "the Reply pill delivers the reply action" 1 delivered "$reply_id" reply
+  expect_poll "the answered toast leaves" none key_of "Answered with Reply"
+  # The toast's exit is longer than the dispatch queue takes to run a
+  # raise, so a raise sent with the reply would have landed by now.
+  expect "a Reply leaves the focus on the other window" "$other_focused" active_window
+  expect "a Reply delivers no default action" 0 delivered "$reply_id" default
+
+  focus_other
+  pill_id="$(sender_note "Opened from its pill" 1)"
+  expect_poll "the toast to open by its pill shows" True has_row live "Opened from its pill"
+  click_pill "the Open pill" "Opened from its pill" Open
+  expect_poll "the Open pill delivers the default action once" 1 delivered "$pill_id" default
+  expect_poll "the Open pill raises the sender's window" "$sender_focused" active_window
+  expect_poll "the toast opened by its pill leaves" none key_of "Opened from its pill"
+
+  dismissed_id="$(sender_note "Dismissed from its toast" 1)"
+  expect_poll "the toast to dismiss shows" True has_row live "Dismissed from its toast"
+  expect "dismissing the newest toast is allowed" ok notes dismiss-latest
+  expect_poll "a dismissal closes the notification on the server" 1 closed_on_server "$dismissed_id"
+
+  # The pointer off the stack, so no card that moved under it keeps its
+  # clock paused.
+  hover "$((mon_w - 5))" "$((mon_h - 5))" || fail "moving the pointer off the toasts failed"
+  wait_for "the toast held for the inbox expires" none 9 key_of "Held for the inbox"
+  wait_for "the toast its sender closes expires" none 9 key_of "Closed by its sender"
+  expect "an expiry closes nothing on the server" 0 closed_on_server "$held_id"
+  close_note "$gone_id"
+  expect_poll "the sender closed the other expired one" 1 closed_on_server "$gone_id"
+  expect "the inbox opens on the expired toasts" ok notes inbox
+  expect_poll "the expired toast is an inbox row" True has_row panel "Held for the inbox"
+
+  focus_other
+  click_card "the held inbox row" "Held for the inbox"
+  expect_poll "a click on the inbox row of an expired toast delivers its default action once" 1 delivered "$held_id" default
+  expect_poll "a click on that inbox row raises the sender's window" "$sender_focused" active_window
+  expect_poll "the opened inbox row leaves" none key_of "Held for the inbox"
+
+  focus_other
+  click_card "the closed inbox row" "Closed by its sender"
+  expect_poll "the inbox row of a notification its sender closed still raises the sender's window" "$sender_focused" active_window
+  expect "that row delivers no action" 0 delivered "$gone_id" default
+  expect_poll "the closed inbox row leaves" none key_of "Closed by its sender"
+
+  focus_other
+  click_card "the dismissed inbox row" "Dismissed from its toast"
+  expect_poll "the inbox row of a dismissed toast still raises the sender's window" "$sender_focused" active_window
+  expect "that row delivers no action" 0 delivered "$dismissed_id" default
+
+  expect "the server sent the sender no activation token" 0 activation_tokens
+  expect "the inbox closes after the open rows" ok notes close
+  expect_poll "the inbox closed after the open rows" '""' read_notes panelMode
+  close_other "the other window's helper exits 0 on SIGTERM"
+  close_toplevel "$sender_pid" "the sender window's helper exits 0 on SIGTERM"
+else
+  fail "the sender's window and another window map for the open rows"
+fi
+
 # Images: a sender's file is copied for the stored entry; a missing one is
 # skipped and the card draws no image.
 python3 -c 'import base64,sys; open(sys.argv[1], "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))' "$home/avatar.png"
@@ -991,6 +1115,10 @@ for i in $(seq 1 105); do notify smoke-bulk 0 "Bulk $i" "" '[]' '{}' 0 >/dev/nul
 expect_poll "the history keeps the newest hundred" 100 history_count
 expect "the newest is first" '"Bulk 105"' state_at history.0.summary
 expect "the oldest went" False in_history "Bulk 5"
+# The notifications held for the history are bounded by it: none outlives
+# its entry, so at most the kept hundred and the toasts on screen are held.
+held_within_history() { notes status | py_reply 'import json,sys; d=json.load(sys.stdin); print(d["held"] <= d["history"] + d["onScreen"] and d["held"] >= d["history"])'; }
+expect_poll "the held notifications are the kept hundred and the toasts on screen at most" True held_within_history
 expect "the history panel opens on the full history" ok notes history
 expect_poll "the full history panel shows forty rows" 40 panel_count
 expect "the panel closes over IPC" ok notes close
