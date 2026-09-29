@@ -13,13 +13,24 @@ Flickable {
     id: root
 
     property real rightInset: Theme.scrollArea.gutter
+    readonly property real measuredContentHeight: measureContentHeight()
     readonly property bool overflowing: contentHeight > height
     readonly property alias bar: scrollBar
 
     clip: true
     contentWidth: width - rightInset
-    contentHeight: contentItem.childrenRect.height
+    contentHeight: measuredContentHeight
     boundsBehavior: Flickable.StopAtBounds
+
+    function measureContentHeight() {
+        let bottom = 0;
+        for (const child of contentItem.children) {
+            if (!child.visible) continue;
+            const childHeight = child.height > 0 ? child.height : child.implicitHeight;
+            bottom = Math.max(bottom, child.y + childHeight);
+        }
+        return bottom;
+    }
 
     function checkInset() {
         if (Theme.scrollArea.gutter > rightInset)

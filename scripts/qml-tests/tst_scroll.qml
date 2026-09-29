@@ -16,11 +16,13 @@ Item {
     id: root
     width: 400
     height: 400
+    property real singleFixedHeight: Theme.size.control.lg
 
     ScrollArea { id: area; width: 100; height: 100; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: short; x: 120; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 40; color: "transparent" } } }
     ScrollArea { id: tall; x: 240; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 100000; color: "transparent" } } }
     ScrollArea { id: inset; y: 140; width: 120; height: 100; rightInset: Theme.inset.window; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
+    ScrollArea { id: singleFixed; x: 140; y: 140; width: 120; height: 100; Item { y: Theme.space.sm; width: parent.width; implicitHeight: root.singleFixedHeight } }
     Select { id: long; y: 300; model: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"] }
 
     TestCase {
@@ -31,6 +33,7 @@ Item {
             UnitTheme.reset();
             area.contentY = 0;
             area.bar.hovered = false;
+            root.singleFixedHeight = Theme.size.control.lg;
             long.choose(0);
         }
 
@@ -43,6 +46,15 @@ Item {
             compare(short.overflowing, false);
             compare(short.contentWidth, short.width - Theme.scrollArea.gutter, "the gutter stays free without an overflow, so the layout does not move when one starts");
             compare(short.bar.visible, false);
+        }
+
+        function test_a_single_direct_child_sets_the_content_height_without_childrenrect() {
+            compare(singleFixed.contentWidth, singleFixed.width - Theme.scrollArea.gutter);
+            compare(singleFixed.contentHeight, Theme.space.sm + Theme.size.control.lg);
+            root.singleFixedHeight = Theme.size.panel.sm;
+            compare(singleFixed.contentHeight, Theme.space.sm + Theme.size.panel.sm);
+            root.singleFixedHeight = Theme.size.control.md;
+            compare(singleFixed.contentHeight, Theme.space.sm + Theme.size.control.md);
         }
 
         function test_the_bar_can_sit_inside_a_container_inset() {
