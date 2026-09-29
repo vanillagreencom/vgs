@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
+mkdir -p -- "$root"
+printf 'mise %s\n' "$*" >>"$root/calls.log"
+cat <<'JSON'
+{"node":{"name":"node","current":"1","latest":"2"}}
+JSON

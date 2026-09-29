@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.updates",
+  "name": "Updates",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Checks system, VGS, plugin, theme and mise updates from one service and publishes their shared status.",
+  "license": "MIT",
+  "icon": "refresh-cw",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["ipc", "status", "tui"],
+  "requirements": [
+    { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" }
+  ],
+  "settings": {
+    "intervalHours": 6,
+    "hideWhenCurrent": false,
+    "aurCommand": "",
+    "snapshot": "auto",
+    "trustPluginUpdates": false,
+    "placement": "center"
+  },
+  "schema": {
+    "intervalHours": { "type": "number", "label": "Check interval", "description": "Hours between automatic update checks", "min": 1, "max": 48, "step": 1, "group": "Cadence" },
+    "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the later bar widget when no source has updates", "group": "Display" },
+    "aurCommand": { "type": "string", "label": "AUR command", "description": "Blank lets the update TUI choose paru -Sua or yay -Sua", "group": "Update TUI" },
+    "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
+    "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the later update TUI pass --yes to plugin and theme updates", "group": "Update TUI" },
+    "placement": { "type": "enum", "label": "Flyout placement", "description": "Default placement for the later updates panel", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
+  },
+  "status": {
+    "pending": { "type": "count", "label": "Updates waiting" },
+    "lastCheck": { "type": "time", "label": "Last checked" },
+    "checkState": { "type": "state", "label": "Check" },
+    "sources": { "type": "data", "label": "Sources" }
+  }
+}

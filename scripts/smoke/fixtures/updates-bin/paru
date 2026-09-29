@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
+mkdir -p -- "$root"
+printf 'paru %s\n' "$*" >>"$root/calls.log"
+cat <<'OUT'
+helper-git 1 -> 2
+OUT

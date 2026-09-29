@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
+mkdir -p -- "$root"
+printf 'git %s\n' "$*" >>"$root/calls.log"
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-pager) shift ;;
+    -c) shift 2 ;;
+    -C) work="$2"; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+case "${args[*]}" in
+  'rev-parse --show-toplevel') printf '%s\n' "${work:-$PWD}" ;;
+  "rev-parse --verify @{upstream}") printf '2222222222222222222222222222222222222222\n' ;;
+  'rev-parse --verify HEAD') printf '1111111111111111111111111111111111111111\n' ;;
+  fetch*) exit 0 ;;
+  'rev-list --count 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222') printf '1\n' ;;
+  rev-list*) printf '1\n' ;;
+  describe*) printf 'v0.1.0-1-g1111111\n' ;;
+  ls-remote*) printf '2222222222222222222222222222222222222222\trefs/heads/main\n' ;;
+  *) exit 0 ;;
+esac
