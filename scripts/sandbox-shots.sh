@@ -256,12 +256,17 @@ scene_settings() { # MODE
   expect_poll "the monitor has its width back" "$mon_w" first_width
 }
 
-# The bar's manager panel of a tree before the Settings plugin: opened from
-# its button, then with the pointer on its first row.
+# The bar's manager panel of a tree before the Settings plugin: opened by a
+# click on its button, then with the pointer on its first row. The click
+# is the popup's first pointer event on that bar: an anchored popup that
+# grabs focus maps on a fresh bar only after one, so a summon over IPC
+# alone leaves it unmapped.
 manager_listed() { ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 0)'; }
+manager_mapped() { [[ $(ipc smoke instanceGeometry panel vgs.bar) != absent ]] && echo mapped || echo absent; }
 scene_manager() { # MODE
   local first
-  expect "the manager panel opens" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+  click_centre "$(bar_key)" vgs.bar/right-manager || fail "the click on the manager button failed"
+  expect_poll "the manager panel maps under its button" mapped manager_mapped
   expect_poll "the manager panel lists its plugins" True manager_listed
   take "manager-$1"
   first="$(ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || first=""
