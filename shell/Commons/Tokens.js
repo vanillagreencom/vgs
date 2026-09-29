@@ -578,9 +578,12 @@ var TOKENS = {
 
     // A confirmation card: `gap` separates its title, message, content and
     // row of actions, `actionGap` the actions; `titleRole` and `bodyRole`
-    // name the roles of `text` its title and message draw in.
+    // name the roles of `text` its title and message draw in. `margin` is
+    // the gap between the surface a host centres the card in and the edges
+    // of the area other layers leave free.
     dialog: {
         width: length("{size.panel.md}"),
+        margin: length("{space.lg}"),
         padding: length("{space.lg}"),
         gap: length("{space.md}"),
         actionGap: length("{space.sm}"),

@@ -5,7 +5,7 @@ import qs.Core
 import qs.Commons
 import qs.Ui
 
-// The requirement notice's surface: one layer window, centred on the screen
+// The requirement notice's surface: one OverlaySurface on the screen
 // Notices chose, existing only while a notice shows, taking the keyboard on
 // demand. It draws the shown notice as a Dialog: each missing command with
 // its package and purpose, then Install and Not now, or Close alone when no
@@ -13,7 +13,9 @@ import qs.Ui
 // every other answer Notices.dismiss. While the shown notice's install runs
 // the window is gone, so the floating TUI it opened, centred on the same
 // monitor, shows whole; a notice the scan after the run keeps comes back as
-// a new window that takes the keyboard. The window sizes to the dialog.
+// a new window that takes the keyboard. The window fills the area other
+// layers leave free, less `dialog.margin`, whatever the dialog's size; the
+// dialog sits in its centre and alone takes pointer input.
 Scope {
     id: host
 
@@ -39,24 +41,22 @@ Scope {
     Loader {
         id: loader
         active: Notices.view !== null && Notices.screen !== null && !Notices.installing
-        sourceComponent: PanelWindow {
+        sourceComponent: OverlaySurface {
             id: win
 
             readonly property Item dialog: card
             readonly property var shown: Notices.view
 
             screen: Notices.screen
-            exclusionMode: ExclusionMode.Ignore
-            exclusiveZone: 0
-            implicitWidth: card.implicitWidth
-            implicitHeight: card.implicitHeight
-            color: "transparent"
+            placement: "center"
+            inset: Theme.dialog.margin
+            inputItems: [card]
             WlrLayershell.namespace: "vgs:notice"
-            WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
             Dialog {
                 id: card
+                anchors.centerIn: parent
                 width: implicitWidth
                 title: win.shown.name + " needs " + (win.shown.rows.length === 1 ? "one command" : win.shown.rows.length + " commands")
                 message: host.message(win.shown)

@@ -10,3 +10,4 @@ AppWindow 1.0 AppWindow.qml
 ToastHost 1.0 ToastHost.qml
 NoticeHost 1.0 NoticeHost.qml
 LayerHost 1.0 LayerHost.qml
+OverlaySurface 1.0 OverlaySurface.qml

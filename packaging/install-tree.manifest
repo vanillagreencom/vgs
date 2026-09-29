@@ -66,6 +66,7 @@ f share/vgs/shell/Hosts/BarHost.qml
 f share/vgs/shell/Hosts/LayerHost.qml
 f share/vgs/shell/Hosts/LockHost.qml
 f share/vgs/shell/Hosts/NoticeHost.qml
+f share/vgs/shell/Hosts/OverlaySurface.qml
 f share/vgs/shell/Hosts/PluginSlot.qml
 f share/vgs/shell/Hosts/ServiceHost.qml
 f share/vgs/shell/Hosts/SummonHost.qml

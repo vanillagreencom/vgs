@@ -118,11 +118,13 @@ const DEFAULTS = [
     ["titleButton.underline", 1],
     ["titleButton.underlineGap", 2],
     ["titleButton.hover", "#ff5a36ff"],
-    // The dialog: 360 px wide, mul(4, 3) = 12 padding, mul(4, 2) = 8
-    // between its blocks and mul(4, 1.5) = 6 between its actions; its card
-    // is the raised surface, mix(#000000, #d7d7d9, 0.075): 215 * 0.075 =
-    // 16.125, 217 * 0.075 = 16.275.
+    // The dialog: 360 px wide, mul(4, 3) = 12 padding and 12 from the
+    // free area's edges, mul(4, 2) = 8 between its blocks and mul(4, 1.5) =
+    // 6 between its actions; its card is the raised surface,
+    // mix(#000000, #d7d7d9, 0.075): 215 * 0.075 = 16.125, 217 * 0.075 =
+    // 16.275.
     ["dialog.width", 360],
+    ["dialog.margin", 12],
     ["dialog.padding", 12],
     ["dialog.gap", 8],
     ["dialog.actionGap", 6],
