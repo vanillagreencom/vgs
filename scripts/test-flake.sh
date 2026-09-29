@@ -11,12 +11,20 @@
 #   - `nix build` succeeds. The build runs scripts/check-install-tree.sh on the
 #     installed tree, so it ships the tree every other channel ships.
 #   - `nix run .# -- --version` prints `vgs <VERSION>`.
-#   - With only the wrapper's PATH, every command config/requirements.json
-#     names resolves, and so does `qs`. `hyprctl` does not: the session
-#     supplies Hyprland.
-# Controls, each built from a private copy of the source:
-#   - flake.nix with the requirements rows cut from the wrapped PATH must fail
-#     the PATH row.
+#   - For the file $out/bin/vgsh resolves to and for bin/vgsh-tui, the PATH
+#     row: the one `# vgs-nix-path` line, run in an empty environment,
+#     resolves every command config/requirements.json names and `qs`, but
+#     not `hyprctl`, since the session supplies Hyprland; a second run
+#     leaves PATH unchanged.
+#   - The same two files are their source with only that line added, right
+#     after the leading comment block the usage text is read from.
+# Controls:
+#   - flake.nix with the requirements rows cut from the runtime PATH must fail
+#     the PATH row on every requirement.
+#   - bin/vgsh-tui from the build with its PATH line removed must fail the
+#     PATH row.
+#   - flake.nix whose insertion loop reaches only bin/vgsh must fail the
+#     build with vgsh-tui's `nix-path=missing` line.
 #   - packaging/install-tree.manifest with a planted entry must fail the build
 #     with that entry's `install-tree=missing` line.
 #
@@ -74,20 +82,38 @@ ok() { printf '  ok    %s\n' "$*"; }
 fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 flags=(--no-update-lock-file --no-link --print-out-paths)
 
-# The wrapper's PATH lines, run with an empty base PATH, answer which of the
-# names resolve. Prints each name that does not.
-unresolved() { # WRAPPER NAME...
-  local wrapper="$1"; shift
-  local lines
-  lines="$(grep -v -e '^#!' -e '^exec ' "$wrapper")" || return 1
+marker='# vgs-nix-path'
+
+# The entry point's PATH line, run with an empty environment, answers which
+# of the names resolve. Prints each name that does not.
+unresolved() { # LINE NAME...
+  local line="$1"; shift
   env -i "$(command -v bash)" -c 'set -e; PATH=; eval "$1"; shift
-    for name in "$@"; do command -v -- "$name" >/dev/null || echo "$name"; done' _ "$lines" "$@"
+    for name in "$@"; do command -v -- "$name" >/dev/null || echo "$name"; done' _ "$line" "$@"
 }
-path_holds() { # WRAPPER: every command resolves and hyprctl does not
-  local missing
-  missing="$(unresolved "$1" qs $VGS_COMMANDS)" || return 1
+path_holds() { # ENTRY: one PATH line; every command resolves, hyprctl does not; a rerun keeps PATH
+  local line missing
+  if ! line="$(grep -F -- "$marker" "$1")" || [[ $line == *$'\n'* ]]; then
+    echo "flake: nix-path=missing path=$1"; return 1
+  fi
+  missing="$(unresolved "$line" qs $VGS_COMMANDS)" || return 1
   [[ -z $missing ]] || { echo "flake: unresolved=$(echo $missing | tr ' ' ,)"; return 1; }
-  [[ $(unresolved "$1" hyprctl) == hyprctl ]] || { echo 'flake: resolved=hyprctl'; return 1; }
+  [[ $(unresolved "$line" hyprctl) == hyprctl ]] || { echo 'flake: resolved=hyprctl'; return 1; }
+  env -i "$(command -v bash)" -c 'PATH=; eval "$1"; once=$PATH; eval "$1"; [[ $PATH == "$once" ]]' _ "$line" ||
+    { echo "flake: nix-path=grows path=$1"; return 1; }
+}
+# ENTRY is SOURCE with one line added: the PATH line, right after the
+# comment block that follows the interpreter line. The interpreter line
+# itself is fixup's to rewrite.
+placed() { # ENTRY SOURCE
+  local -a got want
+  local i=1
+  mapfile -t got <"$1" && mapfile -t want <"$2" || return 1
+  while ((i < ${#want[@]})) && [[ ${want[i]} == '#'* ]]; do i=$((i + 1)); done
+  [[ ${got[i]:-} == *"$marker" ]] || return 1
+  unset 'got[0]' "got[$i]" 'want[0]'
+  local IFS=$'\n'
+  [[ "${got[*]}" == "${want[*]}" ]]
 }
 
 if nix flake check --no-update-lock-file path:/src >/tmp/check.log 2>&1; then ok "nix flake check passes"
@@ -99,14 +125,27 @@ if out="$(nix build "${flags[@]}" path:/src 2>/tmp/build.log)"; then
     ok "nix run -- --version prints vgs $VGS_VERSION"
   else fail "nix run -- --version prints vgs $VGS_VERSION, got [$version]"
   fi
-  if path_holds "$out/bin/vgsh"; then ok "the wrapper's PATH resolves qs and every requirement, not hyprctl"
-  else fail "the wrapper's PATH resolves qs and every requirement, not hyprctl"
+  vgsh="$(readlink -f "$out/bin/vgsh")"
+  for spec in "$vgsh|/src/bin/vgsh" "$out/share/vgs/bin/vgsh-tui|/src/bin/vgsh-tui"; do
+    entry="${spec%%|*}"; source="${spec#*|}"
+    if path_holds "$entry"; then ok "${source#/src/}'s PATH line resolves qs and every requirement, not hyprctl, and adds itself once"
+    else fail "${source#/src/}'s PATH line resolves qs and every requirement, not hyprctl, and adds itself once"
+    fi
+    if placed "$entry" "$source"; then ok "${source#/src/} gains only its PATH line, after its comment block"
+    else fail "${source#/src/} gains only its PATH line, after its comment block"
+    fi
+  done
+  # Control: an entry point without its PATH line.
+  grep -vF -- "$marker" "$out/share/vgs/bin/vgsh-tui" >/tmp/vgsh-tui-bare
+  if [[ $(path_holds /tmp/vgsh-tui-bare) == 'flake: nix-path=missing path=/tmp/vgsh-tui-bare' ]]; then
+    ok "control: an entry point without its PATH line fails the PATH row"
+  else fail "control: an entry point without its PATH line fails the PATH row"
   fi
 else
   cat /tmp/build.log; fail "nix build succeeds and checks the install tree"
 fi
 
-# Control: the flake with no requirements rows on the wrapped PATH.
+# Control: the flake with no requirements rows on the runtime PATH.
 cp -r /src /tmp/no-requirements
 cut='(builtins.filter (row: !row.optional || row.packages ? nix) requirements)'
 if [[ $(grep -cF -- "$cut" /tmp/no-requirements/flake.nix) != 1 ]] || ! flake="$(</src/flake.nix)"; then
@@ -116,9 +155,27 @@ else
   if [[ $(</tmp/no-requirements/flake.nix) == "$flake" ]]; then fail "control: the requirements cut changed flake.nix"
   elif ! mutant="$(nix build "${flags[@]}" path:/tmp/no-requirements 2>/tmp/mutant.log)"; then
     cat /tmp/mutant.log; fail "control: the cut flake builds"
-  elif [[ $(path_holds "$mutant/bin/vgsh") == "flake: unresolved=${VGS_COMMANDS// /,}" ]]; then
+  elif [[ $(path_holds "$(readlink -f "$mutant/bin/vgsh")") == "flake: unresolved=${VGS_COMMANDS// /,}" ]]; then
     ok "control: dropping the requirements fails the PATH row"
   else fail "control: dropping the requirements fails the PATH row on every requirement"
+  fi
+fi
+
+# Control: the build's guard, with the insertion loop reaching only vgsh.
+cp -r /src /tmp/vgsh-only
+loop='for entry in $out/share/vgs/bin/*; do'
+narrow='for entry in $out/share/vgs/bin/vgsh; do'
+if [[ $(grep -cF -- "$loop" /tmp/vgsh-only/flake.nix) != 1 ]] || ! flake="$(</src/flake.nix)"; then
+  fail "control: the insertion loop appears once in flake.nix"
+else
+  printf '%s\n' "${flake/"$loop"/"$narrow"}" >/tmp/vgsh-only/flake.nix
+  if [[ $(</tmp/vgsh-only/flake.nix) == "$flake" ]]; then fail "control: the loop cut changed flake.nix"
+  elif nix build "${flags[@]}" path:/tmp/vgsh-only >/dev/null 2>/tmp/vgsh-only.log; then
+    fail "control: an entry point left without its PATH line fails the build"
+  elif grep -qE 'flake: refused: nix-path=missing path=/nix/store/[^/]+/share/vgs/bin/vgsh-tui$' /tmp/vgsh-only.log; then
+    ok "control: an entry point left without its PATH line fails the build"
+  else
+    cat /tmp/vgsh-only.log; fail "control: an entry point left without its PATH line fails the build with its nix-path line"
   fi
 fi
 
