@@ -2,10 +2,11 @@
 
 // The package managers VGS knows, one row each, and the pure decisions made
 // over them: which managers a system has, the steps an install, a removal
-// or an upgrade takes, and what a manager's update query printed. No QML
-// objects and no I/O, so bin/vgsh-pkg runs this file under node through
-// bin/lib/qml-library.js, the one source D034 names, and PluginLogic.js
-// imports it to judge a manifest's `requirements` (D035).
+// or an upgrade takes, what a manager's update query printed, and the
+// queries naming the package that owns a file and its installed version.
+// No QML objects and no I/O, so bin/vgsh-pkg runs this file under node
+// through bin/lib/qml-library.js, the one source D034 names, and
+// PluginLogic.js imports it to judge a manifest's `requirements` (D035).
 //
 // A row:
 //   id        the manager's name in every VGS file and command
@@ -30,10 +31,19 @@
 //   install, remove, upgrade
 //             the steps, each an argv template run in order; null when VGS
 //             plans none for the manager
-//   owner     the argv template naming the package that owns a file, or null
-// In a template "{bin}" is the row's binary, "{names}" the package names and
-// "{path}" an absolute file path. A pacman-family sync that refreshes the
-// databases always upgrades too: `-Syu`, never `-Sy` alone.
+//   owner     the query naming the package that owns a file, or null:
+//             { argv, read }, argv a template taking "{path}" and read the
+//             pattern whose first group is the package's name in the first
+//             line the query prints
+//   installed the query naming a package's installed version, or null when
+//             VGS asks none of the manager: { argv, read }, argv a template
+//             taking "{name}" and read the pattern whose first group is the
+//             upstream version, with no epoch and no packaging revision, in
+//             the first line the query prints
+// In a template "{bin}" is the row's binary, "{names}" the package names,
+// "{name}" one package name and "{path}" an absolute file path. A
+// pacman-family sync that refreshes the databases always upgrades too:
+// `-Syu`, never `-Sy` alone.
 var MANAGERS = [
     {
         id: "pacman", role: "primary", family: ["arch"], requires: null, binaries: ["pacman"], elevate: true,
@@ -41,7 +51,8 @@ var MANAGERS = [
         install: [["{bin}", "-S", "--needed", "--", "{names}"]],
         remove: [["{bin}", "-Rns", "--", "{names}"]],
         upgrade: [["{bin}", "-Syu"]],
-        owner: ["{bin}", "-Qoq", "{path}"]
+        owner: { argv: ["{bin}", "-Qoq", "{path}"], read: /^(\S+)$/ },
+        installed: { argv: ["{bin}", "-Q", "--", "{name}"], read: /^\S+ (?:[0-9]+:)?(\S+)-[^-\s]+$/ }
     },
     {
         id: "aur", role: "overlay", family: [], requires: "pacman", binaries: ["paru", "yay"], elevate: false,
@@ -49,7 +60,8 @@ var MANAGERS = [
         install: [["{bin}", "-S", "--needed", "--", "{names}"]],
         remove: [["{bin}", "-Rns", "--", "{names}"]],
         upgrade: [["{bin}", "-Sua"]],
-        owner: null
+        owner: null,
+        installed: null
     },
     // apt lists what the package lists held at the last `apt update`, which
     // needs root, so the check never refreshes them.
@@ -59,7 +71,8 @@ var MANAGERS = [
         install: [["{bin}", "install", "{names}"]],
         remove: [["{bin}", "remove", "{names}"]],
         upgrade: [["{bin}", "update"], ["{bin}", "full-upgrade"]],
-        owner: ["dpkg", "-S", "{path}"]
+        owner: { argv: ["dpkg", "-S", "{path}"], read: /^([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?: / },
+        installed: { argv: ["dpkg-query", "-W", "--showformat=${Version}\n", "--", "{name}"], read: /^(?:[0-9]+:)?(\S+?)(?:-[^-\s]+)?$/ }
     },
     {
         id: "dnf", role: "primary", family: ["fedora"], requires: null, binaries: ["dnf5", "dnf"], elevate: true,
@@ -70,7 +83,8 @@ var MANAGERS = [
         install: [["{bin}", "install", "{names}"]],
         remove: [["{bin}", "remove", "{names}"]],
         upgrade: [["{bin}", "upgrade"]],
-        owner: ["rpm", "-qf", "{path}"]
+        owner: { argv: ["rpm", "-qf", "--queryformat", "%{NAME}\n", "{path}"], read: /^(\S+)$/ },
+        installed: { argv: ["rpm", "-q", "--queryformat", "%{VERSION}\n", "--", "{name}"], read: /^(\S+)$/ }
     },
     {
         id: "xbps", role: "primary", family: ["void"], requires: null, binaries: ["xbps-install"], elevate: true,
@@ -78,7 +92,8 @@ var MANAGERS = [
         install: [["{bin}", "-S", "{names}"]],
         remove: [["xbps-remove", "-R", "{names}"]],
         upgrade: [["{bin}", "-Su"]],
-        owner: ["xbps-query", "-o", "{path}"]
+        owner: { argv: ["xbps-query", "-o", "{path}"], read: /^(\S+)-[^-\s]+_[0-9]+: / },
+        installed: null
     },
     // emerge resolves the whole dependency graph to answer, so its check
     // runs only when asked for by name.
@@ -88,13 +103,14 @@ var MANAGERS = [
         install: [["{bin}", "--ask", "--noreplace", "{names}"]],
         remove: [["{bin}", "--ask", "--depclean", "{names}"]],
         upgrade: [["{bin}", "--sync"], ["{bin}", "--ask", "--update", "--deep", "--newuse", "@world"]],
-        owner: ["qfile", "{path}"]
+        owner: { argv: ["qfile", "{path}"], read: /^(\S+) \(/ },
+        installed: null
     },
     // A NixOS system changes through its own configuration, so VGS plans no
     // step and has no read-only update query for it.
     {
         id: "nix", role: "primary", family: ["nixos"], requires: null, binaries: ["nix"], elevate: false,
-        check: null, install: null, remove: null, upgrade: null, owner: null
+        check: null, install: null, remove: null, upgrade: null, owner: null, installed: null
     },
     {
         id: "flatpak", role: "overlay", family: [], requires: null, binaries: ["flatpak"], elevate: false,
@@ -102,7 +118,8 @@ var MANAGERS = [
         install: [["{bin}", "install", "{names}"]],
         remove: [["{bin}", "uninstall", "{names}"]],
         upgrade: [["{bin}", "update"]],
-        owner: null
+        owner: null,
+        installed: null
     },
     // An upgrade is the user asking for current versions now, so it waives
     // mise's release-age cooldown, as omarchy-update-mise does; the check
@@ -113,7 +130,8 @@ var MANAGERS = [
         install: [["{bin}", "use", "--global", "{names}"]],
         remove: [["{bin}", "unuse", "--global", "{names}"]],
         upgrade: [["env", "MISE_MINIMUM_RELEASE_AGE=0", "{bin}", "upgrade"]],
-        owner: null
+        owner: null,
+        installed: null
     }
 ];
 
@@ -484,4 +502,38 @@ function checkOutcome(check, status, stdout) {
     var parsed = PARSERS[check.parser](stdout);
     if (!parsed.ok) return { error: parsed.error };
     return { packages: parsed.packages };
+}
+
+var QUERIES = ["owner", "installed"];
+
+// The argv of manager ID's QUERY, one of QUERIES, over VALUE: an absolute
+// file path for owner, one package name for installed. `{ ok: true, argv }`
+// or `{ ok: false, error }`, the error the keyed first line of a refusal.
+// "{bin}" is the binary ON_PATH resolves.
+function queryArgv(id, query, value, onPath) {
+    var row = managerRow(id);
+    if (row === null) return { ok: false, error: "manager=" + id + " reason=unknown" };
+    var spec = row[query];
+    if (spec === null) return { ok: false, error: "manager=" + id + " query=" + query + " reason=unsupported" };
+    var placeholder = query === "owner" ? "{path}" : "{name}";
+    if (query === "owner" && (typeof value !== "string" || value.charAt(0) !== "/"))
+        return { ok: false, error: "path=" + JSON.stringify(value) + " reason=relative" };
+    if (query === "installed" && !validName(value)) return { ok: false, error: "name=" + JSON.stringify(value) + " reason=grammar" };
+    var needsBinary = spec.argv.indexOf("{bin}") >= 0;
+    var binary = needsBinary ? binaryOf(row, onPath) : null;
+    if (needsBinary && binary === null)
+        return { ok: false, error: "manager=" + id + " reason=absent binaries=" + row.binaries.join(",") };
+    var argv = spec.argv.map(function (token) {
+        if (token === "{bin}") return binary;
+        if (token === placeholder) return value;
+        return token;
+    });
+    return { ok: true, argv: argv };
+}
+
+// What manager ID's QUERY printed, read: the first group of its pattern in
+// the first line of STDOUT, or null when that line does not match.
+function queryAnswer(id, query, stdout) {
+    var m = managerRow(id)[query].read.exec(stdout.split("\n")[0]);
+    return m === null ? null : m[1];
 }

@@ -118,6 +118,7 @@ rows=(
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
   "cli|plugin list controls|scripts/test-vgsh-plugin-list.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js"
+  "cli|self status and update controls|scripts/test-vgsh-self.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/shell.json"
   "cli|outdated controls|scripts/test-vgsh-outdated.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js config/shell.json shell/plugins/*"
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js config/shell.json"
   "cli|theme target controls|scripts/test-vgsh-targets.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js config/shell.json"

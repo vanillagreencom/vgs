@@ -47,6 +47,8 @@
 #                                  count each manager's pending updates without root
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
+#   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind
+#   vgsh self update               update a checkout or a curl install, then restart a running shell
 #   vgsh tui present [--title <text>] [--size default|wide|tall] -- <argv...>
 #                                  run one command in a floating terminal under the VGS presentation
 #
@@ -195,6 +197,31 @@
 # git=rev-list path=<tree> for a failed git call, a checkout with no commit
 # included. docs/architecture/distribution.md § Version.
 #
+# `self status` names this tree's install method, judged by
+# bin/lib/self.js in this order: `checkout` (the top level of its own git
+# checkout), `nix` (in the Nix store), `curl` (the directory that
+# ${XDG_DATA_HOME:-~/.local/share}/vgs/current resolves to) and `package`
+# (the primary package manager owns VERSION as the package vgs or vgs-git).
+# A checkout fetches its upstream as `plugin outdated` does and compares
+# describe forms; a vgs-git package compares the commit its version names
+# with main's, read by git ls-remote under the same rules; every other
+# method compares VERSION, or the vgs package's version, with the newest
+# release's, read from the GitHub API within 10 s. It prints `version=...
+# method=... [package=...] current=... latest=... behind=true|false`, or
+# with --json one line `{ version, method, package, current, latest,
+# behind, error }`. A step that fails is the report's error, its keyed
+# refusal line, with latest and behind null and exit 0. `self update`
+# fast-forwards a checkout with no diff and no question, refusing a
+# modified one as `plugin update` does; replaces a curl install by the
+# newest release under ${XDG_DATA_HOME:-~/.local/share}/vgs/.self.lock,
+# refused self=busy with exit 75 while held; and refuses a package with
+# method=package package=<name> manager=<id> and a Nix install with
+# method=nix, naming the step that updates it. After an update it prints
+# `ok updated=vgs from=<old> to=<new>` and restarts a running shell from
+# the updated tree, whose restart status becomes the command's, or prints
+# shell=not-running; a current tree prints `ok up-to-date=vgs`.
+# docs/architecture/distribution.md § Install methods.
+#
 # `pkg` reads the one package-manager table, shell/Core/PackageManagers.js,
 # through bin/vgsh-pkg, which states its output and refusals. It needs no
 # running shell, and no `pkg` command elevates or changes a package:
@@ -209,7 +236,8 @@
 # apply, follow or reload is partial (a target failed or its reload stays pending;
 # each prints `vgsh: refused: target=<name> reason=<key>`), 4 when restart
 # refuses because the session is locked, 75 when another shell holds the
-# lock or another theme command holds the theme lock, 69 when the shell is
+# lock, another theme command holds the theme lock or another self update
+# holds its lock, 69 when the shell is
 # not running, 78 when `run` or `restart` finds a tool below the runtime
 # floor. The usage text is this header; `vgsh --help` prints it and exits 0.
 set -euo pipefail
@@ -522,13 +550,14 @@ checkout_commits() { # DIR
   ff_old="$(git_or_refuse "git=rev-parse path=$1" -C "$1" rev-parse --verify HEAD)" || exit 1
 }
 
-# Fetch checkout DIR's upstream and, when it is new, print the incoming diff,
-# confirm it and fast-forward to it. Sets ff_old and ff_new, the commits
-# before and after, equal when DIR was already up to date. LABEL names DIR
-# in the refusals: a directory that is not its own checkout, a modified
-# checkout, a failed fetch, no upstream, a source that rewrote its history,
-# and an update nobody confirmed.
-fast_forward() { # DIR LABEL
+# Fetch checkout DIR's upstream and, when it is new, fast-forward to it;
+# with REVIEW `review`, print the incoming diff and confirm it first, and
+# with `trusted` do neither. Sets ff_old and ff_new, the commits before and
+# after, equal when DIR was already up to date. LABEL names DIR in the
+# refusals: a directory that is not its own checkout, a modified checkout,
+# a failed fetch, no upstream, a source that rewrote its history, and an
+# update nobody confirmed.
+fast_forward() { # DIR LABEL REVIEW
   local dir="$1" label="$2" dirty err rc=0
   own_checkout "$dir"
   dirty="$(git_or_refuse "git=status path=$dir" -C "$dir" status --porcelain --untracked-files=all)" || exit 1
@@ -542,15 +571,21 @@ fast_forward() { # DIR LABEL
     1) refuse 1 "not-fast-forward=$label" "the source rewrote its history; remove and add it again" ;;
     *) refuse 1 "git=merge-base exit=$rc path=$dir" "$err" ;;
   esac
-  git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$ff_old" "$ff_new"
-  confirm_update "$label"
+  case "$3" in
+    review)
+      git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$ff_old" "$ff_new"
+      confirm_update "$label"
+      ;;
+    trusted) ;;
+    *) refuse 1 "fast-forward=$3 reason=unknown-review" ;;
+  esac
   git_or_refuse "git=merge path=$dir" -C "$dir" merge --quiet --ff-only "$ff_new"
 }
 
 plugin_update() { # ID
   local id="$1" dir verdict new_id
   dir="$(installed_dir "$id")" || exit $?
-  fast_forward "$dir" "$id"
+  fast_forward "$dir" "$id" review
   if [[ $ff_old == "$ff_new" ]]; then
     echo "ok up-to-date=$id"
     return 0
@@ -591,23 +626,32 @@ outdated_fetch_env=(
   GCM_INTERACTIVE=false # Git Credential Manager fails where it would prompt
 )
 
-# Print checkout DIR's HEAD commit, its upstream commit and the count of
-# upstream commits HEAD lacks, space-separated, after fetching the upstream
-# within the timeout. The fetch runs under outdated_fetch_env in a session of
-# its own, so ssh has no terminal to read a passphrase or a host key answer
-# from. The fetch writes the remote-tracking refs and their objects, and no
-# FETCH_HEAD, maintenance or submodule. Refuses as fast_forward does for the
-# same cause, and a fetch the timeout ended as fetch=LABEL timeout=<seconds>s.
-outdated_probe() { # DIR LABEL
-  local dir="$1" label="$2" err behind rc=0
-  own_checkout "$dir"
-  err="$(env "${outdated_fetch_env[@]}" setsid --wait timeout "$outdated_fetch_timeout" git "${git_flags[@]}" -C "$dir" \
-    fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance 2>&1)" || rc=$?
+# One unattended git call that talks to a remote: under outdated_fetch_env,
+# in a session of its own, so ssh has no terminal to read a passphrase or a
+# host key answer from, and ended at the outdated timeout. Stdout passes
+# through. Refuses with KEY, and a call the timeout ended as KEY
+# timeout=<seconds>s, git's own words following the line.
+unattended_git() { # KEY GIT_ARGS...
+  local key="$1" err rc=0
+  shift
+  { err="$(env "${outdated_fetch_env[@]}" setsid --wait timeout "$outdated_fetch_timeout" git "${git_flags[@]}" "$@" 2>&1 1>&3 3>&-)"; } 3>&1 || rc=$?
   case "$rc" in
     0) [[ -z $err ]] || printf '%s\n' "$err" >&2 ;;
-    124) refuse 1 "fetch=$label timeout=${outdated_fetch_timeout}s" ${err:+"$err"} ;;
-    *) refuse 1 "fetch=$label" ${err:+"$err"} ;;
+    124) refuse 1 "$key timeout=${outdated_fetch_timeout}s" ${err:+"$err"} ;;
+    *) refuse 1 "$key" ${err:+"$err"} ;;
   esac
+}
+
+# Print checkout DIR's HEAD commit, its upstream commit and the count of
+# upstream commits HEAD lacks, space-separated, after fetching the upstream
+# through unattended_git. The fetch writes the remote-tracking refs and
+# their objects, and no FETCH_HEAD, maintenance or submodule. Refuses as
+# fast_forward does for the same cause, and a fetch the timeout ended as
+# fetch=LABEL timeout=<seconds>s.
+outdated_probe() { # DIR LABEL
+  local dir="$1" label="$2" behind
+  own_checkout "$dir"
+  unattended_git "fetch=$label" -C "$dir" fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance
   checkout_commits "$dir"
   behind="$(git_or_refuse "git=rev-list path=$dir" -C "$dir" rev-list --count "$ff_old..$ff_new")" || exit 1
   printf '%s %s %s\n' "$ff_old" "$ff_new" "$behind"
@@ -625,35 +669,49 @@ outdated_row() { # PROBE ID
 # three between empty and holds its keyed refusal line in error.
 outdated_fields=()
 
-# Append the row of each ID to outdated_fields. Each row runs without
-# descriptor 9, so nothing it starts holds the theme lock. Every line a row
-# prints on stderr besides its refusal passes through to stderr.
+# The last line and the refusal of the latest step_run.
+step_out="" step_error=""
+
+# Run CMD in a command substitution, stdout and stderr together, without
+# descriptor 9, so nothing it starts holds the theme lock. On success
+# step_out holds its last line and every earlier line passes to stderr. On
+# failure step_error holds its keyed refusal line, the text after
+# `vgsh: refused: `, else `step=failed exit=<status>`, every other line
+# passes to stderr, and the status is 1: git's warnings from an earlier
+# step print before the refusal, and its cause after it.
+step_run() { # CMD...
+  local out rc=0 line rest=""
+  out="$("$@" 2>&1 9>&-)" || rc=$?
+  if [[ $rc == 0 ]]; then
+    step_out="${out##*$'\n'}"
+    if [[ $out == *$'\n'* ]]; then printf '%s\n' "${out%$'\n'*}" >&2; fi
+    return 0
+  fi
+  step_error=""
+  while IFS= read -r line; do
+    if [[ -z $step_error && $line == "vgsh: refused: "?* ]]; then
+      step_error="${line#vgsh: refused: }"
+    else
+      rest+="$line"$'\n'
+    fi
+  done <<<"$out"
+  [[ -n $step_error ]] || step_error="step=failed exit=$rc"
+  printf '%s' "$rest" >&2
+  return 1
+}
+
+# Append the row of each ID to outdated_fields, each read through step_run.
 outdated_rows() { # PROBE ID...
-  local probe="$1" id out rc line key rest
+  local probe="$1" id
   shift
   for id in "$@"; do
-    rc=0
-    out="$(outdated_row "$probe" "$id" 2>&1 9>&-)" || rc=$?
-    if [[ $rc == 0 ]]; then
-      [[ ${out##*$'\n'} =~ ^([0-9a-f]+)\ ([0-9a-f]+)\ ([0-9]+)$ ]] ||
-        refuse 1 "outdated=$id reason=probe-output" "$out"
+    if step_run outdated_row "$probe" "$id"; then
+      [[ $step_out =~ ^([0-9a-f]+)\ ([0-9a-f]+)\ ([0-9]+)$ ]] ||
+        refuse 1 "outdated=$id reason=probe-output" "$step_out"
       outdated_fields+=("$id" "${BASH_REMATCH[3]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "")
-      if [[ $out == *$'\n'* ]]; then printf '%s\n' "${out%$'\n'*}" >&2; fi
-      continue
+    else
+      outdated_fields+=("$id" "" "" "" "$step_error")
     fi
-    # The refusal is the one keyed line: git's warnings from an earlier
-    # step print before it, and its cause after it.
-    key="" rest=""
-    while IFS= read -r line; do
-      if [[ -z $key && $line == "vgsh: refused: "?* ]]; then
-        key="${line#vgsh: refused: }"
-      else
-        rest+="$line"$'\n'
-      fi
-    done <<<"$out"
-    [[ -n $key ]] || key="probe=failed exit=$rc"
-    outdated_fields+=("$id" "" "" "" "$key")
-    printf '%s' "$rest" >&2
   done
 }
 
@@ -808,7 +866,7 @@ theme_update() { # NAME
       trap - EXIT
       ;;
     git)
-      fast_forward "$dir" "$name"
+      fast_forward "$dir" "$name" review
       if [[ $ff_old == "$ff_new" ]]; then
         echo "ok up-to-date=$name"
         return 0
@@ -871,36 +929,56 @@ theme_outdated() { # FORMAT
 # The release version: VERSION's one line, and a release tag after its v.
 version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 
-# Prints the version in FORMAT, text or json, as the header states.
-version_report() { # FORMAT
-  local file="$root/VERSION" content version top out tag count hash describe=""
+# Prints VERSION's one line, or refuses.
+version_line() {
+  local file="$root/VERSION" content version
   [[ -f $file && -r $file ]] || refuse 1 "version=missing path=$file"
   content="$({ cat -- "$file" 2>/dev/null && printf .; })" || refuse 1 "version=missing path=$file"
   content="${content%.}"
   version="${content%$'\n'}"
   [[ $content == "$version"$'\n' && $version =~ $version_re ]] || refuse 1 "version=malformed path=$file"
-  # A caller's GIT_DIR or its kin would point the calls below at another
-  # repository. The process ends after this report, so the unset reaches
-  # nothing else.
+  printf '%s\n' "$version"
+}
+
+# True when this tree is the top level of its own git checkout. No git, no
+# repository, or a repository around an exported tree, whose commits are
+# not this tree's, is no checkout. A caller's GIT_DIR or its kin would point
+# git at another repository, so they are unset first; every command that
+# asks ends after its report, so the unset reaches nothing else.
+tree_is_checkout() {
+  local top
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
-  # No git, no repository, or a repository around an exported tree, whose
-  # commits are not this tree's: no describe form.
-  if command -v git >/dev/null && top="$(git_plain -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [[ $top == "$root" ]]; then
-    # The globs keep tags of v, digits and dots: v1-beta and nightly never count.
-    out="$(git_or_refuse "git=describe path=$root" -C "$root" describe --long --tags --always --match 'v[0-9]*' --exclude 'v*[!0-9.]*' HEAD)" || exit 1
-    if [[ $out =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
-      tag="${BASH_REMATCH[1]}" count="${BASH_REMATCH[2]}" hash="${BASH_REMATCH[3]}"
-      [[ ${tag#v} =~ $version_re ]] || refuse 1 "tag=$tag reason=not-a-version"
-      describe="${tag#v}.r$count.g$hash"
-    elif [[ $out =~ ^[0-9a-f]+$ ]]; then
-      # --always printed the abbreviated commit alone: no release tag is
-      # reachable, so the distance is from the root.
-      count="$(git_or_refuse "git=rev-list path=$root" -C "$root" rev-list --count HEAD)" || exit 1
-      [[ $count =~ ^[0-9]+$ ]] || refuse 1 "git=rev-list path=$root" "count=$count"
-      describe="$version.r$count.g$out"
-    else
-      refuse 1 "git=describe path=$root" "describe printed: $out"
-    fi
+  command -v git >/dev/null && top="$(git_plain -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [[ $top == "$root" ]]
+}
+
+# Prints commit REV of this checkout in the describe form the header
+# states, X.Y.Z.r<N>.g<hash>, VERSION_TEXT standing in for X.Y.Z when no
+# release tag is reachable from REV.
+describe_of() { # VERSION_TEXT REV
+  local out tag count hash
+  # The globs keep tags of v, digits and dots: v1-beta and nightly never count.
+  out="$(git_or_refuse "git=describe path=$root" -C "$root" describe --long --tags --always --match 'v[0-9]*' --exclude 'v*[!0-9.]*' "$2")" || exit 1
+  if [[ $out =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+    tag="${BASH_REMATCH[1]}" count="${BASH_REMATCH[2]}" hash="${BASH_REMATCH[3]}"
+    [[ ${tag#v} =~ $version_re ]] || refuse 1 "tag=$tag reason=not-a-version"
+    printf '%s.r%s.g%s\n' "${tag#v}" "$count" "$hash"
+  elif [[ $out =~ ^[0-9a-f]+$ ]]; then
+    # --always printed the abbreviated commit alone: no release tag is
+    # reachable, so the distance is from the root.
+    count="$(git_or_refuse "git=rev-list path=$root" -C "$root" rev-list --count "$2")" || exit 1
+    [[ $count =~ ^[0-9]+$ ]] || refuse 1 "git=rev-list path=$root" "count=$count"
+    printf '%s.r%s.g%s\n' "$1" "$count" "$out"
+  else
+    refuse 1 "git=describe path=$root" "describe printed: $out"
+  fi
+}
+
+# Prints the version in FORMAT, text or json, as the header states.
+version_report() { # FORMAT
+  local version describe=""
+  version="$(version_line)" || exit 1
+  if tree_is_checkout; then
+    describe="$(describe_of "$version" HEAD)" || exit 1
   fi
   if [[ $1 == json ]]; then
     # Both values matched the grammars above, digits, dots, r, g and hex
@@ -913,6 +991,114 @@ version_report() { # FORMAT
   else
     printf 'vgs %s\n' "${describe:-$version}"
   fi
+}
+
+# The repository VGS releases come from: `self` reads its newest release
+# and, for a vgs-git package, the commit its main branch points at.
+self_repository=vanillagreencom/vgs
+self_judge="$root/bin/lib/self.js"
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+self_lock="$data_home/vgs/.self.lock"
+
+# Prints the upstream's describe form after a fetch through outdated_probe,
+# then the count of upstream commits this checkout lacks.
+self_checkout_probe() { # VERSION_TEXT
+  local probe upstream count latest
+  probe="$(outdated_probe "$root" vgs)" || exit 1
+  read -r _ upstream count <<<"$probe"
+  latest="$(describe_of "$1" "$upstream")" || exit 1
+  printf '%s %s\n' "$latest" "$count"
+}
+
+# Prints the commit the release repository's main branch points at, read
+# through unattended_git.
+self_main_commit() {
+  local url="https://github.com/$self_repository.git" out
+  out="$(unattended_git "remote=main url=$url" ls-remote "$url" refs/heads/main)" || exit 1
+  [[ $out =~ ^([0-9a-f]{40}|[0-9a-f]{64})[[:space:]]refs/heads/main$ ]] ||
+    refuse 1 "remote=unreadable url=$url" "ls-remote printed: $out"
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# Prints the install method's status in FORMAT, as the header states: the
+# method self.js judges, the facts git reads for a checkout or a vgs-git
+# package, else the newest release, and self.js's report, which judges
+# `behind`. A step's refusal is the report's error.
+self_status() { # FORMAT
+  local version checkout=false method=- package=- current=- latest=- count=- error=- manager
+  version="$(version_line)" || exit 1
+  tree_is_checkout && checkout=true
+  if step_run node "$self_judge" detect "$root" "$data_home" "$version" "$checkout"; then
+    read -r method package current manager <<<"$step_out"
+    if [[ $method == checkout ]]; then
+      if step_run describe_of "$version" HEAD; then
+        current="$step_out"
+        if step_run self_checkout_probe "$version"; then read -r latest count <<<"$step_out"; else error="$step_error"; fi
+      else
+        error="$step_error"
+      fi
+    elif [[ $package == vgs-git ]]; then
+      if step_run self_main_commit; then latest="$step_out"; else error="$step_error"; fi
+    elif step_run node "$self_judge" latest "$self_repository"; then
+      latest="$step_out"
+    else
+      error="$step_error"
+    fi
+  else
+    error="$step_error"
+  fi
+  node "$self_judge" report "$1" "$version" "$method" "$package" "$current" "$latest" "$count" "$error"
+}
+
+# Hold the self-update lock on descriptor 8 until this process exits or
+# closes it, so no two updates replace one install at once. A held lock
+# refuses with self=busy.
+self_lock_hold() {
+  mkdir -p -- "$data_home/vgs" 2>/dev/null && { exec 8>>"$self_lock"; } 2>/dev/null ||
+    refuse 1 "self=lock-failed path=$self_lock"
+  flock -n 8 || refuse 75 "self=busy path=$self_lock" "another vgsh self update runs"
+}
+
+# After an update, restart a running shell through VGSH, the updated tree's
+# command, whose restart status becomes this command's; with no shell
+# running, say so.
+self_restart() { # VGSH
+  if ! shell_pid >/dev/null 2>&1; then echo "shell=not-running"; return 0; fi
+  exec "$1" restart
+}
+
+# Updates this tree as its install method allows, as the header states.
+self_update() {
+  local version checkout=false line method package manager out
+  version="$(version_line)" || exit 1
+  tree_is_checkout && checkout=true
+  line="$(node "$self_judge" detect "$root" "$data_home" "$version" "$checkout")" || exit 1
+  read -r method package _ manager <<<"$line"
+  case "$method" in
+    checkout)
+      fast_forward "$root" vgs trusted
+      if [[ $ff_old == "$ff_new" ]]; then echo "ok up-to-date=vgs"; return 0; fi
+      echo "ok updated=vgs from=${ff_old:0:12} to=${ff_new:0:12}"
+      self_restart "$root/bin/vgsh"
+      ;;
+    curl)
+      self_lock_hold
+      out="$(node "$self_judge" install "$self_repository" "$data_home" "$root" "$version")" || exit 1
+      printf '%s\n' "$out"
+      [[ $out == "ok updated="* ]] || return 0
+      exec 8>&-
+      self_restart "$data_home/vgs/current/bin/vgsh"
+      ;;
+    package)
+      refuse 1 "method=package package=$package manager=$manager" \
+        "$manager owns this tree: update the $package package with the package manager that installed it; vgsh self update changes no package"
+      ;;
+    nix)
+      refuse 1 "method=nix" \
+        "the Nix store owns this tree: update the flake that installed it and rebuild; vgsh self update changes no store path"
+      ;;
+    *) refuse 1 "method=$method reason=unknown" "self.js printed: $line" ;;
+  esac
 }
 
 cmd="${1:-}"
@@ -1152,6 +1338,25 @@ case "$cmd" in
     if [[ $# -lt 2 ]]; then printf 'vgsh: refused: command=missing\n' >&2; usage; exit 2; fi
     shift
     exec "$root/bin/vgsh-tui" launch --title "${title:-${1##*/}}" --size "$size" --presentation full -- "$@"
+    ;;
+  self)
+    sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+      status)
+        format=text
+        if [[ ${1:-} == --json ]]; then format=json; shift; fi
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        self_status "$format"
+        ;;
+      update)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        self_update
+        ;;
+      *)
+        printf 'vgsh: refused: self-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
+        ;;
+    esac
     ;;
   -h|--help|help)
     usage; exit 0

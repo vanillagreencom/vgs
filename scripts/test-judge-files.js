@@ -5,11 +5,15 @@
 // has a readable copy beside it. Every mode below was written by hand.
 // `onPath`, which answers whether a command is an executable file in an
 // absolute directory of PATH, is pinned against a PATH built here.
+// `main` ends a process on a refusal with its line, its detail and its
+// status, thrown or rejected by a returned promise; each row runs in a child
+// node process.
 //
 // The controls at the end edit a copy of the helper, one rule at a time,
 // and require this suite to fail on each copy.
 "use strict";
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -50,7 +54,19 @@ const ROWS = [
     ["no mode given", undefined, false, 0o644, 0o644]
 ];
 
-function verify(helper, root) {
+// main rows: the name, the command's body, the exit status, the stderr.
+const MAIN_ROWS = [
+    ["a refusal prints its line", "main(() => refuse(\"k=v\"))", 1, "vgsh: refused: k=v\n"],
+    ["a refusal's detail follows its line", "main(() => refuse(\"k=v\", undefined, 3, \"why\"))", 3, "vgsh: refused: k=v\nwhy\n"],
+    ["a rejected promise's refusal ends the process the same way", "main(async () => { await null; refuse(\"k=v\", undefined, 4, \"late\\n\"); })", 4, "vgsh: refused: k=v\nlate\n"]
+];
+
+function verify(helper, root, file) {
+    for (const [name, body, status, stderr] of MAIN_ROWS) {
+        const r = childProcess.spawnSync(process.execPath, ["-e", "const { main, refuse } = require(" + JSON.stringify(file) + "); " + body], { encoding: "utf8" });
+        assert.equal(r.status, status, name + ": the status");
+        assert.equal(r.stderr, stderr, name + ": stderr");
+    }
     for (const [name, mode, stale, stagedMode, finalMode] of ROWS) {
         const dir = fs.mkdtempSync(path.join(root, "row-"));
         const file = path.join(dir, "settings.json");
@@ -95,7 +111,7 @@ function verify(helper, root) {
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "judge-files-"));
 try {
-    verify(require(helperFile), root);
+    verify(require(helperFile), root, helperFile);
 
     // Each control removes one rule's behaviour from a copy of the helper.
     const CONTROLS = [
@@ -104,7 +120,9 @@ try {
         ["kept mode", "                fs.chmodSync(tmp, mode);\n", ""],
         ["a command is executable", "fs.accessSync(file, fs.constants.X_OK);", "fs.accessSync(file, fs.constants.F_OK);"],
         ["a command is a file", "if (fs.statSync(file).isFile()) return true;", "return true;"],
-        ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""]
+        ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""],
+        ["a refusal's detail is printed", "e.first + \"\\n\" + detail)", "e.first + \"\\n\")"],
+        ["a returned promise's refusal is caught", "result.catch(end);", "undefined;"]
     ];
     const source = fs.readFileSync(helperFile, "utf8");
     CONTROLS.forEach(([label, needle, replacement], index) => {
@@ -113,13 +131,13 @@ try {
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
         let failed = false;
         try {
-            verify(require(mutant), root);
+            verify(require(mutant), root, mutant);
         } catch (e) {
             failed = true;
         }
         assert.ok(failed, `control "${label}": the suite passed on a helper without that rule`);
     });
-    console.log(`test-judge-files: ok rows=${ROWS.length + 1 + PATH_ROWS.length} controls=${CONTROLS.length}`);
+    console.log(`test-judge-files: ok rows=${ROWS.length + 1 + PATH_ROWS.length + MAIN_ROWS.length} controls=${CONTROLS.length}`);
 } finally {
     fs.writeFileSync = writeFileSync;
     fs.rmSync(root, { recursive: true, force: true });

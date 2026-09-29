@@ -12,9 +12,12 @@
 // - Each update parser reads the canned outputs under scripts/fixtures/pkg/
 //   and inline odd lines; each manager's update query and the meaning of
 //   its exit statuses are pinned. No row touches the network.
-// - The CLI runs with a PATH of stub commands; `detect` and a `check`
-//   without --source read a fixture os-release bound over /etc/os-release
-//   under `unshare -rm`. Without user namespaces those rows cannot run and
+// - The owner and installed queries pin each manager's argv and read each
+//   manager's output, written from its documentation, into a name or a
+//   version.
+// - The CLI runs with a PATH of stub commands; `detect`, `owner` and a
+//   `check` without --source read a fixture os-release bound over
+//   /etc/os-release under `unshare -rm`. Without user namespaces those rows cannot run and
 //   the suite exits 77.
 //
 // The controls at the end edit a copy of the table, bin/vgsh-pkg or
@@ -31,7 +34,7 @@ const TABLE = path.join(repo, "shell", "Core", "PackageManagers.js");
 const PKG = path.join(repo, "bin", "vgsh-pkg");
 const VGSH = path.join(repo, "bin", "vgsh");
 const ELEVATORS = ["sudo", "doas", "run0", "pkexec", "su"];
-const PLACEHOLDERS = ["{bin}", "{names}", "{path}"];
+const PLACEHOLDERS = ["{bin}", "{names}", "{name}", "{path}"];
 const EXIT_MEANINGS = ["updates", "none", "rows"];
 const FIXTURES = path.join(repo, "scripts", "fixtures", "pkg");
 
@@ -50,7 +53,11 @@ function tableErrors(t) {
         const pacmanFamily = row.binaries.some(b => ["pacman", "paru", "yay"].includes(b));
         const templates = [];
         for (const action of t.ACTIONS) if (row[action] !== null) for (const step of row[action]) templates.push([action, step]);
-        if (row.owner !== null) templates.push(["owner", row.owner]);
+        for (const query of t.QUERIES) {
+            if (row[query] === null) continue;
+            templates.push([query, row[query].argv]);
+            if (Object.prototype.toString.call(row[query].read) !== "[object RegExp]") errors.push(where + " " + query + ": read is no pattern");
+        }
         if (row.check !== null && (!Array.isArray(row.check) || row.check.length === 0)) errors.push(where + ": check is neither null nor a list of queries");
         else if (row.check !== null) row.check.forEach((c, i) => {
             const at = where + " check " + i;
@@ -75,6 +82,7 @@ function tableErrors(t) {
             if (action === "install" || action === "remove") { if (names > 1) errors.push(where + " " + action + ": {names} twice"); }
             else if (names > 0) errors.push(where + " " + action + ": {names} outside install and remove");
             if (step.includes("{path}") !== (action === "owner")) errors.push(where + " " + action + ": {path} belongs to the owner query");
+            if (step.includes("{name}") !== (action === "installed")) errors.push(where + " " + action + ": {name} belongs to the installed query");
         }
         for (const action of ["install", "remove"])
             if (row[action] !== null && !row[action].some(step => step.includes("{names}"))) errors.push(where + " " + action + ": no step takes the names");
@@ -265,6 +273,43 @@ const OUTCOME_ROWS = [
     ["flatpak 1 is a failure", "flatpak", "flatpak", 1, "", "exit=1"]
 ];
 
+// Query rows: name, manager, query, the value, the commands on PATH, and
+// the argv, or the refusal's first line.
+const QUERY_ROWS = [
+    ["pacman owner", "pacman", "owner", "/usr/share/vgs/VERSION", ["pacman"], ["pacman", "-Qoq", "/usr/share/vgs/VERSION"]],
+    ["pacman installed", "pacman", "installed", "vgs-git", ["pacman"], ["pacman", "-Q", "--", "vgs-git"]],
+    ["apt owner through dpkg", "apt", "owner", "/usr/share/vgs/VERSION", ["apt-get"], ["dpkg", "-S", "/usr/share/vgs/VERSION"]],
+    ["apt installed through dpkg-query", "apt", "installed", "vgs", ["apt-get"], ["dpkg-query", "-W", "--showformat=${Version}\n", "--", "vgs"]],
+    ["dnf owner through rpm names the package alone", "dnf", "owner", "/usr/share/vgs/VERSION", ["dnf5"], ["rpm", "-qf", "--queryformat", "%{NAME}\n", "/usr/share/vgs/VERSION"]],
+    ["dnf installed through rpm", "dnf", "installed", "vgs", ["dnf5"], ["rpm", "-q", "--queryformat", "%{VERSION}\n", "--", "vgs"]],
+    ["xbps owner", "xbps", "owner", "/usr/share/vgs/VERSION", ["xbps-install"], ["xbps-query", "-o", "/usr/share/vgs/VERSION"]],
+    ["emerge owner", "emerge", "owner", "/usr/share/vgs/VERSION", ["emerge"], ["qfile", "/usr/share/vgs/VERSION"]],
+    ["xbps asks no installed query", "xbps", "installed", "vgs", ["xbps-install"], "manager=xbps query=installed reason=unsupported"],
+    ["aur owns no file", "aur", "owner", "/usr/share/vgs/VERSION", ["paru"], "manager=aur query=owner reason=unsupported"],
+    ["an owner path must be absolute", "pacman", "owner", "VERSION", ["pacman"], "path=\"VERSION\" reason=relative"],
+    ["an installed name keeps the name grammar", "pacman", "installed", "-Qi", ["pacman"], "name=\"-Qi\" reason=grammar"],
+    ["a query whose binary is absent", "pacman", "owner", "/usr/share/vgs/VERSION", [], "manager=pacman reason=absent binaries=pacman"]
+];
+
+// Answer rows: name, manager, query, what the query printed, the answer.
+// The formats are packages.md § Queries' sources.
+const ANSWER_ROWS = [
+    ["pacman -Qoq prints the name", "pacman", "owner", "vgs-git\n", "vgs-git"],
+    ["pacman -Q drops the epoch and the pkgrel", "pacman", "installed", "vgs-git 1:0.1.0.r40.gabc1234-2\n", "0.1.0.r40.gabc1234"],
+    ["pacman -Q without an epoch", "pacman", "installed", "vgs 0.1.0-1\n", "0.1.0"],
+    ["dpkg -S names the package before its colon", "apt", "owner", "vgs: /usr/share/vgs/VERSION\n", "vgs"],
+    ["dpkg -S with an architecture qualifier", "apt", "owner", "vgs:amd64: /usr/share/vgs/VERSION\n", "vgs"],
+    ["a Debian version drops the epoch and the revision", "apt", "installed", "1:0.1.0-3\n", "0.1.0"],
+    ["a Debian upstream version may hold a dash", "apt", "installed", "1.2-3-1\n", "1.2-3"],
+    ["a native Debian version has no revision", "apt", "installed", "0.1.0\n", "0.1.0"],
+    ["rpm prints the name", "dnf", "owner", "vgs\n", "vgs"],
+    ["rpm prints the version", "dnf", "installed", "0.1.0^40.gitabc1234\n", "0.1.0^40.gitabc1234"],
+    ["xbps-query -o names the package before its version", "xbps", "owner", "vgs-git-0.1.0_1: /usr/share/vgs/VERSION\n", "vgs-git"],
+    ["qfile names the category and package", "emerge", "owner", "gui-apps/vgs (/usr/share/vgs/VERSION)\n", "gui-apps/vgs"],
+    ["a message is no answer", "pacman", "owner", "error: No package owns /x\n", null],
+    ["the first line alone is read", "pacman", "installed", "\nvgs 0.1.0-1\n", null]
+];
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const triples = packages => packages.map(p => [p.name, p.old, p.new]);
 
@@ -288,6 +333,19 @@ function verifyTable(t) {
     }
     for (const row of t.MANAGERS) for (const action of t.ACTIONS)
         if (!covered.has(row.id + " " + action)) failures.push("plan: no row for " + row.id + " " + action);
+    const queried = new Set();
+    for (const [name, manager, query, value, commands, want] of QUERY_ROWS) {
+        const got = t.queryArgv(manager, query, value, onPathOf(commands));
+        const expected = typeof want === "string" ? { ok: false, error: want } : { ok: true, argv: want };
+        if (!same(got, expected)) failures.push("query: " + name + ": got " + JSON.stringify(got));
+        queried.add(manager + " " + query);
+    }
+    for (const row of t.MANAGERS) for (const query of t.QUERIES)
+        if (row[query] !== null && !queried.has(row.id + " " + query)) failures.push("query: no row for " + row.id + " " + query);
+    for (const [name, manager, query, stdout, want] of ANSWER_ROWS) {
+        const got = t.queryAnswer(manager, query, stdout);
+        if (got !== want) failures.push("answer: " + name + ": got " + JSON.stringify(got));
+    }
     for (const [name, packages, found, want] of PACKAGE_FOR_ROWS) {
         const got = t.packageFor(packages, found);
         if (!same(got, want)) failures.push("packageFor: " + name + ": got " + JSON.stringify(got));
@@ -409,6 +467,27 @@ function verifyCli(texts, tmp) {
         { source: "emerge", count: null, packages: [], checkedAt: null, error: "skipped=on-demand" },
         { source: "flatpak", count: 3, packages: [{ name: "org.gnome.Loupe", old: null, new: "stable" }, { name: "org.gnome.Platform", old: null, new: "47" },
             { name: "org.freedesktop.Platform.GL.default", old: null, new: "24.08" }], checkedAt: "<time>", error: null }]);
+
+    // Owner stubs answer as pacman and xbps-query do for one owned file,
+    // packages.md § Queries; any other call exits 99.
+    const owned = "/usr/share/vgs/VERSION";
+    const ownerPath = stubPath(tmp, "owner", {
+        pacman: "case \"$1 $2 $3\" in\n  \"-Qoq " + owned + " \") echo vgs-git ;;\n  \"-Qoq \"*) echo \"error: No package owns $2\" >&2; exit 1 ;;\n" +
+            "  \"-Q -- vgs-git\") echo \"vgs-git 0.1.0.r40.gabc1234-1\" ;;\n  *) exit 99 ;;\nesac",
+        "xbps-install": "exit 99",
+        "xbps-query": "[ \"$1 $2\" = \"-o " + owned + "\" ] || exit 99\necho \"vgs-0.1.0_1: " + owned + "\""
+    }, tools);
+    const arch = osRelease("os-release-arch", "NAME=\"Arch Linux\"\nID=arch\n");
+    const suse = osRelease("os-release-suse", "ID=opensuse-tumbleweed\n");
+    expect("owner names the package and its installed version", bound(arch, ownerPath, ["owner", owned]), 0,
+        "{\"manager\":\"pacman\",\"package\":\"vgs-git\",\"version\":\"0.1.0.r40.gabc1234\"}\n", "");
+    expect("owner reports a null version where the table asks none", bound(voidLinux, ownerPath, ["owner", owned]), 0,
+        "{\"manager\":\"xbps\",\"package\":\"vgs\",\"version\":null}\n", "");
+    expect("owner refuses a file no package owns, the query's words after the line", bound(arch, ownerPath, ["owner", "/opt/vgs/VERSION"]), 1, "",
+        "vgsh: refused: path=/opt/vgs/VERSION reason=unowned manager=pacman exit=1\nerror: No package owns /opt/vgs/VERSION\n");
+    expect("owner refuses a system no primary serves", bound(suse, ownerPath, ["owner", owned]), 1, "", "vgsh: refused: manager=none\n");
+    expect("owner refuses a relative path", bound(arch, ownerPath, ["owner", "VERSION"]), 1, "", "vgsh: refused: path=\"VERSION\" reason=relative\n");
+    expect("owner without a path is a bad invocation", bound(arch, ownerPath, ["owner"]), 2, "", "vgsh: refused: path=missing\n");
     return { failures, missing: null };
 }
 
@@ -595,6 +674,8 @@ const CONTROLS = [
     ["table", "the first binary wins even when absent", TABLE, "if (onPath(row.binaries[i])) return row.binaries[i];", "return row.binaries[i];"],
     ["table", "a requirement's package ignores the primary's rank", TABLE, "var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "var order = found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
     ["table", "a requirement's package is picked for an unmapped manager", TABLE, "if (Object.prototype.hasOwnProperty.call(packages, order[i].id))", "if (true)"],
+    ["table", "a query's answer ignores its pattern", TABLE, "return m === null ? null : m[1];", "return stdout.split(\"\\n\")[0];"],
+    ["cli", "owner asks no installed version", PKG, "const version = table.managerRow(id).installed === null ? null : query(", "const version = null && query("],
     ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],
     ["cli", "vgsh pkg drops its arguments", VGSH, "exec node \"$root/bin/vgsh-pkg\" \"$@\"", "exec node \"$root/bin/vgsh-pkg\""],
     ["table", "an unlisted exit status is read as output", TABLE, "if (meaning === undefined) return { error: \"exit=\" + status };", "if (meaning === undefined) meaning = \"rows\";"],

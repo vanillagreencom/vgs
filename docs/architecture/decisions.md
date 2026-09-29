@@ -32,4 +32,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D037](../decisions/D037-plugin-status.md): a plugin publishes manifest-declared runtime values through capability `status`; the core holds one record per plugin, read by every instance and drawn read-only by Settings. Refines D032.
 - [D038](../decisions/D038-judged-theme-catalog.md): first-party themes are a judged catalog in `themes/catalog/`, installed as ordinary packages; it carries no curated file on a target whose files run code.
 - [D039](../decisions/D039-per-screen-wallpaper-map.md): wallpaper is per screen through an additive `screens` map in `backgrounds.json`; a theme apply clears it.
-- [D040](../decisions/D040-one-shared-install-tree.md): every channel calls one installer for one `/usr/share/vgs` tree, with local publishing scripts and MIT licensing.
+- [D040](../decisions/D040-one-shared-install-tree.md): every channel calls one installer for one `/usr/share/vgs` tree, with local publishing scripts and MIT licensing; `vgsh self` knows the checkout, package, curl and Nix methods and updates only a checkout and a curl install.

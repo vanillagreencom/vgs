@@ -50,6 +50,22 @@ One check runs at a time: each holds `flock` on `$XDG_RUNTIME_DIR/vgs/pkg-check.
 
 Omarchy's `omarchy-update-available` filters `checkupdates` for the Omarchy package alone. VGS counts every source, because the Updates badge covers the whole system.
 
+## Queries
+
+A row's `owner` names the package that owns a file, and its `installed` names a package's installed version. Each is an argv and the pattern whose first group reads the answer from the first line the query prints. `vgsh pkg owner <path>` runs the primary manager's two queries and prints `{ manager, package, version }`. Both queries only read the package database. `vgsh self status` asks it which package owns a VGS tree: [distribution.md § Install methods](distribution.md#install-methods).
+
+- `installed` answers the upstream version, with no epoch and no packaging revision, so a `vgs-git` version ends in its commit on every manager.
+- The table asks no `installed` query of xbps and emerge, which no VGS package serves, so their `version` is null.
+- A query that exits non-zero refuses with the query's own stderr after the line. Every owner query exits non-zero for a file no package owns.
+
+The outputs the patterns read come from each tool's own documentation:
+
+- `pacman -Qoq` prints the owner's name, and `pacman -Q <name>` prints `<name> [<epoch>:]<pkgver>-<pkgrel>`, pacman(8).
+- `dpkg -S` prints `<package>[:<arch>]: <path>`, and `dpkg-query -W --showformat='${Version}\n'` prints `[<epoch>:]<upstream>[-<revision>]`, dpkg-query(1) and deb-version(7).
+- `rpm -qf --queryformat '%{NAME}\n'` and `rpm -q --queryformat '%{VERSION}\n'` print the tag alone, rpm(8).
+- `xbps-query -o` prints `<pkgver>: <path>`, with `<pkgver>` the package's name, `-`, its version and `_<revision>`, xbps-query(1) and xbps `bin/xbps-query/ownedby.c`.
+- `qfile` prints `<category>/<package> (<path>)`, the Gentoo wiki's Q applets page.
+
 ## Boundary
 
 The shell never elevates for a package. The table names no elevation command, `vgsh pkg` changes no package, and a package change runs only in a terminal where the user answers the manager's prompt. The one elevation a shell process performs is the Chromium policy writer's `sudo -n`, [D029](../decisions/D029-chromium-policy-writer.md), which changes no package.
@@ -61,3 +77,4 @@ The shell never elevates for a package. The table names no elevation command, `v
 3. Detection takes the first os-release identifier a present primary serves. Enforced by the same suite's detection rows and, for the command, a fixture os-release bound over `/etc/os-release` under `unshare -rm`.
 4. An exit status a query does not list fails the check, and each parser reads its manager's output into the packages written by hand beside it. Enforced by the same suite's outcome and parser rows over the canned outputs in `scripts/fixtures/pkg/`, with a copy that reads an unlisted status as output and one copy per parser as controls.
 5. A check holds the lock, a query past its timeout ends with its process group, and a check stopped by a signal ends every query's group, SIGKILL included for one that ignores SIGTERM, and holds the lock until the last has ended. Enforced by the same suite's `check` rows against stub commands, with copies that signal only the query's leader, send no SIGKILL, install no signal handler or exit when the first query ends as controls.
+6. Each manager's owner and installed queries are the argv its row states, and each reads its manager's output. Enforced by the same suite's query and answer rows, and for `vgsh pkg owner` by stub `pacman` and `xbps-query` commands under fixture os-release files. Its controls are a copy whose answer ignores the pattern and a copy of `bin/vgsh-pkg` that asks no installed version.

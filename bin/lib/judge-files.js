@@ -3,8 +3,9 @@
 // writes a watched file the same way, finds a command on PATH the same way
 // and refuses with the same line.
 //
-// A refusal is one line on stderr, `vgsh: refused: <first>`, and the exit
-// status the refusal carries, 1 unless it names another. A helper throws it
+// A refusal is one line on stderr, `vgsh: refused: <first>`, then its
+// detail, the English or a tool's own words, when it carries one, and the
+// exit status the refusal carries, 1 unless it names another. A helper throws it
 // and `main` prints it, so a caller can put its own output ahead of the line
 // (a structured result) or undo a half-made change on the way out.
 "use strict";
@@ -13,28 +14,38 @@ const path = require("path");
 
 class Refusal extends Error {
     // FIRST is the keyed line after `vgsh: refused: `; REASON the value of
-    // its key, for a caller that reports it in a structured result.
-    constructor(first, reason, status = 1) {
+    // its key, for a caller that reports it in a structured result; DETAIL
+    // the text printed after the line, "" for none.
+    constructor(first, reason, status = 1, detail = "") {
         super(first);
         this.first = first;
         this.reason = reason;
         this.status = status;
+        this.detail = detail;
     }
 }
 
-function refuse(first, reason, status) {
-    throw new Refusal(first, reason, status);
+function refuse(first, reason, status, detail) {
+    throw new Refusal(first, reason, status, detail);
 }
 
-// Run a judge's command; a Refusal ends the process with its line and status.
+// Run a judge's command; a Refusal ends the process with its line, its
+// detail and its status. A command that returns a promise ends the same way
+// when the promise rejects with a Refusal.
 function main(command) {
-    try {
-        command();
-    } catch (e) {
+    const end = e => {
         if (!(e instanceof Refusal)) throw e;
-        process.stderr.write("vgsh: refused: " + e.first + "\n");
+        const detail = e.detail === "" || e.detail.endsWith("\n") ? e.detail : e.detail + "\n";
+        process.stderr.write("vgsh: refused: " + e.first + "\n" + detail);
         process.exit(e.status);
+    };
+    let result;
+    try {
+        result = command();
+    } catch (e) {
+        end(e);
     }
+    if (result !== undefined && typeof result.then === "function") result.catch(end);
 }
 
 // The parsed JSON file. KEY leads the refusal line:

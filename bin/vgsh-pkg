@@ -34,6 +34,12 @@
 //       printed, whatever each source answered. A check stopped by SIGINT,
 //       SIGTERM or SIGHUP prints nothing and exits 128 plus the signal's
 //       number once every query has ended.
+//   vgsh-pkg owner <path>
+//       one JSON line `{ manager, package, version }`: the package the
+//       primary manager's owner query names for the absolute file path, and
+//       its installed upstream version from the manager's installed query,
+//       null when the table holds none for the manager. Runs the two
+//       read-only queries and changes nothing.
 //
 // A check holds flock on $XDG_RUNTIME_DIR/vgs/pkg-check.lock until it
 // exits, so a second one waits for the first. Each query runs in its own
@@ -56,9 +62,18 @@
 // through bin/lib/judge-files.js. Exit 1 for a refusal: `manager=<id>
 // reason=unknown`, `manager=<id> action=<action> reason=unsupported` (the
 // table plans nothing for it), `manager=<id> reason=absent
-// binaries=<list>`, `name=<json> reason=grammar` and
+// binaries=<list>`, `name=<json> reason=grammar`,
 // `os-release=unreadable path=<file> error=<code>`, `runtime-dir=unset`
-// and `lock=failed path=<file> error=<code>`. Exit 2 for a bad
+// and `lock=failed path=<file> error=<code>`, and for `owner`:
+// `manager=none` (no primary serves the system), `manager=<id>
+// query=owner reason=unsupported`, `path=<file> reason=unowned
+// manager=<id> exit=<n>` (the query exited non-zero, as every manager does
+// for a file no package owns), `package=<name> reason=not-installed
+// manager=<id> exit=<n>`, `query=<argv0> reason=failed error=<code>` (the
+// query did not run or outlived its timeout) and `manager=<id>
+// query=owner|installed reason=unreadable` (its first line did not match
+// the table's pattern); the query's own stderr follows the line. Exit 2
+// for a bad
 // invocation, a command that is not a bare file name among them:
 // `command=<json>`. `present` alone also exits 1 with no refusal line, for
 // a missing command.
@@ -75,9 +90,12 @@ const { refuse, main, onPath } = require(path.join(__dirname, "lib", "judge-file
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
 const KILL_GRACE_MS = 5000;
 const FRESH_MS = 10 * 60 * 1000;
+// The seconds one owner or installed query may take: a package database
+// query reads local files.
+const QUERY_TIMEOUT = 30;
 
 function usage(first) {
-    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...] | check [--json] [--source <manager>]\n");
+    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...] | check [--json] [--source <manager>] | owner <path>\n");
     process.exit(2);
 }
 
@@ -214,6 +232,19 @@ async function checkSource(entry, named, stamp) {
     return row(outcome.packages.length, outcome.packages, checkedAt, null);
 }
 
+// Run manager ID's QUERY over VALUE and read its answer. A query that exits
+// non-zero refuses with UNANSWERED, the keyed line its caller names.
+function query(id, name, value, unanswered) {
+    const q = table.queryArgv(id, name, value, onPath);
+    if (!q.ok) refuse(q.error);
+    const run = childProcess.spawnSync(q.argv[0], q.argv.slice(1), { encoding: "utf8", timeout: QUERY_TIMEOUT * 1000, stdio: ["ignore", "pipe", "pipe"], env: Object.assign({}, process.env, { LC_ALL: "C" }) });
+    if (run.error !== undefined) refuse("query=" + q.argv[0] + " reason=failed error=" + run.error.code);
+    if (run.status !== 0) refuse(unanswered + " manager=" + id + " exit=" + (run.status === null ? run.signal : run.status), undefined, 1, run.stderr);
+    const answer = table.queryAnswer(id, name, run.stdout);
+    if (answer === null) refuse("manager=" + id + " query=" + name + " reason=unreadable", undefined, 1, run.stdout);
+    return answer;
+}
+
 const [verb, ...args] = process.argv.slice(2);
 main(() => {
     switch (verb) {
@@ -286,6 +317,17 @@ main(() => {
             }
             if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
         });
+        break;
+    }
+    case "owner": {
+        if (args.length === 0) usage("path=missing");
+        if (args.length > 1) usage("argument=" + args[1]);
+        const found = table.detect(table.osReleaseIds(osRelease()), onPath);
+        if (found.primary === null) refuse("manager=none");
+        const id = found.primary.id;
+        const pkg = query(id, "owner", args[0], "path=" + args[0] + " reason=unowned");
+        const version = table.managerRow(id).installed === null ? null : query(id, "installed", pkg, "package=" + pkg + " reason=not-installed");
+        process.stdout.write(JSON.stringify({ manager: id, package: pkg, version }) + "\n");
         break;
     }
     default:
