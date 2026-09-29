@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Controls for bin/lib/check-manifests.js: one planted defect per rule the
 // script adds beyond PluginLogic.js (duplicate id, missing entry point,
-// unreadable directory, unparseable manifest), one manifest the judge itself
+// unreadable directory, unparseable manifest, a `tui` script that is
+// missing, a link, under a link, not a regular file or not executable), one
+// manifest the judge itself
 // refuses so a judge that passed everything would turn a row red, the icon
 // rule the judge reads from the shipped icon set, and the base listing: a directory without a manifest is not a plugin, an absent or
 // unreadable base exits 2. Each row asserts the printed verdict line and the
@@ -64,6 +66,22 @@ row("a base lists every plugin under it", tmp => { plugin(path.join(tmp, "a"), g
 row("a directory without a manifest under the base is not a plugin", tmp => { plugin(path.join(tmp, "a"), good, true); fs.mkdirSync(path.join(tmp, "notes")); return ["--base", tmp]; }, 0, "check-manifests: ok", "notes");
 row("an absent base exits 2", tmp => ["--base", path.join(tmp, "missing")], 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "missing") + ": cannot list: ");
 row("an unknown option exits 2", tmp => ["--frob"], 2, "check-manifests: refused: option=--frob");
+// A `tui` script is read on disk: a regular file with the owner's execute
+// bit, reached through no link. `script` builds the plugin's tui/ tree.
+const tuiManifest = Object.assign({}, good, { capabilities: ["tui"], tui: { hello: { script: "tui/hello.sh", title: "Hello" } } });
+function tuiPlugin(dir, script) {
+    plugin(dir, tuiManifest, true);
+    script(path.join(dir, "tui"));
+    return ["--", dir];
+}
+function executable(file) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, "#!/bin/sh\n"); fs.chmodSync(file, 0o755); }
+row("a tui script that is an executable file passes", tmp => tuiPlugin(path.join(tmp, "a"), t => executable(path.join(t, "hello.sh"))), 0, "ok       acme.one");
+row("a missing tui script is refused", tmp => tuiPlugin(path.join(tmp, "a"), t => fs.mkdirSync(t)), 1, "tui.hello.script tui/hello.sh missing", "ok       acme.one");
+row("a tui script that is a link is refused", tmp => tuiPlugin(path.join(tmp, "a"), t => { executable(path.join(tmp, "real.sh")); fs.mkdirSync(t); fs.symlinkSync(path.join(tmp, "real.sh"), path.join(t, "hello.sh")); }), 1, "tui.hello.script tui/hello.sh is a symbolic link or lies under one", "ok       acme.one");
+row("a tui script under a linked directory is refused", tmp => tuiPlugin(path.join(tmp, "a"), t => { executable(path.join(tmp, "elsewhere", "hello.sh")); fs.symlinkSync(path.join(tmp, "elsewhere"), t); }), 1, "tui.hello.script tui/hello.sh is a symbolic link or lies under one", "ok       acme.one");
+row("a tui script that is a directory is refused", tmp => tuiPlugin(path.join(tmp, "a"), t => fs.mkdirSync(path.join(t, "hello.sh"), { recursive: true })), 1, "tui.hello.script tui/hello.sh is not a regular file", "ok       acme.one");
+row("a tui script without the execute bit is refused", tmp => tuiPlugin(path.join(tmp, "a"), t => { executable(path.join(t, "hello.sh")); fs.chmodSync(path.join(t, "hello.sh"), 0o644); }), 1, "tui.hello.script tui/hello.sh is not executable", "ok       acme.one");
+row("a tui key without its capability is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({}, tuiManifest, { capabilities: [] }), true); executable(path.join(d, "tui", "hello.sh")); return ["--", d]; }, 1, "tui needs capability tui", "ok       acme.one");
 // Permission bits bind only a non-root uid.
 if (process.getuid() !== 0) {
     row("a plugin directory the scan cannot read exits 2", tmp => { plugin(path.join(tmp, "a"), good, true); plugin(path.join(tmp, "locked"), good, true); fs.chmodSync(path.join(tmp, "locked"), 0o000); return ["--base", tmp]; }, 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "locked") + ": cannot read manifest: Permission denied");

@@ -49,9 +49,10 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 - One owner per timer, watcher, poller and subprocess, inside the entry point's tree. A `Process` gets its stdout parser before it starts.
 - A value the plugin's widgets, flyout or Settings page show is plugin status: declare it in the manifest's `status`, name capability `status`, write it from the one instance that owns its source, the service, with `shell.status.set`, and read it from `shell.status.values`. One writer per key; a credential's value never enters status, only its presence. [`docs/architecture/status.md`](../../../docs/architecture/status.md), [D037](../../../docs/decisions/D037-plugin-status.md).
 - A plugin that needs a Hyprland key or a blur rule declares it as data in the manifest's `hyprland` key and never writes Hyprland configuration: the core renders it into the one Hyprland layer, [`docs/architecture/hyprland.md`](../../../docs/architecture/hyprland.md).
+- A command the user must see or answer runs in a floating TUI: a script under the plugin's `tui/`, declared as data in the manifest's `tui` key and opened with `shell.tui.run`, never a command string: [`docs/architecture/tui.md` § The capability](../../../docs/architecture/tui.md#the-capability).
 - No cache keyed by data other applications supply without a ceiling.
 - Every Quickshell type, property and signal comes from the 0.3.1 reference on Context7: `ctx7 docs /websites/quickshell_v0_3_1 <query>`.
-- Land with `scripts/validate manifests`, `scripts/validate boundary` and `scripts/validate qml` clean, the last with the readback rows [`workflows/new-plugin.md`](workflows/new-plugin.md) step 8 names.
+- Land with `scripts/validate manifests`, `scripts/validate boundary` and `scripts/validate qml` clean, the last with the readback rows [`workflows/new-plugin.md`](workflows/new-plugin.md) step 9 names.
 
 ## Workflows
 
@@ -63,4 +64,4 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 ## References
 
 - [`references/api.md`](references/api.md): what a plugin receives and may call, per kind.
-- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Bar.qml`, `Background.qml`.
+- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Bar.qml`, `Background.qml`, `tui.sh`.

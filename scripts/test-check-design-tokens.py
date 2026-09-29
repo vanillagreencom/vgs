@@ -19,11 +19,12 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 # Files copied from the repository into every fixture: the real table, judge,
 # singleton and loader, so a row judges against the shipped token paths.
-SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "shell/Core/PackageManagers.js", "shell/Ui/icons/Lucide.js", "bin/lib/qml-library.js")
+SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "shell/Core/PackageManagers.js", "shell/Core/HyprlandLayer.js", "shell/Ui/icons/Lucide.js", "bin/lib/qml-library.js")
 # Every tree the default scope walks, each with one clean file, so a fixture
 # walks what the repository walks: these six, the three shipped files under
 # shell/Commons, the shipped manifest judge under shell/Core with the icon
-# set and the package-manager table it imports, and the planted file.
+# set, the package-manager table and the Hyprland layer it imports, and the
+# planted file.
 TREES = ("shell/Ui", "shell/Hosts", "shell/plugins/acme.widget", ".agents/skills/vgs-plugin/templates", "shell/Core", "scripts/smoke/fixtures/plugins/acme.probe")
 CLEAN = "import QtQuick\nimport qs.Commons\nItem {\n    color: Theme.color.surface\n    radius: Theme.radius.md\n    width: 2 * Theme.space.md\n}\n"
 WIDGET_MANIFEST = '{"schemaVersion": 1, "id": "acme.widget", "name": "Widget", "version": "1", "author": "a", "description": "d", "kinds": ["service"], "entryPoints": {"service": "Clean.qml"}}'
@@ -128,7 +129,7 @@ def run_look_row(name, files, want):
         proc = run_check(root)
         keys = keys_of(proc)
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=14"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=15"]
         else:
             good = proc.returncode == 1 and keys == {want}
         return report(name, good, proc)
@@ -177,7 +178,7 @@ def run_row(name, path, text, want):
         proc = run_check(build_repo(tmp, (path, text)))
         keys = keys_of(proc)
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=13"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=14"]
         else:
             good = proc.returncode == 1 and keys == {want} and proc.stdout.splitlines()[-1] == "check-design-tokens: findings=1"
         return report(name, good, proc)

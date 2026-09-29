@@ -12,6 +12,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
 const MANAGERS = path.join(__dirname, "..", "shell", "Core", "PackageManagers.js");
+const LAYER = path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js");
 // The core's own requirements, judged by the function a manifest's are.
 const CORE_REQUIREMENTS = path.join(__dirname, "..", "config", "requirements.json");
 
@@ -523,8 +524,8 @@ suite(load(LOGIC), report);
 
 // Each control removes one rule from a copy of the judge and keeps the text
 // around it; the suite must fail on every copy. The copy sits at the
-// judge's own place in a temporary tree, beside the icon set and the
-// package-manager table it imports.
+// judge's own place in a temporary tree, beside the icon set, the
+// package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
     ["icon is a manifest key", "\"license\", \"icon\", \"kinds\"", "\"license\", \"kinds\""],
     ["icon names a shipped icon", "!hasOwn(Lucide.ICONS, raw.icon)", "false"],
@@ -547,7 +548,7 @@ const CONTROLS = [
     ["a bind row carries its registered description", "hasOwn(descriptions, name) ? descriptions[name] : \"\"", "\"\""],
     ["a bind row carries the manifest's key", "\"default\": defaults[i].key", "\"default\": bind.key"],
     ["a plugin without an icon is listed with the default", ": DEFAULT_ICON;", ": \"\";"],
-    ["status is a manifest key", "\"requirements\", \"status\"];", "\"requirements\"];"],
+    ["status is a manifest key", "\"requirements\", \"status\", \"tui\"];", "\"requirements\", \"tui\"];"],
     ["status needs capability status", "if (capabilities.indexOf(\"status\") === -1)\n        return \"status needs capability status\";", "if (false)\n        return \"status needs capability status\";"],
     ["capability status needs a status", "} else if (capabilities.indexOf(\"status\") !== -1) {", "} else if (false) {"],
     ["a status declaration holds an entry", "if (keys.length === 0)\n        return \"status must declare", "if (false)\n        return \"status must declare"],
@@ -592,6 +593,7 @@ try {
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
+    fs.symlinkSync(LAYER, path.join(temp, "shell", "Core", "HyprlandLayer.js"));
     const source = fs.readFileSync(LOGIC, "utf8");
     for (const [label, needle, replacement] of CONTROLS) {
         const count = source.split(needle).length - 1;

@@ -19,8 +19,10 @@ Singleton {
     NotificationHub { id: notifications; active: root.notificationsHeld }
     SessionLock { id: sessionLock }
     ThemeRunner { id: themes }
+    TuiRunner { id: tuis }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
+    readonly property alias tuis: tuis
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
     // `<plugin id>:<name>` -> the description each registered shortcut
@@ -135,7 +137,8 @@ Singleton {
             get values() { return PluginStatus.valuesOf(ctx.id); },
             get revision() { return PluginStatus.revisionOf(ctx.id); }
         }),
-        theme: themes.provider
+        theme: themes.provider,
+        tui: tuis.provider
     })
 
     // The compositor places anchored surfaces relative to the item's own
@@ -178,7 +181,8 @@ Singleton {
             toasts: Toasts.record(),
             layers: Layers.record(),
             status: PluginStatus.record(),
-            theme: themes.record()
+            theme: themes.record(),
+            tui: tuis.record()
         });
     }
 }

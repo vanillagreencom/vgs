@@ -81,6 +81,7 @@ tree="$tmp/tree"; mkdir -p "$tree/shell/Core" "$tree/shell/Ui/icons"
 cp -R -- "$repo/bin" "$tree/"
 ln -s -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/PluginLogic.js"
 ln -s -- "$repo/shell/Core/PackageManagers.js" "$tree/shell/Core/PackageManagers.js"
+ln -s -- "$repo/shell/Core/HyprlandLayer.js" "$tree/shell/Core/HyprlandLayer.js"
 ln -s -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/Lucide.js"
 
 # Detection that cannot run is a refusal naming it, never a line without

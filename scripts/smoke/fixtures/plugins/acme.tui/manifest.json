@@ -1,0 +1,5 @@
+{ "schemaVersion": 1, "id": "acme.tui", "name": "TUI", "version": "0.1.0", "author": "acme", "description": "smoke fixture declaring one floating TUI",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["tui", "ipc"],
+  "tui": {
+    "hello": { "script": "tui/hello.sh", "title": "Hello", "size": "wide", "presentation": "full", "entry": { "label": "Say hello", "icon": "terminal", "group": "Smoke" } }
+  } }

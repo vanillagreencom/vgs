@@ -6,8 +6,10 @@
 # the plain
 # presentation, the gum.env parse, the argv list, the exported paths and
 # the plugin copy. launch and `vgsh tui present` run against a stub
-# xdg-terminal-exec that records its argv, behind a stub setsid. No row
-# opens a terminal window.
+# xdg-terminal-exec that records its argv, behind a stub setsid that
+# records its first argument and runs the rest in the foreground. `vgsh tui
+# list` and `vgsh tui open` run against a stub qs that answers the shell's
+# reply and records its arguments. No row opens a terminal window.
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
@@ -23,7 +25,7 @@ stub() { printf '#!/bin/sh\n%s\n' "$2" >"$stubs/$1"; chmod +x "$stubs/$1"; } # N
 stub exits 'echo "ran $1"; exit "$1"'
 stub record ": >\"$tmp/argv\"; for a; do printf '%s\\n' \"\$a\" >>\"$tmp/argv\"; done"
 stub envdump 'printf "LIB=%s\nLOGO=%s\nID=%s\nDIR=%s\nACCENT=%s\nCONFIRM=%s\n" "${VGS_TUI_LIB-unset}" "${VGS_TUI_LOGO-unset}" "${VGS_PLUGIN_ID-unset}" "${VGS_PLUGIN_DIR-unset}" "${VGS_TUI_ACCENT-unset}" "${GUM_CONFIRM_SELECTED_BACKGROUND-unset}"'
-stub setsid "echo setsid >\"$tmp/setsid\"; exec \"\$@\""
+stub setsid "printf '%s\\n' \"\$1\" >\"$tmp/setsid\"; [ \"\$1\" = -f ] && shift; exec \"\$@\""
 # waitint SECS records its pid, then sleeps as that pid until SECS pass or a
 # signal ends it.
 stub waitint "echo \$\$ >\"$tmp/child\"; exec sleep \"\$1\""
@@ -231,8 +233,9 @@ check "a Ctrl-C'd plugin script is stopped" child_gone
 check "a Ctrl-C'd plugin script prompts nothing" test "$(grep -c -e 'Done!' -e 'Failed (' "$tmp/out")" == 0
 check "a Ctrl-C'd plugin script leaves no copy" test -z "$(find "$rt" -mindepth 1 -maxdepth 1 -name 'vgs-tui.*')"
 
-# launch: setsid, then xdg-terminal-exec with the app-id of the size, the
-# title and present's argv.
+# launch: setsid -f, which forks the terminal off so launch returns, then
+# xdg-terminal-exec with the app-id of the size, the title and present's
+# argv.
 # launch_row NAME WANT_TERMINAL_ARGV_LINES ARGS...
 launch_row() {
   local name="$1" want="$2"
@@ -240,7 +243,7 @@ launch_row() {
   rm -f -- "$tmp/term" "$tmp/setsid"
   plain_run "$@"
   check "$name exits 0" test "$plain_status" == 0
-  check "$name runs setsid" test -e "$tmp/setsid"
+  check "$name forks through setsid -f" test "$(cat "$tmp/setsid" 2>/dev/null)" == -f
   check "$name hands the terminal its argv" test "$(cat "$tmp/term" 2>/dev/null)" == "$want"
 }
 lines() { printf '%s\n' "$@"; }
@@ -277,7 +280,10 @@ rows=(
   "2|vgsh-tui: refused: verb=frob|$subject frob"
   "2|vgsh-tui: refused: verb=missing|$subject"
   "2|vgsh: refused: tui-subcommand=missing|$repo/bin/vgsh tui"
-  "2|vgsh: refused: tui-subcommand=open|$repo/bin/vgsh tui open"
+  "2|vgsh: refused: tui-subcommand=frob|$repo/bin/vgsh tui frob"
+  "2|vgsh: refused: key=missing|$repo/bin/vgsh tui open"
+  "2|vgsh: refused: argument=x|$repo/bin/vgsh tui open a/b x"
+  "2|vgsh: refused: argument=x|$repo/bin/vgsh tui list x"
   "2|vgsh: refused: option=--title value=missing|$repo/bin/vgsh tui present --title"
   "2|vgsh: refused: argument=exits|$repo/bin/vgsh tui present exits"
   "2|vgsh: refused: command=missing|$repo/bin/vgsh tui present --"
@@ -293,6 +299,49 @@ for row in "${rows[@]}"; do
   check "[${words#"$repo/"}] opens no terminal" test ! -e "$tmp/term"
 done
 
+# vgsh tui list and open: the shell's reply through a stub qs, which records
+# the call vgsh handed it. The shell decides what is listed and opened.
+stub qs "printf '%s\\n' \"\$*\" >\"$tmp/qs\"; printf 'qs log line\\n%s\\n' \"\$STUB_REPLY\""
+printf '%s\n' "$$" >"$rt/vgsh.lock"
+entries='[{"key":"acme.tui/hello","plugin":"acme.tui","name":"hello","title":"Hello","label":"Say hello","icon":"terminal","group":"Smoke"},{"key":"core/doctor","plugin":"core","name":"doctor","title":"Doctor","label":"Check the system","icon":"stethoscope","group":"System"}]'
+listed="$(printf '%-32s %-16s %s\\n%-32s %-16s %s' acme.tui/hello Smoke 'Say hello' core/doctor System 'Check the system')"
+# cli_row BIN REPLY WORDS WANT_EXIT WANT_STDOUT WANT_FIRST_STDERR WANT_QS_CALL:
+# WANT_STDOUT holds printf %b escapes; returns 1 when a check failed.
+cli_row() {
+  local bin="$1" reply="$2" words want_exit="$4" want_out="$5" want_err="$6" want_call="$7" bad=0
+  read -r -a words <<<"$3"
+  rm -f -- "$tmp/qs"
+  plain_run env STUB_REPLY="$reply" "$bin" "${words[@]}"
+  [[ $plain_status == "$want_exit" ]] || bad=1
+  [[ "$(cat "$tmp/out")" == "$(printf '%b' "$want_out")" ]] || bad=1
+  [[ "$(err_first)" == "$want_err" ]] || bad=1
+  [[ "$(cat "$tmp/qs" 2>/dev/null)" == "$want_call" ]] || bad=1
+  return "$bad"
+}
+# rows: name | shell reply | vgsh words | exit | stdout | first stderr line | qs call
+cli_rows=(
+  "tui list prints a line per listed TUI|$entries|tui list|0|$listed||ipc --pid $$ call shell listTuis"
+  "tui list with nothing listed prints nothing|[]|tui list|0|||ipc --pid $$ call shell listTuis"
+  "tui open prints the shell's ok|ok|tui open acme.tui/hello|0|ok||ipc --pid $$ call shell openTui acme.tui/hello"
+  "tui open refuses with the shell's refusal|refused: tui=acme.tui/nope reason=undeclared|tui open acme.tui/nope|1||vgsh: refused: tui=acme.tui/nope reason=undeclared|ipc --pid $$ call shell openTui acme.tui/nope"
+)
+# run_cli_rows BIN QUIET: every row through BIN; prints ok and FAIL lines
+# unless QUIET is `quiet`; returns the number of failing rows.
+run_cli_rows() {
+  local row name reply words want_exit want_out want_err want_call red=0
+  for row in "${cli_rows[@]}"; do
+    IFS='|' read -r name reply words want_exit want_out want_err want_call <<<"$row"
+    if cli_row "$1" "$reply" "$words" "$want_exit" "$want_out" "$want_err" "$want_call"; then
+      [[ $2 == quiet ]] || ok "$name"
+    else
+      red=$((red + 1))
+      [[ $2 == quiet ]] || fail "$name: exit=$plain_status stdout=$(cat "$tmp/out") stderr=$(err_first) qs=$(cat "$tmp/qs" 2>/dev/null)"
+    fi
+  done
+  return "$red"
+}
+run_cli_rows "$repo/bin/vgsh" loud || true
+
 # With no xdg-terminal-exec on PATH, launch refuses before exec.
 bare="$tmp/bare"; mkdir -p "$bare"
 ln -s -- "$node_bin" "$bare/node"
@@ -304,13 +353,14 @@ plain_run env PATH="$bare" "$subject" launch --title t -- exits 0
 check "no terminal launcher exits 69" test "$plain_status" == 69
 check "no terminal launcher is named" test "$(err_first)" == "vgsh-tui: refused: terminal=missing"
 
-# A tree for a copy of bin/vgsh or bin/vgsh-tui, as the runner CLI's mutant
-# trees are built: both files copied, so a control can rewrite one, and
+# A tree for a copy of bin/vgsh, bin/vgsh-tui or bin/vgsh-plugin-judge, as
+# the runner CLI's mutant trees are built: the three files copied, so a
+# control can rewrite one, and
 # bin/lib, which holds the loader, linked beside them. SHELL_DIR is linked
 # as shell/, where launch reads the size table.
 tui_tree() { # DIR SHELL_DIR
   mkdir -p "$1/bin"
-  cp -- "$repo/bin/vgsh" "$repo/bin/vgsh-tui" "$1/bin/"
+  cp -- "$repo/bin/vgsh" "$repo/bin/vgsh-tui" "$repo/bin/vgsh-plugin-judge" "$1/bin/"
   ln -s -- "$repo/bin/lib" "$1/bin/lib"
   ln -s -- "$2" "$1/shell"
 }
@@ -381,5 +431,16 @@ control dropped-size vgsh '--size "$size" --presentation full' '--presentation f
 rm -f -- "$tmp/term"
 plain_run "$control_bin" tui present --size tall -- exits 0
 check "the dropped-size mutant opens a tall TUI as default" grep -qxF -- --app-id=org.vgs.tui "$tmp/term"
+
+control attached-terminal vgsh-tui '  setsid -f xdg-terminal-exec' '  exec setsid xdg-terminal-exec'
+rm -f -- "$tmp/term" "$tmp/setsid"
+plain_run "$control_bin" launch --title t -- exits 0
+check "the attached-terminal mutant does not fork the terminal off" test "$(cat "$tmp/setsid" 2>/dev/null)" != -f
+
+control open-reply vgsh 'reply="$(ipc shell openTui "$1")" || exit $?' 'reply="$(ipc shell openTui "$1")" && reply=ok || exit $?'
+check "the open-reply mutant fails a tui open row" test "$(run_cli_rows "$control_bin" quiet >/dev/null && echo green || echo red)" == red
+
+control list-lines vgsh-plugin-judge 'e.key.padEnd(32)' 'e.label.padEnd(32)'
+check "the list-lines mutant fails a tui list row" test "$(run_cli_rows "$tmp/control-list-lines/bin/vgsh" quiet >/dev/null && echo green || echo red)" == red
 
 rows_done test-vgsh-tui

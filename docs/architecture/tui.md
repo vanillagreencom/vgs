@@ -1,6 +1,6 @@
 # Floating TUIs
 
-Covers: bin/vgsh-tui, bin/lib/tui.sh, bin/lib/logo.txt, scripts/test-vgsh-tui.sh, scripts/test-tui.sh
+Covers: bin/vgsh-tui, bin/lib/tui.sh, bin/lib/logo.txt, shell/Core/TuiRunner.qml, scripts/test-vgsh-tui.sh, scripts/test-tui.sh, scripts/test-tui-logic.js, scripts/smoke/rows/tui.sh, scripts/smoke/fixtures/plugins/acme.tui/**
 
 A floating TUI is a themed terminal window that floats over the session and runs one command under the VGS presentation: the logo, the command, then Done or Failed and a keypress. A flow that asks for a password or a `[y/N]` answer runs in one, so the user answers in a terminal they see, never in the shell process. It is a core concept: [D033](../decisions/D033-floating-tuis-are-core.md).
 
@@ -10,10 +10,11 @@ A floating TUI is a themed terminal window that floats over the session and runs
 - `bin/lib/tui.sh` is the library a TUI script sources through `$VGS_TUI_LIB`: step and warning lines, a header box, gum questions, one sudo authorization per script, a lock, a log and a reboot check. Its header lists each function and its return codes.
 - `bin/lib/logo.txt` is the wordmark `present` prints in the theme accent.
 - `vgsh tui present [--title T] [--size S] -- argv...` is the core's own entry: it hands argv to `vgsh-tui launch` with the full presentation and needs no shell running.
+- The manifest key `tui` and the capability `tui` let a plugin open the scripts it declares, and list and open any listed TUI: [§ The capability](#the-capability).
 
 ## The window
 
-- `launch` execs `setsid xdg-terminal-exec --app-id=<app-id> --title="VGS · <title>" -- vgsh-tui present ...`. xdg-terminal-exec picks the user's default terminal and maps `--app-id` onto that terminal's own flag through the `X-TerminalArgAppId` key of its desktop entry. VGS does not choose or configure the terminal.
+- `launch` runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS · <title>" -- vgsh-tui present ...` and exits 0 once setsid has forked it into a session of its own. The terminal outlives whatever started `launch`: Quickshell kills the processes it started when the shell stops, and a `vgsh restart` during a package install must not kill the install. xdg-terminal-exec picks the user's default terminal and maps `--app-id` onto that terminal's own flag through the `X-TerminalArgAppId` key of its desktop entry. VGS does not choose or configure the terminal.
 - The app-id names a size class. `launch` reads it from `HyprlandLayer.TUI_WINDOWS` in `shell/Core/HyprlandLayer.js`, the table the Hyprland layer writes one window rule per class from; [hyprland.md § The file](hyprland.md#the-file) lists each class's app-id, rule and size. A caller picks a class, never a geometry.
 - A terminal whose desktop entry has no `X-TerminalArgAppId` key opens the window without the app-id, so no rule for the class can match it and the window tiles.
 - A floating TUI needs `xdg-terminal-exec` on the path, `gum` for the library's dialogs, and `setsid` and `script` from util-linux. Without `xdg-terminal-exec`, `launch` exits 69 with `terminal=missing`.
@@ -68,6 +69,21 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 - `present` exports `VGS_PLUGIN_ID` and `VGS_PLUGIN_DIR`, the copy, to the script. A core command gets neither, whatever the caller's environment held.
 - argv[0] must resolve, after every link and `..`, to an executable file inside the copied `tui/` directory. Anything else is refused before it runs.
 
+## The capability
+
+A plugin declares its scripts as data in the manifest's `tui` key and opens them through `shell.tui`. It never hands the shell a command string.
+
+- `tui: { <name>: { script, title, size, presentation, entry } }`. `<name>` is lower case letters, digits and dashes. `script` is a path under the plugin's `tui/` directory, and no segment is `.`, `..` or hidden. `title` is one printable line of at most 60 characters. `size` is a key of `HyprlandLayer.TUI_WINDOWS`, `default` when absent. `presentation` is `full` or `plain`, `full` when absent. `entry`, when present, is `{ label, icon, group }`: a printable label and group, and a Lucide icon of the shipped set. The key needs capability `tui`. `PluginLogic.tuiError` judges it.
+- `bin/lib/check-manifests.js` also reads each script on disk: a regular file with its owner's execute bit, reached through no symbolic link. `bin/vgsh-scan` follows links when it publishes a snapshot, so a link would publish whatever it points at.
+- `shell.tui.run(name, args)` opens one of the calling plugin's own scripts, from the snapshot of the revision its instance runs ([D014](../decisions/D014-source-revisions-are-published-snapshots.md)), with `args` as argv after the script. `args` is absent or a list of at most 16 strings of 1 to 256 characters, with no control character.
+- `shell.tui.entries` lists every TUI with an `entry`: the core's own, keyed `core/<name>` from `PluginLogic.CORE_TUIS`, and every enabled plugin's, keyed `<plugin id>/<name>`, each as `{ key, plugin, name, title, label, icon, group }`. A disabled plugin's rows leave the list. A launcher lists other plugins' TUIs without naming those plugins ([D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md)).
+- `shell.tui.open(key)` opens any listed TUI with no arguments. The IPC functions `listTuis` and `openTui <key>` and the commands `vgsh tui list` and `vgsh tui open <key>` do the same from outside the shell.
+- `run` and `open` answer `ok` once the launcher starts, or `refused: tui=<name> reason=undeclared|args|disabled`. A request starts no launcher when it is refused.
+- The launcher ends after the answer. `shell/Core/TuiRunner.qml` owns each launcher process and logs how it ended with `PluginLogic.tuiLaunchOutcome`. Exit 69 is `tui: refused: tui=<key> reason=launcher-missing`: xdg-terminal-exec is not on the shell's PATH.
+- `PluginLogic.js` makes every decision: the judge, the argument rule, the argv, the listed rows and the log line ([overview.md](overview.md) invariant 6). `scripts/test-tui-logic.js` pins each refusal by its text, with a control per rule. `scripts/smoke/rows/tui.sh` reads the argv back from a stand-in xdg-terminal-exec in the nested sandbox.
+
+Omarchy's menu runs each entry's JSONC `action` string, and its bar runs `bash -lc` on a command string. VGS reads the same data from a judged manifest and hands the terminal an argv list, so no plugin text becomes shell code. `presentation: plain` is Omarchy's `omarchy-launch-tui`. Omarchy's launchers `exec setsid`; VGS forks with `setsid -f`, because the shell tracks the launcher it starts (basecamp/omarchy `e332dc97`).
+
 ## Invariants
 
 1. A command reaches the terminal as an argv list and never passes through a shell. Enforced by `scripts/test-vgsh-tui.sh`, which hands `present` an argument holding `$(...)` and `;`, with a control that runs argv through `bash -c`.
@@ -76,6 +92,8 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 4. A plugin's script runs from a private copy that outlives the snapshot and leaves with `present`. Enforced by `scripts/test-vgsh-tui.sh`, whose script removes its snapshot before it sources a file beside it, with a control that points `VGS_PLUGIN_DIR` at the snapshot.
 5. A Ctrl-C stops the command, and `present` exits 130 with no prompt and no plugin copy left. Enforced by `scripts/test-vgsh-tui.sh`, which types the interrupt byte on the pseudo-terminal while a command sleeps, with a control whose `present` ignores SIGINT.
 6. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`.
+7. `launch` forks the terminal into a session of its own and returns. Enforced by `scripts/test-vgsh-tui.sh` with a stand-in `setsid`, with a control that execs `setsid` without `-f`.
+8. A plugin opens only a script its manifest declares, from its published snapshot, and only while it is enabled. Enforced by `scripts/test-tui-logic.js`, with a control that drops each rule, and by `scripts/smoke/rows/tui.sh` in the nested sandbox.
 
 ## Omarchy
 

@@ -50,6 +50,7 @@ f share/vgs/shell/Core/SessionLock.qml
 f share/vgs/shell/Core/ShortcutRegistry.qml
 f share/vgs/shell/Core/ThemeRunner.qml
 f share/vgs/shell/Core/Toasts.qml
+f share/vgs/shell/Core/TuiRunner.qml
 f share/vgs/shell/Core/qmldir
 f share/vgs/shell/Hosts/BackgroundHost.qml
 f share/vgs/shell/Hosts/BarHost.qml

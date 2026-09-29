@@ -182,6 +182,7 @@ try {
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
+    fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js"), path.join(temp, "shell", "Core", "HyprlandLayer.js"));
     const source = fs.readFileSync(LOGIC, "utf8");
     for (const [label, needle, replacement] of CONTROLS) {
         const count = source.split(needle).length - 1;

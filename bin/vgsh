@@ -53,6 +53,8 @@
 #   vgsh self update               update a checkout or a curl install, then restart a running shell
 #   vgsh tui present [--title <text>] [--size default|wide|tall] -- <argv...>
 #                                  run one command in a floating terminal under the VGS presentation
+#   vgsh tui list                  every floating TUI the running shell lists: the core's and every enabled plugin's
+#   vgsh tui open <key>            open one listed floating TUI, `core/<name>` or `<plugin id>/<name>`, with no arguments
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. Before
@@ -250,7 +252,11 @@
 #
 # `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
 # with the full presentation, titled by --title or else by the command's
-# file name, and needs no shell running: docs/architecture/tui.md.
+# file name, and needs no shell running. `tui list` and `tui open` ask the
+# running shell, which decides what is listed and launches the TUI; `open`
+# prints `ok` once the launcher started, and a launcher that finds no
+# terminal is logged by the shell as `tui: refused: tui=<key>
+# reason=launcher-missing`: docs/architecture/tui.md.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
@@ -1403,7 +1409,25 @@ case "$cmd" in
   tui)
     sub="${1:-}"
     [[ $# -gt 0 ]] && shift
-    if [[ $sub != present ]]; then printf 'vgsh: refused: tui-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2; fi
+    case "$sub" in
+      present) ;;
+      list)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        reply="$(ipc shell listTuis)" || exit $?
+        node "$judge" tuis <<<"$reply"
+        exit
+        ;;
+      open)
+        if [[ $# -eq 0 ]]; then printf 'vgsh: refused: key=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        reply="$(ipc shell openTui "$1")" || exit $?
+        case "$reply" in
+          ok) echo ok; exit 0 ;;
+          *) printf 'vgsh: refused: %s\n' "${reply#refused: }" >&2; exit 1 ;;
+        esac
+        ;;
+      *) printf 'vgsh: refused: tui-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2 ;;
+    esac
     title="" size=default
     while [[ $# -gt 0 && $1 != -- ]]; do
       case "$1" in

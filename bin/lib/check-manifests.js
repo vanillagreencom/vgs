@@ -8,7 +8,11 @@
 // (default shell/plugins), listed the way the shell lists them: by
 // bin/vgsh-scan, so a directory with no manifest.json is not a plugin and a
 // directory the scan cannot read ends the run. With plugin directories it
-// checks those. Prints one line per plugin. Exit 0 when every manifest is
+// checks those. Beside the judge's verdict it reads the files a manifest
+// names: every entry point must be a file, and every `tui` script a regular
+// file with its owner's execute bit, reached through no symbolic link, since
+// bin/vgsh-scan follows links and would publish whatever one points at.
+// Prints one line per plugin. Exit 0 when every manifest is
 // valid, 1 when any is refused, 2 when a directory or file cannot be read or
 // the invocation is bad, each as one keyed line:
 //   check-manifests: unreadable: <path>: <cause>
@@ -61,6 +65,32 @@ function manifests() {
     return entries;
 }
 
+// Why SCRIPT, a `tui` script path the judge accepted, cannot run from the
+// plugin at DIR, or "": `missing`, `is a symbolic link or lies under one`,
+// `is not a regular file` or `is not executable`. A file that cannot be
+// read ends the run.
+function scriptDefect(dir, script) {
+    const file = path.join(dir, script);
+    let stat, real;
+    try {
+        stat = fs.lstatSync(file);
+        real = fs.realpathSync(file);
+    } catch (e) {
+        if (e.code === "ENOENT") return "missing";
+        return unreadable(file, e.code);
+    }
+    let base;
+    try {
+        base = fs.realpathSync(dir);
+    } catch (e) {
+        return unreadable(dir, e.code);
+    }
+    if (stat.isSymbolicLink() || real !== path.join(base, script)) return "is a symbolic link or lies under one";
+    if (!stat.isFile()) return "is not a regular file";
+    if ((stat.mode & 0o100) === 0) return "is not executable";
+    return "";
+}
+
 let refused = 0;
 const seen = {};
 for (const { dir, text } of manifests()) {
@@ -91,6 +121,13 @@ for (const { dir, text } of manifests()) {
             refused += 1;
             missing = true;
         }
+    }
+    for (const name of Object.keys(r.manifest.tui)) {
+        const defect = scriptDefect(dir, r.manifest.tui[name].script);
+        if (defect === "") continue;
+        console.log("refused  " + dir + ": tui." + name + ".script " + r.manifest.tui[name].script + " " + defect);
+        refused += 1;
+        missing = true;
     }
     if (missing) continue;
     console.log("ok       " + r.manifest.id + " " + r.manifest.version + " kinds=" + r.manifest.kinds.join(","));

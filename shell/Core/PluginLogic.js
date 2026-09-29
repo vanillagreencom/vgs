@@ -1,13 +1,15 @@
 .pragma library
 .import "../Ui/icons/Lucide.js" as Lucide
 .import "PackageManagers.js" as PackageManagers
+.import "HyprlandLayer.js" as HyprlandLayer
 
 // Pure decisions about plugins and configuration. No QML objects, no I/O, so
 // scripts/test-plugin-logic.js runs every function under node. The icon set
 // a manifest's `icon` names is the one Icon draws from, and the manager ids
 // a requirement's `packages` names are the package-manager table's (D034),
-// each imported here so the shell and every offline reader judge against one
-// list.
+// and the size classes a `tui` entry names are the Hyprland layer's window
+// table, each imported here so the shell and every offline reader judge
+// against one list.
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
@@ -15,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -57,7 +59,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui"];
 
 // What one entry of a manifest's `requirements`, and of the core's own
 // config/requirements.json, may carry: an external command the plugin runs,
@@ -101,7 +103,8 @@ var STATUS_STATE_TONES = { ok: "success", info: "info", warning: "warning", dang
 var STATUS_STATE_KEYS = ["tone", "text"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
-// under, and the name a manifest's Hyprland bind gives its shortcut.
+// under, the name a manifest's Hyprland bind gives its shortcut, and the name
+// a manifest's `tui` key declares a script under.
 // Capabilities.checkName refuses any other.
 var NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -684,12 +687,234 @@ function requirementRows(manifest, missing) {
     });
 }
 
+// What one entry of a manifest's `tui` key may carry, keyed by a
+// NAME_PATTERN name: the script, the window's title, its size class and
+// presentation, and, when present, the row shell.tui.entries lists it with.
+// `script` is a path under the plugin's `tui/` directory, the one
+// bin/vgsh-tui copies out of the published snapshot and runs from; each
+// segment starts with a letter, a digit or `_`, so none is `.`, `..` or
+// hidden. The sizes are the size classes of HyprlandLayer.TUI_WINDOWS, the
+// table the layer's window rules and the launcher's app-ids come from, and
+// the presentations are bin/vgsh-tui's. A title, a label and a group are one
+// printable line of at most TUI_TEXT_MAX characters.
+var TUI_KEYS = ["script", "title", "size", "presentation", "entry"];
+var TUI_ENTRY_KEYS = ["label", "icon", "group"];
+var TUI_SIZES = Object.keys(HyprlandLayer.TUI_WINDOWS);
+var TUI_PRESENTATIONS = ["full", "plain"];
+var TUI_TEXT_MAX = 60;
+var TUI_SCRIPT = /^tui(\/[A-Za-z0-9_][A-Za-z0-9._-]*)+$/;
+// The arguments shell.tui.run hands a plugin's script: at most TUI_ARGS_MAX
+// strings, each 1 to TUI_ARG_MAX characters with no control character.
+var TUI_ARGS_MAX = 16;
+var TUI_ARG_MAX = 256;
+// The exit status bin/vgsh-tui launch gives when xdg-terminal-exec is not on
+// PATH, its `terminal=missing` refusal.
+var TUI_LAUNCHER_MISSING = 69;
+// The core's own floating TUIs, by name, listed in shell.tui.entries as
+// `core/<name>` and opened by that key: each { argv, title, size,
+// presentation, entry }, `argv` the core command the terminal runs and the
+// rest as a normalized manifest `tui` entry has them.
+var CORE_TUIS = {};
+
+// One printable line of 1 to TUI_TEXT_MAX characters.
+function tuiText(value) {
+    return typeof value === "string" && value.trim().length > 0 && Array.from(value).length <= TUI_TEXT_MAX && !CONTROL_CHARACTER.test(value);
+}
+
+// The first defect of a manifest's `tui` key, or "": an object of at least
+// one script, each named by NAME_PATTERN and holding only TUI_KEYS; `script`
+// matches TUI_SCRIPT; `title` passes tuiText; `size` and `presentation`,
+// when present, come from TUI_SIZES and TUI_PRESENTATIONS; `entry`, when
+// present, holds a tuiText `label` and `group` and an `icon` of the shipped
+// set. The plugin opens its scripts through capability `tui`, which the
+// manifest must name. Whether the script is a regular executable file, and
+// no link, is bin/lib/check-manifests.js's to read on disk.
+function tuiError(tui, capabilities) {
+    if (!isPlainObject(tui))
+        return "tui must be an object of script names to scripts";
+    var names = Object.keys(tui);
+    if (names.length === 0)
+        return "tui must declare at least one script";
+    if (capabilities.indexOf("tui") === -1)
+        return "tui needs capability tui";
+    for (var i = 0; i < names.length; i++) {
+        var name = names[i];
+        var at = "tui." + name;
+        if (!NAME_PATTERN.test(name))
+            return "tui name " + JSON.stringify(name) + " must be lower case letters, digits and dashes";
+        var row = tui[name];
+        if (!isPlainObject(row))
+            return at + " must be an object";
+        var keys = Object.keys(row);
+        for (var k = 0; k < keys.length; k++) {
+            if (TUI_KEYS.indexOf(keys[k]) === -1)
+                return at + " has unknown key " + JSON.stringify(keys[k]);
+        }
+        if (typeof row.script !== "string" || !TUI_SCRIPT.test(row.script))
+            return at + ".script must be a relative path under tui/ inside the plugin, got " + JSON.stringify(row.script);
+        if (!tuiText(row.title))
+            return at + ".title must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+        if (row.size !== undefined && TUI_SIZES.indexOf(row.size) === -1)
+            return at + ".size must be one of " + TUI_SIZES.join(", ") + ", got " + JSON.stringify(row.size);
+        if (row.presentation !== undefined && TUI_PRESENTATIONS.indexOf(row.presentation) === -1)
+            return at + ".presentation must be one of " + TUI_PRESENTATIONS.join(", ") + ", got " + JSON.stringify(row.presentation);
+        if (row.entry === undefined)
+            continue;
+        if (!isPlainObject(row.entry))
+            return at + ".entry must be an object";
+        var entryKeys = Object.keys(row.entry);
+        for (var e = 0; e < entryKeys.length; e++) {
+            if (TUI_ENTRY_KEYS.indexOf(entryKeys[e]) === -1)
+                return at + ".entry has unknown key " + JSON.stringify(entryKeys[e]);
+        }
+        if (!tuiText(row.entry.label))
+            return at + ".entry.label must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+        if (typeof row.entry.icon !== "string" || !hasOwn(Lucide.ICONS, row.entry.icon))
+            return at + ".entry.icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got " + JSON.stringify(row.entry.icon);
+        if (!tuiText(row.entry.group))
+            return at + ".entry.group must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+    }
+    return "";
+}
+
+// A `tui` key tuiError accepted, each entry with every key: `size`
+// "default" and `presentation` "full" when absent, `entry` null.
+function normalTui(tui) {
+    var out = {};
+    Object.keys(tui).forEach(function (name) {
+        var row = tui[name];
+        out[name] = {
+            script: row.script,
+            title: row.title,
+            size: row.size === undefined ? "default" : row.size,
+            presentation: row.presentation === undefined ? "full" : row.presentation,
+            entry: row.entry === undefined ? null : clone(row.entry)
+        };
+    });
+    return out;
+}
+
+// The name a TUI answer carries: the caller's text when it is one visible
+// word, otherwise its JSON, so a log line never holds a raw space, newline
+// or control character.
+function tuiLabel(name) {
+    return typeof name === "string" && /^[\x21-\x7e]+$/.test(name) ? name : JSON.stringify(name);
+}
+
+function tuiRefusal(name, reason) {
+    return { ok: false, answer: "refused: tui=" + tuiLabel(name) + " reason=" + reason };
+}
+
+// Whether ARGS may follow a plugin's script: absent, or a list of at most
+// TUI_ARGS_MAX strings, each 1 to TUI_ARG_MAX characters with no control
+// character.
+function tuiArgsValid(args) {
+    if (args === undefined)
+        return true;
+    if (!Array.isArray(args) || args.length > TUI_ARGS_MAX)
+        return false;
+    return args.every(function (arg) {
+        return typeof arg === "string" && arg.length > 0 && Array.from(arg).length <= TUI_ARG_MAX && !CONTROL_CHARACTER.test(arg);
+    });
+}
+
+// The arguments after bin/vgsh-tui that open ROW, a normalized `tui` entry
+// or a CORE_TUIS row, running COMMAND; PLUGIN, { id, dir }, names the
+// plugin and its published snapshot, null for a core TUI.
+function tuiArgv(row, plugin, command) {
+    var argv = ["launch", "--title", row.title, "--size", row.size, "--presentation", row.presentation];
+    if (plugin !== null)
+        argv.push("--plugin", plugin.id, "--dir", plugin.dir);
+    return argv.concat(["--"], command);
+}
+
+// Plugin MANIFEST's own TUI NAME with ARGS, from its published snapshot
+// under SOURCE_DIR (D014): { ok: true, key, argv }, `key` `<id>/<name>` and
+// `argv` what follows bin/vgsh-tui, or { ok: false, answer } with answer
+// `refused: tui=<name> reason=undeclared` for a name the manifest does not
+// declare, `reason=disabled` while the plugin is not ENABLED and
+// `reason=args` for arguments tuiArgsValid refuses.
+function tuiRun(manifest, enabled, sourceDir, name, args) {
+    if (typeof name !== "string" || !hasOwn(manifest.tui, name))
+        return tuiRefusal(name, "undeclared");
+    if (!enabled)
+        return tuiRefusal(name, "disabled");
+    if (!tuiArgsValid(args))
+        return tuiRefusal(name, "args");
+    var row = manifest.tui[name];
+    var plugin = { id: manifest.id, dir: sourceDir + "/" + manifest.__revision };
+    return { ok: true, key: manifest.id + "/" + name, argv: tuiArgv(row, plugin, [row.script].concat(args === undefined ? [] : args)) };
+}
+
+// The listed TUI KEY, with no arguments: `core/<name>` from CORE, the
+// CORE_TUIS table, or `<plugin id>/<name>` of a script whose manifest in
+// MANIFESTS gives it an `entry`, from the plugin's snapshot under
+// SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key nothing
+// lists and `reason=disabled` for a plugin not in ENABLED_IDS.
+function tuiOpen(manifests, enabledIds, sourceDir, core, key) {
+    var slash = typeof key === "string" ? key.indexOf("/") : -1;
+    if (slash === -1)
+        return tuiRefusal(key, "undeclared");
+    var owner = key.slice(0, slash);
+    var name = key.slice(slash + 1);
+    if (owner === "core") {
+        if (!hasOwn(core, name))
+            return tuiRefusal(key, "undeclared");
+        return { ok: true, key: key, argv: tuiArgv(core[name], null, core[name].argv) };
+    }
+    if (!hasOwn(manifests, owner) || !hasOwn(manifests[owner].tui, name) || manifests[owner].tui[name].entry === null)
+        return tuiRefusal(key, "undeclared");
+    if (enabledIds.indexOf(owner) === -1)
+        return tuiRefusal(key, "disabled");
+    var launch = tuiRun(manifests[owner], true, sourceDir, name, []);
+    return { ok: true, key: key, argv: launch.argv };
+}
+
+// Every listed TUI, sorted by key: each CORE row with an `entry` as
+// `core/<name>`, then those of the plugins in ENABLED_IDS as
+// `<plugin id>/<name>`, each { key, plugin, name, title, label, icon, group }
+// with `plugin` "core" for the core's own.
+function tuiEntries(manifests, enabledIds, core) {
+    var rows = [];
+    function add(owner, name, row) {
+        if (row.entry === null)
+            return;
+        rows.push({ key: owner + "/" + name, plugin: owner, name: name, title: row.title, label: row.entry.label, icon: row.entry.icon, group: row.entry.group });
+    }
+    Object.keys(core).forEach(function (name) { add("core", name, core[name]); });
+    enabledIds.forEach(function (id) {
+        if (!hasOwn(manifests, id))
+            return;
+        Object.keys(manifests[id].tui).forEach(function (name) { add(id, name, manifests[id].tui[name]); });
+    });
+    return rows.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+}
+
+// The log line for a launcher of TUI KEY that ended with COMPLETION,
+// { code, status } or null for one that never started, and STDERR, or ""
+// for a launch that handed the terminal its command. The request answered
+// `ok` before the launcher ran, so its refusal is logged here:
+// `tui: refused: tui=<key> reason=launcher-missing` for xdg-terminal-exec
+// missing, `tui: launcher=unstarted tui=<key>`, and
+// `tui: launcher=failed tui=<key> exit=<code> status=<status>` with the
+// launcher's first stderr line for every other end.
+function tuiLaunchOutcome(key, completion, stderr) {
+    if (completion === null)
+        return "tui: launcher=unstarted tui=" + tuiLabel(key);
+    if (completion.status === 0 && completion.code === 0)
+        return "";
+    if (completion.status === 0 && completion.code === TUI_LAUNCHER_MISSING)
+        return "tui: refused: tui=" + tuiLabel(key) + " reason=launcher-missing";
+    return "tui: launcher=failed tui=" + tuiLabel(key) + " exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0];
+}
+
 // Validate one manifest object. Returns { ok: true, manifest } with the
 // normalized manifest, or { ok: false, error } naming the first defect.
 // `sourceDir` is recorded on the manifest so entry points resolve later.
 // A normalized manifest always carries `capabilities` and `requirements`
 // (arrays, the latter's entries normalRequirements' shape), `settings`,
-// `schema` and `status` (objects), `defaultSection` only when declared, and
+// `schema`, `status` and `tui` (objects, the last normalTui's shape, {}
+// when undeclared), `defaultSection` only when declared, and
 // `hyprland` only when declared, as { binds, layerRules } with every bind's
 // key normalised by hyprlandKey.
 function validateManifest(raw, sourceDir) {
@@ -791,9 +1016,15 @@ function validateManifest(raw, sourceDir) {
     } else if (capabilities.indexOf("status") !== -1) {
         return { ok: false, error: "capability status needs a status declaration" };
     }
+    if (raw.tui !== undefined) {
+        var badTui = tuiError(raw.tui, capabilities);
+        if (badTui !== "")
+            return { ok: false, error: badTui };
+    }
     var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();
     manifest.requirements = normalRequirements(requirements);
+    manifest.tui = normalTui(raw.tui === undefined ? {} : raw.tui);
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
     manifest.status = raw.status === undefined ? {} : clone(raw.status);

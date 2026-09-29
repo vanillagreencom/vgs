@@ -7,8 +7,11 @@
 #   vgsh-tui present [--presentation full|plain] [--plugin <id> --dir <snapshot>] -- <argv...>
 #       run argv under the VGS presentation in this terminal
 #
-# launch execs `setsid xdg-terminal-exec --app-id=<app-id> --title="VGS ·
-# <text>" -- <this file> present ...`, with no shell between. The size
+# launch runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS ·
+# <text>" -- <this file> present ...`, with no shell between, and exits 0
+# once setsid has forked it into a session of its own, so the terminal
+# outlives the process that asked for it: a shell restart kills the
+# launchers it started, never their terminals. The size
 # classes and their app-ids are shell/Core/HyprlandLayer.js's TUI_WINDOWS,
 # the table the Hyprland layer writes its window rules from, read under
 # node; a size it does not hold is a bad invocation. Everything present
@@ -134,7 +137,7 @@ launch() {
     printf 'vgsh-tui: refused: terminal=missing\nxdg-terminal-exec is not on PATH; install it to open floating TUIs\n' >&2
     exit 69
   }
-  exec setsid xdg-terminal-exec --app-id="$app_id" --title="VGS · $title" -- \
+  setsid -f xdg-terminal-exec --app-id="$app_id" --title="VGS · $title" -- \
     "$self" present --presentation "$presentation" "${pass[@]}" -- "${argv[@]}"
 }
 

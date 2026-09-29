@@ -99,6 +99,8 @@ ShellRoot {
         function summon(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("summon", kind, id, payloadJson, null)); }
         function hide(kind: string, id: string): string { return root.ifGuarded(() => Plugins.route("hide", kind, id, "", null)); }
         function toggle(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("toggle", kind, id, payloadJson, null)); }
+        function listTuis(): string { return JSON.stringify(Capabilities.tuis.entries); }
+        function openTui(key: string): string { return root.ifGuarded(() => Capabilities.tuis.open(key)); }
         function renderHyprland(): string { return root.ifGuarded(() => hyprland.item === null ? "refused: hyprland=pending" : hyprland.item.render()); }
     }
 }

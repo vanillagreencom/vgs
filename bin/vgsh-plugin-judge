@@ -13,6 +13,10 @@
 //       names no manager present here; an optional one ends ` optional`.
 //       Detection runs once, and only when a missing requirement names a
 //       package.
+//   vgsh-plugin-judge tuis
+//       read the shell's `listTuis` reply on stdin and print it as
+//       `vgsh tui list` lines: one per listed floating TUI, its key, its
+//       group and its label
 //   vgsh-plugin-judge id <plugin-dir>
 //       print the `id` the manifest names; the manifest need not validate
 //   vgsh-plugin-judge owners <id>
@@ -75,6 +79,11 @@ function listLines(reply) {
     return lines;
 }
 
+// `vgsh tui list`'s lines for ENTRIES, the parsed `listTuis` reply.
+function tuiLines(entries) {
+    return entries.map(e => e.key.padEnd(32) + " " + e.group.padEnd(16) + " " + e.label);
+}
+
 function manifestOf(dir) {
     return readJson(path.join(dir, "manifest.json"), "manifest");
 }
@@ -96,6 +105,17 @@ main(() => {
             refuse("reply=unparseable");
         }
         const lines = listLines(reply);
+        if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
+        break;
+    }
+    case "tuis": {
+        let entries;
+        try {
+            entries = JSON.parse(fs.readFileSync(0, "utf8"));
+        } catch (e) {
+            refuse("reply=unparseable");
+        }
+        const lines = tuiLines(entries);
         if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
         break;
     }

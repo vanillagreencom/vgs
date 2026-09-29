@@ -23,6 +23,7 @@ expect "disable released the IPC target" '[]' lent ipcTargets
 expect "disable released the notification subscriber" '[]' lent subscribers
 expect "disable destroyed the notification server" false lent notificationServer
 expect "disable destroyed the polkit agent" false lent polkitAgent
+expect "disable released the tui capability" null lent holders.tui
 expect_poll "the compositor dropped the fixture's shortcut" 0 hypr_shortcuts
 expect "qs lists no IPC target for the disabled fixture" 0 ipc_targets
 expect "disabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare false
