@@ -2,13 +2,18 @@
 # Controls for bin/vgsh-sudo-grant, the time-boxed passwordless sudo grant,
 # reached through `vgsh sudo`: the verbs and their bounds, install and
 # uninstall, the rule text and its deadline, the visudo check, the expiry
-# timer, publication by rename, the toggle, the question, the refusals of
-# the root half and its startup. Every row runs a copy of vgsh and of the
+# timer, publication by rename, the NixOS configuration-only path, the
+# toggle, the question, the refusals of the root half and its startup.
+# Every row runs a copy of vgsh and of the
 # helper whose `prefix` is a temporary tree, so its /etc, /run and /usr are
 # that tree's. sudo, visudo, systemd-run, systemctl, getent and gum are
 # stand-ins there; the sudo stand-in runs the root half under `unshare -r`,
 # where the tree reads as root's and nothing outside it is writable, so no
-# row reaches the real /etc, the system's sudo or systemd.
+# row reaches the real /etc, the system's sudo or systemd. NixOS rows bind
+# a fixture over /etc/os-release in a private mount namespace, keep the
+# helper as the non-root user, and assert that the tree and sudo log stay
+# untouched; their controls plant a forbidden write and remove the NixOS
+# dispatch.
 set -euo pipefail
 
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
@@ -16,10 +21,11 @@ suite=test-vgsh-sudo-grant
 source_file="$repo/bin/vgsh-sudo-grant"
 uid="$(id -u)"; gid="$(id -g)"
 ((uid != 0)) || { echo "$suite: status=not-measured reason=runs-as-root"; exit 77; }
-for tool in unshare setsid script; do
+for tool in unshare setsid script find mount sh; do
   command -v "$tool" >/dev/null || { echo "$suite: status=not-measured missing=$tool"; exit 77; }
 done
 unshare_bin="$(command -v unshare)"; setsid_bin="$(command -v setsid)"; script_bin="$(command -v script)"
+mount_bin="$(command -v mount)"; sh_bin="$(command -v sh)"
 "$unshare_bin" -r true 2>/dev/null || { echo "$suite: status=not-measured missing=user-namespaces"; exit 77; }
 stat_bin="$(command -v stat)"; date_bin="$(command -v date)"
 
@@ -27,9 +33,11 @@ root="$tmp/root"; bin="$root/usr/bin"; installed="$root/usr/local/bin/vgs-sudo-g
 vgs="$tmp/vgs"; helper="$vgs/bin/vgsh-sudo-grant"
 rule="$root/etc/sudoers.d/99-vgs-nopasswd-$uid"; boot="$root/etc/tmpfiles.d/vgs-sudo-grant.conf"
 unit="vgs-sudo-grant-expire-$uid"
-mkdir -p "$bin" "$vgs/bin" "$tmp/home"
+mkdir -p "$bin" "$vgs/bin" "$vgs/shell/Core" "$tmp/home"
 cp -- "$repo/bin/vgsh" "$vgs/bin/vgsh"
+cp -- "$repo/bin/vgsh-pkg" "$vgs/bin/vgsh-pkg"
 cp -R -- "$repo/bin/lib" "$vgs/bin/lib"
+cp -- "$repo/shell/Core/PackageManagers.js" "$vgs/shell/Core/PackageManagers.js"
 template="$vgs/bin/lib/tmpfiles.d/vgs-sudo-grant.conf"
 for tool in awk cat chmod chown cmp cp env flock grep id install mkdir mktemp mv readlink rm sed touch; do
   tool_bin="$(command -v "$tool")" || { echo "$suite: status=not-measured missing=$tool"; exit 77; }
@@ -137,9 +145,9 @@ place() { # SOURCE
 # A new tree with nothing installed and every record cleared.
 fresh() {
   rm -rf -- "${root:?}/etc" "${root:?}/run" "${root:?}/usr/local"
-  mkdir -p "$root/etc/sudoers.d" "$root/etc/tmpfiles.d" "$root/run" "$root/usr/local/bin"
+  mkdir -p "$root/etc/sudoers.d" "$root/etc/tmpfiles.d" "$root/run" "$root/run/current-system/sw/bin" "$root/usr/local/bin"
   chmod 0755 "$root/etc" "$root/etc/tmpfiles.d" "$root/run"; chmod 0750 "$root/etc/sudoers.d"
-  rm -f -- "$tmp"/{sudo.log,systemd-run.log,systemctl.log,gum.log,tmpfiles.log,checked-rule,visudo-env,timer-active,foreign,date-junk,sudo-old,sudo-exit,sudo-ignores,visudo-exit,arm-exit,tmpfiles-exit,account}
+  rm -f -- "$tmp"/{sudo.log,systemd-run.log,systemctl.log,gum.log,tmpfiles.log,checked-rule,visudo-env,timer-active,foreign,date-junk,sudo-old,sudo-exit,sudo-ignores,visudo-exit,arm-exit,tmpfiles-exit,account,before-tree,after-tree}
   printf '0\n' >"$tmp/gum-answer"
 }
 # fresh, then the placed helper installed as the root half with its boot cleanup.
@@ -148,7 +156,26 @@ installed() {
   cp -- "$helper" "$installed"; chmod 0755 "$installed"
   cp -- "$template" "$boot"; chmod 0644 "$boot"
 }
-row_env=(env -i HOME="$tmp/home" PATH=/usr/bin:/bin LANG=C.UTF-8 VGS_PLANTED=1)
+caller="$tmp/caller"; mkdir -p "$caller"
+ln -s -- "$node_bin" "$caller/node"
+nixos_path="$tmp/nixos-path"; mkdir -p "$nixos_path"
+cat >"$nixos_path/nix" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$nixos_path/nix"
+no_node_path="$tmp/no-node-path"; mkdir -p "$no_node_path"
+for tool in bash readlink dirname id; do
+  tool_bin="$(command -v "$tool")" || { echo "$suite: status=not-measured missing=$tool"; exit 77; }
+  ln -s -- "$tool_bin" "$no_node_path/$tool"
+done
+nixos_os_release="$tmp/os-release-nixos"
+printf 'NAME=NixOS\nID=nixos\n' >"$nixos_os_release"
+nixos_mount_script="$mount_bin --bind \"\$1\" /etc/os-release && shift && exec $unshare_bin --user --map-user=$uid --map-group=$gid \"\$@\""
+nixos_mount_probe_status=0
+"$unshare_bin" -rm "$sh_bin" -c "$nixos_mount_script" sh "$nixos_os_release" "$sh_bin" -c "[ \"\$(id -u)\" = \"$uid\" ] && grep -qx ID=nixos /etc/os-release" 2>/dev/null || nixos_mount_probe_status=$?
+((nixos_mount_probe_status == 0)) || { echo "$suite: status=not-measured missing=nixos-os-release-namespace"; exit 77; }
+row_env=(env -i HOME="$tmp/home" PATH="$caller:/usr/bin:/bin" LANG=C.UTF-8 VGS_PLANTED=1)
 # run NAME WANT_EXIT WANT_FIRST_STDERR ARGS...: vgsh sudo ARGS in a session
 # with no terminal; `*` takes any stderr. Stdout lands in $tmp/out, stderr in $tmp/err.
 run() {
@@ -157,6 +184,37 @@ run() {
   "${row_env[@]}" "$setsid_bin" -w "$vgs/bin/vgsh" sudo "$@" </dev/null >"$tmp/out" 2>"$tmp/err" || status=$?
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
   if [[ $status == "$want_exit" && ($want_err == "*" || $err == "$want_err") ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit stderr=[$err] want=[$want_err]"; fi
+}
+tree_snapshot() { find "$root" -printf '%P %y %s %m %T@\n' | sort; }
+run_nixos_with_path() { # PATH_VALUE NAME WANT_EXIT WANT_FIRST_STDERR ARGS...
+  local path_value="$1" name="$2" want_exit="$3" want_err="$4" status=0 err=""
+  shift 4
+  tree_snapshot >"$tmp/before-tree"
+  env -i HOME="$tmp/home" PATH="$path_value" LANG=C.UTF-8 VGS_PLANTED=1 \
+    "$unshare_bin" -rm "$sh_bin" -c "$nixos_mount_script" \
+    sh "$nixos_os_release" "$setsid_bin" -w "$vgs/bin/vgsh" sudo "$@" \
+    </dev/null >"$tmp/out" 2>"$tmp/err" || status=$?
+  tree_snapshot >"$tmp/after-tree"
+  [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
+  if [[ $status == "$want_exit" && ($want_err == "*" || $err == "$want_err") ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit stderr=[$err] want=[$want_err]"; fi
+}
+run_nixos_dirty() { # NAME WANT_EXIT WANT_FIRST_STDERR ARGS...
+  local name="$1" want_exit="$2" want_err="$3"
+  shift 3
+  run_nixos_with_path "$nixos_path:$caller:/usr/bin:/bin" "$name" "$want_exit" "$want_err" "$@"
+}
+run_nixos() { # NAME WANT_EXIT WANT_FIRST_STDERR ARGS...
+  local name="$1"
+  run_nixos_dirty "$@"
+  check "$name leaves the tree unchanged" cmp -s -- "$tmp/before-tree" "$tmp/after-tree"
+  check "$name makes no sudo call" test ! -e "$tmp/sudo.log"
+  check "$name writes no sudoers rule" no_rule
+}
+run_nixos_no_nix() { # NAME WANT_EXIT WANT_FIRST_STDERR ARGS...
+  run_nixos_with_path "$caller:/usr/bin:/bin" "$@"
+}
+run_nixos_no_node() { # NAME WANT_EXIT WANT_FIRST_STDERR ARGS...
+  run_nixos_with_path "$nixos_path:$no_node_path" "$@"
 }
 # run_tty NAME WANT_EXIT ARGS...: the same on a pseudo-terminal; stdout and
 # stderr together land in $tmp/out, carriage returns dropped.
@@ -179,12 +237,14 @@ root() {
   if [[ $status == "$want_exit" && ($want_err == "*" || $err == "$want_err") ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit stderr=[$err] want=[$want_err]"; fi
 }
 out_has() { grep -qF -- "$1" "$tmp/out"; }
+first_out_matches() { local first; IFS= read -r first <"$tmp/out"; [[ $first =~ $1 ]]; }
 sudo_calls() { cat -- "$tmp/sudo.log" 2>/dev/null; }
 no_rule() { [[ ! -e $rule && -z $(ls -A -- "$root/etc/sudoers.d") ]]; }
+tree_changed() { ! cmp -s -- "$tmp/before-tree" "$tmp/after-tree"; }
 # The epoch of a rule's NOTAFTER deadline, from the rule file's text.
 deadline_epoch() {
-  local text d
-  text="$(cat -- "$rule")"
+  local text d file="${1:-$rule}"
+  text="$(cat -- "$file")"
   [[ $text =~ NOTAFTER=([0-9]{14})Z ]] || return 1
   d="${BASH_REMATCH[1]}"
   "$date_bin" -u -d "${d:0:8} ${d:8:2}:${d:10:2}:${d:12:2}" +%s
@@ -192,7 +252,7 @@ deadline_epoch() {
 # Whether the rule's deadline is MINUTES from START, within ten seconds.
 deadline_in() { # START MINUTES
   local e want
-  e="$(deadline_epoch)" || return 1
+  e="$(deadline_epoch "${3:-}")" || return 1
   want=$(($1 + $2 * 60))
   ((e >= want - 10 && e <= want + 10))
 }
@@ -218,6 +278,48 @@ check "status names the absent root half" test "$(cat "$tmp/out")" == "sudo-gran
 run "grant with no root half is refused" 1 "vgs-sudo-grant: refused: root-half=absent path=$installed" grant
 run "revoke with no root half is refused" 1 "vgs-sudo-grant: refused: root-half=absent path=$installed" revoke
 check "an absent root half runs no sudo" test ! -e "$tmp/sudo.log"
+
+# NixOS follows the package-manager table's nix row: VGS writes no sudo
+# files and prints the configuration rule the user adds to NixOS.
+fresh
+run_nixos "nixos status on a fresh tree is skipped" 0 "" status
+check "nixos status prints the skip reason" test "$(cat "$tmp/out")" == "sudo-grant=skipped=nixos-config"
+installed
+run_nixos "nixos status on an installed tree is skipped" 0 "" status
+check "nixos installed status prints the skip reason" test "$(cat "$tmp/out")" == "sudo-grant=skipped=nixos-config"
+fresh
+start="$("$date_bin" +%s)"
+run_nixos "nixos grant prints the configuration rule" 0 "" grant
+check "nixos grant reports the default deadline first" first_out_matches '^ok sudo-grant=skipped=nixos-config minutes=15 until=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+check "nixos grant names the account in the snippet" out_has 'users = [ "vgsuser" ];'
+check "nixos grant sets runAs to ALL" out_has 'runAs = "ALL";'
+check "nixos grant writes the string command with NOTAFTER" grep -qxE -- '    commands = \[ "NOTAFTER=[0-9]{14}Z NOPASSWD: ALL" \];' "$tmp/out"
+check "nixos grant default deadline is 15 minutes out" deadline_in "$start" 15 "$tmp/out"
+installed
+start="$("$date_bin" +%s)"
+run_nixos "nixos grant 60 prints the configuration rule" 0 "" grant 60
+check "nixos grant 60 reports the deadline first" first_out_matches '^ok sudo-grant=skipped=nixos-config minutes=60 until=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+check "nixos grant 60 deadline is 60 minutes out" deadline_in "$start" 60 "$tmp/out"
+for verb in revoke install uninstall; do
+  fresh
+  run_nixos "nixos $verb is skipped" 0 "" "$verb"
+  check "nixos $verb reports the skip reason" test "$(head -n 1 "$tmp/out")" == "ok sudo-grant=skipped=nixos-config"
+done
+fresh
+run_nixos "nixos grant bad minutes is refused" 2 "vgs-sudo-grant: refused: minutes=1441" grant 1441
+fresh
+printf 'Admin\n' >"$tmp/account"
+run_nixos "nixos grant refuses an unsupported account" 1 "vgs-sudo-grant: refused: account=unsupported name=Admin" grant
+fresh
+run_nixos_no_nix "nixos os-release without nix uses the normal path" 0 "" status
+check "nixos without nix reports the normal absent root half" test "$(cat "$tmp/out")" == "sudo-grant=inactive root-half=absent"
+check "nixos without nix still leaves the tree unchanged" cmp -s -- "$tmp/before-tree" "$tmp/after-tree"
+check "nixos without nix makes no sudo call on a fresh status" test ! -e "$tmp/sudo.log"
+fresh
+run_nixos_no_node "nixos without node refuses detection" 1 "vgs-sudo-grant: refused: system=undetected exit=127" status
+check "nixos without node makes no sudo call" test ! -e "$tmp/sudo.log"
+check "nixos without node leaves the tree unchanged" cmp -s -- "$tmp/before-tree" "$tmp/after-tree"
+check "nixos without node writes no sudoers rule" no_rule
 
 # install prints what it places, then places the boot cleanup and then the
 # root half, each root's, and drops the credential.
@@ -419,6 +521,15 @@ control() { # NAME NEEDLE REPLACEMENT
   place "$copy"
   installed
 }
+control nixos-write "  printf 'NixOS builds /etc from its configuration, so VGS writes no sudo rule here.\n'" "  : >\"\$(rule_path \"\$uid\")\"
+  printf 'NixOS builds /etc from its configuration, so VGS writes no sudo rule here.\n'"
+run_nixos_dirty "the nixos-write mutant grants" 0 "" grant
+check "the nixos-write mutant changes the tree" tree_changed
+check "the nixos-write mutant writes the rule path" test -e "$rule"
+control nixos-blind 'if [[ $detected_system == nix ]]; then' 'if false; then'
+run_nixos_dirty "the nixos-blind mutant reaches the normal status" 0 "" status
+check "the nixos-blind mutant prints the normal status" test "$(cat "$tmp/out")" == "sudo-grant=inactive root-half=current"
+check "the nixos-blind mutant reaches sudo" test -e "$tmp/sudo.log"
 control skip-visudo 'visudo -cqf "$enable_staged" >/dev/null ||' 'true ||'
 printf '1\n' >"$tmp/visudo-exit"
 run_tty "the skip-visudo mutant grants" 0 grant

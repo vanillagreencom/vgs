@@ -42,6 +42,15 @@
 # honour the rule has it revoked again.
 #
 # Every refusal prints one keyed line first: `vgs-sudo-grant: refused: <key>=<value>`.
+# On NixOS, detected through the package-manager table before any sudo
+# call, every user verb writes nothing and runs no sudo. Each reports
+# `skipped=nixos-config`; `grant` prints a `security.sudo.extraRules`
+# snippet with the same `NOTAFTER` deadline. If that detection fails or its
+# first line cannot be read, the user half refuses as `system=undetected`.
+# Detection runs as the user before any sudo call. A command planted on the
+# caller's PATH can only choose the NixOS branch, which writes nothing and
+# runs no sudo, or the normal branch, whose commands still resolve in the
+# system directories alone; vgsh itself was already resolved from that PATH.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 from
 # __status and __disable when no grant is active, 130 when the question is
 # cancelled. docs/architecture/tui.md § sudo, docs/decisions/D036.
@@ -52,7 +61,9 @@ set -euo pipefail
 
 # Every system path below derives from prefix, empty in production.
 prefix=
-safe_path="$prefix/usr/local/sbin:$prefix/usr/local/bin:$prefix/usr/sbin:$prefix/usr/bin:$prefix/sbin:$prefix/bin"
+safe_path="$prefix/usr/local/sbin:$prefix/usr/local/bin:$prefix/usr/sbin:$prefix/usr/bin:$prefix/sbin:$prefix/bin:$prefix/run/current-system/sw/bin"
+# Only the NixOS package-manager check reads the caller's PATH.
+caller_path="${PATH-}"
 # In either half a bare command resolves in the system directories alone,
 # so no checkout or user-writable directory supplies sudo, gum or visudo.
 export PATH="$safe_path"
@@ -108,6 +119,16 @@ timer_unit() { printf 'vgs-sudo-grant-expire-%s' "$1"; }
 # The UTC deadline D, YYYYMMDDHHMMSSZ, as ISO 8601.
 iso() { # D
   printf '%s-%s-%sT%s:%s:%sZ' "${1:0:4}" "${1:4:2}" "${1:6:2}" "${1:8:2}" "${1:10:2}" "${1:12:2}"
+}
+
+# Sets expires and deadline for a grant MINUTES from the current wall clock.
+deadline_for_minutes() { # MINUTES
+  local now
+  now="$(date +%s)" || refuse 1 "clock=unreadable"
+  [[ $now =~ ^[0-9]+$ ]] || refuse 1 "clock=malformed value=$(printf '%q' "$now")"
+  expires=$((now + $1 * 60))
+  deadline="$(date -u -d "@$expires" +%Y%m%d%H%M%SZ)" || refuse 1 "deadline=unreadable"
+  [[ $deadline =~ ^[0-9]{14}Z$ ]] || refuse 1 "deadline=malformed value=$(printf '%q' "$deadline")" "sudo reads NOTAFTER as YYYYMMDDHHMMSSZ"
 }
 
 # ---------------------------------------------------------------- root half
@@ -232,11 +253,7 @@ root_enable() { # UID MINUTES
     "$status_inactive") ;;
     *) refuse 1 "grant=malformed path=$file" "vgsh sudo revoke removes it" ;;
   esac
-  now="$(date +%s)" || refuse 1 "clock=unreadable"
-  [[ $now =~ ^[0-9]+$ ]] || refuse 1 "clock=malformed value=$(printf '%q' "$now")"
-  expires=$((now + minutes * 60))
-  deadline="$(date -u -d "@$expires" +%Y%m%d%H%M%SZ)" || refuse 1 "deadline=unreadable"
-  [[ $deadline =~ ^[0-9]{14}Z$ ]] || refuse 1 "deadline=malformed value=$(printf '%q' "$deadline")" "sudo reads NOTAFTER as YYYYMMDDHHMMSSZ"
+  deadline_for_minutes "$minutes"
   enable_staged="" enable_file="" enable_unit=""
   trap enable_undo EXIT
   # The dot keeps sudo from reading the file before the rename publishes it whole.
@@ -291,6 +308,86 @@ root_main() {
 }
 
 # ---------------------------------------------------------------- user half
+
+# Reads the package-manager table the same way `vgsh pkg detect` does, and
+# sets detected_system to the first line's primary id or none.
+detect_system() {
+  local first status=0
+  system_detect_output="$(env PATH="$caller_path" node "${self%/*}/vgsh-pkg" detect 2>&1)" || status=$?
+  system_detect_status="$status"
+  first="${system_detect_output%%$'\n'*}"
+  if ((status != 0)); then
+    detected_system=
+    return 1
+  fi
+  if [[ $first == primary=none ]]; then
+    detected_system=none
+    return 0
+  fi
+  if [[ $first =~ ^primary=([a-z][a-z0-9_-]*)\ binary=.+$ ]]; then
+    detected_system="${BASH_REMATCH[1]}"
+    return 0
+  fi
+  detected_system=
+  return 1
+}
+
+detect_or_refuse() {
+  if detect_system; then return; fi
+  if [[ -n $system_detect_output ]]; then
+    refuse 1 "system=undetected exit=$system_detect_status" "$system_detect_output"
+  fi
+  refuse 1 "system=undetected exit=$system_detect_status" "the package manager detector printed no first line"
+}
+
+nixos_status() {
+  printf 'sudo-grant=skipped=nixos-config\n'
+}
+
+nixos_grant() { # [MINUTES]
+  local minutes="$default_minutes" expires deadline
+  (($# == 0)) || minutes="$1"
+  minutes_valid "$minutes" || bad_invocation "minutes=$(printf '%q' "$minutes")"
+  minutes=$((10#$minutes))
+  resolve_account "$uid"
+  deadline_for_minutes "$minutes"
+  printf 'ok sudo-grant=skipped=nixos-config minutes=%s until=%s\n' "$minutes" "$(iso "$deadline")"
+  printf 'NixOS builds /etc from its configuration, so VGS writes no sudo rule here.\n'
+  printf 'WARNING: until %s, ANY process running as %s can run ANY command as root WITHOUT a password.\n' "$(iso "$deadline")" "$account"
+  printf 'Anything with access to your account gets full root for that time.\n'
+  printf 'Add this rule to your system configuration, then run nixos-rebuild switch:\n'
+  printf 'security.sudo.extraRules = [\n'
+  printf '  {\n'
+  printf '    users = [ "%s" ];\n' "$account"
+  printf '    runAs = "ALL";\n'
+  printf '    commands = [ "NOTAFTER=%s NOPASSWD: ALL" ];\n' "$deadline"
+  printf '  }\n'
+  printf '];\n'
+  printf 'sudo refuses the rule after %s.\n' "$(iso "$deadline")"
+  printf 'The rule stays in the configuration until you remove it.\n'
+  printf 'Remove it and run nixos-rebuild switch to end it early or once it expired.\n'
+}
+
+nixos_revoke() {
+  printf 'ok sudo-grant=skipped=nixos-config\n'
+  printf 'VGS wrote no rule on NixOS. Remove the rule from security.sudo.extraRules and run nixos-rebuild switch.\n'
+}
+
+nixos_install() {
+  printf 'ok sudo-grant=skipped=nixos-config\n'
+  printf 'Nothing is installed because NixOS sudo rules come from its configuration. Run vgsh sudo grant to print the rule.\n'
+}
+
+nixos_uninstall() {
+  printf 'ok sudo-grant=skipped=nixos-config\n'
+  printf 'Nothing is removed because NixOS sudo rules come from its configuration. Run vgsh sudo grant to print the rule.\n'
+}
+
+nixos_verb() { # VERB ARGS...
+  local verb="$1"
+  shift
+  "nixos_$verb" "$@"
+}
 
 # Drops any cached sudo credential now and again when this command ends.
 cold_sudo() {
@@ -459,10 +556,18 @@ user_main() {
   (($# == 0)) || shift
   case "$verb" in
     status|revoke|install|uninstall) (($# == 0)) || bad_invocation "argument=$(printf '%q' "$1")" ;;
-    grant) (($# <= 1)) || bad_invocation "argument=$(printf '%q' "$2")" ;;
+    grant)
+      (($# <= 1)) || bad_invocation "argument=$(printf '%q' "$2")"
+      (($# == 0)) || minutes_valid "$1" || bad_invocation "minutes=$(printf '%q' "$1")"
+      ;;
     *) bad_invocation "verb=$(printf '%q' "$verb")" ;;
   esac
   uid="$(id -u)" || refuse 1 "user=unknown"
+  detect_or_refuse
+  if [[ $detected_system == nix ]]; then
+    nixos_verb "$verb" "$@"
+    return
+  fi
   "user_$verb" "$@"
 }
 

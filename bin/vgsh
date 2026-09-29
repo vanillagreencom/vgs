@@ -54,10 +54,12 @@
 #                                  run install or remove; without names, pick them in fzf
 #   vgsh sudo status               whether a passwordless sudo grant is active, until when, and its root half's state
 #   vgsh sudo grant [minutes]      warn, ask and grant passwordless sudo for 1 to 1440 minutes, 15 when absent;
-#                                  while a grant is active it revokes that grant instead
+#                                  while a grant is active it revokes that grant instead; on NixOS, print
+#                                  a security.sudo.extraRules snippet and write nothing
 #   vgsh sudo revoke               end the active grant now
-#   vgsh sudo install              install the grant's root half and its boot cleanup, once; sudo asks for the password
-#   vgsh sudo uninstall            remove every grant, then the root half and its boot cleanup
+#   vgsh sudo install              install the grant's root half and its boot cleanup, once; sudo asks for the password;
+#                                  on NixOS, report skipped=nixos-config
+#   vgsh sudo uninstall            remove every grant, then the root half and its boot cleanup; on NixOS, report skipped=nixos-config
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind
@@ -269,7 +271,9 @@
 # which asks for the password unless a grant is active, and `grant` asks
 # one question, so each needs a terminal; the core floating TUI
 # `core/sudo-grant` runs `vgsh sudo grant` in one. No grant exists until
-# the owner runs `sudo install`: docs/architecture/tui.md § sudo.
+# the owner runs `sudo install`. On NixOS, every sudo verb writes nothing,
+# reports `skipped=nixos-config`, and `grant` prints the
+# `security.sudo.extraRules` snippet: docs/architecture/tui.md § sudo.
 #
 # `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
 # with the full presentation, titled by --title or else by the command's
