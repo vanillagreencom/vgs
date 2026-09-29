@@ -33,10 +33,11 @@
 # removed here; `vgsh self update` prunes them.
 #
 # --uninstall removes the version directories, vgs/current, vgs/git and the
-# link, and keeps ${XDG_CONFIG_HOME:-~/.config}/vgs and
-# ${XDG_STATE_HOME:-~/.local/state}/vgs. It refuses while the running shell
-# was started from a tree it would remove, and a vgs/git with changes or
-# commits its upstream lacks unless --force.
+# link, and keeps ${XDG_CONFIG_HOME:-~/.config}/vgs,
+# ${XDG_STATE_HOME:-~/.local/state}/vgs and vgs/.self.lock. It refuses while
+# the running shell was started from a tree it would remove, and, unless
+# --force, a vgs/git holding changes, a stash or commits no remote branch
+# has.
 #
 # It never starts the shell, writes a service unit or edits hyprland.lua. It
 # prints the line that starts VGS with Hyprland.
@@ -45,9 +46,11 @@
 # then English. Exit 1 for a refusal, 2 for a bad argument, 75 while another
 # writer holds vgs/.self.lock, 78 below the floor.
 #
-# The whole script is the body of main, called on the last line. A download
-# cut short ends inside main's definition, which bash reads as a syntax
-# error, so it runs none of it.
+# The whole script is one brace group: main's definition, then its call
+# with the script's arguments. A download cut short ends inside the group,
+# which bash reads as a syntax error, so it runs none of it; not even a cut
+# after the word `main` runs main without its arguments.
+{
 main() {
   set -euo pipefail
   umask 022
@@ -512,40 +515,47 @@ process.stdout.write(lines.join("\n") + "\n");
     fi
   }
 
-  # Refuses a vgs/git with changes or commits its upstream lacks.
+  # Refuses a vgs/git that holds work found nowhere else: changes in the
+  # work tree or index, a stash, or commits on HEAD or a local branch that
+  # no remote-tracking branch holds.
   git_guard() {
-    local out ahead
+    local out
+    local -a git_in=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git -C "$data/git" -c core.fsmonitor=false)
     [[ -d $data/git ]] || return 0
-    out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git -C "$data/git" -c core.fsmonitor=false status --porcelain 2>&1)" ||
+    out="$("${git_in[@]}" status --porcelain 2>&1)" ||
       refuse 1 "git=unreadable path=$data/git" "$out" "pass --force to remove it anyway"
     [[ -z $out ]] || refuse 1 "modified=$data/git" "it holds changes; pass --force to remove them"
-    ahead="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR git -C "$data/git" rev-list --count '@{upstream}..HEAD' 2>&1)" ||
-      refuse 1 "upstream=missing path=$data/git" "$ahead" "pass --force to remove it anyway"
-    ((ahead == 0)) || refuse 1 "ahead=$ahead path=$data/git" "it holds commits its upstream lacks; pass --force to remove them"
+    if "${git_in[@]}" rev-parse -q --verify refs/stash >/dev/null; then
+      refuse 1 "stash=present path=$data/git" "it holds stashed changes; pass --force to remove them"
+    fi
+    out="$("${git_in[@]}" rev-list --count HEAD --branches --not --remotes 2>&1)" ||
+      refuse 1 "git=unreadable path=$data/git" "$out" "pass --force to remove it anyway"
+    ((out == 0)) || refuse 1 "unpublished=$out path=$data/git" "it holds commits no remote branch has; pass --force to remove them"
   }
 
+  # Removes what this script installed. vgs/.self.lock stays: a writer that
+  # opened it before the removal must still meet the lock this run holds.
   uninstall() {
-    local state entry left
-    local -a rest
+    local state entry
+    local -a rest=()
     state="$(link_state)"
     if [[ -d $data ]]; then
+      take_lock
       shell_guard
       [[ $force == true ]] || git_guard
-      take_lock
       shopt -s nullglob dotglob
       for entry in "$data"/*; do
-        if [[ ${entry##*/} =~ ^(current|git|\.self-update-.*|\.self\.lock|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        if [[ ${entry##*/} =~ ^(current|git|\.self-update-.*|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
           rm -rf -- "$entry"
+        elif [[ ${entry##*/} != .self.lock ]]; then
+          rest+=("$entry")
         fi
       done
-      rest=("$data"/*)
       shopt -u nullglob dotglob
-      left="${#rest[@]}"
-      ((left > 0)) || rmdir -- "$data"
     fi
     [[ $state != ours ]] || rm -f -- "$link"
     echo "ok uninstalled=vgs path=$data"
-    if [[ -d $data ]]; then echo "kept=$data reason=not-vgs-files"; fi
+    if ((${#rest[@]} > 0)); then echo "kept=$data reason=not-vgs-files"; fi
     if [[ $state == foreign ]]; then echo "kept=$link reason=foreign"; fi
     echo "kept=$config_dir"
     echo "kept=$state_dir"
@@ -633,3 +643,4 @@ process.stdout.write(lines.join("\n") + "\n");
   printf '  hl.on("hyprland.start", function () hl.exec_cmd("%s run") end)\n' "$link"
 }
 main "$@"
+}

@@ -261,11 +261,26 @@ modified_row() { # BIN: --uninstall refuses a clone with changes
   run "$1" --uninstall
   refused 1 "install.sh: refused: modified=$d/git" && [[ -d $d/git && -d $d/0.1.0 && -L $h/.local/bin/vgsh ]]
 }
-ahead_row() { # BIN: --uninstall refuses a clone with commits its upstream lacks
-  git_home ahead
+unpublished_row() { # BIN: --uninstall refuses a clone with a commit on HEAD no remote branch has
+  git_home unpublished
   g -C "$d/git" commit -q --allow-empty -m local
   run "$1" --uninstall
-  refused 1 "install.sh: refused: ahead=1 path=$d/git" && [[ -d $d/git ]]
+  refused 1 "install.sh: refused: unpublished=1 path=$d/git" && [[ -d $d/git ]]
+}
+branch_row() { # BIN: --uninstall refuses a clone whose other local branch holds such a commit
+  git_home branch
+  g -C "$d/git" switch -q -c topic
+  g -C "$d/git" commit -q --allow-empty -m local
+  g -C "$d/git" switch -q main
+  run "$1" --uninstall
+  refused 1 "install.sh: refused: unpublished=1 path=$d/git" && [[ -d $d/git ]]
+}
+stash_row() { # BIN: --uninstall refuses a clone holding a stash
+  git_home stash
+  printf 'change\n' >>"$d/git/VERSION"
+  g -C "$d/git" stash -q
+  run "$1" --uninstall
+  refused 1 "install.sh: refused: stash=present path=$d/git" && [[ -d $d/git ]]
 }
 rt_shell="$tmp/rt-shell"; mkdir -p "$rt_shell"
 running_row() { # BIN: --uninstall refuses while the running shell was started from a tree it removes
@@ -287,7 +302,7 @@ keep_foreign_row() { # BIN: --uninstall removes the install and keeps a foreign 
   run "$installer"
   ln -sfn /opt/elsewhere/vgsh "$h/.local/bin/vgsh"
   run "$1" --uninstall
-  [[ $status == 0 && ! -e $d && $(readlink -- "$h/.local/bin/vgsh") == /opt/elsewhere/vgsh ]] &&
+  [[ $status == 0 && ! -e $d/current && ! -e $d/0.2.0 && $(readlink -- "$h/.local/bin/vgsh") == /opt/elsewhere/vgsh ]] &&
     out_has "kept=$h/.local/bin/vgsh reason=foreign"
 }
 
@@ -493,7 +508,9 @@ check "a second --git refuses" refused 1 "install.sh: refused: git=exists path=$
 
 echo "uninstall"
 check "--uninstall refuses a clone with changes and removes nothing" modified_row "$installer"
-check "--uninstall refuses a clone with commits its upstream lacks" ahead_row "$installer"
+check "--uninstall refuses a clone with a commit no remote branch has" unpublished_row "$installer"
+check "--uninstall refuses a clone whose other local branch holds such a commit" branch_row "$installer"
+check "--uninstall refuses a clone holding a stash" stash_row "$installer"
 check "--uninstall refuses while the running shell was started from a tree it removes" running_row "$installer"
 git_home uninstall
 mkdir -p "$h/.config/vgs" "$h/.local/state/vgs"
@@ -501,7 +518,7 @@ printf 'mine\n' >"$h/.config/vgs/shell.json"; printf 'mine\n' >"$h/.local/state/
 printf 'other\n' >"$d/notes"
 run "$installer" --uninstall
 check "--uninstall succeeds" test "$status" = 0
-check "it removes the versions, current, the clone and the lock" test ! -e "$d/0.1.0" -a ! -e "$d/current" -a ! -e "$d/git" -a ! -e "$d/.self.lock"
+check "it removes the versions, current and the clone" test ! -e "$d/0.1.0" -a ! -e "$d/current" -a ! -e "$d/git"
 check "it keeps a file it did not install" test -f "$d/notes"
 check "it says it kept the data directory" out_has "kept=$d reason=not-vgs-files"
 check "it removes the link" test ! -e "$h/.local/bin/vgsh" -a ! -L "$h/.local/bin/vgsh"
@@ -509,18 +526,29 @@ check "it keeps the configuration" test -f "$h/.config/vgs/shell.json"
 check "it names the configuration it kept" out_has "kept=$h/.config/vgs"
 check "it keeps the state" test -f "$h/.local/state/vgs/applied.json"
 check "it names the state it kept" out_has "kept=$h/.local/state/vgs"
+lock_kept_row() { # BIN: --uninstall keeps the lock file, the inode a concurrent writer may hold open
+  local inode
+  git_home lock-kept
+  inode="$(stat -c %i -- "$d/.self.lock")"
+  run "$1" --uninstall
+  [[ $status == 0 && ! -e $d/current && $(stat -c %i -- "$d/.self.lock" 2>/dev/null) == "$inode" ]]
+}
+check "it keeps the lock a concurrent writer may hold open" lock_kept_row "$installer"
 check "--uninstall keeps a foreign link and names it" keep_foreign_row "$installer"
 
 echo "truncation"
 # truncated_row BIN: no prefix of BIN piped to bash runs a command. The
-# cuts are every line end and every 97th byte; bash -x traces each command
-# it runs as a line starting with +.
+# cuts are every line end, every 97th byte and every byte of the last 256,
+# which hold main's call; bash -x traces each command it runs as a line
+# starting with +.
 truncated_row() {
-  local size cut
+  local size cut body LC_ALL=C
   local -a cuts
-  size="$(wc -c <"$1")"
-  mapfile -t cuts < <({ LC_ALL=C awk '{ n += length($0) + 1; print n }' "$1"; seq 97 97 "$size"; } | sort -nu)
-  ((${#cuts[@]} > 100)) || { echo "    cuts=${#cuts[@]}: the cut extractor read too few"; return 1; }
+  # A cut that drops only the trailing newlines leaves the whole script.
+  body="$(<"$1")"
+  size="${#body}"
+  mapfile -t cuts < <({ LC_ALL=C awk '{ n += length($0) + 1; print n }' "$1"; seq 97 97 "$size"; seq $((size > 256 ? size - 256 : 1)) "$size"; } | sort -nu)
+  ((${#cuts[@]} > 300)) || { echo "    cuts=${#cuts[@]}: the cut extractor read too few"; return 1; }
   new_home truncated
   for cut in "${cuts[@]}"; do
     ((cut < size)) || continue
@@ -542,11 +570,36 @@ control() {
   shift 2
   if "$row" "$copy" "$@" >/dev/null; then fail "control: $name: $row passed on the copy"; else ok "control: $name"; fi
 }
-copy="$tmp/copies/unwrapped"
-awk 'NR == FNR { if ($0 == "main() {") first = FNR; if ($0 == "}") last = FNR; next }
-     FNR == first || FNR == last || $0 == "main \"$@\"" { next } { print }' "$installer" "$installer" >"$copy"
-[[ $(wc -l <"$copy") -eq $(($(wc -l <"$installer") - 3)) ]] || { echo "$suite: control=unwrapped lines-removed-mismatch" >&2; exit 1; }
-control "a copy without the main wrapper runs a truncated download" truncated_row
+# unwrap NAME DROP...: sets copy to install.sh without the wrapper lines
+# DROP names: group-open, main-open, main-close, call, group-close.
+unwrap() {
+  local name="$1"
+  shift
+  copy="$tmp/copies/$name"
+  mkdir -p "$tmp/copies"
+  python3 - "$installer" "$copy" "$@" <<'PY'
+import sys
+source, target, drop = sys.argv[1], sys.argv[2], set(sys.argv[3:])
+lines = open(source).read().split("\n")
+closes = [i for i, l in enumerate(lines) if l == "}"]
+wrapper = {
+    "group-open": lines.index("{"),
+    "main-open": lines.index("main() {"),
+    "main-close": closes[-2],
+    "call": lines.index('main "$@"'),
+    "group-close": closes[-1],
+}
+order = [wrapper[k] for k in ("group-open", "main-open", "main-close", "call", "group-close")]
+if order != sorted(order) or len(set(order)) != 5:
+    sys.exit("unwrap: wrapper=unrecognised lines=" + str(order))
+cut = {wrapper[k] for k in drop}
+open(target, "w").write("\n".join(l for i, l in enumerate(lines) if i not in cut))
+PY
+}
+unwrap unwrapped group-open main-open main-close call group-close
+control "a copy with the body outside main runs a truncated download" truncated_row
+unwrap ungrouped group-open group-close
+control "a copy whose call of main stands outside the group runs a cut after the word main" truncated_row
 
 # rule NAME ROW NEEDLE REPLACEMENT: a copy of install.sh without one rule,
 # NEEDLE replaced, on which ROW, the row that judges the rule, must fail.
@@ -564,9 +617,12 @@ rule os os_row '[[ $os == Linux ]] ||' '[[ $os == "$os" ]] ||'
 rule package-database system_row 'pacman -Q -- "$name" >/dev/null 2>&1; then' 'pacman -Q -- "$name" >/dev/null 2>&1 && false; then'
 rule foreign-link foreign_row '&& $(link_state) == foreign ]]' '&& $(link_state) == none ]]'
 rule modified-clone modified_row '[[ -z $out ]] || refuse 1 "modified=' 'true || refuse 1 "modified='
-rule ahead-clone ahead_row '((ahead == 0)) ||' 'true ||'
+rule unpublished-commit unpublished_row '((out == 0)) || refuse 1 "unpublished=' 'true || refuse 1 "unpublished='
+rule other-branches branch_row 'rev-list --count HEAD --branches --not --remotes' 'rev-list --count HEAD --not --remotes'
+rule stash stash_row 'if "${git_in[@]}" rev-parse -q --verify refs/stash >/dev/null; then' 'if false; then'
 rule running-shell running_row 'if [[ $tree == "$(readlink -f -- "$data")"/* ]]; then' 'if false; then'
 rule keep-foreign-link keep_foreign_row '[[ $state != ours ]] || rm -f -- "$link"' 'rm -f -- "$link"'
+rule keep-lock lock_kept_row '^(current|git|\.self-update-.*|[0-9]+' '^(current|git|\.self\.lock|\.self-update-.*|[0-9]+'
 rule floor-need drift_row 'quickshell 0.3.1   ^Quickshell' 'quickshell 0.3.0   ^Quickshell'
 rule requirement-package drift_row 'dnf=util-linux-core' 'dnf=util-linux'
 copy_with manager-order "$installer" 'fedora        dnf5,dnf' 'fedora        dnf,dnf5'
