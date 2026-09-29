@@ -46,7 +46,8 @@ A floating TUI is a themed terminal window that floats over the session and runs
 2. `gum.env` is parsed, never sourced, and a file with one bad line exports nothing. Enforced by `scripts/test-vgsh-tui.sh`, with a control that sources a file holding a planted `$(...)` line.
 3. The Done and Failed prompt is on the terminal whatever stdout is. Enforced by `scripts/test-vgsh-tui.sh`, with a control that prompts on stdout.
 4. A plugin's script runs from a private copy that outlives the snapshot and leaves with `present`. Enforced by `scripts/test-vgsh-tui.sh`, whose script removes its snapshot before it sources a file beside it, with a control that points `VGS_PLUGIN_DIR` at the snapshot.
-5. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`.
+5. A Ctrl-C stops the command, and `present` exits 130 with no prompt and no plugin copy left. Enforced by `scripts/test-vgsh-tui.sh`, which types the interrupt byte on the pseudo-terminal while a command sleeps, with a control whose `present` ignores SIGINT.
+6. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`.
 
 ## Omarchy
 

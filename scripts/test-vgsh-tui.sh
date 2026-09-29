@@ -2,7 +2,8 @@
 # Controls for bin/vgsh-tui, the floating TUI presenter, and `vgsh tui
 # present`, which hands it a command. present runs on a pseudo-terminal
 # script(1) opens, with a key typed every 0.2 s, and runs stub commands: the
-# Done and Failed prompts, the skip on 130, the exit code, the plain
+# Done and Failed prompts, the skip on 130, a typed Ctrl-C, the exit code,
+# the plain
 # presentation, the gum.env parse, the argv list, the exported paths and
 # the plugin copy. launch and `vgsh tui present` run against a stub
 # xdg-terminal-exec that records its argv, behind a stub setsid. No row
@@ -23,6 +24,9 @@ stub exits 'echo "ran $1"; exit "$1"'
 stub record ": >\"$tmp/argv\"; for a; do printf '%s\\n' \"\$a\" >>\"$tmp/argv\"; done"
 stub envdump 'printf "LIB=%s\nLOGO=%s\nID=%s\nDIR=%s\nACCENT=%s\nCONFIRM=%s\n" "${VGS_TUI_LIB-unset}" "${VGS_TUI_LOGO-unset}" "${VGS_PLUGIN_ID-unset}" "${VGS_PLUGIN_DIR-unset}" "${VGS_TUI_ACCENT-unset}" "${GUM_CONFIRM_SELECTED_BACKGROUND-unset}"'
 stub setsid "echo setsid >\"$tmp/setsid\"; exec \"\$@\""
+# waitint SECS records its pid, then sleeps as that pid until SECS pass or a
+# signal ends it.
+stub waitint "echo \$\$ >\"$tmp/child\"; exec sleep \"\$1\""
 stub xdg-terminal-exec ": >\"$tmp/term\"; for a; do printf '%s\\n' \"\$a\" >>\"$tmp/term\"; done"
 
 # on_tty BIN ARGS...: BIN on a pseudo-terminal; stdout and stderr together
@@ -57,7 +61,7 @@ failed_text() { printf 'Failed (exit code %s)! Press any key to close...' "$1"; 
 rows=(
   "a success|full|0|done|yes"
   "a failure|full|1|failed|yes"
-  "a Ctrl-C|full|130|none|yes"
+  "an exit of 130|full|130|none|yes"
   "a plain failure|plain|1|none|no"
   "a plain success|plain|0|none|no"
 )
@@ -153,6 +157,8 @@ plugin_snapshot() {
   printf '#!/bin/sh\n' >"$snap/outside.sh"
   chmod +x "$snap/tui/run.sh" "$snap/outside.sh"
   ln -s -- "$stubs/exits" "$snap/tui/link.sh"
+  printf '#!/bin/sh\necho $$ >%q\nexec sleep "$1"\n' "$tmp/child" >"$snap/tui/wait.sh"
+  chmod +x "$snap/tui/wait.sh"
 }
 plugin_snapshot
 on_tty "$subject" present --plugin acme.tui --dir "$snap" -- tui/run.sh 'x y'
@@ -186,6 +192,33 @@ rm -rf -- "$snap"
 on_tty "$subject" present --plugin acme.tui --dir "$snap" -- tui/run.sh
 check "a missing snapshot is refused" out_has "vgsh-tui: refused: copy=$snap/tui reason=failed"
 check "a missing snapshot exits 1" test "$tty_status" == 1
+
+# Ctrl-C: the terminal's interrupt byte, typed once the command runs, stops
+# the command, and present exits 130 with no prompt and no copy left. The
+# command sleeps 8 s, so a Ctrl-C that fails to reach it ends in a Done
+# prompt instead of the timeout.
+# on_tty_interrupt BIN ARGS...: as on_tty, with 0x03 typed once $tmp/child exists.
+on_tty_interrupt() {
+  local cmd
+  cmd="$(printf '%q ' "$@")"
+  rm -f -- "$tmp/child"
+  set +e
+  { while [[ ! -s $tmp/child ]]; do sleep 0.05; done; printf '\003'; while :; do printf x; sleep 0.2; done; } |
+    timeout 30 "${tui_env[@]}" script -qec "$cmd" /dev/null >"$tmp/out" 2>&1
+  tty_status=${PIPESTATUS[1]}
+  set -e
+}
+child_gone() { local pid; pid="$(cat "$tmp/child")"; [[ -n $pid ]] && ! kill -0 "$pid" 2>/dev/null; }
+on_tty_interrupt "$subject" present -- waitint 8
+check "a Ctrl-C'd command exits 130" test "$tty_status" == 130
+check "a Ctrl-C'd command is stopped" child_gone
+check "a Ctrl-C'd command prompts nothing" test "$(grep -c -e 'Done!' -e 'Failed (' "$tmp/out")" == 0
+plugin_snapshot
+on_tty_interrupt "$subject" present --plugin acme.tui --dir "$snap" -- tui/wait.sh 8
+check "a Ctrl-C'd plugin script exits 130" test "$tty_status" == 130
+check "a Ctrl-C'd plugin script is stopped" child_gone
+check "a Ctrl-C'd plugin script prompts nothing" test "$(grep -c -e 'Done!' -e 'Failed (' "$tmp/out")" == 0
+check "a Ctrl-C'd plugin script leaves no copy" test -z "$(find "$rt" -mindepth 1 -maxdepth 1 -name 'vgs-tui.*')"
 
 # launch: setsid, then xdg-terminal-exec with the app-id of the size, the
 # title and present's argv.
@@ -306,6 +339,11 @@ rm -f -- "$tmp/argv"
 plain_run "$control_bin" present --presentation plain -- record 'a b' "\$(touch $tmp/planted)"
 check "the shell-string mutant runs an argument as shell code" test -e "$tmp/planted"
 rm -f -- "$tmp/planted"
+
+control ignored-interrupt vgsh-tui $'\n    trap : INT\n' $'\n    trap \'\' INT\n'
+on_tty_interrupt "$control_bin" present -- waitint 8
+check "the ignored-interrupt mutant lets the command outlive Ctrl-C" test "$tty_status" == 0
+check "the ignored-interrupt mutant prompts Done" out_has "$done_text"
 
 control snapshot-dir vgsh-tui 'if copy_plugin; then export VGS_PLUGIN_DIR="$copy_dir"' 'if copy_plugin; then export VGS_PLUGIN_DIR="$plugin_dir"'
 plugin_snapshot
