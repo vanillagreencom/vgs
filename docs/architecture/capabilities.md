@@ -1,6 +1,6 @@
 # Capabilities
 
-Covers: shell/Core/Capabilities.qml, shell/Core/ShortcutRegistry.qml, shell/Core/IpcRegistry.qml, shell/Core/NotificationHub.qml, shell/Core/SessionLock.qml, shell/Core/Lifetime.js
+Covers: shell/Core/Capabilities.qml, shell/Core/ShortcutRegistry.qml, shell/Core/IpcRegistry.qml, shell/Core/NotificationHub.qml, shell/Core/SessionLock.qml, shell/Core/Lifetime.js, shell/Core/Toasts.qml, shell/Hosts/ToastHost.qml, scripts/smoke/rows/toasts.sh
 
 How the core lends a plugin the APIs its manifest names, holds them for one instance and releases them. The manifest and the kinds are [plugins.md](plugins.md).
 
@@ -12,10 +12,14 @@ A capability is a core API named in the manifest's `capabilities` and delivered 
 - A build that fails after its capabilities were made (an entry point without `shell`, a background without `screen`, a widget without the `BarWidget` properties) drains the same lifetime, leaves no build record and is reported to the host as a failed build.
 - Every instance is destroyed under the host key it was built under, so a host whose key changes while its screen goes away still releases everything.
 - The notification server and the polkit agent exist only while a plugin holds their capability, so a shell with no such plugin claims neither role. The server advertises bodies with markup, actions, images and persistence, so a subscriber that draws a body renders or strips its markup. The smoke asserts both objects are gone once the holder is disabled. Whether the process keeps the notification D-Bus name after the server is destroyed is Quickshell's, and [D012](../decisions/D012-core-owns-lent-objects.md) names it as the revisit condition.
-- `toasts`, `theme` and `layers` have contracts of their own: [design-system.md § Toasts](design-system.md#toasts), [theme-capability.md](theme-capability.md) and [layers.md](layers.md).
+- `toasts`, `theme` and `layers` have contracts of their own: [§ Toasts](#toasts), [theme-capability.md](theme-capability.md) and [layers.md](layers.md).
 
 Each capability's members are listed in [`.agents/skills/vgs-plugin/references/api.md` § The shell object](../../.agents/skills/vgs-plugin/references/api.md#the-shell-object). Three carry rules of their own: `compositor` offers one function per dispatcher in `Dispatch.PLUGIN_DISPATCHERS`, and `shell/Core/Dispatch.js` refuses an argument that could break out of the session's syntax; `configure` writes only a key the manifest's `schema` declares, with a value of its type, to the configuration entry `PluginLogic.settingTargetOf` names for the calling instance's kind; `lock` keeps a locked session locked when its holder is unloaded.
 
 A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 
 `Capabilities` maps providers and accounts for holds. Each resource owner keeps its state, registration and release together; a stateless provider needs no separate component.
+
+## Toasts
+
+`Toast` is the notice the core's toast stack, `shell/Core/Toasts.qml`, draws through `shell/Hosts/ToastHost.qml` on the focused screen; a plugin shows one through the `toasts` capability. The component and its tokens are [design-system.md](design-system.md). `PluginLogic.toastOptions` judges the options and `PluginLogic.TOAST_VISIBLE_MAX` and `TOAST_QUEUE_MAX` are the ceilings; a theme sets the look, the corner and the default duration, never a ceiling. A toast's timer starts when it shows, so one that waited shows for its whole duration. Expiry, the user's close, the disposer and the instance's teardown all run the one release, which is idempotent. When the stack's screen goes, the shown toasts return to the front of the queue and show again on the next focused screen; with no screen, every toast waits. `scripts/smoke/rows/toasts.sh` reads each of these back from the lending record, the layer list and a click on the close button.

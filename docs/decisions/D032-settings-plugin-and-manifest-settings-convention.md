@@ -92,7 +92,7 @@ A user `vgs.bar` row that lists `manager` in a section draws nothing for it, and
 
 ## Omarchy comparison
 
-Checked against basecamp/omarchy main at `e332dc9`: `shell/plugins/README.md`, `docs/omarchy-shell.md`, `shell/plugins/*/manifest.json`, `shell/services/PluginRegistry.qml` and `default/omarchy/omarchy-menu.jsonc`.
+Checked against basecamp/omarchy main at `e332dc9`: `shell/plugins/README.md`, the `omarchy-shell.md` guide under its `docs` directory, `shell/plugins/*/manifest.json`, `shell/services/PluginRegistry.qml` and `default/omarchy/omarchy-menu.jsonc`.
 
 | Omarchy | VGS | Where VGS takes it, or why it differs |
 |---|---|---|

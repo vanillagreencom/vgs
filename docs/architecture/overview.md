@@ -17,7 +17,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
-- Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the first-party Settings plugin, `vgs.settings`, reached through the `manager` capability; its mechanism is core.
+- Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the Settings plugin, `vgs.settings`, through the `manager` capability; its mechanism is core.
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
 - Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token, or through its own judged table when it owns its look ([appearance.md](appearance.md)).
 - Budget: a ceiling a validation row asserts in the nested sandbox.
@@ -66,7 +66,6 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [D028](../decisions/D028-one-generated-hyprland-layer.md): the shell writes one Hyprland Lua layer from the theme and plugin manifest data, loaded by one line in `hyprland.lua`.
 - [D030](../decisions/D030-managed-copies-for-watched-theme-directories.md): managed copies serve watched theme directories.
 - [D031](../decisions/D031-installed-themes-render-code-targets.md): an installed theme's curated file is dropped on a target whose files run code.
-- [D032](../decisions/D032-settings-plugin-and-manifest-settings-convention.md): the Settings plugin is the manager's user interface, and the manifest alone declares each plugin's settings page.
 
 ## Topics
 
