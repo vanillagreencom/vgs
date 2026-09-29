@@ -53,6 +53,10 @@ A catalog package installs with no network into `${XDG_CONFIG_HOME:-~/.config}/v
 - **Remove.** `vgsh theme remove <name>` deletes a catalog install as it deletes any installed package, whatever its marker holds.
 - **Omarchy.** `omarchy-theme-install` (basecamp/omarchy, e332dc9, read 2026-09-28) clones a git URL and removes any theme of that name first. VGS installs from the judged catalog with no network, and refuses an occupied name so that no install deletes a package or its edits.
 
+## Wallpapers
+
+`vgsh theme wallpapers <name> [--update]` downloads the archive an entry's `imagery` pins and lands its images in the catalog install's `backgrounds/`, which belongs to that download. Then the marker records the pin. The fetch, the member rules and the land are [theme-wallpapers.md](theme-wallpapers.md).
+
 ## Trust
 
 An installed package's curated file on a `runsCode` target is dropped at apply ([D031](../decisions/D031-installed-themes-render-code-targets.md)), and a catalog package installs as an installed package. The catalog therefore carries no such file: `catalog-check` refuses a curated file on a `runsCode` target as `curated-code`. It refuses a file no target writes as `curated-unknown`, since the judge cannot tell whether it runs code, a file apply would not take in place of the render as `curated-shape`, through the renderer's own `curatedTaken`, anything but a regular file as `curated-file`, and a symlink anywhere in an entry as `symlink`. A target the renderer refuses leaves a curated file unclassified, so it refuses the check. A catalog install needs no trust exception, and apply drops or passes over no curated file of a catalog package.
@@ -80,9 +84,9 @@ The converter does not carry `apps/`. Catalog packages may not carry curated fil
 
 The converter refuses a color line it cannot parse, a missing mapped key, a bad mode, a missing pin, and a pin disagreement between `catalog.json` and `asset-lock.json`. It judges the merged index with `ThemeLogic.acceptCatalogIndex`, and judges each converted package with `ThemeLogic.acceptCatalogEntry`, before it writes the catalog output.
 
-The thumbnail step downloads each pinned archive into the content-addressed cache `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/theme-assets/<sha256>.tar.gz`, unless `--asset-cache` names another directory. It checks the archive size and SHA-256 before reading it. Tests can pass `--asset-base file://... --allow-file-base`; normal use accepts HTTPS only, and every redirect must stay HTTPS.
+The thumbnail step downloads each pinned archive through `bin/lib/theme-download.js`, the fetch `vgsh theme wallpapers` runs ([theme-wallpapers.md](theme-wallpapers.md)), and keeps it in the content-addressed cache `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/theme-assets/<sha256>.tar.gz`, unless `--asset-cache` names another directory. It checks the archive size and SHA-256 before reading it. Tests can pass `--asset-base file://... --allow-file-base`; normal use accepts HTTPS only, and every redirect must stay HTTPS.
 
-The thumbnail source is the first direct regular image entry under `backgrounds/` in the archive, using `bin/lib/theme-backgrounds.js` for the same image-name rule that `vgsh theme background list` uses. Nested files are skipped. The archive reader verifies tar header checksums and octal sizes. It reads pax `path` headers and GNU long names for the next member. It accepts global pax headers only when they do not carry a `path`. It refuses absolute paths, `..` segments, symbolic links, hard links and unsupported member types under `backgrounds/`. ImageMagick writes a 480 px wide JPEG with metadata stripped, fixed sampling and fixed quality.
+The thumbnail source is the first direct regular image entry under `backgrounds/` in the archive, using `bin/lib/theme-backgrounds.js` for the same image-name rule that `vgsh theme background list` uses. The archive reader is the one [theme-wallpapers.md § Fetch and read](theme-wallpapers.md#fetch-and-read) describes. The converter's own member rule skips nested files and every member outside `backgrounds/`, and refuses symbolic links, hard links and unsupported member types under `backgrounds/`. ImageMagick writes a 480 px wide JPEG with metadata stripped, fixed sampling and fixed quality.
 
 The per-thumbnail budget is 120000 bytes. The 81-theme budget is 9720000 bytes. `tools/convert-v1-themes /home/method/dev/.worktrees/vgs/v1 --theme nord --asset-cache tmp/theme-assets` on 2026-09-28 produced `themes/catalog/thumbnails/nord.jpg` at 25445 bytes.
 

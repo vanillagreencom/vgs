@@ -11,7 +11,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
-const zlib = require("node:zlib");
+
+const { paxRecord, makeTarGz } = require("./tar-fixture.js");
 
 const repo = path.join(__dirname, "..");
 const FIXTURE = path.join(repo, "scripts", "fixtures", "convert-v1-themes");
@@ -149,51 +150,6 @@ function updatePins(root, theme, edit) {
     catalog.totalSize = catalog.themes.reduce((sum, item) => sum + item.size, 0);
     fs.writeFileSync(catalogFile, JSON.stringify(catalog, null, 2) + "\n");
     fs.writeFileSync(lockFile, JSON.stringify(lock, null, 2) + "\n");
-}
-
-function paxRecord(key, value) {
-    let record = `${key}=${value}\n`;
-    let length = Buffer.byteLength(record) + 2;
-    for (;;) {
-        const next = Buffer.byteLength(String(length)) + 1 + Buffer.byteLength(record);
-        if (next === length) return `${length} ${record}`;
-        length = next;
-    }
-}
-
-function makeTarGz(entries) {
-    const blocks = [];
-    const checksum = header => {
-        for (let i = 148; i < 156; i++) header[i] = 32;
-        let sum = 0;
-        for (const byte of header) sum += byte;
-        header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "ascii");
-    };
-    for (const entry of entries) {
-        const data = Buffer.from(entry.data || "");
-        const header = Buffer.alloc(512);
-        header.write(entry.name, 0, 100, "utf8");
-        header.write("0000644\0", 100, 8, "ascii");
-        header.write("0000000\0", 108, 8, "ascii");
-        header.write("0000000\0", 116, 8, "ascii");
-        const size = entry.sizeField === undefined ? (entry.type === "1" || entry.type === "2" || entry.type === "5" ? 0 : data.length).toString(8).padStart(11, "0") + "\0" : entry.sizeField;
-        header.write(size, 124, 12, "ascii");
-        header.write("00000000000\0", 136, 12, "ascii");
-        header.write(entry.type || "0", 156, 1, "ascii");
-        if (entry.link) header.write(entry.link, 157, 100, "utf8");
-        header.write("ustar\0", 257, 6, "ascii");
-        header.write("00", 263, 2, "ascii");
-        checksum(header);
-        if (entry.badChecksum) header[0] = header[0] === 65 ? 66 : 65;
-        blocks.push(header);
-        if (entry.type !== "1" && entry.type !== "2" && entry.type !== "5") {
-            blocks.push(data);
-            const pad = (512 - (data.length % 512)) % 512;
-            if (pad > 0) blocks.push(Buffer.alloc(pad));
-        }
-    }
-    blocks.push(Buffer.alloc(1024));
-    return zlib.gzipSync(Buffer.concat(blocks), { mtime: 0 });
 }
 
 function replaceArchive(root, theme, entries) {
@@ -425,8 +381,8 @@ try {
         assert.equal(proc.status, 0, proc.stdout + proc.stderr);
         assert.match(proc.stdout, /source=z-direct\.jpg/);
         const copy = converterCopy(path.join(dir, "control"),
-            'if (!fileName.includes("/")) entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });',
-            'entries.push({ name: path.basename(fileName), data: content, isFile: () => true, isSymbolicLink: () => false });');
+            'return fileName.includes("/") ? null : collect(entries, fileName);',
+            'return collect(entries, path.basename(fileName));');
         const mutant = runThemes(dir, ["alpha"], [], copy);
         assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
         assert.doesNotMatch(mutant.stdout, /source=z-direct\.jpg/, "mutant still skipped nested member");

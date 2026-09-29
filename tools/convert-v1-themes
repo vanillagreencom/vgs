@@ -12,20 +12,16 @@
 // into the content-addressed cache `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/theme-assets/<sha256>.tar.gz` unless --asset-cache names another directory.
 // --asset-base overrides v1 catalog.json's source.baseUrl. HTTPS is the only
 // normal transport, redirects included; file:// is accepted only with
-// --allow-file-base for tests. The archive reader supports pax path headers
-// and GNU long names, and refuses invalid headers, links and unsupported
-// member types under backgrounds/.
+// --allow-file-base for tests. The fetch and the archive reader are
+// bin/lib/theme-download.js, which `vgsh theme wallpapers` shares; this
+// converter refuses links and unsupported member types under backgrounds/.
 // Exit 0: converted. Exit 1: refused input or output. Exit 2: unreadable or
 // I/O failure.
 "use strict";
 
-const crypto = require("node:crypto");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { fileURLToPath } = require("node:url");
-const zlib = require("node:zlib");
 
 const repo = path.join(__dirname, "..");
 const { load } = require(path.join(repo, "bin", "lib", "qml-library.js"));
@@ -33,6 +29,7 @@ const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
 const { Refusal, replaceFile } = require(path.join(repo, "bin", "lib", "judge-files.js"));
 const backgrounds = require(path.join(repo, "bin", "lib", "theme-backgrounds.js"));
+const download = require(path.join(repo, "bin", "lib", "theme-download.js"));
 
 const THUMBNAIL_WIDTH = 480;
 const DEFAULT_THUMBNAIL_BUDGET = 120000;
@@ -139,13 +136,8 @@ function parseArgs(argv) {
         else usage(`argument=${arg}`);
     }
     if (args.v1Tree === null) usage("v1-tree=missing");
-    args.assetCache = args.assetCache || defaultCacheDir();
+    args.assetCache = args.assetCache || download.cacheDir();
     return args;
-}
-
-function defaultCacheDir() {
-    const base = process.env.XDG_CACHE_HOME || path.join(process.env.HOME || os.homedir(), ".cache");
-    return path.join(base, "vgs", "theme-assets");
 }
 
 function parseTomlColors(theme, file, required, colorKeysOnly) {
@@ -225,201 +217,77 @@ function convertTheme(theme, v1ThemesDir, catalog, lock) {
     return { theme, shell, terminal, entry };
 }
 
-function verifiedCachePath(pin, args) {
-    return path.join(args.assetCache, `${pin.sha256}.tar.gz`);
-}
-
-function sha256File(file) {
-    const hash = crypto.createHash("sha256");
-    hash.update(readFile(file, null));
-    return hash.digest("hex");
-}
-
-function verifyCached(file, pin) {
-    let stat;
-    try {
-        stat = fs.statSync(file);
-    } catch (e) {
-        if (e.code === "ENOENT") return false;
-        unreadable(file, e.code || e.message);
+// A refusal of bin/lib/theme-download.js as this converter's line. A
+// fetch refusal is `asset-<reason>`, a transfer's `asset-download
+// reason=<reason>`; a local write failure exits 2.
+function refuseAsset(theme, e) {
+    switch (e.step) {
+    case "fetch":
+        if (e.reason === "unwritable") throw new ConvertExit(EXIT_IO, message("unwritable", e.detail));
+        if (e.reason === "download" || e.reason === "redirect-not-https") refuseGlobal("asset-download", `reason=${e.reason} ${e.detail}`);
+        refuseGlobal(`asset-${e.reason}`, e.detail);
+        break;
+    case "archive":
+        refuse(theme, "archive", `reason=${e.reason} ${e.detail}`);
+        break;
+    case "header":
+        refuse(theme, "archive.header", `reason=${e.reason}${e.detail === "" ? "" : " " + e.detail}`);
+        break;
+    case "name":
+        refuse(theme, "archive.member", `name=${JSON.stringify(e.member)}`);
+        break;
+    default:
+        throw new Error(`convert-v1-themes: asset refusal step ${e.step} is none of fetch, archive, header, name`);
     }
-    if (!stat.isFile()) refuseGlobal("asset-cache", `path=${file} reason=not-file`);
-    if (stat.size !== pin.size) refuseGlobal("asset-size", `path=${file} got=${stat.size} want=${pin.size}`);
-    const actual = sha256File(file);
-    if (actual !== pin.sha256) refuseGlobal("asset-sha256", `path=${file} got=${actual} want=${pin.sha256}`);
-    return true;
 }
 
-function assetUrl(pin, args, catalog) {
+// The verified archive of theme ITEM in the asset cache, downloaded once
+// and kept there.
+async function ensureArchive(item, args, catalog) {
     const base = args.assetBase || catalog.source.baseUrl;
     if (typeof base !== "string" || base === "") refuseGlobal("asset-base", "reason=missing");
-    const url = `${base.replace(/\/+$/, "")}/${pin.release}/${pin.archive}`;
-    if (url.startsWith("file://")) {
-        if (!args.allowFileBase) refuseGlobal("asset-base", "reason=file-url-without-flag");
-        return url;
-    }
-    if (!url.startsWith("https://")) refuseGlobal("asset-base", `reason=not-https url=${JSON.stringify(url)}`);
-    return url;
-}
-
-function copyFileUrl(url, target, expectedSize) {
-    const source = fileURLToPath(url);
-    const stat = fs.statSync(source);
-    if (!stat.isFile()) refuseGlobal("asset-url", `path=${source} reason=not-file`);
-    if (stat.size !== expectedSize) refuseGlobal("asset-size", `url=${url} got=${stat.size} want=${expectedSize}`);
-    fs.copyFileSync(source, target);
-}
-
-function downloadUrl(url, target) {
-    const result = spawnSync(process.execPath, ["-e", `
-const fs = require('node:fs');
-const out = fs.createWriteStream(${JSON.stringify(target)}, { flags: 'wx' });
-function get(url, redirects) {
-  const client = require(url.startsWith('https://') ? 'node:https' : 'node:http');
-  const req = client.get(url, res => {
-    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
-      res.resume();
-      const next = new URL(res.headers.location, url).toString();
-      if (!next.startsWith('https://')) { console.error('reason=redirect-not-https url=' + next); process.exit(4); }
-      get(next, redirects - 1);
-      return;
-    }
-    if (res.statusCode !== 200) { console.error('status=' + res.statusCode); process.exit(3); }
-    res.pipe(out);
-    out.on('finish', () => out.close(() => process.exit(0)));
-  });
-  req.on('error', err => { console.error(err.code || err.message); process.exit(2); });
-}
-out.on('error', err => { console.error(err.code || err.message); process.exit(2); });
-get(${JSON.stringify(url)}, 5);
-`], { encoding: "utf8" });
-    if (result.status !== 0) {
-        const error = (result.stderr || result.stdout).trim();
-        const reasonLine = error.split(/\r?\n/).find(line => line.startsWith("reason="));
-        if (reasonLine !== undefined) refuseGlobal("asset-download", reasonLine);
-        refuseGlobal("asset-download", `url=${url} error=${JSON.stringify(error)}`);
-    }
-}
-
-function ensureArchive(pin, args, catalog) {
-    const file = verifiedCachePath(pin, args);
-    if (verifyCached(file, pin)) return file;
     try {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const url = download.archiveUrl(item.entry.imagery, base, args.allowFileBase);
+        return (await download.fetchArchive(item.entry.imagery, url, args.assetCache, true, () => {})).file;
     } catch (e) {
-        unreadable(path.dirname(file), e.code || e.message);
+        if (e instanceof download.AssetRefusal) refuseAsset(item.theme, e);
+        throw e;
     }
-    const tmp = `${file}.download-${process.pid}`;
-    try { fs.rmSync(tmp, { force: true }); } catch (_) {}
-    const url = assetUrl(pin, args, catalog);
-    try {
-        if (url.startsWith("file://")) copyFileUrl(url, tmp, pin.size);
-        else downloadUrl(url, tmp);
-        const stat = fs.statSync(tmp);
-        if (stat.size !== pin.size) refuseGlobal("asset-size", `url=${url} got=${stat.size} want=${pin.size}`);
-        const actual = sha256File(tmp);
-        if (actual !== pin.sha256) refuseGlobal("asset-sha256", `url=${url} got=${actual} want=${pin.sha256}`);
-        fs.renameSync(tmp, file);
-    } catch (e) {
-        try { fs.rmSync(tmp, { force: true }); } catch (_) {}
-        if (e instanceof Refusal || e instanceof ConvertExit) throw e;
-        unreadable(file, e.code || e.message);
-    }
-    return file;
 }
 
-function tarString(buffer, start, length) {
-    return buffer.subarray(start, start + length).toString("utf8").replace(/\0.*$/, "");
+// The converter's member policy: every member under backgrounds/ is a
+// regular file or a directory, and each regular file directly in it goes
+// into ENTRIES for the thumbnail; nested files and every member outside
+// backgrounds/ are skipped.
+function thumbnailSources(theme, entries) {
+    return member => {
+        if (member.name !== backgrounds.DIR && !member.name.startsWith(`${backgrounds.DIR}/`)) return null;
+        if (member.kind === "hardlink" || member.kind === "symlink") refuse(theme, "archive.member", `name=${JSON.stringify(member.name)} reason=link type=${JSON.stringify(member.type)}`);
+        if (member.kind !== "file" && member.kind !== "directory") refuse(theme, "archive.member", `name=${JSON.stringify(member.name)} reason=unsupported-type type=${JSON.stringify(member.type)}`);
+        if (member.kind !== "file") return null;
+        const fileName = member.name.slice(backgrounds.DIR.length + 1);
+        return fileName.includes("/") ? null : collect(entries, fileName);
+    };
 }
 
-function parseOctal(theme, header, start, length, key) {
-    const raw = header.subarray(start, start + length).toString("ascii").replace(/\0/g, " ").trim();
-    if (!/^[0-7]+$/.test(raw)) refuse(theme, "archive.header", `reason=${key} value=${JSON.stringify(raw)}`);
-    return parseInt(raw, 8);
+// A sink that keeps member FILE_NAME's body in memory as an entry of
+// ENTRIES, shaped as backgrounds.firstImageName reads a directory entry.
+function collect(entries, fileName) {
+    const chunks = [];
+    return {
+        write(chunk) { chunks.push(Buffer.from(chunk)); },
+        close() { entries.push({ name: fileName, data: Buffer.concat(chunks), isFile: () => true, isSymbolicLink: () => false }); }
+    };
 }
 
-function verifyHeader(theme, header) {
-    const stored = parseOctal(theme, header, 148, 8, "checksum");
-    let actual = 0;
-    for (let index = 0; index < header.length; index++) actual += index >= 148 && index < 156 ? 32 : header[index];
-    if (stored !== actual) refuse(theme, "archive.header", `reason=checksum got=${stored} want=${actual}`);
-}
-
-function parsePax(theme, data) {
-    const attrs = {};
-    let at = 0;
-    while (at < data.length) {
-        const space = data.indexOf(32, at);
-        if (space === -1) refuse(theme, "archive.header", "reason=pax");
-        const rawLength = data.subarray(at, space).toString("ascii");
-        if (!/^[0-9]+$/.test(rawLength)) refuse(theme, "archive.header", "reason=pax-length");
-        const length = Number(rawLength);
-        if (!Number.isSafeInteger(length) || length <= 0 || at + length > data.length || data[at + length - 1] !== 10) refuse(theme, "archive.header", "reason=pax-length");
-        const record = data.subarray(space + 1, at + length - 1).toString("utf8");
-        const equals = record.indexOf("=");
-        if (equals <= 0) refuse(theme, "archive.header", "reason=pax-record");
-        attrs[record.slice(0, equals)] = record.slice(equals + 1);
-        at += length;
-    }
-    return attrs;
-}
-
-function longName(data) {
-    return data.toString("utf8").replace(/\0.*$/, "").replace(/\n$/, "");
-}
-
-function safeTarName(theme, name) {
-    let trimmed = name.replace(/\/+$/, "");
-    while (trimmed.startsWith("./")) trimmed = trimmed.slice(2);
-    const parts = trimmed.split("/");
-    if (name.startsWith("/") || parts.some(part => part === "" || part === "." || part === "..")) refuse(theme, "archive.member", `name=${JSON.stringify(name)}`);
-    return trimmed;
-}
-
-function readTarEntries(theme, archive) {
-    let data;
-    try {
-        data = zlib.gunzipSync(readFile(archive, null));
-    } catch (e) {
-        refuse(theme, "archive", `reason=unreadable-gzip error=${e.code || e.message}`);
-    }
+async function readTarEntries(theme, archive) {
     const entries = [];
-    let nextName = null;
-    for (let offset = 0; offset + 512 <= data.length;) {
-        const header = data.subarray(offset, offset + 512);
-        if (header.every(byte => byte === 0)) break;
-        verifyHeader(theme, header);
-        const namePart = tarString(header, 0, 100);
-        const prefix = tarString(header, 345, 155);
-        const fallbackName = prefix === "" ? namePart : `${prefix}/${namePart}`;
-        const rawName = nextName || fallbackName;
-        nextName = null;
-        const size = parseOctal(theme, header, 124, 12, "size");
-        const type = tarString(header, 156, 1);
-        const body = offset + 512;
-        if (body + size > data.length) refuse(theme, "archive.header", `reason=size-truncated size=${size}`);
-        const content = data.subarray(body, body + size);
-        if (type === "x") {
-            const attrs = parsePax(theme, content);
-            if (Object.hasOwn(attrs, "path")) nextName = safeTarName(theme, attrs.path);
-        } else if (type === "g") {
-            const attrs = parsePax(theme, content);
-            if (Object.hasOwn(attrs, "path")) refuse(theme, "archive.header", `reason=global-pax-path path=${JSON.stringify(attrs.path)}`);
-        } else if (type === "L") {
-            nextName = safeTarName(theme, longName(content));
-        } else {
-            const name = safeTarName(theme, rawName);
-            const underBackgrounds = name === backgrounds.DIR || name.startsWith(`${backgrounds.DIR}/`);
-            if (underBackgrounds && (type === "1" || type === "2")) refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=link type=${JSON.stringify(type)}`);
-            if (underBackgrounds && type !== "0" && type !== "" && type !== "5") refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=unsupported-type type=${JSON.stringify(type)}`);
-            if ((type === "0" || type === "") && name.startsWith(`${backgrounds.DIR}/`)) {
-                const fileName = name.slice(backgrounds.DIR.length + 1);
-                if (!fileName.includes("/")) entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });
-            }
-        }
-        offset = body + Math.ceil(size / 512) * 512;
+    try {
+        await download.readArchive(archive, thumbnailSources(theme, entries), () => {});
+    } catch (e) {
+        if (e instanceof download.AssetRefusal) refuseAsset(theme, e);
+        throw e;
     }
-    if (nextName !== null) refuse(theme, "archive.header", "reason=missing-long-name-member");
     return entries;
 }
 
@@ -429,8 +297,8 @@ function scratchRoot() {
     return root;
 }
 
-function makeThumbnail(theme, archive, scratch, budget) {
-    const entries = readTarEntries(theme, archive);
+async function makeThumbnail(theme, archive, scratch, budget) {
+    const entries = await readTarEntries(theme, archive);
     const first = backgrounds.firstImageName(entries);
     if (first === null) refuse(theme, "archive.backgrounds", "reason=no-image");
     const entry = entries.find(candidate => candidate.name === first);
@@ -491,7 +359,7 @@ function land(catalogDir, finalIndex, converted, thumbnails) {
     replaceFile(path.join(catalogDir, "index.json"), writeJson(finalIndex), "convert-v1-themes");
 }
 
-function main() {
+async function main() {
     const args = parseArgs(process.argv.slice(2));
     const v1ThemesDir = path.join(args.v1Tree, "themes");
     const catalog = readJson(path.join(v1ThemesDir, "catalog.json"));
@@ -507,8 +375,8 @@ function main() {
     const thumbnails = new Map();
     try {
         for (const item of converted) {
-            const archive = ensureArchive(item.entry.imagery, args, catalog);
-            thumbnails.set(item.theme, makeThumbnail(item.theme, archive, scratch, args.thumbnailBudget));
+            const archive = await ensureArchive(item, args, catalog);
+            thumbnails.set(item.theme, await makeThumbnail(item.theme, archive, scratch, args.thumbnailBudget));
         }
         const existing = readExistingIndex(args.catalogDir);
         const finalIndex = buildIndex(existing, converted);
@@ -524,9 +392,7 @@ function main() {
     }
 }
 
-try {
-    main();
-} catch (e) {
+main().catch(e => {
     if (e instanceof ConvertExit) {
         console.error(e.line);
         process.exit(e.status);
@@ -536,4 +402,4 @@ try {
         process.exit(EXIT_IO);
     }
     throw e;
-}
+});

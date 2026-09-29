@@ -99,20 +99,41 @@
 //   vgsh-theme-judge catalog-probe <config-dir> <name>
 //       print `<installed digest> <catalog digest> <behind>` for catalog
 //       install NAME: its `vgsh theme outdated` row.
+//   vgsh-theme-judge wallpapers-fetch <text|json> <config-dir> <stage> <held|busy|failed> <name> <install|update>
+//       outside the theme lock, under the download lock whose flock
+//       verdict the caller passes: judge catalog install NAME's
+//       wallpapers, fetch the archive its index entry pins into the
+//       theme-asset cache, verify its size and sha256, and unpack its
+//       images into <stage>/backgrounds beside <stage>/pin.json. Prints
+//       progress lines, and nothing else when the install is up to date.
+//   vgsh-theme-judge wallpapers-land <text|json> <config-dir> <stage> <held|busy|failed> <name> <install|update>
+//       under the theme lock verdict, after `recover`: judge NAME again,
+//       rename the staged images into the package and record the pin in
+//       its marker; prints `ok wallpapers=<name> state=<installed|updated|
+//       up-to-date> images=<n> archive=<sha256, 12 digits>`, or under
+//       `json` `{ state, theme, wallpapers, images, sha256, reason }`.
+//   vgsh-theme-judge asset-lock
+//       print the download lock's file, `download.lock` in the
+//       theme-asset cache.
 //
 // list, apply, follow, reload, background, installed, checkouts, origin,
-// catalog, install, catalog-update, catalog-probe and recover refuse with
-// one line on stderr, `vgsh: refused: <key>=...`, through
-// bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under `json`,
-// apply prints its structured result on stdout first, refusals included,
-// and so do follow, reload and background. A partial apply, follow or
+// catalog, install, catalog-update, catalog-probe, recover,
+// wallpapers-fetch and wallpapers-land refuse with one line on stderr,
+// `vgsh: refused: <key>=...`, through bin/lib/judge-files.js: exit 1, or
+// 75 for `reason=busy`. Under `json`, apply prints its structured result
+// on stdout first, refusals included, and so do follow, reload, background
+// and both wallpapers commands, whose refusals are `wallpapers=<name>
+// reason=<key>`, each key in theme-wallpapers.md § Refusals. A partial
+// apply, follow or
 // reload prints one such line per failed or reload-pending target and
 // exits 3. A
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner, theme-install.md, theme-apply.md,
-// theme-targets.md, theme-backgrounds.md and theme-catalog.md hold the
+// theme-targets.md, theme-backgrounds.md, theme-catalog.md and
+// theme-wallpapers.md hold the
 // rules this file implements; the catalog marker is
-// bin/lib/theme-catalog.js, the target renderer
+// bin/lib/theme-catalog.js, the wallpaper fetch and archive reader
+// bin/lib/theme-download.js, the target renderer
 // bin/lib/theme-render.js, the background state bin/lib/theme-backgrounds.js,
 // and the edit a target's `select` keeps in its application's settings file
 // bin/lib/theme-select.js.
@@ -133,6 +154,7 @@ const render = require(path.join(__dirname, "lib", "theme-render.js"));
 const backgrounds = require(path.join(__dirname, "lib", "theme-backgrounds.js"));
 const select = require(path.join(__dirname, "lib", "theme-select.js"));
 const catalog = require(path.join(__dirname, "lib", "theme-catalog.js"));
+const download = require(path.join(__dirname, "lib", "theme-download.js"));
 
 const SHIPPED = path.join(repo, "themes");
 const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
@@ -144,6 +166,19 @@ const CATALOG = "catalog";
 const CATALOG_INDEX = "index.json";
 const FORMATS = ["text", "json"];
 const LOCK_VERDICTS = ["held", "busy", "failed"];
+const THEME_LOCK = "theme.lock";
+
+// Refuse KEY unless LOCK, the caller's verdict on the flock of FILE, is
+// `held`: `busy` exits 75.
+function heldLock(key, lock, file) {
+    if (lock === "busy") refuse(key + "=busy", "busy", 75);
+    if (lock === "failed") refuse(key + "=lock-failed path=" + file, "lock-failed");
+}
+
+// heldLock for the theme lock, <config-dir>/theme.lock.
+function themeLock(key, lock, configDir) {
+    heldLock(key, lock, path.join(configDir, THEME_LOCK));
+}
 
 function usage(first) {
     console.error("vgsh-theme-judge: refused: " + first);
@@ -1170,8 +1205,7 @@ function settle(entry, configHome, live, key) {
 function applyTo(result, failures, configDir, stateDir, lock, name) {
     if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
     const key = "theme=" + name + " reason";
-    if (lock === "busy") refuse(key + "=busy", "busy", 75);
-    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    themeLock(key, lock, configDir);
     const before = readPending(stateDir, key);
     const { rows, resolved } = packageSet(configDir, key);
     const row = resolved.get(name);
@@ -1326,8 +1360,7 @@ function apply(format, configDir, stateDir, lock, name) {
 // result RESULT then carries.
 function followTo(result, failures, configDir, stateDir, lock, only) {
     const key = "follow=applied reason";
-    if (lock === "busy") refuse(key + "=busy", "busy", 75);
-    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    themeLock(key, lock, configDir);
     const applied = readApplied(stateDir, key);
     const settled = outcome => {
         result.follow = outcome;
@@ -1572,8 +1605,7 @@ function reloadTarget(name, shipped, disabled, configHome, live, failures) {
 // targets whose hook fails. Nothing is rendered, staged or wired.
 function reloadAll(result, failures, configDir, stateDir, lock) {
     const key = "reload=pending reason";
-    if (lock === "busy") refuse(key + "=busy", "busy", 75);
-    if (lock === "failed") refuse(key + "=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
+    themeLock(key, lock, configDir);
     const before = readPending(stateDir, key);
     if (before.length === 0) {
         result.state = "unchanged";
@@ -1606,12 +1638,6 @@ const BACKGROUND_STEPS = { next: 1, previous: -1 };
 // What `background list` names: the applied package's images, or every
 // source's.
 const BACKGROUND_SCOPES = ["applied", "all"];
-
-// Refuse background VERB unless the caller holds the theme lock.
-function backgroundLock(verb, lock, configDir) {
-    if (lock === "busy") refuse("background=" + verb + " reason=busy", "busy", 75);
-    if (lock === "failed") refuse("background=" + verb + " reason=lock-failed path=" + path.join(configDir, "theme.lock"), "lock-failed");
-}
 
 // The package name theme.name holds, which apply writes after the swap, or
 // null before any apply. KEY leads the refusal for a file that cannot be
@@ -1662,7 +1688,7 @@ function backgroundSources(configDir, key) {
 // step learns each part.
 function stepBackground(result, step, configDir, stateDir, lock) {
     const key = "background=" + step + " reason";
-    backgroundLock(step, lock, configDir);
+    themeLock(key, lock, configDir);
     const shown = backgrounds.read(logic, stateDir, key);
     const name = appliedPackage(stateDir, key);
     result.theme = name;
@@ -1687,7 +1713,7 @@ function setBackground(result, argument, screen, configDir, stateDir, lock) {
     const key = "background=set reason";
     if (screen !== null && !backgrounds.isOutputName(screen)) refuse(key + "=malformed-screen screen=" + JSON.stringify(screen), "malformed-screen");
     result.screen = screen;
-    backgroundLock("set", lock, configDir);
+    themeLock(key, lock, configDir);
     const shown = backgrounds.read(logic, stateDir, key);
     const applied = appliedName(stateDir, key);
     const { source, background } = backgrounds.locate(backgroundSources(configDir, key), argument, key);
@@ -1891,11 +1917,11 @@ function catalogEntries(prefix) {
 }
 
 // The directory of installed package NAME under <config-dir>/themes and the
-// key its refusals lead with; a name the package judge refuses is refused
-// as `installed` refuses it.
-function installedPath(configDir, name) {
-    if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
-    return { dir: path.join(configDir, "themes", name), key: "theme=" + name + " reason" };
+// key its refusals lead with, `<VERB>=<name> reason`; a name the package
+// judge refuses is refused as `installed` refuses it.
+function installedPath(configDir, name, verb = "theme") {
+    if (!logic.isPackageName(name)) refuse(verb + "=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
+    return { dir: path.join(configDir, "themes", name), key: verb + "=" + name + " reason" };
 }
 
 // The index entry of NAME, refused `not-in-catalog` when the index has none.
@@ -2194,6 +2220,231 @@ function catalogList(format, configDir) {
             " imageryInstalled=" + row.imageryInstalled + " imageryUpdate=" + row.imageryUpdate);
 }
 
+// --- wallpapers
+
+// `vgsh theme wallpapers` downloads a catalog install's first archive, or
+// with `--update` also replaces the archive another pin unpacked.
+const WALLPAPER_MODES = ["install", "update"];
+// What the fetch leaves in the stage for the land: the unpacked images in
+// backgrounds/ and the pin they came from. An update's replaced images wait
+// in `replaced` until the stage is removed.
+const STAGED_PIN = "pin.json";
+const REPLACED = "replaced";
+// A progress line is printed each time the bytes pass another of this many
+// equal steps of the total, besides the first and the last.
+const PROGRESS_STEPS = 20;
+// The environment variable that replaces a pin's `<repo>/releases/download`.
+const ASSET_BASE = "VGS_THEME_ASSET_BASE";
+
+// What `vgsh theme wallpapers NAME` does, judged from the package, its
+// marker and the index as they stand now: `up-to-date` when the marker
+// records the archive the index pins, `installed` when it records none,
+// `updated` when it records another and MODE is `update`. Refused: no
+// catalog install `not-catalog`, a name the index dropped
+// `not-in-catalog`, an entry with no archive `no-imagery`, a first
+// download into a backgrounds/ the download did not place `exists`, and
+// another archive's images without `update` `installed`. RESULT takes the
+// pin's sha256.
+function wallpaperPlan(configDir, name, mode, result) {
+    const { dir, key } = installedPath(configDir, name, "wallpapers");
+    const origin = realDirectory(dir, key) ? installOrigin(dir, key) : { origin: "none", marker: null };
+    if (origin.origin !== "catalog") refuse(key + "=not-catalog path=" + dir, "not-catalog");
+    const pin = catalogEntry(name, key).imagery;
+    if (pin === null) refuse(key + "=no-imagery", "no-imagery");
+    result.sha256 = pin.sha256;
+    const marker = origin.marker;
+    const images = path.join(dir, backgrounds.DIR);
+    const plan = { dir, key, pin, marker, images };
+    if (marker.imagery !== null && marker.imagery.sha256 === pin.sha256) return Object.assign(plan, { state: "up-to-date" });
+    if (marker.imagery === null) {
+        let there;
+        try {
+            there = fs.lstatSync(images, { throwIfNoEntry: false });
+        } catch (e) {
+            refuse(key + "=unreadable path=" + images + " error=" + e.code, "unreadable");
+        }
+        if (there !== undefined) refuse(key + "=exists path=" + images, "exists", 1,
+            "the download did not place " + images + "; your own images belong in " + path.join(configDir, backgrounds.DIR));
+        return Object.assign(plan, { state: "installed" });
+    }
+    if (mode !== "update") refuse(key + "=installed archive=" + marker.imagery.sha256.slice(0, 12) + " pinned=" + pin.sha256.slice(0, 12), "installed", 1,
+        "the index pins another archive; --update replaces the images of " + images);
+    return Object.assign(plan, { state: "updated" });
+}
+
+// The progress lines of an archive of TOTAL bytes: `{ state, bytes, total }`
+// on stdout under `json`, else `progress state=<s> bytes=<n> total=<t>` on
+// stderr. Each state prints its first call, each call that passes another
+// step and its call at TOTAL.
+function progressLines(format, total) {
+    let last = null;
+    return (state, bytes) => {
+        const step = bytes === total ? PROGRESS_STEPS : Math.floor(bytes * PROGRESS_STEPS / total);
+        if (last !== null && last.state === state && last.step >= step) return;
+        last = { state, step };
+        if (format === "json") process.stdout.write(JSON.stringify({ state, bytes, total }) + "\n");
+        else process.stderr.write("progress state=" + state + " bytes=" + bytes + " total=" + total + "\n");
+    };
+}
+
+// A refusal of bin/lib/theme-download.js as this command's, led by KEY.
+// A fetch refusal keeps its reason; a gzip error is `archive`, a bad tar
+// header `header` with the defect, and a member name no package may hold
+// `path`.
+function refuseAsset(key, e) {
+    const detail = e.detail === "" ? "" : " " + e.detail;
+    switch (e.step) {
+    case "fetch": refuse(key + "=" + e.reason + detail, e.reason); break;
+    case "archive": {
+        const reason = e.reason === "gzip" ? "archive" : e.reason;
+        refuse(key + "=" + reason + detail, reason);
+        break;
+    }
+    case "header": refuse(key + "=header defect=" + e.reason + detail, "header"); break;
+    case "name": refuse(key + "=path member=" + JSON.stringify(e.member), "path"); break;
+    default: throw new Error("vgsh-theme-judge: asset refusal step " + e.step + " is none of fetch, archive, header, name");
+    }
+}
+
+// A sink writing one image to FILE, created afresh: a name the archive
+// holds twice is refused `duplicate`.
+function imageSink(file, key, at) {
+    let fd;
+    try {
+        fd = fs.openSync(file, "wx");
+    } catch (e) {
+        if (e.code === "EEXIST") refuse(key + "=duplicate " + at, "duplicate");
+        refuse(key + "=unwritable path=" + file + " error=" + e.code, "unwritable");
+    }
+    return {
+        write(chunk) { writing(file, key, () => download.writeAll(fd, chunk)); },
+        close() { writing(file, key, () => fs.closeSync(fd)); }
+    };
+}
+
+// Unpack the verified ARCHIVE into <stage>/backgrounds. A member lands only
+// as a regular file named `backgrounds/<file>`, FILE an image name, of at
+// most MEMBER_CEILING bytes, judged from its header before a byte is
+// written. Refused: a link `link`, any other kind `type`, any other name
+// `path`, a name that is no image `not-an-image`, a larger member
+// `oversize`, and an archive with no image `no-image`. Answers the count.
+async function unpackWallpapers(archive, stage, key, progress) {
+    const target = path.join(stage, backgrounds.DIR);
+    writing(target, key, () => fs.mkdirSync(target));
+    let images = 0;
+    await download.readArchive(archive, member => {
+        const at = "member=" + JSON.stringify(member.name);
+        if (member.kind === "symlink" || member.kind === "hardlink") refuse(key + "=link " + at, "link");
+        if (member.kind !== "file") refuse(key + "=type " + at + " type=" + JSON.stringify(member.type), "type");
+        const file = member.name.slice(backgrounds.DIR.length + 1);
+        if (!member.name.startsWith(backgrounds.DIR + "/") || file.includes("/")) refuse(key + "=path " + at, "path");
+        if (!backgrounds.isImageName(file)) refuse(key + "=not-an-image " + at, "not-an-image");
+        if (member.size > download.MEMBER_CEILING) refuse(key + "=oversize " + at + " size=" + member.size + " ceiling=" + download.MEMBER_CEILING, "oversize");
+        images += 1;
+        return imageSink(path.join(target, file), key, at);
+    }, progress);
+    if (images === 0) refuse(key + "=no-image", "no-image");
+    return images;
+}
+
+// A result `{ state, theme, wallpapers, images, sha256, reason }` for NAME,
+// failed until a command fills it.
+function wallpaperResult(name) {
+    return { state: "failed", theme: name, wallpapers: null, images: null, sha256: null, reason: null };
+}
+
+// Run RUN, which fills RESULT; under `json` a refusal first prints RESULT
+// as one line on stdout, `state` "failed" beside the refusal's reason.
+async function wallpaperReport(format, result, run) {
+    try {
+        await run();
+    } catch (e) {
+        if (e instanceof Refusal && format === "json") {
+            result.state = "failed";
+            result.reason = e.reason;
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }
+        throw e;
+    }
+}
+
+// The fetch of `vgsh theme wallpapers NAME`, outside the theme lock and
+// under the download lock, LOCK its caller's verdict: judge the install,
+// then fetch the pinned archive into the cache, verify it and unpack its
+// images into STAGE with the pin. An install already up to date stages
+// nothing. The cache's part is removed whatever happens.
+async function wallpapersFetch(format, configDir, stage, lock, name, mode) {
+    const result = wallpaperResult(name);
+    await wallpaperReport(format, result, async () => {
+        const { key } = installedPath(configDir, name, "wallpapers");
+        const cache = download.cacheDir();
+        heldLock(key, lock, path.join(cache, download.LOCK_FILE));
+        const plan = wallpaperPlan(configDir, name, mode, result);
+        if (plan.state === "up-to-date") return;
+        const progress = progressLines(format, plan.pin.size);
+        let fetched = null;
+        try {
+            const url = download.archiveUrl(plan.pin, process.env[ASSET_BASE], Boolean(process.env[TEST_RUN]));
+            fetched = await download.fetchArchive(plan.pin, url, cache, false, progress);
+            await unpackWallpapers(fetched.file, stage, key, progress);
+        } catch (e) {
+            if (e instanceof download.AssetRefusal) refuseAsset(key, e);
+            throw e;
+        } finally {
+            if (fetched !== null && !fetched.cached) writing(fetched.file, key, () => fs.rmSync(fetched.file, { force: true }));
+        }
+        const pinFile = path.join(stage, STAGED_PIN);
+        writing(pinFile, key, () => fs.writeFileSync(pinFile, JSON.stringify(plan.pin) + "\n", { flag: "wx" }));
+    });
+}
+
+// Move FROM to TO by rename; KEY leads the refusal `move`.
+function moveInto(from, to, key) {
+    try {
+        fs.renameSync(from, to);
+    } catch (e) {
+        refuse(key + "=move path=" + to + " error=" + e.code, "move");
+    }
+}
+
+// The land of `vgsh theme wallpapers NAME`, under the theme lock, LOCK its
+// caller's verdict, after `recover`: judge the install again, since it or
+// the index may have changed during the download. An install up to date
+// stays. Otherwise the stage must hold the archive the index still pins,
+// else `changed`. An update renames the old backgrounds/ into the stage,
+// then the staged backgrounds/ is renamed into the package, then the marker
+// records the pin. Prints `ok wallpapers=<name> state=<state> images=<n>
+// archive=<sha256, 12 digits>`, or under `json` the result.
+async function wallpapersLand(format, configDir, stage, lock, name, mode) {
+    const result = wallpaperResult(name);
+    await wallpaperReport(format, result, () => {
+        const { key } = installedPath(configDir, name, "wallpapers");
+        themeLock(key, lock, configDir);
+        recover(configDir);
+        const plan = wallpaperPlan(configDir, name, mode, result);
+        if (plan.state !== "up-to-date") {
+            const staged = readJson(path.join(stage, STAGED_PIN), key, true);
+            if (staged === null || JSON.stringify(staged) !== JSON.stringify(plan.pin))
+                refuse(key + "=changed", "changed", 1, "the theme or the catalog changed during the download; run it again");
+            if (plan.state === "updated" && fs.lstatSync(plan.images, { throwIfNoEntry: false }) !== undefined)
+                moveInto(plan.images, path.join(stage, REPLACED), key);
+            moveInto(path.join(stage, backgrounds.DIR), plan.images, key);
+            replaceFile(path.join(plan.dir, catalog.MARKER_FILE), catalog.markerText(plan.marker.digest, plan.pin), key);
+        }
+        result.wallpapers = plan.state;
+        result.images = backgrounds.images(plan.dir, key).length;
+        result.state = "ok";
+    });
+    if (format === "json") process.stdout.write(JSON.stringify(result) + "\n");
+    else console.log("ok wallpapers=" + name + " state=" + result.wallpapers + " images=" + result.images + " archive=" + result.sha256.slice(0, 12));
+}
+
+// The download lock's file, which `vgsh theme wallpapers` holds for the
+// fetch: the one place its path is decided.
+function assetLock() {
+    console.log(path.join(download.cacheDir(), download.LOCK_FILE));
+}
+
 const [command, ...args] = process.argv.slice(2);
 main(() => {
     switch (command) {
@@ -2260,6 +2511,14 @@ main(() => {
     case "origin":
         if (args.length !== 2) usage("arguments=" + command);
         originCommand(...args);
+        break;
+    case "wallpapers-fetch":
+    case "wallpapers-land":
+        if (args.length !== 6 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3]) || !WALLPAPER_MODES.includes(args[5])) usage("arguments=" + command);
+        return command === "wallpapers-fetch" ? wallpapersFetch(...args) : wallpapersLand(...args);
+    case "asset-lock":
+        if (args.length !== 0) usage("arguments=" + command);
+        assetLock();
         break;
     default:
         usage("command=" + (command || "missing"));

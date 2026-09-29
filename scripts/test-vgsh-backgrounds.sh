@@ -255,7 +255,7 @@ check "a busy next leaves the link" links_to a.JPG
 tinst "previous under --json while the lock is held prints the busy result" "$cfg" "$rt_empty" 75 "$(json_line failed null null null '"busy"')" "vgsh: refused: background=previous reason=busy" theme background --json previous
 tinst "set while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: background=set reason=busy" theme background set "$images/c.png"
 check "a busy set leaves the link" links_to a.JPG
-judge_control busy 'if (lock === "busy") refuse("background=" + verb + " reason=busy", "busy", 75);' ''
+judge_control busy 'if (lock === "busy") refuse(key + "=busy", "busy", 75);' ''
 tinst "the busy mutant moves on under the held lock" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
 tinst "the busy mutant sets under the held lock" "$cfg" "$rt_empty" 0 "$(set_line c.png dusk "$images/c.png")" "" theme background set "$images/c.png"
 unset THEME_BIN

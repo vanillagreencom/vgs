@@ -33,6 +33,8 @@
 #   vgsh theme remove <name>       delete an installed theme package's directory
 #   vgsh theme catalog [--json]    every catalog theme with its install state
 #   vgsh theme install <name>      install one catalog theme package, with no network
+#   vgsh theme wallpapers [--json] <name> [--update]
+#                                  download, verify and unpack a catalog install's wallpapers; --update replaces another archive's
 #   vgsh theme outdated [--json]   fetch every installed theme package and report how far it is behind its upstream
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
@@ -167,6 +169,23 @@
 # `definitionUpdate`, `imageryInstalled` and `imageryUpdate`, `--json` as
 # `{ entries: [...] }`: docs/architecture/theme-catalog.md § Install.
 #
+# `theme wallpapers` is the one theme command that reaches the network. It
+# fetches the archive a catalog install's index entry pins, over HTTPS
+# only, into ${XDG_CACHE_HOME:-~/.cache}/vgs/theme-assets/, holding
+# download.lock there and not the theme lock, checks its size and sha256,
+# and unpacks only regular backgrounds/<image> members of at most 128 MiB
+# into a staging directory. Under the theme lock it then renames the images
+# into the package's backgrounds/ and records the pin in the marker. It
+# refuses a backgrounds/ the download did not place as reason=exists,
+# since the user's own images belong in ${XDG_CONFIG_HOME:-~/.config}/vgs/backgrounds/,
+# and another archive's images as reason=installed unless --update
+# replaces them. It prints progress lines on stderr and `ok wallpapers=<name>
+# state=installed|updated|up-to-date images=<n> archive=<sha256>`; --json
+# prints `{ state, bytes, total }` lines, then `{ state, theme, wallpapers,
+# images, sha256, reason }`, on stdout. VGS_THEME_ASSET_BASE replaces the
+# pin's release URL, and takes file:// only in a test run:
+# docs/architecture/theme-wallpapers.md.
+#
 # `theme browser-policy install` is the one command that asks for a
 # privilege: bin/vgsh-browser-policy installs itself root-owned with one
 # NOPASSWD sudoers rule for the calling user, the setup the chromium
@@ -237,9 +256,9 @@
 # apply, follow or reload is partial (a target failed or its reload stays pending;
 # each prints `vgsh: refused: target=<name> reason=<key>`), 4 when restart
 # refuses because the session is locked, 75 when another shell holds the
-# lock, another theme command holds the theme lock or another self update
-# holds its lock, 69 when the shell is
-# not running, 78 when `run` or `restart` finds a tool below the runtime
+# lock, another theme command holds the theme lock, another self update
+# holds its lock or another wallpaper download holds the download lock,
+# 69 when the shell is not running, 78 when `run` or `restart` finds a tool below the runtime
 # floor. The usage text is this header; `vgsh --help` prints it and exits 0.
 set -euo pipefail
 
@@ -886,6 +905,36 @@ theme_update() { # NAME
   exec node "$theme_judge" follow text "$config_home/vgs" "$state_home/vgs" held "$name"
 }
 
+# Take the download lock, `download.lock` in the theme-asset cache, on
+# descriptor 8 for the judge that runs next, and set `download_verdict` to
+# held, busy or failed, as theme_lock_verdict does for the theme lock. The
+# judge names the file, so its path has one owner.
+theme_download_verdict() {
+  local file status=0
+  download_verdict=failed
+  file="$(node "$theme_judge" asset-lock)" || return 0
+  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null && { exec 8>>"$file"; } 2>/dev/null || return 0
+  flock -n -E 75 8 || status=$?
+  case "$status" in
+    0) download_verdict=held ;;
+    75) download_verdict=busy ;;
+  esac
+}
+
+# The fetch runs under the download lock alone, so a download never holds
+# up an apply; the download lock is then released and the land runs under
+# the theme lock, the judge judging the install again. Both print a result
+# on every path. This process holds the stage until it exits.
+theme_wallpapers() { # FORMAT NAME MODE
+  mkdir -p -- "$user_themes"
+  theme_stage wallpapers
+  theme_download_verdict
+  node "$theme_judge" wallpapers-fetch "$1" "$config_home/vgs" "$stage" "$download_verdict" "$2" "$3" || exit $?
+  exec 8>&-
+  theme_lock_verdict
+  node "$theme_judge" wallpapers-land "$1" "$config_home/vgs" "$stage" "$verdict" "$2" "$3"
+}
+
 # The judge stages and judges the catalog package and moves it into place;
 # this process holds the stage and the lock.
 theme_install() { # NAME
@@ -1310,6 +1359,17 @@ case "$cmd" in
       outdated)
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
         theme_outdated "$format"
+        ;;
+      wallpapers)
+        name=""; mode=install
+        for arg in "$@"; do
+          if [[ $arg == --update && $mode == install ]]; then mode=update
+          elif [[ -z $name && $arg != --* ]]; then name="$arg"
+          else printf 'vgsh: refused: argument=%s\n' "$arg" >&2; usage; exit 2
+          fi
+        done
+        if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
+        theme_wallpapers "$format" "$name" "$mode"
         ;;
       *)
         printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2

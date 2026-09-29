@@ -229,6 +229,50 @@ server.serve_forever()
 }
 doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; } # NAME [TOKENS_JSON]
 
+# A gzip tar archive at OUT, written by python3's tarfile in pax format
+# with every time 0, one member per MEMBER: `file:<name>=<source>` a
+# regular file holding SOURCE's bytes, `badsum:<name>=<source>` the same
+# with a header checksum that does not match, `symlink:<name>=<target>`,
+# `hardlink:<name>=<target>`, `dir:<name>`, and `claim:<name>=<bytes>`, a
+# regular member whose header claims BYTES while the archive ends after
+# its header. A claim is the last member.
+tar_gz() { # OUT MEMBER...
+  python3 - "$@" <<'PY'
+import gzip, io, sys, tarfile
+out, specs = sys.argv[1], sys.argv[2:]
+raw = io.BytesIO()
+tar = tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT)
+for spec in specs:
+    kind, _, rest = spec.partition(":")
+    name, _, value = rest.partition("=")
+    info = tarfile.TarInfo(name)
+    if kind in ("file", "badsum"):
+        data = open(value, "rb").read()
+        info.size = len(data)
+        at = tar.offset
+        tar.addfile(info, io.BytesIO(data))
+        if kind == "badsum":
+            raw.getbuffer()[at] ^= 1
+    elif kind in ("symlink", "hardlink"):
+        info.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
+        info.linkname = value
+        tar.addfile(info)
+    elif kind == "dir":
+        info.type = tarfile.DIRTYPE
+        tar.addfile(info)
+    elif kind == "claim":
+        info.size = int(value)
+        header = info.tobuf(tarfile.PAX_FORMAT)
+        raw.write(header)
+        tar.offset += len(header)
+    else:
+        sys.exit("tar_gz: kind=" + kind)
+tar.close()
+with open(out, "wb") as f:
+    f.write(gzip.compress(raw.getvalue(), mtime=0))
+PY
+}
+
 rows_done() { # SUITE
   if [[ $failures -gt 0 ]]; then echo "$1: failed=$failures"; exit 1; fi
   echo "$1: ok"
