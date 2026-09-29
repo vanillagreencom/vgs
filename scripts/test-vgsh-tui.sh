@@ -29,7 +29,7 @@ stub setsid "printf '%s\\n' \"\$1\" >\"$tmp/setsid\"; [ \"\$1\" = -f ] && shift;
 # waitint SECS records its pid, then sleeps as that pid until SECS pass or a
 # signal ends it.
 stub waitint "echo \$\$ >\"$tmp/child\"; exec sleep \"\$1\""
-stub xdg-terminal-exec ": >\"$tmp/term\"; for a; do printf '%s\\n' \"\$a\" >>\"$tmp/term\"; done"
+stub xdg-terminal-exec ": >\"$tmp/term\"; for a; do printf '%s\\n' \"\$a\" >>\"$tmp/term\"; done; printf '%s\\n' \"\${VGSH_RUNNER_PID-unset}\" >\"$tmp/term-env\""
 
 # on_tty BIN ARGS...: BIN on a pseudo-terminal; stdout and stderr together
 # land in $tmp/out, the exit status in $tty_status. A key is typed every
@@ -257,6 +257,11 @@ launch_row "a plugin launch" "$(lines --app-id=org.vgs.tui "--title=VGS · p" --
   "$subject" launch --title p --plugin acme.tui --dir "$snap" -- tui/run.sh
 launch_row "a relative snapshot" "$(lines --app-id=org.vgs.tui "--title=VGS · p" -- "$subject" present --presentation full --plugin acme.tui --dir "$tmp/./snapshot" -- tui/run.sh)" \
   env -C "$tmp" "$subject" launch --title p --plugin acme.tui --dir ./snapshot -- tui/run.sh
+# The shell's marker stays behind: the terminal is the user's, not the
+# shell's, and `vgsh pkg run` refuses a caller that carries it.
+rm -f -- "$tmp/term-env"
+plain_run env VGSH_RUNNER_PID=4242 "$subject" launch --title t -- exits 0
+check "a launch from the shell hands the terminal no VGSH_RUNNER_PID" test "$(cat "$tmp/term-env" 2>/dev/null)" == unset
 launch_row "vgsh tui present" "$(lines --app-id=org.vgs.tui "--title=VGS · exits" -- "$subject" present --presentation full -- exits 0)" \
   "$repo/bin/vgsh" tui present -- exits 0
 launch_row "vgsh tui present with a title and a size" "$(lines --app-id=org.vgs.tui.tall "--title=VGS · Up" -- "$subject" present --presentation full -- "$stubs/exits" 1)" \
@@ -457,6 +462,11 @@ check "the list-lines mutant fails a tui list row" test "$(run_cli_rows "$tmp/co
 
 control unshaped-reply vgsh-plugin-judge 'if (!Array.isArray(entries) || ' 'if (false && '
 check "the unshaped-reply mutant fails a tui list row" test "$(run_cli_rows "$tmp/control-unshaped-reply/bin/vgsh" quiet >/dev/null && echo green || echo red)" == red
+
+control runner-marker vgsh-tui $'  unset VGSH_RUNNER_PID\n' ''
+rm -f -- "$tmp/term-env"
+plain_run env VGSH_RUNNER_PID=4242 "$control_bin" launch --title t -- exits 0
+check "the runner-marker mutant hands the terminal the shell's marker" test "$(cat "$tmp/term-env" 2>/dev/null)" == 4242
 
 control unchecked-terminal vgsh-tui 'bad_invocation "argument=$1"; require_terminal ;;' 'bad_invocation "argument=$1"; : ;;'
 plain_run env PATH="$bare" "$control_bin" check

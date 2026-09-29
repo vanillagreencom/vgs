@@ -65,6 +65,12 @@ expect_poll "the second placement is gone" 1 probe_widgets
 expect "run starts a detached process" ok probe touch "$sandbox/touched-by-run"
 touched() { [[ -f $sandbox/touched-by-run ]] && echo yes || echo no; }
 expect_poll "the detached process ran" yes touched
+# A detached program is the user's, not the shell's: it starts without the
+# shell's marker, which `vgsh pkg run` refuses, and with the rest of the
+# shell's environment.
+expect "run starts a process that writes its environment" ok probe environ "$sandbox/detached-env"
+detached_env() { [[ -s $sandbox/detached-env ]] || { echo pending; return; }; grep -q '^PATH=' "$sandbox/detached-env" && ! grep -q '^VGSH_RUNNER_PID=' "$sandbox/detached-env" && echo clean || echo marked; }
+expect_poll "the detached process has no VGSH_RUNNER_PID" clean detached_env
 
 bus_owner() { "${shell_env[@]}" gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner "$1" 2>>"$sandbox/ipc.log"; }
 expect_poll "the core's notification server owns the bus name" "(true,)" bus_owner org.freedesktop.Notifications

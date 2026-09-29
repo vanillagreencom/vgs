@@ -4,7 +4,8 @@
 # was handed and opens nothing, so no terminal starts. The fixture acme.tui
 # declares one listed script. Rows: the published list, the app-id of the
 # script's size, the snapshot path it runs from and its arguments, the
-# core's own sudo grant opened by key as the core's bin/vgsh, each refusal, a launcher that finds no terminal and the synchronous
+# core's own sudo grant and package install picker opened by key as the
+# core's bin/vgsh, each refusal, a launcher that finds no terminal and the synchronous
 # `launcher-missing` answer that follows until a probe finds one again, the
 # launchers the core holds, and a disabled plugin's list and hold gone.
 set -euo pipefail
@@ -36,7 +37,7 @@ expect "enabling the tui fixture is allowed" ok ipc shell setPluginEnabled acme.
 expect_poll "the tui fixture's service is built" True record_exists acme.tui
 expect_poll "the fixture holds the tui capability" True tui_held
 
-core_listed='{"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}'
+core_listed='{"key": "core/pkg-install", "plugin": "core", "name": "pkg-install", "title": "Install packages", "label": "Install packages", "icon": "package-plus", "group": "Packages"}, {"key": "core/pkg-remove", "plugin": "core", "name": "pkg-remove", "title": "Remove packages", "label": "Remove packages", "icon": "package-minus", "group": "Packages"}, {"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}'
 listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}, '"$core_listed"']'
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
@@ -89,6 +90,10 @@ forget_record
 expect "openTui opens the core's sudo grant" ok ipc shell openTui core/sudo-grant
 expect_poll "the terminal is handed the core's vgsh sudo grant" \
   "$(words --app-id=org.vgs.tui "--title=VGS · Passwordless sudo" -- "$tui_self" present --presentation full -- "$core_vgsh" sudo grant)" recorded
+forget_record
+expect "openTui opens the core's package install picker" ok ipc shell openTui core/pkg-install
+expect_poll "the terminal is handed the core's vgsh pkg install" \
+  "$(words --app-id=org.vgs.tui "--title=VGS · Install packages" -- "$tui_self" present --presentation full -- "$core_vgsh" pkg install)" recorded
 
 # Refusals, each before any launcher starts.
 forget_record

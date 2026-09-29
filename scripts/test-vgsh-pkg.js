@@ -7,7 +7,11 @@
 //   no step names an elevation command, and no pacman-family step refreshes
 //   the databases without upgrading (`-Sy` alone).
 // - Detection runs over os-release texts and sets of commands on PATH.
-// - Plans pin each manager's argv for install, remove and upgrade.
+// - Plans pin each manager's argv for install, remove and upgrade, and the
+//   pickers each manager's list and preview queries; a preview word holds
+//   no fzf placeholder. The elevation commands, their order and the choice
+//   a run makes over them are pinned; bin/vgsh-pkg's `run` and pickers are
+//   scripts/test-vgsh-pkg-run.sh's.
 // - packageFor picks a requirement's package for a detected system.
 // - Each update parser reads the canned outputs under scripts/fixtures/pkg/
 //   and inline odd lines; each manager's update query and the meaning of
@@ -58,6 +62,14 @@ function tableErrors(t) {
             templates.push([query, row[query].argv]);
             if (Object.prototype.toString.call(row[query].read) !== "[object RegExp]") errors.push(where + " " + query + ": read is no pattern");
         }
+        for (const action of ["install", "remove"]) {
+            const spec = row.picker[action];
+            if (spec === null) continue;
+            templates.push(["list", spec.list], ["preview", spec.preview]);
+            // fzf substitutes every brace expression in a preview string, so
+            // a preview word that is no placeholder the table fills holds none.
+            for (const token of spec.preview) if (!PLACEHOLDERS.includes(token) && /[{}]/.test(token)) errors.push(where + " picker " + action + ": brace in preview word " + token);
+        }
         if (row.check !== null && (!Array.isArray(row.check) || row.check.length === 0)) errors.push(where + ": check is neither null nor a list of queries");
         else if (row.check !== null) row.check.forEach((c, i) => {
             const at = where + " check " + i;
@@ -82,7 +94,7 @@ function tableErrors(t) {
             if (action === "install" || action === "remove") { if (names > 1) errors.push(where + " " + action + ": {names} twice"); }
             else if (names > 0) errors.push(where + " " + action + ": {names} outside install and remove");
             if (step.includes("{path}") !== (action === "owner")) errors.push(where + " " + action + ": {path} belongs to the owner query");
-            if (step.includes("{name}") !== (action === "installed")) errors.push(where + " " + action + ": {name} belongs to the installed query");
+            if (step.includes("{name}") !== (action === "installed" || action === "preview")) errors.push(where + " " + action + ": {name} belongs to the installed query and a picker's preview");
         }
         for (const action of ["install", "remove"])
             if (row[action] !== null && !row[action].some(step => step.includes("{names}"))) errors.push(where + " " + action + ": no step takes the names");
@@ -164,6 +176,32 @@ const PLAN_ROWS = [
     ["a name with a space", "pacman", "install", ["gum fzf"], ["pacman"], "name=\"gum fzf\" reason=grammar"],
     ["an empty name", "pacman", "install", [""], ["pacman"], "name=\"\" reason=grammar"],
     ["a name past 256 characters", "pacman", "install", ["a".repeat(257)], ["pacman"], "name=\"" + "a".repeat(257) + "\" reason=grammar"]
+];
+
+// pickerFor rows: name, manager, action, the commands on PATH, `{ list,
+// preview }` or the refusal.
+const PICKER_ROWS = [
+    ["pacman install lists the sync databases", "pacman", "install", ["pacman"], { list: ["pacman", "-Slq"], preview: ["pacman", "-Sii", "{name}"] }],
+    ["pacman remove lists the explicit packages", "pacman", "remove", ["pacman"], { list: ["pacman", "-Qqe"], preview: ["pacman", "-Qi", "{name}"] }],
+    ["aur install through the helper", "aur", "install", ["yay"], { list: ["yay", "-Slqa"], preview: ["yay", "-Siia", "{name}"] }],
+    ["aur remove is pacman's", "aur", "remove", ["paru"], "manager=aur picker=remove reason=unsupported"],
+    ["apt install", "apt", "install", ["apt-get"], { list: ["apt-cache", "pkgnames"], preview: ["apt-cache", "show", "{name}"] }],
+    ["apt remove lists the manual packages", "apt", "remove", ["apt-get"], { list: ["apt-mark", "showmanual"], preview: ["dpkg", "-s", "{name}"] }],
+    ["dnf install", "dnf", "install", ["dnf5"], { list: ["dnf5", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["dnf5", "info", "{name}"] }],
+    ["dnf remove lists the user's packages", "dnf", "remove", ["dnf"], { list: ["dnf", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }],
+    ["flatpak offers no picker", "flatpak", "install", ["flatpak"], "manager=flatpak picker=install reason=unsupported"],
+    ["an absent manager", "pacman", "install", [], "manager=pacman reason=absent binaries=pacman"]
+];
+
+// elevator rows: name, packages.elevate or undefined, the commands on PATH,
+// `{ ok: true, command }` or the refusal.
+const ELEVATOR_ROWS = [
+    ["sudo first", undefined, ["run0", "doas", "sudo"], "sudo"],
+    ["doas without sudo", undefined, ["run0", "doas"], "doas"],
+    ["run0 alone", undefined, ["run0"], "run0"],
+    ["none found", undefined, ["pkexec", "su"], "elevate=none candidates=sudo,doas,run0"],
+    ["the configured command over sudo", "run0", ["sudo", "run0"], "run0"],
+    ["a configured command that is absent", "doas", ["sudo"], "elevate=doas reason=absent source=packages.elevate"]
 ];
 
 // packageFor rows: name, a requirement's packages, detect's answer, the pick.
@@ -345,6 +383,17 @@ function verifyTable(t) {
     for (const [name, manager, query, stdout, want] of ANSWER_ROWS) {
         const got = t.queryAnswer(manager, query, stdout);
         if (got !== want) failures.push("answer: " + name + ": got " + JSON.stringify(got));
+    }
+    for (const [name, manager, action, commands, want] of PICKER_ROWS) {
+        const got = t.pickerFor(manager, action, onPathOf(commands));
+        const expected = typeof want === "string" ? { ok: false, error: want } : Object.assign({ ok: true }, want);
+        if (!same(got, expected)) failures.push("picker: " + name + ": got " + JSON.stringify(got));
+    }
+    if (!same(t.ELEVATORS, ["sudo", "doas", "run0"])) failures.push("elevators: got " + JSON.stringify(t.ELEVATORS));
+    for (const [name, configured, commands, want] of ELEVATOR_ROWS) {
+        const got = t.elevator(configured, onPathOf(commands));
+        const expected = want.includes("=") ? { ok: false, error: want } : { ok: true, command: want };
+        if (!same(got, expected)) failures.push("elevator: " + name + ": got " + JSON.stringify(got));
     }
     for (const [name, packages, found, want] of PACKAGE_FOR_ROWS) {
         const got = t.packageFor(packages, found);
@@ -668,6 +717,11 @@ function checkRows(scripts, quick, tools, tmp, expect, failures) {
 const CONTROLS = [
     ["rule:partial upgrade", "a pacman upgrade refreshes without upgrading", TABLE, "upgrade: [[\"{bin}\", \"-Syu\"]],", "upgrade: [[\"{bin}\", \"-Sy\"]],"],
     ["rule:elevation command", "a step elevates", TABLE, "[\"{bin}\", \"full-upgrade\"]", "[\"sudo\", \"{bin}\", \"full-upgrade\"]"],
+    ["rule:brace", "a preview word holds an fzf placeholder", TABLE, "preview: [\"{bin}\", \"-Sii\", \"{name}\"]", "preview: [\"{bin}\", \"-Sii\", \"--x={q}\", \"{name}\"]"],
+    ["rule:elevation command", "a picker's list elevates", TABLE, "list: [\"{bin}\", \"-Slq\"]", "list: [\"sudo\", \"{bin}\", \"-Slq\"]"],
+    ["table", "a picker keeps the binary placeholder", TABLE, "var fill = function (token) { return token === \"{bin}\" ? found.binary : token; };", "var fill = function (token) { return token; };"],
+    ["table", "the elevation order changes", TABLE, "var ELEVATORS = [\"sudo\", \"doas\", \"run0\"];", "var ELEVATORS = [\"doas\", \"sudo\", \"run0\"];"],
+    ["table", "a configured elevation command is ignored", TABLE, "        if (onPath(configured)) return { ok: true, command: configured };\n", ""],
     ["table", "ID_LIKE is ignored", TABLE, "    if (like !== null) {", "    if (false) {"],
     ["table", "an overlay ignores the primary it requires", TABLE, "if (other.requires !== null && (primary === null || primary.id !== other.requires)) continue;", ""],
     ["table", "a name may start with a dash", TABLE, " && name.charAt(0) !== \"-\"", ""],

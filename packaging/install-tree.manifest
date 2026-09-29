@@ -4,6 +4,7 @@ f share/vgs/VERSION
 f share/vgs/bin/lib/check-manifests.js
 f share/vgs/bin/lib/judge-files.js
 f share/vgs/bin/lib/logo.txt
+f share/vgs/bin/lib/pkg-run.sh
 f share/vgs/bin/lib/qml-library.js
 f share/vgs/bin/lib/self.js
 f share/vgs/bin/lib/theme-backgrounds.js

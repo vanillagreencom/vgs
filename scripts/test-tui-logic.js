@@ -215,8 +215,10 @@ function suite(ctx, check) {
     check("coreTuiTable returns a judged table", thrown({ doctor: doctor }), "accepted");
     check("coreTuiTable throws on a row's first defect", thrown({ doctor: doctor, bad: without("argv") }), "tui: core/bad needs key argv");
 
-    // The shipped table: the passwordless sudo grant, each command a file of
-    // the core's bin/ its owner may run.
+    // The shipped table: the package pickers and the passwordless sudo grant,
+    // each command a file of the core's bin/ its owner may run.
+    check("the core lists its package install picker", ctx.CORE_TUIS["pkg-install"], { argv: ["vgsh", "pkg", "install"], title: "Install packages", size: "default", presentation: "full", entry: { label: "Install packages", icon: "package-plus", group: "Packages" } });
+    check("the core lists its package remove picker", ctx.CORE_TUIS["pkg-remove"], { argv: ["vgsh", "pkg", "remove"], title: "Remove packages", size: "default", presentation: "full", entry: { label: "Remove packages", icon: "package-minus", group: "Packages" } });
     check("the core lists its passwordless sudo grant", ctx.CORE_TUIS["sudo-grant"], { argv: ["vgsh", "sudo", "grant"], title: "Passwordless sudo", size: "default", presentation: "full", entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" } });
     check("every core command is an executable file of bin/", Object.keys(ctx.CORE_TUIS).filter(n => {
         const file = path.join(BIN, ctx.CORE_TUIS[n].argv[0]);
@@ -316,6 +318,7 @@ const CONTROLS = [
     ["run starts from the published snapshot", "dir: sourceDir + \"/\" + manifest.__revision", "dir: manifest.__sourceDir"],
     ["the launch names the plugin", "argv.push(\"--plugin\", plugin.id, \"--dir\", plugin.dir);", "argv.push(\"--dir\", plugin.dir);"],
     ["open needs a key with a slash", "if (slash === -1)", "if (false)"],
+    ["the core's install picker runs vgsh pkg install", "argv: [\"vgsh\", \"pkg\", \"install\"]", "argv: [\"vgsh\", \"pkg\", \"remove\"]"],
     ["open finds a core TUI in the table", "if (!hasOwn(core, name))\n            return tuiRefusal(key, \"undeclared\");", "if (core[name] === undefined)\n            return tuiRefusal(key, \"undeclared\");"],
     ["open needs an entry", " || manifests[owner].tui[name].entry === null)", ")"],
     ["open refuses a disabled plugin", "if (enabledIds.indexOf(owner) === -1)", "if (false)"],

@@ -34,6 +34,25 @@
 //       printed, whatever each source answered. A check stopped by SIGINT,
 //       SIGTERM or SIGHUP prints nothing and exits 128 plus the signal's
 //       number once every query has ended.
+//   vgsh-pkg run install|remove|upgrade [--manager <id>] [names...]
+//       run the plan for manager <id>, else the detected primary, in this
+//       terminal: install and remove take one name or more, upgrade none.
+//       Each step of a row whose `elevate` is true runs behind the
+//       elevation command: shell.json's `packages.elevate` when set, else
+//       the first of sudo, doas and run0 on PATH (the table's ELEVATORS).
+//       The steps run through bin/lib/pkg-run.sh, whose header states the
+//       sudo session and how each step is shown; the exit status is the
+//       first failing step's, or 0. A run prints no Done or Failed:
+//       `vgsh-tui present` owns the ending.
+//   vgsh-pkg install|remove [--manager <id>] [names...]
+//       with names, `run install|remove` with them. Without, fzf lists the
+//       manager's packages, available for install and explicitly installed
+//       for remove, with the table's preview of the one under the cursor,
+//       and the names picked are run. Without --manager, install first asks
+//       which manager to pick from when the primary and an overlay both
+//       offer a picker, the AUR beside pacman; else it is the primary's.
+//       Picking nothing exits 0 and runs nothing; leaving fzf with Esc or
+//       Ctrl-C exits 130.
 //   vgsh-pkg owner <path>
 //       one JSON line `{ manager, package, version }`: the package the
 //       primary manager's owner query names for the absolute file path, and
@@ -72,7 +91,21 @@
 // manager=<id> exit=<n>`, `query=<argv0> reason=failed error=<code>` (the
 // query did not run or outlived its timeout) and `manager=<id>
 // query=owner|installed reason=unreadable` (its first line did not match
-// the table's pattern); the query's own stderr follows the line. Exit 2
+// the table's pattern); the query's own stderr follows the line. For `run`,
+// `install` and `remove`, before anything else runs: `caller=shell
+// verb=<verb>` when VGSH_RUNNER_PID is set, the variable `vgsh run` exports
+// to the shell and so to every process the shell starts, apart from the
+// programs it opens for the user (shell.run.detached and a floating TUI's
+// terminal), and `<verb>=no-terminal` when /dev/tty does not open; then
+// `manager=none` without --manager where no primary is detected,
+// `elevate=<command> reason=absent source=packages.elevate`, `elevate=none
+// candidates=sudo,doas,run0`, `shipped-config=` and `user-config=` with
+// `unreadable`, `unparseable` or `malformed` for a shell.json layer
+// bin/lib/judge-files.js's readConfig refuses, `runner=failed
+// error=<code>`, and for a picker `manager=<id> picker=<action>
+// reason=unsupported`, `picker=fzf reason=absent`, `picker=fzf
+// reason=failed exit=<n>|error=<code>` and `query=<argv0> reason=failed
+// exit=<n>|error=<code>` for a list query, its stderr after the line. Exit 2
 // for a bad
 // invocation, a command that is not a bare file name among them:
 // `command=<json>`. `present` alone also exits 1 with no refusal line, for
@@ -85,9 +118,14 @@ const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const table = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
-const { refuse, main, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { Refusal, refuse, main, onPath, readConfig } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
+const RUNNER = path.join(__dirname, "lib", "pkg-run.sh");
+const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
+// A picker's list and fzf's answer: a system's whole repository fits.
+const LIST_BUFFER = 256 * 1024 * 1024;
+const HEX_COLOUR = /^#[0-9a-fA-F]{6}$/;
 const KILL_GRACE_MS = 5000;
 const FRESH_MS = 10 * 60 * 1000;
 // The seconds one owner or installed query may take: a package database
@@ -95,7 +133,7 @@ const FRESH_MS = 10 * 60 * 1000;
 const QUERY_TIMEOUT = 30;
 
 function usage(first) {
-    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...] | check [--json] [--source <manager>] | owner <path>\n");
+    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...] | run install|remove|upgrade [--manager <id>] [names...] | install|remove [--manager <id>] [names...] | check [--json] [--source <manager>] | owner <path>\n");
     process.exit(2);
 }
 
@@ -245,6 +283,166 @@ function query(id, name, value, unanswered) {
     return answer;
 }
 
+// The detected primary's id; refuses `manager=none` when no row serves the
+// system.
+function primaryId() {
+    const found = table.detect(table.osReleaseIds(osRelease()), onPath);
+    if (found.primary === null) refuse("manager=none");
+    return found.primary.id;
+}
+
+// `[--manager <id>] [names...]` for run, install and remove.
+function managerAndNames(rest) {
+    if (rest[0] !== "--manager") return { manager: null, names: rest };
+    if (rest.length < 2) usage("option=--manager value=missing");
+    return { manager: rest[1], names: rest.slice(2) };
+}
+
+// A package change runs only where its user sees and answers the prompt:
+// never in a process the shell started, and never without a terminal.
+// Checked before any query, plan or step.
+function refuseOutsideTerminal(verb) {
+    if (process.env.VGSH_RUNNER_PID !== undefined)
+        refuse("caller=shell verb=" + verb, undefined, 1, "the shell never changes a package; run this in a terminal or open core/pkg-install");
+    try {
+        fs.closeSync(fs.openSync("/dev/tty", "r+"));
+    } catch (e) {
+        refuse(verb + "=no-terminal", undefined, 1, "/dev/tty did not open (" + e.code + "); run this in a terminal, where the password prompt shows");
+    }
+}
+
+// The effective shell.json's `packages.elevate`, or undefined: the shipped
+// layer merged with the user's as the shell merges them, each judged by
+// PluginLogic.configError, which accepts only one of the table's ELEVATORS.
+function configuredElevator() {
+    const logic = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
+    const configHome = process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || os.homedir(), ".config");
+    const shipped = readConfig(logic, SHIPPED_CONFIG, "shipped-config");
+    const user = readConfig(logic, path.join(configHome, "vgs", "shell.json"), "user-config", true);
+    const packages = logic.effectiveConfig(shipped, user).packages;
+    return packages === undefined ? undefined : packages.elevate;
+}
+
+// Run ACTION's plan for MANAGER over NAMES through bin/lib/pkg-run.sh, and
+// exit with its status. The steps travel as argv, each led by its length,
+// so no shell reads them.
+function run(action, manager, names) {
+    const r = table.plan(manager, action, names, onPath);
+    if (!r.ok) refuse(r.error);
+    let command = "none";
+    if (r.plan.elevate) {
+        const chosen = table.elevator(configuredElevator(), onPath);
+        if (!chosen.ok) refuse(chosen.error);
+        command = chosen.command;
+    }
+    const argv = [RUNNER, command];
+    for (const step of r.plan.steps) argv.push(String(step.length), ...step);
+    return new Promise((resolve, reject) => {
+        const child = childProcess.spawn("bash", argv, { stdio: "inherit" });
+        // The terminal sends Ctrl-C and a hangup to its whole foreground
+        // group, the runner included, which ends its step and its sudo
+        // session; this process outlives them to exit with the runner's
+        // status. A SIGTERM sent to this process alone is passed on.
+        process.on("SIGINT", () => {});
+        process.on("SIGHUP", () => {});
+        process.on("SIGTERM", () => child.kill("SIGTERM"));
+        child.on("error", e => reject(new Refusal("runner=failed error=" + e.code)));
+        child.on("close", (status, signal) => {
+            process.exit(status !== null ? status : 128 + os.constants.signals[signal]);
+        });
+    });
+}
+
+// One word as a POSIX shell reads it back: single-quoted, each quote
+// closed, escaped and reopened.
+function shellWord(word) {
+    return "'" + word.replace(/'/g, "'\\''") + "'";
+}
+
+// fzf runs a preview as a shell command string, `$SHELL -c`, so ARGV, the
+// table's preview, becomes one: every word single-quoted, and "{name}"
+// replaced by fzf's own placeholder {1}, which fzf fills with the first
+// field of the line under the cursor, quoted. The table's preview words
+// hold no brace (scripts/test-vgsh-pkg.js), so fzf finds no other
+// placeholder, and fzf runs with SHELL=/bin/sh, so the quoting is POSIX's
+// whatever the user's login shell.
+function previewCommand(argv) {
+    return argv.map(word => word === "{name}" ? "{1}" : shellWord(word)).join(" ");
+}
+
+// A gum.env colour `vgsh-tui present` exported, or FALLBACK, one of fzf's
+// ANSI colour names, outside the presentation or for a value that is not
+// #rrggbb.
+function colour(variable, fallback) {
+    const value = process.env[variable];
+    return value !== undefined && HEX_COLOUR.test(value) ? value : fallback;
+}
+
+// The lines LINES the user picks in fzf with ARGS: `{ picked }`, empty when
+// the user accepted no line, or `{ cancelled: true }` for Esc or Ctrl-C,
+// fzf's 130. fzf draws on /dev/tty and reads the list on stdin.
+function fzf(args, lines) {
+    const r = childProcess.spawnSync("fzf", args, {
+        input: lines.map(line => line + "\n").join(""),
+        stdio: ["pipe", "pipe", "inherit"],
+        encoding: "utf8",
+        maxBuffer: LIST_BUFFER,
+        env: Object.assign({}, process.env, { SHELL: "/bin/sh" })
+    });
+    if (r.error !== undefined) refuse("picker=fzf reason=failed error=" + r.error.code);
+    if (r.status === 130) return { cancelled: true };
+    if (r.status === 1) return { picked: [] };
+    if (r.status !== 0) refuse("picker=fzf reason=failed exit=" + (r.status === null ? r.signal : r.status));
+    return { picked: r.stdout.split("\n").filter(line => line !== "") };
+}
+
+// The package names a picker's LIST query prints: the first field of each
+// line, blank lines dropped and each name once, in the query's order.
+function listed(list) {
+    const r = childProcess.spawnSync(list[0], list.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: LIST_BUFFER });
+    if (r.error !== undefined) refuse("query=" + list[0] + " reason=failed error=" + r.error.code);
+    if (r.status !== 0) refuse("query=" + list[0] + " reason=failed exit=" + (r.status === null ? r.signal : r.status), undefined, 1, r.stderr);
+    const names = new Set();
+    for (const line of r.stdout.split("\n")) {
+        const first = line.trim().split(/\s+/)[0];
+        if (first !== "") names.add(first);
+    }
+    return Array.from(names);
+}
+
+// The manager whose picker ACTION opens when none is named, answered as
+// fzf answers: the detected primary and each overlay whose row offers one,
+// asked in fzf when more than one does.
+function pickerManager(action) {
+    const found = table.detect(table.osReleaseIds(osRelease()), onPath);
+    if (found.primary === null) refuse("manager=none");
+    const offered = [found.primary].concat(found.overlays).map(entry => entry.id).filter(id => table.managerRow(id).picker[action] !== null);
+    if (offered.length === 0) refuse("manager=" + found.primary.id + " picker=" + action + " reason=unsupported");
+    if (offered.length === 1) return { picked: offered };
+    const tone = colour("VGS_TUI_ACCENT", "yellow");
+    return fzf(["--prompt=" + (action === "install" ? "Install from" : "Remove from") + "> ", "--color=pointer:" + tone], offered);
+}
+
+// Omarchy's picker, omarchy-pkg-install and omarchy-pkg-remove: several
+// names, the preview under the list, and its keys, in the theme's success
+// colour for an install and its danger colour for a removal.
+function pick(action, manager) {
+    const spec = table.pickerFor(manager, action, onPath);
+    if (!spec.ok) refuse(spec.error);
+    const tone = action === "install" ? colour("VGS_TUI_SUCCESS", "green") : colour("VGS_TUI_DANGER", "red");
+    return fzf([
+        "--multi",
+        "--preview=" + previewCommand(spec.preview),
+        "--preview-label=alt-p: toggle description, alt-j/k: scroll, tab: multi-select",
+        "--preview-label-pos=bottom",
+        "--preview-window=down:65%:wrap",
+        "--bind=alt-p:toggle-preview",
+        "--bind=alt-d:preview-half-page-down,alt-u:preview-half-page-up",
+        "--bind=alt-k:preview-up,alt-j:preview-down",
+        "--color=pointer:" + tone + ",marker:" + tone
+    ], listed(spec.list));
+}
+
 const [verb, ...args] = process.argv.slice(2);
 main(() => {
     switch (verb) {
@@ -282,6 +480,33 @@ main(() => {
         if (!r.ok) refuse(r.error);
         process.stdout.write(JSON.stringify(r.plan) + "\n");
         break;
+    }
+    case "run": {
+        const [action, ...rest] = args;
+        if (!table.ACTIONS.includes(action)) usage("action=" + (action === undefined ? "missing" : action));
+        const { manager, names } = managerAndNames(rest);
+        if (action === "upgrade" && names.length > 0) usage("argument=" + names[0]);
+        if (action !== "upgrade" && names.length === 0) usage("names=missing");
+        refuseOutsideTerminal(verb);
+        return run(action, manager === null ? primaryId() : manager, names);
+    }
+    case "install":
+    case "remove": {
+        const { manager, names } = managerAndNames(args);
+        refuseOutsideTerminal(verb);
+        if (names.length > 0) return run(verb, manager === null ? primaryId() : manager, names);
+        if (!onPath("fzf")) refuse("picker=fzf reason=absent");
+        let chosen = manager;
+        if (chosen === null) {
+            const source = pickerManager(verb);
+            if (source.cancelled) process.exit(130);
+            if (source.picked.length === 0) break;
+            chosen = source.picked[0];
+        }
+        const answer = pick(verb, chosen);
+        if (answer.cancelled) process.exit(130);
+        if (answer.picked.length === 0) break;
+        return run(verb, chosen, answer.picked);
     }
     case "check": {
         let json = false;

@@ -48,6 +48,10 @@
 #                                  print the argv of each step the action takes; runs nothing
 #   vgsh pkg check [--json] [--source <manager>]
 #                                  count each manager's pending updates without root
+#   vgsh pkg run install|remove|upgrade [--manager <id>] [names...]
+#                                  run the plan in this terminal, elevating through sudo, doas or run0
+#   vgsh pkg install|remove [--manager <id>] [names...]
+#                                  run install or remove; without names, pick them in fzf
 #   vgsh sudo status               whether a passwordless sudo grant is active, until when, and its root half's state
 #   vgsh sudo grant [minutes]      warn, ask and grant passwordless sudo for 1 to 1440 minutes, 15 when absent;
 #                                  while a grant is active it revokes that grant instead
@@ -256,8 +260,9 @@
 #
 # `pkg` reads the one package-manager table, shell/Core/PackageManagers.js,
 # through bin/vgsh-pkg, which states its output and refusals. It needs no
-# running shell, and no `pkg` command elevates or changes a package:
-# docs/architecture/packages.md.
+# running shell. Only `run`, `install` and `remove` change a package, and
+# they elevate only in a terminal the user sees: each refuses without one,
+# and in a process the shell started: docs/architecture/packages.md.
 #
 # `sudo` runs bin/vgsh-sudo-grant, which states its output and refusals.
 # `status`, `grant` and `revoke` reach its root half through `sudo -N`,

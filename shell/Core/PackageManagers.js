@@ -19,8 +19,9 @@
 //   binaries  the commands that run the manager, preferred first; the first
 //             one on PATH is the row's binary
 //   elevate   whether install, remove and upgrade need root. No step names
-//             an elevation command: the shell never elevates, and a step
-//             runs only in a terminal where the user answers the prompt.
+//             an elevation command: `vgsh pkg run` puts one of ELEVATORS
+//             before each step, in a terminal where the user answers the
+//             prompt, and the shell process never elevates.
 //   check     the unprivileged update queries, the first whose binary is
 //             null or the row's binary answering: its argv, the meaning of
 //             each exit status ("updates" or "rows": the parser's rows are
@@ -40,6 +41,11 @@
 //             taking "{name}" and read the pattern whose first group is the
 //             upstream version, with no epoch and no packaging revision, in
 //             the first line the query prints
+//   picker    what `vgsh pkg install` and `remove` offer in fzf when no name
+//             is given: { install, remove }, each null when VGS offers no
+//             picker for the action, else { list, preview }. list prints
+//             the packages, one per line, the name first; preview prints
+//             one package's details and takes "{name}". Both only read.
 // In a template "{bin}" is the row's binary, "{names}" the package names,
 // "{name}" one package name and "{path}" an absolute file path. A
 // pacman-family sync that refreshes the databases always upgrades too:
@@ -52,7 +58,11 @@ var MANAGERS = [
         remove: [["{bin}", "-Rns", "--", "{names}"]],
         upgrade: [["{bin}", "-Syu"]],
         owner: { argv: ["{bin}", "-Qoq", "{path}"], read: /^(\S+)$/ },
-        installed: { argv: ["{bin}", "-Q", "--", "{name}"], read: /^\S+ (?:[0-9]+:)?(\S+)-[^-\s]+$/ }
+        installed: { argv: ["{bin}", "-Q", "--", "{name}"], read: /^\S+ (?:[0-9]+:)?(\S+)-[^-\s]+$/ },
+        picker: {
+            install: { list: ["{bin}", "-Slq"], preview: ["{bin}", "-Sii", "{name}"] },
+            remove: { list: ["{bin}", "-Qqe"], preview: ["{bin}", "-Qi", "{name}"] }
+        }
     },
     {
         id: "aur", role: "overlay", family: [], requires: "pacman", binaries: ["paru", "yay"], elevate: false,
@@ -61,7 +71,10 @@ var MANAGERS = [
         remove: [["{bin}", "-Rns", "--", "{names}"]],
         upgrade: [["{bin}", "-Sua"]],
         owner: null,
-        installed: null
+        installed: null,
+        // pacman's remove picker lists the AUR's packages too, as
+        // omarchy-pkg-remove's does.
+        picker: { install: { list: ["{bin}", "-Slqa"], preview: ["{bin}", "-Siia", "{name}"] }, remove: null }
     },
     // apt lists what the package lists held at the last `apt update`, which
     // needs root, so the check never refreshes them.
@@ -72,7 +85,11 @@ var MANAGERS = [
         remove: [["{bin}", "remove", "{names}"]],
         upgrade: [["{bin}", "update"], ["{bin}", "full-upgrade"]],
         owner: { argv: ["dpkg", "-S", "{path}"], read: /^([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?: / },
-        installed: { argv: ["dpkg-query", "-W", "--showformat=${Version}\n", "--", "{name}"], read: /^(?:[0-9]+:)?(\S+?)(?:-[^-\s]+)?$/ }
+        installed: { argv: ["dpkg-query", "-W", "--showformat=${Version}\n", "--", "{name}"], read: /^(?:[0-9]+:)?(\S+?)(?:-[^-\s]+)?$/ },
+        picker: {
+            install: { list: ["apt-cache", "pkgnames"], preview: ["apt-cache", "show", "{name}"] },
+            remove: { list: ["apt-mark", "showmanual"], preview: ["dpkg", "-s", "{name}"] }
+        }
     },
     {
         id: "dnf", role: "primary", family: ["fedora"], requires: null, binaries: ["dnf5", "dnf"], elevate: true,
@@ -84,7 +101,14 @@ var MANAGERS = [
         remove: [["{bin}", "remove", "{names}"]],
         upgrade: [["{bin}", "upgrade"]],
         owner: { argv: ["rpm", "-qf", "--queryformat", "%{NAME}\n", "{path}"], read: /^(\S+)$/ },
-        installed: { argv: ["rpm", "-q", "--queryformat", "%{VERSION}\n", "--", "{name}"], read: /^(\S+)$/ }
+        installed: { argv: ["rpm", "-q", "--queryformat", "%{VERSION}\n", "--", "{name}"], read: /^(\S+)$/ },
+        // The format's `\n` is dnf's own escape: dnf5 prints only what the
+        // format asks for, and dnf 4 adds a newline of its own, which leaves
+        // a blank line the picker drops.
+        picker: {
+            install: { list: ["{bin}", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["{bin}", "info", "{name}"] },
+            remove: { list: ["{bin}", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }
+        }
     },
     {
         id: "xbps", role: "primary", family: ["void"], requires: null, binaries: ["xbps-install"], elevate: true,
@@ -93,7 +117,8 @@ var MANAGERS = [
         remove: [["xbps-remove", "-R", "{names}"]],
         upgrade: [["{bin}", "-Su"]],
         owner: { argv: ["xbps-query", "-o", "{path}"], read: /^(\S+)-[^-\s]+_[0-9]+: / },
-        installed: null
+        installed: null,
+        picker: { install: null, remove: null }
     },
     // emerge resolves the whole dependency graph to answer, so its check
     // runs only when asked for by name.
@@ -104,13 +129,15 @@ var MANAGERS = [
         remove: [["{bin}", "--ask", "--depclean", "{names}"]],
         upgrade: [["{bin}", "--sync"], ["{bin}", "--ask", "--update", "--deep", "--newuse", "@world"]],
         owner: { argv: ["qfile", "{path}"], read: /^(\S+) \(/ },
-        installed: null
+        installed: null,
+        picker: { install: null, remove: null }
     },
     // A NixOS system changes through its own configuration, so VGS plans no
     // step and has no read-only update query for it.
     {
         id: "nix", role: "primary", family: ["nixos"], requires: null, binaries: ["nix"], elevate: false,
-        check: null, install: null, remove: null, upgrade: null, owner: null, installed: null
+        check: null, install: null, remove: null, upgrade: null, owner: null, installed: null,
+        picker: { install: null, remove: null }
     },
     {
         id: "flatpak", role: "overlay", family: [], requires: null, binaries: ["flatpak"], elevate: false,
@@ -119,7 +146,8 @@ var MANAGERS = [
         remove: [["{bin}", "uninstall", "{names}"]],
         upgrade: [["{bin}", "update"]],
         owner: null,
-        installed: null
+        installed: null,
+        picker: { install: null, remove: null }
     },
     // An upgrade is the user asking for current versions now, so it waives
     // mise's release-age cooldown, as omarchy-update-mise does; the check
@@ -131,11 +159,19 @@ var MANAGERS = [
         remove: [["{bin}", "unuse", "--global", "{names}"]],
         upgrade: [["env", "MISE_MINIMUM_RELEASE_AGE=0", "{bin}", "upgrade"]],
         owner: null,
-        installed: null
+        installed: null,
+        picker: { install: null, remove: null }
     }
 ];
 
 var ACTIONS = ["install", "remove", "upgrade"];
+
+// The commands `vgsh pkg run` may put before a step of a row whose elevate
+// is true, in the order it looks for them on PATH. They live outside the
+// rows, so the table's steps stay free of any elevation command, and
+// PluginLogic.configError judges shell.json's `packages.elevate` against
+// this list.
+var ELEVATORS = ["sudo", "doas", "run0"];
 
 // A package name is printable ASCII with no space, and never starts with a
 // dash, so no manager reads it as an option.
@@ -279,6 +315,37 @@ function plan(id, action, names, onPath) {
         return argv;
     });
     return { ok: true, plan: { manager: id, binary: binary, action: action, elevate: row.elevate, steps: steps } };
+}
+
+// The elevation command a run puts before its steps: CONFIGURED, shell.json's
+// `packages.elevate` as configError accepted it, or undefined when unset.
+// `{ ok: true, command }` with CONFIGURED when ON_PATH finds it, or else the
+// first of ELEVATORS it finds; `{ ok: false, error }` for a configured
+// command that is absent or when none is found.
+function elevator(configured, onPath) {
+    if (configured !== undefined) {
+        if (ELEVATORS.indexOf(configured) === -1)
+            throw new Error("elevator: packages.elevate " + JSON.stringify(configured) + " passed configError but is not one of " + ELEVATORS.join(", "));
+        if (onPath(configured)) return { ok: true, command: configured };
+        return { ok: false, error: "elevate=" + configured + " reason=absent source=packages.elevate" };
+    }
+    for (var i = 0; i < ELEVATORS.length; i++)
+        if (onPath(ELEVATORS[i])) return { ok: true, command: ELEVATORS[i] };
+    return { ok: false, error: "elevate=none candidates=" + ELEVATORS.join(",") };
+}
+
+// Manager ID's picker for ACTION, install or remove, with "{bin}" the binary
+// ON_PATH resolves: `{ ok: true, list, preview }`, preview keeping "{name}"
+// for the caller to fill, or `{ ok: false, error }` for an unknown or absent
+// manager and `manager=<id> picker=<action> reason=unsupported` for one the
+// table offers no picker for.
+function pickerFor(id, action, onPath) {
+    var found = presentManager(id, onPath);
+    if (!found.ok) return found;
+    var spec = found.row.picker[action];
+    if (spec === null) return { ok: false, error: "manager=" + id + " picker=" + action + " reason=unsupported" };
+    var fill = function (token) { return token === "{bin}" ? found.binary : token; };
+    return { ok: true, list: spec.list.map(fill), preview: spec.preview.map(fill) };
 }
 
 // The update parsers, one per output format a check's argv prints. Each maps

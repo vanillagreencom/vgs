@@ -12,7 +12,7 @@ An enable or disable edit starts with the effective disabled list. This preserve
 
 ## shell.json keys
 
-Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. The shell reads every key of the table but `disabledTargets`, which only `vgsh theme apply` reads: [theme-apply.md § Apply](theme-apply.md#apply). The shell carries that key, and any key outside this table, untouched.
+Both layers share one shape, judged by `PluginLogic.configError` after every parse. A file that fails the judge is in the `malformed` state: the last good value stands and the log names the defect. A user file in that state refuses every write until it passes again. The shell reads every key of the table but `disabledTargets`, which only `vgsh theme apply` reads ([theme-apply.md § Apply](theme-apply.md#apply)), and `packages`, which only `vgsh pkg run` reads. The shell carries that key, and any key outside this table, untouched.
 
 | Key | Shape |
 |---|---|
@@ -23,6 +23,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 | `plugins[].keys` | An object: each name is a shortcut the plugin's manifest binds in `hyprland.binds`, and each value the key that replaces its default, such as `SUPER+ALT+SPACE`, or `null` to unbind it. The Hyprland layer reads it and hands it to no plugin: [hyprland.md](hyprland.md). The manager's `setKey` writes it, normalised, from the Settings window's Keys rows, [manager.md](manager.md). A name the manifest binds nothing under is reported by `listPlugins`, not refused. |
 | `disabledPlugins[]` | Strings: plugin ids. |
 | `disabledTargets[]` | Strings: theme target names an apply skips. A user list replaces the shipped one. |
+| `packages.elevate` | `sudo`, `doas` or `run0`, from `PackageManagers.ELEVATORS`: the command `vgsh pkg run` puts before a step that needs root. Without it, the first of the three on PATH. `packages` is an object; a user `packages` replaces the shipped one whole. [packages.md § Running a plan](packages.md#running-a-plan). |
 
 ## Unknown ids
 

@@ -51,6 +51,8 @@ Item {
         try { shell.ipc.handle("echo", arg => arg); } catch (e) { root.duplicateIpc = e.message; }
         shell.ipc.handle("set", arg => { const at = arg.indexOf("="); return root.shell.configure.set(arg.slice(0, at), JSON.parse(arg.slice(at + 1))); });
         shell.ipc.handle("touch", path => root.shell.run.detached(["touch", path]));
+        // The environment a detached process starts with, written to PATH.
+        shell.ipc.handle("environ", path => root.shell.run.detached(["sh", "-c", "env >\"$1\"", "sh", path]));
         shell.ipc.handle("lock", () => root.shell.lock.lock(lockContent));
         shell.ipc.handle("unlock", () => root.shell.lock.unlock());
         shell.ipc.handle("dispatch", arg => { const a = arg.split(" "); return root.shell.compositor[a[0]].apply(null, a.slice(1)); });

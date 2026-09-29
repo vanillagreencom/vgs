@@ -151,7 +151,9 @@ var CONFIG_VERSION = 1;
 // present, passes keysError; `disabledPlugins` and
 // `disabledTargets` are lists of strings; `bar` is an object whose `id` is
 // a string and whose `layout` holds, per section in SECTIONS, a list of
-// objects each with a string `id`.
+// objects each with a string `id`; `packages` is an object whose `elevate`,
+// when present, is one of PackageManagers.ELEVATORS, the command
+// `vgsh pkg run` elevates through.
 // A key outside that set is carried untouched. Config.qml runs this judge
 // on every parsed file and reports a defect as the file's state, so no
 // malformed row is dropped on the way to the screen.
@@ -191,6 +193,12 @@ function configError(config) {
         return bad;
     if (config.disabledTargets !== undefined && (bad = names(config.disabledTargets, "disabledTargets")) !== "")
         return bad;
+    if (config.packages !== undefined) {
+        if (!isPlainObject(config.packages))
+            return "packages must be an object";
+        if (config.packages.elevate !== undefined && PackageManagers.ELEVATORS.indexOf(config.packages.elevate) === -1)
+            return "packages.elevate must be one of " + PackageManagers.ELEVATORS.join(", ") + ", got " + JSON.stringify(config.packages.elevate);
+    }
     if (config.bar !== undefined) {
         if (!isPlainObject(config.bar))
             return "bar must be an object";
@@ -724,8 +732,23 @@ var CORE_TUI_COMMAND = /^vgsh(-[a-z]+)*$/;
 // `core/<name>` and opened by that key: each { argv, title, size,
 // presentation, entry }, `argv` the core command the terminal runs and the
 // rest as a normalized manifest `tui` entry has them. coreTuiTable judges
-// the table when this file loads.
+// the table when this file loads. The package pickers run in the default
+// size, the window Omarchy's floating terminal gives omarchy-pkg-install.
 var CORE_TUIS = coreTuiTable({
+    "pkg-install": {
+        argv: ["vgsh", "pkg", "install"],
+        title: "Install packages",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Install packages", icon: "package-plus", group: "Packages" }
+    },
+    "pkg-remove": {
+        argv: ["vgsh", "pkg", "remove"],
+        title: "Remove packages",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Remove packages", icon: "package-minus", group: "Packages" }
+    },
     "sudo-grant": {
         argv: ["vgsh", "sudo", "grant"],
         title: "Passwordless sudo",

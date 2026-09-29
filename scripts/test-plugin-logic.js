@@ -186,6 +186,11 @@ function suite(ctx, check) {
         ["a section not a list", { bar: { layout: { left: { id: "a.b" } } } }, "bar.layout.left must be a list"],
         ["a layout row without an id", { bar: { layout: { center: [{ format: "x" }] } } }, "bar.layout.center.0 must be an object with a string id"],
         ["a layout row with a numeric id", { bar: { layout: { right: [{ id: 3 }] } } }, "bar.layout.right.0 must be an object with a string id"],
+        ["packages with each elevation command passes", { packages: { elevate: "run0" } }, ""],
+        ["packages without elevate passes", { packages: {} }, ""],
+        ["packages not an object", { packages: ["sudo"] }, "packages must be an object"],
+        ["an elevate outside sudo, doas and run0", { packages: { elevate: "pkexec" } }, "packages.elevate must be one of sudo, doas, run0, got \"pkexec\""],
+        ["an elevate that is not a string", { packages: { elevate: true } }, "packages.elevate must be one of sudo, doas, run0, got true"],
     ];
     for (const [name, config, want] of configRows) {
         const got = ctx.configError(config);
@@ -527,6 +532,8 @@ suite(load(LOGIC), report);
 // judge's own place in a temporary tree, beside the icon set, the
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
+    ["packages is an object", "if (!isPlainObject(config.packages))\n            return \"packages must be an object\";", "if (false)\n            return \"packages must be an object\";"],
+    ["packages.elevate is an elevation command", "config.packages.elevate !== undefined && PackageManagers.ELEVATORS.indexOf(config.packages.elevate) === -1", "false"],
     ["icon is a manifest key", "\"license\", \"icon\", \"kinds\"", "\"license\", \"kinds\""],
     ["icon names a shipped icon", "!hasOwn(Lucide.ICONS, raw.icon)", "false"],
     ["bounds need a number entry", "if (entry.type !== \"number\")\n                return at + \".\" + bound + \" needs type number\";", "if (false)\n                return at + \".\" + bound + \" needs type number\";"],

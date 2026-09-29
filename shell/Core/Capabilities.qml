@@ -150,11 +150,15 @@ Singleton {
 
     // run: a detached process from an argument list. No shell parses it.
     // `ok` means the list was handed to Quickshell; a program that fails to
-    // start is not reported back.
+    // start is not reported back. The program does not inherit
+    // VGSH_RUNNER_PID, the variable that marks the shell's own processes: a
+    // terminal the user opens from the shell is not the shell, and
+    // `vgsh pkg run` refuses a caller that carries it (packages.md). A null
+    // value removes a variable from the inherited environment.
     function runDetached(argv) {
         if (!Array.isArray(argv) || argv.length === 0 || argv.some(a => typeof a !== "string" || a.length === 0))
             return "refused: argv=" + JSON.stringify(argv);
-        Quickshell.execDetached(argv);
+        Quickshell.execDetached({ command: argv, environment: { VGSH_RUNNER_PID: null } });
         return "ok";
     }
 
