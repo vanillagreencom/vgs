@@ -18,6 +18,11 @@ Item {
     property var screen: null
     required property var service
     readonly property var look: Theme.appearance(Appearance.TOKENS, Appearance.LIGHT)
+    // The one column every card's text and the header's title start on, so
+    // they line up: the clearing inset of the tallest card the stack draws,
+    // with its text `pad` from the top. The inset grows with the card's
+    // height, so the tallest card's clears every shorter card too.
+    readonly property real textColumn: Math.ceil(Inset.clearing(look.card.pad, look.radius.full, look.card.width, look.card.maxHeight, look.radius.clearance, look.card.pad))
     readonly property bool panelOpen: service !== null && service.panelOpen
     readonly property bool panelClosing: service !== null && service.panelClosing
     readonly property bool inputAll: panelOpen
@@ -44,6 +49,7 @@ Item {
             id: header
             look: stack.look
             host: stack
+            textColumn: stack.textColumn
             shown: stack.panelOpen
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: implicitWidth
@@ -76,6 +82,7 @@ Item {
                     CardSlot {
                         host: stack
                         look: stack.look
+                        textColumn: stack.textColumn
                     }
                 }
             }

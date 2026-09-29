@@ -15,8 +15,11 @@ Item {
     readonly property var service: host ? host.service : null
     property bool shown: false
     readonly property bool history: service !== null && service.panelMode === "history"
-    // The controls inset is the square-corner floor; the title clears the rounded end from there.
-    readonly property real titleInset: Inset.clearing(look.header.controlsInset, look.radius.full, width, height, look.radius.clearance)
+    // The stack's text column, which the cards' text starts on.
+    required property real textColumn
+    // The title starts on the cards' column, and never under the header's
+    // own rounded end: the controls inset is the square-corner floor.
+    readonly property real titleInset: Math.max(textColumn, Math.ceil(Inset.clearing(look.header.controlsInset, look.radius.full, width, height, look.radius.clearance, titles.y)))
 
     implicitWidth: look.header.width
     implicitHeight: look.header.height
@@ -31,6 +34,7 @@ Item {
     }
 
     Column {
+        id: titles
         anchors.left: parent.left
         anchors.leftMargin: header.titleInset
         anchors.verticalCenter: parent.verticalCenter

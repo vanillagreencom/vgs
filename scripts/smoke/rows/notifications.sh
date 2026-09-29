@@ -254,35 +254,46 @@ expect_poll "an actionable toast shows" True has_row live "Actioned"
 rest_on_card Actioned || fail "the pointer never rested on the actionable toast"
 expect_poll "the hover reveals the sender's actions and Dismiss" '["Open", "Reply", "Dismiss"]' shown_pills Actioned
 sleep 0.5
+# png_rgba(PATH), the one PNG reader of this row, for Python programs that
+# start with it: (width, height, rows of RGBA bytes) for the 8-bit,
+# non-interlaced RGBA files grabToImage saves, or a `png=<depth>/<type>/
+# <interlace>` word for any other file. Standard library only.
+png_rgba_py='import json, math, struct, sys, zlib
+def png_rgba(path):
+    data = open(path, "rb").read()
+    pos, idat, head = 8, b"", None
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IHDR": head = struct.unpack(">IIBBBBB", data[pos + 8:pos + 8 + n])
+        elif kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    iw, ih, depth, ctype, _, _, interlace = head
+    if (depth, ctype, interlace) != (8, 6, 0): return "png=%d/%d/%d" % (depth, ctype, interlace)
+    raw, stride, prev, rows = zlib.decompress(idat), iw * 4, bytearray(iw * 4), []
+    for y in range(ih):
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a, b, c = (line[i - 4] if i >= 4 else 0), prev[i], (prev[i - 4] if i >= 4 else 0)
+            if f == 1: line[i] = (line[i] + a) & 255
+            elif f == 2: line[i] = (line[i] + b) & 255
+            elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                p = a + b - c
+                line[i] = (line[i] + (a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c)) & 255
+        rows.append(line); prev = line
+    return iw, ih, rows
+'
 # The hover actions draw nothing past the capsule's rounded ends: the card
 # grabbed alone, without the glass under it, is clear everywhere more than
 # 1.5 px outside either end's curve, and drawn where the fade runs under
-# no pill. The PNG is read with the standard library.
-capsule_clear() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c '
-import json, math, struct, sys, zlib
+# no pill.
+capsule_clear() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c "$png_rgba_py"'
 path, summary = sys.argv[1], sys.argv[2]
 w, h = next((r[2], r[3]) for s, r, v in json.load(sys.stdin) if v["summary"] == summary)
-data = open(path, "rb").read()
-pos, idat, head = 8, b"", None
-while pos < len(data):
-    n, kind = struct.unpack(">I4s", data[pos:pos + 8])
-    if kind == b"IHDR": head = struct.unpack(">IIBBBBB", data[pos + 8:pos + 8 + n])
-    elif kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
-    pos += 12 + n
-iw, ih, depth, ctype, _, _, interlace = head
-if (depth, ctype, interlace) != (8, 6, 0): print("png=%d/%d/%d" % (depth, ctype, interlace)); sys.exit()
-raw, stride, prev, alpha = zlib.decompress(idat), iw * 4, bytearray(iw * 4), []
-for y in range(ih):
-    f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-    for i in range(stride):
-        a, b, c = (line[i - 4] if i >= 4 else 0), prev[i], (prev[i - 4] if i >= 4 else 0)
-        if f == 1: line[i] = (line[i] + a) & 255
-        elif f == 2: line[i] = (line[i] + b) & 255
-        elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
-        elif f == 4:
-            p = a + b - c
-            line[i] = (line[i] + (a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c)) & 255
-    alpha.append(line[3::4]); prev = line
+image = png_rgba(path)
+if isinstance(image, str): print(image); sys.exit()
+iw, ih, rows = image
+alpha = [line[3::4] for line in rows]
 s, r = iw / w, min(w, h) / 2
 at = lambda x, y: alpha[min(ih - 1, int(y * s))][min(iw - 1, int(x * s))]
 outside = 0
@@ -387,13 +398,14 @@ expect "the status counts the copies kept" '{"keptDesktop": 2, "keptBrowser": 0}
 
 # The space around a card's text, from the card's rectangle and its visible
 # title and body items, as `top=<px> bottom=<px> left=<px> right=<px>
-# height=<px> slot=<px> pad=<px>` for the card whose summary is SUMMARY on
-# the first screen; `absent` before the card exists and `no-text` while
-# none of its text lines is visible. The predicate below is the contract
-# and its control.
+# height=<px> slot=<px> pad=<px> column=<px>` for the card whose summary is
+# SUMMARY on the first screen, `column` being the stack's text column the
+# card reads; `absent` before the card exists and `no-text` while none of
+# its text lines is visible. The predicate below is the contract and its
+# controls.
 text_space() {
-  local cards texts
-  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary,slotLeft,pad)" || return
+  local cards texts bodies
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary,slotLeft,pad,textColumn)" || return
   texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
   bodies="$(ipc smoke layerItems vgs.notifications ImageText lineCount,visible,objectName)" || return
   python3 -c 'import json,sys
@@ -408,25 +420,40 @@ lines += [r for s, r, v in bodies if inside(s, r) and v["visible"] and v["lineCo
 if not lines: print("no-text"); sys.exit()
 top, bottom = min(r[1] for r in lines), max(r[1] + r[3] for r in lines)
 left, right = min(r[0] for r in lines), max(r[0] + r[2] for r in lines)
-print("top=%d bottom=%d left=%d right=%d height=%d slot=%d pad=%d" % (top - y, y + h - bottom, left - x, x + w - right, h, round(values["slotLeft"]), round(values["pad"])))' "$1" "$cards" "$texts" "$bodies"
+print("top=%d bottom=%d left=%d right=%d height=%d slot=%d pad=%d column=%d" % (top - y, y + h - bottom, left - x, x + w - right, h, round(values["slotLeft"]), round(values["pad"]), round(values["textColumn"])))' "$1" "$cards" "$texts" "$bodies"
 }
-# Rectangular text clears the rounded end by one spacing step on both sides.
-# A round slot stays at the pad.
+# Whether a text block's corner, SIDE in from a rounded end and EDGE in
+# from the top or bottom of a container HEIGHT tall, keeps the clearance
+# step, 4 (radius.clearance), inside the end's curve, less 1 px for the
+# whole-pixel readings. The card and the header are far wider than tall,
+# so each end is a half circle of radius HEIGHT / 2. Python source for the
+# predicates below.
+corner_clears_py='import math
+def corner_clears(side, edge, height):
+    c = height / 2
+    return c - math.hypot(max(0, c - side), max(0, c - edge)) >= 4 - 1
+'
+# A card's text starts on the stack's text column, the same at both ends
+# for text alone, and its corners keep the step inside the rounded end. A
+# round slot stays at the pad, and the text's far end is on the column.
 inset_contract_value() { # KIND CLAMPED MEASUREMENT
-  python3 -c 'import math,re,sys
+  python3 -c "$corner_clears_py"'
+import re, sys
 t = sys.stdin.read().strip()
-m = re.fullmatch(r"top=(\d+) bottom=(\d+) left=(\d+) right=(\d+) height=(\d+) slot=(-?\d+) pad=(\d+)", t)
+m = re.fullmatch(r"top=(\d+) bottom=(\d+) left=(\d+) right=(\d+) height=(\d+) slot=(-?\d+) pad=(\d+) column=(\d+)", t)
 if not m: print(t); sys.exit()
-top, bottom, left, right, height, slot, pad = map(int, m.groups())
-need = math.ceil(height / 2) + 4
+top, bottom, left, right, height, slot, pad, column = map(int, m.groups())
+edge = min(top, bottom)
 problems = []
 if abs(top - bottom) > 1: problems.append("vertical")
-if left < need: problems.append("left")
-if right < need: problems.append("right")
-if sys.argv[1] == "avatarless" and abs(left - right) > 1: problems.append("sides")
+if sys.argv[1] == "avatarless":
+    if abs(left - column) > 1: problems.append("left")
+    if abs(right - column) > 1: problems.append("right")
+    if not corner_clears(min(left, right), edge, height): problems.append("curve")
 if sys.argv[1] == "slot":
     if abs(slot - pad) > 1: problems.append("slot")
-    if right > need + 1: problems.append("right-clear")
+    if abs(right - column) > 1: problems.append("right")
+    if not corner_clears(right, edge, height): problems.append("curve")
 if sys.argv[2] == "clamped" and not (80 <= height <= 94): problems.append("clamped")
 print("ok" if not problems else "violation " + ",".join(problems))' "$1" "$2" <<<"$3"
 }
@@ -440,6 +467,9 @@ note_card_reading() { # LABEL SUMMARY
   t="$(text_space "$2")" || { fail "$1: no card reading"; return; }
   ok "$1: $t"
 }
+# The header's title and subtitle and its rightmost pill, as `left=<px>
+# top=<px> height=<px> control=<px> centre=<px>`: the titles' inset and top
+# in the header, and the pill's inset from the right end and its centre.
 header_space() {
   local headers texts pills
   headers="$(ipc smoke layerItems vgs.notifications InboxHeader titleInset)" || return
@@ -454,32 +484,104 @@ lines = [r for s, r, v in texts if s == screen and v["visible"] and v["objectNam
 buttons = [(r, v["text"]) for s, r, v in pills if s == screen and v["visible"] and v["text"] in ("Mark read", "History", "Clear history", "Unread") and x <= r[0] < x + w and y <= r[1] < y + h]
 if not lines or not buttons: print("incomplete"); sys.exit()
 left = min(r[0] for r in lines) - x
+top = min(r[1] for r in lines) - y
 right_button = max(buttons, key=lambda item: item[0][0] + item[0][2])[0]
 control = x + w - (right_button[0] + right_button[2])
 centre = control + right_button[3] / 2
-print("left=%d height=%d control=%d centre=%.1f" % (left, h, control, centre))' "$headers" "$texts" "$pills"
+print("left=%d top=%d height=%d control=%d centre=%.1f" % (left, top, h, control, centre))' "$headers" "$texts" "$pills"
 }
-header_contract_value() {
-  python3 -c 'import math,re,sys
+# The header's title starts where a card's text alone does, its corner
+# keeps the step inside the header's own rounded end, and its pills sit
+# centred on that end. CARD is text_space's reading of a card without a
+# slot, measured in the same run.
+header_contract_value() { # CARD
+  python3 -c "$corner_clears_py"'
+import re, sys
 t = sys.stdin.read().strip()
-m = re.fullmatch(r"left=(\d+) height=(\d+) control=(\d+) centre=([0-9.]+)", t)
+m = re.fullmatch(r"left=(\d+) top=(\d+) height=(\d+) control=(\d+) centre=([0-9.]+)", t)
 if not m: print(t); sys.exit()
-left, height, control, centre = int(m.group(1)), int(m.group(2)), int(m.group(3)), float(m.group(4))
-need = math.ceil(height / 2) + 4
+card = re.search(r"\bleft=(\d+) ", sys.argv[1])
+if not card: print("card " + sys.argv[1]); sys.exit()
+left, top, height, control, centre = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), float(m.group(5))
 problems = []
-if left < need: problems.append("left")
+if abs(left - int(card.group(1))) > 1: problems.append("align")
+if not corner_clears(left, top, height): problems.append("curve")
 if abs(centre - height / 2) > 1: problems.append("control")
-print("ok" if not problems else "violation " + ",".join(problems))'
+print("ok" if not problems else "violation " + ",".join(problems))' "$1"
 }
-checked_header() {
-  local t
+checked_header() { # CARD_SUMMARY
+  local card t
+  card="$(text_space "$1")" || return
   t="$(header_space)" || return
-  header_contract_value <<<"$t"
+  header_contract_value "$card" <<<"$t"
 }
 note_header_reading() {
   local t
   t="$(header_space)" || { fail "header: no reading"; return; }
   ok "header geometry measured: $t"
+}
+# Nothing of a card's glass, shadow or light draws outside its capsule:
+# every pixel of the grabbed slot more than 1.5 px outside the capsule is
+# no lighter than the black drop shadow, its colour times its alpha at most
+# 3 of 255 in every channel, and the fill is drawn inside. SLOT and CARD
+# are `x y w h` rectangles on one screen, the grab is the slot's. A sheen
+# shorter than the card, rounded to its own smaller corner, read 9 and 10
+# outside the two-line and the clamped card, and the shared shape reads 0:
+# this row under scripts/qml-smoke.sh, and the same grabs of a sandbox
+# shell at QT_SCALE_FACTOR=2, on host cachy on 2026-09-29.
+glass_clear_value() { # PNG SLOT CARD
+  python3 -c "$png_rgba_py"'
+image = png_rgba(sys.argv[1])
+if isinstance(image, str): print(image); sys.exit()
+iw, ih, rows = image
+sx, sy, sw, sh = map(float, sys.argv[2].split())
+cx, cy, w, h = map(float, sys.argv[3].split())
+s, r = iw / sw, min(w, h) / 2
+def outside(x, y):
+    qx, qy = abs(x - w / 2) - (w / 2 - r), abs(y - h / 2) - (h / 2 - r)
+    return math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
+light, at = 0, None
+for py in range(ih):
+    line = rows[py]
+    for px in range(iw):
+        x, y = (px + 0.5) / s + sx - cx, (py + 0.5) / s + sy - cy
+        if outside(x, y) > 1.5:
+            k = 4 * px
+            v = max(line[k], line[k + 1], line[k + 2]) * line[k + 3] // 255
+            if v > light: light, at = v, (round(x), round(y))
+def alpha(x, y): return rows[min(ih - 1, int((y + cy - sy) * s))][4 * min(iw - 1, int((x + cx - sx) * s)) + 3]
+inside = min(alpha(w / 2, 4), alpha(w / 2, h - 5))
+print("clear" if light <= 3 and inside >= 128 else "violation light=%d at=%s inside=%d" % (light, at, inside))' "$1" "$2" "$3"
+}
+# The slot's and the card's rectangles, `x y w h` each, for the card whose
+# summary is SUMMARY on the first screen, the one grabLayerItem grabs.
+glass_rects() { # SUMMARY
+  local slots cards
+  slots="$(ipc smoke layerItems vgs.notifications CardSlot summary)" || return
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary)" || return
+  python3 -c 'import json,sys
+pick = lambda items: next((r for s, r, v in json.loads(items) if v["summary"] == sys.argv[1]), None)
+slot, card = pick(sys.argv[2]), pick(sys.argv[3])
+print("absent" if slot is None or card is None else "%d %d %d %d|%d %d %d %d" % (*slot, *card))' "$1" "$slots" "$cards"
+}
+glass_clear() { # PNG SUMMARY
+  local rects
+  rects="$(glass_rects "$2")" || return
+  [[ $rects == *"|"* ]] || { echo "$rects"; return; }
+  glass_clear_value "$1" "${rects%%|*}" "${rects#*|}"
+}
+# The control: the same grab read against a capsule 6 px smaller all
+# round, so the drawn glass lies outside it.
+glass_clear_shrunk() { # PNG SUMMARY
+  local rects card
+  rects="$(glass_rects "$2")" || return
+  [[ $rects == *"|"* ]] || { echo "$rects"; return; }
+  read -r -a card <<<"${rects#*|}"
+  glass_clear_value "$1" "${rects%%|*}" "$((card[0] + 6)) $((card[1] + 6)) $((card[2] - 12)) $((card[3] - 12))" | cut -d' ' -f1
+}
+grab_glass() { # LABEL SUMMARY PNG
+  render expect "the $1 card's slot is grabbed" grabbing ipc smoke grabLayerItem vgs.notifications CardSlot summary "$2" "$3"
+  render expect_poll "the grab of the $1 card's slot is saved" "saved $3" ipc smoke grabbed
 }
 notify smoke-app 0 "Even one" "" '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even two" "One line of body text" '[]' '{}' 0 >/dev/null
@@ -491,19 +593,28 @@ notify smoke-chat 0 "Hover geometry" "Pick one" '["default", "Open", "reply", "R
 expect_poll "the hover geometry card shows" True has_row live "Hover geometry"
 rest_on_card "Hover geometry" || fail "the pointer never rested on the hover geometry toast"
 expect_poll "the hover geometry card shows actions" '["Open", "Reply", "Dismiss"]' shown_pills "Hover geometry"
-expect "the inset predicate rejects text under the rounded end" "violation left,right" inset_contract_value avatarless "" "top=14 bottom=14 left=14 right=14 height=45 slot=-1 pad=14"
-expect "the header predicate rejects a title under the rounded end" "violation left" header_contract_value <<<"left=20 height=48 control=10 centre=24.0"
-expect_poll "a one-line card clears the rounded end on both sides" ok checked_space "Even one" avatarless
-expect_poll "a two-line card clears the rounded end on both sides" ok checked_space "Even two" avatarless
-expect_poll "a multiline card clears the rounded end on both sides" ok checked_space "Even multi" avatarless
-expect_poll "a browser calendar card clears the rounded end on both sides" ok checked_space "Weekly eStaff" avatarless
-expect_poll "a browser Slack card keeps its round slot at the pad and clears the text" ok checked_space "New message in master-operator" slot
-expect_poll "a card past its most lines stops at its maximum height and clears both sides" ok checked_space "Even max" avatarless clamped
-expect_poll "a hovered action card clears the rounded end while the pills show" ok checked_space "Hover geometry" avatarless
-expect_poll "a card with an image keeps its round slot at the pad and clears the text" ok checked_space Pictured slot
-expect_poll "a Slack faces card keeps its round slot at the pad and clears the text" ok checked_space "[acme] in ada, grace, alan, edsger, barbara" slot
+expect "the inset predicate rejects text off the stack's column" "violation left,right" inset_contract_value avatarless "" "top=14 bottom=14 left=34 right=34 height=59 slot=-1 pad=14 column=20"
+expect "the inset predicate rejects text under the rounded end" "violation curve" inset_contract_value avatarless "" "top=14 bottom=14 left=14 right=14 height=94 slot=-1 pad=14 column=14"
+expect "the inset predicate rejects a round slot off the pad" "violation slot" inset_contract_value slot "" "top=14 bottom=14 left=66 right=20 height=68 slot=20 pad=14 column=20"
+expect "the header predicate rejects a title off the cards' column" "violation align" header_contract_value "top=21 bottom=21 left=20 right=20 height=59 slot=-1 pad=14 column=20" <<<"left=12 top=8 height=48 control=10 centre=24.0"
+expect "the header predicate rejects a title under its rounded end" "violation curve" header_contract_value "top=21 bottom=21 left=8 right=8 height=59 slot=-1 pad=14 column=8" <<<"left=8 top=8 height=48 control=10 centre=24.0"
+expect_poll "a one-line card's text is on the stack's column and clears the rounded ends" ok checked_space "Even one" avatarless
+expect_poll "a two-line card's text is on the stack's column and clears the rounded ends" ok checked_space "Even two" avatarless
+expect_poll "a multiline card's text is on the stack's column and clears the rounded ends" ok checked_space "Even multi" avatarless
+expect_poll "a browser calendar card's text is on the stack's column and clears the rounded ends" ok checked_space "Weekly eStaff" avatarless
+expect_poll "a browser Slack card keeps its round slot at the pad and ends its text on the column" ok checked_space "New message in master-operator" slot
+expect_poll "a card past its most lines stops at its maximum height with its text on the column" ok checked_space "Even max" avatarless clamped
+expect_poll "a hovered action card keeps its text on the column while the pills show" ok checked_space "Hover geometry" avatarless
+expect_poll "a card with an image keeps its round slot at the pad and ends its text on the column" ok checked_space Pictured slot
+expect_poll "a Slack faces card keeps its round slot at the pad and ends its text on the column" ok checked_space "[acme] in ada, grace, alan, edsger, barbara" slot
+for glass_card in "one-line:Even one" "two-line:Even two" "clamped:Even max"; do
+  glass_png="$sandbox/glass-${glass_card%%:*}.png"
+  grab_glass "${glass_card%%:*}" "${glass_card#*:}" "$glass_png"
+  render expect "the ${glass_card%%:*} card's glass draws nothing outside its capsule" clear glass_clear "$glass_png" "${glass_card#*:}"
+done
+render expect "the glass predicate rejects glass drawn outside the capsule" violation glass_clear_shrunk "$sandbox/glass-clamped.png" "Even max"
 expect "the inbox opens for header geometry" ok notes inbox
-expect_poll "the inbox header title clears the rounded end" ok checked_header
+expect_poll "the inbox header title starts on a card's text column and clears its rounded end" ok checked_header "Even two"
 note_card_reading "one-line card geometry measured" "Even one"
 note_card_reading "two-line card geometry measured" "Even two"
 note_card_reading "multiline card geometry measured" "Even multi"

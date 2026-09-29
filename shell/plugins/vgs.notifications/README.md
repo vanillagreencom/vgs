@@ -50,7 +50,7 @@ Where the notifications keep their state, what a restart restores and how a bad 
 
 The glass, the edge light, the pills and the switch are the plugin's own files, drawn from its own table: a plugin imports no other plugin's files.
 
-A card keeps `card.pad` above and below its content. Rectangular text starts at least one clearance step past the drawn rounded end on both sides. A round image, face stack or pill may stay at `card.pad`, because its centre follows the capsule end. The card grows with its text up to `card.maxHeight`. A longer body shows the whole lines that fit and elides the last one, so the vertical space stays the same.
+A card keeps `card.pad` above and below its content. Rectangular text starts on the stack's one text column at both ends: the inset that keeps the text's corners one clearance step inside the rounded ends of the tallest card, `card.maxHeight`. The inbox header's title starts on the same column, so it lines up with a card's text. A round image, face stack or pill may stay at `card.pad`, because its centre follows the capsule end. The card grows with its text up to `card.maxHeight`. A longer body shows the whole lines that fit and elides the last one, so the vertical space stays the same.
 
 The stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
 

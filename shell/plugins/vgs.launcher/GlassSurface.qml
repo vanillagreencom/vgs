@@ -2,8 +2,12 @@ import QtQuick
 import QtQuick.Effects
 
 // Frosted glass: a soft drop shadow, a translucent fill, a faint top-down
-// sheen and a hairline inner edge. The compositor blurs what is behind it
-// when a layer rule asks it to (README). Children go into the clipped body.
+// sheen and a hairline inner edge. Every layer takes the surface's whole
+// geometry and `radius`, so all of them round to the same corner: `clip`
+// cuts only to the bounding box, and a layer of another size rounds to
+// another corner that shows past the surface's curve. The compositor blurs
+// what is behind it when a layer rule asks it to (README). Children go into
+// the clipped body.
 // Every value comes from `look`, the launcher's own table.
 Item {
     id: glass
@@ -37,18 +41,15 @@ Item {
         color: glass.fill
         clip: true
 
-        // Light falling on the top of the glass, at a fixed height so it
-        // does not redraw while the card resizes.
+        // Light falling on the top of the glass, fading out `sheenHeight`
+        // down, under the fill.
         Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: Math.min(glass.look.glass.sheenHeight, parent.height)
-            radius: parent.radius
+            anchors.fill: parent
+            radius: glass.radius
             z: -1
             gradient: Gradient {
                 GradientStop { position: 0; color: glass.look.glass.sheen }
-                GradientStop { position: 1; color: glass.look.glass.sheenEnd }
+                GradientStop { position: Math.min(1, glass.look.glass.sheenHeight / glass.height); color: glass.look.glass.sheenEnd }
             }
         }
     }

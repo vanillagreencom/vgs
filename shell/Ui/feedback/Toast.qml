@@ -44,6 +44,7 @@ Rectangle {
         width: root.width
         height: root.implicitHeight
         step: root.clearanceStep
+        top: root.basePadding
     }
 
     Row {

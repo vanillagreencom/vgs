@@ -115,7 +115,7 @@ var TOKENS = {
     radius: {
         // Larger than any side, so a corner rounds to a pill or a circle.
         full: length(4096),
-        // How far past a rounded end's radius text starts.
+        // How far inside a rounded end's curve the corners of text stay.
         clearance: length(4)
     },
 

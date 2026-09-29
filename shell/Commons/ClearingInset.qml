@@ -8,6 +8,8 @@ QtObject {
     property real width: 0
     property real height: 0
     property real step: 0
+    // How far the content's top edge stands in from the container's.
+    property real top: 0
     property real inset: pad
     property bool settlePending: false
     property bool alive: true
@@ -20,7 +22,7 @@ QtObject {
     }
 
     function targetInset() {
-        return Math.ceil(Inset.clearing(pad, radius, width, height, step));
+        return Math.ceil(Inset.clearing(pad, radius, width, height, step, top));
     }
 
     function scheduleSettle() {
@@ -46,4 +48,5 @@ QtObject {
     onWidthChanged: reset()
     onHeightChanged: scheduleSettle()
     onStepChanged: reset()
+    onTopChanged: reset()
 }

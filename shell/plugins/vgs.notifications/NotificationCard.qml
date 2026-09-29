@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Widgets
-import qs.Commons
 import qs.Ui
 import "NotificationLogic.js" as Logic
 
@@ -53,7 +52,9 @@ Item {
     // maxHeight less that pad: the body shows only the lines that fit.
     readonly property real fullHeight: content.implicitHeight + 2 * pad
     readonly property real pad: look.card.pad
-    readonly property real horizontalInset: contentInset.inset
+    // The stack's text column: rectangular text starts this far in from
+    // either end, a round slot at `pad`.
+    required property real textColumn
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
     // The body as ImageText segments: StyledText with every image tag
@@ -69,9 +70,9 @@ Item {
     readonly property bool showsBadge: enrichment !== null && workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
     readonly property bool showsSlot: showsFaces || showsIcon
     readonly property real slotWidth: showsFaces ? faceStack.implicitWidth : showsIcon ? look.card.icon : 0
-    readonly property real slotGap: showsSlot ? Math.max(look.card.gapIcon, horizontalInset - pad - slotWidth) : 0
-    readonly property real contentLeftInset: showsSlot ? pad : horizontalInset
-    readonly property real contentWidth: Math.max(0, fullWidth - contentLeftInset - horizontalInset)
+    readonly property real slotGap: showsSlot ? Math.max(look.card.gapIcon, textColumn - pad - slotWidth) : 0
+    readonly property real contentLeftInset: showsSlot ? pad : textColumn
+    readonly property real contentWidth: Math.max(0, fullWidth - contentLeftInset - textColumn)
     readonly property real contentOffset: contentLeftInset - (fullWidth - contentWidth) / 2
     readonly property real slotLeft: showsSlot ? content.x + iconSlot.x : -1
     // The summary as drawn: the rule's title once the workspace's icon
@@ -92,18 +93,6 @@ Item {
     implicitWidth: fullWidth
     implicitHeight: fullHeight
     clip: true
-    onSummaryChanged: contentInset.reset()
-    onBodyChanged: contentInset.reset()
-    onShowsSlotChanged: contentInset.reset()
-
-    ClearingInset {
-        id: contentInset
-        pad: card.pad
-        radius: card.radius
-        width: card.fullWidth
-        height: card.fullHeight
-        step: card.look.radius.clearance
-    }
 
     HoverHandler { id: hoverTracker }
 

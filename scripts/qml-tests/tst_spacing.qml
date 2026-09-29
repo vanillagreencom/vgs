@@ -39,6 +39,7 @@ Item {
         width: 120
         height: clearingProbeText.implicitHeight + 8
         step: 4
+        top: 4
     }
 
     TestCase {
@@ -105,9 +106,20 @@ Item {
             checkRhythm();
         }
 
+        // The least whole inset from the pad whose content corner, `top`
+        // down, keeps `step` inside a corner circle of radius `corner`.
+        function leastClearing(pad, corner, top, step) {
+            for (let x = pad; x < corner + step; x++)
+                if (corner - Math.hypot(Math.max(0, corner - x), Math.max(0, corner - top)) >= step) return x;
+            return Math.ceil(corner + step);
+        }
+
         function test_toast_text_clears_a_rounded_corner() {
             compare(UnitTheme.override({ radius: { md: 32 } }), "ok");
-            const inset = Math.ceil(Math.min(Theme.toast.radius, toast.width / 2, toast.height / 2) + Theme.space.xs);
+            const pad = Theme.toast.padding;
+            tryVerify(() => toast.children[0].x > pad, 1000, "toast rounded inset grew");
+            const inset = leastClearing(pad, Math.min(Theme.toast.radius, toast.width / 2, toast.height / 2), toast.children[0].y, Theme.space.xs);
+            verify(inset > pad && inset < Math.min(Theme.toast.radius, toast.height / 2), "the toast's row clears inside the curve, not past the whole corner: " + inset);
             close(() => toast.children[0].x, inset, "toast rounded inset");
             close(() => toast.width - (toast.children[0].x + toast.children[0].width), inset, "toast rounded right inset");
         }
@@ -115,7 +127,7 @@ Item {
         function test_clearing_inset_settles_after_wrapped_height_grows() {
             clearingProbe.reset();
             tryVerify(() => clearingProbe.inset > clearingProbe.pad, 1000, "clearing inset grew");
-            close(() => clearingProbe.inset, Math.ceil(Inset.clearing(clearingProbe.pad, clearingProbe.radius, clearingProbe.width, clearingProbe.height, clearingProbe.step)), "clearing inset fixed point");
+            close(() => clearingProbe.inset, Math.ceil(Inset.clearing(clearingProbe.pad, clearingProbe.radius, clearingProbe.width, clearingProbe.height, clearingProbe.step, clearingProbe.top)), "clearing inset fixed point");
         }
     }
 }

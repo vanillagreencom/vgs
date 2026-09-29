@@ -19,6 +19,8 @@ Item {
     // this copy; every binding on it checks for that.
     readonly property var service: host ? host.service : null
     required property var look
+    // The stack's text column, which the card's text starts on.
+    required property real textColumn
     required property int index
     required property string key
     required property string app
@@ -139,6 +141,7 @@ Item {
     NotificationCard {
         id: card
         look: slot.look
+        textColumn: slot.textColumn
         anchors.horizontalCenter: parent.horizontalCenter
         y: slot.look.card.gap * slot.stretch + slot.drop - slot.look.card.lift * slot.hover
         width: slot.look.card.dot * (1 + slot.look.card.squashWide * slot.squash) + (card.fullWidth - slot.look.card.dot) * slot.stretch

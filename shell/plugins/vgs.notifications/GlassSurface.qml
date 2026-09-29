@@ -2,7 +2,10 @@ import QtQuick
 import QtQuick.Effects
 
 // Frosted glass: a soft drop shadow, a translucent fill, a faint top-down
-// sheen and a hairline inner edge, rounded to a pill. `follow` lays it
+// sheen and a hairline inner edge, rounded to a pill. Every layer takes the
+// surface's whole geometry and `radius`, so all of them round to the same
+// corner: `clip` cuts only to the bounding box, and a layer of another size
+// rounds to another corner that shows past the pill's curve. `follow` lays it
 // under a card, taking the card's geometry, opacity, scale and transform
 // origin; `orb`, from 0 to 1, adds the shade and the specular spot that
 // make a small round surface read as a glass bead, as a toast is while it
@@ -76,18 +79,15 @@ Item {
             }
         }
 
-        // Light falling on the top of the glass, at a fixed height so it
-        // does not redraw while the card resizes.
+        // Light falling on the top of the glass, fading out `sheenHeight`
+        // down, under the fill.
         Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: Math.min(glass.look.glass.sheenHeight, parent.height)
-            radius: parent.radius
+            anchors.fill: parent
+            radius: glass.radius
             z: -1
             gradient: Gradient {
                 GradientStop { position: 0; color: glass.look.glass.sheen }
-                GradientStop { position: 1; color: glass.look.glass.sheenEnd }
+                GradientStop { position: Math.min(1, glass.look.glass.sheenHeight / glass.height); color: glass.look.glass.sheenEnd }
             }
         }
     }
