@@ -100,7 +100,7 @@ source "$1"
 stub_state="$4"
 held_mode_state() { printf "%s\n" "$stub_state"; }
 row_class="$2"
-[[ $3 == none ]] || mode_hold=(WAYLAND-1 480x720)
+[[ $3 == none ]] || mode_hold=(WAYLAND-1 "480x720 scale=1")
 fail "a row" >/dev/null
 printf "%s %s %s\n" "$failures" "$behaviour_failures" "$mode_resets"
 smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$mode_resets" /dev/null >/dev/null' _ \

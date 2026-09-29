@@ -13,7 +13,8 @@ failures=0
 behaviour_failures=0
 stalled_render=false
 row_class=behaviour
-# A mode a row holds on a nested output, as (OUTPUT MODE), empty when no row
+# A mode a row holds on a nested output, as (OUTPUT STATE), STATE its mode
+# and scale as mode_scale_of in harness.sh reads them, empty when no row
 # holds one; hold_mode and release_mode alone write it. A row that fails
 # after the output left the held mode counts in mode_resets and never as
 # behaviour: it measured an output the sandbox reset (held_mode_state in

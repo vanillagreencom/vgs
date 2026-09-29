@@ -192,10 +192,12 @@ scene_cases=(
   "a revision before the Settings plugin refuses the settings scene" 2 "sandbox-shots: refused: scene=settings tree=$old_rev" --rev "$old_rev" settings
   "a revision before the Settings plugin takes the manager scene" 77 "qml-smoke: status=not-measured" --rev "$old_rev" manager
   "a checkout with the Settings plugin takes the settings scene" 77 "qml-smoke: status=not-measured" settings
+  "a scale other than 1 or 2 is refused" 2 "sandbox-shots: refused: scale=3" --scale 3 settings
+  "scale 2 is taken" 77 "qml-smoke: status=not-measured" --scale 2 settings
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1)
+scene_arity=(1 3 3 1 3 3)
 at=0
 for n in "${!scene_arity[@]}"; do
   label="${scene_cases[at]}"; status="${scene_cases[at + 1]}"; line="${scene_cases[at + 2]}"
@@ -203,22 +205,29 @@ for n in "${!scene_arity[@]}"; do
   at=$((at + 3 + ${scene_arity[n]}))
   if scene_case "$repo/scripts/sandbox-shots.sh" "$label" "$status" "$line" "${args[@]}"; then ok "$label"; else fail "$label"; fi
 done
-# Control: a copy that never refuses an unshipped scene sends the manager
-# scene of a Settings checkout on to the harness.
+# Controls: a copy with one refusal planted away sends the refused case on
+# to the harness. Rows: label | the refusal's text, which must match once |
+# its replacement | the refusal line the case wants | the case's arguments,
+# split on spaces. A field holds no `|`, the separator.
+shots_controls=(
+  "an unshipped scene is not refused|if [[ (\$scene == settings || \$scene == manager) && \$scene != \"\$manager_scene\" ]]; then|if false; then|sandbox-shots: refused: scene=manager tree=checkout|manager"
+  "a refused scale goes on to the harness|refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }|refused: scale=%s\\n' \"\$scale\" >&2; }|sandbox-shots: refused: scale=3|--scale 3 settings"
+)
 shots_mutant="$tmp/sandbox-shots-mutant.sh"
-if python3 - "$repo/scripts/sandbox-shots.sh" "$shots_mutant" <<'PY'
+for row in "${shots_controls[@]}"; do
+  IFS='|' read -r label needle replacement line case_args <<<"$row"
+  read -r -a args <<<"$case_args"
+  if python3 -c '
 import sys
-src, dst = sys.argv[1:]
+src, dst, needle, replacement = sys.argv[1:]
 text = open(src).read()
-needle = 'if [[ ($scene == settings || $scene == manager) && $scene != "$manager_scene" ]]; then'
-assert text.count(needle) == 1, "the scene refusal must match once"
-open(dst, "w").write(text.replace(needle, "if false; then"))
-PY
-then
-  if scene_case "$shots_mutant" "control" 2 "sandbox-shots: refused: scene=manager tree=checkout" manager >/dev/null; then fail "control: an unshipped scene is not refused left the refusal case green"; else ok "control: an unshipped scene is not refused"; fi
-else
-  fail "control: the scene refusal could not be planted"
-fi
+assert text.count(needle) == 1, "the refusal must match once"
+open(dst, "w").write(text.replace(needle, replacement))' "$repo/scripts/sandbox-shots.sh" "$shots_mutant" "$needle" "$replacement"; then
+    if scene_case "$shots_mutant" "control" 2 "$line" "${args[@]}" >/dev/null; then fail "control: $label left the refusal case green"; else ok "control: $label"; fi
+  else
+    fail "control: $label could not be planted"
+  fi
+done
 
 # The export of another revision, scripts/smoke/tree.sh, with no sandbox. A
 # scratch repository holds a revision whose bin/judge loads

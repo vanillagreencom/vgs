@@ -660,14 +660,15 @@ expect_poll "the themes panel closes" closed panel_open
 # first screen through the probe's `images`, and the surface the host maps
 # from the compositor: none while no image is drawn, one per screen while
 # one is. The panel is read back through the labels it draws and clicked
-# through its icon buttons. A headless monitor at scale 2 reads the
-# requested sourceSize back in device pixels, and draws an image set on it
-# alone while the first screen draws `current`. A copy of the background
-# that decodes at logical pixels, a copy of the shared state reader that
-# ignores `screens`, one that never reloads the state file and a copy of
-# the background that is always shown are the block's controls. The block
-# leaves vgs applied with no current image and the plugin disabled, so
-# later rows see the bar they saw before the vgs.themes block.
+# through its icon buttons. The first screen, held at double its mode and
+# scale 2, reads the requested sourceSize back in device pixels, the mode
+# the compositor reports; a headless second monitor draws an image set on
+# it alone while the first screen draws `current`. A copy of the
+# background that decodes at logical pixels, a copy of the shared state
+# reader that ignores `screens`, one that never reloads the state file and
+# a copy of the background that is always shown are the block's controls.
+# The block leaves vgs applied with no current image and the plugin
+# disabled, so later rows see the bar they saw before the vgs.themes block.
 bg_state="$home/.local/state/vgs"
 scenic="$installed/scenic"
 mkdir -p -- "$scenic/backgrounds"
@@ -695,7 +696,6 @@ background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_stat
 # `images=<n>` while the background draws other than one image.
 background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%.1f" % (r[0][3][0] / r[0][3][1]) if len(r)==1 else "images=%d" % len(r))'; }
 background_source_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
-background_device_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,math,sys; r=json.load(sys.stdin); box=r[0][2]; print("%dx%d" % (math.ceil(box[0] * float(sys.argv[1])), math.ceil(box[1] * float(sys.argv[1]))))' "$2"; }
 screen_listed() { hypr -j monitors | python3 -c 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
 # Replace the state file whole with one naming image PATH.
 bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }
@@ -725,14 +725,33 @@ expect "the apply links the package's first image" "$scenic/backgrounds/a.png" b
 expect_poll "the background draws the applied package's first image" "$scenic/backgrounds/a.png ready" background_image
 expect_poll "the host maps one surface per screen once the image is drawn" "$monitors" layer_count vgs:background
 expect "the image is decoded to cover the screen, not at the file's size" True background_covers
-expect_poll "the scale-1 screen requests its logical size" "$(background_device_size "$screen_name" 1)" background_source_size "$screen_name"
+# The first screen's mode at scale 1 is its logical size, which the
+# background requests. The mode comes from the compositor, so a screen Qt
+# reads as 0x0 cannot pass.
+screen_state="$(mode_scale_of "$screen_name")" || screen_state=unreadable
+if [[ $screen_state =~ ^([1-9][0-9]*)x([1-9][0-9]*)\ scale=1$ ]]; then
+  screen_mode="${BASH_REMATCH[1]}x${BASH_REMATCH[2]}"
+  hidpi_mode="$((BASH_REMATCH[1] * 2))x$((BASH_REMATCH[2] * 2))"
+else
+  fail "the first screen reads $screen_state, not a sized mode at scale 1"
+  screen_mode=unread hidpi_mode=unread
+fi
+expect_poll "the scale-1 screen requests its logical size" "$screen_mode" background_source_size "$screen_name"
 
-hidpi_output=SMOKE-HIDPI
-expect "the nested compositor adds a scale-2 monitor" ok hypr output create headless "$hidpi_output"
-expect_poll "the scale-2 monitor is listed" True screen_listed "$hidpi_output"
-expect_poll "the scale-2 monitor gets a background" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
-expect_poll "the host maps the scale-2 background with the others" "$((monitors + 1))" layer_count vgs:background
-expect_poll "the scale-2 background requests device pixels" "$(background_device_size "$hidpi_output" 2)" background_source_size "$hidpi_output"
+# The nested output takes double its mode at scale 2, so its logical size
+# stays; a headless output stays 0x0 in the sandbox
+# (docs/architecture/runtime.md § Hyprland). hold_mode reads the mode and
+# the scale back; the host or a reload can reset them under the rows
+# (held_mode_state in harness.sh).
+# Control: the same reader on a headless output reads a zero size, so the
+# held output's reading is the compositor's and not the reader's.
+zero_output=SMOKE-ZERO
+expect "the nested compositor adds a headless output" ok hypr output create headless "$zero_output"
+expect_poll "the headless output reads a zero size" "0x0 scale=1" mode_scale_of "$zero_output"
+expect "the nested compositor removes the headless output" ok hypr output remove "$zero_output"
+expect_poll "the headless output is gone" False screen_listed "$zero_output"
+hold_mode "the nested compositor holds the first screen at double its mode and scale 2" "$screen_name" "$hidpi_mode" 2
+expect_poll "the scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
 
 plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"
 cp -p -- "$plugin_qml" "$sandbox/Background.qml.device-pixels.real"
@@ -753,28 +772,35 @@ dst.write_text(text)
 PY
 mv -T -- "$plugin_qml.tmp" "$plugin_qml"
 expect "a rescan builds the logical-pixel control" ok ipc shell rescanPlugins
-expect_poll "the logical-pixel control decodes the scale-2 screen at logical pixels" "$(background_device_size "$hidpi_output" 1)" background_source_size "$hidpi_output"
+expect_poll "the logical-pixel control decodes the scale-2 screen at logical pixels" "$screen_mode" background_source_size "$screen_name"
 cp -p -- "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
 expect "a rescan restores the device-pixel background" ok ipc shell rescanPlugins
-expect_poll "the restored scale-2 background requests device pixels" "$(background_device_size "$hidpi_output" 2)" background_source_size "$hidpi_output"
+expect_poll "the restored scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
 expect "the follow after the device-pixel rescan queued ends" idle theme_idle
+release_mode "the nested compositor gives the first screen its own mode at scale 1" "$screen_name" "$screen_mode"
 
 # Each screen draws its own entry in `screens`, else `current`: an image
-# from the user folder set on the scale-2 monitor alone, which a step of
+# from the user folder set on a second monitor alone, which a step of
 # `current` leaves in place. A screen whose own image cannot be read draws
 # `current`: the image is removed and the monitor comes back, so a new
-# background decodes the entry that `screens` keeps.
+# background decodes the entry that `screens` keeps. The second monitor is
+# a headless output: these rows read which image it draws, not its size.
 # Control: a sandbox copy of the state reader that ignores `screens` draws
-# `current` on the scale-2 monitor.
+# `current` on the second monitor.
+second_output=SMOKE-SECOND
+expect "the nested compositor adds a second monitor" ok hypr output create headless "$second_output"
+expect_poll "the second monitor is listed" True screen_listed "$second_output"
+expect_poll "the second monitor gets a background" "$scenic/backgrounds/a.png ready" background_image_on "$second_output"
+expect_poll "the host maps the second monitor's background with the others" "$((monitors + 1))" layer_count vgs:background
 user_bg="$home/.config/vgs/backgrounds"
 mkdir -p -- "$user_bg"
 cp -- "$scenic/backgrounds/c.png" "$user_bg/own.png"
-expect "set --screen gives the scale-2 monitor its own image" "ok background=own.png theme=- path=$user_bg/own.png screen=$hidpi_output" vgsh_theme background set "$user_bg/own.png" --screen "$hidpi_output"
-expect_poll "the scale-2 monitor draws its own image" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect "set --screen gives the second monitor its own image" "ok background=own.png theme=- path=$user_bg/own.png screen=$second_output" vgsh_theme background set "$user_bg/own.png" --screen "$second_output"
+expect_poll "the second monitor draws its own image" "$user_bg/own.png ready" background_image_on "$second_output"
 expect "the first screen draws the current image beside it" "$scenic/backgrounds/a.png ready" background_image
 expect "next moves the current image under a screen's own" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
 expect_poll "the first screen follows next" "$scenic/backgrounds/b.png ready" background_image
-expect "the scale-2 monitor keeps its own image through next" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect "the second monitor keeps its own image through next" "$user_bg/own.png ready" background_image_on "$second_output"
 expect "previous moves the current image back" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background previous
 expect_poll "the first screen follows previous" "$scenic/backgrounds/a.png ready" background_image
 state_qml="$repo/shell/plugins/vgs.themes/WallpaperState.qml"
@@ -790,35 +816,35 @@ assert dst.read_text() != text, "screens control must change the file"
 PY
 mv -T -- "$state_qml.tmp" "$state_qml"
 expect "a rescan builds the control that ignores screens" ok ipc shell rescanPlugins
-expect_poll "the control draws the current image on the scale-2 monitor" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
+expect_poll "the control draws the current image on the second monitor" "$scenic/backgrounds/a.png ready" background_image_on "$second_output"
 cp -p -- "$sandbox/WallpaperState.qml.screens.real" "$state_qml.tmp" && mv -T -- "$state_qml.tmp" "$state_qml"
 expect "a rescan restores the reader of screens" ok ipc shell rescanPlugins
-expect_poll "the restored plugin draws the scale-2 monitor's own image" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect_poll "the restored plugin draws the second monitor's own image" "$user_bg/own.png ready" background_image_on "$second_output"
 expect "the follow after the screens rescans ends" idle theme_idle
 expected_errors+=('background: file://.*/own\.png\?.* unreadable' 'Background\.qml.*Cannot open: file://.*/own\.png')
 rm -- "$user_bg/own.png"
-expect "the nested compositor removes the scale-2 monitor over its removed image" ok hypr output remove "$hidpi_output"
-expect_poll "the scale-2 monitor is gone before it comes back" False screen_listed "$hidpi_output"
-expect "the nested compositor adds the scale-2 monitor back" ok hypr output create headless "$hidpi_output"
-expect_poll "a screen whose own image cannot be read draws the current image" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
+expect "the nested compositor removes the second monitor over its removed image" ok hypr output remove "$second_output"
+expect_poll "the second monitor is gone before it comes back" False screen_listed "$second_output"
+expect "the nested compositor adds the second monitor back" ok hypr output create headless "$second_output"
+expect_poll "a screen whose own image cannot be read draws the current image" "$scenic/backgrounds/a.png ready" background_image_on "$second_output"
 expect_log "the background logs the unreadable own image" 1 'background: file://.*/own\.png\?.* unreadable'
 # A screen's own entry that names the current image under the same stamp
 # fails with it, and the screen follows the next readable `current`.
 cp -- "$scenic/backgrounds/c.png" "$user_bg/same.png"
 expected_errors+=('background: file://.*/same\.png\?.* unreadable' 'Background\.qml.*Cannot open: file://.*/same\.png')
 expect "set makes a user-folder image current" "ok background=same.png theme=- path=$user_bg/same.png" vgsh_theme background set "$user_bg/same.png"
-expect "set --screen gives the scale-2 monitor the current image as its own" "ok background=same.png theme=- path=$user_bg/same.png screen=$hidpi_output" vgsh_theme background set "$user_bg/same.png" --screen "$hidpi_output"
-expect_poll "the scale-2 monitor draws its own entry that names the current image" "$user_bg/same.png ready" background_image_on "$hidpi_output"
+expect "set --screen gives the second monitor the current image as its own" "ok background=same.png theme=- path=$user_bg/same.png screen=$second_output" vgsh_theme background set "$user_bg/same.png" --screen "$second_output"
+expect_poll "the second monitor draws its own entry that names the current image" "$user_bg/same.png ready" background_image_on "$second_output"
 rm -- "$user_bg/same.png"
-expect "the nested compositor removes the scale-2 monitor over its removed current image" ok hypr output remove "$hidpi_output"
-expect_poll "the scale-2 monitor is gone before it comes back again" False screen_listed "$hidpi_output"
-expect "the nested compositor adds the scale-2 monitor back again" ok hypr output create headless "$hidpi_output"
-expect_poll "an own entry equal to an unreadable current draws nothing" "$user_bg/same.png error" background_image_on "$hidpi_output"
+expect "the nested compositor removes the second monitor over its removed current image" ok hypr output remove "$second_output"
+expect_poll "the second monitor is gone before it comes back again" False screen_listed "$second_output"
+expect "the nested compositor adds the second monitor back again" ok hypr output create headless "$second_output"
+expect_poll "an own entry equal to an unreadable current draws nothing" "$user_bg/same.png error" background_image_on "$second_output"
 expect "set makes a readable package image current" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background set "$scenic/backgrounds/a.png"
-expect_poll "a screen whose failed own entry named the old current draws the new current" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
-expect "the nested compositor removes the scale-2 monitor" ok hypr output remove "$hidpi_output"
-expect_poll "the scale-2 background surface is gone" "$monitors" layer_count vgs:background
-expect_poll "the removed scale-2 monitor is gone" False screen_listed "$hidpi_output"
+expect_poll "a screen whose failed own entry named the old current draws the new current" "$scenic/backgrounds/a.png ready" background_image_on "$second_output"
+expect "the nested compositor removes the second monitor" ok hypr output remove "$second_output"
+expect_poll "the second monitor's background surface is gone" "$monitors" layer_count vgs:background
+expect_poll "the removed second monitor is gone" False screen_listed "$second_output"
 expect "next moves to the package's second image" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
 expect_poll "the background follows next" "$scenic/backgrounds/b.png ready" background_image
 expect "previous moves back to the package's first image" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background previous

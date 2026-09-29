@@ -2,7 +2,8 @@
 # Capture the shell's surfaces in the nested Hyprland sandbox with grim.
 #
 # Usage: scripts/sandbox-shots.sh [--out DIR] [--rev REV] [--modes LIST]
-#                                 [--timeout SECONDS] [--keep] [SCENE...]
+#                                 [--scale N] [--timeout SECONDS] [--keep]
+#                                 [SCENE...]
 #
 # The sandbox is the smoke's own (scripts/smoke/harness.sh): its own HOME,
 # runtime dir, buses and nested compositor, with the shell started inside
@@ -24,9 +25,15 @@
 # with the runtime helpers a revision before bin/lib kept under scripts/,
 # under this checkout's harness and probe, for a before shot; the plugin
 # fixtures a scene installs are that revision's, which its judge accepts.
+# --scale is 1, the default, or 2: at 2 the nested output takes double its
+# mode at scale 2 before the first shot, so the layout keeps its logical
+# size and each PNG holds device pixels. Each shot at scale 2 first checks
+# that the output still reads that mode and scale, since a host resize or
+# a configuration reload resets them, and fails when it does not. Another
+# value is refused as `sandbox-shots: refused: scale=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
-# tmp/sandbox-shots/<UTC time>[-REV]. shots.tsv beside them lists each shot
+# tmp/sandbox-shots/<UTC time>[-REV][-x2]. shots.tsv beside them lists each shot
 # with the sha256 of its file and how it was proved current (shot.sh).
 #
 # Exit 0 when every shot was taken. Exit 77 when a prerequisite is missing
@@ -41,12 +48,14 @@ keep=false
 out=""
 rev=""
 modes=""
+scale=1
 scenes=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) out="$2"; shift 2 ;;
     --rev) rev="$2"; shift 2 ;;
     --modes) modes="$2"; shift 2 ;;
+    --scale) scale="$2"; shift 2 ;;
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
@@ -59,6 +68,7 @@ IFS=, read -r -a mode_list <<<"$modes"
 for mode in "${mode_list[@]}"; do
   [[ $mode == dark || $mode == light ]] || { printf 'sandbox-shots: refused: mode=%s\n' "$mode" >&2; exit 2; }
 done
+[[ $scale == 1 || $scale == 2 ]] || { printf 'sandbox-shots: refused: scale=%s\n' "$scale" >&2; exit 2; }
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
@@ -69,7 +79,7 @@ if ! command -v grim >/dev/null 2>&1; then
 fi
 source "$checkout/scripts/smoke/shot.sh"
 source "$checkout/scripts/smoke/tree.sh"
-[[ -n $out ]] || out="$checkout/tmp/sandbox-shots/$(date -u +%Y%m%dT%H%M%SZ)${rev:+-$rev}"
+[[ -n $out ]] || out="$checkout/tmp/sandbox-shots/$(date -u +%Y%m%dT%H%M%SZ)${rev:+-$rev}$([[ $scale == 1 ]] || echo "-x$scale")"
 SHOT_DIR="$(shot_dir_under "$checkout" "$out")" || exit 2
 if [[ -e $SHOT_DIR/shots.tsv ]]; then printf 'sandbox-shots: refused: out-dir-used=%s\n' "$SHOT_DIR" >&2; exit 2; fi
 
@@ -145,11 +155,30 @@ ok "grim captures only $SHOT_SOCKET"
 # Hyprland's own notice that it was not started through start-hyprland
 # would sit over the top right of every shot.
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
-read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])')
+main_name="$(hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || { fail "the monitor is unreadable"; exit 1; }
+# At scale 2 the first monitor holds double its mode for the whole run
+# (hold_mode in scripts/smoke/harness.sh), so its logical size stays.
+if [[ $scale == 2 ]]; then
+  base_mode="$(first_mode)" || { fail "the monitor's mode is unreadable"; exit 1; }
+  hold_mode "the monitor takes double its mode at scale 2" "$main_name" "$((${base_mode%x*} * 2))x$((${base_mode#*x} * 2))" 2
+  if [[ ${#mode_hold[@]} -eq 0 ]]; then
+    printf 'sandbox-shots: scale=2 not-held output=%s\n' "$main_name"
+    exit 1
+  fi
+fi
+# The monitor's logical size, the layout coordinates the pointer helper
+# takes, and the space the bar reserves at its top.
+read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]), round(m["height"] / m["scale"]), m["reserved"][1])')
 
 undrawn=0
+# take NAME: one shot, refused while the output has left a mode the run
+# holds, so a PNG never shows a reset output under a held mode's name.
 take() { # NAME
   local status=0
+  if [[ ${#mode_hold[@]} -gt 0 && $(held_mode_state) != held ]]; then
+    fail "shot $1 not taken: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or a configuration reload reset it"
+    return
+  fi
   shot "$1" || status=$?
   case $status in
     0) ;;
@@ -319,12 +348,14 @@ scene_settings() { # MODE
     fail "the notifications' Slack section is unreadable: $section"
   fi
   settings_close
-  # The monitor made narrower than the window: the nested output takes a
-  # 480 by 720 mode for the shot, then its own mode again. The gear opens
-  # the window on its bar's monitor, the list first and then a page.
-  local main_mode main_name
-  main_mode="$(first_mode)" && main_name="$(hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || fail "the monitor is unreadable"
-  expect "the monitor is made narrower than the window" ok output_mode "$main_name" 480x720
+  # The monitor made narrower than the window: the nested output holds a
+  # mode 480 by 720 logical pixels at the run's scale for the shot, then
+  # its own mode again. The gear opens the window on its bar's monitor, the
+  # list first and then a page.
+  local main_mode narrow_mode="$((480 * scale))x$((720 * scale))"
+  main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+  [[ $scale == 1 ]] || release_mode "the run's scale-2 hold ends for the narrow monitor" "$main_name" "$main_mode" "$scale"
+  hold_mode "the monitor is made narrower than the window" "$main_name" "$narrow_mode" "$scale"
   expect_poll "the monitor is 480 logical pixels wide" 480 first_width
   expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
   expect_poll "the narrow window maps" 1 settings_count
@@ -333,7 +364,8 @@ scene_settings() { # MODE
   expect_poll "the probe's page is shown on the narrow monitor" '"acme.probe"' settings_page
   take "settings-$1-narrow-page"
   settings_close
-  expect "the monitor's own mode is restored" ok output_mode "$main_name" "$main_mode"
+  release_mode "the monitor's own mode is restored" "$main_name" "$main_mode" "$scale"
+  [[ $scale == 1 ]] || hold_mode "the monitor holds its scale-2 mode again" "$main_name" "$main_mode" "$scale"
   expect_poll "the monitor has its width back" "$mon_w" first_width
 }
 

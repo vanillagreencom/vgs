@@ -118,7 +118,6 @@ repo="$sandbox/repo"
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
-hl.monitor({ output = "SMOKE-HIDPI", mode = "1280x720", position = "auto", scale = 2 })
 -- Logs stay off while the startup latencies are read, since logging every
 -- surface slows the first bar; compositor_logs_on creates this file and
 -- reloads, and the cursor rows then read each cursor shape the compositor
@@ -908,49 +907,54 @@ layer_bar_clear() { # NAMESPACE TOKEN
   t="$(layer_bar_geometry "$1" "$2")" || return
   layer_bar_contract_value <<<"$t"
 }
-# output_mode NAME MODE: the nested compositor gives output NAME the mode
-# MODE, such as 480x720, at scale 1 and the layout's origin, through a Lua
-# monitor rule; the reply is hyprctl's. The nested output takes any mode,
-# which the rows use for a monitor narrower than a window; a headless
-# output the rows could add instead stays 0x0 in the sandbox, its buffers
-# failing to allocate. A row restores the mode it read first.
-output_mode() { hypr eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"0x0\", scale = 1 })"; }
-# mode_of NAME: output NAME's mode as WxH; returns 1 when no monitor has
-# that name.
-mode_of() { hypr -j monitors | python3 -c 'import json,sys; m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]]; print("%dx%d" % (m[0]["width"], m[0]["height"])) if len(m)==1 else sys.exit(1)' "$1"; }
-# hold_mode LABEL NAME MODE: output NAME takes MODE and the rows after it
-# hold that mode until release_mode. The hold begins once the monitor reads
-# MODE; a mode never taken is a failure and holds nothing.
+# output_mode NAME MODE [SCALE]: the nested compositor gives output NAME
+# the mode MODE, such as 480x720, at SCALE, 1 by default, and the layout's
+# origin, through a Lua monitor rule; the reply is hyprctl's. The nested
+# Wayland output takes any mode and an integer scale; a headless output
+# stays 0x0 in the sandbox (docs/architecture/runtime.md § Hyprland). A
+# row restores the mode it read first.
+output_mode() { hypr eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"0x0\", scale = ${3:-1} })"; }
+# mode_scale_of NAME: output NAME's mode and scale as `WxH scale=S`, such
+# as `3510x1866 scale=2`, the mode in device pixels; returns 1 when no
+# monitor has that name.
+mode_scale_of() { hypr -j monitors | python3 -c 'import json,sys; m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]]; print("%dx%d scale=%g" % (m[0]["width"], m[0]["height"], m[0]["scale"])) if len(m)==1 else sys.exit(1)' "$1"; }
+# hold_mode LABEL NAME MODE [SCALE]: output NAME takes MODE at SCALE, 1 by
+# default, and the rows after it hold that mode and scale until
+# release_mode. The hold begins once the monitor reads both; a mode or a
+# scale never taken is a failure and holds nothing.
 hold_mode() {
-  local label="$1" output="$2" mode="$3" failed_before="$failures"
+  local label="$1" output="$2" want="$3 scale=${4:-1}" failed_before="$failures"
   [[ ${#mode_hold[@]} -eq 0 ]] || { fail "$label: ${mode_hold[0]} already holds ${mode_hold[1]}; hold_mode does not nest"; return; }
-  expect "$label" ok output_mode "$output" "$mode"
-  expect_poll "$output reads the mode $mode" "$mode" mode_of "$output"
-  [[ $failures -eq $failed_before ]] && mode_hold=("$output" "$mode")
+  expect "$label" ok output_mode "$output" "$3" "${4:-1}"
+  expect_poll "$output reads $want" "$want" mode_scale_of "$output"
+  [[ $failures -eq $failed_before ]] && mode_hold=("$output" "$want")
   return 0
 }
 # held_mode_state: what became of the held mode, as one word. `held`: the
-# output reads it. `reset`: the output reads another mode. Once the hold
-# began, two writers move a nested output off it, and neither is what a
-# held row measures. Hyprland gives a Wayland-backend output the size of
-# every configure the host sends the nested window that differs from its
-# rule's mode (src/output/Monitor.cpp, the output's state listener,
-# Hyprland v0.56.2), and the host sends one whenever it resizes the window
-# or changes its state, focus included. A configuration reload, which the
-# shell runs when its Hyprland layer changes, drops the monitor rule
-# output_mode added through `hyprctl eval` (src/config/lua/ConfigManager.cpp,
-# CConfigManager::reload). The shell writes no monitor rule of its own.
-# `unreadable`: the monitor cannot be read, which excuses nothing.
+# output reads its mode and scale. `reset`: the output reads another mode
+# or another scale. Once the hold began, two writers move a nested output
+# off it, and neither is what a held row measures. Hyprland gives a
+# Wayland-backend output the size of every configure the host sends the
+# nested window that differs from its rule's mode (src/output/Monitor.cpp,
+# the output's state listener, Hyprland v0.56.2), and the host sends one
+# whenever it resizes the window or changes its state, focus included. A
+# configuration reload, which the shell runs when its Hyprland layer
+# changes, drops the monitor rule output_mode added through `hyprctl eval`
+# (src/config/lua/ConfigManager.cpp, CConfigManager::reload). The shell
+# writes no monitor rule of its own. `unreadable`: the monitor cannot be
+# read, which excuses nothing.
 held_mode_state() {
-  local mode
-  mode="$(mode_of "${mode_hold[0]}")" || { echo unreadable; return; }
-  if [[ $mode == "${mode_hold[1]}" ]]; then echo held; else echo reset; fi
+  local state
+  state="$(mode_scale_of "${mode_hold[0]}")" || { echo unreadable; return; }
+  if [[ $state == "${mode_hold[1]}" ]]; then echo held; else echo reset; fi
 }
-# release_mode LABEL NAME MODE: any hold ends and output NAME takes MODE
-# again, whether or not hold_mode's mode was taken.
+# release_mode LABEL NAME MODE [SCALE]: any hold ends and output NAME takes
+# MODE at SCALE, 1 by default, again, whether or not hold_mode's mode was
+# taken, and reads both before the rows go on.
 release_mode() {
   mode_hold=()
-  expect "$1" ok output_mode "$2" "$3"
+  expect "$1" ok output_mode "$2" "$3" "${4:-1}"
+  expect_poll "$2 reads $3 scale=${4:-1}" "$3 scale=${4:-1}" mode_scale_of "$2"
 }
 # The first monitor's mode as WxH, and its logical width.
 first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print("%dx%d" % (m["width"], m["height"]))'; }
