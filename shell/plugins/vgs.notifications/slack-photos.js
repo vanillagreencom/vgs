@@ -321,11 +321,15 @@ function remove(file) {
 
 // A team directory's own names that this run did not keep: its files and
 // photos, its temporary files and an older layout's flat photos. Any other
-// name stays.
+// name stays. `keepUsers` null drops users/ whole.
 function sweepTeam(dir, keep, keepUsers) {
     for (const name of fs.readdirSync(dir)) {
         if (name === USERS_DIR) {
             const usersDir = path.join(dir, USERS_DIR);
+            if (keepUsers === null) {
+                remove(usersDir);
+                continue;
+            }
             for (const user of fs.readdirSync(usersDir))
                 if (!keepUsers.has(user)) remove(path.join(usersDir, user));
         } else if (TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : (/\.png$/.test(name) || TEMP_NAME.test(name))) {
@@ -335,12 +339,15 @@ function sweepTeam(dir, keep, keepUsers) {
 }
 
 // Everything under the root but accounts.json and the directories of the
-// teams in `kept`.
-function sweepRoot(root, kept) {
+// teams in `photoTeams` or `emojiTeams`. A team only `emojiTeams` holds, one
+// no token serves, loses its photos and keeps its emoji, so no photo
+// outlives the token and a token stored again fetches the team afresh.
+function sweepRoot(root, photoTeams, emojiTeams) {
     if (!fs.existsSync(root)) return;
     for (const name of fs.readdirSync(root)) {
-        if (name === ACCOUNTS_FILE || kept.has(name)) continue;
-        remove(path.join(root, name));
+        if (name === ACCOUNTS_FILE || photoTeams.has(name)) continue;
+        if (emojiTeams.has(name)) sweepTeam(path.join(root, name), new Set(), null);
+        else remove(path.join(root, name));
     }
 }
 
@@ -599,7 +606,7 @@ function refresh(root, ids, emojiCache) {
         path: process.env.PATH
     };
     const emojiRun = emojiCache === null ? { kept: emoji.disable(root, deps), teams: null } : emoji.refresh(root, emojiCache, ids, deps, lines);
-    sweepRoot(root, new Set([...photos.kept, ...emojiRun.kept]));
+    sweepRoot(root, photos.kept, emojiRun.kept);
     const accountsFile = path.join(root, ACCOUNTS_FILE);
     if (photos.accounts === null) {
         remove(accountsFile);

@@ -393,7 +393,7 @@ function controls() {
         ["safe user id", "const id = safeSegment(user && user.id);", "const id = user && user.id || \"\";", /only safe synthetic users are stored/],
         ["team id argv", "if (safeSegment(id) === \"\") usage(", "if (false) usage(", /refused argv exits 2: a team id with a slash/],
         ["team mismatch", "if (safeSegment(info && info.id) !== id) {", "if (false) {", /the mismatched team is refused|team=mismatch/],
-        ["a team without a token is swept", "if (name === ACCOUNTS_FILE || kept.has(name)) continue;", "if (name === ACCOUNTS_FILE || /^T/.test(name)) continue;", /a workspace with no token keeps no cache/],
+        ["a team without a token is swept", "if (name === ACCOUNTS_FILE || photoTeams.has(name)) continue;", "if (name === ACCOUNTS_FILE || /^T/.test(name)) continue;", /a workspace with no token keeps no cache/],
         ["the workspace's own token wins", "if (known !== \"\" && served.has(known)) {", "if (false) {", /the legacy token asks only which team it serves|a served legacy team is not asked again/],
         ["the legacy token is not fetched twice", "if (!served.has(id)) settle(LEGACY,", "if (true) settle(LEGACY,", /the workspace's own token wins|the legacy token asks only which team it serves/],
         ["the legacy token serves its team", "if (!served.has(id)) settle(LEGACY,", "if (false) settle(LEGACY,", /the legacy single token still works/],
