@@ -1,5 +1,8 @@
 .pragma library
 
+// Pure decisions for vgs.updates: probe normalization, snapshot judging,
+// status derivation, publish diffs, check cadence, failure retry and TUI run
+// end detection. QML owns I/O and timers; bin/check owns processes and disk.
 var SOURCE_LABELS = {
     pacman: "System",
     apt: "System",
@@ -15,6 +18,7 @@ var SOURCE_LABELS = {
     themes: "Themes",
     packages: "Packages"
 };
+var RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
 
 function hasOwn(object, key) {
     return object !== null && typeof object === "object" && Object.prototype.hasOwnProperty.call(object, key);
@@ -26,6 +30,10 @@ function isPlainObject(value) {
 
 function clone(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function sameJson(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function toMs(value) {
@@ -47,20 +55,15 @@ function packageRows(rows) {
     for (var i = 0; i < rows.length; i++) {
         var row = rows[i];
         if (!isPlainObject(row) || typeof row.name !== "string") continue;
-        out.push({ name: row.name, old: row.old === undefined ? null : row.old, new: row.new === undefined ? null : row.new });
+        var made = { name: row.name, old: row.old === undefined ? null : row.old, new: row.new === undefined ? null : row.new };
+        if (typeof row.behind === "number" && isFinite(row.behind) && row.behind > 0) made.behind = row.behind;
+        out.push(made);
     }
     return out;
 }
 
 function sourceRow(source, count, packages, checkedAt, error) {
-    return {
-        source: source,
-        label: sourceLabel(source),
-        count: count,
-        packages: packageRows(packages),
-        checkedAt: checkedAt,
-        error: error === undefined ? null : error
-    };
+    return { source: source, label: sourceLabel(source), count: count, packages: packageRows(packages), checkedAt: checkedAt, error: error === undefined ? null : error };
 }
 
 function commandError(name, probe) {
@@ -80,7 +83,7 @@ function parseProbeJson(name, probe) {
 
 function normalizePkg(probe) {
     var parsed = parseProbeJson("pkg", probe);
-    if (!parsed.ok) return [sourceRow("packages", null, [], null, parsed.error)];
+    if (!parsed.ok) return parsed.error.indexOf("manager=none") !== -1 ? [] : [sourceRow("packages", null, [], null, parsed.error)];
     if (!Array.isArray(parsed.value)) return [sourceRow("packages", null, [], null, "unparseable pkg")];
     var out = [];
     for (var i = 0; i < parsed.value.length; i++) {
@@ -118,8 +121,8 @@ function normalizeOutdated(source, probe, checkedAt) {
         }
         var behind = Number(row.behind || 0);
         if (behind > 0) {
-            count += behind;
-            packages.push({ name: row.id, old: row.head === undefined ? null : row.head, new: row.upstream === undefined ? null : row.upstream });
+            count += 1;
+            packages.push({ name: row.id, old: row.head === undefined ? null : row.head, new: row.upstream === undefined ? null : row.upstream, behind: behind });
         }
     }
     return sourceRow(source, errors.length > 0 ? null : count, packages, checkedAt, errors.length > 0 ? errors.join("; ") : null);
@@ -178,23 +181,31 @@ function firstSourceError(snapshot) {
     return null;
 }
 
-function checkState(snapshot, checking, now, intervalMs) {
+function checkState(snapshot, checking, now, intervalMs, checkFailure) {
     if (checking) return { tone: "info", text: "Checking" };
+    if (checkFailure !== null && checkFailure !== undefined && checkFailure !== "") return { tone: "danger", text: String(checkFailure).slice(0, 200) };
     if (snapshot === null) return { tone: "info", text: "Not checked" };
     if (snapshot.error !== null && snapshot.error !== "") return { tone: "danger", text: String(snapshot.error).slice(0, 200) };
     var source = firstSourceError(snapshot);
     if (source !== null) return { tone: "warning", text: (source.label || source.source) + ": " + String(source.error).slice(0, 180) };
-    if (typeof now === "number" && intervalMs > 0 && now - snapshot.checkedAt > 2 * intervalMs) return { tone: "warning", text: "Check stale" };
+    if (typeof now === "number" && intervalMs > 0 && now - snapshot.checkedAt >= 2 * intervalMs) return { tone: "warning", text: "Check stale" };
     return { tone: "ok", text: pendingCount(snapshot) > 0 ? "Updates waiting" : "Up to date" };
 }
 
-function publishValues(snapshot, checking, now, intervalMs) {
-    return {
-        pending: pendingCount(snapshot),
-        lastCheck: snapshot === null ? null : snapshot.checkedAt,
-        checkState: checkState(snapshot, checking, now, intervalMs),
-        sources: snapshot === null ? [] : clone(snapshot.sources)
-    };
+function publishValues(snapshot, checking, now, intervalMs, checkFailure) {
+    return { pending: pendingCount(snapshot), lastCheck: snapshot === null ? null : snapshot.checkedAt, checkState: checkState(snapshot, checking, now, intervalMs, checkFailure), sources: snapshot === null ? [] : clone(snapshot.sources) };
+}
+
+function statusWrites(previous, next) {
+    var before = previous || {};
+    var out = [];
+    var keys = ["pending", "lastCheck", "checkState", "sources"];
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        if (next[key] === null || next[key] === undefined) continue;
+        if (!hasOwn(before, key) || !sameJson(before[key], next[key])) out.push({ key: key, value: clone(next[key]) });
+    }
+    return out;
 }
 
 function intervalMs(settings) {
@@ -204,11 +215,28 @@ function intervalMs(settings) {
     return hours * 60 * 60 * 1000;
 }
 
-function nextCheckDelay(snapshot, checking, now, interval) {
+function nextCheckDelay(snapshot, checking, now, interval, failedAt) {
     if (checking) return interval;
+    if (failedAt !== null && failedAt !== undefined) return Math.max(0, failedAt + RETRY_AFTER_FAILURE_MS - now);
     if (snapshot === null) return 0;
     var due = snapshot.checkedAt + interval;
     return Math.max(0, due - now);
+}
+
+function staleDelay(snapshot, now, interval) {
+    if (snapshot === null || interval <= 0) return null;
+    return Math.max(0, snapshot.checkedAt + 2 * interval - now);
+}
+
+function nextTimerDelay(snapshot, checking, now, interval, failedAt) {
+    var checkDelay = nextCheckDelay(snapshot, checking, now, interval, failedAt);
+    var stale = staleDelay(snapshot, now, interval);
+    if (stale === null) return checkDelay;
+    return Math.min(checkDelay, stale);
+}
+
+function shouldRunCheck(snapshot, checking, now, interval, failedAt) {
+    return !checking && nextCheckDelay(snapshot, false, now, interval, failedAt) === 0;
 }
 
 function tuiRunEnded(previous, current) {

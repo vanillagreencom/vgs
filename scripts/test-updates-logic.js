@@ -30,28 +30,35 @@ function verify(logic) {
     themes: probe([{ id: "moss", behind: 0, head: "c", upstream: "c", error: null }])
   }, now);
   assert.equal(snapshot.checkedAt, now);
-  same(snapshot.sources.map(s => [s.source, s.count, s.label]), [["pacman", 2, "System"], ["aur", 1, "AUR"], ["flatpak", 0, "Flatpak"], ["mise", null, "mise"], ["vgs", 1, "VGS"], ["plugins", 2, "Plugins"], ["themes", 0, "Themes"]]);
+  same(snapshot.sources.map(s => [s.source, s.count, s.label]), [["pacman", 2, "System"], ["aur", 1, "AUR"], ["flatpak", 0, "Flatpak"], ["mise", null, "mise"], ["vgs", 1, "VGS"], ["plugins", 1, "Plugins"], ["themes", 0, "Themes"]]);
   same(snapshot.sources[4].packages, [{ name: "vgs", old: "0.1.0.r1.g1111111", new: "0.1.0.r2.g2222222" }]);
-  assert.equal(logic.pendingCount(snapshot), 6);
-  same(logic.checkState(snapshot, false, now, 6 * 60 * 60 * 1000), { tone: "warning", text: "mise: skipped=no-check" });
+  assert.equal(logic.pendingCount(snapshot), 5);
+  same(logic.checkState(snapshot, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "mise: skipped=no-check" });
   const clean = JSON.parse(JSON.stringify(snapshot));
   clean.sources[3].error = null;
   clean.sources[3].count = 0;
-  same(logic.checkState(clean, false, now, 6 * 60 * 60 * 1000), { tone: "ok", text: "Updates waiting" });
+  same(logic.checkState(clean, false, now, 6 * 60 * 60 * 1000, ""), { tone: "ok", text: "Updates waiting" });
   clean.sources.forEach(s => { s.count = 0; });
-  same(logic.checkState(clean, false, now, 6 * 60 * 60 * 1000), { tone: "ok", text: "Up to date" });
-  same(logic.checkState(clean, true, now, 6), { tone: "info", text: "Checking" });
+  same(logic.checkState(clean, false, now, 6 * 60 * 60 * 1000, ""), { tone: "ok", text: "Up to date" });
+  same(logic.checkState(clean, true, now, 6, ""), { tone: "info", text: "Checking" });
   clean.checkedAt = now - 13;
-  same(logic.checkState(clean, false, now, 6), { tone: "warning", text: "Check stale" });
+  same(logic.checkState(clean, false, now, 6, ""), { tone: "warning", text: "Check stale" });
   clean.error = "exit=1";
-  same(logic.checkState(clean, false, now, 6), { tone: "danger", text: "exit=1" });
-  same(logic.publishValues(snapshot, false, now, 6 * 60 * 60 * 1000).pending, 6);
-  assert.equal(logic.publishValues(snapshot, false, now, 6).lastCheck, now);
-  assert.equal(logic.nextCheckDelay(null, false, now, 6), 0);
-  assert.equal(logic.nextCheckDelay({ checkedAt: now - 2, sources: [], error: null }, false, now, 6), 4);
-  assert.equal(logic.nextCheckDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6), 0);
+  same(logic.checkState(clean, false, now, 6, ""), { tone: "danger", text: "exit=1" });
+  same(logic.publishValues(snapshot, false, now, 6 * 60 * 60 * 1000, "").pending, 5);
+  assert.equal(logic.publishValues(snapshot, false, now, 6, "").lastCheck, now);
+  assert.equal(logic.nextCheckDelay(null, false, now, 6, null), 0);
+  assert.equal(logic.nextCheckDelay({ checkedAt: now - 2, sources: [], error: null }, false, now, 6, null), 4);
+  assert.equal(logic.nextCheckDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6, null), 0);
   assert.equal(logic.intervalMs({ intervalHours: 0 }), 3600000);
   assert.equal(logic.intervalMs({ intervalHours: 49 }), 48 * 3600000);
+  same(snapshot.sources[5].packages, [{ name: "acme.one", old: "a", new: "b", behind: 2 }]);
+  same(logic.checkState(clean, false, now, 6, "exit=2 failed"), { tone: "danger", text: "exit=2 failed" });
+  same(logic.statusWrites({}, { pending: 1, lastCheck: null, checkState: { tone: "ok", text: "Up to date" }, sources: [] }).map(w => w.key), ["pending", "checkState", "sources"]);
+  same(logic.statusWrites({ pending: 1 }, { pending: 1, checkState: { tone: "ok", text: "Up to date" } }).map(w => w.key), ["checkState"]);
+  assert.equal(logic.nextCheckDelay(snapshot, false, now + 1000, 99999999, now), logic.RETRY_AFTER_FAILURE_MS - 1000);
+  assert.equal(logic.nextCheckDelay(snapshot, false, now + logic.RETRY_AFTER_FAILURE_MS, 6, now), 0);
+  assert.equal(logic.nextTimerDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6, null), 0);
 
   same(logic.parseSnapshotText(JSON.stringify(snapshot)), { ok: true, snapshot });
   same(logic.parseSnapshotText("{"), { ok: false, error: "not-json" });
@@ -61,7 +68,9 @@ function verify(logic) {
   const pluginRow = failedPlugins.sources.find(s => s.source === "plugins");
   same([pluginRow.count, pluginRow.error], [null, "bad: fetch=bad"]);
   const failedCommand = logic.normalizeSnapshot({ pkg: probe("", 1, "vgsh: refused: manager=none"), self: probe({ behind: false, error: null }), plugins: probe([]), themes: probe([]) }, now);
-  same(failedCommand.sources[0], { source: "packages", label: "Packages", count: null, packages: [], checkedAt: null, error: "exit=1 manager=none" });
+  same(failedCommand.sources.map(s => s.source), ["vgs", "plugins", "themes"]);
+  const failedPkg = logic.normalizeSnapshot({ pkg: probe("", 1, "vgsh: refused: lock=failed"), self: probe({ behind: false, error: null }), plugins: probe([]), themes: probe([]) }, now);
+  same(failedPkg.sources[0], { source: "packages", label: "Packages", count: null, packages: [], checkedAt: null, error: "exit=1 lock=failed" });
 
   assert.equal(logic.tuiRunEnded({}, {}), false);
   assert.equal(logic.tuiRunEnded({}, { update: { running: false, code: 0, endedAt: 10 } }), true);
@@ -74,8 +83,14 @@ verify(load(file));
 
 const controls = [
   ["package rows count", "total += snapshot.sources[i].count;", "total += 0;"],
+  ["outdated rows count once", "count += 1;", "count += behind;"],
+  ["outdated packages keep behind", "behind: behind", "oldBehind: behind"],
+  ["check failure wins state", "if (checkFailure !== null && checkFailure !== undefined && checkFailure !== \"\") return { tone: \"danger\", text: String(checkFailure).slice(0, 200) };", "if (false) return { tone: \"danger\", text: \"\" };"],
+  ["status writes skip unchanged", "if (!hasOwn(before, key) || !sameJson(before[key], next[key])) out.push({ key: key, value: clone(next[key]) });", "out.push({ key: key, value: clone(next[key]) });"],
+  ["failure retry uses short delay", "failedAt + RETRY_AFTER_FAILURE_MS - now", "failedAt + interval - now"],
+  ["no package manager omits the package row", "if (!parsed.ok) return parsed.error.indexOf(\"manager=none\") !== -1 ? [] : [sourceRow(\"packages\", null, [], null, parsed.error)];", "if (!parsed.ok) return [sourceRow(\"packages\", null, [], null, parsed.error)];"],
   ["source errors set warning", "if (source !== null) return { tone: \"warning\", text: (source.label || source.source) + \": \" + String(source.error).slice(0, 180) };", "if (false) return { tone: \"warning\", text: \"\" };"] ,
-  ["stale after twice the interval", "now - snapshot.checkedAt > 2 * intervalMs", "now - snapshot.checkedAt > 3 * intervalMs"],
+  ["stale after twice the interval", "now - snapshot.checkedAt >= 2 * intervalMs", "now - snapshot.checkedAt > 3 * intervalMs"],
   ["TUI endedAt advances", "if (Number(next.endedAt) > Number(prior.endedAt)) return true;", "if (false) return true;"],
   ["outdated error makes a source error", "errors.push(row.id + \": \" + row.error);", "count += 0;"],
   ["failed probe is reported", "if (!probe || probe.status !== 0) return { ok: false, error: commandError(name, probe || { status: null, stderr: \"\" }) };", "if (!probe || probe.status !== 0) return { ok: true, value: [] };"],

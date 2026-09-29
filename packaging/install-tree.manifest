@@ -195,6 +195,7 @@ f share/vgs/shell/plugins/vgs.themes/ThemesPanel.qml
 f share/vgs/shell/plugins/vgs.themes/WallpaperState.qml
 f share/vgs/shell/plugins/vgs.themes/Widget.qml
 f share/vgs/shell/plugins/vgs.themes/manifest.json
+f share/vgs/shell/plugins/vgs.updates/NormalizeCheck.js
 f share/vgs/shell/plugins/vgs.updates/Service.qml
 f share/vgs/shell/plugins/vgs.updates/UpdatesLogic.js
 f share/vgs/shell/plugins/vgs.updates/bin/check

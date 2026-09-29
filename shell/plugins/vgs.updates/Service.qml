@@ -3,6 +3,9 @@ import Quickshell
 import Quickshell.Io
 import "UpdatesLogic.js" as Logic
 
+// Owns vgs.updates runtime state: cached snapshot readback, one check
+// process, cadence timers, IPC and every status write. Widgets and panels
+// read status only; this service is the single writer.
 Item {
     id: root
 
@@ -12,26 +15,33 @@ Item {
     property bool checking: false
     property bool queued: false
     property var lastTuiState: ({})
-    property string checkError: ""
+    property string checkFailure: ""
+    property double failedAt: -1
+    property var reported: ({})
     readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/vgs/updates"
     readonly property string statusPath: stateDir + "/status.json"
     readonly property string checkScript: String(Qt.resolvedUrl("bin/check")).replace(/^file:\/\//, "")
+    readonly property string vgshPath: Quickshell.shellDir + "/../bin/vgsh"
     readonly property int currentIntervalMs: Logic.intervalMs(shell === null ? null : shell.settings)
-    readonly property var published: Logic.publishValues(snapshot, checking, Date.now(), currentIntervalMs)
+    readonly property var currentTuiState: shell === null || shell.tui === undefined ? ({}) : shell.tui.state
 
     onShellChanged: start()
     onCurrentIntervalMsChanged: schedule()
-    onPublishedChanged: publish()
+    onCurrentTuiStateChanged: {
+        if (shell === null || shell.tui === undefined) return;
+        if (Logic.tuiRunEnded(lastTuiState, currentTuiState)) requestCheck("tui");
+        lastTuiState = currentTuiState;
+    }
 
     function start() {
         if (shell === null || registered) return;
         registered = true;
         shell.ipc.handle("check", () => root.requestCheck("ipc"));
-        shell.ipc.handle("status", () => JSON.stringify(root.published));
+        shell.ipc.handle("status", () => JSON.stringify(Logic.publishValues(snapshot, checking, Date.now(), currentIntervalMs, checkFailure)));
         cacheReader.path = statusPath;
         cacheReader.reload();
-        lastTuiState = shell.tui === undefined ? ({}) : shell.tui.state;
-        tuiWatch.start();
+        lastTuiState = currentTuiState;
+        publishNow();
     }
 
     function requestCheck(reason) {
@@ -39,23 +49,20 @@ Item {
             queued = true;
             return "queued";
         }
-        checkError = "";
         checking = true;
-        checkProc.command = [checkScript];
-        checkProc.environment = { VGS_UPDATES_VGSH: Quickshell.shellDir + "/../bin/vgsh" };
+        checkProc.command = [checkScript, "--vgsh", vgshPath];
         checkProc.running = true;
-        publish();
+        publishNow();
         return "started";
     }
 
     function maybeCheck() {
-        const delay = Logic.nextCheckDelay(snapshot, checking, Date.now(), currentIntervalMs);
-        if (delay === 0) requestCheck("due");
+        if (Logic.shouldRunCheck(snapshot, checking, Date.now(), currentIntervalMs, failedAt < 0 ? null : failedAt)) requestCheck("due");
         else schedule();
     }
 
     function schedule() {
-        const delay = Logic.nextCheckDelay(snapshot, checking, Date.now(), currentIntervalMs);
+        const delay = Logic.nextTimerDelay(snapshot, checking, Date.now(), currentIntervalMs, failedAt < 0 ? null : failedAt);
         cadence.interval = Math.max(1000, Math.min(delay, 2147483647));
         cadence.restart();
     }
@@ -67,23 +74,25 @@ Item {
             return false;
         }
         snapshot = judged.snapshot;
+        checkFailure = "";
+        failedAt = -1;
+        publishNow();
         schedule();
-        publish();
         return true;
     }
 
-    function publish() {
+    function publishNow() {
         if (shell === null) return;
-        const values = Logic.publishValues(snapshot, checking, Date.now(), currentIntervalMs);
-        setStatus("pending", values.pending);
-        if (values.lastCheck !== null) setStatus("lastCheck", values.lastCheck);
-        setStatus("checkState", values.checkState);
-        setStatus("sources", values.sources);
-    }
-
-    function setStatus(key, value) {
-        const reply = shell.status.set(key, value);
-        if (reply !== "ok") console.error("updates: " + reply);
+        const values = Logic.publishValues(snapshot, checking, Date.now(), currentIntervalMs, checkFailure);
+        const writes = Logic.statusWrites(reported, values);
+        if (writes.length === 0) return;
+        const next = Object.assign({}, reported);
+        for (const write of writes) {
+            const reply = shell.status.set(write.key, write.value);
+            if (reply !== "ok") console.error("updates: " + reply);
+            else next[write.key] = write.value;
+        }
+        reported = next;
     }
 
     FileView {
@@ -96,7 +105,7 @@ Item {
         }
         onLoadFailed: error => {
             if (error !== FileViewError.FileNotFound) console.warn("updates: cache unreadable: " + error);
-            root.publish();
+            root.publishNow();
             root.maybeCheck();
         }
     }
@@ -113,12 +122,13 @@ Item {
             completion = null;
             root.checking = false;
             if (done !== null && done.code === 0 && root.acceptText(checkOut.text)) {
-                root.checkError = "";
+                root.checkFailure = "";
+                root.failedAt = -1;
             } else {
                 const line = String(checkErr.text || "").split("\n").filter(l => l !== "")[0] || "no-output";
-                root.checkError = (done === null ? "start=failed" : "exit=" + done.code) + " " + line;
-                root.snapshot = { checkedAt: Date.now(), sources: [], error: root.checkError };
-                root.publish();
+                root.checkFailure = (done === null ? "start=failed" : "exit=" + done.code) + " " + line;
+                root.failedAt = Date.now();
+                root.publishNow();
                 root.schedule();
             }
             if (root.queued) {
@@ -132,18 +142,12 @@ Item {
         id: cadence
         repeat: false
         interval: root.currentIntervalMs
-        onTriggered: root.requestCheck("timer")
-    }
-
-    Timer {
-        id: tuiWatch
-        interval: 1000
-        repeat: true
         onTriggered: {
-            if (root.shell === null || root.shell.tui === undefined) return;
-            const next = root.shell.tui.state;
-            if (Logic.tuiRunEnded(root.lastTuiState, next)) root.requestCheck("tui");
-            root.lastTuiState = next;
+            if (Logic.shouldRunCheck(root.snapshot, root.checking, Date.now(), root.currentIntervalMs, root.failedAt < 0 ? null : root.failedAt)) root.requestCheck("timer");
+            else {
+                root.publishNow();
+                root.schedule();
+            }
         }
     }
 }

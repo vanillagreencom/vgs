@@ -4,6 +4,7 @@ root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
 mkdir -p -- "$root"
 printf 'git %s\n' "$*" >>"$root/calls.log"
 args=()
+work="${PWD}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-pager) shift ;;
@@ -13,13 +14,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 case "${args[*]}" in
-  'rev-parse --show-toplevel') printf '%s\n' "${work:-$PWD}" ;;
+  'rev-parse --show-toplevel') printf '%s\n' "$work" ;;
   "rev-parse --verify @{upstream}") printf '2222222222222222222222222222222222222222\n' ;;
   'rev-parse --verify HEAD') printf '1111111111111111111111111111111111111111\n' ;;
-  fetch*) exit 0 ;;
+  'fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance') exit 0 ;;
   'rev-list --count 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222') printf '1\n' ;;
-  rev-list*) printf '1\n' ;;
-  describe*) printf 'v0.1.0-1-g1111111\n' ;;
-  ls-remote*) printf '2222222222222222222222222222222222222222\trefs/heads/main\n' ;;
-  *) exit 0 ;;
+  'describe --long --tags --always --abbrev=7 --match v[0-9]* --exclude v*[!0-9.]* HEAD') printf 'v0.1.0-1-g1111111\n' ;;
+  'describe --long --tags --always --abbrev=7 --match v[0-9]* --exclude v*[!0-9.]* 2222222222222222222222222222222222222222') printf 'v0.1.0-2-g2222222\n' ;;
+  *) printf 'updates git stub: refused args=%s work=%s\n' "${args[*]}" "$work" >&2; exit 99 ;;
 esac

@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
-# Compose every update probe for vgs.updates and atomically publish one cache:
-# ${XDG_STATE_HOME:-~/.local/state}/vgs/updates/status.json.
+# vgs.updates check runner.
+# Usage: check --vgsh /absolute/path/to/vgsh
+# It holds $XDG_RUNTIME_DIR/vgs/updates/check.lock, starts the four read-only
+# vgsh probes concurrently in separate process groups, normalizes them through
+# NormalizeCheck.js, atomically writes $XDG_STATE_HOME/vgs/updates/status.json
+# and prints the same JSON. TERM, INT and HUP signal every live probe group,
+# wait for them and exit 128 plus the signal.
 set -euo pipefail
+
+usage() { printf 'updates-check: refused: %s\nusage: check --vgsh PATH\n' "$1" >&2; exit 2; }
+[[ ${1:-} == --vgsh && $# -eq 2 && -n ${2:-} ]] || usage 'vgsh=missing'
+vgsh="$2"
+[[ $vgsh == /* && -x $vgsh ]] || usage "vgsh=$vgsh"
 
 state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
 runtime_dir="${XDG_RUNTIME_DIR:-$state_home}"
@@ -10,73 +20,64 @@ lock_dir="$runtime_dir/vgs/updates"
 mkdir -p -- "$state_dir" "$lock_dir"
 lock="$lock_dir/check.lock"
 status_file="$state_dir/status.json"
-vgsh="${VGS_UPDATES_VGSH:-vgsh}"
 script="$(readlink -f -- "${BASH_SOURCE[0]}")"
 plugin_dir="$(cd -- "$(dirname -- "$script")/.." && pwd)"
 logic="$plugin_dir/UpdatesLogic.js"
+normalizer="$plugin_dir/NormalizeCheck.js"
+loader="$(cd -- "$(dirname -- "$vgsh")" && pwd)/lib/qml-library.js"
 prefix="$$"
 
 exec 9>"$lock"
 flock 9
 
-child=""
 cleanup_files=()
+probe_names=()
+pids=()
+stop_status=""
 cleanup() {
   local file
   for file in "${cleanup_files[@]}"; do rm -f -- "$file"; done
 }
-stop_child() {
-  if [[ -n $child ]]; then kill -TERM "$child" 2>/dev/null || true; fi
-}
-trap 'stop_child; cleanup; exit 143' TERM
-trap 'stop_child; cleanup; exit 130' INT
-trap 'stop_child; cleanup; exit 129' HUP
-trap cleanup EXIT
-
-run_probe() {
-  local name="$1" out err stat status=0
+write_status() { printf '%s\n' "$2" >"$state_dir/.${1}.${prefix}.status"; }
+start_probe() {
+  local name="$1" out err stat
+  shift
   out="$state_dir/.${name}.${prefix}.out"
   err="$state_dir/.${name}.${prefix}.err"
   stat="$state_dir/.${name}.${prefix}.status"
-  shift
   cleanup_files+=("$out" "$err" "$stat")
-  "$@" >"$out" 2>"$err" &
-  child=$!
-  wait "$child" || status=$?
-  child=""
-  printf '%s\n' "$status" >"$stat"
+  probe_names+=("$name")
+  setsid "$@" >"$out" 2>"$err" &
+  pids+=("$!")
 }
+signal_groups() {
+  local sig="$1" pid
+  for pid in "${pids[@]}"; do kill -"$sig" -- "-$pid" 2>/dev/null || kill -"$sig" -- "$pid" 2>/dev/null || true; done
+}
+stop_all() {
+  local sig_name="$1" code="$2"
+  stop_status="$code"
+  signal_groups "$sig_name"
+}
+trap 'stop_all TERM 143' TERM
+trap 'stop_all INT 130' INT
+trap 'stop_all HUP 129' HUP
+trap cleanup EXIT
 
-run_probe pkg "$vgsh" pkg check --json
-run_probe self "$vgsh" self status --json
-run_probe plugins "$vgsh" plugin outdated --json
-run_probe themes "$vgsh" theme outdated --json
+start_probe pkg "$vgsh" pkg check --json
+start_probe self "$vgsh" self status --json
+start_probe plugins "$vgsh" plugin outdated --json
+start_probe themes "$vgsh" theme outdated --json
+
+for i in "${!pids[@]}"; do
+  status=0
+  wait "${pids[$i]}" || status=$?
+  write_status "${probe_names[$i]}" "$status"
+done
+if [[ -n $stop_status ]]; then exit "$stop_status"; fi
 
 snapshot="$state_dir/.status.${prefix}.json"
 cleanup_files+=("$snapshot")
-node - "$logic" "$state_dir" "$prefix" <<'NODE' >"$snapshot"
-const fs = require("fs");
-const vm = require("vm");
-function load(file) {
-  const source = fs.readFileSync(file, "utf8");
-  const pragma = ".pragma library\n";
-  if (!source.startsWith(pragma)) throw new Error("pragma=missing path=" + file);
-  const library = {};
-  vm.runInNewContext(source.slice(pragma.length), library, { filename: file });
-  return library;
-}
-const logic = load(process.argv[2]);
-const dir = process.argv[3];
-const prefix = process.argv[4];
-function read(name) {
-  return {
-    status: Number(fs.readFileSync(`${dir}/.${name}.${prefix}.status`, "utf8")),
-    stdout: fs.readFileSync(`${dir}/.${name}.${prefix}.out`, "utf8"),
-    stderr: fs.readFileSync(`${dir}/.${name}.${prefix}.err`, "utf8")
-  };
-}
-const probes = { pkg: read("pkg"), self: read("self"), plugins: read("plugins"), themes: read("themes") };
-process.stdout.write(JSON.stringify(logic.normalizeSnapshot(probes, Date.now())) + "\n");
-NODE
+node "$normalizer" "$loader" "$logic" "$state_dir" "$prefix" >"$snapshot"
 mv -f -- "$snapshot" "$status_file"
 cat -- "$status_file"

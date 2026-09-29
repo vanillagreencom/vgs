@@ -4,16 +4,32 @@
 
 ## Sources
 
-The service runs one script, `bin/check`.
+The service runs this command with argv only:
 
-That script composes these read-only commands:
+```text
+bin/check --vgsh <absolute path to vgsh>
+```
+
+`bin/check` refuses when `--vgsh` is missing or is not an executable absolute path.
+
+The script holds this lock for the whole check:
+
+```text
+${XDG_RUNTIME_DIR}/vgs/updates/check.lock
+```
+
+It starts these read-only commands concurrently, each in its own process group:
 
 - `vgsh pkg check --json`: system packages, AUR, Flatpak and mise tools.
 - `vgsh self status --json`: the VGS checkout, package, Nix install or curl install.
 - `vgsh plugin outdated --json`: installed plugin git checkouts.
 - `vgsh theme outdated --json`: installed theme git checkouts and catalog installs.
 
-The script writes `${XDG_STATE_HOME}/vgs/updates/status.json` atomically.
+It writes this file atomically:
+
+```text
+${XDG_STATE_HOME}/vgs/updates/status.json
+```
 
 The status file has this shape:
 
@@ -21,9 +37,27 @@ The status file has this shape:
 { "checkedAt": 1790650695194, "sources": [], "error": null }
 ```
 
-Each source keeps its own count, package list and error.
+`checkedAt` is whole milliseconds since the Unix epoch.
 
-A failed source stays visible with `count: null` and its reason.
+`sources` is a list of source rows.
+
+Each row is `{ source, label, count, packages, checkedAt, error }`.
+
+A failed source stays visible with `count: null` and its reason in `error`.
+
+`error` is for a whole snapshot error that still produced JSON.
+
+A process failure before JSON leaves the last good file unchanged.
+
+## Counts
+
+Package-manager rows count packages.
+
+VGS counts as one update when `vgsh self status --json` reports `behind: true`.
+
+Plugins and themes count one update per checkout or catalog package that is behind.
+
+Their package rows keep the commit count as `behind` for the flyout.
 
 ## Cadence
 
@@ -41,6 +75,10 @@ It checks again when one of its own TUI runs records a new end in `shell.tui.sta
 
 A cache older than twice the interval reports a stale check state.
 
+A check process failure keeps the last good snapshot and reports a danger state.
+
+After a process failure, the service retries after five minutes.
+
 Only one check process runs at a time.
 
 A second request while a check runs queues one more check.
@@ -50,7 +88,7 @@ A second request while a check runs queues one more check.
 The service publishes these status keys:
 
 - `pending`: total updates with numeric counts.
-- `lastCheck`: the last check time in whole milliseconds since the Unix epoch.
+- `lastCheck`: the last successful snapshot time.
 - `checkState`: `ok`, `info`, `warning` or `danger`, with a short reason.
 - `sources`: the source rows for the later bar widget and flyout.
 
