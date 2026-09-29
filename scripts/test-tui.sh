@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Controls for bin/lib/tui.sh, the floating TUI presentation library. Each
-# row sources it into a fresh bash with an explicit environment and runs one
-# snippet: stub gum, sudo, uname and pgrep record their arguments or answer
+# Controls for bin/lib/tui.sh, the floating TUI presentation library, and
+# for the plugin template that sources it. Each library row sources it into
+# a fresh bash with an explicit environment and runs one snippet: stub gum, sudo, uname and pgrep record their arguments or answer
 # as the row sets. A row that needs no terminal runs under `setsid --wait`,
 # a session with no controlling terminal; one that needs a terminal runs on
 # a pseudo-terminal script(1) opens.
@@ -177,6 +177,41 @@ echo 3 >"$tmp/pgrep-exit"; printf '%s\n' "$kernel" >"$tmp/release"; : >"$tmp/pid
 run 'vgs_tui_reboot_check'
 check "a failed pgrep is refused" test "$status:$(err_first)" == "1:vgs-tui: refused: reboot-check=pgrep exit=3"
 
+# The plugin template's confirm, .agents/skills/vgs-plugin/templates/tui.sh,
+# run on a pseudo-terminal with a gum whose confirm answers as the row sets
+# and whose other commands succeed: No ends the script with 0, and a Ctrl-C
+# (130) or a refusal (2) leaves with its own code, so present shows no Done
+# prompt for either.
+template="$repo/.agents/skills/vgs-plugin/templates/tui.sh"
+tstubs="$tmp/template-stubs"; mkdir -p "$tstubs"
+printf '#!/bin/sh\n[ "$1" = confirm ] || exit 0\nread -r st <"%s"\nexit "$st"\n' "$tmp/confirm-exit" >"$tstubs/gum"
+chmod +x "$tstubs/gum"
+# run_template FILE CONFIRM_EXIT: FILE as a script, confirm answering
+# CONFIRM_EXIT; the exit status in $status.
+run_template() {
+  printf '%s\n' "$2" >"$tmp/confirm-exit"
+  status=0
+  "${lib_env[@]}" PATH="$tstubs:$stubs:$base_path" VGS_TUI_LIB="$lib" script -qec "$(printf '%q ' "$BASH" "$1")" /dev/null \
+    </dev/null >"$tmp/out" 2>&1 || status=$?
+}
+# run_template_rows FILE QUIET: every row through FILE; prints ok and FAIL
+# lines unless QUIET is `quiet`; returns the number of failing rows.
+run_template_rows() {
+  local row confirm want red=0
+  for row in "0|0" "1|0" "130|130" "2|2"; do
+    IFS='|' read -r confirm want <<<"$row"
+    run_template "$1" "$confirm"
+    if [[ $status == "$want" ]]; then
+      [[ $2 == quiet ]] || ok "the template exits $want when confirm answers $confirm"
+    else
+      red=$((red + 1))
+      [[ $2 == quiet ]] || fail "the template exits $want when confirm answers $confirm: got $status"
+    fi
+  done
+  return "$red"
+}
+run_template_rows "$template" loud || true
+
 # Must-fail controls, each on a copy of the library missing one rule.
 control() { # NAME NEEDLE REPLACEMENT: LIB names the copy
   local copy="$tmp/control-$1.sh"
@@ -198,5 +233,11 @@ control shared-lock 'flock -n -E 75 "$_vgs_tui_lock_fd" || status=$?' 'true || s
 lock_twice
 check "the shared-lock mutant lets a second holder in" grep -qxF second=0 "$tmp/out"
 LIB="$lib"
+
+# The template's control: a copy that turns every confirm status into success.
+template_copy="$tmp/control-template.sh"
+python3 -c 'import sys; p, o = sys.argv[1:]; s = open(p).read(); a = "vgs_tui_confirm \"Continue?\" || status=$?"; assert s.count(a) == 1; open(o, "w").write(s.replace(a, "vgs_tui_confirm \"Continue?\" || exit 0"))' "$template" "$template_copy"
+check "the swallowed-confirm mutant differs" test "$(cmp -s "$template" "$template_copy"; echo $?)" == 1
+check "the swallowed-confirm mutant fails a template row" test "$(run_template_rows "$template_copy" quiet && echo green || echo red)" == red
 
 rows_done test-tui

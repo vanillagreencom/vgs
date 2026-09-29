@@ -144,7 +144,7 @@ rows=(
   "cli|theme download library controls|node scripts/test-theme-download.js|bin/lib/theme-download.js scripts/tar-fixture.js"
   "cli|agent CLI target controls|scripts/test-vgsh-agents.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
   "cli|floating TUI presenter controls|scripts/test-vgsh-tui.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-tui bin/vgsh-plugin-judge bin/lib/* shell/Core/HyprlandLayer.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js"
-  "cli|floating TUI library controls|scripts/test-tui.sh|scripts/vgsh-rows.sh bin/lib/tui.sh"
+  "cli|floating TUI library controls|scripts/test-tui.sh|scripts/vgsh-rows.sh bin/lib/tui.sh .agents/skills/vgs-plugin/templates/tui.sh"
   "cli|gum target under the TUI presenter|node scripts/test-theme-gum.js|themes/targets/gum/* themes/vgs/* themes/light/* bin/lib/theme-render.js bin/vgsh-tui bin/lib/tui.sh shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "cli|judge file helper controls|node scripts/test-judge-files.js|bin/lib/judge-files.js"
   "cli|package manager table and vgsh pkg|node scripts/test-vgsh-pkg.js|shell/Core/PackageManagers.js bin/vgsh-pkg bin/vgsh bin/lib/judge-files.js bin/lib/qml-library.js scripts/fixtures/pkg/*"

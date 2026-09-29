@@ -6,7 +6,7 @@ The plugin contract: what a plugin is, what the core builds for it, what it may 
 
 ## Manifest
 
-A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `bin/lib/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text, the `hyprland` key's in `scripts/test-hyprland-layer.js` and the `tui` key's in `scripts/test-tui-logic.js`. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
+A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `bin/lib/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text, the `hyprland` key's in `scripts/test-hyprland-layer.js`. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -25,7 +25,7 @@ A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogi
 | `status` | no | The runtime values the plugin publishes through capability `status`, which the manifest must name, each `{ type, label, group?, hint?, command?, hidden? }`; its instances read them and the Settings page draws them read-only: [status.md](status.md). |
 | `hyprland` | no | What the plugin asks of Hyprland, as data the core renders into the Hyprland layer: `binds`, a list of `{ shortcut, key }`, each a shortcut the plugin registers through capability `shortcut`, which the manifest must name, and its default key such as `SUPER+SPACE`; and `layerRules`, a list of `{ namespace, blur, ignoreAlpha }` for `^vgs:<name>$`, the core hosts' namespaces. At least one list is non-empty, and no shortcut, key or namespace appears twice: [hyprland.md](hyprland.md). |
 | `requirements` | no | The external commands the plugin runs, each `{ command, packages, optional, purpose }`: a bare command name, its package per manager id, whether the plugin works without it, and one line on what it is for. A requirement never names a plugin, and `requires` is refused: [requirements.md](requirements.md). |
-| `tui` | no | Floating TUI scripts the plugin opens, keyed by name: `{ script, title, size, presentation, entry }`, `script` an executable file under `tui/`. Needs capability `tui`: [tui.md § The capability](tui.md#the-capability). |
+| `tui` | no | Floating TUI scripts: [tui.md § The capability](tui.md#the-capability). |
 
 ## Kinds
 

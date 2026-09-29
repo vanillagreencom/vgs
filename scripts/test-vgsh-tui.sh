@@ -278,6 +278,7 @@ rows=(
   "2|vgsh-tui: refused: argument=--title|$subject present --title t -- exits 0"
   "2|vgsh-tui: refused: argument=--size|$subject present --size wide -- exits 0"
   "2|vgsh-tui: refused: verb=frob|$subject frob"
+  "2|vgsh-tui: refused: argument=x|$subject check x"
   "2|vgsh-tui: refused: verb=missing|$subject"
   "2|vgsh: refused: tui-subcommand=missing|$repo/bin/vgsh tui"
   "2|vgsh: refused: tui-subcommand=frob|$repo/bin/vgsh tui frob"
@@ -322,6 +323,10 @@ cli_row() {
 cli_rows=(
   "tui list prints a line per listed TUI|$entries|tui list|0|$listed||ipc --pid $$ call shell listTuis"
   "tui list with nothing listed prints nothing|[]|tui list|0|||ipc --pid $$ call shell listTuis"
+  "tui list refuses a reply that is not a list|null|tui list|1||vgsh: refused: reply=malformed|ipc --pid $$ call shell listTuis"
+  "tui list refuses an object reply|{\"key\":\"a/b\"}|tui list|1||vgsh: refused: reply=malformed|ipc --pid $$ call shell listTuis"
+  "tui list refuses a row without a string label|[{\"key\":\"a/b\",\"group\":\"G\",\"label\":3}]|tui list|1||vgsh: refused: reply=malformed|ipc --pid $$ call shell listTuis"
+  "tui list refuses a guard refusal as unparseable|refused: guard=unowned pid=1|tui list|1||vgsh: refused: reply=unparseable|ipc --pid $$ call shell listTuis"
   "tui open prints the shell's ok|ok|tui open acme.tui/hello|0|ok||ipc --pid $$ call shell openTui acme.tui/hello"
   "tui open refuses with the shell's refusal|refused: tui=acme.tui/nope reason=undeclared|tui open acme.tui/nope|1||vgsh: refused: tui=acme.tui/nope reason=undeclared|ipc --pid $$ call shell openTui acme.tui/nope"
 )
@@ -352,6 +357,13 @@ done
 plain_run env PATH="$bare" "$subject" launch --title t -- exits 0
 check "no terminal launcher exits 69" test "$plain_status" == 69
 check "no terminal launcher is named" test "$(err_first)" == "vgsh-tui: refused: terminal=missing"
+# check: launch's own terminal test, which the shell runs before it answers.
+plain_run env PATH="$bare" "$subject" check
+check "check without a terminal launcher exits 69" test "$plain_status" == 69
+check "check without a terminal launcher names it as launch does" test "$(err_first)" == "vgsh-tui: refused: terminal=missing"
+plain_run "$subject" check
+check "check with a terminal launcher on PATH exits 0" test "$plain_status" == 0
+check "check with a terminal launcher prints nothing" test ! -s "$tmp/err"
 
 # A tree for a copy of bin/vgsh, bin/vgsh-tui or bin/vgsh-plugin-judge, as
 # the runner CLI's mutant trees are built: the three files copied, so a
@@ -442,5 +454,12 @@ check "the open-reply mutant fails a tui open row" test "$(run_cli_rows "$contro
 
 control list-lines vgsh-plugin-judge 'e.key.padEnd(32)' 'e.label.padEnd(32)'
 check "the list-lines mutant fails a tui list row" test "$(run_cli_rows "$tmp/control-list-lines/bin/vgsh" quiet >/dev/null && echo green || echo red)" == red
+
+control unshaped-reply vgsh-plugin-judge 'if (!Array.isArray(entries) || ' 'if (false && '
+check "the unshaped-reply mutant fails a tui list row" test "$(run_cli_rows "$tmp/control-unshaped-reply/bin/vgsh" quiet >/dev/null && echo green || echo red)" == red
+
+control unchecked-terminal vgsh-tui 'bad_invocation "argument=$1"; require_terminal ;;' 'bad_invocation "argument=$1"; : ;;'
+plain_run env PATH="$bare" "$control_bin" check
+check "the unchecked-terminal mutant answers check without a terminal launcher" test "$plain_status" == 0
 
 rows_done test-vgsh-tui

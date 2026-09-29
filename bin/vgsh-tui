@@ -6,6 +6,8 @@
 #       open a floating terminal that runs `present` with the same argv
 #   vgsh-tui present [--presentation full|plain] [--plugin <id> --dir <snapshot>] -- <argv...>
 #       run argv under the VGS presentation in this terminal
+#   vgsh-tui check
+#       exit 0 when launch would find xdg-terminal-exec, else refuse as launch does
 #
 # launch runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS ·
 # <text>" -- <this file> present ...`, with no shell between, and exits 0
@@ -44,7 +46,11 @@
 #
 # Every refusal prints one keyed line first: `vgsh-tui: refused: <key>=<value>`.
 # launch exits 2 on a bad invocation, 69 when xdg-terminal-exec is not on
-# PATH, and 1 when the size table cannot be read (`size-table=unreadable`). present exits with the command's code, 2 on a bad invocation, and 1
+# PATH (`terminal=missing`), and 1 when the size table cannot be read
+# (`size-table=unreadable`). check runs launch's own terminal test and exits
+# 0, or 69 with the same refusal, or 2 on a bad invocation; the shell runs it
+# to answer `launcher-missing` before it starts a launcher. present exits
+# with the command's code, 2 on a bad invocation, and 1
 # after refusing the plugin copy or script, a refusal it reports under the
 # same Done/Failed prompt. docs/architecture/tui.md.
 set -euo pipefail
@@ -77,6 +83,15 @@ app_id_of() { # SIZE
     if (!Object.prototype.hasOwnProperty.call(layer.TUI_WINDOWS, size)) process.exit(3);
     process.stdout.write(layer.TUI_WINDOWS[size].appId);
   ' "$root" "$1"
+}
+
+# The one terminal test launch and check share: exits 69 with the refusal
+# when xdg-terminal-exec is not on PATH.
+require_terminal() {
+  command -v xdg-terminal-exec >/dev/null || {
+    printf 'vgsh-tui: refused: terminal=missing\nxdg-terminal-exec is not on PATH; install it to open floating TUIs\n' >&2
+    exit 69
+  }
 }
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$self" >&2; }
@@ -133,10 +148,7 @@ launch() {
   esac
   # present runs in the terminal's working directory, not this one.
   [[ -z $plugin_id ]] || { [[ $plugin_dir == /* ]] || plugin_dir="$PWD/$plugin_dir"; pass=(--plugin "$plugin_id" --dir "$plugin_dir"); }
-  command -v xdg-terminal-exec >/dev/null || {
-    printf 'vgsh-tui: refused: terminal=missing\nxdg-terminal-exec is not on PATH; install it to open floating TUIs\n' >&2
-    exit 69
-  }
+  require_terminal
   setsid -f xdg-terminal-exec --app-id="$app_id" --title="VGS · $title" -- \
     "$self" present --presentation "$presentation" "${pass[@]}" -- "${argv[@]}"
 }
@@ -230,6 +242,7 @@ verb="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$verb" in
   launch|present) parse "$verb" "$@"; check_common; "$verb" ;;
+  check) [[ $# -eq 0 ]] || bad_invocation "argument=$1"; require_terminal ;;
   -h|--help|help) usage; exit 0 ;;
   *) bad_invocation "verb=${verb:-missing}" ;;
 esac

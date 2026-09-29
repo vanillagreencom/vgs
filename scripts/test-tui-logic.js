@@ -115,45 +115,60 @@ function suite(ctx, check) {
     ];
     for (const [name, args, want] of argRows) check("tuiArgsValid: " + name, ctx.tuiArgsValid(args), want);
 
-    // tuiRun: [name, enabled, script name, args, answer or argv].
+    // tuiRun: [name, enabled, launcher state, script name, args, argv, or
+    // the answer and whether it asks for a probe].
+    const argvHello = ["launch", "--title", "Hello", "--size", "default", "--presentation", "full", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/hello.sh"];
     const runRows = [
-        ["a declared script with arguments", true, "hello", ["a b", "$(x)"], ["launch", "--title", "Hello", "--size", "default", "--presentation", "full", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/hello.sh", "a b", "$(x)"]],
-        ["a declared script without arguments", true, "update", undefined, ["launch", "--title", "Update", "--size", "wide", "--presentation", "plain", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/update.sh"]],
-        ["a name the manifest does not declare", true, "other", [], "refused: tui=other reason=undeclared"],
-        ["a name that is a prototype member", true, "constructor", [], "refused: tui=constructor reason=undeclared"],
-        ["a name that is not a string", true, 3, [], "refused: tui=3 reason=undeclared"],
-        ["a name with a space is quoted", true, "a b", [], "refused: tui=\"a b\" reason=undeclared"],
-        ["a disabled plugin", false, "hello", [], "refused: tui=hello reason=disabled"],
-        ["arguments the judge refuses", true, "hello", ["a\nb"], "refused: tui=hello reason=args"],
+        ["a declared script with arguments", true, "present", "hello", ["a b", "$(x)"], argvHello.concat(["a b", "$(x)"])],
+        ["a declared script without arguments", true, "present", "update", undefined, ["launch", "--title", "Update", "--size", "wide", "--presentation", "plain", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/update.sh"]],
+        ["a launcher no probe has answered yet starts the launch", true, "unknown", "hello", [], argvHello],
+        ["a name the manifest does not declare", true, "present", "other", [], ["refused: tui=other reason=undeclared", false]],
+        ["a name that is a prototype member", true, "present", "constructor", [], ["refused: tui=constructor reason=undeclared", false]],
+        ["a name that is not a string", true, "present", 3, [], ["refused: tui=3 reason=undeclared", false]],
+        ["a name with a space is quoted", true, "present", "a b", [], ["refused: tui=\"a b\" reason=undeclared", false]],
+        ["a disabled plugin", false, "present", "hello", [], ["refused: tui=hello reason=disabled", false]],
+        ["arguments the judge refuses", true, "present", "hello", ["a\nb"], ["refused: tui=hello reason=args", false]],
+        ["a missing launcher refuses and asks for a probe", true, "missing", "hello", [], ["refused: tui=hello reason=launcher-missing", true]],
+        ["an undeclared name is refused before a missing launcher", true, "missing", "other", [], ["refused: tui=other reason=undeclared", false]],
+        ["a disabled plugin is refused before a missing launcher", false, "missing", "hello", [], ["refused: tui=hello reason=disabled", false]],
+        ["refused arguments come before a missing launcher", true, "missing", "hello", ["a\nb"], ["refused: tui=hello reason=args", false]],
     ];
     const running = Object.assign({ __revision: "r1" }, normal);
-    for (const [name, enabled, script, args, want] of runRows) {
-        const r = ctx.tuiRun(running, enabled, "/run/src", script, args);
-        check("tuiRun: " + name, r.ok ? r.argv : r.answer, want);
+    for (const [name, enabled, launcher, script, args, want] of runRows) {
+        const r = ctx.tuiRun(running, enabled, "/run/src", launcher, script, args);
+        check("tuiRun: " + name, r.ok ? r.argv : [r.answer, r.probe], want);
     }
-    check("tuiRun keys a launch by plugin and name", ctx.tuiRun(running, true, "/run/src", "hello", []).key, "acme.tui/hello");
+    check("tuiRun keys a launch by plugin and name", ctx.tuiRun(running, true, "/run/src", "present", "hello", []).key, "acme.tui/hello");
+    check("tuiRun throws on a launcher state no rule covers", (() => { try { ctx.tuiRun(running, true, "/run/src", "gone", "hello", []); return "answered"; } catch (e) { return e.message; } })(), "tui: launcher state \"gone\" is not one of unknown, present, missing");
 
     // tuiOpen and tuiEntries over two plugins, one disabled, and a core table.
     const other = Object.assign({ __revision: "r2" }, ctx.validateManifest(Object.assign(manifestWith({ fix: { script: "tui/fix.sh", title: "Fix", entry: { label: "Fix it", icon: "wrench", group: "Tools" } } }), { id: "acme.other" }), "/q").manifest);
     const manifests = { "acme.tui": running, "acme.other": other };
     const core = { doctor: { argv: ["vgsh", "doctor"], title: "Doctor", size: "tall", presentation: "full", entry: { label: "Check the system", icon: "stethoscope", group: "System" } }, quiet: { argv: ["true"], title: "Quiet", size: "default", presentation: "plain", entry: null } };
+    // tuiOpen: [name, enabled ids, launcher state, key, argv, or the answer
+    // and whether it asks for a probe].
     const openRows = [
-        ["a listed plugin script opens with no arguments", ["acme.tui"], "acme.tui/update", ["launch", "--title", "Update", "--size", "wide", "--presentation", "plain", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/update.sh"]],
-        ["a core TUI opens its command with no plugin", [], "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "vgsh", "doctor"]],
-        ["a declared script without an entry is not listed", ["acme.tui"], "acme.tui/hello", "refused: tui=acme.tui/hello reason=undeclared"],
-        ["a disabled plugin's listed script", ["acme.tui"], "acme.other/fix", "refused: tui=acme.other/fix reason=disabled"],
-        ["an unknown plugin", ["acme.tui"], "acme.none/fix", "refused: tui=acme.none/fix reason=undeclared"],
-        ["an unknown core TUI", [], "core/none", "refused: tui=core/none reason=undeclared"],
-        ["a core name that is a prototype member", [], "core/constructor", "refused: tui=core/constructor reason=undeclared"],
-        ["a key with no slash", ["acme.tui"], "acme.tui", "refused: tui=acme.tui reason=undeclared"],
-        ["a key with no owner", ["acme.tui"], "/update", "refused: tui=/update reason=undeclared"],
-        ["a key that is not a string", ["acme.tui"], null, "refused: tui=null reason=undeclared"],
+        ["a listed plugin script opens with no arguments", ["acme.tui"], "present", "acme.tui/update", ["launch", "--title", "Update", "--size", "wide", "--presentation", "plain", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/update.sh"]],
+        ["a core TUI opens its command with no plugin", [], "present", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "vgsh", "doctor"]],
+        ["a declared script without an entry is not listed", ["acme.tui"], "present", "acme.tui/hello", ["refused: tui=acme.tui/hello reason=undeclared", false]],
+        ["a disabled plugin's listed script", ["acme.tui"], "present", "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", false]],
+        ["an unknown plugin", ["acme.tui"], "present", "acme.none/fix", ["refused: tui=acme.none/fix reason=undeclared", false]],
+        ["an unknown core TUI", [], "present", "core/none", ["refused: tui=core/none reason=undeclared", false]],
+        ["a core name that is a prototype member", [], "present", "core/constructor", ["refused: tui=core/constructor reason=undeclared", false]],
+        ["a key with no slash", ["acme.tui"], "present", "acme.tui", ["refused: tui=acme.tui reason=undeclared", false]],
+        ["a key with no owner", ["acme.tui"], "present", "/update", ["refused: tui=/update reason=undeclared", false]],
+        ["a key that is not a string", ["acme.tui"], "present", null, ["refused: tui=null reason=undeclared", false]],
+        ["a listed plugin script with a missing launcher", ["acme.tui"], "missing", "acme.tui/update", ["refused: tui=acme.tui/update reason=launcher-missing", true]],
+        ["a core TUI with a missing launcher", [], "missing", "core/doctor", ["refused: tui=core/doctor reason=launcher-missing", true]],
+        ["an unknown key is refused before a missing launcher", [], "missing", "core/none", ["refused: tui=core/none reason=undeclared", false]],
+        ["a disabled plugin is refused before a missing launcher", ["acme.tui"], "missing", "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", false]],
+        ["a launcher no probe has answered yet opens the key", [], "unknown", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "vgsh", "doctor"]],
     ];
-    for (const [name, enabledIds, key, want] of openRows) {
-        const r = ctx.tuiOpen(manifests, enabledIds, "/run/src", core, key);
-        check("tuiOpen: " + name, r.ok ? r.argv : r.answer, want);
+    for (const [name, enabledIds, launcher, key, want] of openRows) {
+        const r = ctx.tuiOpen(manifests, enabledIds, "/run/src", launcher, core, key);
+        check("tuiOpen: " + name, r.ok ? r.argv : [r.answer, r.probe], want);
     }
-    check("tuiOpen keys a launch by the key it opened", ctx.tuiOpen(manifests, [], "/run/src", core, "core/doctor").key, "core/doctor");
+    check("tuiOpen keys a launch by the key it opened", ctx.tuiOpen(manifests, [], "/run/src", "present", core, "core/doctor").key, "core/doctor");
     check("tuiEntries: the core's and every enabled plugin's listed TUIs, by key", ctx.tuiEntries(manifests, ["acme.tui"], core), [
         { key: "acme.tui/update", plugin: "acme.tui", name: "update", title: "Update", label: "Update the system", icon: "terminal", group: "System" },
         { key: "core/doctor", plugin: "core", name: "doctor", title: "Doctor", label: "Check the system", icon: "stethoscope", group: "System" },
@@ -172,6 +187,30 @@ function suite(ctx, check) {
     ];
     for (const [name, completion, stderr, want] of outcomeRows)
         check("tuiLaunchOutcome: " + name, ctx.tuiLaunchOutcome("acme.tui/hello", completion, stderr), want);
+
+    // tuiLauncherAfter: [name, state before, completion, state after].
+    const stateRows = [
+        ["exit 0 finds the terminal", "unknown", { code: 0, status: 0 }, "present"],
+        ["exit 0 after a missing state finds it again", "missing", { code: 0, status: 0 }, "present"],
+        ["exit 69 finds no terminal", "present", { code: 69, status: 0 }, "missing"],
+        ["exit 69 before any answer", "unknown", { code: 69, status: 0 }, "missing"],
+        ["a process that never started says nothing", "missing", null, "missing"],
+        ["a crash says nothing", "missing", { code: 0, status: 1 }, "missing"],
+        ["a bad invocation says nothing", "unknown", { code: 2, status: 0 }, "unknown"],
+    ];
+    for (const [name, before, completion, want] of stateRows)
+        check("tuiLauncherAfter: " + name, ctx.tuiLauncherAfter(before, completion), want);
+
+    // tuiProbeOutcome: [name, completion, stderr, log line].
+    const probeRows = [
+        ["a probe that found the terminal", { code: 0, status: 0 }, "", ""],
+        ["a probe that found none is recorded, not logged", { code: 69, status: 0 }, "vgsh-tui: refused: terminal=missing", ""],
+        ["a probe that never started", null, "", "tui: probe=unstarted"],
+        ["a probe with a bad invocation", { code: 2, status: 0 }, "vgsh-tui: refused: argument=x\nusage", "tui: probe=failed exit=2 status=0 vgsh-tui: refused: argument=x"],
+        ["a probe that crashed", { code: 0, status: 1 }, "", "tui: probe=failed exit=0 status=1 "],
+    ];
+    for (const [name, completion, stderr, want] of probeRows)
+        check("tuiProbeOutcome: " + name, ctx.tuiProbeOutcome(completion, stderr), want);
 }
 
 suite(load(LOGIC), report);
@@ -224,7 +263,18 @@ const CONTROLS = [
     ["entries sort by key", "return rows.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });", "return rows;"],
     ["a label is quoted unless one visible word", "/^[\\x21-\\x7e]+$/.test(name)", "true"],
     ["a crashed launcher is a failure", "if (completion.status === 0 && completion.code === 0)", "if (completion.code === 0)"],
-    ["exit 69 is launcher-missing", "completion.code === TUI_LAUNCHER_MISSING", "false"],
+    ["exit 69 is launcher-missing", "if (completion.status === 0 && completion.code === TUI_LAUNCHER_MISSING)\n        return \"tui: refused: tui=\"", "if (false)\n        return \"tui: refused: tui=\""],
+    ["a missing launcher refuses", "if (launcher !== \"missing\")\n        return null;", "if (true)\n        return null;"],
+    ["a missing launcher asks for a probe", "    refusal.probe = true;\n", ""],
+    ["a launcher state outside the table throws", "if (TUI_LAUNCHER_STATES.indexOf(launcher) === -1)", "if (false)"],
+    ["run consults the launcher after the judge", "    var missing = tuiLauncherRefusal(launcher, name);\n    if (missing !== null)\n        return missing;\n", ""],
+    ["open consults the launcher for a core TUI", "        if (coreMissing !== null)\n            return coreMissing;\n", ""],
+    ["open consults the launcher for a plugin TUI", "    if (pluginMissing !== null)\n        return pluginMissing;\n", ""],
+    ["exit 0 is present", "    if (completion.code === 0)\n        return \"present\";", "    if (false)\n        return \"present\";"],
+    ["exit 69 is missing", "    if (completion.code === TUI_LAUNCHER_MISSING)\n        return \"missing\";", "    if (false)\n        return \"missing\";"],
+    ["a crash keeps the state", "if (completion === null || completion.status !== 0)\n        return state;", "if (completion === null)\n        return state;"],
+    ["a probe that answered logs nothing", "if (completion.status === 0 && (completion.code === 0 || completion.code === TUI_LAUNCHER_MISSING))", "if (completion.status === 0 && completion.code === 0)"],
+    ["a probe that never started is logged", "if (completion === null)\n        return \"tui: probe=unstarted\";", "if (false)\n        return \"tui: probe=unstarted\";"],
     ["a launcher that never started is logged", "if (completion === null)\n        return \"tui: launcher=unstarted", "if (false)\n        return \"tui: launcher=unstarted"],
 ];
 

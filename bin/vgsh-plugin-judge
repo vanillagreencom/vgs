@@ -16,7 +16,8 @@
 //   vgsh-plugin-judge tuis
 //       read the shell's `listTuis` reply on stdin and print it as
 //       `vgsh tui list` lines: one per listed floating TUI, its key, its
-//       group and its label
+//       group and its label; a reply that is not a list of rows with a
+//       string key, group and label is refused as `reply=malformed`
 //   vgsh-plugin-judge id <plugin-dir>
 //       print the `id` the manifest names; the manifest need not validate
 //   vgsh-plugin-judge owners <id>
@@ -115,6 +116,8 @@ main(() => {
         } catch (e) {
             refuse("reply=unparseable");
         }
+        if (!Array.isArray(entries) || !entries.every(e => e !== null && typeof e === "object" && ["key", "group", "label"].every(k => typeof e[k] === "string")))
+            refuse("reply=malformed");
         const lines = tuiLines(entries);
         if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
         break;

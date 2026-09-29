@@ -707,9 +707,13 @@ var TUI_SCRIPT = /^tui(\/[A-Za-z0-9_][A-Za-z0-9._-]*)+$/;
 // strings, each 1 to TUI_ARG_MAX characters with no control character.
 var TUI_ARGS_MAX = 16;
 var TUI_ARG_MAX = 256;
-// The exit status bin/vgsh-tui launch gives when xdg-terminal-exec is not on
-// PATH, its `terminal=missing` refusal.
+// The exit status bin/vgsh-tui launch and check give when xdg-terminal-exec
+// is not on PATH, their `terminal=missing` refusal.
 var TUI_LAUNCHER_MISSING = 69;
+// What the core knows of the terminal launcher: `unknown` until a probe or a
+// launch answers, `present` once one exited 0, `missing` once one exited
+// TUI_LAUNCHER_MISSING. tuiLauncherAfter moves it.
+var TUI_LAUNCHER_STATES = ["unknown", "present", "missing"];
 // The core's own floating TUIs, by name, listed in shell.tui.entries as
 // `core/<name>` and opened by that key: each { argv, title, size,
 // presentation, entry }, `argv` the core command the terminal runs and the
@@ -802,7 +806,22 @@ function tuiLabel(name) {
 }
 
 function tuiRefusal(name, reason) {
-    return { ok: false, answer: "refused: tui=" + tuiLabel(name) + " reason=" + reason };
+    return { ok: false, answer: "refused: tui=" + tuiLabel(name) + " reason=" + reason, probe: false };
+}
+
+// The refusal of a request the judge accepted while LAUNCHER, one of
+// TUI_LAUNCHER_STATES, is `missing`, or null. It asks for one probe, so a
+// terminal installed since the last one is found by a later request without
+// a restart. Any other state starts the launch: an `unknown` launcher that
+// finds no terminal is logged by tuiLaunchOutcome and moves the state.
+function tuiLauncherRefusal(launcher, name) {
+    if (TUI_LAUNCHER_STATES.indexOf(launcher) === -1)
+        throw new Error("tui: launcher state " + JSON.stringify(launcher) + " is not one of " + TUI_LAUNCHER_STATES.join(", "));
+    if (launcher !== "missing")
+        return null;
+    var refusal = tuiRefusal(name, "launcher-missing");
+    refusal.probe = true;
+    return refusal;
 }
 
 // Whether ARGS may follow a plugin's script: absent, or a list of at most
@@ -829,18 +848,23 @@ function tuiArgv(row, plugin, command) {
 }
 
 // Plugin MANIFEST's own TUI NAME with ARGS, from its published snapshot
-// under SOURCE_DIR (D014): { ok: true, key, argv }, `key` `<id>/<name>` and
-// `argv` what follows bin/vgsh-tui, or { ok: false, answer } with answer
-// `refused: tui=<name> reason=undeclared` for a name the manifest does not
-// declare, `reason=disabled` while the plugin is not ENABLED and
-// `reason=args` for arguments tuiArgsValid refuses.
-function tuiRun(manifest, enabled, sourceDir, name, args) {
+// under SOURCE_DIR (D014), while the launcher is LAUNCHER: { ok: true, key,
+// argv }, `key` `<id>/<name>` and `argv` what follows bin/vgsh-tui, or
+// { ok: false, answer, probe } with answer `refused: tui=<name>` and, in this
+// order, `reason=undeclared` for a name the manifest does not declare,
+// `reason=disabled` while the plugin is not ENABLED, `reason=args` for
+// arguments tuiArgsValid refuses and `reason=launcher-missing` as
+// tuiLauncherRefusal decides; `probe` is true for the last alone.
+function tuiRun(manifest, enabled, sourceDir, launcher, name, args) {
     if (typeof name !== "string" || !hasOwn(manifest.tui, name))
         return tuiRefusal(name, "undeclared");
     if (!enabled)
         return tuiRefusal(name, "disabled");
     if (!tuiArgsValid(args))
         return tuiRefusal(name, "args");
+    var missing = tuiLauncherRefusal(launcher, name);
+    if (missing !== null)
+        return missing;
     var row = manifest.tui[name];
     var plugin = { id: manifest.id, dir: sourceDir + "/" + manifest.__revision };
     return { ok: true, key: manifest.id + "/" + name, argv: tuiArgv(row, plugin, [row.script].concat(args === undefined ? [] : args)) };
@@ -850,8 +874,9 @@ function tuiRun(manifest, enabled, sourceDir, name, args) {
 // CORE_TUIS table, or `<plugin id>/<name>` of a script whose manifest in
 // MANIFESTS gives it an `entry`, from the plugin's snapshot under
 // SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key nothing
-// lists and `reason=disabled` for a plugin not in ENABLED_IDS.
-function tuiOpen(manifests, enabledIds, sourceDir, core, key) {
+// lists, `reason=disabled` for a plugin not in ENABLED_IDS, then
+// `reason=launcher-missing` as tuiLauncherRefusal decides for LAUNCHER.
+function tuiOpen(manifests, enabledIds, sourceDir, launcher, core, key) {
     var slash = typeof key === "string" ? key.indexOf("/") : -1;
     if (slash === -1)
         return tuiRefusal(key, "undeclared");
@@ -860,13 +885,19 @@ function tuiOpen(manifests, enabledIds, sourceDir, core, key) {
     if (owner === "core") {
         if (!hasOwn(core, name))
             return tuiRefusal(key, "undeclared");
+        var coreMissing = tuiLauncherRefusal(launcher, key);
+        if (coreMissing !== null)
+            return coreMissing;
         return { ok: true, key: key, argv: tuiArgv(core[name], null, core[name].argv) };
     }
     if (!hasOwn(manifests, owner) || !hasOwn(manifests[owner].tui, name) || manifests[owner].tui[name].entry === null)
         return tuiRefusal(key, "undeclared");
     if (enabledIds.indexOf(owner) === -1)
         return tuiRefusal(key, "disabled");
-    var launch = tuiRun(manifests[owner], true, sourceDir, name, []);
+    var pluginMissing = tuiLauncherRefusal(launcher, key);
+    if (pluginMissing !== null)
+        return pluginMissing;
+    var launch = tuiRun(manifests[owner], true, sourceDir, launcher, name, []);
     return { ok: true, key: key, argv: launch.argv };
 }
 
@@ -888,6 +919,34 @@ function tuiEntries(manifests, enabledIds, core) {
         Object.keys(manifests[id].tui).forEach(function (name) { add(id, name, manifests[id].tui[name]); });
     });
     return rows.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+}
+
+// The launcher state after a probe or a launch that was started while the
+// state was STATE ended with COMPLETION, { code, status } or null for one
+// that never started: `present` on exit 0, `missing` on
+// TUI_LAUNCHER_MISSING, STATE for any other end, which says nothing about the
+// terminal.
+function tuiLauncherAfter(state, completion) {
+    if (completion === null || completion.status !== 0)
+        return state;
+    if (completion.code === 0)
+        return "present";
+    if (completion.code === TUI_LAUNCHER_MISSING)
+        return "missing";
+    return state;
+}
+
+// The log line for a probe, `bin/vgsh-tui check`, that ended with
+// COMPLETION and STDERR, or "" for one that answered: exit 0 or
+// TUI_LAUNCHER_MISSING, which tuiLauncherAfter records. Every other end is
+// `tui: probe=failed exit=<code> status=<status>` with the first stderr
+// line, or `tui: probe=unstarted`.
+function tuiProbeOutcome(completion, stderr) {
+    if (completion === null)
+        return "tui: probe=unstarted";
+    if (completion.status === 0 && (completion.code === 0 || completion.code === TUI_LAUNCHER_MISSING))
+        return "";
+    return "tui: probe=failed exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0];
 }
 
 // The log line for a launcher of TUI KEY that ended with COMPLETION,

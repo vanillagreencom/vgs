@@ -254,9 +254,9 @@
 # with the full presentation, titled by --title or else by the command's
 # file name, and needs no shell running. `tui list` and `tui open` ask the
 # running shell, which decides what is listed and launches the TUI; `open`
-# prints `ok` once the launcher started, and a launcher that finds no
-# terminal is logged by the shell as `tui: refused: tui=<key>
-# reason=launcher-missing`: docs/architecture/tui.md.
+# prints `ok` once the launcher started, or the shell's refusal, such as
+# `tui=<key> reason=launcher-missing` while it found no terminal launcher:
+# docs/architecture/tui.md.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
