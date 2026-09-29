@@ -52,8 +52,8 @@ Item {
     // maxHeight less that pad: the body shows only the lines that fit.
     readonly property real fullHeight: content.implicitHeight + 2 * pad
     readonly property real pad: look.card.pad
-    // The stack's text column: rectangular text starts this far in from
-    // either end, a round slot at `pad`.
+    // The stack's text column: text without media starts this far in from
+    // either end, and every text ends this far from the right end.
     required property real textColumn
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
@@ -63,18 +63,26 @@ Item {
     readonly property var bodySegments: Logic.emojiSegments(Logic.styledBody(body, app, appIcon), emoji)
     readonly property bool singleLine: sanitizedBody.length === 0
     readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
-    readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
     // NotificationLogic.enrich's reading of this sender, or null.
     readonly property var enrichment: Logic.enrich(app, desktopEntry, appIcon, summary, body)
     readonly property bool showsFaces: enrichment !== null && enrichment.faces.length > 0
     readonly property bool showsBadge: enrichment !== null && workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
-    readonly property bool showsSlot: showsFaces || showsIcon
-    readonly property real slotWidth: showsFaces ? faceStack.implicitWidth : showsIcon ? look.card.icon : 0
-    readonly property real slotGap: showsSlot ? Math.max(look.card.gapIcon, textColumn - pad - slotWidth) : 0
+    // What the media slot draws: the people the rule read, else the
+    // notification's image, else its application's icon; none when the
+    // one-line summary opens with its own icon glyph.
+    readonly property string mediaKind: showsFaces ? "faces" : iconInSummary || iconSource.length === 0 ? "" : image.length > 0 ? "thumbnail" : "icon"
+    readonly property bool showsSlot: mediaKind !== "" && mediaSlot.drawable
+    // The lines the text runs to at the compact tier's width, which no
+    // tier changes, so the tier the judge reads from it moves no line: a
+    // summary that fits that width is one line, a longer one or one with a
+    // line break two, and a body adds at least one.
+    readonly property real compactTitleWidth: fullWidth - pad - look.media.compact.size - look.card.gapIcon - textColumn - (showsBadge ? look.badge.size + look.badge.gap : 0)
+    readonly property int compactLines: (summaryRow.visible ? (title.indexOf("\n") === -1 && titleMeasure.advanceWidth <= compactTitleWidth ? 1 : 2) : 0) + (singleLine ? 0 : 1)
+    readonly property string mediaTier: Logic.mediaTier(compactLines)
     readonly property real contentLeftInset: showsSlot ? pad : textColumn
     readonly property real contentWidth: Math.max(0, fullWidth - contentLeftInset - textColumn)
     readonly property real contentOffset: contentLeftInset - (fullWidth - contentWidth) / 2
-    readonly property real slotLeft: showsSlot ? content.x + iconSlot.x : -1
+    readonly property real slotLeft: showsSlot ? content.x + mediaSlot.x : -1
     // The summary as drawn: the rule's title once the workspace's icon
     // stands in for the workspace.
     readonly property string title: showsBadge ? enrichment.title : summary
@@ -113,36 +121,22 @@ Item {
         anchors.horizontalCenterOffset: card.contentOffset
         width: card.contentWidth
         opacity: card.contentOpacity
-        spacing: card.slotGap
+        spacing: card.showsSlot ? card.look.card.gapIcon : 0
 
-        Item {
-            id: iconSlot
-            Layout.preferredWidth: card.slotWidth
-            Layout.preferredHeight: card.showsFaces ? faceStack.implicitHeight : card.showsIcon ? card.look.card.icon : 0
+        MediaSlot {
+            id: mediaSlot
+            Layout.preferredWidth: implicitWidth
+            Layout.preferredHeight: implicitHeight
             Layout.alignment: Qt.AlignVCenter
             visible: card.showsSlot
-
-            Faces {
-                id: faceStack
-                look: card.look
-                visible: card.showsFaces
-                names: card.showsFaces ? card.enrichment.faces : []
-                more: card.showsFaces ? card.enrichment.more : 0
-                image: card.image
-                images: card.showsFaces ? card.faceImages : []
-            }
-
-            Image {
-                id: iconImage
-                anchors.fill: parent
-                visible: !card.showsFaces
-                source: card.iconInSummary ? "" : card.iconSource
-                sourceSize.width: card.look.card.icon * Screen.devicePixelRatio
-                sourceSize.height: card.look.card.icon * Screen.devicePixelRatio
-                fillMode: Image.PreserveAspectFit
-                asynchronous: true
-                smooth: true
-            }
+            look: card.look
+            tier: card.mediaTier
+            kind: card.mediaKind
+            source: card.iconSource
+            names: card.showsFaces ? card.enrichment.faces : []
+            more: card.showsFaces ? card.enrichment.more : 0
+            images: card.showsFaces ? card.faceImages : []
+            carried: card.image
         }
 
         ColumnLayout {
@@ -161,6 +155,7 @@ Item {
                 // Its image loads while hidden, and the name gives way to it
                 // only once it has.
                 ClippingRectangle {
+                    objectName: "notificationBadge"
                     Layout.preferredWidth: card.showsBadge ? card.look.badge.size : 0
                     Layout.preferredHeight: card.look.badge.size
                     Layout.alignment: Qt.AlignTop
@@ -206,6 +201,12 @@ Item {
                 FontMetrics {
                     id: titleMetrics
                     font: titleText.font
+                }
+
+                TextMetrics {
+                    id: titleMeasure
+                    font: titleText.font
+                    text: card.title
                 }
             }
 

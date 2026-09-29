@@ -23,6 +23,7 @@ ProgressBar 1.0 feedback/ProgressBar.qml
 Badge 1.0 feedback/Badge.qml
 Kbd 1.0 feedback/Kbd.qml
 CodeLine 1.0 feedback/CodeLine.qml
+AvatarGroup 1.0 feedback/AvatarGroup.qml
 ScrollArea 1.0 layout/ScrollArea.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
@@ -40,5 +41,6 @@ MenuItem 1.0 overlay/MenuItem.qml
 TitleButton 1.0 controls/TitleButton.qml
 internal AnchorTracker overlay/AnchorTracker.qml
 internal ScrollBar layout/ScrollBar.qml
+internal AvatarFace feedback/AvatarFace.qml
 singleton OverlayState 1.0 overlay/OverlayState.qml
 singleton ImagePool 1.0 foundation/ImagePool.qml

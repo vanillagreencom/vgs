@@ -327,12 +327,12 @@ expect_poll "a toast with an image shows" True has_row live "Pictured"
 pictured_key="$(key_of Pictured)"
 expect_poll "the sender's image was copied for the stored entry" True test_file "$note_images/$pictured_key-image"
 expect_poll "the stored entry points at its copy" "\"file://$note_images/$pictured_key-image\"" stored_image "$pictured_key"
-expected_errors+=('NotificationCard\.qml.*Cannot open: file://.*/missing\.png')
+expected_errors+=('MediaSlot\.qml.*Cannot open: file://.*/missing\.png')
 notify smoke-chat 0 "Unpictured" "" '[]' "{\"image-path\": <\"$home/missing.png\">}" 0 >/dev/null
 expect_poll "a toast whose image file is missing shows" True has_row live "Unpictured"
-shows_icon() { ipc smoke layerItems vgs.notifications NotificationCard summary,showsIcon | python3 -c 'import json,sys; print(next((v["showsIcon"] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None))' "$1"; }
-expect_poll "the card with a missing image draws no image" False shows_icon Unpictured
-expect_poll "the card with its image draws it" True shows_icon Pictured
+shows_slot() { ipc smoke layerItems vgs.notifications NotificationCard summary,showsSlot | python3 -c 'import json,sys; print(next((v["showsSlot"] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None))' "$1"; }
+expect_poll "the card with a missing image draws no image" False shows_slot Unpictured
+expect_poll "the card with its image draws it" True shows_slot Pictured
 unpictured_key="$(key_of Unpictured)"
 expect "no copy exists for the missing image" False test_file "$note_images/$unpictured_key-image"
 expect_poll "the stored entry with a missing image keeps no image" '""' stored_image "$unpictured_key"
@@ -349,16 +349,14 @@ expect "the copy is the cached image's body" "370 89504e470d0a1a0a" bash -c 'pri
 expect "the workspace's name gives way to its icon" '"from Ada Lovelace"' card_value "[acme] from Ada Lovelace" title
 expect "a direct message shows its sender's face" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
 notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 30000 >/dev/null
-expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
+expect_poll "a group message reads four people, its sender first, and the rest as more" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace", "edsger"], "more": 1}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
 expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
-token_faces_loaded() { ipc smoke layerItems vgs.notifications Faces names,images | python3 -c 'import json,sys
-for _screen, _rect, value in json.load(sys.stdin):
-    if value["names"] == ["alan", "ada", "grace"]:
-        images = value["images"]
-        print(len(images) == 3 and all(str(i).startswith("file://") and "?v=" in str(i) for i in images) and len(set(images)) == 3)
-        break
-else:
-    print(False)' ; }
+# The group draws three faces and a chip past four people: alan, ada and
+# grace, whose photos acme's cache holds.
+token_faces_loaded() { card_value "[acme] in ada, grace, alan, edsger, barbara" faceImages | python3 -c 'import json,sys
+t = sys.stdin.read()
+images = json.loads(t)[:3] if t.startswith("[") else []
+print(len(images) == 3 and all(str(i).startswith("file://") and "?v=" in str(i) for i in images) and len(set(images)) == 3)'; }
 expect_poll "the token cache supplies distinct Slack group photos" True token_faces_loaded
 notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 30000 >/dev/null
 expect_poll "a workspace with no disk-cache icon uses the token-cache icon" true card_value "[globex] in eng" showsBadge
@@ -626,6 +624,164 @@ note_card_reading "image avatar card geometry measured" Pictured
 note_card_reading "Slack faces card geometry measured" "[acme] in ada, grace, alan, edsger, barbara"
 note_header_reading
 expect "the inbox closes after header geometry" ok notes close
+
+# Media tiers: a card of one line takes the compact media slot and every
+# other card the regular one, and every card of a tier starts its text at
+# the same x, whatever its media: an image, one person or a group. The
+# people fit the slot, two to four as a cluster and seven as three faces
+# and a chip. The fixture set runs on a clear screen.
+tier_image="$repo/themes/catalog/thumbnails/akane.jpg"
+expect "clearing the screen before the media tiers is allowed" ok notes dismiss-all
+expect_poll "the screen is clear before the media tiers" 0 note_status onScreen
+tier_compact=("Tier image" "[acme] from Grace Hopper" "[acme] in edsger, barbara")
+tier_regular=("Tier image saved" "[acme] from Alan Turing" "[acme] in ada, grace" "[acme] in ada, grace, alan" "[acme] in ada, grace, alan, edsger" "[acme] in ada, grace, alan, edsger, barbara, ken, linus" "New message in tier-room")
+notify smoke-shot 0 "Tier image" "" '[]' "{\"image-path\": <\"$tier_image\">}" 0 >/dev/null
+notify Slack 0 "[acme] from Grace Hopper" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify Slack 0 "[acme] in edsger, barbara" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify smoke-shot 0 "Tier image saved" "Saved: screenshot.png" '[]' "{\"image-path\": <\"$tier_image\">}" 0 >/dev/null
+notify Slack 0 "[acme] from Alan Turing" "lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+for tier_group in "ada, grace" "ada, grace, alan" "ada, grace, alan, edsger" "ada, grace, alan, edsger, barbara, ken, linus"; do
+  notify Slack 0 "[acme] in $tier_group" "ada: the notes are up" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+done
+notify "" 0 "New message in tier-room" $'app.slack.com\n\nada: the notes are up' '[]' '{}' 0 >/dev/null
+# One card's tier, where its text block starts and its slot's size, as
+# `tier=<tier> left=<px> slot=<px>x<px>`: the block starts at its title,
+# its body or the workspace icon before the title, whichever is leftmost.
+# `absent` before the card and `no-text` or `no-slot` before its text or
+# slot shows.
+tier_reading() { # SUMMARY
+  local cards texts badges slots
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary,mediaTier)" || return
+  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
+  badges="$(ipc smoke layerItems vgs.notifications ClippingRectangle visible,objectName)" || return
+  slots="$(ipc smoke layerItems vgs.notifications MediaSlot visible)" || return
+  python3 -c 'import json,sys
+cards, texts, badges, slots = (json.loads(a) for a in sys.argv[2:6])
+card = next(((s, r, v) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
+if card is None: print("absent"); sys.exit()
+screen, (x, y, w, h), values = card
+inside = lambda r: x <= r[0] < x + w and y <= r[1] < y + h
+lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and v["objectName"] in ("notificationTitleText", "notificationBodyText") and inside(r)]
+lines += [r for s, r, v in badges if s == screen and v["visible"] and v["objectName"] == "notificationBadge" and inside(r)]
+slot = next((r for s, r, v in slots if s == screen and v["visible"] and inside(r)), None)
+if not lines: print("no-text"); sys.exit()
+if slot is None: print("no-slot"); sys.exit()
+print("tier=%s left=%d slot=%dx%d" % (values["mediaTier"], min(r[0] for r in lines) - x, slot[2], slot[3]))' "$1" "$cards" "$texts" "$badges" "$slots"
+}
+# Every reading is of TIER, and they share one text x and one slot size.
+tier_contract_value() { # TIER READING...
+  python3 -c 'import re,sys
+tier, readings = sys.argv[1], sys.argv[2:]
+parsed = [re.fullmatch(r"tier=(\w+) left=(\d+) slot=(\d+)x(\d+)", t) for t in readings]
+bad = [t for t, m in zip(readings, parsed) if not m]
+if bad: print(bad[0]); sys.exit()
+problems = []
+if any(m.group(1) != tier for m in parsed): problems.append("tier")
+if max(int(m.group(2)) for m in parsed) - min(int(m.group(2)) for m in parsed) > 1: problems.append("x")
+if len({(m.group(3), m.group(4)) for m in parsed}) != 1 or any(m.group(3) != m.group(4) for m in parsed): problems.append("slot")
+print("ok" if not problems else "violation " + ",".join(problems))' "$@"
+}
+checked_tier() { # TIER SUMMARY...
+  local tier="$1" summary t readings=()
+  shift
+  for summary in "$@"; do
+    t="$(tier_reading "$summary")" || return
+    readings+=("$t")
+  done
+  tier_contract_value "$tier" "${readings[@]}"
+}
+note_tier_reading() { # SUMMARY
+  local t
+  t="$(tier_reading "$1")" || { fail "$1: no tier reading"; return; }
+  ok "media tier measured: $1: $t"
+}
+# The faces in one card's slot, as JSON: the slot's rectangle and each
+# visible face's rectangle and label, the label the chip's "+N" or the
+# initials; `absent` before the card or its slot shows.
+group_reading() { # SUMMARY
+  local cards slots faces
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary)" || return
+  slots="$(ipc smoke layerItems vgs.notifications MediaSlot visible)" || return
+  faces="$(ipc smoke layerItems vgs.notifications AvatarFace visible,initials)" || return
+  python3 -c 'import json,sys
+cards, slots, faces = (json.loads(a) for a in sys.argv[2:5])
+card = next(((s, r) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
+if card is None: print("absent"); sys.exit()
+screen, (x, y, w, h) = card
+inside = lambda r: x <= r[0] < x + w and y <= r[1] < y + h
+slot = next((r for s, r, v in slots if s == screen and v["visible"] and inside(r)), None)
+if slot is None: print("absent"); sys.exit()
+print(json.dumps({"slot": slot, "faces": [[r, v["initials"]] for s, r, v in faces if s == screen and v["visible"] and inside(r)]}))' "$1" "$cards" "$slots" "$faces"
+}
+# PLACES faces, each inside the slot, the last labelled CHIP when given.
+group_fit_value() { # PLACES CHIP READING
+  python3 -c 'import json,sys
+t = sys.argv[3]
+if not t.startswith("{"): print(t); sys.exit()
+reading = json.loads(t)
+sx, sy, sw, sh = reading["slot"]
+faces = reading["faces"]
+problems = []
+if len(faces) != int(sys.argv[1]): problems.append("count")
+if any(r[0] < sx - 1 or r[1] < sy - 1 or r[0] + r[2] > sx + sw + 1 or r[1] + r[3] > sy + sh + 1 for r, _ in faces): problems.append("outside")
+if sys.argv[2] and (not faces or faces[-1][1] != sys.argv[2]): problems.append("chip")
+print("ok" if not problems else "violation " + ",".join(problems))' "$@"
+}
+checked_group() { # PLACES CHIP SUMMARY
+  local t
+  t="$(group_reading "$3")" || return
+  group_fit_value "$1" "$2" "$t"
+}
+expect "the tier predicate rejects two text starts in one tier" "violation x" tier_contract_value compact "tier=compact left=54 slot=28x28" "tier=compact left=66 slot=28x28"
+expect "the tier predicate rejects a card of another tier" "violation tier" tier_contract_value compact "tier=compact left=54 slot=28x28" "tier=regular left=54 slot=28x28"
+expect "the group predicate rejects a face outside the slot" "violation outside" group_fit_value 2 "" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[30, 16, 24, 24], "B"]]}'
+expect "the group predicate rejects a missing face" "violation count" group_fit_value 3 "" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[16, 16, 24, 24], "B"]]}'
+expect "the group predicate rejects a chip that counts wrong" "violation chip" group_fit_value 4 "+4" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[16, 0, 24, 24], "B"], [[16, 16, 24, 24], "C"], [[0, 16, 24, 24], "+3"]]}'
+expect_poll "every compact card starts its text at one x, whatever its media" ok checked_tier compact "${tier_compact[@]}"
+expect_poll "every regular card starts its text at one x, whatever its media" ok checked_tier regular "${tier_regular[@]}"
+expect_poll "two people fit the slot on its diagonal" ok checked_group 2 "" "[acme] in ada, grace"
+expect_poll "three people fit the slot as a triangle" ok checked_group 3 "" "[acme] in ada, grace, alan"
+expect_poll "four people fit the slot as a 2 by 2 cluster" ok checked_group 4 "" "[acme] in ada, grace, alan, edsger"
+expect_poll "seven people fit the slot as three faces and a +4 chip" ok checked_group 4 "+4" "[acme] in ada, grace, alan, edsger, barbara, ken, linus"
+for tier_summary in "${tier_compact[@]}" "${tier_regular[@]}"; do note_tier_reading "$tier_summary"; done
+# A face's image is cut to a circle: in a slot grab, the point a tenth of
+# the side in from the top left, outside the slot's inscribed circle and
+# inside a corner radius under a fifth of the side, is clear, and the
+# middle shows the image, RGB when given. The unit runner draws no shader
+# effect, so the cut is read here. Grace's photo in acme's cache is
+# 150,70,180; the control reads a thumbnail, cropped to a square with a
+# small radius, whose corner point is drawn.
+face_cut_value() { # PNG [R,G,B]
+  python3 -c "$png_rgba_py"'
+image = png_rgba(sys.argv[1])
+if isinstance(image, str): print(image); sys.exit()
+iw, ih, rows = image
+def px(fx, fy):
+    x, y = min(iw - 1, int(fx * iw)), min(ih - 1, int(fy * ih))
+    return rows[y][4 * x:4 * x + 4]
+problems = []
+if px(0.1, 0.1)[3] > 25: problems.append("cut")
+if len(sys.argv) > 2 and sys.argv[2]:
+    want, centre = [int(v) for v in sys.argv[2].split(",")], px(0.5, 0.5)
+    if centre[3] < 230 or any(abs(c - w) > 12 for c, w in zip(centre[:3], want)): problems.append("image")
+print("ok" if not problems else "violation " + ",".join(problems))' "$@"
+}
+# The slot grabbed again on each poll, since the photo loads after the
+# card shows; the grab itself lands a frame later.
+grabbed_face_cut() { # PROPERTY VALUE PNG [R,G,B]
+  local state
+  [[ $(ipc smoke grabLayerItem vgs.notifications MediaSlot "$1" "$2" "$3") == grabbing ]] || { echo ungrabbed; return; }
+  for _ in $(seq 1 20); do
+    state="$(ipc smoke grabbed)" || return
+    [[ $state == "saved $3" ]] && { face_cut_value "$3" "${4:-}"; return; }
+    sleep 0.1
+  done
+  echo "grab=$state"
+}
+face_png="$sandbox/face-grace.png"
+thumb_png="$sandbox/thumbnail-slot.png"
+render expect_poll "a face's photo shows cut to a circle" ok grabbed_face_cut names "Grace Hopper" "$face_png" 150,70,180
+render expect_poll "the cut predicate rejects a square corner" "violation cut" grabbed_face_cut kind thumbnail "$thumb_png"
 
 # Custom emoji. The synthetic cache holds acme's :smoke-party:, which the
 # helper made into a normalized image at start. A card in acme draws it

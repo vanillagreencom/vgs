@@ -138,7 +138,7 @@ Item {
             Slider { from: 0; to: 100; value: 40; width: parent.width }
             Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
 
-            SectionHeader { text: "Feedback"; description: "Progress, spinner, badges, key caps and a code line to copy" }
+            SectionHeader { text: "Feedback"; description: "Progress, spinner, badges, key caps, avatar groups of one to seven people and a code line to copy" }
             Flow {
                 width: parent.width
                 spacing: Theme.space.lg
@@ -155,6 +155,27 @@ Item {
                 }
                 Kbd { text: "Ctrl" }
                 Kbd { text: "K" }
+            }
+            Flow {
+                width: parent.width
+                spacing: Theme.space.lg
+                Repeater {
+                    // One to seven people: a lone face, the diagonal, the
+                    // triangle, the 2 by 2 cluster and three faces with a
+                    // chip for the rest.
+                    model: [1, 2, 3, 4, 7]
+                    AvatarGroup {
+                        required property int modelData
+                        readonly property var everyone: [
+                            { image: "", initials: "AL", tint: Theme.color.accent },
+                            { image: "", initials: "GH", tint: Theme.color.info },
+                            { image: "", initials: "AT", tint: Theme.color.success },
+                            { image: "", initials: "ED", tint: Theme.color.warning }
+                        ]
+                        people: everyone.slice(0, Math.min(modelData, everyone.length))
+                        more: Math.max(0, modelData - everyone.length)
+                    }
+                }
             }
             CodeLine { width: parent.width; text: "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"; copyLabel: "Copy the command" }
             Flow {

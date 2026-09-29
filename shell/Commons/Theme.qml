@@ -57,6 +57,7 @@ Singleton {
     readonly property var badge: published.badge
     readonly property var kbd: published.kbd
     readonly property var codeLine: published.codeLine
+    readonly property var avatarGroup: published.avatarGroup
     readonly property var tabs: published.tabs
     readonly property var listItem: published.listItem
     readonly property var sectionHeader: published.sectionHeader

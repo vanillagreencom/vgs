@@ -147,8 +147,8 @@ var TOKENS = {
         // for 94; scripts/test-notifications-logic.js holds the table to it.
         pad: length(14),
         maxHeight: length(94),
+        // Between the media slot and the text, at either tier.
         gapIcon: length(12),
-        icon: length(40),
         lineGap: length(2),
         summaryLines: number(2, 1, 8),
         panelEnterScale: share(0.97),
@@ -156,13 +156,30 @@ var TOKENS = {
         exitScale: share(0.3)
     },
 
-    // The people a notification names, as overlapping round faces in the
-    // icon slot: one alone at the icon's size, several smaller, each ringed
-    // in the glass and laid over the one before it, and a "+N" chip last,
-    // on top.
+    // The slot a card's image, people or application icon sits in, square
+    // and `size` wide at each tier NotificationLogic.mediaTier names:
+    // `compact` for a card of one line, `regular` for every other. The
+    // tier alone places the text, `card.pad + size + card.gapIcon` in, so
+    // every card of a tier starts its text at the same x. An image is
+    // cropped to the square with corners of `radius`, an application icon
+    // is drawn `icon` wide in the middle, and people fill it as faces.
+    // `regular` keeps the reference's 40 px icon slot, the one slot
+    // Omarchy's notification card draws every image and icon in
+    // (shell/plugins/notifications/components/NotificationCard.qml on
+    // quattro, read 2026-09-29); `compact` is 28, so a one-line card with
+    // media is 28 plus twice `card.pad` tall.
+    media: {
+        compact: { size: length(28), icon: length(24), radius: length(6) },
+        regular: { size: length(40), icon: length(40), radius: length(8) }
+    },
+
+    // The people a notification names, as faces in the media slot, laid
+    // out by the AvatarGroup of qs.Ui: one alone fills the slot; two to
+    // four overlap clockwise, each `share` of the slot across, ringed in
+    // the glass and laid over the one before it; past four, three faces
+    // and a "+N" chip.
     face: {
-        small: length(26),
-        overlap: length(10),
+        share: share(0.6),
         ring: color("{glass.base}"),
         ringWidth: length(2),
         // Every face is opaque, so a face over another cuts it out rather
@@ -181,8 +198,9 @@ var TOKENS = {
             teal: color("mix({glass.base}, #3fb8a6, 0.6)"),
             rose: color("mix({glass.base}, #e06a8c, 0.6)")
         },
-        initials: { size: length(15), weight: weight(600) },
-        initialsSmall: { size: length(10), weight: weight(600) }
+        // The initials' size as a share of the face's diameter.
+        initials: share(0.42),
+        initialsWeight: weight(600)
     },
 
     // The workspace a summary names, as its small rounded icon before it.

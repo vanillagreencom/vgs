@@ -155,9 +155,10 @@ function summaryStartsWithGlyph(summary) {
 
 // -------------------------------------------------------- enrichment
 
-// A card stacks at most FACES_MAX faces; the people past them are one
+// A card reads at most FACES_MAX people, the most its AvatarGroup draws
+// as faces; it counts the people past them, which the group shows as a
 // "+N" chip.
-var FACES_MAX = 3;
+var FACES_MAX = 4;
 // A sender's workspace list is read up to WORKSPACES_MAX workspaces, so the
 // icon copies taken from it stay bounded.
 var WORKSPACES_MAX = 16;
@@ -229,6 +230,13 @@ function enrich(app, desktopEntry, appIcon, summary, body) {
         faces: read.people.slice(0, FACES_MAX),
         more: Math.max(0, read.people.length - FACES_MAX)
     };
+}
+
+// The media slot's tier for a card whose text runs to `lines` lines at
+// the compact tier's text width: `compact` for one line, `regular` for
+// more. Appearance's `media` group holds each tier's sizes.
+function mediaTier(lines) {
+    return lines <= 1 ? "compact" : "regular";
 }
 
 function fold(name) {

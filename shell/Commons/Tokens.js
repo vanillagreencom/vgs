@@ -482,6 +482,24 @@ var TOKENS = {
         confirm: number(1500, 0, 10000)
     },
 
+    // People as round faces in a square box `size` wide. One person fills
+    // the box. Two to four overlap, clockwise from the top left, each
+    // `face` of the box across and ringed `ringWidth` in `ring`; past four,
+    // three faces and a `chip` disc that counts the rest. A face without
+    // an image shows initials, `initials` of its diameter, on its tint, or
+    // on `tint` when it names none.
+    avatarGroup: {
+        size: length(40),
+        face: share(0.6),
+        ringWidth: length("{border.thick}"),
+        ring: color("{color.surface}"),
+        tint: color("{color.surfaceHover}"),
+        chip: color("{color.surfaceRaised}"),
+        foreground: color("{color.text}"),
+        initials: share(0.42),
+        weight: weight(600)
+    },
+
     tabs: {
         height: length("{size.control.md}"),
         gap: length("{space.md}"),
