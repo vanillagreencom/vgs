@@ -167,8 +167,8 @@
 # each prints `vgsh: refused: target=<name> reason=<key>`), 4 when restart
 # refuses because the session is locked, 75 when another shell holds the
 # lock or another theme command holds the theme lock, 69 when the shell is
-# not running, 78 when `run` finds a tool below the runtime floor. The usage
-# text is this header; `vgsh --help` prints it and exits 0.
+# not running, 78 when `run` or `restart` finds a tool below the runtime
+# floor. The usage text is this header; `vgsh --help` prints it and exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
