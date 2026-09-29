@@ -220,7 +220,7 @@ expect_poll "the unreadable image list is a failure with its reason" '[1, "faile
 expect "a set whose runner prints no result is accepted" ok probe theme-set /nowhere/a.jpg
 expect_poll "the unreadable set is a failure with its reason" '[1, "failed", null, null, "output-unreadable"]' answer set state path screen reason
 expect "a download whose runner prints no result is accepted" ok probe theme-wallpapers nord
-expect_poll "the unreadable download is a failure with its reason" '[1, "failed", "nord", null, "output-unreadable"]' answer wallpapers state theme wallpapers reason
+expect_poll "the unreadable download is a failure with its reason" '[3, "failed", "nord", null, "output-unreadable"]' answer wallpapers state theme wallpapers reason
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 
 rm -r -- "$browse" "$installed/nord"

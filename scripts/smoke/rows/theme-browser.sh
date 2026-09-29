@@ -387,6 +387,9 @@ type_keys -k Tab || fail "sending Tab on one screen failed"
 expect_poll "Tab on one screen steps" "$nord_b" wall_selected
 press_wallpapers || fail "typing SUPER+W to close failed"
 expect_poll "SUPER+W on the open wallpaper view closes it" 0 layer_count vgs:overlay
+expect "the follow after the wallpaper rows ends" idle theme_idle
+expect "vgs applies after the wallpaper rows" "ok theme=vgs state=applied shell=applied" vgsh_theme apply vgs
+expect_poll "the shell follows vgs after the wallpaper rows" vgs ipc smoke themeName
 
 expect "disabling vgs.themes after the browser rows is allowed" ok ipc shell setPluginEnabled vgs.themes false
 expect_poll "disabling vgs.themes released its shortcut" '[]' lent_themes
