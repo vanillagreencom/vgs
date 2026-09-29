@@ -1,4 +1,4 @@
-# D046: Services build after the first bars present a frame
+# D047: Services build after the first bars present a frame
 
 [← Decision Index](INDEX.md)
 
