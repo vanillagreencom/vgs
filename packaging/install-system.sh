@@ -9,7 +9,9 @@
 # $DESTDIR$PREFIX/bin/vgsh and points to ../share/vgs/bin/vgsh. Root README.md
 # and LICENSE land under share/doc/vgs and share/licenses/vgs.
 # The installed shell tree drops developer-only AGENTS.md, CLAUDE.md and
-# README.md files under shell/. Refusals print one keyed first line.
+# README.md files under shell/. Install into a fresh DESTDIR, or remove an
+# old runtime tree before running this script. Refusals print one keyed first
+# line.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -56,10 +58,27 @@ skip_shell_markdown() { # RELATIVE_PATH
   esac
 }
 
-tracked_tree() {
+refuse() { # STATUS KEY [DETAIL...]
+  local status="$1"
+  printf 'install-system: refused: %s\n' "$2" >&2
+  shift 2
+  [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2
+  exit "$status"
+}
+
+directory_nonempty() { # DIR
+  local -a entries
+  [[ -d $1 ]] || return 1
+  shopt -s nullglob dotglob
+  entries=("$1"/*)
+  shopt -u nullglob dotglob
+  ((${#entries[@]} > 0))
+}
+
+enumerate_tree() {
   local top
   if top="$(git -C "$source_root" rev-parse --show-toplevel 2>/dev/null)" && [[ $top == "$source_root" ]]; then
-    git -C "$source_root" ls-files -z -- bin shell config themes VERSION
+    "${VGS_INSTALL_ENUMERATOR:-git}" -C "$source_root" ls-files -- bin shell config themes VERSION
   else
     python3 - "$source_root" <<'PY'
 import os
@@ -67,24 +86,58 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+errors = []
+def onerror(error):
+    errors.append(f"{error.filename}: {error.strerror}")
 for base in ("bin", "shell", "config", "themes"):
     start = root / base
-    for current, dirs, files in os.walk(start, followlinks=False):
+    for current, dirs, files in os.walk(start, followlinks=False, onerror=onerror):
         dirs[:] = sorted(dirs)
         for name in sorted(files):
             path = pathlib.Path(current) / name
             if path.is_file() or path.is_symlink():
-                print(path.relative_to(root).as_posix(), end="\0")
+                print(path.relative_to(root).as_posix())
 version = root / "VERSION"
 if version.is_file() or version.is_symlink():
-    print("VERSION", end="\0")
+    print("VERSION")
+if errors:
+    for error in errors:
+        print(error, file=sys.stderr)
+    raise SystemExit(1)
 PY
   fi
 }
 
+bin_link="$install_root/bin/vgsh"
+if directory_nonempty "$runtime_root"; then
+  refuse 1 "target=not-empty path=$runtime_root" "remove the old tree or install into a fresh DESTDIR"
+fi
+if [[ -e $bin_link || -L $bin_link ]]; then
+  if [[ ! -L $bin_link || $(readlink -- "$bin_link") != "../share/vgs/bin/vgsh" ]]; then
+    refuse 1 "link=unexpected path=$bin_link" "remove the old command or install into a fresh DESTDIR"
+  fi
+fi
+
+enumerate_errors="$source_root/tmp/install-system-enumerate-errors.$$"
+cleanup() { rm -f -- "$enumerate_errors"; }
+trap cleanup EXIT
+mkdir -p -- "$source_root/tmp"
+if ! entries_text="$(enumerate_tree 2>"$enumerate_errors")"; then
+  printf 'install-system: refused: enumerate=failed path=%s\n' "$source_root" >&2
+  cat -- "$enumerate_errors" >&2
+  exit 1
+fi
+install_entries=()
+if [[ -n $entries_text ]]; then
+  mapfile -t install_entries <<<"$entries_text"
+fi
+if ((${#install_entries[@]} == 0)); then
+  refuse 1 "enumerate=empty path=$source_root"
+fi
+
 mkdir -p -- "$runtime_root" "$install_root/bin" "$install_root/share/doc/vgs" "$install_root/share/licenses/vgs"
 
-while IFS= read -r -d '' rel; do
+for rel in "${install_entries[@]}"; do
   [[ -n $rel ]] || continue
   skip_shell_markdown "$rel" && continue
   src="$source_root/$rel"
@@ -92,7 +145,7 @@ while IFS= read -r -d '' rel; do
   [[ -f $src || -L $src ]] || continue
   mkdir -p -- "$(dirname -- "$dst")"
   cp -Pp -- "$src" "$dst"
-done < <(tracked_tree)
+done
 
 cp -p -- "$source_root/README.md" "$install_root/share/doc/vgs/README.md"
 cp -p -- "$source_root/LICENSE" "$install_root/share/licenses/vgs/LICENSE"

@@ -58,6 +58,27 @@ render() {
 # leaves out a line matching one of them.
 expected_errors=()
 ok() { printf '  ok    %s\n' "$*"; }
+error_pattern=' ERROR |WARN qml: |WARN scene:|WARN quickshell\.hyprland|TypeError|ReferenceError|is not defined|Cannot read|Cannot assign'
+unexpected_log_errors() { # LOG
+  python3 - "$1" "$error_pattern" "${expected_errors[@]}" <<'PY'
+import re, sys
+path, pattern, expected = sys.argv[1], re.compile(sys.argv[2]), [re.compile(e) for e in sys.argv[3:]]
+for line in open(path, errors="replace"):
+    if pattern.search(line) and not any(e.search(line) for e in expected):
+        print(line.rstrip())
+PY
+}
+check_unexpected_log() { # LABEL LOG
+  local label="$1" log="$2" log_errors
+  if ! log_errors="$(unexpected_log_errors "$log")"; then
+    fail "$label unreadable: $log"
+  elif [[ -n $log_errors ]]; then
+    fail "$label holds errors:"
+    head -n 20 <<<"$log_errors"
+  else
+    ok "$label holds no unexpected error ($log)"
+  fi
+}
 
 # Runs on every exit, so it is armed before either directory exists and
 # removes only what was made.
@@ -91,11 +112,15 @@ home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 python3 - "$repo" "$sandbox/repo" "${source_tree:-$repo}" <<'PY'
 import pathlib, shutil, sys
 source, target, tree = map(pathlib.Path, sys.argv[1:])
-for directory in ("shell", "bin", "config", "themes", "packaging"):
+for directory in ("shell", "bin", "config", "themes"):
     shutil.copytree(tree / directory, target / directory)
+shutil.copytree(source / "packaging", target / "packaging")
 shutil.copytree(source / "scripts", target / "scripts")
 for file_name in ("VERSION", "LICENSE", "README.md"):
-    shutil.copyfile(tree / file_name, target / file_name)
+    origin = tree / file_name
+    if not origin.exists():
+        origin = source / file_name
+    shutil.copyfile(origin, target / file_name)
 # The copy ships no target: each would detect the host's own application on
 # PATH, and its reload hook would signal that application in the live
 # session. The rows add the fixture targets they read. A tree older than the

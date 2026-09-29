@@ -17,6 +17,7 @@
 - `$PREFIX/bin/vgsh` is a symlink to `../share/vgs/bin/vgsh`.
 - The installer drops `AGENTS.md`, `CLAUDE.md` and `README.md` under `shell/`, and installs the root `README.md` and `LICENSE` under doc and licence paths.
 - `scripts/check-install-tree.sh` compares the installed tree with `packaging/install-tree.manifest`, and has a `--write` mode for intentional file-list updates.
+- The installer refuses an existing non-empty runtime tree. A package upgrade installs into a fresh staging root, or removes the old runtime tree first.
 - Publishing runs from local scripts. VGS adds no GitHub workflow for releases or package publication.
 - VGS uses the MIT licence. Package metadata uses `MIT AND OFL-1.1 AND ISC` because bundled fonts and icons carry their own licences.
 
@@ -36,7 +37,7 @@ VGS takes the single-tree property, but not the distribution ownership. VGS inst
 
 ## Verification
 
-`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix and applies the default theme.
+`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme.
 
 **Revisit When**: VGS ships architecture-specific binaries, package publication moves to a workflow, or a channel needs a different runtime tree.
 

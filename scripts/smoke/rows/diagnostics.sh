@@ -1,24 +1,7 @@
 # Every QML warning and error the shell logged, minus the lines rows
 # provoked on purpose, plus the engine's own error classes.
 set -euo pipefail
-error_pattern=' ERROR |WARN qml: |WARN scene:|WARN quickshell\.hyprland|TypeError|ReferenceError|is not defined|Cannot read|Cannot assign'
-unexpected_errors() {
-  python3 - "$instance_log" "$error_pattern" "${expected_errors[@]}" <<'PY'
-import re, sys
-path, pattern, expected = sys.argv[1], re.compile(sys.argv[2]), [re.compile(e) for e in sys.argv[3:]]
-for line in open(path, errors="replace"):
-    if pattern.search(line) and not any(e.search(line) for e in expected):
-        print(line.rstrip())
-PY
-}
-if ! log_errors="$(unexpected_errors)"; then
-  fail "shell log unreadable: $instance_log"
-elif [[ -n $log_errors ]]; then
-  fail "shell log holds errors:"
-  head -n 20 <<<"$log_errors"
-else
-  ok "shell log holds no unexpected error ($instance_log)"
-fi
+check_unexpected_log "shell log" "$instance_log"
 
 echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$first_bar_budget_ms"
 if [[ -n $first_bar_ms && $first_bar_ms -le $first_bar_budget_ms ]]; then ok "the first bar maps within its budget"; else fail "first bar latency ${first_bar_ms:-unmeasured} ms over budget $first_bar_budget_ms ms"; fi
