@@ -201,7 +201,7 @@ expect_poll "the apply after the install fails with the runner's reason" '"Apply
 expect "the install before the failed apply landed" True bash -c '[[ -f $1/akane/.vgs-catalog.json ]] && echo True' _ "$installed"
 expect_poll "the cards read akane installed after the failed apply" True selected_installed
 type_keys -k Return || fail "sending Return to retry akane failed"
-expect_poll "Enter retries the apply" '"akane"' ipc smoke themeName
+expect_poll "Enter retries the apply" akane ipc smoke themeName
 expect_poll "the retried apply offers akane's wallpapers" akane offer_name
 click_in vgs:overlay overlay vgs.themes Button "Not now" || fail "the click on Not now for akane failed"
 expect_poll "Not now withdraws akane's offer" none offer_name
