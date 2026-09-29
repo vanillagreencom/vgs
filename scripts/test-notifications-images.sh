@@ -27,7 +27,7 @@ TMP_ROOT="$(mktemp -d)" || { echo "test-notifications-images: scratch=mktemp-fai
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "test-notifications-images: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
-for tool in timeout head stat mkfifo sha1sum od dd grep; do
+for tool in timeout head stat mkfifo sha1sum sha256sum od dd grep; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'test-notifications-images: status=not-measured missing=%s\n' "$tool"
     exit 77
@@ -102,10 +102,15 @@ exit=3" "$(run "$script" copy "$images" "$world/sender/avatar.png" "$images/../x
   mkdir -p "$cache" "$icons"
   cp -- "$entry" "$cache/"
   printf 'stale' >"$icons/T0GONE-0"
-  check "a cached URL's body is copied and a missing one skipped" "copied $icons/T0ACME-0
+  got="$(run "$script" cached "$cache" "$icons" "$icons/T0ACME-0" "$url" "$icons/T0ACME-1" "https://avatars.slack-edge.com/fixture/acme_68.png")"
+  local icon_version
+  icon_version="$(sha256sum -- "$icons/T0ACME-0")"
+  icon_version="${icon_version%% *}"
+  icon_version="${icon_version:0:16}"
+  check "a cached URL's body is copied and a missing one skipped" "copied $icons/T0ACME-0 version=$icon_version
 skipped $icons/T0ACME-1 reason=missing
 stderr=
-exit=0" "$(run "$script" cached "$cache" "$icons" "$icons/T0ACME-0" "$url" "$icons/T0ACME-1" "https://avatars.slack-edge.com/fixture/acme_68.png")"
+exit=0" "$got"
   check "the copy is the body alone, a PNG" "370 89504e470d0a1a0a" "$(stat -c %s -- "$icons/T0ACME-0" 2>/dev/null || echo absent) $(od -An -tx1 -N8 -- "$icons/T0ACME-0" 2>/dev/null | tr -d ' ')"
   check "the out directory holds only this run's copies" "T0ACME-0" "$(cd "$icons" && ls -1A)"
   # Planted defects, each under the fixture's file name.
@@ -146,6 +151,7 @@ controls = [
     ("cache entry ends in its record", 'if [[ $status -eq 1 ]]; then echo malformed; return; fi', 'if [[ $status -eq 1 ]]; then offsets="$size:"; status=0; fi'),
     ("cache entry bound", 'if [[ $size -gt $max_bytes ]]; then echo too-large; return; fi', 'if false; then echo too-large; return; fi'),
     ("cached out directory emptied", 'rm -f -- "$file" || { printf \'notifications-images: error=remove path=%s\\n\' "$file" >&2; exit 4; }\n    done\n    for ((', 'true || { printf \'notifications-images: error=remove path=%s\\n\' "$file" >&2; exit 4; }\n    done\n    for (('),
+    ("cached copy version", 'printf \'copied %s version=%s\\n\' "$to" "$version"', 'printf \'copied %s\\n\' "$to"'),
     ("sweep keeps owned", 'if [[ -n ${keep[$name]:-} ]]; then continue; fi', 'if false; then continue; fi'),
     ("sweep removes orphans", 'rm -f -- "$file" || { printf \'notifications-images: error=remove path=%s\\n\' "$file" >&2; exit 4; }\n      removed=', 'true || { printf \'notifications-images: error=remove path=%s\\n\' "$file" >&2; exit 4; }\n      removed='),
     ("paired copy paths", "[[ $(( $# % 2 )) -eq 0 ]] || usage", "true"),
@@ -168,8 +174,8 @@ for copy in "$TMP_ROOT"/controls/*.sh; do
   failures=$saved
   passed=$((passed + 1))
 done
-if [[ $passed -ne 10 ]]; then
-  echo "test-notifications-images: controls=$passed want 10; the control table is broken"
+if [[ $passed -ne 11 ]]; then
+  echo "test-notifications-images: controls=$passed want 11; the control table is broken"
   exit 1
 fi
 echo "test-notifications-images: ok controls=$passed"

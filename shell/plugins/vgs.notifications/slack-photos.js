@@ -2,6 +2,7 @@
 "use strict";
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -68,7 +69,35 @@ function commandPath(command) {
     return found.stdout.trim().split(/\n/)[0] || "";
 }
 
+function executableOnPath(command) {
+    const dirs = String(process.env.PATH || "").split(path.delimiter);
+    for (const dir of dirs) {
+        if (dir === "") continue;
+        const candidate = path.join(dir, command);
+        try {
+            const stat = fs.statSync(candidate);
+            fs.accessSync(candidate, fs.constants.X_OK);
+            if (stat.isFile()) return candidate;
+        } catch (_e) {
+            // Keep looking.
+        }
+    }
+    return "";
+}
+
+function assertTestSecretToolPath() {
+    const dir = process.env.VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR;
+    if (!dir) return;
+    const found = executableOnPath("secret-tool");
+    const testDir = fs.realpathSync(dir);
+    const realFound = found === "" ? "" : fs.realpathSync(found);
+    if (realFound !== "" && !inside(testDir, realFound)) {
+        fail(5, "notifications-slack-photos: secret-tool=test-stub-required");
+    }
+}
+
 function lookupToken() {
+    assertTestSecretToolPath();
     const secret = childProcess.spawnSync("secret-tool", ["lookup"].concat(ATTRS), {
         encoding: "utf8",
         maxBuffer: 1024 * 1024
@@ -221,7 +250,15 @@ function keepExistingImage(file, budget, keepName) {
     if (size <= 0 || size > MAX_IMAGE_BYTES || size > budget.remaining) return "";
     budget.remaining -= size;
     budget.keep.add(keepName);
-    return "file://" + file;
+    return versionedFileUrl(file);
+}
+
+function fileVersion(file) {
+    return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex").slice(0, 16);
+}
+
+function versionedFileUrl(file) {
+    return "file://" + file + "?v=" + fileVersion(file);
 }
 
 function userRecord(user, teamDir, budget, stats) {
@@ -240,7 +277,7 @@ function userRecord(user, teamDir, budget, stats) {
         const size = fs.statSync(wanted).size;
         if (size <= budget.remaining) {
             budget.remaining -= size;
-            photo = "file://" + wanted;
+            photo = versionedFileUrl(wanted);
             budget.keep.add(path.basename(wanted));
         } else {
             fs.rmSync(wanted, { force: true });
@@ -353,7 +390,7 @@ function refresh(root) {
             if (size <= budget.remaining) {
                 budget.remaining -= size;
                 budget.keep.add("workspace.png");
-                icon = "file://" + iconFile;
+                icon = versionedFileUrl(iconFile);
             } else {
                 fs.rmSync(iconFile, { force: true });
             }

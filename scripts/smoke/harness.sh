@@ -281,7 +281,7 @@ JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 start_ms="$(now_ms)"
-spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" "$repo/bin/vgsh" run
+spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.

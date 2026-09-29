@@ -44,7 +44,7 @@ cp -R -- "$repo/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
 slack_photo_cache="$home/.cache/vgs/notifications/slack-photos/TSMOKE"
 mkdir -p -- "$slack_photo_cache"
 python3 - "$slack_photo_cache" <<'PY'
-import json, pathlib, struct, sys, time, zlib
+import hashlib, json, pathlib, struct, sys, time, zlib
 
 root = pathlib.Path(sys.argv[1])
 
@@ -69,14 +69,19 @@ images = {
 }
 for name, body in images.items():
     (root / name).write_bytes(body)
+
+def file_url(name):
+    file = root / name
+    return "file://" + str(file) + "?v=" + hashlib.sha256(file.read_bytes()).hexdigest()[:16]
+
 team = {
     "id": "TSMOKE",
     "names": ["acme", "globex"],
-    "icon": "file://" + str(root / "workspace.png"),
+    "icon": file_url("workspace.png"),
     "users": [
-        {"id": "UALAN", "names": ["alan"], "photo": "file://" + str(root / "UALAN.png")},
-        {"id": "UADA", "names": ["ada", "Ada Lovelace"], "photo": "file://" + str(root / "UADA.png")},
-        {"id": "UGRACE", "names": ["grace", "Grace Hopper"], "photo": "file://" + str(root / "UGRACE.png")},
+        {"id": "UALAN", "names": ["alan"], "photo": file_url("UALAN.png")},
+        {"id": "UADA", "names": ["ada", "Ada Lovelace"], "photo": file_url("UADA.png")},
+        {"id": "UGRACE", "names": ["grace", "Grace Hopper"], "photo": file_url("UGRACE.png")},
     ],
 }
 (root / "team.json").write_text(json.dumps({"id": team["id"], "names": team["names"], "icon": team["icon"]}) + "\n")
@@ -92,6 +97,15 @@ fi
 exit 1
 SH
 chmod 755 "$shim/secret-tool"
+cat >"$shim/curl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'notifications-smoke: real Slack API refused' >&2
+exit 19
+SH
+chmod 755 "$shim/curl"
+shell_secret_tool() { PATH="$shim:$(dirname -- "$node_bin"):$PATH" command -v secret-tool || true; }
+expect "the Slack photo helper resolves the stub secret-tool first" "$shim/secret-tool" shell_secret_tool
+file_url_json() { python3 -c 'import hashlib,json,pathlib,sys; p=pathlib.Path(sys.argv[1]); print(json.dumps("file://" + str(p) + "?v=" + hashlib.sha256(p.read_bytes()).hexdigest()[:16]))' "$1"; }
 expect "enabling the notifications is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the notification service is built" True record_exists vgs.notifications
 expect_poll "the service registered its shortcut, IPC target and subscriber and holds no layer" '[["vgs.notifications:inbox"], ["vgs.notifications"], ["vgs.notifications"], []]' lent_notes
@@ -286,7 +300,7 @@ card_value() { ipc smoke layerItems vgs.notifications NotificationCard "summary,
 slack_icon="$home/.cache/vgs/notifications/workspaces/slack/T0ACME-0"
 notify Slack 0 "[acme] from Ada Lovelace" "Did you see the notes?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 expect_poll "a Slack direct message draws its workspace's icon" true card_value "[acme] from Ada Lovelace" showsBadge
-expect "the icon is the copy out of Slack's cache" "\"file://$slack_icon\"" card_value "[acme] from Ada Lovelace" workspaceIcon
+expect "the icon is the copy out of Slack's cache" "$(file_url_json "$slack_icon")" card_value "[acme] from Ada Lovelace" workspaceIcon
 expect "the copy is the cached image's body" "370 89504e470d0a1a0a" bash -c 'printf "%s %s\n" "$(stat -c %s -- "$1")" "$(od -An -tx1 -N8 -- "$1" | tr -d " ")"' _ "$slack_icon"
 expect "the workspace's name gives way to its icon" '"from Ada Lovelace"' card_value "[acme] from Ada Lovelace" title
 expect "a direct message shows its sender's face" '{"rule": "slack", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
@@ -297,7 +311,7 @@ token_faces_loaded() { ipc smoke layerItems vgs.notifications Faces names,images
 for _screen, _rect, value in json.load(sys.stdin):
     if value["names"] == ["alan", "ada", "grace"]:
         images = value["images"]
-        print(len(images) == 3 and all(str(i).startswith("file://") for i in images) and len(set(images)) == 3)
+        print(len(images) == 3 and all(str(i).startswith("file://") and "?v=" in str(i) for i in images) and len(set(images)) == 3)
         break
 else:
     print(False)' ; }
@@ -305,7 +319,7 @@ expect_poll "the token cache supplies distinct Slack group photos" True token_fa
 notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 expect_poll "a workspace with no disk-cache icon uses the token-cache icon" true card_value "[globex] in eng" showsBadge
 expect "the token-cache workspace icon replaces that workspace name" '"in eng"' card_value "[globex] in eng" title
-expect "the fallback icon came from the Slack photo cache" "\"file://$home/.cache/vgs/notifications/slack-photos/TSMOKE/workspace.png\"" card_value "[globex] in eng" workspaceIcon
+expect "the fallback icon came from the Slack photo cache" "$(file_url_json "$home/.cache/vgs/notifications/slack-photos/TSMOKE/workspace.png")" card_value "[globex] in eng" workspaceIcon
 
 # The space around a card's text, from the card's rectangle and its visible
 # text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card

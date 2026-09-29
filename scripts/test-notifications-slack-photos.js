@@ -19,13 +19,39 @@ const helperSource = path.join(repo, "shell", "plugins", "vgs.notifications", "s
 const scratch = path.join(repo, "tmp", "test-notifications-slack-photos-" + process.pid);
 const token = "xoxp-test-token";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
+const pngChanged = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+let secretToolPath = "";
 
 function write(file, text) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text, { mode: 0o700 });
 }
 
-function run(cache, env) {
+function resolveCommand(command, env) {
+    for (const dir of String(env.PATH || "").split(path.delimiter)) {
+        if (dir === "") continue;
+        const candidate = path.join(dir, command);
+        try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            if (fs.statSync(candidate).isFile()) return fs.realpathSync(candidate);
+        } catch (_e) {
+            // Keep looking.
+        }
+    }
+    return "";
+}
+
+function assertSecretTool(env, mode) {
+    const found = resolveCommand("secret-tool", env);
+    if (mode === "absent") {
+        assert.equal(found, "", "the missing-secret-tool case must not resolve a real secret-tool");
+        return;
+    }
+    assert.equal(found, fs.realpathSync(secretToolPath), "tests must run only against the stub secret-tool");
+}
+
+function run(cache, env, secretToolMode) {
+    assertSecretTool(env, secretToolMode || "stub");
     return new Promise(resolve => {
         const child = childProcess.spawn(process.execPath, [helper, "refresh", cache], { cwd: repo, env });
         let stdout = "";
@@ -38,8 +64,8 @@ function run(cache, env) {
     });
 }
 
-async function runJson(cache, env) {
-    const result = await run(cache, env);
+async function runJson(cache, env, secretToolMode) {
+    const result = await run(cache, env, secretToolMode);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "", "a successful helper prints no stderr");
     return JSON.parse(result.stdout);
@@ -60,8 +86,11 @@ fs.mkdirSync(scratch, { recursive: true });
 
 async function main() {
     const bin = path.join(scratch, "bin");
+    const emptyBin = path.join(scratch, "empty-bin");
     const secretLog = path.join(scratch, "secret-argv.log");
-    write(path.join(bin, "secret-tool"), `#!/usr/bin/env bash
+    secretToolPath = path.join(bin, "secret-tool");
+    fs.mkdirSync(emptyBin, { recursive: true });
+    write(secretToolPath, `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >>"${secretLog}"
 if [[ \${SECRET_TOOL_EMPTY:-} == 1 ]]; then exit 1; fi
@@ -69,7 +98,8 @@ printf '%s\\n' '${token}'
 `);
     const baseEnv = Object.assign({}, process.env, {
         PATH: bin + path.delimiter + process.env.PATH,
-        VGS_NOTIFICATIONS_SLACK_TEST: "1"
+        VGS_NOTIFICATIONS_SLACK_TEST: "1",
+        VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR: bin
     });
 
     let touched = false;
@@ -79,7 +109,7 @@ printf '%s\\n' '${token}'
     assert.equal(touched, false, "no token starts no HTTP request");
     assert.equal(fs.existsSync(absentCache), false, "no token creates no cache directory");
     const missingSecretToolCache = path.join(scratch, "missing-secret-tool-cache");
-    const missingSecretTool = await runJson(missingSecretToolCache, Object.assign({}, baseEnv, { PATH: path.dirname(process.execPath) }));
+    const missingSecretTool = await runJson(missingSecretToolCache, Object.assign({}, baseEnv, { PATH: emptyBin }), "absent");
     assert.deepEqual(missingSecretTool, { status: "absent" }, "missing secret-tool is the same as no token");
     assert.equal(fs.existsSync(missingSecretToolCache), false, "missing secret-tool creates no cache directory");
 
@@ -118,7 +148,8 @@ printf '%s\\n' '${token}'
         assert.equal(loaded.teams.length, 1);
         assert.deepEqual(loaded.teams[0].names, ["acme", "Acme Corp"]);
         assert.equal(loaded.teams[0].users.length, 3, "only safe synthetic users are stored");
-        assert.match(loaded.teams[0].users[0].photo, /^file:\/\//);
+        assert.match(loaded.teams[0].icon, /^file:\/\/\/[^\s?#]+\.png\?v=[0-9a-f]{16}$/, "the workspace icon URL is versioned by content");
+        assert.match(loaded.teams[0].users[0].photo, /^file:\/\/\/[^\s?#]+\.png\?v=[0-9a-f]{16}$/, "the photo URL is versioned by content");
         assert.equal(loaded.teams[0].users[2].photo, "", "untrusted image hosts are skipped");
         assert.equal(fs.existsSync(path.join(cache, "T1", "U1.png")), true, "a user photo is cached");
         assert.equal(fs.existsSync(path.join(cache, "T1", "workspace.png")), true, "the workspace icon is cached");
@@ -137,6 +168,41 @@ printf '%s\\n' '${token}'
     const indexFile = path.join(cache, "index.json");
     const oldDaily = new Date(Date.now() - 25 * 60 * 60 * 1000);
     const oldRetry = new Date(Date.now() - 16 * 60 * 1000);
+    const first = JSON.parse(fs.readFileSync(indexFile, "utf8"));
+    const firstIcon = first.teams[0].icon;
+    const firstPhoto = first.teams[0].users[0].photo;
+    async function refreshWithImageBytes(imageBytes) {
+        fs.utimesSync(indexFile, oldDaily, oldDaily);
+        return withServer((req, res) => {
+            if (req.url.startsWith("/api/team.info")) {
+                assert.equal(req.headers.authorization, "Bearer " + token);
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ ok: true, team: { id: "T1", domain: "acme", name: "Acme Corp", icon: { image_68: `http://127.0.0.1:${req.socket.localPort}/images/team.png` } } }));
+                return;
+            }
+            if (req.url.startsWith("/api/users.list")) {
+                assert.equal(req.headers.authorization, "Bearer " + token);
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ ok: true, members: [
+                    { id: "U1", name: "ada", real_name: "Ada Lovelace", profile: { display_name: "Ada", real_name: "Ada Lovelace", image_48: `http://127.0.0.1:${req.socket.localPort}/images/ada.png` } }
+                ], response_metadata: { next_cursor: "" } }));
+                return;
+            }
+            if (req.url.startsWith("/images/")) {
+                res.setHeader("content-type", "image/png");
+                res.end(imageBytes);
+                return;
+            }
+            res.statusCode = 404;
+            res.end("missing");
+        }, async port => runJson(cache, Object.assign({}, baseEnv, { VGS_NOTIFICATIONS_SLACK_API_BASE: `http://127.0.0.1:${port}/api` })));
+    }
+    const sameBytes = await refreshWithImageBytes(png);
+    assert.equal(sameBytes.teams[0].icon, firstIcon, "the workspace icon version stays when the bytes stay");
+    assert.equal(sameBytes.teams[0].users[0].photo, firstPhoto, "the photo version stays when the bytes stay");
+    const changedBytes = await refreshWithImageBytes(pngChanged);
+    assert.notEqual(changedBytes.teams[0].icon, firstIcon, "the workspace icon version changes when the bytes change");
+    assert.notEqual(changedBytes.teams[0].users[0].photo, firstPhoto, "the photo version changes when the bytes change");
     fs.utimesSync(indexFile, oldDaily, oldDaily);
     let downloadFailureCalls = 0;
     await withServer((req, res) => {
@@ -255,7 +321,7 @@ function controls() {
     const dir = path.join(scratch, "controls");
     fs.mkdirSync(dir, { recursive: true });
     const controls = [
-        ["Authorization header", '"header = \\"Authorization: Bearer " + token.replace(/"/g, "") + "\\""', '"header = \\"Authorization: Bearer wrong\\""', /API calls carry the token in a header|Expected values to be strictly equal/],
+        ["Authorization header", '"header = \\"Authorization: Bearer " + token.replace(/"/g, "") + "\\""', '"header = \\"Authorization: Bearer wrong\\""', /API calls carry the token in a header/],
         ["fresh cache", "if (fresh !== null) {", "if (false && fresh !== null) {", /fresh cache avoids another API call/],
         ["failure backoff", "if (failureHeld(failureFile)) {", "if (false && failureHeld(failureFile)) {", /a recent failure is held|api=users\.list error=missing_scope|api=team\.info error=ratelimited/],
         ["safe user id", "const id = safeSegment(user && user.id);", "const id = user && user.id || \"\";", /only safe synthetic users are stored/]
@@ -267,6 +333,8 @@ function controls() {
         const copy = path.join(dir, String(index), "slack-photos.js");
         fs.mkdirSync(path.dirname(copy), { recursive: true });
         fs.writeFileSync(copy, source.replace(needle, replacement), { mode: 0o700 });
+        const syntax = childProcess.spawnSync(process.execPath, ["--check", copy], { cwd: repo, encoding: "utf8" });
+        assert.equal(syntax.status, 0, `control "${label}": the mutated helper must remain valid JavaScript`);
         const result = childProcess.spawnSync(process.execPath, [__filename], {
             cwd: repo,
             env: Object.assign({}, process.env, {

@@ -104,7 +104,10 @@ Scope {
                 console.error(first !== undefined ? first : "notifications-images: " + (done === null ? "start=failed" : "exit=" + done.code) + " verb=cached");
             } else {
                 for (const line of String(helperOut.text || "").split("\n"))
-                    if (line.indexOf("copied ") === 0) copied.push(line.slice(7));
+                    if (line.indexOf("copied ") === 0) {
+                        const found = /^copied (.+) version=([0-9a-f]{16})$/.exec(line);
+                        if (found !== null) copied.push(found[1] + "?v=" + found[2]);
+                    }
             }
             source.finish(Logic.workspaceIconMap(source.listed, source.dir, copied));
         }

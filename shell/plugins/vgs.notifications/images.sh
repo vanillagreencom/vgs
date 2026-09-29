@@ -77,6 +77,12 @@ cache_body() {
   if [[ $end -le $start ]]; then echo malformed; return; fi
   dd if="$entry" of="$to.tmp" iflag=skip_bytes,count_bytes skip="$start" count=$(( end - start )) status=none || echo unreadable
 }
+version_of() {
+  local sum
+  sum="$(sha256sum -- "$1")" || return
+  sum="${sum%% *}"
+  printf '%s' "${sum:0:16}"
+}
 [[ $# -ge 2 ]] || usage
 verb="$1"; shift
 export LC_ALL=C
@@ -148,7 +154,12 @@ case "$verb" in
         continue
       fi
       mv -f -- "$to.tmp" "$to"
-      printf 'copied %s\n' "$to"
+      if ! version="$(version_of "$to")"; then
+        rm -f -- "$to"
+        printf 'skipped %s reason=unreadable\n' "$to"
+        continue
+      fi
+      printf 'copied %s version=%s\n' "$to" "$version"
     done
     ;;
   *) usage ;;

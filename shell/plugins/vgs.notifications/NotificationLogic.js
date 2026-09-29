@@ -300,7 +300,8 @@ function workspaceIconMap(workspaces, dir, copied) {
         var file = "";
         for (var n = 0; n < workspaces[i].urls.length && file === ""; n++) {
             var to = dir + "/" + workspaces[i].id + "-" + n;
-            if (copied.indexOf(to) !== -1) file = "file://" + to;
+            var copiedUrl = copiedVersion(copied, to);
+            if (copiedUrl !== "") file = "file://" + copiedUrl;
         }
         for (var k = 0; k < workspaces[i].names.length; k++) {
             var key = fold(workspaces[i].names[k]);
@@ -308,6 +309,14 @@ function workspaceIconMap(workspaces, dir, copied) {
         }
     }
     return map;
+}
+
+function copiedVersion(copied, to) {
+    var prefix = to + "?v=";
+    for (var i = 0; i < copied.length; i++) {
+        if (typeof copied[i] === "string" && copied[i].indexOf(prefix) === 0 && /^[0-9a-f]{16}$/.test(copied[i].slice(prefix.length))) return copied[i];
+    }
+    return "";
 }
 
 // Whether a notification naming `workspace` should read the list again: the
@@ -349,10 +358,10 @@ function slackPhotos(text) {
             if (typeof user.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(user.id)) return { ok: false, error: "teams." + t + ".users." + u + ".id want=safe" };
             var userNames = uniqueNames(user.names);
             if (userNames.length === 0) continue;
-            var photo = typeof user.photo === "string" && /^file:\/\/\/[^\s]+$/.test(user.photo) ? user.photo : "";
+            var photo = slackPhotoFileUrl(user.photo);
             users.push({ id: user.id, names: userNames, photo: photo });
         }
-        var icon = typeof team.icon === "string" && /^file:\/\/\/[^\s]+$/.test(team.icon) ? team.icon : "";
+        var icon = slackPhotoFileUrl(team.icon);
         teams.push({ id: team.id, names: names, icon: icon, users: users });
     }
     return {
@@ -363,6 +372,10 @@ function slackPhotos(text) {
         stale: parsed.stale === true,
         teams: teams
     };
+}
+
+function slackPhotoFileUrl(value) {
+    return typeof value === "string" && /^file:\/\/\/[^\s?#]+\.png\?v=[0-9a-f]{16}$/.test(value) ? value : "";
 }
 
 function uniqueNames(names) {

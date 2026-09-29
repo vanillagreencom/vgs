@@ -263,9 +263,9 @@ function verify(logic) {
     same(logic.slackWorkspaces(JSON.stringify(many)).workspaces.map(w => w.id), Array.from({ length: 16 }, (_, i) => "T" + (10 + i)), "the list is cut at its limit");
     const listed = logic.slackWorkspaces(JSON.stringify(index)).workspaces;
     same(logic.workspaceCopies(listed, "/c"), [{ to: "/c/T1-0", url: "https://a/a68.png" }, { to: "/c/T2-0", url: "https://a/g88.png" }, { to: "/c/T2-1", url: "https://a/g68.png" }]);
-    const icons = logic.workspaceIconMap(listed, "/c", ["/c/T2-1", "/c/T9-0"]);
-    same(icons, { acme: "", "acme corp": "", globex: "file:///c/T2-1", initech: "" }, "a workspace answers to its first copied icon, by domain and by name");
-    same(logic.workspaceIconMap([{ id: "A", names: ["x"], urls: ["u"] }, { id: "B", names: ["X"], urls: ["u"] }], "/c", ["/c/B-0"]), { x: "" }, "a shared name keeps the first workspace");
+    const icons = logic.workspaceIconMap(listed, "/c", ["/c/T2-1?v=0123456789abcdef", "/c/T9-0?v=abcdef0123456789"]);
+    same(icons, { acme: "", "acme corp": "", globex: "file:///c/T2-1?v=0123456789abcdef", initech: "" }, "a workspace answers to its first copied icon, by domain and by name");
+    same(logic.workspaceIconMap([{ id: "A", names: ["x"], urls: ["u"] }, { id: "B", names: ["X"], urls: ["u"] }], "/c", ["/c/B-0?v=0123456789abcdef"]), { x: "" }, "a shared name keeps the first workspace");
     // Reading the list again: [label, workspace, last read, now, want].
     for (const [label, workspace, loadedAt, now, want] of [
         ["one with an icon", "Globex", 0, 999999, false],
@@ -281,10 +281,10 @@ function verify(logic) {
         teams: [{
             id: "T1",
             names: ["acme", "Acme Corp"],
-            icon: "file:///cache/T1/workspace.png",
+            icon: "file:///cache/T1/workspace.png?v=0123456789abcdef",
             users: [
-                { id: "U1", names: ["Ada Lovelace", "ada"], photo: "file:///cache/T1/U1.png" },
-                { id: "U2", names: ["Grace Hopper"], photo: "file:///cache/T1/U2.png" },
+                { id: "U1", names: ["Ada Lovelace", "ada"], photo: "file:///cache/T1/U1.png?v=abcdef0123456789" },
+                { id: "U2", names: ["Grace Hopper"], photo: "file:///cache/T1/U2.png?v=1234567890abcdef" },
                 { id: "U3", names: ["No Photo"], photo: "" }
             ]
         }]
@@ -295,14 +295,15 @@ function verify(logic) {
     same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.id want=safe" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }] }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }] }, "a non-file photo is ignored");
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "file:///cache/T1/workspace.png", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }] }] })).teams, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }], "an unversioned file URL is ignored");
     const group = logic.enrich("Slack", "slack", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
-    same(logic.slackFaceImages(group, photoCache.teams, "file:///sender.png"), ["file:///cache/T1/U1.png", "file:///cache/T1/U2.png", ""], "each Slack face takes its own photo");
+    same(logic.slackFaceImages(group, photoCache.teams, "file:///sender.png"), ["file:///cache/T1/U1.png?v=abcdef0123456789", "file:///cache/T1/U2.png?v=1234567890abcdef", ""], "each Slack face takes its own photo");
     same(logic.slackFaceImages(Object.assign({}, group, { workspace: "unknown" }), photoCache.teams, "file:///sender.png"), ["file:///sender.png", "", ""], "an unknown workspace has no photos");
-    const singleTeam = [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }] }];
+    const singleTeam = [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png?v=abcdef0123456789" }] }];
     const direct = logic.enrich("Slack", "slack", "New message from Ada", "hi");
-    same(logic.slackFaceImages(direct, singleTeam, ""), ["file:///cache/T1/U1.png"], "one workspace can match titles without a prefix");
-    same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png" }, { id: "U2", names: ["ADA"], photo: "file:///second.png" }] }], ""), ["file:///first.png"], "the first duplicate name owns the photo");
-    assert.equal(logic.slackWorkspaceIcon(photoCache.teams, "acme"), "file:///cache/T1/workspace.png");
+    same(logic.slackFaceImages(direct, singleTeam, ""), ["file:///cache/T1/U1.png?v=abcdef0123456789"], "one workspace can match titles without a prefix");
+    same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png?v=1111111111111111" }, { id: "U2", names: ["ADA"], photo: "file:///second.png?v=2222222222222222" }] }], ""), ["file:///first.png?v=1111111111111111"], "the first duplicate name owns the photo");
+    assert.equal(logic.slackWorkspaceIcon(photoCache.teams, "acme"), "file:///cache/T1/workspace.png?v=0123456789abcdef");
 }
 verify(load(file));
 
@@ -348,13 +349,13 @@ const CONTROLS = [
     ["safe team id", "if (!/^[A-Za-z0-9]{1,32}$/.test(ids[i]) || names.length === 0) {", "if (names.length === 0) {"],
     ["larger icon first", "var urls = [icon.image_88, icon.image_68]", "var urls = [icon.image_68, icon.image_88]"],
     ["workspace limit", "for (var i = 0; i < ids.length && out.length < WORKSPACES_MAX; i++) {", "for (var i = 0; i < ids.length; i++) {"],
-    ["first copied icon", "if (copied.indexOf(to) !== -1) file = \"file://\" + to;", "file = \"file://\" + to;"],
+    ["first copied icon", "if (copiedUrl !== \"\") file = \"file://\" + copiedUrl;", "file = \"file://\" + to;"],
     ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"],
     ["tint by the folded name", 'var key = fold(name || "");', 'var key = String(name || "");'],
     ["tint by the hash", "return FACE_TINTS[hash % FACE_TINTS.length];", "return FACE_TINTS[0];"],
     ["Slack photo cache status", 'if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };', 'if (false) return { ok: false, error: "status want=loaded|absent" };'],
     ["Slack photo safe team id", 'if (typeof team.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(team.id)) return { ok: false, error: "teams." + t + ".id want=safe" };', 'if (false) return { ok: false, error: "teams." + t + ".id want=safe" };'],
-    ["Slack photo file URL only", 'var photo = typeof user.photo === "string" && /^file:\\/\\/\\/[^\\s]+$/.test(user.photo) ? user.photo : "";', 'var photo = typeof user.photo === "string" ? user.photo : "";'],
+    ["Slack photo file URL only", 'return typeof value === "string" && /^file:\\/\\/\\/[^\\s?#]+\\.png\\?v=[0-9a-f]{16}$/.test(value) ? value : "";', 'return typeof value === "string" ? value : "";'],
     ["Slack photo workspace match", "if (fold(teams[t].names[n]) === wanted) return teams[t];", "if (false) return teams[t];"],
     ["Slack photo first name wins", "if (!hasOwn(map, key)) map[key] = photo;", "map[key] = photo;"],
     ["Slack photo per face", "images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || \"\") : \"\"));", "images.push(i === 0 ? String(carriedImage || \"\") : \"\");"]
