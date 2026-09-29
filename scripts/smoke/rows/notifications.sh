@@ -176,12 +176,8 @@ clock_of() { read_notes clocks | py_reply 'import json,sys; c=json.load(sys.stdi
 card_centre() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; y0=int(sys.argv[2])
 for screen, (x, y, w, h), v in json.load(sys.stdin):
     if v["summary"] == sys.argv[1]: print(x + w // 2, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
-card_left() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; y0=int(sys.argv[2])
-for screen, (x, y, w, h), v in json.load(sys.stdin):
-    if v["summary"] == sys.argv[1]: print(x + 30, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
-pill_centre() { ipc smoke layerItems vgs.notifications PillButton text,visible | python3 -c 'import json,sys; y0=int(sys.argv[2])
-for screen, (x, y, w, h), v in json.load(sys.stdin):
-    if v["text"] == sys.argv[1]: print(x + w // 2, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
+# click_pill TEXT: one click_item on the shown pill TEXT in the layer.
+click_pill() { click_item vgs:layer vgs.notifications PillButton text "$1"; }
 shown_pills() { ipc smoke layerItems vgs.notifications CardSlot summary,actions | python3 -c 'import json,sys; print(json.dumps(next(([a["label"] for a in v["actions"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
 has_row() { row_summaries "$1" | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$2"; }
 in_history() { history_summaries | python3 -c 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$1"; }
@@ -307,17 +303,14 @@ card_grab="$sandbox/actioned-card.png"
 render expect "the hovered actionable card is grabbed" grabbing ipc smoke grabLayerItem vgs.notifications NotificationCard summary Actioned "$card_grab"
 render expect_poll "the grab of the hovered card is saved" "saved $card_grab" ipc smoke grabbed
 render expect "the hover actions draw nothing past the capsule's rounded ends" clear capsule_clear "$card_grab" Actioned
-read -r px py < <(pill_centre Reply) || fail "the Reply pill is not drawn"
-click "$px" "$py" || fail "the click on Reply failed"
+click_pill Reply || fail "the click on Reply failed"
 invoked() { grep -c "ActionInvoked (uint32 [0-9]*, '$1')" -- "$signals" || true; }
 expect_poll "the click runs the sender's action" 1 invoked reply
 expect_poll "the acted-on toast leaves" none key_of Actioned
 notify smoke-chat 0 "Clicked" "Open me" '["default", "Open"]' '{}' 0 >/dev/null
 expect_poll "a toast with a default action shows" True has_row live "Clicked"
-sleep 1
-read -r cx cy < <(card_left Clicked) || fail "the clicked toast has no card"
-hover "$cx" "$cy" || fail "the hover before the card click failed"
-click "$cx" "$cy" || fail "the click on the card failed"
+# The click lands left on the card, clear of the actions its hover shows.
+click_item vgs:layer vgs.notifications NotificationCard summary Clicked 30 - || fail "the click on the card failed"
 expect_poll "a click on the card runs its default action" 1 invoked default
 expect_poll "the clicked toast leaves" none key_of Clicked
 
@@ -652,9 +645,7 @@ expect_poll "the stack takes the whole screen's presses while a panel is open" '
 notify smoke-app 0 "While open" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
 expect_poll "a toast arriving with the panel open shows" True has_row live "While open"
 expect_poll "its clock does not run while the panel is open" paused clock_state "While open"
-sleep 1
-read -r mx my < <(pill_centre "Mark read") || fail "the Mark read pill is not drawn"
-click "$mx" "$my" || fail "the click on Mark read failed"
+click_pill "Mark read" || fail "the click on Mark read failed"
 expect_poll "Mark read closes the panel" '""' read_notes panelMode
 read_before_set() { state_at readBefore | python3 -c 'import sys; print(float(sys.stdin.read()) > 0)'; }
 expect_poll "Mark read persists its cutoff" True read_before_set
@@ -670,9 +661,7 @@ expect_poll "an inbox after Mark read is caught up" '"All caught up"' read_notes
 expect "the history panel opens" ok notes history
 kept="$(note_status history)"
 expect_poll "the history lists what is kept" "$(( kept < 40 ? kept : 40 ))" panel_count
-sleep 1
-read -r qx qy < <(pill_centre "Clear history") || fail "the Clear history pill is not drawn"
-click "$qx" "$qy" || fail "the click on Clear history failed"
+click_pill "Clear history" || fail "the click on Clear history failed"
 expect_poll "Clear history empties the stored history" 0 history_count
 expect_poll "its rows fade out" '[]' row_summaries panel
 expect "the panel stays open after Clear history" '"history"' read_notes panelMode

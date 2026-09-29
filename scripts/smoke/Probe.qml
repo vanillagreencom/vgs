@@ -148,6 +148,17 @@ Scope {
         return found === undefined ? null : found;
     }
 
+    // The first visible, enabled item named `type` whose `property` reads
+    // `value` in a plugin's layer copies, sorted by screen, or null.
+    function layerItem(id, type, property, value) {
+        for (const entry of Layers.entries.filter(e => e.pluginId === id))
+            for (const screen of Object.keys(entry.screens).sort()) {
+                const found = root.descendants(entry.screens[screen]).find(child => root.typeName(child) === type && String(child[property]) === value && child.visible && child.enabled);
+                if (found !== undefined) return found;
+            }
+        return null;
+    }
+
     // The first visible, enabled item named `type` whose `text`, or `name`
     // for an icon, is `text` inside the first visible item named
     // `scopeType` that draws `scopeText`, under an instance, or null: one
@@ -285,6 +296,22 @@ Scope {
                     out.push([name, win.WlrLayershell.keyboardFocus === WlrKeyboardFocus.None, win.WlrLayershell.layer === WlrLayer.Overlay, win.exclusionMode === ExclusionMode.Normal]);
                 }
             return JSON.stringify(out);
+        }
+        // The box of the first visible, enabled item named `type` whose
+        // `property` reads `value` in a plugin's layer copies, sorted by
+        // screen, as [x, y, w, h] in its window, or "absent". A layer the
+        // compositor places knows no position of its own, so a row adds the
+        // layer's position from `hyprctl layers`.
+        function layerItemGeometry(id: string, type: string, property: string, value: string): string {
+            const found = root.layerItem(id, type, property, value);
+            return found === null ? "absent" : JSON.stringify(root.windowBox(found));
+        }
+        // Whether that item reports the pointer over it: "true", "false",
+        // or "absent" with no such item, as itemHovered answers for an
+        // instance's item.
+        function layerItemHovered(id: string, type: string, property: string, value: string): string {
+            const found = root.layerItem(id, type, property, value);
+            return found === null ? "absent" : String(found.hovered === true);
         }
         // Every item of a type in a plugin's layer copies, sorted by screen:
         // [screen, [x, y, width, height] in its window, { property: value }]

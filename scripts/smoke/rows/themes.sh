@@ -523,7 +523,7 @@ planted_click() {
 # Whether the plant moved the vgs item by more than its own height: True
 # or False, or the plant file's lines when it holds no two boxes.
 plant_moved() { python3 -c 'import json,sys; b=[json.loads(l) for l in open(sys.argv[1]).read().splitlines()]; print(abs(b[1][1]-b[0][1]) > b[0][3] if len(b)==2 else b)' "$click_plant"; }
-single_read_needle='rect="$(ipc smoke itemGeometry "$1" "$2" "$3" "$4")" || return 1'
+single_read_needle='rect="$(control_box "${lookup[@]}")" || return 1'
 click_item_def="$(declare -f click_item)"
 click_item_rest="${click_item_def//"$single_read_needle"/}"
 if [[ $(( (${#click_item_def} - ${#click_item_rest}) / ${#single_read_needle} )) == 1 ]] \
@@ -555,15 +555,17 @@ fi
 # Control: click_item aimed at the vgs row's centre, a stand-in for a
 # panel surface the compositor has not yet placed where the probe reads
 # it, never finds the smoke row under the pointer, so it clicks nothing.
-if vgs_rect="$(ipc smoke itemGeometry panel vgs.themes ListItem vgs)" && [[ $vgs_rect != absent ]]; then
-  read -r vx vy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$vgs_rect")
+# The aim is the vgs row's centre as an offset from the smoke row's corner.
+if vgs_rect="$(ipc smoke itemGeometry panel vgs.themes ListItem vgs)" && [[ $vgs_rect != absent ]] \
+  && smoke_rect="$(ipc smoke itemGeometry panel vgs.themes ListItem smoke)" && [[ $smoke_rect != absent ]]; then
+  read -r vx vy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); sx,sy=json.loads(sys.argv[2])[:2]; print(int(x+w/2-sx), int(y+h/2-sy))' "$vgs_rect" "$smoke_rect")
   if click_item panel vgs.themes ListItem smoke "$vx" "$vy"; then
     fail "click_item clicked for the smoke row at the vgs row's centre"
   else
     ok "click_item clicks nothing at a point the smoke row does not report the pointer over"
   fi
 else
-  fail "the vgs row's geometry is unreadable for the click control: ${vgs_rect:-failed}"
+  fail "the rows' geometry is unreadable for the click control: vgs=${vgs_rect:-failed} smoke=${smoke_rect:-failed}"
 fi
 
 # An installed package's own file for a target that runs code is dropped

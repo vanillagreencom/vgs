@@ -464,40 +464,68 @@ click_centre() {
   read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
   click "$cx" "$cy"
 }
-# click_item HOST_KEY ID TYPE TEXT [X Y]: one click on the first visible,
-# enabled control TYPE reading TEXT under an instance, at its centre or at
-# (X, Y), once the control reports the pointer over that point. The
+# control_box LOOKUP: a control's box in layout coordinates as
+# [x, y, w, h], or absent; control_hovered LOOKUP: true, false or absent
+# for whether it reports the pointer over it. LOOKUP is HOST_KEY ID TYPE
+# TEXT for the first visible, enabled control TYPE reading TEXT under a
+# built instance, or NAMESPACE ID TYPE PROPERTY VALUE, NAMESPACE a
+# layer's vgs:<name>, for the first visible, enabled item TYPE whose
+# PROPERTY reads VALUE in plugin ID's copies of that layer. The probe
+# answers a layer item's box in its window, so the layer's position from
+# the compositor is added.
+control_box() {
+  local rect layer
+  if [[ $1 != vgs:* ]]; then ipc smoke itemGeometry "$1" "$2" "$3" "$4"; return; fi
+  rect="$(ipc smoke layerItemGeometry "$2" "$3" "$4" "$5")" || return 1
+  if [[ $rect == absent ]]; then echo absent; return; fi
+  layer="$(surface_box "$1")" || return 1
+  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); print(json.dumps([l[0] + r[0], l[1] + r[1], r[2], r[3]]))' "$layer" "$rect"
+}
+control_hovered() {
+  if [[ $1 == vgs:* ]]; then ipc smoke layerItemHovered "$2" "$3" "$4" "$5"
+  else ipc smoke itemHovered "$1" "$2" "$3" "$4"
+  fi
+}
+# click_item LOOKUP [DX DY]: one click on a control_box LOOKUP, at its
+# centre or at (DX, DY) from its top-left corner, `-` for the centre on
+# that axis, once the control reports the pointer over that point. The
 # compositor routes a click by where it has placed the surface, which can
 # trail the layout the probe reads after the surface resizes, and a list
-# that grows after it opens can move the control, so a box read once goes
-# stale. Every 100 ms, for up to 5 s, the helper reads the control's box
-# again, moves the pointer to its point, one pixel apart each time so each
-# move is a motion, and reads whether the control reports the pointer. It
-# clicks after two such readings in a row at one box, so a reading taken
-# before the move reached the shell never decides it, and reads the box
-# once more before the press: a box that moved starts the count again.
-# Returns 1, with no click, when the control is absent at the first
-# reading or never reports the pointer; a control absent at a later
-# reading is being laid out again, and the count starts again.
-click_item() { # HOST_KEY ID TYPE TEXT [X Y]
-  local rect seen="" x="" y="" px hovered held=0 i
+# that grows after it opens or a card that slides in moves the control, so
+# a box read once goes stale. Every 100 ms, for up to 5 s, the helper reads
+# the control's box again, moves the pointer to its point, one pixel apart
+# each time so each move is a motion, and reads whether the control reports
+# the pointer. It clicks after two such readings in a row at one box, so a
+# reading taken before the move reached the shell never decides it, and
+# reads the box once more before the press: a box that moved starts the
+# count again. Returns 1, with no click, when the control is absent at the
+# first reading or never reports the pointer; a control absent at a later
+# reading is being laid out again, and the count starts again. The rows
+# that click through it: agent-warden.sh, updates.sh, themes.sh (its
+# click_row and click_button, and the helper's controls) and
+# notifications.sh (the Reply pill, a card's default action, Mark read and
+# Clear history). A hover that only reveals a control stays a hover.
+click_item() { # LOOKUP [DX DY]
+  local n=4 lookup rect seen="" x="" y="" px hovered held=0 i
+  [[ $1 == vgs:* ]] && n=5
+  if (( $# != n && $# != n + 2 )); then echo "click_item: refused: arguments=$# lookup=$n" >&2; return 1; fi
+  lookup=("${@:1:n}")
+  shift "$n"
   for i in $(seq 1 50); do
-    rect="$(ipc smoke itemGeometry "$1" "$2" "$3" "$4")" || return 1
+    rect="$(control_box "${lookup[@]}")" || return 1
     if [[ $rect == absent ]]; then
       [[ $i -gt 1 ]] || return 1
       held=0; seen=""; sleep 0.1; continue
     fi
     if [[ $rect != "$seen" ]]; then
       held=0; seen="$rect"
-      if [[ $# -ge 6 ]]; then x="$5"; y="$6"
-      else read -r x y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect") || return 1
-      fi
+      read -r x y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); dx,dy=sys.argv[2:]; print(int(x + (w / 2 if dx == "-" else float(dx))), int(y + (h / 2 if dy == "-" else float(dy))))' "$rect" "${1:--}" "${2:--}") || return 1
     fi
     px=$((x + i % 2))
     hover "$px" "$y" || return 1
-    hovered="$(ipc smoke itemHovered "$1" "$2" "$3" "$4")" || return 1
+    hovered="$(control_hovered "${lookup[@]}")" || return 1
     if [[ $hovered == true ]]; then held=$((held + 1)); else held=0; fi
-    if [[ $held -ge 2 && $(ipc smoke itemGeometry "$1" "$2" "$3" "$4") == "$seen" ]]; then click "$px" "$y"; return; fi
+    if [[ $held -ge 2 && $(control_box "${lookup[@]}") == "$seen" ]]; then click "$px" "$y"; return; fi
     sleep 0.1
   done
   return 1
