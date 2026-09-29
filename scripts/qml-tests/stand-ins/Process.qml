@@ -1,5 +1,9 @@
 import QtQuick
 
+// Stands in for Quickshell.Io's Process, whose plugin does not load outside
+// the shell. The TUI records test sets stdout and stderr and then emits
+// exited before running becomes false, matching the runtime order the core
+// relies on.
 QtObject {
     id: process
 

@@ -1,20 +1,43 @@
 import QtQuick
 import Qt.labs.folderlistmodel
+import Quickshell
 import Quickshell.Io
 import "PluginLogic.js" as Logic
 
-Item {
+// Owns the exit-record side of the `tui` capability: the FolderListModel
+// listing, the per-file readers, the reaper, one `bin/vgsh-tui wait`
+// process per live run, the accepted records and runs, and the `done`
+// callbacks with their delivery. The listing is the fast path. The wait is
+// the guarantee when FolderListModel drops a directory change. No timer runs,
+// and no wait process exists while no run is live.
+Scope {
     id: root
 
+    // The directory bin/vgsh-tui writes records in.
     property string recordDir: ""
+    // The core's bin/ directory, where vgsh-tui lives.
     property string coreBin: ""
+    // Each listed record file's path -> the record PluginLogic accepted.
     property var fileRecords: ({})
+    // Each key -> the last ended record accepted from `vgsh-tui wait`, so
+    // memory is bounded by the number of keys, not by runs.
     property var waitRecords: ({})
+    // Each listed record file's path -> the FileView that reads it once.
     property var readers: ({})
+    // PluginLogic.tuiRuns of the file and wait records.
     property var runs: Logic.tuiRuns([])
+    // Each `done` waiting for its run: { id, run, done }.
     property var waiters: []
+    // Each live wait id, key|run -> the Process that waits on the lock.
     property var waits: ({})
+    // Wait ids whose process already finished while a running record still
+    // lists the run. It is pruned to the wanted wait set, so it is bounded by
+    // live running records.
     property var settled: ({})
+    // Runs whose launcher exited 0 before an ended record was known. They are
+    // pruned as soon as the wait finishes or the run ends, so they are bounded
+    // by launches still awaiting a completion signal.
+    property var launchedRuns: []
 
     readonly property bool recordsWatched: String(recordFiles.folder) === "file://" + recordDir
 
@@ -26,7 +49,8 @@ Item {
     }
 
     function launched(key, run) {
-        startWait(key, run);
+        launchedRuns = launchedRuns.concat([{ key: key, run: run }]);
+        reconcileWaits();
     }
 
     function addWaiter(id, run, done) {
@@ -80,13 +104,21 @@ Item {
 
     function refresh() {
         runs = Logic.tuiRuns(Object.keys(fileRecords).map(path => fileRecords[path]).concat(Object.keys(waitRecords).map(key => waitRecords[key])));
-        pruneSettled();
-        ensureRunningWaits();
+        reconcileWaits();
         for (const run of waiters.map(w => w.run)) deliverKnown(run);
     }
 
-    function ensureRunningWaits() {
-        for (const row of Logic.tuiWaitRuns(runs, [])) startWait(row.key, row.run);
+    function reconcileWaits() {
+        const wanted = Logic.tuiWaitRuns(runs, launchedRuns);
+        const live = {};
+        for (const row of wanted) live[waitId(row.key, row.run)] = true;
+        launchedRuns = launchedRuns.filter(row => Object.prototype.hasOwnProperty.call(live, waitId(row.key, row.run)));
+        const nextSettled = {};
+        for (const id of Object.keys(settled)) {
+            if (Object.prototype.hasOwnProperty.call(live, id)) nextSettled[id] = true;
+        }
+        settled = nextSettled;
+        for (const row of wanted) startWait(row.key, row.run);
     }
 
     function waitId(key, run) {
@@ -108,13 +140,15 @@ Item {
     }
 
     function finishWait(process, stdout, stderr) {
+        const id = waitId(process.key, process.run);
         const outcome = Logic.tuiWaitOutcome(process.key, process.run, process.completion, stdout, stderr);
         for (const line of outcome.logs) console.error(line);
         const nextWaits = Object.assign({}, waits);
-        delete nextWaits[waitId(process.key, process.run)];
+        delete nextWaits[id];
         waits = nextWaits;
+        launchedRuns = launchedRuns.filter(row => waitId(row.key, row.run) !== id);
         const nextSettled = Object.assign({}, settled);
-        nextSettled[waitId(process.key, process.run)] = true;
+        nextSettled[id] = true;
         settled = nextSettled;
         if (outcome.record !== null) {
             const nextRecords = Object.assign({}, waitRecords);
@@ -122,21 +156,15 @@ Item {
             waitRecords = nextRecords;
             refresh();
         } else {
-            pruneSettled();
+            reconcileWaits();
         }
         process.destroy();
     }
 
-    function pruneSettled() {
-        const live = {};
-        for (const row of Logic.tuiWaitRuns(runs, [])) live[waitId(row.key, row.run)] = true;
-        const next = {};
-        for (const id of Object.keys(settled)) {
-            if (Object.prototype.hasOwnProperty.call(live, id)) next[id] = true;
-        }
-        settled = next;
-    }
-
+    // One reader per listed file, kept while the file is listed. A record
+    // is never rewritten, so each file is read once, however often the
+    // listing's rows are rebuilt; a file read again could be removed between
+    // FileView's check and its open, which it logs whatever printErrors says.
     function syncReaders() {
         const listed = {};
         for (let i = 0; i < recordFiles.count; i++) listed[recordFiles.get(i, "filePath")] = true;
@@ -177,7 +205,8 @@ Item {
             reaping: reaper.running,
             runs: keys,
             waiters: waiters.map(w => w.id),
-            waits: Object.keys(waits).sort()
+            waits: Object.keys(waits).sort(),
+            launched: launchedRuns.map(row => row.key)
         };
     }
 
@@ -211,6 +240,7 @@ Item {
             printErrors: false
             onLoaded: root.recordLoaded(reader.path, text())
             onLoadFailed: error => {
+                // A record removed between the listing and the read.
                 if (error !== FileViewError.FileNotFound) console.error("tui: record=" + reader.path + " unreadable: error=" + error);
             }
         }

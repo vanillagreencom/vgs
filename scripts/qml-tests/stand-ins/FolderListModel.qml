@@ -1,5 +1,9 @@
 import QtQuick
 
+// Stands in for Qt.labs.folderlistmodel's FolderListModel, whose real
+// watcher cannot be forced to drop one change on demand. The TUI records
+// test drives the listed paths by hand and can choose whether a reset,
+// insert, removal or no signal reaches the owner.
 QtObject {
     id: model
 

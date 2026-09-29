@@ -389,7 +389,9 @@ rm -f -- "$rdir"/*.json
 
 # wait: one process blocks on the key lock and exits as soon as the
 # presenter releases it. Ceiling: 1000 ms from presenter's exit to wait's
-# exit. Measured 0 ms on cachy x86_64 on 2026-09-29 with this row.
+# exit. scripts/test-vgsh-tui.sh measured 0 ms on cachy x86_64 on
+# 2026-09-29, from the shell's reap of the presenter to its reap of wait; 0
+# means under 1 ms at date's nanosecond resolution rounded to milliseconds.
 wait_opts=(--record acme.tui/hello --run 10-1 --record-dir "$rdir" --app-id org.vgs.tui --window-title "$title_words")
 rm -f -- "$tmp/child" "$tmp/wait-out" "$tmp/wait-err"
 "${tui_env[@]}" "$subject" present --presentation plain "${wait_opts[@]}" -- waitint 1 </dev/null >/dev/null 2>&1 &
@@ -406,6 +408,7 @@ wait_status=0
 wait "$wait_pid" || wait_status=$?
 wait_done="$(date +%s%N)"
 wait_ms="$(python3 -c 'import sys; print((int(sys.argv[2]) - int(sys.argv[1])) // 1000000)' "$present_done" "$wait_done")"
+echo "test-vgsh-tui: wait-latency-ms=$wait_ms"
 check "wait exits after the presenter exits" test "$present_status:$wait_status" == "0:0"
 check "wait prints the ended record once" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["key"], r["run"], r["state"], r["code"])' "$tmp/wait-out")" == "acme.tui/hello 10-1 ended 0"
 check "wait exits within the lock-release ceiling" test "$wait_ms" -le 1000

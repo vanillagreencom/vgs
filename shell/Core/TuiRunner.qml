@@ -9,11 +9,11 @@ import "PluginLogic.js" as Logic
 // `bin/vgsh-tui launch` per accepted request and at most one
 // `bin/vgsh-tui check` probe. TuiRecords owns the record listing, reaper and
 // one `bin/vgsh-tui wait` process per live run. PluginLogic decides which
-// TUI a request names, whether
-// its plugin is enabled, the arguments, whether the key is busy or the
-// launcher state refuses it, the launcher's argv, how each exit moves the
-// state, what the records say, which waits run and what each `done` receives. The launcher
-// forks the terminal into a session of its own and exits once the
+// TUI a request names, whether its plugin is enabled, the arguments, whether
+// the key is busy or the launcher state refuses it, the launcher's argv, how
+// each exit moves the state, what the records say, which waits run and what
+// each `done` receives. The launcher forks the terminal into a session of its
+// own and exits once the
 // presenter wrote its record, so a terminal outlives the shell that opened
 // it. Each run's `done` belongs to the lifetime of the instance that asked:
 // a destroyed instance's callback is dropped and its run still ends. The
@@ -147,7 +147,6 @@ Scope {
         if (ctx !== null) {
             release = ctx.onDispose(() => recordStore.releaseWaiter(waiter));
         }
-        recordStore.deliverKnown(run);
     }
 
     function finish(process, stderr) {
