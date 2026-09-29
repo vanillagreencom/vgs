@@ -11,7 +11,9 @@
 # reach this file as argv from node, never as a shell string, and run as
 # lists: a package name holding `$(...)` stays one literal word.
 #
-# Each step runs in order with ELEVATOR before it, unless ELEVATOR is none,
+# The steps run in the directory this file starts in, which bin/vgsh-pkg
+# sets to $HOME. Each step runs in order with ELEVATOR before it, unless
+# ELEVATOR is none,
 # after a step line in the theme accent. The first step that fails ends the
 # run with its exit status. Under sudo every run holds one sudo session
 # (tui.sh's vgs_tui_sudo_session): the password is asked once, before the

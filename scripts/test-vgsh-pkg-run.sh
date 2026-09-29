@@ -27,7 +27,7 @@ script_bin="$(command -v script)"
 # The tools the runner and the stubs need, and nothing that changes a
 # package.
 tools="$tmp/tools"; mkdir -p "$tools"
-for tool in bash readlink dirname sleep cat; do
+for tool in bash readlink dirname sleep cat env; do
   found="$(command -v "$tool")" || { echo "test-vgsh-pkg-run: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$found" "$tools/$tool"
 done
@@ -51,6 +51,8 @@ stub "$managers" pacman 'case "$1" in -Slq) printf "alpha\nbeta\ngamma\n" ;; -Qq
 [ "${STUB_FAIL:-}" != "$1" ] || exit 7'
 stub "$managers" paru 'case "$1" in -Slqa) printf "aurpkg\n" ;; esac'
 stub "$managers" apt-get '[ "${STUB_FAIL:-}" != "$1" ] || exit 7'
+# mise records the directory its step runs in.
+stub "$managers" mise 'pwd >"$LOG.cwd"'
 # dnf 4 prints its metadata notice on stdout unless -q is given, and with
 # the format's own newline a blank line after each name, one name per arch.
 stub "$managers" dnf 'quiet=no
@@ -86,7 +88,8 @@ make_tree "$tree"
 # with a fresh log, answers and user config directory, PATH the directories
 # named (colon-separated) then the tools. PKG_ANSWERS, set before the call
 # and emptied by it, holds fzf's answers in order, `status=N` for an exit
-# status alone. Output lands in $tmp/out, the exit
+# status alone. PKG_CWD, when set, is the directory it starts in. Output
+# lands in $tmp/out, the exit
 # status in $status. PKG_TTY=none runs it with no controlling terminal
 # instead, stderr in $tmp/err.
 pkg() {
@@ -94,9 +97,9 @@ pkg() {
   shift 2
   while [[ $1 != -- ]]; do extra+=("$1"); shift; done
   shift
-  rm -rf -- "$log" "$answers" "$tmp/planted"
+  rm -rf -- "$log" "$log.cwd" "$answers" "$tmp/planted"
   : >"$log"
-  mkdir -p "$answers" "$cfg/vgs"
+  mkdir -p "$answers" "$cfg/vgs" "$tmp/home"
   [[ -n ${PKG_CONFIG:-} ]] && printf '%s\n' "$PKG_CONFIG" >"$cfg/vgs/shell.json" || rm -f -- "$cfg/vgs/shell.json"
   local i=1 answer
   for answer in "${PKG_ANSWERS[@]}"; do
@@ -111,7 +114,7 @@ pkg() {
     setsid -w "${env_words[@]}" "$node_bin" "$at/bin/vgsh-pkg" "$@" </dev/null >"$tmp/out" 2>"$tmp/err" || status=$?
   else
     cmd="$(printf '%q ' "${env_words[@]}" "$node_bin" "$at/bin/vgsh-pkg" "$@")"
-    SHELL="$BASH" timeout 30 "$script_bin" -qec "$cmd" /dev/null </dev/null >"$tmp/out" 2>&1 || status=$?
+    ( cd -- "${PKG_CWD:-.}" && SHELL="$BASH" timeout 30 "$script_bin" -qec "$cmd" /dev/null ) </dev/null >"$tmp/out" 2>&1 || status=$?
   fi
 }
 PKG_ANSWERS=()
@@ -178,6 +181,12 @@ row_literal_name() {
   pkg "$1" "$sudo_path" -- run install --manager pacman "$name"
   [[ $status == 0 && ! -e $tmp/planted ]] && grep -qxF "pacman [-S] [--needed] [--] [$name]" "$log"
 }
+row_home_directory() {
+  mkdir -p "$tmp/project"
+  printf '[tools]\nnode = "18"\n' >"$tmp/project/mise.toml"
+  PKG_CWD="$tmp/project" pkg "$1" "$managers" -- run upgrade --manager mise
+  [[ $status == 0 && "$(cat "$log.cwd" 2>/dev/null)" == "$tmp/home" ]] && log_is "mise [upgrade]"
+}
 row_aur_unelevated() {
   pkg "$1" "$managers:$tmp/elevate-sudo" -- run install --manager aur aurpkg
   [[ $status == 0 ]] && log_is "paru [-S] [--needed] [--] [aurpkg]"
@@ -231,7 +240,7 @@ row_picker_without_fzf() {
 
 rows=(no_terminal shell_process pacman_install apt_upgrade first_failure doas run0 configured configured_absent
   configured_unknown no_elevator literal_name aur_unelevated picker_install picker_remove picker_cancelled
-  picker_nothing aur_picker picker_unsupported picker_without_fzf dnf_picker)
+  picker_nothing aur_picker picker_unsupported picker_without_fzf dnf_picker home_directory)
 for r in "${rows[@]}"; do
   rm -f -- "$tmp/why"
   if "row_$r" "$tree"; then ok "$r"; else fail "$r: status=$status $(cat -- "$tmp/why" 2>/dev/null) out=[$(tr '\n' '|' <"$tmp/out")]"; fi
@@ -278,6 +287,7 @@ control elevates-in-shell bin/vgsh-pkg 'if (process.env.VGSH_RUNNER_PID !== unde
 control no-sudo-session bin/lib/pkg-run.sh $'if [[ $elevator == sudo ]]; then\n  vgs_tui_sudo_session start' $'if false; then\n  vgs_tui_sudo_session start' apt_upgrade
 control runs-past-failure bin/lib/pkg-run.sh '[[ $status -eq 0 ]] || exit "$status"' ':' first_failure
 control shell-string bin/lib/pkg-run.sh '  "${step[@]}" || status=$?' '  bash -c "${step[*]}" || status=$?' literal_name
+control caller-directory bin/vgsh-pkg 'stdio: "inherit", cwd: process.env.HOME || "/" });' 'stdio: "inherit" });' home_directory
 control always-elevates bin/vgsh-pkg '    if (r.plan.elevate) {' '    if (true) {' aur_unelevated
 control ignores-configuration bin/vgsh-pkg 'table.elevator(configuredElevator(), onPath)' 'table.elevator(undefined, onPath)' configured
 control unquoted-preview bin/vgsh-pkg '    return "'"'"'" + word.replace' '    return word; "'"'"'" + word.replace' picker_install

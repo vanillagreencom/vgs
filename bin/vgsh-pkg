@@ -40,8 +40,9 @@
 //       Each step of a row whose `elevate` is true runs behind the
 //       elevation command: shell.json's `packages.elevate` when set, else
 //       the first of sudo, doas and run0 on PATH (the table's ELEVATORS).
-//       The steps run through bin/lib/pkg-run.sh, whose header states the
-//       sudo session and how each step is shown; the exit status is the
+//       The steps run from $HOME, as check's queries do, through
+//       bin/lib/pkg-run.sh, whose header states the sudo session and how
+//       each step is shown; the exit status is the
 //       first failing step's, or 0. A run prints no Done or Failed:
 //       `vgsh-tui present` owns the ending.
 //   vgsh-pkg install|remove [--manager <id>] [names...]
@@ -325,7 +326,9 @@ function configuredElevator() {
 
 // Run ACTION's plan for MANAGER over NAMES through bin/lib/pkg-run.sh, and
 // exit with its status. The steps travel as argv, each led by its length,
-// so no shell reads them.
+// so no shell reads them, and run from $HOME, as a check's queries do, so
+// no project's configuration in the caller's directory (a mise.toml) makes
+// a step do other than what the check counted.
 function run(action, manager, names) {
     const r = table.plan(manager, action, names, onPath);
     if (!r.ok) refuse(r.error);
@@ -338,7 +341,7 @@ function run(action, manager, names) {
     const argv = [RUNNER, command];
     for (const step of r.plan.steps) argv.push(String(step.length), ...step);
     return new Promise((resolve, reject) => {
-        const child = childProcess.spawn("bash", argv, { stdio: "inherit" });
+        const child = childProcess.spawn("bash", argv, { stdio: "inherit", cwd: process.env.HOME || "/" });
         // The terminal sends Ctrl-C and a hangup to its whole foreground
         // group, the runner included, which ends its step and its sudo
         // session; this process outlives them to exit with the runner's
