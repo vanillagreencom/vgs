@@ -5,7 +5,8 @@ import qs.Ui
 
 // One row of a list: an optional icon, a text with an optional secondary
 // line under it, and `trailing` items at the end, such as a badge or a
-// switch. The template owns the click, `highlighted` and the keyboard;
+// switch. Both lines draw at line height 1, `row.lineGap` apart, so the
+// pair's glyphs sit on the row's centre with the icon. The template owns the click, `highlighted` and the keyboard;
 // the fill follows hover, press and highlight.
 T.ItemDelegate {
     id: root
@@ -35,9 +36,10 @@ T.ItemDelegate {
         Column {
             width: parent.width - (parent.children[0].visible ? parent.children[0].width + parent.spacing : 0) - (trailingRow.width > 0 ? trailingRow.width + parent.spacing : 0)
             anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.row.lineGap
             Label {
                 id: title
-                role: "body"
+                role: "item"
                 text: root.text
                 color: root.highlighted ? Theme.listItem.selectedForeground : Theme.color.text
                 width: parent.width
@@ -45,7 +47,7 @@ T.ItemDelegate {
             }
             Label {
                 id: secondaryLabel
-                role: "hint"
+                role: "itemHint"
                 text: root.secondary
                 visible: root.secondary !== ""
                 width: parent.width

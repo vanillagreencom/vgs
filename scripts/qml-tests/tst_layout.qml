@@ -61,6 +61,23 @@ Item {
             verify(bare.implicitWidth > 100, "a populated row without a width is " + bare.implicitWidth + " wide");
         }
 
+        // The title and secondary lines draw at line height 1, so the pair's
+        // line boxes are their glyphs, and the pair sits on the icon's
+        // centre, which is the row's.
+        function test_list_item_centres_its_lines_on_its_icon() {
+            const icon = row.contentItem.children[0];
+            const column = row.contentItem.children[1];
+            const title = column.children[0];
+            const secondary = column.children[1];
+            compare(title.lineHeight, 1);
+            compare(secondary.lineHeight, 1);
+            const top = title.mapToItem(row, 0, 0).y;
+            const bottom = secondary.mapToItem(row, 0, secondary.height).y;
+            const iconMid = icon.mapToItem(row, 0, icon.height / 2).y;
+            verify(Math.abs((top + bottom) / 2 - iconMid) <= 1, "lines centre " + (top + bottom) / 2 + ", icon centre " + iconMid);
+            verify(Math.abs(iconMid - row.height / 2) <= 1, "icon centre " + iconMid + ", row centre " + row.height / 2);
+        }
+
         function test_section_header_and_divider() {
             const eyebrow = header.children[0];
             compare(eyebrow.role, "eyebrow");

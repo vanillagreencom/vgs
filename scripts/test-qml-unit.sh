@@ -97,6 +97,7 @@ mutations=(
   "a shown tooltip stays under a new overlay|overlay/Tooltip.qml|function onOpenChanged() { if (OverlayState.open > 0) window.visible = false; }|function onOpenChanged() {}|tst_overlays.qml"
   "enter leaves the select closed|controls/Select.qml|Keys.onReturnPressed: openList()|Keys.onReturnPressed: {}|tst_overlays.qml"
   "the list row prefers no width of its own|layout/ListItem.qml|Math.max(title.implicitWidth, secondaryLabel.implicitWidth)|0|tst_layout.qml"
+  "the list row's secondary line keeps paragraph leading|layout/ListItem.qml|role: \"itemHint\"|role: \"hint\"|tst_layout.qml"
   "the icon button's icon sits at the top|controls/IconButton.qml|topPadding: leftPadding|topPadding: 0|tst_button.qml"
   "the button ignores hover|controls/Button.qml|hovered ? tokens.hover :|false ? tokens.hover :|tst_button.qml"
   "the button ignores press|controls/Button.qml|down ? tokens.pressed :|false ? tokens.pressed :|tst_button.qml"
