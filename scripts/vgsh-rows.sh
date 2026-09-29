@@ -187,6 +187,37 @@ manifest() { # ID VERSION [EXTRA_JSON_MEMBERS]
   printf '{ "schemaVersion": 1, "id": "%s", "name": "Probe", "version": "%s", "author": "acme", "description": "fixture",\n  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }%s }' "$1" "$2" "${3:-}"
 }
 head_of() { g -C "$1" rev-parse HEAD; }
+# An HTTP server on 127.0.0.1 that answers every request 401 with a Basic
+# challenge, so git asks for credentials. Sets auth_port once it listens;
+# the EXIT trap stops it. The wait polls for the port file the server
+# writes after it binds.
+auth_server() {
+  local ready="$tmp/auth-port"
+  python3 -c '
+import http.server, os, sys
+class Challenge(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", "Basic realm=\"fixture\"")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Challenge)
+with open(sys.argv[1] + ".part", "w") as f:
+    f.write(str(server.server_address[1]))
+os.rename(sys.argv[1] + ".part", sys.argv[1])
+server.serve_forever()
+' "$ready" </dev/null >/dev/null 2>&1 &
+  auth_server_pid=$!
+  trap 'kill "$auth_server_pid" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
+  for _ in $(seq 1 100); do
+    [[ -s $ready ]] && break
+    sleep 0.1
+  done
+  auth_port="$(cat -- "$ready" 2>/dev/null)" || auth_port=""
+  [[ $auth_port =~ ^[0-9]+$ ]] || { echo "$(basename -- "$0" .sh): auth-server=not-listening" >&2; exit 1; }
+}
 doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; } # NAME [TOKENS_JSON]
 
 rows_done() { # SUITE

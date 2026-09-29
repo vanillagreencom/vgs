@@ -2,8 +2,9 @@
 # Controls for `vgsh plugin outdated` and `vgsh theme outdated`: one row per
 # installed checkout from local bare repositories, the JSON and text forms,
 # the error rows, and what the verbs never do: move a checkout, run a git
-# hook, let git prompt, outlast the fetch timeout, keep the theme lock's
-# descriptor in git, or change a package under an exclusive theme command.
+# hook, let git, ssh or a credential helper prompt or run an askpass,
+# outlast the fetch timeout, keep the theme lock's descriptor in git, or
+# change a package under an exclusive theme command.
 # Expected commits come from the fixtures' own git, never from vgsh. Each
 # control runs a copy of the tree, never bin/vgsh itself. The fetch's
 # --no-auto-maintenance has no row: git starts maintenance only past an
@@ -22,13 +23,13 @@ source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
 
 theme_tree
 # The outdated verbs call these beside the tools theme_tree links.
-for tool in timeout python3 realpath; do
+for tool in timeout python3 realpath env setsid; do
   tool_bin="$(command -v "$tool")" || { echo "test-vgsh-outdated: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$tool_bin" "$theme_path/$tool"
 done
 
 source_repo probe "$(manifest acme.probe 0.1.0)"
-for name in gone loose plain slow prompt; do source_repo "$name" "$(manifest "acme.$name" 0.1.0)"; done
+for name in gone loose plain slow prompt http; do source_repo "$name" "$(manifest "acme.$name" 0.1.0)"; done
 theme_source moss "$(doc moss)"
 
 # Git hooks are live for every git call from here on: the fixture home's
@@ -133,10 +134,15 @@ inst "plugin outdated with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh:
 inst "plugin outdated --json with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=acme.probe" plugin outdated --json acme.probe
 
 # The transport: ssh remotes answered by a stub ssh first on PATH, which
-# records the prompt setting git hands it and fails, after 12 s for the
-# slow host.
+# records what ssh would consult before it prompts: the prompt setting git
+# hands it, whether it may run an askpass, and whether it can open a
+# terminal. It then fails, after 12 s for the slow host.
 stub="$tmp/ssh-stub"; mkdir -p "$stub"
-printf '#!/bin/sh\nprintf "prompt=%%s\\n" "${GIT_TERMINAL_PROMPT-unset}" >>"$0.record"\ncase "$*" in *slow.invalid*) sleep 12 ;; esac\nexit 1\n' >"$stub/ssh"
+printf '%s\n' '#!/bin/sh' \
+  'if (: </dev/tty) 2>/dev/null; then tty=yes; else tty=no; fi' \
+  'printf "prompt=%s require=%s tty=%s\n" "${GIT_TERMINAL_PROMPT-unset}" "${SSH_ASKPASS_REQUIRE-unset}" "$tty" >>"$0.record"' \
+  'case "$*" in *slow.invalid*) sleep 12 ;; esac' \
+  'exit 1' >"$stub/ssh"
 chmod +x "$stub/ssh"
 cfg="$tmp/cfg-slow"
 inst "add installs acme.slow" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/slow.git"
@@ -152,14 +158,67 @@ unset THEME_BIN
 cfg="$tmp/cfg-prompt"
 inst "add installs acme.prompt" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/prompt.git"
 g -C "$cfg/vgs/plugins/acme.prompt" remote set-url origin ssh://fail.invalid/prompt.git
+quiet="prompt=0 require=never tty=no"
 rm -f -- "$stub/ssh.record"
 INST_PATH="$stub:$base_path" inst "an ssh remote that fails is an error row" "$cfg" "$rt_empty" 0 "acme.prompt error=fetch=acme.prompt" "$any_out" plugin outdated
-check "git's transport runs with the terminal prompt off" test "$(<"$stub/ssh.record")" == "prompt=0"
+check "git's transport may not prompt, run an askpass or open a terminal" test "$(<"$stub/ssh.record")" == "$quiet"
 tree_control prompting bin/vgsh 'GIT_TERMINAL_PROMPT=0 ' ''
 rm -f -- "$stub/ssh.record"
 INST_PATH="$stub:$base_path" INST_BIN="$THEME_BIN" inst "the prompting mutant reports the same row" "$cfg" "$rt_empty" 0 "acme.prompt error=fetch=acme.prompt" "$any_out" plugin outdated
-check "the prompting mutant leaves the prompt setting to the caller" test "$(<"$stub/ssh.record")" == "prompt=unset"
+check "the prompting mutant leaves the prompt setting to the caller" test "$(<"$stub/ssh.record")" == "prompt=unset require=never tty=no"
+tree_control sshaskpass bin/vgsh 'SSH_ASKPASS_REQUIRE=never ' ''
+rm -f -- "$stub/ssh.record"
+INST_PATH="$stub:$base_path" INST_BIN="$THEME_BIN" inst "the ssh-askpass mutant reports the same row" "$cfg" "$rt_empty" 0 "acme.prompt error=fetch=acme.prompt" "$any_out" plugin outdated
+check "the ssh-askpass mutant leaves ssh free to run an askpass" test "$(<"$stub/ssh.record")" == "prompt=0 require=unset tty=no"
 unset THEME_BIN
+# On a terminal, as a person running the verb has one: the fetch's own
+# session leaves ssh none to read a passphrase from. script(1) ends each
+# line it records with a carriage return, so the rows grep for the line.
+saved_env=("${base_env[@]}"); base_env+=(PATH="$stub:$base_path")
+rm -f -- "$stub/ssh.record"
+on_terminal "" plugin outdated
+check "plugin outdated on a terminal exits 0" test "$term_status" == 0
+check "plugin outdated on a terminal prints the error row" grep -q -F -- "acme.prompt error=fetch=acme.prompt" "$tmp/out"
+check "ssh under plugin outdated on a terminal can open no terminal" test "$(<"$stub/ssh.record")" == "$quiet"
+tree_control sessionless bin/vgsh 'setsid --wait ' ''
+rm -f -- "$stub/ssh.record"
+INST_BIN="$THEME_BIN" on_terminal "" plugin outdated
+check "the sessionless mutant on a terminal prints the error row" grep -q -F -- "acme.prompt error=fetch=acme.prompt" "$tmp/out"
+check "the sessionless mutant's ssh opens the terminal" test "$(<"$stub/ssh.record")" == "prompt=0 require=never tty=yes"
+unset THEME_BIN
+base_env=("${saved_env[@]}")
+
+# Git's own credential prompt: an HTTP remote that answers 401. The
+# checkout's credential helper records the Credential Manager setting it
+# is handed and has no credential; an askpass named by core.askPass,
+# GIT_ASKPASS and SSH_ASKPASS leaves a marker if it runs.
+auth_server
+askpass="$tmp/askpass"
+printf '%s\n' '#!/bin/sh' ': >"$0.ran"' 'echo x' >"$askpass"
+helper="$tmp/credential-helper"
+printf '%s\n' '#!/bin/sh' 'cat >/dev/null' 'printf "gcm=%s\n" "${GCM_INTERACTIVE-unset}" >>"$0.record"' >"$helper"
+chmod +x "$askpass" "$helper"
+cfg="$tmp/cfg-http"
+inst "add installs acme.http" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/http.git"
+http="$cfg/vgs/plugins/acme.http"
+g -C "$http" remote set-url origin "http://127.0.0.1:$auth_port/http.git"
+g -C "$http" config core.askPass "$askpass"
+g -C "$http" config credential.helper "$helper"
+saved_env=("${base_env[@]}"); base_env+=(GIT_ASKPASS="$askpass" SSH_ASKPASS="$askpass")
+rm -f -- "$askpass.ran" "$helper.record"
+inst "a remote that asks for credentials is an error row" "$cfg" "$rt_empty" 0 "acme.http error=fetch=acme.http" "$any_out" plugin outdated
+check "no askpass runs for git's credential prompt" test ! -e "$askpass.ran"
+check "the stored-credential helper runs, told not to prompt" test "$(sort -u -- "$helper.record")" == "gcm=false"
+tree_control gitaskpass bin/vgsh 'GIT_ASKPASS= ' ''
+rm -f -- "$askpass.ran" "$helper.record"
+INST_BIN="$THEME_BIN" inst "the git-askpass mutant reports the same row" "$cfg" "$rt_empty" 0 "acme.http error=fetch=acme.http" "$any_out" plugin outdated
+check "the git-askpass mutant runs the askpass" test -e "$askpass.ran"
+tree_control credentialprompt bin/vgsh 'GCM_INTERACTIVE=false ' ''
+rm -f -- "$askpass.ran" "$helper.record"
+INST_BIN="$THEME_BIN" inst "the credential-prompt mutant reports the same row" "$cfg" "$rt_empty" 0 "acme.http error=fetch=acme.http" "$any_out" plugin outdated
+check "the credential-prompt mutant leaves the Credential Manager free to prompt" test "$(sort -u -- "$helper.record")" == "gcm=unset"
+unset THEME_BIN
+base_env=("${saved_env[@]}")
 
 # Themes: installed packages alone, under a shared hold of the theme lock.
 cfg="$tmp/cfg-themes"; themes="$cfg/vgs/themes"

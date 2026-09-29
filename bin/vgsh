@@ -76,9 +76,9 @@
 # does and the next start reads the change.
 #
 # `plugin outdated` and `theme outdated` fetch every installed checkout
-# with no hook and no terminal prompt, each fetch ended at 10 s, and
-# change nothing else: no merge, no checkout, no FETCH_HEAD, no plugin or
-# package code. Each prints one row per checkout, sorted by id:
+# with no hook, no prompt and no askpass dialog, each fetch ended at 10 s,
+# and change nothing else: no merge, no checkout, no FETCH_HEAD, no plugin
+# or package code. Each prints one row per checkout, sorted by id:
 # `<id> behind=<n> head=<commit> upstream=<commit>` with 12-digit commits,
 # or `<id> error=<refusal>`: the keyed line update prints for the same
 # cause, or fetch=<id> timeout=10s. --json prints the rows as one JSON
@@ -555,16 +555,29 @@ plugin_remove() { # ID
 # The seconds one outdated fetch may take.
 outdated_fetch_timeout=10
 
+# The environment of every outdated fetch, which runs unattended and must
+# ask nobody: an authentication it cannot complete from an agent, a key
+# without a passphrase or a stored credential fails the fetch instead.
+# The user's ssh command and configuration stay as they are.
+outdated_fetch_env=(
+  GIT_TERMINAL_PROMPT=0 # git fails where it would prompt on the terminal
+  GIT_ASKPASS= # empty, it outranks core.askPass and SSH_ASKPASS, so git runs no askpass
+  SSH_ASKPASS_REQUIRE=never # ssh runs no askpass either
+  GCM_INTERACTIVE=false # Git Credential Manager fails where it would prompt
+)
+
 # Print checkout DIR's HEAD commit, its upstream commit and the count of
 # upstream commits HEAD lacks, space-separated, after fetching the upstream
-# with no terminal prompt and within the timeout. The fetch writes the
+# within the timeout. The fetch runs under outdated_fetch_env in a session
+# of its own, so ssh has no terminal to read a passphrase or a host key
+# answer from. The fetch writes the
 # remote-tracking refs and their objects, and no FETCH_HEAD, maintenance
 # or submodule. Refuses as fast_forward does for the same cause, and a
 # fetch the timeout ended as fetch=LABEL timeout=<seconds>s.
 outdated_probe() { # DIR LABEL
   local dir="$1" label="$2" err behind rc=0
   own_checkout "$dir"
-  err="$(GIT_TERMINAL_PROMPT=0 timeout "$outdated_fetch_timeout" git "${git_flags[@]}" -C "$dir" \
+  err="$(env "${outdated_fetch_env[@]}" setsid --wait timeout "$outdated_fetch_timeout" git "${git_flags[@]}" -C "$dir" \
     fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance 2>&1)" || rc=$?
   case "$rc" in
     0) [[ -z $err ]] || printf '%s\n' "$err" >&2 ;;
