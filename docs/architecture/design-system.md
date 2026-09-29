@@ -44,7 +44,7 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 ## Readability
 
-`ThemeLogic.readabilityShortfalls` owns the contrast table for resting text, accent text and status text on resting surfaces. `scripts/check-theme-contrast.js` runs that table over the shipped `vgs` and `light` packages and every catalog entry, so a token default or converted theme that makes text unreadable fails offline validation. The table excludes hover surfaces and disabled text for the reasons in [theme-catalog.md § Readability](theme-catalog.md#readability).
+`ThemeLogic.readabilityShortfalls` owns the contrast table for resting text, accent text and status text on resting surfaces. `scripts/check-theme-contrast.js` runs that table over the shipped `vgs` and `light` packages and every catalog entry, so a token default or converted theme that makes text unreadable fails offline validation. The table excludes hover surfaces and disabled text for the reasons in [theme-conversion.md § Readability](theme-conversion.md#readability).
 
 ## Components
 

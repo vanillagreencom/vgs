@@ -2,7 +2,7 @@
 
 Covers: bin/lib/theme-download.js, scripts/test-theme-download.js, scripts/tar-fixture.js, scripts/test-vgsh-wallpapers.sh
 
-`vgsh theme wallpapers [--json] <name> [--update]` downloads the wallpaper archive a catalog install's index entry pins and lands its images in the package's `backgrounds/`. It is the one catalog command that reaches the network; `theme catalog` and `theme install` work offline. `bin/lib/theme-download.js` holds the fetch and the tar reader, which the v1 converter shares ([theme-catalog.md § Conversion](theme-catalog.md#conversion)). The catalog and its marker are [theme-catalog.md](theme-catalog.md). `bin/vgsh-theme-judge` holds the member rules and the land.
+`vgsh theme wallpapers [--json] <name> [--update]` downloads the wallpaper archive a catalog install's index entry pins and lands its images in the package's `backgrounds/`. It is the one catalog command that reaches the network; `theme catalog` and `theme install` work offline. `bin/lib/theme-download.js` holds the fetch and the tar reader, which the v1 converter shares ([theme-conversion.md § Conversion](theme-conversion.md#conversion)). The catalog and its marker are [theme-catalog.md](theme-catalog.md). `bin/vgsh-theme-judge` holds the member rules and the land.
 
 ## Scope
 
