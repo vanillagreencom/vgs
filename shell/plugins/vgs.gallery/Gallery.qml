@@ -225,6 +225,20 @@ Item {
                     }
                 }
 
+                SectionHeader { text: "Carousel"; description: "A rail of cards at its smallest scale: a click or the wheel over it steps the rail" }
+                CardCarousel {
+                    width: parent.width
+                    height: Theme.carousel.expandedHeight * Theme.carousel.minScale
+                    model: ["info", "success", "warning", "danger", "info", "success", "warning", "danger", "info"]
+                    currentIndex: 4
+                    delegate: Rectangle {
+                        required property var modelData
+                        required property size decodeSize
+                        anchors.fill: parent
+                        color: Theme.color[modelData]
+                    }
+                }
+
                 SectionHeader { text: "Titles and scrolling"; description: "A title that opens a long menu, the current choice checked; a scroll area and its bar" }
                 Flow {
                     width: parent.width

@@ -582,6 +582,32 @@ var TOKENS = {
         dim: color("alpha({palette.background}, 0.42)")
     },
 
+    // A rail of angled cards: one expanded card between slices that
+    // overlap each other by `overlap`, every length multiplied by one unit.
+    // The unit is the carousel's width over the reference rail, the
+    // expanded card plus `referenceSteps` slice steps plus
+    // `referenceMargin` a side, or its height over the expanded card's
+    // height, whichever is smaller, held between `minScale` and
+    // `maxScale`; the two ranges meet at 1, so the clamp never inverts.
+    // Cards within `band` slices past the ones shown stay built. The
+    // selected card and its neighbours decode at their drawn size in
+    // device pixels, the longer side no more than `decodeCap`, and the
+    // rail moves over `duration`.
+    carousel: {
+        expandedWidth: length(768),
+        expandedHeight: length(475),
+        sliceWidth: length(108),
+        sliceHeight: length(432),
+        overlap: length(30),
+        referenceSteps: number(13, 0, 64),
+        referenceMargin: length(20),
+        minScale: number(0.35, 0.1, 1),
+        maxScale: number(2, 1, 4),
+        band: number(2, 0, 16),
+        decodeCap: length(2560),
+        duration: duration("{motion.duration.normal}")
+    },
+
     // The embedded bar: `barWidth` thick, `barInset` from the area's edge,
     // inside a `gutter` the content leaves free while it overflows; a thumb
     // never shorter than `minThumb`. It shows while hovered or scrolling

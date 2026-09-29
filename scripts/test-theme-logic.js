@@ -134,7 +134,24 @@ const DEFAULTS = [
     ["angledCard.borderWidth", 1],
     ["angledCard.selectedBorder", "#ff5a36ff"],
     ["angledCard.selectedBorderWidth", 3],
-    ["angledCard.dim", "#0000006b"]
+    ["angledCard.dim", "#0000006b"],
+    // The carousel: Omarchy's 768 by 475 card and 108 by 432 slices, 30
+    // over each other; v1's reference rail, 768 + 13 * (108 - 30) + 2 * 20
+    // = 1822, its unit held from 0.35 to 2, two cards built past the shown
+    // ones and a decode of at most 2560; the rail moves over
+    // motion.duration.normal, 150 ms at motion.scale 1.
+    ["carousel.expandedWidth", 768],
+    ["carousel.expandedHeight", 475],
+    ["carousel.sliceWidth", 108],
+    ["carousel.sliceHeight", 432],
+    ["carousel.overlap", 30],
+    ["carousel.referenceSteps", 13],
+    ["carousel.referenceMargin", 20],
+    ["carousel.minScale", 0.35],
+    ["carousel.maxScale", 2],
+    ["carousel.band", 2],
+    ["carousel.decodeCap", 2560],
+    ["carousel.duration", 150]
 ];
 
 // A document that is accepted, and the values it must resolve to.
