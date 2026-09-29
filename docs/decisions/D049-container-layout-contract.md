@@ -1,4 +1,4 @@
-# D045: Containers use one inset box, an inner scroll gutter and fitted popup height
+# D049: Containers use one inset box, an inner scroll gutter and fitted popup height
 
 [← Decision Index](INDEX.md)
 

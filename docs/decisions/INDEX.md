@@ -52,7 +52,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D047 | VGS-592 | Services build after every first bar presents a frame, with a deadline | No service build delays the first bar, whatever a plugin imports | A layer surface reports its first presented frame, or a service must precede the bar | Active | [Full](D047-services-build-after-the-first-bar-frame.md) |
 | 2026-09-29 | D048 | VGS-585 | Theme-owned Hyprland appearance groups use manifest switches | Core names no plugin; settings stay manifest-drawn | A theme needs layout-affecting Hyprland values | Active | [Full](D048-theme-owned-hyprland-appearance.md) |
 | 2026-09-29 | D049 | VGS-589 | Slack custom emoji from Slack's cache and `emoji.list`, drawn inline by `ImageText` | No token needed, no work on the notification path, Qt elision misplaces images | Slack sends emoji images, or Qt fixes StyledText image loading and elision | Active | [Full](D049-slack-custom-emoji-from-the-cache-drawn-inline.md) |
-| 2026-09-29 | D046 | VGS-578 | Containers use one inset box, an inner scroll gutter and fitted popup height | One owner removes per-surface padding arithmetic and keeps bars inside the inset | A child needs to bleed outside the inset box, or Quickshell adds a matching primitive | Active | [Full](D046-container-layout-contract.md) |
+| 2026-09-29 | D049 | VGS-578 | Containers use one inset box, an inner scroll gutter and fitted popup height | One owner removes per-surface padding arithmetic and keeps bars inside the inset | A child needs to bleed outside the inset box, or Quickshell adds a matching primitive | Active | [Full](D049-container-layout-contract.md) |
 
 ---
 
