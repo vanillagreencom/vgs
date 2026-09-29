@@ -319,17 +319,19 @@ click_item vgs:layer vgs.notifications NotificationCard summary Clicked 30 - || 
 expect_poll "a click on the card runs its default action" 1 invoked default
 expect_poll "the clicked toast leaves" none key_of Clicked
 
-# Opening a notification delivers its sender's default action and raises
-# the sender's window, from a toast, from the default action's pill and
-# from the inbox row of a toast that expired, whose notification the
-# service still holds. The sender is a toplevel helper of class
-# smoke.sender and the notifications this row sends in its name; the
-# signals log above records what reaches it. Quickshell 0.3.1 sends no
-# ActivationToken, so the count of those stays 0. Another window takes the
-# focus before each click, so no raise reading passes on a focus that was
-# already there, and a Reply, which raises nothing, must leave it there.
-# The controls: the inbox rows of a notification its sender closed and of
-# one whose toast was dismissed deliver nothing, and still raise.
+# Every action on a notification delivers the sender's action and brings
+# the sender's window into view, through the compositor's reveal: a click
+# on a toast, the default action's pill, another action's pill and the
+# inbox row of a toast that expired, whose notification the service still
+# holds. The sender is a toplevel helper of class smoke.sender and the
+# notifications this row sends in its name; the signals log above records
+# what reaches it. Quickshell 0.3.1 sends no ActivationToken, so the count
+# of those stays 0. Another window takes the focus before each click, so
+# no raise reading passes on a focus that was already there, and the
+# Dismiss pill, which raises nothing, must leave it there. The controls:
+# the inbox rows of a notification its sender closed and of one whose
+# toast was dismissed deliver nothing, and still raise. Where the window
+# is on the screen is the reveal row's (rows/compositor-reveal.sh).
 sender_class=smoke.sender
 sender_focused="[\"$sender_class\", \"Sender window\"]"
 other_focused='["smoke.other", "Other window"]'
@@ -387,11 +389,21 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   expect_poll "the toast to answer shows" True has_row live "Answered with Reply"
   click_pill "the Reply pill" "Answered with Reply" Reply
   expect_poll "the Reply pill delivers the reply action" 1 delivered "$reply_id" reply
-  expect_poll "the answered toast leaves" none key_of "Answered with Reply"
-  # The toast's exit is longer than the dispatch queue takes to run a
-  # raise, so a raise sent with the reply would have landed by now.
-  expect "a Reply leaves the focus on the other window" "$other_focused" active_window
+  expect_poll "the Reply pill raises the sender's window too" "$sender_focused" active_window
   expect "a Reply delivers no default action" 0 delivered "$reply_id" default
+  expect_poll "the answered toast leaves" none key_of "Answered with Reply"
+
+  # The Dismiss pill asks the core for no reveal: the service logs each
+  # choice that asks for one, and the count stays.
+  focus_other
+  chose_before="$(log_lines "notifications: chose ")"
+  dismissed_pill_id="$(sender_note "Dismissed by its pill" 1)"
+  expect_poll "the toast to dismiss by its pill shows" True has_row live "Dismissed by its pill"
+  click_pill "the Dismiss pill" "Dismissed by its pill" Dismiss
+  expect_poll "the Dismiss pill closes the notification on the server" 1 closed_on_server "$dismissed_pill_id"
+  expect "the Dismiss pill asks for no reveal" "$chose_before" log_lines "notifications: chose "
+  expect "the Dismiss pill leaves the focus on the other window" "$other_focused" active_window
+  expect "the Dismiss pill delivers no action" 0 delivered "$dismissed_pill_id" default
 
   focus_other
   pill_id="$(sender_note "Opened from its pill" 1)"

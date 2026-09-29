@@ -62,6 +62,9 @@ Item {
         shell.ipc.handle("lock", () => root.shell.lock.lock(lockContent));
         shell.ipc.handle("unlock", () => root.shell.lock.unlock());
         shell.ipc.handle("dispatch", arg => { const a = arg.split(" "); return root.shell.compositor[a[0]].apply(null, a.slice(1)); });
+        // reveal <address>[,<address>...] [sender]: the compositor's reveal
+        // of those windows, awaiting the sender with the word `sender`.
+        shell.ipc.handle("reveal", arg => { const a = arg.split(" "); return root.shell.compositor.reveal(a[0].split(","), a[1] === "sender"); });
         // Several dispatches in one call, separated by ";", so they reach
         // the queue back to back; answers every reply joined by ",".
         shell.ipc.handle("batch", arg => arg.split(";").map(one => { const a = one.split(" "); return root.shell.compositor[a[0]].apply(null, a.slice(1)); }).join(","));
