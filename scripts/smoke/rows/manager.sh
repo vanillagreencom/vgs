@@ -106,6 +106,56 @@ listing, at = json.JSONDecoder().raw_decode(text)
 names = json.loads(text[at:])
 print(len(names) == len(listing["plugins"]))'; }
 expect_poll "the cleared search lists every plugin again" True list_complete
+# The list page: the search field and every row span one left and one
+# right edge, the list's, `scrollArea.gutter` clear of the scroll area's
+# right; the heading's text and every row's icon start `row.paddingX` past
+# that left edge; and each row's lines centre on its icon, which centres on
+# the row, all within one pixel. `[]` is the pass.
+list_alignment() {
+  local rows pad gutter
+  rows="$(ipc smoke descendantGeometry panel vgs.settings)" || return
+  pad="$(ipc smoke themeValue row.paddingX)" || return
+  gutter="$(ipc smoke themeValue scrollArea.gutter)" || return
+  python3 - "$rows" "$pad" "$gutter" <<'PY'
+import json, sys
+rows, pad, gutter = (json.loads(a) for a in sys.argv[1:])
+out = []
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+def right(r): return r["box"][0] + r["box"][2]
+def mid_y(r): return r["box"][1] + r["box"][3] / 2
+def check(name, got, want):
+    if abs(got - want) > 1: out.append("%s=%.2f want=%.2f" % (name, got, want))
+page = [i for i, r in enumerate(rows) if r["type"] == "ListPage"]
+if len(page) != 1: print(json.dumps(["pages=%d" % len(page)])); sys.exit()
+under = lambda kind: [i for i, r in enumerate(rows) if r["type"] == kind and inside(i, page[0])]
+search, areas, items = under("TextField"), under("ScrollArea"), under("ListItem")
+heading = [i for i in under("Label") if rows[i].get("role") == "h2"]
+if len(search) != 1 or len(areas) != 1 or len(heading) != 1 or len(items) < 3:
+    print(json.dumps(["search=%d areas=%d heading=%d items=%d" % (len(search), len(areas), len(heading), len(items))])); sys.exit()
+edge_l, edge_r = rows[search[0]]["box"][0], right(rows[search[0]])
+check("search.right", edge_r, right(rows[areas[0]]) - gutter)
+check("heading.x", rows[heading[0]]["box"][0], edge_l + pad)
+for n, i in enumerate(items):
+    item = rows[i]
+    check("item%d.left" % n, item["box"][0], edge_l)
+    check("item%d.right" % n, right(item), edge_r)
+    icons = [j for j, r in enumerate(rows) if r["type"] == "Icon" and inside(j, i) and rows[r["parent"]]["parent"] == i]
+    lines = [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("role") in ("item", "itemHint") and inside(j, i) and r["box"][3] > 0]
+    if len(icons) != 1 or not lines: out.append("item%d icons=%d lines=%d" % (n, len(icons), len(lines))); continue
+    icon = rows[icons[0]]
+    check("item%d.icon.x" % n, icon["box"][0], edge_l + pad)
+    check("item%d.icon.y" % n, mid_y(icon), mid_y(item))
+    top = min(rows[j]["box"][1] for j in lines)
+    bottom = max(rows[j]["box"][1] + rows[j]["box"][3] for j in lines)
+    check("item%d.lines.y" % n, (top + bottom) / 2, mid_y(icon))
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the list's heading, search field and rows share its edges, each row's lines on its icon" '[]' list_alignment
 
 # The list: one row per discovered plugin, the Settings plugin itself
 # included, with its icon, source, capabilities, keys and errors.
@@ -132,41 +182,67 @@ page_fields() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import js
 expect_poll "the page draws one field per schema entry and no other plugin's" '[9, 0]' page_fields
 sliders() { ipc smoke descendantGeometry panel vgs.settings | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
 expect "the two bounded numbers draw sliders" 2 sliders
-# Every field's inline label starts `row.paddingX` in from the page's
-# column and every control `field.labelWidth` plus `field.labelGap` past
-# that, within one pixel; `[]` is the pass.
+# page_alignment SETTINGS KEYS: [] when the shown page draws SETTINGS
+# setting fields and KEYS key rows and every inline field, the details and
+# commands included, starts its label `row.paddingX` in from the page's
+# column and its control `field.labelWidth` plus `field.labelGap` past that,
+# ends its control `row.paddingX` in from the column's right, which leaves
+# the scroll bar's gutter free on every page, and centres its label on its
+# control or value, each within one pixel, a text value at line height 1
+# so its box is its glyphs; else the misfits.
 page_alignment() {
-  local rows pad label_w label_gap
+  local rows pad label_w label_gap gutter
   rows="$(ipc smoke descendantGeometry panel vgs.settings)" || return
   pad="$(ipc smoke themeValue row.paddingX)" || return
   label_w="$(ipc smoke themeValue field.labelWidth)" || return
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
-  python3 - "$rows" "$pad" "$label_w" "$label_gap" <<'PY'
+  gutter="$(ipc smoke themeValue scrollArea.gutter)" || return
+  python3 - "$rows" "$pad" "$label_w" "$label_gap" "$gutter" "$1" "$2" <<'PY'
 import json, sys
-rows, pad, label_w, label_gap = (json.loads(a) for a in sys.argv[1:])
+rows, pad, label_w, label_gap, gutter, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
 out = []
-fields = [i for i, r in enumerate(rows) if r["type"] == "SettingField"]
-if len(fields) != 9: out.append("fields=%d" % len(fields))
 def inside(j, i):
     while j != -1:
         if j == i: return True
         j = rows[j]["parent"]
     return False
+def right(r): return r["box"][0] + r["box"][2]
+def mid_y(r): return r["box"][1] + r["box"][3] / 2
+def check(name, got, want):
+    if abs(got - want) > 1: out.append("%s=%.2f want=%.2f" % (name, got, want))
+page = [i for i, r in enumerate(rows) if r["type"] == "PluginPage"]
+areas = [i for i, r in enumerate(rows) if r["type"] == "ScrollArea" and page and inside(i, page[0])]
+if len(page) != 1 or len(areas) != 1:
+    print(json.dumps(["pages=%d areas=%d" % (len(page), len(areas))])); sys.exit()
+area = rows[areas[0]]
+column_right = right(area) - gutter
+fields = [i for i, r in enumerate(rows) if r["type"] in ("SettingField", "KeyField", "Field") and inside(i, page[0])]
+counts = [sum(1 for i in fields if rows[i]["type"] == kind) for kind in ("SettingField", "KeyField")]
+if counts != [want_settings, want_keys]: out.append("settings,keys=%s want=%s" % (counts, [want_settings, want_keys]))
 for n, i in enumerate(fields):
+    name = "%s%d" % (rows[i]["type"], n)
     left = rows[i]["box"][0]
-    labels = [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("role") == "label" and rows[r["parent"]]["type"] == "QQuickRow" and rows[r["parent"]]["parent"] == i]
-    controls = [j for j, r in enumerate(rows) if r["type"] in ("TextField", "Select", "Switch", "Slider") and inside(j, i)]
-    if len(labels) != 1 or len(controls) != 1: out.append("field%d labels=%d controls=%d" % (n, len(labels), len(controls)))
-    for j in labels:
-        if abs(rows[j]["box"][0] - (left + pad)) > 1: out.append("field%d.label.x=%.2f want=%.2f" % (n, rows[j]["box"][0], left + pad))
-    for j in controls:
-        want = left + pad + label_w + label_gap
-        got = rows[j]["box"][0]
-        if abs(got - want) > 1: out.append("field%d.%s.x=%.2f want=%.2f" % (n, rows[j]["type"], got, want))
+    lines = [j for j, r in enumerate(rows) if r["type"] == "QQuickRow" and r["parent"] == i]
+    if len(lines) != 1: out.append("%s rows=%d" % (name, len(lines))); continue
+    labels = [j for j, r in enumerate(rows) if r["parent"] == lines[0] and r["type"] == "Label" and r.get("role") == "label"]
+    slots = [j for j, r in enumerate(rows) if r["parent"] == lines[0] and r["type"] != "Label"]
+    if len(labels) != 1 or len(slots) != 1: out.append("%s labels=%d slots=%d" % (name, len(labels), len(slots))); continue
+    label, slot = rows[labels[0]], rows[slots[0]]
+    values = [r for r in rows if r["parent"] == slots[0]]
+    if len(values) != 1: out.append("%s values=%d" % (name, len(values))); continue
+    check(name + ".label.x", label["box"][0], left + pad)
+    check(name + ".control.x", slot["box"][0], left + pad + label_w + label_gap)
+    check(name + ".control.right", right(slot), column_right - pad)
+    check(name + ".label.y", mid_y(label), mid_y(values[0]))
+    # A value drawn with leading below its glyphs is centred as a box and
+    # not as text.
+    if values[0]["type"] == "Label" and values[0].get("lineHeight") != 1: out.append("%s.value.lineHeight=%s" % (name, values[0].get("lineHeight")))
+    for j, r in enumerate(rows):
+        if r["type"] in ("TextField", "Select") and inside(j, i): check(name + "." + r["type"] + ".right", right(r), column_right - pad)
 print(json.dumps(out))
 PY
 }
-geometry expect_poll "the page's fields share one label edge and one control edge" '[]' page_alignment
+geometry expect_poll "the page's fields share one label edge, one control edge and one right edge, each label on its control" '[]' page_alignment 9 0
 
 # The page scrolls under its bar: a drag on the thumb moves the content
 # with it, and a press on the track under the thumb pages one view down.
@@ -208,6 +284,7 @@ type_keys set || fail "typing into the title's menu failed"
 expect_poll "typed letters highlight the plugin whose name starts with them" '["Settings"]' title_menu current
 type_keys -k Return || fail "sending Return to the title's menu failed"
 expect_poll "Enter jumps to that plugin's page" '"vgs.settings"' settings_page
+geometry expect_poll "the Settings page's key row ends on the settings fields' right edge, its label on its field" '[]' page_alignment 0 1
 expect_poll "the jump closes the menu" '[false]' title_menu opened
 
 # Keys: the Settings plugin's own page edits its shortcut's key. A key
@@ -291,32 +368,27 @@ geometry expect_poll "the shortcut's window fits the focused monitor" '[]' windo
 expect "the shortcut toggles it closed again" ok hypr dispatch 'hl.dsp.global("vgs.settings:toggle")'
 expect_poll "the window is gone after the shortcut" 0 layer_count vgs:panel
 
-# A monitor narrower than the window's width token: the window keeps
-# `size.window.gutter` a side and half the monitor's height, centred. A
-# headless output the rows could add has no size in the sandbox, whose
-# headless buffers fail to allocate (the GBM line qml-smoke.sh's header
-# names), so the row makes the monitor the narrower one: a theme sets the
-# token past the monitor's width, which meets the same clamp,
-# min(size.window.width, width - 2 * size.window.gutter).
-theme_file="$home/.config/vgs/theme.json"
-theme_saved="$sandbox/theme.json.before-clamp"
-[[ ! -e $theme_file ]] || cp -p -- "$theme_file" "$theme_saved"
-printf '{ "schemaVersion": 1, "name": "wide-window", "tokens": { "size": { "window": { "width": 4096 } } } }\n' >"$theme_file.tmp" && mv -T -- "$theme_file.tmp" "$theme_file"
-expect_poll "a theme sets the window width past the monitor's" 4096 ipc smoke themeValue size.window.width
-click_centre "$(bar_key)" vgs.settings || fail "the click on the gear for the clamp failed"
-expect_poll "the gear opens the window for the clamp" open settings_open
+# A monitor narrower than the window's width token: the nested output
+# takes a 480 by 720 mode, and the window keeps `size.window.gutter` a side
+# and half the monitor's height, centred on it; the mode it had is then
+# restored, so later rows meet the monitor they read at the start.
+narrow_mode=480x720
+main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+expect "the nested compositor makes its monitor narrower than the window" ok output_mode "$main_monitor" "$narrow_mode"
+expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+bar_width() { one_layer vgs:bar | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
+expect_poll "the bar follows the narrow monitor" 480 bar_width
+expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
+expect_poll "the window maps on the narrow monitor" 1 layer_count vgs:panel
 geometry expect_poll "a monitor narrower than the width token keeps the gutters, half its height, centred" '[]' window_fits "$main_monitor"
 clamped_width() { settings_layer | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
 gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
-geometry expect "the clamped window is the monitor's width less two gutters" "$((mon_w - 2 * gutter))" clamped_width
+geometry expect "the clamped window is the monitor's width less two gutters" "$((480 - 2 * gutter))" clamped_width
 expect "the gear closes the clamped window" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the clamped window is gone" 0 layer_count vgs:panel
-if [[ -e $theme_saved ]]; then
-  mv -T -- "$theme_saved" "$theme_file"
-else
-  unlink -- "$theme_file"
-fi
-expect_poll "the theme's window width is the default again" 600 ipc smoke themeValue size.window.width
+expect "the nested compositor restores its monitor's mode" ok output_mode "$main_monitor" "$main_mode"
+expect_poll "the monitor has its width back" "$mon_w" first_width
+expect_poll "the bar follows the restored monitor" "$mon_w" bar_width
 
 # Enable and disable, and a setting, through the page.
 expect "the deep link reopens the fixture's page" ok ipc shell summon panel vgs.settings '{"plugin":"acme.probe"}'

@@ -404,6 +404,16 @@ reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum
 # Live layers with a namespace as [[x, y, w, h], ...], sorted.
 layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
 layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# output_mode NAME MODE: the nested compositor gives output NAME the mode
+# MODE, such as 480x720, at scale 1 and the layout's origin, through a Lua
+# monitor rule; the reply is hyprctl's. The nested output takes any mode,
+# which the rows use for a monitor narrower than a window; a headless
+# output the rows could add instead stays 0x0 in the sandbox, its buffers
+# failing to allocate. A row restores the mode it read first.
+output_mode() { hypr eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"0x0\", scale = 1 })"; }
+# The first monitor's mode as WxH, and its logical width.
+first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print("%dx%d" % (m["width"], m["height"]))'; }
+first_width() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]))'; }
 # The one live layer with a namespace as [x, y, w, h], or layers=<n>.
 one_layer() { layers_of "$1" | python3 -c 'import json,sys; l=json.load(sys.stdin); print(json.dumps(l[0]) if len(l) == 1 else "layers=%d" % len(l))'; }
 # at_centre NAMESPACE RECT_JSON: the layout position of the centre of a box

@@ -337,7 +337,8 @@ Scope {
         // Every item under an instance, the instance first, breadth first:
         // its type name as typeName writes it, its box in screen
         // coordinates, its implicit size, the index of its parent in the
-        // list and a Label's role. A row measures alignment from it, so the
+        // list, a Label's role and a text's line height, at which only 1
+        // makes a box its glyphs. A row measures alignment from it, so the
         // shipped item carries no readback of its own.
         function descendantGeometry(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -350,7 +351,8 @@ Scope {
                     box: [at.x, at.y, child.width, child.height],
                     implicit: [child.implicitWidth, child.implicitHeight],
                     parent: items.indexOf(child.parent),
-                    role: child.role
+                    role: child.role,
+                    lineHeight: child.lineHeight
                 };
             }));
         }

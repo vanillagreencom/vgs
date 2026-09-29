@@ -165,10 +165,10 @@ settings_close() {
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a plugin page with many grouped settings at its top and dragged
 # down its scroll bar; a plugin with keys; the title's menu open with its
-# scroll bar under the pointer; and the window clamped on a monitor
-# narrower than its width token.
+# scroll bar under the pointer; and the list and a page on a monitor
+# narrower than the window's width token.
 scene_settings() { # MODE
-  local area at tx ty title x y theme_file="$home/.config/vgs/theme.json"
+  local area at tx ty title x y
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
   expect_poll "the gear opens the Settings window" 1 layer_count vgs:panel
   expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn panel vgs.settings
@@ -209,25 +209,22 @@ scene_settings() { # MODE
   expect_poll "the title's menu closes" False settings_menu_open
   park_pointer
   settings_close
-  # A width token past the monitor's width meets the clamp a narrower
-  # monitor meets; the sandbox's headless outputs have no size.
-  cp -p -- "$theme_file" "$sandbox/theme.json.shots"
-  python3 - "$theme_file" <<'PY'
-import json, sys
-path = sys.argv[1]
-doc = json.load(open(path))
-doc["name"] = doc["name"] + "-clamped"
-doc.setdefault("tokens", {}).setdefault("size", {}).setdefault("window", {})["width"] = 4096
-json.dump(doc, open(path + ".tmp", "w"))
-PY
-  mv -T -- "$theme_file.tmp" "$theme_file"
-  expect_poll "the width token is past the monitor's width" 4096 ipc smoke themeValue size.window.width
-  expect "the Settings window opens clamped" ok ipc shell summon panel vgs.settings '{"plugin":"acme.probe"}'
-  expect_poll "the clamped window maps" 1 layer_count vgs:panel
-  take "settings-$1-clamped"
+  # The monitor made narrower than the window: the nested output takes a
+  # 480 by 720 mode for the shot, then its own mode again. The gear opens
+  # the window on its bar's monitor, the list first and then a page.
+  local main_mode main_name
+  main_mode="$(first_mode)" && main_name="$(hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || fail "the monitor is unreadable"
+  expect "the monitor is made narrower than the window" ok output_mode "$main_name" 480x720
+  expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+  expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
+  expect_poll "the narrow window maps" 1 layer_count vgs:panel
+  take "settings-$1-narrow-list"
+  expect "the narrow window opens the probe's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+  expect_poll "the probe's page is shown on the narrow monitor" '"acme.probe"' settings_page
+  take "settings-$1-narrow-page"
   settings_close
-  mv -T -- "$sandbox/theme.json.shots" "$theme_file"
-  expect_poll "the width token is back" 600 ipc smoke themeValue size.window.width
+  expect "the monitor's own mode is restored" ok output_mode "$main_name" "$main_mode"
+  expect_poll "the monitor has its width back" "$mon_w" first_width
 }
 
 launcher_rows() { ipc smoke launcherRows overlay vgs.launcher; }
