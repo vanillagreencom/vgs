@@ -4,15 +4,17 @@ import qs.Ui
 import "Files.js" as Files
 
 // One card on the wallpaper browser's rail: an image card draws its image,
-// decoded at the size the carousel hands it; the download or update card,
-// and an image card while its image loads or when it cannot be read, fill
-// with the surface colour and name the card under an icon. A Spinner
-// turns over the card while the browser sets its image or runs its
-// download.
+// decoded at the size the carousel hands it and loaded under the view's
+// generation, so a file replaced under its name is read again. The
+// download or update card, and an image card while its image loads or
+// when it cannot be read, fill with the surface colour and name the card
+// under an icon. A Spinner turns over the card while the browser sets its
+// image or runs its download.
 Item {
     id: root
 
-    // The card BrowserLogic.wallpaperCards built.
+    // The card BrowserLogic.wallpaperCards built, with the view's
+    // `generation`.
     required property var modelData
     required property size decodeSize
     // Whether the browser is setting this image or running this card's
@@ -55,7 +57,7 @@ Item {
         id: image
         anchors.fill: parent
         visible: status === Image.Ready
-        source: root.offer ? "" : Files.fileUrl(root.modelData.path)
+        source: root.offer ? "" : Files.stampedUrl(root.modelData.path, root.modelData.generation)
         sourceSize: root.decodeSize
         fillMode: Image.PreserveAspectCrop
         asynchronous: true

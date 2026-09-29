@@ -67,6 +67,11 @@ FocusScope {
     property var downloading: null
     // What the last step that failed answered, "" when none did.
     property string problem: ""
+    // The load the rail's images come from, a clock reading taken on
+    // open: each card loads its image under it as the URL's stamp, so an
+    // image replaced under its name since an earlier open is read again
+    // rather than from Qt's pixmap cache.
+    property real generation: 0
 
     // Read the list, the catalog and every image, then build the cards and
     // run THEN, when given. Each answer is kept as it arrives.
@@ -208,6 +213,7 @@ FocusScope {
     function start() {
         if (started || shell === null) return;
         started = true;
+        generation = Date.now();
         refresh();
         focusRail();
     }
@@ -259,9 +265,12 @@ FocusScope {
         anchors.horizontalCenter: parent.horizontalCenter
         model: BrowserLogic.SCOPES.map(s => s.label)
         currentIndex: root.scopeIndex
+        // A segment click focuses the control, and a click on the chosen
+        // segment emits no `activated`, so the control hands the keyboard
+        // back to the rail whenever it takes it, after the click ends.
+        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
         onActivated: index => {
             root.scopeIndex = index;
-            root.focusRail();
         }
     }
 
@@ -275,7 +284,7 @@ FocusScope {
         anchors.right: parent.right
         focus: true
         model: ScriptModel {
-            values: root.shownCards.map(card => Object.assign({ key: BrowserLogic.cardKey(card) }, card))
+            values: root.shownCards.map(card => Object.assign({ key: BrowserLogic.railKey(BrowserLogic.cardKey(card), root.generation), generation: root.generation }, card))
             objectProp: "key"
         }
         delegate: ThemeCard {

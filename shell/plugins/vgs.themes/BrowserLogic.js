@@ -164,6 +164,14 @@ function cardKey(card) {
     return JSON.stringify([card.name, card.label, card.image, card.palette]);
 }
 
+// The identity of a card on a rail from its KEY and the view's
+// GENERATION, the load its images come from: a new generation rebuilds
+// every card, so each reads its image again. The carousel hands a card's
+// content its entry once, and keeps a card whose identity stayed.
+function railKey(key, generation) {
+    return JSON.stringify([generation, key]);
+}
+
 // The index to select in LIST: the card named NAME, else the first.
 function selection(list, name) {
     for (var i = 0; i < list.length; i++)

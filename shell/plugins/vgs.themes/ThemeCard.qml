@@ -12,7 +12,8 @@ import "Files.js" as Files
 Item {
     id: root
 
-    // The card BrowserLogic.cards built for this theme.
+    // The card BrowserLogic.cards built for this theme, with the view's
+    // `generation`, the stamp its image loads under.
     required property var modelData
     required property size decodeSize
     // Whether the browser is installing, applying or downloading for this
@@ -63,7 +64,7 @@ Item {
         id: image
         anchors.fill: parent
         visible: status === Image.Ready
-        source: root.modelData.image === null ? "" : Files.fileUrl(root.modelData.image)
+        source: root.modelData.image === null ? "" : Files.stampedUrl(root.modelData.image, root.modelData.generation)
         sourceSize: root.decodeSize
         fillMode: Image.PreserveAspectCrop
         asynchronous: true

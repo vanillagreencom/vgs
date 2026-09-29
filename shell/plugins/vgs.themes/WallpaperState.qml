@@ -34,12 +34,6 @@ Item {
         return Object.prototype.hasOwnProperty.call(screens, name) ? screens[name] : source;
     }
 
-    // The image's URL with its entry's stamp as the query, so a new stamp
-    // is a new source.
-    function fileUrl(path, stamp) {
-        return Files.fileUrl(path) + "?" + encodeURIComponent(stamp);
-    }
-
     // The `screens` map of a document as { sources, paths }, each empty
     // for an absent key, or null for one the runner did not write.
     function screenSources(value) {
@@ -50,7 +44,7 @@ Item {
         for (const name of Object.keys(value)) {
             const entry = value[name];
             if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || typeof entry.stamp !== "string") return null;
-            sources[name] = fileUrl(entry.path, entry.stamp);
+            sources[name] = Files.stampedUrl(entry.path, entry.stamp);
             paths[name] = entry.path;
         }
         return { sources: sources, paths: paths };
@@ -64,8 +58,8 @@ Item {
     }
 
     // Set `path`, `source`, `screens` and `screenPaths` from
-    // backgrounds.json's TEXT; a
-    // document the runner did not write is logged and names no image.
+    // backgrounds.json's TEXT; a document the runner did not write is
+    // logged and names no image.
     function take(text) {
         let doc = null;
         try {
@@ -77,7 +71,7 @@ Item {
         const current = own !== null && typeof doc.current === "string" && typeof doc.stamp === "string";
         if (own !== null && (current || doc.current === null)) {
             path = current ? doc.current : "";
-            source = current ? fileUrl(doc.current, doc.stamp) : "";
+            source = current ? Files.stampedUrl(doc.current, doc.stamp) : "";
             screens = own.sources;
             screenPaths = own.paths;
             return;

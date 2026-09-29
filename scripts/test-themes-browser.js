@@ -118,6 +118,9 @@ function verify(logic, files) {
         ["a label", { label: "Nord Two" }],
         ["a name", { name: "nord-two" }]
     ]) assert.notEqual(logic.cardKey(Object.assign({}, nordCard, change)), logic.cardKey(nordCard), label + " changes the key");
+    assert.equal(logic.railKey("/t/a.jpg", 7), logic.railKey("/t/a.jpg", 7), "one key in one generation is one card");
+    assert.notEqual(logic.railKey("/t/a.jpg", 8), logic.railKey("/t/a.jpg", 7), "a new generation rebuilds the card");
+    assert.notEqual(logic.railKey("/t/b.jpg", 7), logic.railKey("/t/a.jpg", 7), "another key is another card");
     assert.equal(logic.selection(built, "nord"), 4);
     assert.equal(logic.selection(built, "gone"), 0);
     assert.equal(logic.selection([], "nord"), 0);
@@ -176,6 +179,8 @@ function verify(logic, files) {
 
     // File URLs encode each segment.
     assert.equal(files.fileUrl("/home/u/a b/#1?.jpg"), "file:///home/u/a%20b/%231%3F.jpg");
+    assert.equal(files.stampedUrl("/home/u/a b.jpg", "12:34.5"), "file:///home/u/a%20b.jpg?12%3A34.5");
+    assert.equal(files.stampedUrl("/t/a.jpg", 1790679199706), "file:///t/a.jpg?1790679199706");
 }
 
 // Qt::Key codes, from qnamespace.h.
@@ -302,6 +307,7 @@ const CONTROLS = [
     ["printable only", "return code >= 32 && code !== 127;", "return true;"],
     ["offer only when displayed", "card.installed && card.displayed && card.imagery", "card.installed && card.imagery"],
     ["offer only with bytes", "&& card.imagery.size > 0", ""],
+    ["rail key holds the generation", "return JSON.stringify([generation, key]);", "return JSON.stringify([key]);"],
     ["key holds the palette", "return JSON.stringify([card.name, card.label, card.image, card.palette]);", "return JSON.stringify([card.name, card.label, card.image]);"],
     ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return'],
     ["wallpaper chords pass on", 'if (chord) return "";', ""],
@@ -336,7 +342,20 @@ try {
         }
         assert.ok(failed, `control "${label}": the suite passed on logic without that rule`);
     }
+    // Files.js's control: a stamped URL that drops its stamp.
+    const filesSource = fs.readFileSync(path.join(dir, "Files.js"), "utf8");
+    const stampNeedle = 'return fileUrl(path) + "?" + encodeURIComponent(String(stamp));';
+    assert.equal(filesSource.split(stampNeedle).length, 2, "control \"stamp in the URL\": the text to replace must occur once");
+    const filesMutant = path.join(temp, "Files.js");
+    fs.writeFileSync(filesMutant, filesSource.replace(stampNeedle, () => "return fileUrl(path);"));
+    let stampFailed = false;
+    try {
+        verify(load(file), load(filesMutant));
+    } catch (e) {
+        stampFailed = true;
+    }
+    assert.ok(stampFailed, "control \"stamp in the URL\": the suite passed on files without the stamp");
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-themes-browser: ok payloads=${PAYLOAD_REFUSED.length} edits=${EDITS.length} keys=${WALLPAPER_KEYS.length} controls=${CONTROLS.length}`);
+console.log(`test-themes-browser: ok payloads=${PAYLOAD_REFUSED.length} edits=${EDITS.length} keys=${WALLPAPER_KEYS.length} controls=${CONTROLS.length + 1}`);

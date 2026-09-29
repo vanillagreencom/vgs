@@ -73,6 +73,13 @@ FocusScope {
     // `name` the image file or the package, or null.
     property var job: null
     readonly property bool busy: job !== null
+    // The load the rail's images come from: set on open and again once a
+    // download or an update ends, since either can replace an image under
+    // its name. BrowserLogic.railKey folds it into each card's identity,
+    // and the card loads its image under it as the URL's stamp, so no
+    // card keeps a decode of a replaced file. A clock reading, so no two
+    // opens share one in Qt's pixmap cache.
+    property real generation: 0
     // `last.downloading` as last read while a download this view started
     // runs, else null.
     property var downloading: null
@@ -129,11 +136,17 @@ FocusScope {
 
     function takeKeys() { root.forceActiveFocus(); }
 
+    function nextGeneration() {
+        generation = Math.max(Date.now(), generation + 1);
+    }
+
     // End the running step with LINE, "" for none, and read the lists
-    // again: a step that failed may still have changed what is on disk.
+    // again: a step that failed may still have changed what is on disk, so
+    // the rail loads every image again too.
     function finish(line) {
         job = null;
         problem = line;
+        nextGeneration();
         refresh();
     }
 
@@ -200,6 +213,7 @@ FocusScope {
     function start() {
         if (started || shell === null) return;
         started = true;
+        nextGeneration();
         refresh();
         takeKeys();
     }
@@ -265,14 +279,17 @@ FocusScope {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Theme.space.lg
 
+        // A segment click focuses its control, and a click on the chosen
+        // segment emits no `activated`, so each control hands the keyboard
+        // back to the view whenever it takes it, after the click ends.
         SegmentedControl {
             id: sourceControl
             model: BrowserLogic.WALLPAPER_SOURCES.map(s => s.label)
             currentIndex: root.sourceIndex
+            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
             onActivated: index => {
                 root.sourceIndex = index;
                 currentIndex = Qt.binding(() => root.sourceIndex);
-                root.takeKeys();
             }
         }
 
@@ -281,10 +298,10 @@ FocusScope {
             visible: root.scoped
             model: BrowserLogic.SCREEN_SCOPES.map(s => s.label)
             currentIndex: root.scopeIndex
+            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
             onActivated: index => {
                 root.chooseScope(index);
                 currentIndex = Qt.binding(() => root.scopeIndex);
-                root.takeKeys();
             }
         }
     }
@@ -298,8 +315,8 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         model: ScriptModel {
-            values: root.cards
-            objectProp: "key"
+            values: root.cards.map(card => Object.assign({ railKey: BrowserLogic.railKey(card.key, root.generation), generation: root.generation }, card))
+            objectProp: "railKey"
         }
         delegate: WallpaperCard {
             busy: root.job !== null && root.job.key === modelData.key

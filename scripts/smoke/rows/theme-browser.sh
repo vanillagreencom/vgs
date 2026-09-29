@@ -240,6 +240,76 @@ wall_job() { wall_value job | python3 -c 'import json,sys; j=json.load(sys.stdin
 press_wallpapers() { type_keys -M logo -k w -m logo; }
 nord_a="$installed/nord/backgrounds/a.jpg"; nord_b="$installed/nord/backgrounds/b.jpg"; nord_c="$installed/nord/backgrounds/c.jpg"
 wall_output=SMOKE-WALL
+# Whether the first segmented control, the source control in the wallpaper
+# view and the scope control in the theme view, holds the keyboard.
+segment_focused() { ipc smoke readDescendant overlay vgs.themes SegmentedControl activeFocus; }
+thumbs="$repo/themes/catalog/thumbnails"
+# The width over the height of the file IMAGE, a JPEG, and of the ready card
+# image drawing PATH, `none` while none is ready, each to one decimal place.
+# A card decodes to cover its box, so its image keeps the file's ratio.
+file_ratio() {
+  python3 - "$1" <<'PY'
+import struct, sys
+d = open(sys.argv[1], "rb").read(); i = 2
+while i < len(d):
+    m, l = d[i + 1], struct.unpack(">H", d[i + 2:i + 4])[0]
+    if m in (0xC0, 0xC1, 0xC2):
+        h, w = struct.unpack(">HH", d[i + 5:i + 9]); print("%.1f" % (w / h)); break
+    i += 2 + l
+PY
+}
+card_ratio() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[3] for i in json.load(sys.stdin) if i[0]==sys.argv[1] and i[1]=="ready"]; print("%.1f" % (r[0][0] / r[0][1]) if r else "none")' "$1"; }
+# pin_nord ARCHIVE A_IMAGE: an archive holding a.jpg from A_IMAGE and b.jpg
+# and c.jpg from nord's thumbnail, pinned for nord in the sandbox copy's
+# catalog, which the update card then offers.
+pin_nord() {
+  python3 - "$assets/themes-v1/$1" "$2" "$thumbs/nord.jpg" "$index" <<'PY'
+import hashlib, json, os, sys, tarfile
+out, first, image, index = sys.argv[1:]
+with tarfile.open(out, "w:gz") as tar:
+    tar.add(first, arcname="backgrounds/a.jpg")
+    for name in ("backgrounds/b.jpg", "backgrounds/c.jpg"):
+        tar.add(image, arcname=name)
+data = open(out, "rb").read()
+doc = json.load(open(index))
+nord = [e for e in doc["entries"] if e["name"] == "nord"][0]
+nord["imagery"] = dict(nord["imagery"], archive=os.path.basename(out), size=len(data), sha256=hashlib.sha256(data).hexdigest())
+with open(index + ".next", "w") as f:
+    json.dump(doc, f)
+os.replace(index + ".next", index)
+PY
+}
+# plugin_control FILE LABEL OLD NEW: rescan vgs.themes with the OLD text of
+# its FILE, which must occur once, replaced by NEW; plugin_restore FILE
+# LABEL rescans it with the file put back. Each waits for the scan to
+# publish a new revision of the plugin and for the follow after it.
+themes_revision() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.themes"][0])'; }
+themes_revised() { [[ $(themes_revision) != "$1" ]] && echo revised || echo same; }
+themes_rescan() { # LABEL
+  local before
+  before="$(themes_revision)" || { fail "the revision before $1 is unreadable"; return; }
+  expect "a rescan builds $1" ok ipc shell rescanPlugins
+  expect_poll "the rescan publishes $1" revised themes_revised "$before"
+  expect "the follow after the rescan for $1 ends" idle theme_idle
+}
+plugin_control() {
+  local file="$repo/shell/plugins/vgs.themes/$1"
+  cp -p -- "$file" "$sandbox/$1.real"
+  python3 - "$sandbox/$1.real" "$file.tmp" "$3" "$4" <<'PY' || { fail "the $2 control's text occurs once in $1"; return; }
+import pathlib, sys
+src, dst, old, new = sys.argv[1:]
+text = pathlib.Path(src).read_text()
+assert text.count(old) == 1, "control text must match once: " + old
+pathlib.Path(dst).write_text(text.replace(old, new))
+PY
+  mv -T -- "$file.tmp" "$file"
+  themes_rescan "the $2 control"
+}
+plugin_restore() {
+  local file="$repo/shell/plugins/vgs.themes/$1"
+  cp -p -- "$sandbox/$1.real" "$file.tmp" && mv -T -- "$file.tmp" "$file"
+  themes_rescan "the view the $2 control replaced"
+}
 
 expect "the follow before the wallpaper rows ends" idle theme_idle
 expect "nord applies for the wallpaper rows" "ok theme=nord state=applied shell=applied" vgsh_theme apply nord
@@ -308,25 +378,7 @@ expect "a set for every monitor clears each screen's own image" '{}' bg_screens
 
 # Control: a copy of the view that sets every image as the current one
 # moves the other screen's image under This monitor.
-wall_qml="$repo/shell/plugins/vgs.themes/WallpaperView.qml"
-themes_revision() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.themes"][0])'; }
-# Whether the scan published a revision of vgs.themes other than BEFORE.
-themes_revised() { [[ $(themes_revision) != "$1" ]] && echo revised || echo same; }
-revision_before="$(themes_revision)"
-cp -p -- "$wall_qml" "$sandbox/WallpaperView.qml.real"
-python3 - "$sandbox/WallpaperView.qml.real" "$wall_qml.tmp" <<'PY'
-import pathlib, sys
-src, dst = map(pathlib.Path, sys.argv[1:])
-text = src.read_text()
-old = "shell.theme.set(card.path, BrowserLogic.setScreen(scope, screenName), result => {"
-assert text.count(old) == 1, f"scope control must match once: {old}"
-dst.write_text(text.replace(old, "shell.theme.set(card.path, null, result => {"))
-assert dst.read_text() != text, "scope control must change the file"
-PY
-mv -T -- "$wall_qml.tmp" "$wall_qml"
-expect "a rescan builds the view that ignores the scope" ok ipc shell rescanPlugins
-expect_poll "the rescan publishes the view that ignores the scope" revised themes_revised "$revision_before"
-expect "the follow after the scope control's rescan ends" idle theme_idle
+plugin_control WallpaperView.qml scope "shell.theme.set(card.path, BrowserLogic.setScreen(scope, screenName), result => {" "shell.theme.set(card.path, null, result => {"
 press_wallpapers || fail "typing SUPER+W for the scope control failed"
 expect_poll "SUPER+W opens the scope control's browser" 1 layer_count vgs:overlay
 expect_poll "the scope control's view read its lists" true wall_value loaded
@@ -335,40 +387,91 @@ expect_poll "the scope control selects b.jpg for this monitor" "$nord_b" wall_se
 type_keys -k Return || fail "sending Return to the scope control failed"
 expect_poll "the scope control's set closes the browser" 0 layer_count vgs:overlay
 expect_poll "the scope control moves the other screen's image too" "$nord_b ready" background_image_on "$other_screen"
-cp -p -- "$sandbox/WallpaperView.qml.real" "$wall_qml.tmp" && mv -T -- "$wall_qml.tmp" "$wall_qml"
-revision_before="$(themes_revision)"
-expect "a rescan restores the wallpaper view" ok ipc shell rescanPlugins
-expect_poll "the rescan publishes the restored view" revised themes_revised "$revision_before"
-expect "the follow after the restoring rescan ends" idle theme_idle
+plugin_restore WallpaperView.qml scope
 expect "set --every-screen puts nord's first image back on every screen" "ok background=a.jpg theme=nord path=$nord_a screen=*" vgsh_theme background set "$nord_a" --every-screen
 
-# The update card: the catalog pins a second archive with a third image.
-# Enter on it runs the update form on the download lane, applies nord
-# again, reads the lists again and stays open.
-python3 - "$assets/themes-v1/vgs-theme-nord-smoke2.tar.gz" "$repo/themes/catalog/thumbnails/nord.jpg" "$index" <<'PY'
-import hashlib, json, os, sys, tarfile
-out, image, index = sys.argv[1:]
-with tarfile.open(out, "w:gz") as tar:
-    for name in ("backgrounds/a.jpg", "backgrounds/b.jpg", "backgrounds/c.jpg"):
-        tar.add(image, arcname=name)
-data = open(out, "rb").read()
-doc = json.load(open(index))
-nord = [e for e in doc["entries"] if e["name"] == "nord"][0]
-nord["imagery"] = dict(nord["imagery"], archive=os.path.basename(out), size=len(data), sha256=hashlib.sha256(data).hexdigest())
-with open(index + ".next", "w") as f:
-    json.dump(doc, f)
-os.replace(index + ".next", index)
-PY
-press_wallpapers || fail "typing SUPER+W for the update failed"
-expect_poll "SUPER+W opens the browser for the update" 1 layer_count vgs:overlay
+# A click on the segment already chosen hands the keyboard back as a
+# change does: Right then steps the rail and leaves the source. In the
+# theme view it leaves the scope. Controls: a copy of each view whose
+# control keeps the keyboard switches the source or the scope on Right.
+press_wallpapers || fail "typing SUPER+W for the segment click failed"
+expect_poll "SUPER+W opens the browser for the segment click" 1 layer_count vgs:overlay
+expect_poll "the segment-click view selects a.jpg" "$nord_a" wall_selected
+click_in vgs:overlay overlay vgs.themes QQuickButton Theme || fail "the click on the chosen Theme segment failed"
+expect_poll "the view takes the keyboard back after a click on the chosen source" false segment_focused
+type_keys -k Right || fail "sending Right after the segment click failed"
+expect_poll "Right after the click steps the rail" "$nord_b" wall_selected
+expect "Right after the click leaves the source" '"theme"' wall_value source
+type_keys -k Escape || fail "sending Escape after the segment click failed"
+expect_poll "Escape closes the browser after the segment click" 0 layer_count vgs:overlay
+press_themes || fail "typing SUPER+T for the segment click failed"
+expect_poll "SUPER+T opens the theme view for the segment click" 1 layer_count vgs:overlay
+expect_poll "the theme view read its cards for the segment click" true view_value loaded
+click_in vgs:overlay overlay vgs.themes QQuickButton All || fail "the click on the chosen All segment failed"
+expect_poll "the theme view takes the keyboard back after a click on the chosen scope" false segment_focused
+type_keys -k Right || fail "sending Right in the theme view failed"
+expect "Right after the click leaves the theme view's scope" 0 view_value scopeIndex
+type_keys -k Escape || fail "sending Escape to the theme view failed"
+expect_poll "Escape closes the theme view after the segment click" 0 layer_count vgs:overlay
+plugin_control WallpaperView.qml "wallpaper focus" $'currentIndex: root.sourceIndex\n            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)' 'currentIndex: root.sourceIndex'
+press_wallpapers || fail "typing SUPER+W for the wallpaper focus control failed"
+expect_poll "SUPER+W opens the wallpaper focus control's browser" 1 layer_count vgs:overlay
+expect_poll "the wallpaper focus control's view read its lists" true wall_value loaded
+click_in vgs:overlay overlay vgs.themes QQuickButton Theme || fail "the click on the focus control's Theme segment failed"
+type_keys -k Right || fail "sending Right to the wallpaper focus control failed"
+expect_poll "the wallpaper focus control's Right switches the source" '"all"' wall_value source
+type_keys -k Escape || fail "sending Escape to the wallpaper focus control failed"
+expect_poll "Escape closes the wallpaper focus control's browser" 0 layer_count vgs:overlay
+plugin_restore WallpaperView.qml "wallpaper focus"
+plugin_control ThemeView.qml "theme focus" $'\n        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)' ''
+press_themes || fail "typing SUPER+T for the theme focus control failed"
+expect_poll "SUPER+T opens the theme focus control's browser" 1 layer_count vgs:overlay
+expect_poll "the theme focus control read its cards" true view_value loaded
+click_in vgs:overlay overlay vgs.themes QQuickButton All || fail "the click on the focus control's All segment failed"
+type_keys -k Right || fail "sending Right to the theme focus control failed"
+expect_poll "the theme focus control's Right switches the scope" 1 view_value scopeIndex
+type_keys -k Escape || fail "sending Escape to the theme focus control failed"
+expect_poll "Escape closes the theme focus control's browser" 0 layer_count vgs:overlay
+plugin_restore ThemeView.qml "theme focus"
+
+# The update card: the catalog pins a newer archive, which replaces a.jpg
+# under its name with an image of another shape and adds c.jpg. Enter on
+# it runs the update form on the download lane, applies nord again, reads
+# the lists again, loads every card's image again and stays open. Each
+# card image is read back by the ratio it decodes to. Control: a copy of
+# the view whose cards keep their identity across the update keeps
+# drawing the old a.jpg. It runs first, on the second archive; the real
+# view then reads that archive's a.jpg on a new open and the third
+# archive's after its update.
+plugin_control WallpaperView.qml identity "BrowserLogic.railKey(card.key, root.generation)" "BrowserLogic.railKey(card.key, 0)"
+pin_nord vgs-theme-nord-smoke2.tar.gz "$thumbs/frankenstein.jpg"
+press_wallpapers || fail "typing SUPER+W for the identity control failed"
+expect_poll "SUPER+W opens the identity control's browser" 1 layer_count vgs:overlay
 expect_poll "the theme source ends with the update card" "[\"$nord_a\", \"$nord_b\", \"update\"]" wall_keys
+expect_poll "the identity control draws nord's a.jpg" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_a"
 type_keys -k End || fail "sending End failed"
 expect_poll "End selects the update card" update wall_selected
+type_keys -k Return || fail "sending Return to the identity control's update card failed"
+expect_poll "the identity control's update, apply and lists end" none wall_job
+expect "the identity control's update left no problem" '""' wall_value problem
+expect_poll "the theme source lists the third image and no card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\"]" wall_keys
+expect "the update replaced a.jpg on disk" True bash -c 'cmp -s -- "$1" "$2" && echo True' _ "$thumbs/frankenstein.jpg" "$nord_a"
+expect "the identity control keeps drawing the replaced a.jpg's old picture" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_a"
+type_keys -k Escape || fail "sending Escape to the identity control failed"
+expect_poll "Escape closes the identity control's browser" 0 layer_count vgs:overlay
+plugin_restore WallpaperView.qml identity
+pin_nord vgs-theme-nord-smoke3.tar.gz "$thumbs/biscuit-de-mar.jpg"
+press_wallpapers || fail "typing SUPER+W for the update failed"
+expect_poll "SUPER+W opens the browser for the update" 1 layer_count vgs:overlay
+expect_poll "a new open draws the a.jpg the last update replaced" "$(file_ratio "$thumbs/frankenstein.jpg")" card_ratio "$nord_a"
+expect_poll "the theme source ends with the next update card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\", \"update\"]" wall_keys
+type_keys -k End || fail "sending End for the update failed"
+expect_poll "End selects the next update card" update wall_selected
 type_keys -k Return || fail "sending Return to the update card failed"
 expect_poll "the update, the apply after it and the lists end" none wall_job
 expect "the update left no problem" '""' wall_value problem
 expect "the update keeps the browser open" 1 layer_count vgs:overlay
-expect_poll "the theme source lists the third image and no card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\"]" wall_keys
+expect_poll "the rail draws the a.jpg the update replaced" "$(file_ratio "$thumbs/biscuit-de-mar.jpg")" card_ratio "$nord_a"
 expect "the update unpacks the third image" True bash -c '[[ -f $1 ]] && echo True' _ "$nord_c"
 type_keys -k Escape || fail "sending Escape after the update failed"
 expect_poll "Escape closes the browser after the update" 0 layer_count vgs:overlay
