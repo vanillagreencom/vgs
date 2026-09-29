@@ -25,7 +25,7 @@ It starts these read-only commands concurrently, each in its own process group:
 - `vgsh plugin outdated --json`: installed plugin git checkouts.
 - `vgsh theme outdated --json`: installed theme git checkouts and catalog installs.
 
-TERM, INT or HUP to `bin/check` signals every probe's process group and waits for each probe to exit. A probe ends its own git fetch before it exits: [manager.md § Outdated](../../../docs/architecture/manager.md#outdated).
+TERM, INT or HUP to `bin/check` sends TERM to every probe's process group and waits for each probe to exit. A probe starts with SIGINT ignored, as every background job of a shell without job control does, so TERM is the signal each probe acts on. A probe ends its own git fetch before it exits: [manager.md § Outdated](../../../docs/architecture/manager.md#outdated).
 
 It writes this file atomically:
 

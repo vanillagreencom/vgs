@@ -185,7 +185,7 @@ INST_BIN="$THEME_BIN" stop_run TERM plugin outdated --json
 check "the stepless mutant's plugin outdated returns before its fetch ended" test "$stop_ended" == no
 unset THEME_BIN
 # The bound: a fetch that ignores TERM gets SIGKILL 5 s later, well before
-# its own 12 s end; the control without the grace waits that end out.
+# its own 17 s end; the control without the grace waits that end out.
 stop_git deaf
 stop_run TERM plugin outdated --json
 check "TERM ends plugin outdated with exit 143 when the fetch ignores TERM" test "$stop_status" == 143
@@ -193,6 +193,16 @@ check "the kill grace ends a fetch that ignores TERM before its own end" test "$
 tree_control graceless bin/vgsh '--kill-after="$outdated_kill_grace" ' ''
 INST_BIN="$THEME_BIN" stop_run TERM plugin outdated --json
 check "the graceless mutant waits out a fetch that ignores TERM" test "$stop_ended" == yes
+unset THEME_BIN
+# Unstopped, the same fetch outlives its timeout's TERM and ends by the
+# grace's SIGKILL, which timeout reports as 137: still the timeout's row.
+# Real waits: the timeout and the grace are production's fixed 10 s and
+# 5 s.
+rm -f -- "$stop_git_dir/ended"
+INST_PATH="$stop_git_dir:$base_path" inst "a fetch the timeout's kill grace ends is a timeout row" "$cfg" "$rt_empty" 0 "acme.stop error=fetch=acme.stop timeout=10s" "" plugin outdated
+check "the grace's SIGKILL ended the fetch before its own end" test ! -e "$stop_git_dir/ended"
+tree_control killblind bin/vgsh 'if [[ $rc == 137 ]]' 'if false'
+INST_PATH="$stop_git_dir:$base_path" INST_BIN="$THEME_BIN" inst "the kill-blind mutant loses the timeout from the row" "$cfg" "$rt_empty" 0 "acme.stop error=fetch=acme.stop" "" plugin outdated
 unset THEME_BIN
 cfg="$tmp/cfg-prompt"
 inst "add installs acme.prompt" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/prompt.git"

@@ -4,8 +4,8 @@
 # It holds $XDG_RUNTIME_DIR/vgs/updates/check.lock, starts the four read-only
 # vgsh probes concurrently in separate process groups, normalizes them through
 # NormalizeCheck.js, atomically writes $XDG_STATE_HOME/vgs/updates/status.json
-# and prints the same JSON. TERM, INT and HUP signal every live probe group,
-# wait for them and exit 128 plus the signal.
+# and prints the same JSON. TERM, INT and HUP send TERM to every live probe
+# group, wait for them and exit 128 plus the signal.
 set -euo pipefail
 
 usage() { printf 'updates-check: refused: %s\nusage: check --vgsh PATH\n' "$1" >&2; exit 2; }
@@ -54,14 +54,16 @@ signal_groups() {
   local sig="$1" pid
   for pid in "${pids[@]}"; do kill -"$sig" -- "-$pid" 2>/dev/null || kill -"$sig" -- "$pid" 2>/dev/null || true; done
 }
-stop_all() {
-  local sig_name="$1" code="$2"
-  stop_status="$code"
-  signal_groups "$sig_name"
+# Each probe starts in the background of this shell, which runs no job
+# control, so it starts with SIGINT ignored and a bash probe cannot trap
+# it: every probe group gets TERM, whichever signal stopped the check.
+stop_all() { # STATUS
+  stop_status="$1"
+  signal_groups TERM
 }
-trap 'stop_all TERM 143' TERM
-trap 'stop_all INT 130' INT
-trap 'stop_all HUP 129' HUP
+trap 'stop_all 143' TERM
+trap 'stop_all 130' INT
+trap 'stop_all 129' HUP
 trap cleanup EXIT
 
 start_probe pkg "$vgsh" pkg check --json

@@ -133,5 +133,50 @@ PY
 chmod 755 "$mutant"
 mutant_left="$(delayed_run mutant "$mutant")"
 if [[ $mutant_left -gt 0 ]]; then ok "control: without the re-wait a probe outlives bin/check"; else fail "control: without the re-wait a probe outlives bin/check"; fi
+# SIGINT: each probe starts in the background of bin/check, so with SIGINT
+# ignored, and a bash probe cannot trap it; a check stopped by INT still
+# sends every probe group TERM. The stand-in probe notes each TERM it gets.
+# The control forwards INT, which the probes ignore until their 3 s sleep
+# ends.
+cat >"$root/bin/vgsh" <<'VGSH'
+#!/usr/bin/env bash
+record="$XDG_STATE_HOME/vgs/updates-test"
+mkdir -p -- "$record"
+echo "$$" >>"$record/int-$RUN"
+trap ': >"$record/termed-$RUN-$$"; exit 143' TERM
+sleep 3 &
+wait
+VGSH
+chmod 755 "$root/bin/vgsh"
+# int_run LABEL CHECK: run CHECK with SIGINT at its default, as a terminal's
+# foreground job has it, until its four probes recorded themselves, INT
+# it, and print its status and how many probes got TERM.
+int_run() {
+  local label="$1" helper="$2" pid status log="$root/state/vgs/updates-test/int-$1"
+  set +e
+  "${run_env[@]:0:2}" --default-signal=INT "${run_env[@]:2}" RUN="$label" "$helper" --vgsh "$root/bin/vgsh" >/dev/null 2>"$root/$label.err" &
+  pid=$!
+  for _ in $(seq 1 50); do [[ -f $log && $(wc -l <"$log") -eq 4 ]] && break; sleep 0.1; done
+  kill -INT "$pid"
+  wait "$pid"
+  status=$?
+  set -e
+  echo "$status $(find "$root/state/vgs/updates-test" -name "termed-$label-*" | wc -l)"
+}
+read -r status termed <<<"$(int_run int "$check")"
+if [[ $status -eq 130 ]]; then ok "INT exits as 128 plus the signal"; else fail "INT exits as 128 plus the signal: $status"; fi
+if [[ $termed -eq 4 ]]; then ok "INT sends every probe TERM"; else fail "INT sends every probe TERM: termed=$termed"; fi
+int_mutant="$root/check-forwards-int"
+python3 - "$check" "$int_mutant" <<'PY'
+import pathlib, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+old = '  signal_groups TERM\n'
+new = '  signal_groups INT\n'
+assert source.count(old) == 1
+pathlib.Path(sys.argv[2]).write_text(source.replace(old, new))
+PY
+chmod 755 "$int_mutant"
+read -r _ termed <<<"$(int_run int-mutant "$int_mutant")"
+if [[ $termed -eq 0 ]]; then ok "control: forwarding INT stops no probe"; else fail "control: forwarding INT stops no probe: termed=$termed"; fi
 if [[ $failures -gt 0 ]]; then echo "test-updates-check: failed=$failures"; exit 1; fi
 echo "test-updates-check: ok"

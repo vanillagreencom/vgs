@@ -832,7 +832,7 @@ unattended_stopping=""
 # between has no trap and ends at once, and the verb's wait for the step
 # then rests on the call's shell still holding the step's output.
 unattended_git() { # KEY GIT_ARGS...
-  local key="$1" scratch out_fd err_fd err rc=0
+  local key="$1" scratch out_fd err_fd err rc=0 started=$SECONDS
   shift
   # The call runs in the background so `wait` returns when a trapped
   # signal arrives, which a substitution's read does not; its output goes
@@ -849,6 +849,10 @@ unattended_git() { # KEY GIT_ARGS...
   git_out="$(<"/dev/fd/$out_fd")"
   err="$(<"/dev/fd/$err_fd")"
   exec {out_fd}>&- {err_fd}>&-
+  # timeout exits 124 when its TERM ended the call at the deadline, and 137
+  # when the SIGKILL a grace later did, as it does any other SIGKILL: only
+  # a call past the deadline is the timeout's.
+  if [[ $rc == 137 ]] && ((SECONDS - started > outdated_fetch_timeout)); then rc=124; fi
   case "$rc" in
     0) [[ -z $err ]] || printf '%s\n' "$err" >&2 ;;
     124) refuse 1 "$key timeout=${outdated_fetch_timeout}s" ${err:+"$err"} ;;

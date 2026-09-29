@@ -90,7 +90,8 @@ on_terminal() {
 # call but a fetch or an ls-remote, the remote calls, execs the real git. A
 # remote call writes its pid to remote.pid and then, as stop_git MODE chose, `slow` sleeps and on TERM takes 2 s to
 # end before it writes `ended`, or `deaf` ignores TERM and writes `ended`
-# only once its 12 s sleep completes.
+# only once its 17 s sleep completes, past the fetch's 10 s timeout and
+# its 5 s kill grace.
 stop_git_dir="$tmp/stop-git"
 stop_git() { # MODE
   local real_git sleep_bin
@@ -105,7 +106,7 @@ stop_git() { # MODE
     'read -r mode <"$d/mode"' \
     'case $mode in' \
     "  slow) trap \"'$sleep_bin' 2; : >'\$d/ended'; exit 1\" TERM; '$sleep_bin' 30 & wait \$! ;;" \
-    "  deaf) trap '' TERM; '$sleep_bin' 12; : >\"\$d/ended\" ;;" \
+    "  deaf) trap '' TERM; '$sleep_bin' 17; : >\"\$d/ended\" ;;" \
     'esac' \
     'exit 1' >"$stop_git_dir/git"
   chmod +x "$stop_git_dir/git"
