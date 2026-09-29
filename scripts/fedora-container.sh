@@ -9,11 +9,11 @@
 # registry.fedoraproject.org/fedora:44. Needs podman and the network; the
 # host's session, configuration and package manager are never touched.
 #
-# On the host it clones HEAD into a scratch directory, tags the clone
-# v<VERSION> and packs HEAD's release tarball with
-# scripts/lib/release-tarball.sh, the builder scripts/release calls. Inside
-# the container it enables the repositories packaging/fedora/copr-project
-# names; writes the vgs-git source RPM through .copr/Makefile, as COPR does;
+# On the host it clones HEAD into a scratch directory and packs HEAD's
+# release tarball with scripts/lib/release-tarball.sh, the builder
+# scripts/release calls. Inside the container it enables the repositories
+# packaging/fedora/copr-project names; writes the vgs-git source RPM
+# through .copr/Makefile, as COPR does; tags the clone v<VERSION> and
 # writes the vgs source RPM from that tarball; installs each source RPM's
 # build dependencies and rebuilds it as an unprivileged user, failing on any
 # RPM warning; installs vgs, checks that each floor's epoch is its
@@ -75,7 +75,10 @@ inside() {
   [[ $git_version =~ ^[0-9]+\.[0-9]+\.[0-9]+\^[0-9]+\.git[0-9a-f]+$ ]] || fail "vgs-git version $git_version"
   step "vgs-git source RPM $git_version"
 
-  # The host tagged the clone and packed the tarball.
+  # The scratch clone's release tag, moved to HEAD, so the release package
+  # is built from this tree whether or not v<VERSION> exists upstream. The
+  # host packed HEAD's tarball.
+  git tag -f "v$version" >/dev/null
   logged srpm-vgs packaging/fedora/srpm.sh --spec packaging/fedora/vgs.spec --outdir /work/out --tarball "/work/vgs-$version.tar.gz"
   [[ $line =~ ^srpm:\ ok\ path=([^ ]+)\ version=$version$ ]] || fail "vgs srpm printed: $line"
   srpm_rel="${BASH_REMATCH[1]}"
@@ -186,10 +189,7 @@ trap cleanup EXIT
 chmod 755 "$work"
 git clone -q --no-hardlinks -- "$repo" "$work/src"
 git -C "$work/src" checkout -q --detach "$head"
-# The clone's release tag, moved to HEAD, so the release package is built
-# from this tree whether or not v<VERSION> exists upstream.
 version="$(<"$repo/VERSION")"
-git -C "$work/src" tag -f "v$version" >/dev/null
 "$repo/scripts/lib/release-tarball.sh" "$head" "$version" "$work/vgs-$version.tar.gz" >/dev/null ||
   { echo "fedora-container: fail: archive=failed commit=$head" >&2; exit 1; }
 cp -- "$self" "$work/run.sh"
