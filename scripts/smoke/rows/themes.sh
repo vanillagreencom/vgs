@@ -408,12 +408,16 @@ panel_source() {
   click_centre "$themes_key" vgs.themes || { fail "$1: the click opening the themes panel failed"; return 1; }
   expect_poll "$1 opens" open panel_open
 }
+step() {
+  local message="$1"
+  shift
+  "$@" || { fail "$message"; return 1; }
+}
 install_call='const reply = shell.theme.install(name, result => {'
 if [[ $(grep -c -F -- "$install_call" "$panel_qml") == 1 ]]; then
   if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "const reply = \"ok\"; if (false) shell.theme.install(name, result => {"))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.catalog-mutant" "$install_call"; then
     panel_source "the catalog install control" "$sandbox/ThemesPanel.qml.catalog-mutant" \
-      && scroll_themes 10000 \
-      && click_button "Install" \
+      && expect "the catalog install control invokes the install path" ok ipc smoke invokeInstance panel vgs.themes installCatalog catalog-smoke \
       && expect "the catalog install control leaves the catalog uninstalled" absent catalog_installed_state
     panel_source "the restored catalog install action" "$sandbox/ThemesPanel.qml.real" \
       && expect_poll "the restored catalog install action lists the row" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"]]' theme_row catalog-smoke
@@ -435,15 +439,14 @@ if [[ $(grep -c -F -- "$finish_refresh" "$panel_qml") == 1 ]]; then
   if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, ""))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.download-finish-mutant" "$finish_refresh"; then
     rm -f -- "$catalog_wallpapers" "$catalog_wallpapers_gate"
     panel_source "the download finish refresh control" "$sandbox/ThemesPanel.qml.download-finish-mutant" \
-      && scroll_themes 10000 \
-      && click_button "Download wallpapers" \
+      && expect "the download finish control invokes the download path" ok ipc smoke invokeInstance panel vgs.themes downloadCatalogWallpapers catalog-smoke \
       && expect_poll "the download finish control shows progress" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke \
-      && click_outside \
+      && step "the download finish control could not close the panel during the download" click_outside \
       && expect_poll "the download finish control panel closes during the download" closed panel_open \
-      && click_centre "$themes_key" vgs.themes \
+      && step "the download finish control could not reopen the panel during the download" click_centre "$themes_key" vgs.themes \
       && expect_poll "the download finish control panel reopens during the download" open panel_open \
       && expect_poll "the download finish control reopened panel reads progress" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke \
-      && touch -- "$catalog_wallpapers_gate" \
+      && step "the download finish control could not release the wallpaper gate" touch -- "$catalog_wallpapers_gate" \
       && expect "the download finish control completes the wallpaper download" installed wait_catalog_wallpapers \
       && expect_poll "the download finish control keeps the stale download action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
     rm -f -- "$catalog_wallpapers" "$catalog_wallpapers_gate"
