@@ -22,6 +22,7 @@ T.MenuItem {
     rightPadding: Theme.menu.item.paddingX + (checked ? Theme.icon.size.sm + spacing : 0)
     spacing: Theme.menu.item.gap
     hoverEnabled: true
+    PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
     Accessible.checked: checked

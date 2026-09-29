@@ -26,6 +26,7 @@ T.AbstractButton {
     padding: 0
     spacing: Theme.titleButton.gap
     hoverEnabled: true
+    PointerCursor {}
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text

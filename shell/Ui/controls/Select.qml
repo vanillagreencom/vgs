@@ -67,6 +67,7 @@ T.AbstractButton {
     leftPadding: Theme.textField.paddingX
     rightPadding: Theme.textField.paddingX + Theme.icon.size.sm + Theme.textField.gap
     hoverEnabled: true
+    PointerCursor {}
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: currentText
@@ -151,6 +152,7 @@ T.AbstractButton {
                 text: root.textAt(index)
                 highlighted: ListView.isCurrentItem
                 hoverEnabled: true
+                PointerCursor {}
                 Accessible.name: text
                 onClicked: root.choose(index)
                 onHoveredChanged: if (hovered) entries.currentIndex = index

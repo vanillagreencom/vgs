@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Ui
 
 // A round ghost button: a hover plate, a press squish and a pointer cursor.
 Item {
@@ -40,7 +41,7 @@ Item {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         onClicked: button.clicked()
     }
 }

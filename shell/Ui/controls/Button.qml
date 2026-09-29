@@ -41,6 +41,7 @@ T.Button {
     rightPadding: Theme.button.paddingX
     spacing: Theme.button.gap
     hoverEnabled: true
+    PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
 

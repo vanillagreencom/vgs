@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import qs.Ui
 
 // One row of the launcher's list: an icon tile or an application's own
 // icon, the label, the detail line while a search narrows the list, and a
@@ -151,7 +152,7 @@ Item {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onEntered: row.launcher.selectFromPointer(row.index, row, { x: mouseX, y: mouseY })
         onPositionChanged: mouse => row.launcher.selectFromPointer(row.index, row, mouse)

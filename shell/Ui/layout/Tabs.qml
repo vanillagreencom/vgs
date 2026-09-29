@@ -49,6 +49,7 @@ T.TabBar {
             leftPadding: Theme.space.xs
             rightPadding: Theme.space.xs
             hoverEnabled: true
+            PointerCursor {}
             Accessible.name: text
 
             contentItem: Label {

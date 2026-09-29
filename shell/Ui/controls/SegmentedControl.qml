@@ -52,6 +52,7 @@ Rectangle {
                 leftPadding: Theme.segmented.paddingX
                 rightPadding: Theme.segmented.paddingX
                 hoverEnabled: true
+                PointerCursor {}
                 text: String(modelData)
                 Accessible.name: text
                 onClicked: { root.forceActiveFocus(); root.choose(index); }

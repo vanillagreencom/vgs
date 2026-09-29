@@ -22,6 +22,7 @@ Item {
     property var hover: null
     property var press: null
     readonly property Component hoverComponent: Component { HoverHandler {} }
+    // pointer-cursor-exempt: it watches a press on the anchor to close the tooltip; the anchor's own control owns the cursor
     readonly property Component pressComponent: Component { TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds } }
     readonly property bool resting: hover !== null && hover.hovered && !(press !== null && press.pressed)
 

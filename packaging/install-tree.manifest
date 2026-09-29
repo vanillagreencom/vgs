@@ -93,6 +93,7 @@ f share/vgs/shell/Ui/foundation/Divider.qml
 f share/vgs/shell/Ui/foundation/FocusRing.qml
 f share/vgs/shell/Ui/foundation/Icon.qml
 f share/vgs/shell/Ui/foundation/Label.qml
+f share/vgs/shell/Ui/foundation/PointerCursor.qml
 f share/vgs/shell/Ui/foundation/Scrim.qml
 f share/vgs/shell/Ui/foundation/Surface.qml
 f share/vgs/shell/Ui/icons/LICENSE

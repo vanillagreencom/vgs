@@ -27,7 +27,7 @@ BarWidget {
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton | Qt.RightButton
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         onClicked: mouse => {
             if (root.shell === null) return;
             const reply = mouse.button === Qt.RightButton ? root.shell.run.detached(["xdg-terminal-exec"]) : root.shell.surfaces.toggle("overlay", "{}");

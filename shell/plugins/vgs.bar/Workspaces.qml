@@ -48,6 +48,7 @@ Item {
 
                 MouseArea {
                     anchors.fill: parent
+                    PointerCursor {}
                     onClicked: root.bar.shell.compositor.focusWorkspace(pill.modelData)
                 }
             }

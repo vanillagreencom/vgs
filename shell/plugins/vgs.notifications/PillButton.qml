@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Ui
 
 // A compact text button on the glass: quiet at rest, a plate on hover, a
 // squish while pressed. `emphasized` lifts it a step at rest.
@@ -41,7 +42,7 @@ Item {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         onClicked: pill.clicked()
     }
 }

@@ -6,6 +6,7 @@ Surface 1.0 foundation/Surface.qml
 Divider 1.0 foundation/Divider.qml
 FocusRing 1.0 foundation/FocusRing.qml
 Scrim 1.0 foundation/Scrim.qml
+PointerCursor 1.0 foundation/PointerCursor.qml
 Button 1.0 controls/Button.qml
 IconButton 1.0 controls/IconButton.qml
 ToggleButton 1.0 controls/ToggleButton.qml

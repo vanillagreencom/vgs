@@ -256,6 +256,7 @@ Item {
                             }
                             MouseArea {
                                 anchors.fill: parent
+                                PointerCursor {}
                                 containmentMask: QtObject {
                                     function contains(point: point): bool { return internal.inside(card, point); }
                                 }

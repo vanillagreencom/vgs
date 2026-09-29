@@ -14,6 +14,7 @@ T.CheckBox {
     implicitHeight: Math.max(implicitIndicatorHeight, implicitContentHeight)
     spacing: Theme.checkbox.gap
     hoverEnabled: true
+    PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
 

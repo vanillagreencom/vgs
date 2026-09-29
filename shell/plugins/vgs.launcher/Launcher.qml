@@ -876,6 +876,7 @@ Item {
     // ------------------------------------------------------------ drawing
 
     // A click outside the card closes it.
+    // pointer-cursor-exempt: a press here is a click away from the card, not a control
     MouseArea {
         anchors.fill: parent
         onClicked: root.cancel()
@@ -934,6 +935,7 @@ Item {
             }
         }
 
+        // pointer-cursor-exempt: it holds the presses on the card, so they never reach the click-away area
         MouseArea {
             anchors.fill: parent
             onClicked: {}
@@ -1128,6 +1130,7 @@ Item {
                         }
                     }
 
+                    // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
                     MouseArea {
                         id: scrollMouse
                         property real grab: 0

@@ -14,6 +14,7 @@ T.Slider {
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset, implicitHandleWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset, implicitHandleHeight + topPadding + bottomPadding)
     hoverEnabled: true
+    PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
 
     background: Rectangle {

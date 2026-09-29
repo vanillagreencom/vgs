@@ -23,6 +23,7 @@ T.ItemDelegate {
     rightPadding: Theme.listItem.paddingX
     spacing: Theme.listItem.gap
     hoverEnabled: true
+    PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
 

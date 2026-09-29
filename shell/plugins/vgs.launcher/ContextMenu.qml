@@ -42,6 +42,7 @@ Item {
 
     // The click-away catcher also takes hover, so nothing behind the flyout
     // reacts to the pointer while it is open.
+    // pointer-cursor-exempt: a press here is a click away from the flyout, not a control
     MouseArea {
         anchors.fill: parent
         enabled: menu.opened
@@ -68,6 +69,7 @@ Item {
         }
 
         // The whole flyout owns the pointer, gaps and separators included.
+        // pointer-cursor-exempt: it holds the presses on the flyout's gaps, where nothing is clickable
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
@@ -170,7 +172,7 @@ Item {
                         anchors.fill: parent
                         enabled: !entry.separator
                         hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
+                        PointerCursor {}
                         onEntered: menu.hovered = entry.index
                         onExited: if (menu.hovered === entry.index) menu.hovered = -1
                         onClicked: {

@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Ui
 
 // An on and off switch on the glass: a translucent track that fills with
 // the theme's accent while on, and a white knob with a soft shadow.
@@ -56,7 +57,7 @@ Item {
     MouseArea {
         id: mouse
         anchors.fill: parent
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         onClicked: control.toggled(!control.checked)
     }
 }

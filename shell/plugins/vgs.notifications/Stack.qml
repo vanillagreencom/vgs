@@ -23,6 +23,7 @@ Item {
     readonly property bool inputAll: panelOpen
     readonly property Item inputItem: column
 
+    // pointer-cursor-exempt: a press here is a click away from the open panel, not a control
     MouseArea {
         anchors.fill: parent
         enabled: stack.panelOpen

@@ -50,6 +50,7 @@ Item {
 
     HoverHandler { id: barHover }
 
+    // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
     MouseArea {
         id: track
         anchors.fill: parent
@@ -66,6 +67,7 @@ Item {
 
         HoverHandler { id: thumbHover }
 
+        // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
         MouseArea {
             id: thumbArea
             // Where on the thumb the press landed, so the thumb keeps it
