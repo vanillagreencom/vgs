@@ -686,6 +686,7 @@
             "gem",
             "uninstall",
             "rails",
+            "railties",
             "--all",
             "--executables",
             "--ignore-dependencies"

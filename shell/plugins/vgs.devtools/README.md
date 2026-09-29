@@ -79,33 +79,24 @@ The judge refuses interpreter evaluation forms such as `sh -c`, `eval`, `env sh 
 
 The judge also refuses versioned or wrapped forms such as `bash -lc`, `python3.12 -c`, `env -S`, `env VAR=1 bash -c`, `mise x node -- node -e` and `mise exec -- sh -c`.
 
-Database ports must bind to `127.0.0.1`. A row cannot publish a database on all interfaces. Database presence comes from the container name, checked by VGS-556 per runtime in `container.runtimes` order.
+Database ports must bind to `127.0.0.1`. A row cannot publish a database on all interfaces. Database presence comes from the container name, checked by the engine per runtime in `container.runtimes` order.
 
 ## Engine
 
-`bin/devtools --tree <dir> <verb>` runs against the VGS tree at `<dir>`. It loads `shell/Core/PackageManagers.js`, `shell/Ui/icons/Lucide.js` and `bin/lib/judge-files.js` from that tree, and runs `bin/vgsh pkg`. It refuses the whole catalog when `CatalogLogic.judgeCatalog` refuses one row.
+`bin/devtools --tree <dir> <verb>` runs against the VGS tree at `<dir>`. Its header states each verb, its output and its refusals. The verbs are `list --json`, `install`, `update` and `remove` for one row or, with `--mise <key>`, for a tool that only the owner's global mise config declares, and `launchers refresh|remove`.
 
-- `list --json`: The state of every row this machine builds on, and the tools of the global mise config that no row declares. A row reports `installed`, `version`, `origin` and the `actions` the other verbs accept now. `origin` is `mise`, `package` (a package manager owns the command), `managedBy` (a package owns the row's `managedBy` command), `installer`, `container` or `foreign`. The list runs one `mise ls --json` and one `mise ls --global --json`.
-- `install <id>`: The row's distribution packages through `vgsh pkg run install`, then its mise settings, then `mise use -g` of each spec it requires and of its tools or package, or its named installer, then its `postInstall` steps. The engine then checks the row's `present` probe. `--channel <c>` picks a release channel.
-- `update <id>`: `mise up` over the row's mise keys. A row whose `present` probe fails after the update is installed again with `mise use -g --force` and its `buildEnv`. Then the row's `postInstall` steps run again. Each step installs the current release of what it adds, so rails and phoenix follow the new ruby and elixir.
-- `remove <id>`: Install in reverse. It runs the row's `postRemove` steps, then removes each tool or package that no other installed row declares, runs the installer's own uninstall, deletes what the row's `home` probe names, and removes the packages that no other installed row lists. A database row removes its container.
-- `update --mise <key>` and `remove --mise <key>`: The same for a tool that only the owner's global mise config declares. The engine never installs one, so the owner's stowed config stays the source of truth.
-- `launchers refresh|remove`: Write or delete the launchers in `~/.local/bin`.
-
-Install, update and remove run only in a terminal and never in a process the shell started, through `refuseOutsideTerminal` in `bin/lib/judge-files.js`. `vgsh pkg run` has the same rule. Each mise, container and installer step runs through `bin/lib/pkg-run.sh` from `$HOME`, with `MISE_MINIMUM_RELEASE_AGE=0` and the row's `buildEnv`. Before `mise use` or `mise up`, the engine sets mise's `upgrade.auto_prune` to false when it is not false already. Without this, an upgrade deletes the release that a running session still executes.
-
-The named installers download the upstream script to a temporary file and run it with `sh`. No shell string passes through the engine. `rustup` removes itself with `rustup self uninstall -y`. The `opam` binary that its installer puts in `/usr/local/bin` stays after a removal, because only root can delete it.
-
-A row whose `present` probe still holds after a removal reports `present=remains`: something VGS did not install provides it.
+- The engine refuses the whole catalog when `CatalogLogic.judgeCatalog` refuses one row.
+- Install, update and remove run only in a terminal, never in a process the shell started. The floating TUI script `tui/devtools.sh` is where they run.
+- `update` runs the row's `postInstall` steps again after `mise up`, so rails and phoenix follow the new ruby and elixir.
+- The engine never installs a tool that only the owner's mise config declares, so that config stays the source of truth.
+- The `opam` binary that the opam installer puts in `/usr/local/bin` stays after a removal, because only root can delete it.
 
 ## Launchers
 
-A launcher is a script at `~/.local/bin/<command>` for an agent, app or tool. On its first run, it installs the row through mise. Then it runs the row. Its second line is `# vgs.devtools launcher`.
+A launcher is a script at `~/.local/bin/<command>` that installs its row through mise on the first run and then runs it. The plugin's `writeLaunchers` setting, off by default, asks for them.
 
-- The plugin's `writeLaunchers` setting is off by default. The panel passes `--launchers`, or runs `launchers refresh` or `launchers remove`, from that setting.
-- A file without the mark, a link included, belongs to the owner. The engine never replaces or deletes it. The owner's `agent-cli` links stay the owner's.
-- The engine writes no launcher where the command already answers on `PATH` outside `~/.local/bin` and mise's data directory, because the launcher would hide that copy.
-- A row with `exec` installs with an empty `bin_path=`, so its package exports nothing on `PATH` (v1 D016). Its launcher runs the `exec` file below the directory that `mise where` names. The engine writes this launcher after each install and update, whatever the setting, and `launchers remove` keeps it while the row is installed.
+- The engine never replaces or deletes a file it did not write, so the owner's `agent-cli` links stay the owner's.
+- A row with `exec`, such as Cursor, always gets its launcher, because mise installs it with nothing on `PATH` (v1 D016).
 - A launcher runs the row's default channel.
 
 ## Omarchy comparison

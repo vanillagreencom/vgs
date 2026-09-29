@@ -98,8 +98,16 @@ case "$1" in
     shift
     mkdir -p "$st/which"
     case "$*" in
-      "gem install "*) printf '%s/installs/ruby/bin/%s\n' "$MISE_DATA_DIR" "$3" >"$st/which/$3" ;;
-      "gem uninstall "*) rm -f "$st/which/$3" ;;
+      # rails is a metapackage: its rails executable belongs to railties,
+      # so only uninstalling railties takes the command away.
+      "gem install rails "*)
+        printf '%s/installs/ruby/bin/rails\n' "$MISE_DATA_DIR" >"$st/which/rails"
+        echo rails >"$st/which/.owner-railties" ;;
+      "gem uninstall "*)
+        for g; do
+          [ -f "$st/which/.owner-$g" ] || continue
+          rm -f "$st/which/$(cat "$st/which/.owner-$g")" "$st/which/.owner-$g"
+        done ;;
       "composer global config bin-dir "*) echo "$5" >"$st/composer-bin" ;;
       "composer global require laravel/installer")
         bin="$(cat "$st/composer-bin" 2>/dev/null || echo "$HOME/.config/composer/vendor/bin")"
@@ -208,7 +216,7 @@ row_rails_remove_kept() { # PLUGIN: rails installed, and with it ruby, which sta
   : >"$log"
   ENGINE_TTY=pty engine "$1" -- remove rails
   [[ $status == 0 ]] && out_has "devtools: kept=ruby reason=declared-by-installed-row" && log_is \
-    "mise [x] [ruby] [--] [gem] [uninstall] [rails] [--all] [--executables] [--ignore-dependencies] {age=0}"
+    "mise [x] [ruby] [--] [gem] [uninstall] [rails] [railties] [--all] [--executables] [--ignore-dependencies] {age=0}"
 }
 row_remove_mirror() { # PLUGIN: after row_install_order's install
   : >"$log"
@@ -369,6 +377,7 @@ control ignores-arch CatalogLogic.js '    return !Array.isArray(row.arch) || lis
 control packages-last bin/devtools $'    if (row.packages !== undefined) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' $'    if (false) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' install_order
 control no-mise-which bin/devtools '        for (const finder of [resolveCommand, miseWhich])' '        for (const finder of [resolveCommand])' rails_install
 control update-skips-postinstall bin/devtools $'    runSteps((row.postInstall || []).map(step => stepArgv(catalog, step)), env);\n    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' $'    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' rails_update_after_install
+control rails-only-postremove catalog.json $'"rails",\n            "railties",' '"rails",' rails_remove_kept
 control skips-postremove bin/devtools '    runSteps((row.postRemove || []).map(step => stepArgv(catalog, step)), buildEnv(row));' '' rails_remove_kept
 control keeps-packages bin/devtools $'            runPackages("remove", picked.manager,' $'            if (false) runPackages("remove", picked.manager,' remove_mirror_after_install
 
