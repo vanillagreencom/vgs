@@ -6,3 +6,4 @@ singleton Workspaces 1.0 Workspaces.qml
 singleton Time 1.0 Time.qml
 WatchedFile 1.0 WatchedFile.qml
 Inset 1.0 Inset.js
+ClearingInset 1.0 ClearingInset.qml

@@ -85,12 +85,12 @@ chmod 700 "$root/runtime"
 ln -s -- "$ui" "$imports/qs/Ui"
 # Theme.qml resolves the bundled font relative to its own directory.
 ln -s -- "$repo/shell/assets" "$imports/qs/assets"
-for file in Theme.qml Tokens.js ThemeLogic.js Inset.js WatchedFile.qml; do
+for file in Theme.qml Tokens.js ThemeLogic.js Inset.js ClearingInset.qml WatchedFile.qml; do
   [[ -f $commons/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$commons/$file" >&2; exit 2; }
   ln -s -- "$commons/$file" "$imports/qs/Commons/$file"
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
-printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
+printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
 for file in TuiRecords.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
   [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
   ln -s -- "$core/$file" "$imports/qs/Core/$file"

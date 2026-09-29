@@ -19,8 +19,6 @@ Rectangle {
     readonly property real basePadding: Theme.toast.padding
     readonly property real baseRadius: Theme.toast.radius
     readonly property real clearanceStep: Theme.space.xs
-    property real horizontalInset: basePadding
-    property bool insetSettlePending: false
     signal dismissed()
 
     function toneOf(name) {
@@ -30,50 +28,29 @@ Rectangle {
         return Theme.badge.tone.neutral;
     }
 
-    function targetInset() {
-        return Inset.clearing(basePadding, baseRadius, width, implicitHeight, clearanceStep);
-    }
-
-    function scheduleInsetSettle() {
-        if (insetSettlePending) return;
-        insetSettlePending = true;
-        Qt.callLater(settleInset);
-    }
-
-    function resetInset() {
-        horizontalInset = basePadding;
-        scheduleInsetSettle();
-    }
-
-    function settleInset() {
-        insetSettlePending = false;
-        if (typeof root.targetInset !== "function") return;
-        const next = Math.ceil(root.targetInset());
-        if (Math.abs(horizontalInset - next) <= 0.01) return;
-        horizontalInset = next;
-        scheduleInsetSettle();
-    }
-
     implicitWidth: Theme.toast.width
     implicitHeight: row.implicitHeight + 2 * basePadding
     radius: baseRadius
     color: Theme.toast.background
     border.width: Theme.border.thin
     border.color: Theme.toast.border
-    Component.onCompleted: scheduleInsetSettle()
-    onImplicitHeightChanged: scheduleInsetSettle()
-    onWidthChanged: resetInset()
-    onTitleChanged: resetInset()
-    onMessageChanged: resetInset()
-    onBasePaddingChanged: resetInset()
-    onBaseRadiusChanged: resetInset()
-    onClearanceStepChanged: resetInset()
+    onTitleChanged: contentInset.reset()
+    onMessageChanged: contentInset.reset()
+
+    ClearingInset {
+        id: contentInset
+        pad: root.basePadding
+        radius: root.baseRadius
+        width: root.width
+        height: root.implicitHeight
+        step: root.clearanceStep
+    }
 
     Row {
         id: row
-        x: root.horizontalInset
+        x: contentInset.inset
         y: root.basePadding
-        width: parent.width - 2 * root.horizontalInset
+        width: parent.width - 2 * contentInset.inset
         spacing: Theme.toast.contentGap
 
         Icon {

@@ -50,8 +50,7 @@ Item {
     // maxHeight less that pad: the body shows only the lines that fit.
     readonly property real fullHeight: content.implicitHeight + 2 * pad
     readonly property real pad: look.card.pad
-    property real horizontalInset: pad
-    property bool insetSettlePending: false
+    readonly property real horizontalInset: contentInset.inset
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
     readonly property bool singleLine: sanitizedBody.length === 0
@@ -83,41 +82,21 @@ Item {
         return Quickshell.iconPath(value, true);
     }
 
-    function targetInset() {
-        return Inset.clearing(pad, radius, fullWidth, fullHeight, look.radius.clearance);
-    }
-
-    function scheduleInsetSettle() {
-        if (insetSettlePending) return;
-        insetSettlePending = true;
-        Qt.callLater(settleInset);
-    }
-
-    function resetInset() {
-        horizontalInset = pad;
-        scheduleInsetSettle();
-    }
-
-    function settleInset() {
-        insetSettlePending = false;
-        if (typeof card.targetInset !== "function") return;
-        const next = Math.ceil(card.targetInset());
-        if (Math.abs(horizontalInset - next) <= 0.01) return;
-        horizontalInset = next;
-        scheduleInsetSettle();
-    }
-
     implicitWidth: fullWidth
     implicitHeight: fullHeight
     clip: true
-    Component.onCompleted: scheduleInsetSettle()
-    onFullHeightChanged: scheduleInsetSettle()
-    onFullWidthChanged: resetInset()
-    onPadChanged: resetInset()
-    onRadiusChanged: resetInset()
-    onSummaryChanged: resetInset()
-    onBodyChanged: resetInset()
-    onShowsSlotChanged: resetInset()
+    onSummaryChanged: contentInset.reset()
+    onBodyChanged: contentInset.reset()
+    onShowsSlotChanged: contentInset.reset()
+
+    ClearingInset {
+        id: contentInset
+        pad: card.pad
+        radius: card.radius
+        width: card.fullWidth
+        height: card.fullHeight
+        step: card.look.radius.clearance
+    }
 
     HoverHandler { id: hoverTracker }
 

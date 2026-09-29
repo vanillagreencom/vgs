@@ -26,6 +26,20 @@ Item {
     Badge { id: badge; text: "new"; iconName: "check"; y: 340 }
     Toast { id: toast; title: "Saved"; iconName: "check"; y: 370 }
     Checkbox { id: check; text: "Pin"; y: 470 }
+    Text {
+        id: clearingProbeText
+        text: "A message long enough to wrap after the inset grows and makes the line narrower."
+        width: clearingProbe.width - 2 * clearingProbe.inset
+        wrapMode: Text.WordWrap
+    }
+    ClearingInset {
+        id: clearingProbe
+        pad: 4
+        radius: 4096
+        width: 120
+        height: clearingProbeText.implicitHeight + 8
+        step: 4
+    }
 
     TestCase {
         name: "spacing"
@@ -96,6 +110,12 @@ Item {
             const inset = Math.ceil(Math.min(Theme.toast.radius, toast.width / 2, toast.height / 2) + Theme.space.xs);
             close(() => toast.children[0].x, inset, "toast rounded inset");
             close(() => toast.width - (toast.children[0].x + toast.children[0].width), inset, "toast rounded right inset");
+        }
+
+        function test_clearing_inset_settles_after_wrapped_height_grows() {
+            clearingProbe.reset();
+            tryVerify(() => clearingProbe.inset > clearingProbe.pad, 1000, "clearing inset grew");
+            close(() => clearingProbe.inset, Math.ceil(Inset.clearing(clearingProbe.pad, clearingProbe.radius, clearingProbe.width, clearingProbe.height, clearingProbe.step)), "clearing inset fixed point");
         }
     }
 }

@@ -15,6 +15,7 @@ Item {
     readonly property var service: host ? host.service : null
     property bool shown: false
     readonly property bool history: service !== null && service.panelMode === "history"
+    // The controls inset is the square-corner floor; the title clears the rounded end from there.
     readonly property real titleInset: Inset.clearing(look.header.controlsInset, look.radius.full, width, height, look.radius.clearance)
 
     implicitWidth: look.header.width
