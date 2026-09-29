@@ -30,7 +30,7 @@ var BODY_MAX = 4096;
 var LOW_LIFETIME = 5000;
 var MAX_LIFETIME = 30000;
 // The state file's format.
-var STATE_VERSION = 2;
+var STATE_VERSION = 1;
 // The entry roles an image can sit in, each owned as a copy by a stored
 // entry, named <key>-<role> in the images directory.
 var IMAGE_ROLES = ["appIcon", "image"];
@@ -894,6 +894,9 @@ function lifetimeFor(urgency, expireTimeout, normal) {
 // A hint of another shape is refused whole: its role stays "" and the
 // service logs its name.
 var HINTS = { "x-vgs-icon": "hintIcon", "x-vgs-tone": "hintTone", "x-vgs-open": "hintOpen", "x-vgs-click": "hintClick" };
+// The hint roles, which a stored entry may leave out: an entry stored
+// before a sender could add hints has none, and reads back with each "".
+var HINT_ROLES = ["hintIcon", "hintTone", "hintOpen", "hintClick"];
 var HINT_TONES = ["success", "warning", "danger", "info"];
 var HINT_CLICKS = ["open", "none"];
 // A Lucide name's grammar; a name the shipped set lacks is drawn as no icon
@@ -1091,13 +1094,16 @@ function entryError(value, where) {
     var keys = Object.keys(value);
     for (var k = 0; k < keys.length; k++)
         if (ENTRY_ROLES.indexOf(keys[k]) === -1 && CLOCK_FIELDS.indexOf(keys[k]) === -1) return where + "." + keys[k] + " unknown";
-    var strings = ["key", "app", "appIcon", "summary", "body", "image", "desktopEntry", "hintIcon", "hintTone", "hintOpen", "hintClick"];
+    var strings = ["key", "app", "appIcon", "summary", "body", "image", "desktopEntry"];
     for (var s = 0; s < strings.length; s++)
         if (typeof value[strings[s]] !== "string") return where + "." + strings[s] + " want=string";
-    var roles = ["hintIcon", "hintTone", "hintOpen", "hintClick"];
-    for (var h = 0; h < roles.length; h++)
-        if (!hintValueFits(roles[h], value[roles[h]])) return where + "." + roles[h] + " refused";
-    if (value.hintClick === "open" && value.hintOpen === "") return where + ".hintClick open without hintOpen";
+    for (var h = 0; h < HINT_ROLES.length; h++) {
+        var hint = value[HINT_ROLES[h]];
+        if (hint === undefined) continue;
+        if (typeof hint !== "string") return where + "." + HINT_ROLES[h] + " want=string";
+        if (!hintValueFits(HINT_ROLES[h], hint)) return where + "." + HINT_ROLES[h] + " refused";
+    }
+    if (value.hintClick === "open" && !value.hintOpen) return where + ".hintClick open without hintOpen";
     var numbers = ["originalId", "expireTimeout", "timestamp"];
     for (var n = 0; n < numbers.length; n++)
         if (typeof value[numbers[n]] !== "number" || !isFinite(value[numbers[n]])) return where + "." + numbers[n] + " want=number";
@@ -1141,7 +1147,17 @@ function parseState(text) {
             seen[list[i].key] = true;
         }
     }
-    return { ok: true, state: { dnd: parsed.dnd, readBefore: parsed.readBefore, live: parsed.live, history: parsed.history } };
+    return { ok: true, state: { dnd: parsed.dnd, readBefore: parsed.readBefore, live: parsed.live.map(withHintRoles), history: parsed.history.map(withHintRoles) } };
+}
+
+// A stored entry with every hint role, "" for one it leaves out.
+function withHintRoles(entry) {
+    var out = {};
+    var keys = Object.keys(entry);
+    for (var i = 0; i < keys.length; i++) out[keys[i]] = entry[keys[i]];
+    for (var h = 0; h < HINT_ROLES.length; h++)
+        if (out[HINT_ROLES[h]] === undefined) out[HINT_ROLES[h]] = "";
+    return out;
 }
 
 function emptyState() {

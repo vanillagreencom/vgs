@@ -33,7 +33,7 @@ function stored(timestamp, id, extra) {
     return Object.assign({ key: timestamp + "-" + id, originalId: id, app: "app", appIcon: "", summary: "s" + id, body: "", image: "", desktopEntry: "", urgency: 1, expireTimeout: 0, timestamp: timestamp, hintIcon: "", hintTone: "", hintOpen: "", hintClick: "" }, extra || {});
 }
 function stateText(value) {
-    return JSON.stringify(Object.assign({ version: 2, dnd: false, readBefore: 0, live: [], history: [] }, value));
+    return JSON.stringify(Object.assign({ version: 1, dnd: false, readBefore: 0, live: [], history: [] }, value));
 }
 
 // Bodies: [label, body, app, what the card renders].
@@ -66,7 +66,7 @@ const STATE_REFUSED = [
     ["not JSON", "{ nope", "not-json"],
     ["a list", "[]", "not-object"],
     ["an unknown key", stateText({ extra: 1 }), "extra unknown"],
-    ["another version", stateText({ version: 1 }), "version want=2"],
+    ["another version", stateText({ version: 2 }), "version want=1"],
     ["a Silence that is no boolean", stateText({ dnd: "on" }), "dnd want=boolean"],
     ["a read cutoff that is no number", stateText({ readBefore: "0" }), "readBefore want=number"],
     ["a history that is no list", stateText({ history: {} }), "history want=list"],
@@ -82,7 +82,7 @@ const STATE_REFUSED = [
     ["a remaining time that is no number", stateText({ live: [stored(5, 1, { remaining: null })] }), "live.0.remaining want=number"],
     ["a clock both running and paused", stateText({ live: [stored(5, 1, { deadline: 9, remaining: 3 })] }), "live.0 deadline and remaining both set"],
     ["a key twice", stateText({ live: [stored(5, 1)], history: [stored(5, 1)] }), "history.0.key duplicate"],
-    ["an entry without its hint roles", stateText({ history: [(({ hintIcon, ...rest }) => rest)(stored(5, 1))] }), "history.0.hintIcon want=string"],
+    ["a stored hint role that is no string", stateText({ history: [stored(5, 1, { hintIcon: 3 })] }), "history.0.hintIcon want=string"],
     ["a stored hint tone outside the tones", stateText({ history: [stored(5, 1, { hintTone: "red" })] }), "history.0.hintTone refused"],
     ["a stored hint path that is relative", stateText({ history: [stored(5, 1, { hintOpen: "runs/a.log" })] }), "history.0.hintOpen refused"],
     ["a stored open click with nothing to open", stateText({ history: [stored(5, 1, { hintClick: "open" })] }), "history.0.hintClick open without hintOpen"]
@@ -213,8 +213,12 @@ function verify(logic) {
     // The state file's judge.
     for (const [label, text, want] of STATE_REFUSED)
         same(logic.parseState(text), { ok: false, error: want }, "state: " + label);
-    const good = { version: 2, dnd: true, readBefore: 50, live: [stored(9, 2, { deadline: 99 })], history: [stored(5, 1)] };
+    const good = { version: 1, dnd: true, readBefore: 50, live: [stored(9, 2, { deadline: 99 })], history: [stored(5, 1)] };
     same(logic.parseState(JSON.stringify(good)), { ok: true, state: { dnd: true, readBefore: 50, live: good.live, history: good.history } });
+    // An entry stored before senders could add hints has no hint roles,
+    // and reads back with each one empty.
+    const unhinted = (timestamp, id) => (({ hintIcon, hintTone, hintOpen, hintClick, ...rest }) => rest)(stored(timestamp, id));
+    same(logic.parseState(stateText({ live: [unhinted(8, 4)], history: [unhinted(7, 3)] })), { ok: true, state: { dnd: false, readBefore: 0, live: [stored(8, 4)], history: [stored(7, 3)] } }, "entries without hint roles read back with each empty");
     same(logic.parseState(logic.serializeState(logic.emptyState())), { ok: true, state: { dnd: false, readBefore: 0, live: [], history: [] } }, "an empty state reads back");
     same(logic.parseState(logic.serializeState({ dnd: true, readBefore: 50, live: good.live, history: good.history })).state.history, good.history, "a state reads back as written");
 
@@ -774,8 +778,11 @@ const CONTROLS = [
     ["a click opens the hinted file", "if (row.hintClick === \"open\" && row.hintOpen !== \"\") return \"open\";", "if (false) return \"open\";"],
     ["a none click only dismisses", "if (row.hintClick === \"none\") return \"dismiss\";", "if (false) return \"dismiss\";"],
     ["only an open reads the click hints", "if (choice !== \"open\") return \"default\";", ""],
-    ["the state judge reads the hint values", "if (!hintValueFits(roles[h], value[roles[h]])) return where + \".\" + roles[h] + \" refused\";", "if (false) return \"\";"],
-    ["the state judge refuses an open click with no file", "if (value.hintClick === \"open\" && value.hintOpen === \"\") return where + \".hintClick open without hintOpen\";", "if (false) return \"\";"]
+    ["the state judge reads the hint values", "if (!hintValueFits(HINT_ROLES[h], hint)) return where + \".\" + HINT_ROLES[h] + \" refused\";", "if (false) return \"\";"],
+    ["the state judge refuses a hint role that is no string", "if (typeof hint !== \"string\") return where + \".\" + HINT_ROLES[h] + \" want=string\";", "if (false) return \"\";"],
+    ["the state judge refuses an open click with no file", "if (value.hintClick === \"open\" && !value.hintOpen) return where + \".hintClick open without hintOpen\";", "if (false) return \"\";"],
+    ["a stored entry may leave its hint roles out", "if (hint === undefined) continue;", "if (hint === undefined) return where + \".\" + HINT_ROLES[h] + \" want=string\";"],
+    ["a stored entry reads back with every hint role", "if (out[HINT_ROLES[h]] === undefined) out[HINT_ROLES[h]] = \"\";", ""]
 ];
 
 const source = fs.readFileSync(file, "utf8");

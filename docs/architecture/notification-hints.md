@@ -18,7 +18,7 @@ Each is a string hint. `NotificationLogic.readHints` judges them and keeps each 
 - A hint of another shape is refused whole: its role stays empty and the service logs `notifications: hints refused: app=<app> names=<hints>` once when the notification arrives.
 - `x-vgs-click: open` without an accepted `x-vgs-open` is refused, so a card never promises a file it cannot open.
 - A replacement notification brings its own hints; the card redraws with them.
-- The state file stores the four roles, and its judge refuses a stored value the hint judge would refuse.
+- The state file stores the four roles. An entry may leave them out, as one stored before hints existed does, and reads back with each empty; the judge refuses a stored value the hint judge would refuse.
 
 ```bash
 notify-send --app-name=Backup --urgency=critical \

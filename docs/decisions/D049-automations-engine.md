@@ -40,7 +40,7 @@
 - One judge for the calendar, the guard and the preview removes the class of bug where the preview shows a run the scheduler never makes, or the scheduler fires one the rule excludes. The logic suite compares the preview with `systemd-analyze calendar --iterations` for each rule shape.
 - Records written once under new names let the service notice a run with one directory listing, as the TUI exit records do ([tui-records.md](../architecture/tui-records.md)).
 - A hint is data any sender can add, so `vgs.notifications` stays free of any plugin's name ([D005](D005-kinds-are-surfaces-no-dependencies.md)), and the click survives a shell restart because the card stores it with the notification.
-- The notifications state file gains four roles and moves to version 2. No reader of version 1 ships: a state file written before this change is refused once, as the plugin refuses any other defect, and Clear history starts it over.
+- The notifications state file stays at version 1 and gains four optional roles. An entry stored before a sender could add hints has none and reads back with each empty, so the history the user already has survives; a stored role of the wrong shape is refused like any other defect. A version bump would have refused that history once, and a reader of an older version is code this project does not carry.
 
 ## Where VGS differs from Omarchy
 

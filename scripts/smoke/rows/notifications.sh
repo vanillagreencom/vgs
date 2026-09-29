@@ -1213,7 +1213,7 @@ import json, os, sys, time
 p = sys.argv[1]
 d = json.load(open(p))
 ts = int(time.time() * 1000) - 60000
-d["live"].append({"key": "%d-900" % ts, "originalId": 900, "app": "smoke-app", "appIcon": "", "summary": "Stale", "body": "", "image": "", "desktopEntry": "", "urgency": 1, "expireTimeout": 0, "timestamp": ts, "hintIcon": "", "hintTone": "", "hintOpen": "", "hintClick": ""})
+d["live"].append({"key": "%d-900" % ts, "originalId": 900, "app": "smoke-app", "appIcon": "", "summary": "Stale", "body": "", "image": "", "desktopEntry": "", "urgency": 1, "expireTimeout": 0, "timestamp": ts})
 json.dump(d, open(p + ".tmp", "w"))
 os.replace(p + ".tmp", p)
 PY
