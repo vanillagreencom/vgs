@@ -1,6 +1,6 @@
 # vgs.devtools
 
-`vgs.devtools` holds a catalog of developer tools, its judge, the engine that installs, updates and removes each row, and a panel that shows each row's state with its actions. `vgsh ipc call vgs.devtools invoke open` opens the panel.
+`vgs.devtools` holds a catalog of developer tools, its judge, the engine that installs, updates and removes each row, and a window that shows each row's state with its actions. `vgsh ipc call vgs.devtools invoke open` opens the window.
 
 ## Files
 
@@ -10,8 +10,8 @@
 - `bin/devtools`: The engine, in node. Its header states each verb, its output and its refusals.
 - `tui/devtools.sh`: The floating TUI script. `install.sh`, `update.sh` and `remove.sh` run it with their verb. Its header states the arguments and refusals.
 - `Service.qml`, `Query.qml`: The service and the one read-only command each of its queries runs.
-- `Panel.qml`, `ToolRow.qml`: The panel and one of its rows.
-- `ViewLogic.js`: Every decision the service and the panel make, pure.
+- `Window.qml`, `ToolRow.qml`: The window and one of its rows.
+- `ViewLogic.js`: Every decision the service and the window make, pure.
 - `scripts/check-devtools-catalog.js`: The command-line check. It prints `<rule> <path> <detail>` for each refusal.
 - `scripts/test-devtools.sh`: The engine's and the TUI scripts' suite, with a stub mise, pacman, sudo, uname and gum.
 - `scripts/test-devtools-view.js`: `ViewLogic.js`'s suite. `scripts/smoke/rows/devtools.sh` is the plugin's row in the nested sandbox.
@@ -30,19 +30,21 @@ The catalog's sections, fields, install routes, mise specs and security rules ar
 - The engine never installs a tool that only the owner's mise config declares, so that config stays the source of truth.
 - The `opam` binary that the opam installer puts in `/usr/local/bin` stays after a removal, because only root can delete it.
 
-## Panel and service
+## Window and service
 
-The service owns every command the plugin runs in the background. The panel draws what the service publishes and runs nothing itself.
+The service owns every command the plugin runs in the background. The window draws what the service publishes and runs nothing itself.
 
-- The service runs four read-only queries: the engine's `list --json`, `vgsh doctor --json`, `vgsh self status --json` and `vgsh pkg check --json --source mise`. It runs them at start and on IPC `refresh`. IPC `open` summons the panel and runs them too, but it asks the network again only when that answer is older than 10 minutes. When one of the plugin's TUI runs ends, the service lists again and asks doctor and mise again. When the core's scan finds another set of missing commands for the core or an enabled plugin, through the `doctor` capability's `missing`, it lists again and asks doctor and mise again, since an install the core ran can bring mise itself.
-- The service publishes plugin status: `mise` (its version, or Not installed), `checks`, `installed`, `outdated` and `missingRequirements` for the Settings page, and `catalog`, the data the panel draws. A count keeps its last answer when its query fails, and `checks` names each query that failed.
-- The panel shows the VGS section, then Agents, Apps, CLI tools, Languages, Editors, Databases, Terminals and Other mise tools. Each row shows its icon on a brand tile, its version, where it comes from, a channel `Select` for an install, and Install, Update or Remove. A row that something outside VGS provides shows Managed outside VGS and offers no action.
+- The window is a Hyprland window titled Dev Tools, of class `org.vgs.shell`. It opens floating and centred on the focused monitor, 600 pixels wide and 600 pixels tall, or the monitor's size less a margin a side on a smaller one, and its rows scroll inside it. Hyprland draws its border and moves, resizes, tiles and closes it like any other window: click another window to type there, and use your own keys to move it or tile it. Escape closes it while it has the keyboard. To tile the shell's windows by default, add `hl.window_rule({ name = "vgs:window", enabled = false })` to `hyprland.lua` after the line that loads the VGS layer.
+
+- The service runs four read-only queries: the engine's `list --json`, `vgsh doctor --json`, `vgsh self status --json` and `vgsh pkg check --json --source mise`. It runs them at start and on IPC `refresh`. IPC `open` summons the window and runs them too, but it asks the network again only when that answer is older than 10 minutes. When one of the plugin's TUI runs ends, the service lists again and asks doctor and mise again. When the core's scan finds another set of missing commands for the core or an enabled plugin, through the `doctor` capability's `missing`, it lists again and asks doctor and mise again, since an install the core ran can bring mise itself.
+- The service publishes plugin status: `mise` (its version, or Not installed), `checks`, `installed`, `outdated` and `missingRequirements` for the Settings page, and `catalog`, the data the window draws. A count keeps its last answer when its query fails, and `checks` names each query that failed.
+- The window shows the VGS section, then Agents, Apps, CLI tools, Languages, Editors, Databases, Terminals and Other mise tools. Each row shows its icon on a brand tile, its version, where it comes from, a channel `Select` for an install, and Install, Update or Remove. A row that something outside VGS provides shows Managed outside VGS and offers no action.
 - The VGS section shows how VGS is installed and its version. When VGS is behind, Update opens the first TUI entry of group `Update`, which the Updates plugin declares. The section also lists every missing requirement of VGS and of each enabled plugin. Install raises the core's requirement notice for that command through the `doctor` capability ([requirement-notice.md](../../../docs/architecture/requirement-notice.md)).
 - Every action opens the plugin's floating TUI. The install, update and remove entries are listed in group `Dev Tools`. Opened with no row, as the launcher opens them, each offers the rows its verb accepts now, from the engine's `targets` verb.
 
 ## Launchers
 
-A launcher is a script at `~/.local/bin/<command>` that installs its row through mise on the first run and then runs it. The plugin's `writeLaunchers` setting, off by default, asks for them. The panel's switch writes it. The service runs `launchers refresh` while it is on and `launchers remove` while it is off, at start, when it changes and after each TUI run.
+A launcher is a script at `~/.local/bin/<command>` that installs its row through mise on the first run and then runs it. The plugin's `writeLaunchers` setting, off by default, asks for them. The window's switch writes it. The service runs `launchers refresh` while it is on and `launchers remove` while it is off, at start, when it changes and after each TUI run.
 
 - The engine never replaces or deletes a file it did not write, so the owner's `agent-cli` links stay the owner's.
 - A row with `exec`, such as Cursor, always gets its launcher, because mise installs it with nothing on `PATH` (v1 D016).
@@ -50,7 +52,7 @@ A launcher is a script at `~/.local/bin/<command>` that installs its row through
 
 ## Omarchy comparison
 
-Omarchy uses `omarchy-install-dev-env` case arms and `omarchy-menu.jsonc` rows with bash `disabled` checks. Its Install › Development menu shows no version and no source, and removal is a second menu. VGS shows every row in one panel with its state, and lists it again when the TUI ends.
+Omarchy uses `omarchy-install-dev-env` case arms and `omarchy-menu.jsonc` rows with bash `disabled` checks. Its Install › Development menu shows no version and no source, and removal is a second menu. VGS shows every row in one window with its state, and lists it again when the TUI ends.
 
 VGS uses `catalog.json` rows plus `present` probes. The engine can list, install and remove tools from one data file without parsing menu shell snippets.
 

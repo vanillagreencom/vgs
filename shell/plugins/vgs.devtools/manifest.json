@@ -4,15 +4,15 @@
   "name": "Dev Tools",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A panel over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and Install, Update and Remove in a floating TUI, and a VGS section with how VGS is installed and every missing requirement. Open it with vgsh ipc call vgs.devtools invoke open.",
+  "description": "A window over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and Install, Update and Remove in a floating TUI, and a VGS section with how VGS is installed and every missing requirement. Open it with vgsh ipc call vgs.devtools invoke open.",
   "license": "MIT",
   "icon": "code-xml",
   "kinds": [
-    "panel",
+    "window",
     "service"
   ],
   "entryPoints": {
-    "panel": "Panel.qml",
+    "window": "Window.qml",
     "service": "Service.qml"
   },
   "capabilities": [
@@ -25,20 +25,13 @@
     "tui"
   ],
   "settings": {
-    "writeLaunchers": false,
-    "placement": "center"
+    "writeLaunchers": false
   },
   "schema": {
     "writeLaunchers": {
       "type": "boolean",
       "label": "Write launchers",
       "description": "Write a launcher in ~/.local/bin for every agent, app and tool, which installs it through mise on first run; VGS never replaces or deletes a file it did not write"
-    },
-    "placement": {
-      "type": "enum",
-      "label": "Placement",
-      "description": "Where the Dev Tools panel opens on its monitor",
-      "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
     }
   },
   "requirements": [
@@ -53,7 +46,7 @@
     "mise": {
       "type": "state",
       "label": "mise",
-      "hint": "Installs, updates and removes every tool the Dev Tools panel lists",
+      "hint": "Installs, updates and removes every tool the Dev Tools window lists",
       "command": "vgsh pkg run install mise"
     },
     "checks": {

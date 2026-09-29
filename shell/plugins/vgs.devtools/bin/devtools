@@ -39,7 +39,7 @@
 //       `mise ls --global --json` per list.
 //   devtools --tree <dir> targets install|update|remove
 //       one line per row the verb accepts now, as list reads the rows, in
-//       the Dev Tools panel's section order: `<label>\t<word>...`, the label
+//       the Dev Tools window's section order: `<label>\t<word>...`, the label
 //       the row's name and its section's title from ViewLogic.js, the
 //       words what the verb takes after it: the row's id, or --mise and the
 //       key of an other mise tool, whose label is its key. The floating TUI

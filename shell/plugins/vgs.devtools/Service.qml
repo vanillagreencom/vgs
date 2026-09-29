@@ -11,7 +11,7 @@ import "ViewLogic.js" as ViewLogic
 // trigger runs:
 //   the first shell            everything
 //   vgsh ipc call vgs.devtools invoke open
-//                              summons the panel, then everything, a
+//                              summons the window, then everything, a
 //                              network query only when its answer is stale
 //   vgsh ipc call vgs.devtools invoke refresh
 //                              everything
@@ -22,7 +22,7 @@ import "ViewLogic.js" as ViewLogic
 //   the core's scan finding another set of missing commands for the core
 //   or an enabled plugin (shell.doctor.missing)
 //                              the requirements
-// The panel reads the published `catalog` and runs nothing itself.
+// The window reads the published `catalog` and runs nothing itself.
 Item {
     id: root
 
@@ -87,10 +87,10 @@ Item {
         trigger("scan");
     }
 
-    // Summon the panel on the focused monitor, then refresh; answers the
-    // panel host's reply.
+    // Summon the window, which Hyprland maps on the focused monitor, then
+    // refresh; answers the window host's reply.
     function open() {
-        const reply = shell.surfaces.summon("panel", "{}");
+        const reply = shell.surfaces.summon("window", "{}");
         if (reply !== "ok") console.warn("devtools: summon " + reply);
         trigger("open");
         return reply;

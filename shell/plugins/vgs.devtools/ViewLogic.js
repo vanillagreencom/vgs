@@ -2,12 +2,12 @@
 
 // The Dev Tools plugin's decisions, pure: the commands the service runs and
 // when, how it reads each answer, the status values it publishes from them,
-// and the sections and rows the panel draws from the published `catalog`.
-// Service.qml and Panel.qml hold no rule of their own; each asks here.
+// and the sections and rows the window draws from the published `catalog`.
+// Service.qml and Window.qml hold no rule of their own; each asks here.
 // scripts/test-devtools-view.js pins every rule with a control.
 
-// The catalog's sections in the order the panel draws them, after the VGS
-// section, each with the title the panel heads it with. `other` is the
+// The catalog's sections in the order the window draws them, after the VGS
+// section, each with the title the window heads it with. `other` is the
 // engine's list of global mise tools no row declares. The keys are
 // CatalogLogic.SECTION_NAMES plus `other`; the test holds them equal.
 // `icon` is the Lucide icon of a row that names none, on a neutral tile:
@@ -42,7 +42,7 @@ var QUERIES = {
 // What each trigger runs. `catalog` always follows `launchers` (next), since
 // a launcher verb changes what the list reports. `start` is the service's
 // first shell, `refresh` the IPC call, `open` the IPC call that summons the
-// panel, `tui` the end of a run of one of the plugin's own TUIs and
+// window, `tui` the end of a run of one of the plugin's own TUIs and
 // `setting` a change of writeLaunchers, `scan` a change of the missing
 // commands the core's scan reports for the core and each enabled plugin
 // (the `doctor` capability's `missing`), such as an install the core's
@@ -57,7 +57,7 @@ var TRIGGERS = {
 };
 
 // An `open` asks a remote again only when that query's last answer is
-// older than this: a user who opens the panel twice in a minute does not
+// older than this: a user who opens the window twice in a minute does not
 // query the release API and every tool registry twice. A run of the
 // plugin's own TUI and an explicit `refresh` always ask.
 var NETWORK_FRESH_MS = 10 * 60 * 1000;
@@ -203,7 +203,7 @@ function listedRows(report) {
     return rows;
 }
 
-// The `catalog` status value, everything the panel draws: each query's
+// The `catalog` status value, everything the window draws: each query's
 // answer as { value, error }, null before its first answer. The
 // requirements are reduced to the missing ones.
 function catalogValue(answers) {
@@ -306,7 +306,7 @@ function updateEntry(entries) {
 var ACTION_LABELS = { install: "Install", update: "Update", remove: "Remove" };
 var ACTION_VARIANTS = { install: "primary", update: "secondary", remove: "danger" };
 
-// One catalog or other-tool ROW as the panel draws it: { key, name, icon,
+// One catalog or other-tool ROW as the window draws it: { key, name, icon,
 // brand, tile, secondary, chips, channels, actions, lines }. `tile` is
 // "brand", "neutral" or "accent"; `chips` { text, tone }; `actions`
 // { kind, verb, label, variant }; `channels` the choices a Select offers,
@@ -406,7 +406,7 @@ function requirementRow(requirement, index) {
     return out;
 }
 
-// Every section the panel draws from CATALOG, the published `catalog`
+// Every section the window draws from CATALOG, the published `catalog`
 // value, or [] before the service published one: { key, title,
 // description, rows, lines }. ENTRY is the Update group's first TUI key, ""
 // for none; WRITE the writeLaunchers setting. A query that failed puts its
@@ -430,7 +430,7 @@ function sections(catalog, entry, write) {
     return out;
 }
 
-// The panel's summary line from CATALOG: what mise reports, how many tools
+// The window's summary line from CATALOG: what mise reports, how many tools
 // are installed and how many mise can update.
 function summary(catalog) {
     if (catalog === null || catalog === undefined || catalog.tools === null) return "Listing tools";
@@ -457,7 +457,7 @@ function runningLines(state) {
     });
 }
 
-// The line the panel shows for the REPLY an action was answered with: none
+// The line the window shows for the REPLY an action was answered with: none
 // for `ok`, and none for a TUI's `busy`, whose answer is the live run's
 // window raised.
 function replyLine(reply) {

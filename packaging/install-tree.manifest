@@ -130,11 +130,11 @@ f share/vgs/shell/plugins/vgs.bar/Workspaces.qml
 f share/vgs/shell/plugins/vgs.bar/manifest.json
 f share/vgs/shell/plugins/vgs.devtools/Appearance.js
 f share/vgs/shell/plugins/vgs.devtools/CatalogLogic.js
-f share/vgs/shell/plugins/vgs.devtools/Panel.qml
 f share/vgs/shell/plugins/vgs.devtools/Query.qml
 f share/vgs/shell/plugins/vgs.devtools/Service.qml
 f share/vgs/shell/plugins/vgs.devtools/ToolRow.qml
 f share/vgs/shell/plugins/vgs.devtools/ViewLogic.js
+f share/vgs/shell/plugins/vgs.devtools/Window.qml
 f share/vgs/shell/plugins/vgs.devtools/bin/devtools
 f share/vgs/shell/plugins/vgs.devtools/catalog.json
 f share/vgs/shell/plugins/vgs.devtools/manifest.json

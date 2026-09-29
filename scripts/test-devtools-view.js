@@ -2,7 +2,7 @@
 // The Dev Tools plugin's decisions, shell/plugins/vgs.devtools/ViewLogic.js,
 // under node: which queries each trigger runs and their argv, how an answer
 // is read, the status values the service publishes, the TUI arguments an
-// action passes, and the sections and rows the panel draws. Every expected
+// action passes, and the sections and rows the window draws. Every expected
 // value is written out by hand.
 //
 // The controls at the end edit a copy of the logic, one rule at a time,
@@ -60,10 +60,10 @@ const ANSWERS = [
 
 function verify(logic) {
     // Sections: the catalog's own and `other`, each once, with an icon.
-    same(logic.TOOL_SECTIONS.map(s => s.key).filter(k => k !== "other").sort(), JSON.parse(JSON.stringify(Catalog.SECTION_NAMES)).sort(), "the panel draws every catalog section");
+    same(logic.TOOL_SECTIONS.map(s => s.key).filter(k => k !== "other").sort(), JSON.parse(JSON.stringify(Catalog.SECTION_NAMES)).sort(), "the window draws every catalog section");
     same(logic.TOOL_SECTIONS.map(s => s.title), ["Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]);
-    // The TUI names the panel runs are the manifest's.
-    same(JSON.parse(JSON.stringify(logic.VERBS)).sort(), Object.keys(manifest.tui).sort(), "every TUI the panel runs is declared");
+    // The TUI names the window runs are the manifest's.
+    same(JSON.parse(JSON.stringify(logic.VERBS)).sort(), Object.keys(manifest.tui).sort(), "every TUI the window runs is declared");
 
     // Triggers.
     same(logic.queriesFor("start", {}, 0), ["launchers", "requirements", "vgs", "updates"]);
@@ -196,7 +196,7 @@ function verify(logic) {
     assert.equal(logic.summary({ tools: { value: null, error: "x" }, updates: null }), "The tool list failed");
     assert.equal(logic.summary(Object.assign({}, catalog, { updates: { value: null, error: "timeout=120" } })), "mise 2026.9.9 · 2 installed · the update check failed: timeout=120");
 
-    // The panel's lines.
+    // The window's lines.
     same(logic.runningLines({ remove: { running: true }, install: { running: true }, update: { running: false } }),
         ["An install runs in its window; the list refreshes when it ends", "A removal runs in its window; the list refreshes when it ends"]);
     assert.equal(logic.replyLine("ok"), "");

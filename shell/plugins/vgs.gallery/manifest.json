@@ -4,27 +4,17 @@
   "name": "Gallery",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Every component of the design system in every variant and state, for previewing a theme. Summon it as a panel.",
+  "description": "Every component of the design system in every variant and state, for previewing a theme, in a window of its own. Open it with vgsh ipc call shell summon window vgs.gallery '{}'.",
   "license": "MIT",
   "icon": "swatch-book",
   "kinds": [
-    "panel"
+    "window"
   ],
   "entryPoints": {
-    "panel": "Gallery.qml"
+    "window": "Gallery.qml"
   },
   "capabilities": [
     "toasts"
   ],
-  "settings": {
-    "placement": "center"
-  },
-  "schema": {
-    "placement": {
-      "type": "enum",
-      "label": "Placement",
-      "description": "Where the gallery opens on its monitor when summoned",
-      "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
-    }
-  }
+  "settings": {}
 }

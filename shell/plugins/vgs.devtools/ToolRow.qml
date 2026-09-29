@@ -1,12 +1,12 @@
 import QtQuick
 import qs.Ui
 
-// One row of the Dev Tools panel, drawn from a ViewLogic row: the tool's
+// One row of the Dev Tools window, drawn from a ViewLogic row: the tool's
 // icon on its tile, its name, the version or state line under it and any
 // problem lines, then its chips, a channel Select when the row offers
 // more than one channel, and one Button per action. A click on an action
 // emits `acted` with the action and the channel the Select holds, "" for
-// none; the panel decides what runs. Every value the row draws itself
+// none; the window decides what runs. Every value the row draws itself
 // reads `look`, the plugin's own table (Appearance.js).
 Item {
     id: root
