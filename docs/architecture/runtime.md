@@ -41,6 +41,16 @@ Where the shell's memory sits, how to measure it and the growth invariants are i
 - Dispatches wait in order behind one running process. `Dispatch.QUEUE_LIMIT` bounds waiting requests; overflow returns and logs `refused: dispatch-queue=full`. Each reply and exit belongs to the active request until `runningChanged` reports false, including a failed start.
 - A Lua session and a classic session take different dispatcher syntax. `Hyprland.usingLua` selects it; a new dispatcher carries both forms. The Lua window dispatchers accept unknown table keys without complaint and `hl.dsp.window.move` answers `ok` for an address that names no window, so only a read of the compositor's state after the reply proves a dispatcher acted.
 
+## Notifications
+
+What the Quickshell 0.3.1 notification server does, from its source at tag `v0.3.1` (commit `1a4716c`, `src/services/notifications/`), which [notification-actions.md](notification-actions.md) rests on:
+
+- `NotificationAction::invoke()` emits `ActionInvoked` with the notification's id and the action's identifier, then closes the notification as `Dismissed` unless its `resident` hint is set (`notification.cpp`, lines 45 to 56).
+- The server emits no `ActivationToken`: `org.freedesktop.Notifications.xml` declares the signal (line 46) and nothing under `src/` emits it. A sender that raises its window with the token it waits for gets none.
+- `Notification::expire()` and `dismiss()` close the notification (`notification.cpp`, lines 65 to 79). `NotificationServer::deleteNotification` then emits the object's `closed`, drops the id, emits `NotificationClosed` and destroys the object (`server.cpp`, lines 100 to 113). An action on a destroyed notification is refused with `Cannot invoke destroyed notification`. A sender's `CloseNotification` takes the same path as `CloseRequested` (lines 136 to 142).
+- `Notify` with the id of a notification the server still tracks updates that object in place and emits no new `notification` signal, only the changed properties' signals (`server.cpp`, lines 177 to 220). An id it no longer tracks makes a new notification with a new id.
+- The server watches only its own bus name (`server.cpp`, lines 48 to 57), never a sender's connection: a notification stays tracked until the service or its sender closes it.
+
 ## QML
 
 The Quickshell and Qt facts the QML rests on are in [runtime-qml.md](runtime-qml.md).

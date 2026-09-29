@@ -23,18 +23,27 @@ While a panel is open the toasts stay and do not expire, a press outside the sta
 | `silence` | `on`, `off`, `toggle`, or empty to read it | `on` or `off`, or `refused: silence=<arg> want=on\|off\|toggle` |
 | `dismiss-all` | none | dismisses every toast; `ok`, or `none` with none on screen |
 | `dismiss-latest`, `invoke-latest` | none | dismisses, or clicks, the newest toast; `ok` or `none` |
-| `status` | none | one JSON line: `silence`, `panel`, `store` (`state`, `problem`), `onScreen`, `history`, `readBefore`, `duplicates` (`keptDesktop`, `keptBrowser`, below) |
+| `status` | none | one JSON line: `silence`, `panel`, `store` (`state`, `problem`), `onScreen`, `history`, `held` (below), `readBefore`, `duplicates` (`keptDesktop`, `keptBrowser`, below) |
 
 ## Toasts
 
 - A toast shows for at least `duration` seconds at normal urgency, 8 by default, and for the shorter of 5 seconds and `duration` at low urgency, longer when the sender's timeout asks, up to 30 seconds. Set `duration` from 2 to 30 on the plugin's Settings page, or as `{ "id": "vgs.notifications", "duration": 12 }` in `plugins` in `~/.config/vgs/shell.json`. A critical toast stays until it is closed. The pointer on a toast, or an open panel, pauses its clock.
 - A sender replacing its notification updates the toast in place and starts its clock over; a sender closing it ends the toast.
-- Hovering a card reveals its actions: the sender's own while it is live, Show when it has none and one of its windows is open, and Dismiss. A click on the card runs the sender's default action, or shows its window, and a right click dismisses it.
+- Hovering a card reveals its actions: the sender's own while its notification is still open (below), Show when it has none and one of its windows is open, and Dismiss. A click opens the notification, and a right click dismisses it.
 - The body renders the markup the server advertises, less every image tag and a browser's leading site address ([notification-senders.md § Browser notifications](../../../docs/architecture/notification-senders.md#browser-notifications)). The summary is plain text.
 - At most 20 toasts show at once; a newer one lets the oldest non-critical toast go into the history.
 - Silence keeps every notification off the screen and records it in the history, bar a critical one from the bare command line (`notify-send -u critical`). A notification from the bare command line that is not critical, or one marked transient, is not recorded under Silence.
 
 Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-action` sender are not ported: nothing in this shell sends them.
+
+## Opening a notification
+
+A click on a toast or an inbox row, the default action's pill, Show and `invoke-latest` open a notification the same way for every application:
+
+1. While the notification is still open, the sender's default action reaches the sender, which then shows what the notification is about.
+2. The sender's window comes forward, open or not. The server gives the sender no activation token, so on Wayland the sender cannot raise its own window.
+
+Another action, such as Reply, reaches the sender and raises nothing. A toast that expires stays open for its inbox row until the row leaves the history, the user dismisses it or clears the history, or the sender closes it; `held` in `status` counts these. A Slack message from a browser raises that browser. Slack's notifications carry no link to their channel or message, so a Slack row no longer open raises Slack alone. Unlike Omarchy's, an inbox row opens too: [notification-actions.md](../../../docs/architecture/notification-actions.md).
 
 ## Slack
 
