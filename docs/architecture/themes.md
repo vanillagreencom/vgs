@@ -49,7 +49,7 @@ The shipped packages are `vgs`, the dark defaults and the revert, and `light`, t
 
 ## Apply
 
-`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md). Apply also makes one of the package's background images current, and `vgsh theme background next` and `previous` move to the next or the previous one: [theme-backgrounds.md](theme-backgrounds.md). `vgsh theme follow` applies the applied package again once it changed: [theme-follow.md](theme-follow.md).
+`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md). Apply also makes one of the package's background images current, `vgsh theme background next` and `previous` move to the next or the previous one, `set` shows one chosen image on every screen or on one output, and `list` names the images: [theme-backgrounds.md](theme-backgrounds.md). `vgsh theme follow` applies the applied package again once it changed: [theme-follow.md](theme-follow.md).
 
 ## Trust
 

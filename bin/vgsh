@@ -21,6 +21,10 @@
 #   vgsh theme follow [--json]     apply the applied package again when it changed and the theme file is unedited
 #   vgsh theme background [--json] next|previous
 #                                  show the applied package's next or previous background image and remember it
+#   vgsh theme background [--json] set <path> [--screen <output>]
+#                                  show one package's or the user folder's image, or show it on one output only
+#   vgsh theme background [--json] list [--all]
+#                                  the applied package's background images, or every package's and the user folder's
 #   vgsh theme add <git url>       clone, judge and install one theme package
 #   vgsh theme update [--yes] <name>
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
@@ -88,15 +92,22 @@
 # stays. `theme list` reports that unedited file unmodified.
 # Apply also makes the package's remembered background image, else its
 # first, the current one: the ${XDG_STATE_HOME:-~/.local/state}/vgs/background
-# symlink and backgrounds.json beside it. `theme background next` and
-# `previous` hold the same lock and move to the applied package's next or
-# previous image, remembering it: docs/architecture/theme-backgrounds.md.
+# symlink and backgrounds.json beside it, and clears every output's own
+# image. `theme background next` and `previous` hold the same lock and move
+# to the applied package's next or previous image, remembering it. `theme
+# background set` holds it too and shows one image from a package's
+# backgrounds/ or from ${XDG_CONFIG_HOME:-~/.config}/vgs/backgrounds/, a
+# regular file never reached through a symlink below that folder; with
+# --screen it is that Hyprland output's own image. `theme background list`
+# names the applied package's images, and with --all every package's and
+# the user folder's: docs/architecture/theme-backgrounds.md.
 # `--json` prints the list, the apply's result `{ state, shell, targets,
 # theme, reason }`, the follow's, that result with its `follow` outcome,
-# the reload's `{ state, targets, reason }` or the background step's
-# `{ state, background, theme, path, reason }`, refusals included, as one
-# JSON line on stdout. `theme` commands never contact the
-# shell: docs/architecture/theme-apply.md.
+# the reload's `{ state, targets, reason }`, the background step's
+# `{ state, background, theme, path, reason }`, the set's, that result with
+# its `screen`, or the background list's `{ state, images, reason }`,
+# refusals included, as one JSON line on stdout. `theme` commands never
+# contact the shell: docs/architecture/theme-apply.md.
 #
 # `theme add`, `update` and `remove` follow the plugin rules above for
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
@@ -726,11 +737,38 @@ PY
         exec node "$theme_judge" follow "$format" "$config_home/vgs" "$state_home/vgs" "$verdict"
         ;;
       background)
-        step="${1:-}"
-        if [[ $step != next && $step != previous ]]; then printf 'vgsh: refused: background-subcommand=%s\n' "${step:-missing}" >&2; usage; exit 2; fi
-        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
-        theme_lock_verdict
-        exec node "$theme_judge" background "$format" "$step" "$config_home/vgs" "$state_home/vgs" "$verdict"
+        verb="${1:-}"
+        [[ $# -gt 0 ]] && shift
+        case "$verb" in
+          next|previous)
+            if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+            theme_lock_verdict
+            exec node "$theme_judge" background "$format" "$verb" "$config_home/vgs" "$state_home/vgs" "$verdict"
+            ;;
+          set)
+            image="${1:-}"
+            if [[ -z $image ]]; then printf 'vgsh: refused: path=missing\n' >&2; usage; exit 2; fi
+            shift
+            screen=()
+            if [[ ${1:-} == --screen ]]; then
+              if [[ -z ${2:-} ]]; then printf 'vgsh: refused: screen=missing\n' >&2; usage; exit 2; fi
+              screen=("$2")
+              shift 2
+            fi
+            if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+            theme_lock_verdict
+            exec node "$theme_judge" background "$format" set "$config_home/vgs" "$state_home/vgs" "$verdict" "$image" "${screen[@]}"
+            ;;
+          list)
+            scope=applied
+            if [[ ${1:-} == --all ]]; then scope=all; shift; fi
+            if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+            exec node "$theme_judge" background "$format" list "$config_home/vgs" "$state_home/vgs" "$scope"
+            ;;
+          *)
+            printf 'vgsh: refused: background-subcommand=%s\n' "${verb:-missing}" >&2; usage; exit 2
+            ;;
+        esac
         ;;
       browser-policy)
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
