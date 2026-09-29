@@ -36,11 +36,10 @@ fi
 mkdir -p -- "$home/.config/vgs/plugins/acme.needs"
 cp -R -- "$repo/scripts/smoke/fixtures/plugins/acme.needs/." "$home/.config/vgs/plugins/acme.needs/"
 
-stop_shell
 ipc() {
   "${shell_env[@]}" "$mutant/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
-if start_shell "$mutant" "$sandbox/notice-mutant-qs.log"; then
+if stop_shell && start_shell "$mutant" "$sandbox/notice-mutant-qs.log"; then
   ok "the control copy starts as the guarded shell"
 fi
 expect "the control copy is the guarded shell" true ipc shell guarded

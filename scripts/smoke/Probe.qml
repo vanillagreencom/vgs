@@ -486,6 +486,13 @@ Scope {
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
         function startOrder(): string { return JSON.stringify(root.startOrder); }
+        // A detached `sleep SECONDS`: a process the shell starts that
+        // outlives it. It inherits the shell's descriptors, the instance
+        // lock's among them, for rows/start-order.sh's stop controls.
+        function startOutliving(seconds: int): string {
+            Quickshell.execDetached(["sleep", String(seconds)]);
+            return "ok";
+        }
         function configChanges(): int { return root.changes; }
         function configUserLoads(): int { return root.userLoads; }
         function failedBuilds(hostKey: string): int {

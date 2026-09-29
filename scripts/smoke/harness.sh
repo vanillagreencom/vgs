@@ -750,15 +750,40 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
   done
   if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; instance_log=""; return 1; fi
 }
-# stop_shell: TERM to the runner start_shell started, waited on for up to
-# 5 s, before a row starts another.
+# stop_shell: TERM to the runner start_shell started, then a wait on the
+# instance lock the runner took, before a row starts another. Every
+# process the shell starts inherits the lock's descriptor (runtime.md
+# § Process), so the shell's own exit does not free the lock, and the next
+# `vgsh run` refuses while any of them lives. The bound is
+# stop_lock_wait_s, the 10 s `vgsh restart` gives the same wait. On the
+# bound the row fails, naming each process that holds the lock, and it
+# returns 1 with the shell unreaped. Once the lock is free it reaps the
+# runner and clears shell_pid, so a second stop signals no stale pid.
+# rows/start-order.sh holds the controls.
+stop_lock_wait_s=10
 stop_shell() {
-  kill -TERM "$shell_pid" 2>/dev/null || true
-  for _ in $(seq 1 50); do
-    kill -0 "$shell_pid" 2>/dev/null || break
-    sleep 0.1
+  local lock="$rt_dir/vgsh.lock"
+  [[ -z $shell_pid ]] || kill -TERM "$shell_pid" 2>/dev/null || true
+  if ! flock -w "$stop_lock_wait_s" "$lock" true; then
+    fail "stop_shell: lock=$lock still held ${stop_lock_wait_s}s after the TERM to pid ${shell_pid:-none}"
+    lock_holders "$lock"
+    return 1
+  fi
+  [[ -z $shell_pid ]] || wait "$shell_pid" 2>/dev/null || true
+  shell_pid=""
+}
+# lock_holders LOCK: one line per process with a descriptor open on LOCK,
+# found through /proc, as its pid, command name and argv.
+lock_holders() { # LOCK
+  local target fd pid seen=" "
+  target="$(readlink -f -- "$1")" || target="$1"
+  for fd in /proc/[0-9]*/fd/*; do
+    [[ $(readlink -- "$fd" 2>/dev/null) == "$target" ]] || continue
+    pid="${fd#/proc/}"; pid="${pid%%/*}"
+    [[ $seen != *" $pid "* ]] || continue
+    seen+="$pid "
+    printf '        holder pid=%s comm=%s cmdline=%s\n' "$pid" "$(cat -- "/proc/$pid/comm" 2>/dev/null)" "$(tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline")"
   done
-  wait "$shell_pid" 2>/dev/null || true
 }
 # Lines of the instance log matching an extended regex, counted. grep exits
 # 1 for a count of zero, which is an answer; anything above is a read or
@@ -1368,6 +1393,49 @@ print("        core: pending=%s running=%s ended=%s" % (key in tui["pending"], r
 if running is not None and "%s@%s.ended.json" % (stem, running) in files:
     print("        run %s has its ended record on disk while the core reports it running: the listing missed it" % running)
 ' "$1" "$rt_dir/vgs/tui" "$core" || printf '        the record directory is unreadable: %s\n' "$rt_dir/vgs/tui"
+}
+
+# smoke_row NAME [DIR]: source DIR/NAME.sh, DIR the rows directory by
+# default, in this shell, since rows share state, and fail the row once
+# when its output holds a Python traceback. A reader can raise outside
+# every expect, in a helper or an unchecked pipe, and the traceback then
+# sits in the log behind passing checks. The row's stdout and stderr go
+# through one filter that prints each line at once, so a row that exits
+# still shows its lines, and keeps them in $sandbox/rows/NAME.out. The
+# harness does not wait for the filter to end: a process the row started
+# can hold the pipe open. The last write of the row is an end marker; the
+# filter counts the tracebacks before it into $sandbox/rows/NAME.result,
+# never prints the marker, and passes every later line on until its input
+# closes. The harness polls for that count, for smoke_row_drain_s at most.
+# The locals carry a prefix, since the row runs in their scope.
+# rows/updates.sh holds the controls.
+smoke_row_drain_s=5
+smoke_row() { # NAME [DIR]
+  local smoke_row_name="$1" smoke_row_dir="${2:-$repo/scripts/smoke/rows}" smoke_row_marker smoke_row_count=""
+  local smoke_row_out="$sandbox/rows/$1.out" smoke_row_result="$sandbox/rows/$1.result"
+  smoke_row_marker="qml-smoke: row-end $1 $$ $SRANDOM"
+  mkdir -p -- "$sandbox/rows"
+  rm -f -- "$smoke_row_out" "$smoke_row_result"
+  {
+    # The row reads no argument, as when qml-smoke.sh sourced it.
+    set --
+    source "$smoke_row_dir/$smoke_row_name.sh"
+    printf '%s\n' "$smoke_row_marker"
+  } > >(awk -v marker="$smoke_row_marker" -v out="$smoke_row_out" -v result="$smoke_row_result" '
+    $0 == marker && !ended { printf "%d\n", tracebacks > result; close(result); ended = 1; next }
+    { print; fflush(); print > out; fflush(out) }
+    !ended && index($0, "Traceback (most recent call last):") { tracebacks++ }
+  ') 2>&1
+  for _ in $(seq 1 $((smoke_row_drain_s * 10))); do
+    if [[ -f $smoke_row_result ]] && read -r smoke_row_count <"$smoke_row_result" && [[ $smoke_row_count =~ ^[0-9]+$ ]]; then break; fi
+    smoke_row_count=""
+    sleep 0.1
+  done
+  if [[ -z $smoke_row_count ]]; then
+    fail "$smoke_row_name: its output did not drain within ${smoke_row_drain_s}s: $smoke_row_out"
+  elif [[ $smoke_row_count -gt 0 ]]; then
+    fail "$smoke_row_name: its output holds $smoke_row_count Python traceback(s): $smoke_row_out"
+  fi
 }
 
 smoke_finish() {

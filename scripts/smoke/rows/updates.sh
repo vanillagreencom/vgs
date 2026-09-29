@@ -42,7 +42,9 @@
 # hidden. The reader of a button's argv answers absent with no record and
 # partial for a record planted empty or cut before its script; its control
 # is a reader of the old shape, which raises on an absent record, and
-# expect_poll fails once on its traceback.
+# expect_poll fails once on its traceback. The controls of smoke_row's
+# traceback rule run here too, over rows planted in the sandbox that read
+# the status record outside every expect.
 set -euo pipefail
 updates_dir="$home/.config/vgs/plugins/vgs.updates"
 updates_state="$home/.local/state/vgs/updates-smoke"
@@ -344,6 +346,33 @@ old_reader_poll() { (failures=0 behaviour_failures=0; expect_poll "the old launc
 expect "control: a poll whose reader raises on an absent record fails once" 1 old_reader_poll
 expect "control: the failed poll names the reader's traceback" 1 grep -c -F -- "the old launch reader: the reader raised a Python traceback" "$sandbox/reader-traceback-control.log"
 expect "control: the failed poll prints the traceback under its row" 1 grep -c -x -F -- "        Traceback (most recent call last):" "$sandbox/reader-traceback-control.log"
+
+# Controls for smoke_row's traceback rule (harness.sh), over rows planted
+# in the sandbox: a status reader run outside every expect that raises
+# fails its row once, naming it; the same reader answering a state word
+# fails nothing; a row that sends its own output elsewhere hides the end
+# marker, and the bound fails it. Each runs in a subshell whose failure
+# count is its answer and whose lines go to their own file, so the
+# planted traceback never reaches this row's output.
+row_plants="$sandbox/row-plants"
+mkdir -p -- "$row_plants"
+cat >"$row_plants/updates-traceback-plant.sh" <<'SH'
+updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin)["no-such-field"])' || true
+SH
+cat >"$row_plants/updates-traceback-clean.sh" <<'SH'
+updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin).get("no-such-field", "absent"))' || true
+SH
+cat >"$row_plants/updates-undrained.sh" <<'SH'
+exec >/dev/null 2>&1
+SH
+planted_row() { # NAME
+  (failures=0 behaviour_failures=0 smoke_row_drain_s=1; smoke_row "$1" "$row_plants" >"$sandbox/row-plant-$1.log" 2>&1; echo "$failures")
+}
+expect "control: a planted row whose reader raises outside every expect fails once" 1 planted_row updates-traceback-plant
+expect "control: the planted row's failure names it and its traceback count" 1 grep -c -F -- "FAIL  updates-traceback-plant: its output holds 1 Python traceback(s)" "$sandbox/row-plant-updates-traceback-plant.log"
+expect "control: the same reader answering a state word fails nothing" 0 planted_row updates-traceback-clean
+expect "control: a planted row that hides its end marker fails once at the bound" 1 planted_row updates-undrained
+expect "control: the undrained row's failure names it" 1 grep -c -F -- "FAIL  updates-undrained: its output did not drain within 1s" "$sandbox/row-plant-updates-undrained.log"
 
 # Pending, from the last real check.
 expect_poll "a pending check draws the accent count" '["pending", "refresh-cw", "accent", "7", "accent"]' widget_view

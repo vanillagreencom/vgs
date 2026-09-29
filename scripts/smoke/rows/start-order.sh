@@ -21,8 +21,13 @@
 # that waits for a built service leaves the lock with the service; a
 # follow moved onto the gate's release is queued after its scan's turn; a
 # follow that runs only while the services are held queues none for a
-# rescan. The row runs last and leaves the last copy running
-# for the harness's teardown.
+# rescan. Before the restart with no bar, the row reads harness.sh's
+# stop_shell: with a planted process that outlives the shell and holds
+# the instance lock, the stop returns with the lock free; its controls
+# are a stop with no lock wait, which returns with the lock held, and a
+# stop that times out on the lock, which fails and names its holders.
+# The row runs last and leaves the last copy running for the harness's
+# teardown.
 set -euo pipefail
 ipc() {
   "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
@@ -36,10 +41,10 @@ done
 # restart_over TREE LOG [DISABLED_JSON BAR]: the running shell stopped
 # and TREE's runner started over the default set and the two fixtures,
 # with the plugins DISABLED_JSON lists disabled and no compiled QML cache;
-# start_shell's readings follow, BAR passed on. Returns 1 when the start
-# failed.
+# start_shell's readings follow, BAR passed on. Returns 1 when the stop
+# or the start failed.
 restart_over() { # TREE LOG [DISABLED_JSON BAR]
-  stop_shell
+  stop_shell || return 1
   default_set_prepare '["acme.locker", "acme.contention"]' "${3:-[]}"
   rm -rf -- "$home/.cache/quickshell/qmlcache"
   start_shell "$1" "$2" "${4:-bar}"
@@ -171,6 +176,61 @@ if copy_tree follow-held && edit_tree follow-held shell/shell.qml \
     'function onScanFinished() { if (ServiceGate.release === "") Capabilities.themes.follow(); }' \
   && restart_over "$sandbox/start-order-follow-held" "$sandbox/start-order-follow-held-qs.log"; then
   expect "control: a follow held to the gate queues none for a rescan" 0 rescan_follows
+fi
+
+# The stop's wait on the instance lock (harness.sh's stop_shell). A
+# process the shell starts inherits the lock's descriptor, so it holds
+# the lock past the shell's exit; the probe plants one, a detached sleep
+# of stop_holder_s, which outlasts the shell's exit on TERM. lock_state
+# answers `free` or `held`, from a lock taken and dropped at once.
+stop_holder_s=3
+lock_state() {
+  local status=0
+  flock -n -E 75 "$rt_dir/vgsh.lock" true || status=$?
+  case "$status" in
+    0) echo free ;;
+    75) echo held ;;
+    *) echo "unreadable status=$status" ;;
+  esac
+}
+# A stop whose TERM reaches a stand-in, never the shell, times out on the
+# lock the shell holds: the row fails once and names the shell among the
+# holders. Its lines go to their own file, and the stand-in ends on the TERM.
+stop_timeout_log="$sandbox/stop-timeout-control.log"
+stop_timeout_control() {
+  (
+    failures=0 behaviour_failures=0 stop_lock_wait_s=1
+    sleep 30 >/dev/null 2>&1 &
+    shell_pid=$!
+    stop_shell >"$stop_timeout_log" || :
+    echo "$failures"
+  )
+}
+expect "control: a stop whose TERM misses the shell fails once on the held lock" 1 stop_timeout_control
+expect "control: the timed-out stop names the shell as a lock holder" 1 grep -c -F -- "holder pid=$shell_pid comm=" "$stop_timeout_log"
+# The real stop with a planted holder returns with the lock free, and the
+# next start answers ping.
+expect "the probe plants a process that outlives the shell" ok ipc smoke startOutliving "$stop_holder_s"
+if stop_shell; then
+  expect "stop_shell returns once the planted holder freed the instance lock" free lock_state
+fi
+restart_over "$repo" "$sandbox/start-order-lock-qs.log" || :
+# Control: a copy of stop_shell with no lock wait, which still waits for
+# the pid, returns while the planted holder keeps the lock, the state in
+# which the next `vgsh run` refuses. The no-bar restart below then stops
+# through the real stop_shell, which waits for the holder to exit.
+unwaited_needle='flock -w "$stop_lock_wait_s" "$lock" true'
+stop_shell_def="$(declare -f stop_shell)"
+stop_shell_rest="${stop_shell_def//"$unwaited_needle"/}"
+if [[ $(( (${#stop_shell_def} - ${#stop_shell_rest}) / ${#unwaited_needle} )) == 1 ]] \
+  && unwaited_def="${stop_shell_def/"$unwaited_needle"/true}" \
+  && [[ $unwaited_def != "$stop_shell_def" ]] \
+  && eval "unwaited_$unwaited_def"; then
+  expect "the probe plants a process that outlives the shell for the control" ok ipc smoke startOutliving "$stop_holder_s"
+  unwaited_stop_shell || :
+  expect "control: a stop that waits only for the pid returns with the instance lock held" held lock_state
+else
+  fail "the stop_shell copy with no lock wait could not be written"
 fi
 
 # No bar: the default set with the bar disabled builds none, and the gate

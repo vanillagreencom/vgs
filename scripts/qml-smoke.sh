@@ -163,45 +163,46 @@ fi
 
 source "$repo/scripts/smoke/harness.sh"
 
-# These rows share one sandbox and run in dependency order.
-source "$repo/scripts/smoke/rows/bar.sh"
+# These rows share one sandbox and run in dependency order. smoke_row
+# (harness.sh) sources each and fails one whose output holds a traceback.
+smoke_row bar
 # bar.sh read the startup latencies; the cursor rows need the log.
 if compositor_logs_on; then ok "the nested compositor logs from here on"; else fail "the nested compositor's logs did not turn on"; fi
-source "$repo/scripts/smoke/rows/plugins.sh"
-source "$repo/scripts/smoke/rows/sources.sh"
-source "$repo/scripts/smoke/rows/capabilities.sh"
-source "$repo/scripts/smoke/rows/status.sh"
-source "$repo/scripts/smoke/rows/manager.sh"
-source "$repo/scripts/smoke/rows/updates.sh"
-source "$repo/scripts/smoke/rows/settings.sh"
-source "$repo/scripts/smoke/rows/windows.sh"
-source "$repo/scripts/smoke/rows/compositor-reveal.sh"
-source "$repo/scripts/smoke/rows/agent-warden.sh"
-source "$repo/scripts/smoke/rows/capability-release.sh"
-source "$repo/scripts/smoke/rows/surfaces.sh"
-source "$repo/scripts/smoke/rows/failed-builds.sh"
-source "$repo/scripts/smoke/rows/monitors.sh"
-source "$repo/scripts/smoke/rows/configuration.sh"
-source "$repo/scripts/smoke/rows/theme.sh"
-source "$repo/scripts/smoke/rows/themes.sh"
-source "$repo/scripts/smoke/rows/theme-browse.sh"
-source "$repo/scripts/smoke/rows/theme-browser.sh"
-source "$repo/scripts/smoke/rows/toasts.sh"
-source "$repo/scripts/smoke/rows/layers.sh"
-source "$repo/scripts/smoke/rows/tui.sh"
-source "$repo/scripts/smoke/rows/notices.sh"
-source "$repo/scripts/smoke/rows/devtools.sh"
-source "$repo/scripts/smoke/rows/overlays.sh"
-source "$repo/scripts/smoke/rows/gallery.sh"
-source "$repo/scripts/smoke/rows/launcher.sh"
-source "$repo/scripts/smoke/rows/notifications.sh"
-source "$repo/scripts/smoke/rows/automations.sh"
-source "$repo/scripts/smoke/rows/hyprland.sh"
-source "$repo/scripts/smoke/rows/instance-guard.sh"
-source "$repo/scripts/smoke/rows/diagnostics.sh"
-source "$repo/scripts/smoke/rows/read-only-prefix.sh"
-source "$repo/scripts/smoke/rows/notices-control.sh"
-source "$repo/scripts/smoke/rows/hidpi.sh"
-source "$repo/scripts/smoke/rows/start-order.sh"
+smoke_row plugins
+smoke_row sources
+smoke_row capabilities
+smoke_row status
+smoke_row manager
+smoke_row updates
+smoke_row settings
+smoke_row windows
+smoke_row compositor-reveal
+smoke_row agent-warden
+smoke_row capability-release
+smoke_row surfaces
+smoke_row failed-builds
+smoke_row monitors
+smoke_row configuration
+smoke_row theme
+smoke_row themes
+smoke_row theme-browse
+smoke_row theme-browser
+smoke_row toasts
+smoke_row layers
+smoke_row tui
+smoke_row notices
+smoke_row devtools
+smoke_row overlays
+smoke_row gallery
+smoke_row launcher
+smoke_row notifications
+smoke_row automations
+smoke_row hyprland
+smoke_row instance-guard
+smoke_row diagnostics
+smoke_row read-only-prefix
+smoke_row notices-control
+smoke_row hidpi
+smoke_row start-order
 
 smoke_finish
