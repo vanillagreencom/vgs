@@ -675,6 +675,13 @@ for i in range(len(words) - 1):
     if words[i] == "--run": words[i + 1] = "RUN"
 print(json.dumps(words))' "$tui_record"; }
 words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
+# The key the recorded run carries, then the recorded argv from the script
+# on, as JSON, or `absent`.
+recorded_tail() { recorded | python3 -c 'import json,sys
+t=sys.stdin.read().strip()
+if t == "absent": print(t); sys.exit()
+w=json.loads(t); at=w.index("--record")
+print(json.dumps([w[at + 1]] + w[w.index("--", at) + 1:]))'; }
 forget_record() { rm -f -- "${tui_record:?}"; }
 # A core TUI's command is the core's bin/ beside the shell directory,
 # whatever the shell's PATH holds. core_words: the words the terminal is

@@ -85,13 +85,6 @@ row_texts() { ipc smoke itemTexts panel vgs.devtools ToolRow | python3 -c 'impor
 # The VGS row's texts with its error line, which names the sandbox's
 # path, read as `error=<key>`.
 vgs_texts() { row_texts VGS | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(None if r is None else [t if not t.startswith("method=") else "error=" + t.split(" ")[0] for t in r], ensure_ascii=False))'; }
-# The key the recorded run carries, then the recorded argv from the script
-# on, as JSON, or `absent`.
-recorded_tail() { recorded | python3 -c 'import json,sys
-t=sys.stdin.read().strip()
-if t == "absent": print(t); sys.exit()
-w=json.loads(t); at=w.index("--record")
-print(json.dumps([w[at + 1]] + w[w.index("--", at) + 1:]))'; }
 # The ended record the presenter of KEY's last run wrote, by file name, or
 # `none`: the presenter writes it when it exits and keeps only the newest.
 ended_record() { local stem="${1/\//@}" f found=none; for f in "$rt_dir/vgs/tui/$stem@"*.ended.json; do [[ -e $f ]] && found="${f##*/}"; done; echo "$found"; }

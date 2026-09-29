@@ -114,9 +114,14 @@ f share/vgs/shell/assets/fonts/InterVariable-OFL.txt
 f share/vgs/shell/assets/fonts/InterVariable.ttf
 f share/vgs/shell/assets/fonts/JetBrainsMono-OFL.txt
 f share/vgs/shell/assets/fonts/JetBrainsMono-Variable.ttf
+f share/vgs/shell/plugins/vgs.agent-warden/Panel.qml
 f share/vgs/shell/plugins/vgs.agent-warden/Service.qml
+f share/vgs/shell/plugins/vgs.agent-warden/ViewLogic.js
 f share/vgs/shell/plugins/vgs.agent-warden/WardenLogic.js
+f share/vgs/shell/plugins/vgs.agent-warden/Widget.qml
 f share/vgs/shell/plugins/vgs.agent-warden/manifest.json
+f share/vgs/shell/plugins/vgs.agent-warden/tui/setup.sh
+f share/vgs/shell/plugins/vgs.agent-warden/tui/vsys.sh
 f share/vgs/shell/plugins/vgs.bar/Bar.qml
 f share/vgs/shell/plugins/vgs.bar/Builtin.qml
 f share/vgs/shell/plugins/vgs.bar/Clock.qml

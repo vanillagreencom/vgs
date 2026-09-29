@@ -98,8 +98,8 @@ while [[ ! -e $gate ]]; do sleep 0.05; done
 TUI
 chmod 755 "$updates_dir/tui/finish.sh"
 
-# A terminal stand-in that runs the presenter with no window; rows/tui.sh
-# writes its own over it.
+# A terminal stand-in that runs the presenter with no window;
+# rows/agent-warden.sh writes harness.sh's recording one over it.
 cat >"$shim/xdg-terminal-exec" <<'EOF'
 #!/usr/bin/env bash
 while [[ $# -gt 0 && $1 != -- ]]; do shift; done

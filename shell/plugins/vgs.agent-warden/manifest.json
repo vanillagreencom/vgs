@@ -4,20 +4,97 @@
   "name": "Agent Warden",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits. It reads the warden's status and never changes an agent itself.",
+  "description": "A shield in the bar that shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits, and a small panel with what needs a look and a link that opens vsys. It reads the warden's status and never changes an agent itself.",
   "license": "MIT",
   "icon": "shield-check",
-  "kinds": ["service"],
-  "entryPoints": { "service": "Service.qml" },
-  "capabilities": ["ipc", "requirements", "status"],
+  "kinds": [
+    "bar-widget",
+    "panel",
+    "service"
+  ],
+  "entryPoints": {
+    "bar-widget": "Widget.qml",
+    "panel": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "ipc",
+    "requirements",
+    "run",
+    "status",
+    "surfaces",
+    "tui"
+  ],
+  "defaultSection": "right",
+  "settings": {
+    "showCount": true,
+    "hideWhenIdle": false
+  },
+  "schema": {
+    "showCount": {
+      "type": "boolean",
+      "label": "Show a count",
+      "description": "Show beside the shield how many agents run, or how many things need a look",
+      "group": "Display"
+    },
+    "hideWhenIdle": {
+      "type": "boolean",
+      "label": "Hide when idle",
+      "description": "Hide the shield while no agent runs and nothing needs a look",
+      "group": "Display"
+    }
+  },
   "requirements": [
-    { "command": "vsys", "packages": { "aur": "vsys" }, "optional": true, "purpose": "The agent dashboard that ships the warden" }
+    {
+      "command": "vsys",
+      "packages": {
+        "aur": "vsys"
+      },
+      "optional": true,
+      "purpose": "The agent dashboard that ships the warden"
+    },
+    {
+      "command": "systemctl",
+      "optional": true,
+      "purpose": "Starts the warden's timer again from the panel when it has stopped checking"
+    }
   ],
   "status": {
-    "warden": { "type": "state", "label": "Warden", "hint": "Keeps AI agents within their memory and task limits. Run this once to set it up.", "command": "vsys warden install" },
-    "agents": { "type": "count", "label": "Agents running" },
-    "lastCheck": { "type": "time", "label": "Last check" },
-    "vsys": { "type": "presence", "label": "vsys", "hint": "The agent dashboard that ships the warden", "command": "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash" },
-    "detail": { "type": "data", "label": "Detail" }
+    "warden": {
+      "type": "state",
+      "label": "Warden",
+      "hint": "Keeps AI agents within their memory and task limits. Run this once to set it up.",
+      "command": "vsys warden install"
+    },
+    "agents": {
+      "type": "count",
+      "label": "Agents running"
+    },
+    "lastCheck": {
+      "type": "time",
+      "label": "Last check"
+    },
+    "vsys": {
+      "type": "presence",
+      "label": "vsys",
+      "hint": "The agent dashboard that ships the warden",
+      "command": "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"
+    },
+    "detail": {
+      "type": "data",
+      "label": "Detail"
+    }
+  },
+  "tui": {
+    "vsys": {
+      "script": "tui/vsys.sh",
+      "title": "vsys",
+      "size": "wide",
+      "presentation": "plain"
+    },
+    "setup": {
+      "script": "tui/setup.sh",
+      "title": "Set up Agent Warden"
+    }
   }
 }
