@@ -17,14 +17,18 @@ geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryO
 # top: the hand over an enabled button, switch and checkbox, and the arrow
 # over each disabled one, which Qt skips when it picks the cursor.
 gallery_box() { ipc smoke shownWindowGeometry window vgs.gallery "$1" "$2"; }
-gallery_offset() { python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])[1] - json.loads(sys.argv[2])[1]))' "$(gallery_box SectionHeader Buttons)" "$(gallery_box Label Gallery)"; }
-if [[ $(ipc smoke scrollTo window vgs.gallery 0) == \[* ]] && offset="$(gallery_offset)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
+gallery_offset() { python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])[1] - json.loads(sys.argv[2])[1]))' "$(gallery_box SectionHeader "$1")" "$(gallery_box Label Gallery)"; }
+if [[ $(ipc smoke scrollTo window vgs.gallery 0) == \[* ]] && offset="$(gallery_offset Buttons)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
   expect_cursor "an enabled button shows the hand" pointer window:Gallery "$(gallery_box Button Small)"
   expect_cursor "a disabled button shows the arrow" default window:Gallery "$(gallery_box Button Disabled)"
+  if offset="$(gallery_offset Choices)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
   expect_cursor "an enabled switch shows the hand" pointer window:Gallery "$(gallery_box Switch Off)"
   expect_cursor "a disabled switch shows the arrow" default window:Gallery "$(gallery_box Switch Disabled)"
   expect_cursor "an enabled checkbox shows the hand" pointer window:Gallery "$(gallery_box Checkbox Unchecked)"
   expect_cursor "a disabled checkbox shows the arrow" default window:Gallery "$(gallery_box Checkbox Disabled)"
+  else
+    fail "the gallery did not scroll its Choices section to the top"
+  fi
   rest_pointer || fail "moving the pointer off the gallery failed"
 else
   fail "the gallery did not scroll its Buttons section to the top"
