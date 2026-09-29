@@ -196,6 +196,7 @@ f share/vgs/shell/plugins/vgs.notifications/images.sh
 f share/vgs/shell/plugins/vgs.notifications/manifest.json
 f share/vgs/shell/plugins/vgs.notifications/shaders/edgelight.frag
 f share/vgs/shell/plugins/vgs.notifications/shaders/edgelight.frag.qsb
+f share/vgs/shell/plugins/vgs.notifications/slack-emoji.js
 f share/vgs/shell/plugins/vgs.notifications/slack-photos.js
 f share/vgs/shell/plugins/vgs.notifications/token-status.sh
 f share/vgs/shell/plugins/vgs.settings/KeyField.qml

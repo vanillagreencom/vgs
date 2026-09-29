@@ -5,6 +5,7 @@ const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const emoji = require("./slack-emoji.js");
 
 // The libsecret item of an account: service vgs-notifications, account
 // `slack:<team id>` for one workspace's token and `slack` for the
@@ -25,12 +26,13 @@ const API_DEFAULT = "https://slack.com/api";
 // photo; and users/, one <user id>.png per photo. The team sweep deletes
 // only these names, its own temporary files and the flat <user id>.png
 // photos an older layout kept beside team.json, so another artifact of the
-// team, such as its custom emoji, can sit in the directory beside them.
+// team, its custom emoji (slack-emoji.js), sits in the directory beside
+// them.
 const TEAM_FILES = ["team.json", "users.json", "workspace.png"];
 const USERS_DIR = "users";
 // The root holds accounts.json, each account's resolved team and its last
-// failure, and one directory per team a stored token serves; the root sweep
-// removes anything else.
+// failure, and one directory per team a stored token serves or whose custom
+// emoji are cached; the root sweep removes anything else.
 const ACCOUNTS_FILE = "accounts.json";
 const TEMP_NAME = /^\..+\.[0-9]+\.(?:tmp|download|resized)$/;
 
@@ -210,30 +212,35 @@ function downloadProtocolArgs() {
         : ["--proto", "=https", "--proto-redir", "=https"];
 }
 
+// Download an image URL on Slack's image hosts to `file`, at most `max`
+// bytes: "saved", "skipped" for a URL outside those hosts, or "failed",
+// which leaves no file.
+function fetchImage(url, file, max) {
+    if (!allowedImageUrl(url)) return "skipped";
+    const curl = childProcess.spawnSync("curl", [
+        "--silent", "--show-error", "--fail", "--location",
+        "--max-redirs", "3",
+        ...downloadProtocolArgs(),
+        "--max-time", "10", "--connect-timeout", "5",
+        "--max-filesize", String(max),
+        "--output", file,
+        url
+    ], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+    const size = !curl.error && curl.status === 0 && fs.existsSync(file) ? fs.statSync(file).size : 0;
+    if (size <= 0 || size > max) {
+        fs.rmSync(file, { force: true });
+        return "failed";
+    }
+    return "saved";
+}
+
 function downloadImage(url, file) {
     if (!allowedImageUrl(url)) return "skipped";
     const dir = path.dirname(file);
     mkdir(dir);
     if (!inside(dir, file)) return "skipped";
     const tmp = path.join(dir, "." + path.basename(file) + "." + process.pid + ".download");
-    const curl = childProcess.spawnSync("curl", [
-        "--silent", "--show-error", "--fail", "--location",
-        "--max-redirs", "3",
-        ...downloadProtocolArgs(),
-        "--max-time", "10", "--connect-timeout", "5",
-        "--max-filesize", String(MAX_IMAGE_BYTES),
-        "--output", tmp,
-        url
-    ], { encoding: "utf8", maxBuffer: 1024 * 1024 });
-    if (curl.error || curl.status !== 0) {
-        fs.rmSync(tmp, { force: true });
-        return "failed";
-    }
-    const size = fs.statSync(tmp).size;
-    if (size <= 0 || size > MAX_IMAGE_BYTES) {
-        fs.rmSync(tmp, { force: true });
-        return "failed";
-    }
+    if (fetchImage(url, tmp, MAX_IMAGE_BYTES) !== "saved") return "failed";
     const magick = commandPath("magick") || commandPath("convert");
     if (magick !== "") {
         const resized = path.join(dir, "." + path.basename(file) + "." + process.pid + ".resized");
@@ -441,23 +448,10 @@ function buildTeam(root, id, account, info, members) {
     return record;
 }
 
-function refresh(root, ids) {
-    assertTestSecretToolPath();
-    const lines = [];
-    const tokens = [];
-    for (const account of ids.map(id => "slack:" + id).concat([LEGACY])) {
-        const found = lookupToken(account);
-        if (found.state === "no-tool") break;
-        if (found.state === "failed") lines.push(found.line);
-        if (found.state === "token") tokens.push({ account, token: found.token });
-    }
-    if (tokens.length === 0) {
-        sweepRoot(root, new Set());
-        remove(path.join(root, ACCOUNTS_FILE));
-        for (const line of lines) console.error(line);
-        output({ status: "absent" });
-        return;
-    }
+// The photos of the teams `tokens` serve: { value, kept, accounts }, the
+// output's photo fields, the team ids whose directories hold photos, and
+// the account states to store.
+function refreshPhotos(root, tokens, lines) {
     const accountsFile = path.join(root, ACCOUNTS_FILE);
     const stored = readJson(accountsFile);
     const previous = stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
@@ -553,34 +547,90 @@ function refresh(root, ids) {
             }
         }
     }
-    const kept = new Set(teams.map(team => team.id));
-    mkdir(root);
-    sweepRoot(root, kept);
-    writeJson(accountsFile, accounts);
     const downloadFailed = teams.reduce((sum, team) => sum + team.downloadFailed, 0);
     if (downloadFailed > 0) lines.push("notifications-slack-photos: downloads=failed count=" + downloadFailed);
-    for (const line of lines) console.error(line);
-    output({
-        status: "loaded",
-        generatedAt: teams.length === 0 ? 0 : Math.min(...teams.map(team => team.generatedAt)),
-        downloadFailed,
-        stale,
-        teams: teams.map(team => ({ id: team.id, names: team.names, icon: team.icon, users: team.users, account: team.account }))
-    });
+    return {
+        value: {
+            status: "loaded",
+            generatedAt: teams.length === 0 ? 0 : Math.min(...teams.map(team => team.generatedAt)),
+            downloadFailed,
+            stale,
+            teams: teams.map(team => ({ id: team.id, names: team.names, icon: team.icon, users: team.users, account: team.account }))
+        },
+        kept: new Set(teams.map(team => team.id)),
+        accounts
+    };
 }
 
+// The token that serves team `id`: its own, unless that token was refused
+// as another team's, else the single-workspace token when team.info last
+// named `id`; "" for none.
+function tokenFor(tokens, accounts, id) {
+    const own = tokens.find(e => e.account === "slack:" + id);
+    if (own !== undefined && (accounts[own.account] || {}).reason !== "team=mismatch") return own.token;
+    const legacy = tokens.find(e => e.account === LEGACY);
+    return legacy !== undefined && (accounts[LEGACY] || {}).team === id ? legacy.token : "";
+}
+
+// One run: the photos, then the custom emoji when `emojiCache`, Slack's
+// Cache_Data, is given, or their removal when it is null; then the root
+// sweep and the one output line, with an `emoji` list when emoji are on.
+function refresh(root, ids, emojiCache) {
+    assertTestSecretToolPath();
+    const lines = [];
+    const tokens = [];
+    for (const account of ids.map(id => "slack:" + id).concat([LEGACY])) {
+        const found = lookupToken(account);
+        if (found.state === "no-tool") break;
+        if (found.state === "failed") lines.push(found.line);
+        if (found.state === "token") tokens.push({ account, token: found.token });
+    }
+    const photos = tokens.length === 0 ? { value: { status: "absent" }, kept: new Set(), accounts: null } : refreshPhotos(root, tokens, lines);
+    let base = "";
+    const deps = {
+        readJson,
+        atomicWrite,
+        download: fetchImage,
+        listEmoji: token => apiCall(base !== "" ? base : (base = apiBase()), token, "emoji.list", {}).emoji,
+        allowedUrl: allowedImageUrl,
+        redact,
+        tokenFor: id => tokenFor(tokens, photos.accounts || {}, id),
+        now: Date.now,
+        path: process.env.PATH
+    };
+    const emojiRun = emojiCache === null ? { kept: emoji.disable(root, deps), teams: null } : emoji.refresh(root, emojiCache, ids, deps, lines);
+    sweepRoot(root, new Set([...photos.kept, ...emojiRun.kept]));
+    const accountsFile = path.join(root, ACCOUNTS_FILE);
+    if (photos.accounts === null) {
+        remove(accountsFile);
+    } else {
+        mkdir(root);
+        writeJson(accountsFile, photos.accounts);
+    }
+    for (const line of lines) console.error(line);
+    output(emojiRun.teams === null ? photos.value : Object.assign({}, photos.value, { emoji: emojiRun.teams }));
+}
+
+// refresh <root> [--emoji <Slack Cache_Data>] [<team id>...]
 function main(argv) {
     if (argv.length < 4 || argv[2] !== "refresh") usage("usage");
-    const ids = argv.slice(4);
+    let rest = argv.slice(4);
+    let emojiCache = null;
+    if (rest[0] === "--emoji") {
+        if (rest.length < 2 || !path.isAbsolute(rest[1])) usage("emoji want=<absolute cache dir>");
+        emojiCache = rest[1];
+        rest = rest.slice(2);
+    }
+    const ids = rest;
     if (ids.length > TEAMS_MAX) usage("teams count=" + ids.length + " want<=" + TEAMS_MAX);
     for (const id of ids)
         if (safeSegment(id) === "") usage("team-id want=[A-Za-z0-9]{1,32}");
-    return { root: argv[3], ids: Array.from(new Set(ids)) };
+    return { root: argv[3], ids: Array.from(new Set(ids)), emojiCache };
 }
 
 const args = main(process.argv);
 try {
-    refresh(args.root, args.ids);
+    refresh(args.root, args.ids, args.emojiCache);
 } catch (e) {
     fail(4, "notifications-slack-photos: error=io");
 }

@@ -374,12 +374,12 @@ exit 1
     write(path.join(layoutCache, "T1", "team.json"), JSON.stringify({ id: "T1", names: ["acme"], icon: "" }));
     write(path.join(layoutCache, "T1", "UT1A.png"), png);
     write(path.join(layoutCache, "T1", ".users.json.123.tmp"), "{");
-    write(path.join(layoutCache, "T1", "emoji.json"), "{}");
-    write(path.join(layoutCache, "T1", "emoji", "party.png"), png);
+    write(path.join(layoutCache, "T1", "notes.json"), "{}");
+    write(path.join(layoutCache, "T1", "notes", "party.png"), png);
     await runJson(layoutCache, ["T1"]);
     assert.deepEqual(fs.readdirSync(layoutCache).sort(), ["T1", "accounts.json"], "the old root index and failure file are gone");
-    assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1")).sort(), ["emoji", "emoji.json", "team.json", "users", "users.json", "workspace.png"], "the old flat photos go and names the helper does not own stay");
-    assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1", "emoji")), ["party.png"]);
+    assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1")).sort(), ["notes", "notes.json", "team.json", "users", "users.json", "workspace.png"], "the old flat photos go and names the helper does not own stay");
+    assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1", "notes")), ["party.png"]);
 }
 
 function controls() {
@@ -407,6 +407,7 @@ function controls() {
         const copy = path.join(dir, String(index), "slack-photos.js");
         fs.mkdirSync(path.dirname(copy), { recursive: true });
         fs.writeFileSync(copy, source.replace(needle, () => replacement), { mode: 0o700 });
+        fs.copyFileSync(path.join(path.dirname(helperSource), "slack-emoji.js"), path.join(path.dirname(copy), "slack-emoji.js"));
         const syntax = childProcess.spawnSync(process.execPath, ["--check", copy], { cwd: repo, encoding: "utf8" });
         assert.equal(syntax.status, 0, `control "${label}": the mutated helper must remain valid JavaScript`);
         const result = childProcess.spawnSync(process.execPath, [__filename], {
