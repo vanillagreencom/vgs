@@ -26,7 +26,7 @@ const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(
 // Hover points the launcher maps into its own coordinates: [label, last,
 // at, whether the pointer moved]. The roundoff rows are the points an
 // instrumented nested smoke read for a pointer resting over the rows while
-// the card animated (docs/architecture/runtime-qml.md); a wl_fixed_t step
+// the card animated (docs/architecture/runtime-pointer.md); a wl_fixed_t step
 // is 1/256 px.
 const POINTER_MOVES = [
     ["no reading yet", { x: -1, y: -1 }, { x: 877.5, y: 480 }, false],

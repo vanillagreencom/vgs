@@ -34,6 +34,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [requirements.md](requirements.md) and [requirement-notice.md](requirement-notice.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe, the `missing` lines or the notice.
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
+- [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.

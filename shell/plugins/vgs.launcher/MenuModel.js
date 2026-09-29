@@ -654,7 +654,7 @@ var POINTER_EPSILON = 1 / 512;
 // yet, so the first hover after the list changed moves nothing. Qt delivers
 // hover again to a row that moves under a still pointer, as the card
 // animates, and the point it maps back differs by float roundoff
-// (docs/architecture/runtime-qml.md): an exact comparison reads that as
+// (docs/architecture/runtime-pointer.md): an exact comparison reads that as
 // motion, and the resting pointer takes the cursor.
 function pointerMoved(last, at) {
     if (last.x < 0 && last.y < 0) return false;
