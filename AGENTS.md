@@ -20,7 +20,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
 - A change that adds a surface, a service or a plugin adds its validation row under `scripts/smoke/rows/` in the same PR.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
-- Before designing a plugin, a theme target or any system integration, check how the latest Omarchy (`basecamp/omarchy`, `main`) solves the same problem. Take its approach where it is simpler or more robust; where VGS differs, say why in the issue or decision record.
+- Before designing a plugin, a theme target or any system integration, check how the latest Omarchy (`basecamp/omarchy`, its default branch) solves the same problem. Take its approach where it is simpler or more robust; where VGS differs, say why in the issue or decision record.
 
 ## Read next
 

@@ -368,7 +368,7 @@ VGS delivery policy overrides the shared workflow's mandatory review, CI-wait, b
 code-quality = """
 Quickshell rules for this shell. They add to the rules above.
 
-- Compare every design against how the latest Omarchy (`basecamp/omarchy`, `main`) solves the same problem. Adopt its approach where it is simpler or more robust; where VGS does differently, state why in the issue or decision record. Omarchy is a reference, not a constraint.
+- Compare every design against how the latest Omarchy (`basecamp/omarchy`, its default branch) solves the same problem. Adopt its approach where it is simpler or more robust; where VGS does differently, state why in the issue or decision record. Omarchy is a reference, not a constraint.
 - The runtime facts the code rests on are in `docs/architecture/runtime-qml.md` for FolderListModel, Process, createObject, FileView and property-handler order, and in `docs/architecture/runtime.md`: § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
 - Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
 - A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
