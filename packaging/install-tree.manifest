@@ -277,6 +277,8 @@ f share/vgs/themes/catalog/miasma/terminal.json
 f share/vgs/themes/catalog/miasma/theme.json
 f share/vgs/themes/catalog/monokai/terminal.json
 f share/vgs/themes/catalog/monokai/theme.json
+f share/vgs/themes/catalog/moon-orbit/terminal.json
+f share/vgs/themes/catalog/moon-orbit/theme.json
 f share/vgs/themes/catalog/nagai-twilight/terminal.json
 f share/vgs/themes/catalog/nagai-twilight/theme.json
 f share/vgs/themes/catalog/nebulite/terminal.json
@@ -367,6 +369,7 @@ f share/vgs/themes/catalog/thumbnails/matte-black.jpg
 f share/vgs/themes/catalog/thumbnails/mechanoonna.jpg
 f share/vgs/themes/catalog/thumbnails/miasma.jpg
 f share/vgs/themes/catalog/thumbnails/monokai.jpg
+f share/vgs/themes/catalog/thumbnails/moon-orbit.jpg
 f share/vgs/themes/catalog/thumbnails/nagai-twilight.jpg
 f share/vgs/themes/catalog/thumbnails/nebulite.jpg
 f share/vgs/themes/catalog/thumbnails/noctalia.jpg
