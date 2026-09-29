@@ -568,12 +568,11 @@ outdated_fetch_env=(
 
 # Print checkout DIR's HEAD commit, its upstream commit and the count of
 # upstream commits HEAD lacks, space-separated, after fetching the upstream
-# within the timeout. The fetch runs under outdated_fetch_env in a session
-# of its own, so ssh has no terminal to read a passphrase or a host key
-# answer from. The fetch writes the
-# remote-tracking refs and their objects, and no FETCH_HEAD, maintenance
-# or submodule. Refuses as fast_forward does for the same cause, and a
-# fetch the timeout ended as fetch=LABEL timeout=<seconds>s.
+# within the timeout. The fetch runs under outdated_fetch_env in a session of
+# its own, so ssh has no terminal to read a passphrase or a host key answer
+# from. The fetch writes the remote-tracking refs and their objects, and no
+# FETCH_HEAD, maintenance or submodule. Refuses as fast_forward does for the
+# same cause, and a fetch the timeout ended as fetch=LABEL timeout=<seconds>s.
 outdated_probe() { # DIR LABEL
   local dir="$1" label="$2" err behind rc=0
   own_checkout "$dir"
