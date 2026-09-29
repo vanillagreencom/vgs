@@ -15,6 +15,7 @@
 #   vgsh plugin update [--yes] <id>
 #                                  fetch, show the diff, ask, and fast-forward an installed plugin
 #   vgsh plugin remove <id>        delete an installed plugin's directory
+#   vgsh plugin outdated [--json]  fetch every installed plugin and report how far it is behind its upstream
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
 #                                  apply one theme package to the shell and every enabled target; `apply vgs` restores the defaults
@@ -30,6 +31,7 @@
 #   vgsh theme update [--yes] <name>
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
+#   vgsh theme outdated [--json]   fetch every installed theme package and report how far it is behind its upstream
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
 #   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
@@ -51,7 +53,8 @@
 # $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
 # command that contacts the shell addresses that instance alone, so a shell
 # started any other way is never reached. `plugin validate`, `plugin add`,
-# `plugin update` and `plugin remove` work with no shell running.
+# `plugin update`, `plugin remove` and `plugin outdated` work with no shell
+# running.
 #
 # `restart` checks the same floor first, so below it restart refuses as run
 # does and leaves the running shell alone. It refuses while the session is
@@ -71,6 +74,20 @@
 # `shell=rescan-started` or `shell=rescan-queued` when a shell runs (the
 # scan's result is in `vgsh plugin list`), or `shell=not-running` when none
 # does and the next start reads the change.
+#
+# `plugin outdated` and `theme outdated` fetch every installed checkout
+# with no hook and no terminal prompt, each fetch ended at 10 s, and
+# change nothing else: no merge, no checkout, no FETCH_HEAD, no plugin or
+# package code. Each prints one row per checkout, sorted by id:
+# `<id> behind=<n> head=<commit> upstream=<commit>` with 12-digit commits,
+# or `<id> error=<refusal>`: the keyed line update prints for the same
+# cause, or fetch=<id> timeout=10s. --json prints the rows as one JSON
+# line, `[{ id, behind, head, upstream, error }]` with full commit ids,
+# `[]` when nothing is installed; when error is set the other three are
+# null. Error rows still exit 0. `theme outdated` holds the theme lock
+# shared: a second outdated runs beside it, and it is refused with
+# outdated=themes reason=busy while any other theme command holds the lock.
+# docs/architecture/manager.md § Outdated.
 #
 # Theme packages are the shipped themes/<name>/ and the installed
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>/; an installed package
@@ -296,7 +313,8 @@ preflight() {
 # repository cannot set any of these, but the user's git configuration can,
 # and none of them may run while vgsh handles plugin files. Descriptor 9 is
 # closed for git, so a gc git detaches never holds the theme lock.
-git_plain() { git --no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@" 9>&-; }
+git_flags=(--no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false)
+git_plain() { git "${git_flags[@]}" "$@" 9>&-; }
 
 # One git call whose failure is a refusal: KEY is the first stderr line and
 # git's own messages follow it. Stdout passes through.
@@ -466,6 +484,19 @@ confirm_update() { # LABEL
   esac
 }
 
+# Refuse unless DIR is the top level of its own checkout.
+own_checkout() { # DIR
+  local top
+  top="$(git_or_refuse "not-a-checkout=$1" -C "$1" rev-parse --show-toplevel)" || exit 1
+  [[ $top == "$1" ]] || refuse 1 "not-a-checkout=$1 toplevel=$top"
+}
+
+# Set ff_old and ff_new to checkout DIR's HEAD and upstream commits.
+checkout_commits() { # DIR
+  ff_new="$(git_or_refuse "upstream=missing path=$1" -C "$1" rev-parse --verify '@{upstream}')" || exit 1
+  ff_old="$(git_or_refuse "git=rev-parse path=$1" -C "$1" rev-parse --verify HEAD)" || exit 1
+}
+
 # Fetch checkout DIR's upstream and, when it is new, print the incoming diff,
 # confirm it and fast-forward to it. Sets ff_old and ff_new, the commits
 # before and after, equal when DIR was already up to date. LABEL names DIR
@@ -473,14 +504,12 @@ confirm_update() { # LABEL
 # checkout, a failed fetch, no upstream, a source that rewrote its history,
 # and an update nobody confirmed.
 fast_forward() { # DIR LABEL
-  local dir="$1" label="$2" top dirty err rc=0
-  top="$(git_or_refuse "not-a-checkout=$dir" -C "$dir" rev-parse --show-toplevel)" || exit 1
-  [[ $top == "$dir" ]] || refuse 1 "not-a-checkout=$dir toplevel=$top"
+  local dir="$1" label="$2" dirty err rc=0
+  own_checkout "$dir"
   dirty="$(git_or_refuse "git=status path=$dir" -C "$dir" status --porcelain --untracked-files=all)" || exit 1
   [[ -z $dirty ]] || refuse 1 "modified=$dir" "commit or discard the local changes first"
   git_or_refuse "fetch=$label" -C "$dir" fetch --quiet --no-recurse-submodules
-  ff_new="$(git_or_refuse "upstream=missing path=$dir" -C "$dir" rev-parse --verify '@{upstream}')" || exit 1
-  ff_old="$(git_or_refuse "git=rev-parse path=$dir" -C "$dir" rev-parse --verify HEAD)" || exit 1
+  checkout_commits "$dir"
   [[ $ff_old == "$ff_new" ]] && return 0
   err="$(git_plain -C "$dir" merge-base --is-ancestor "$ff_old" "$ff_new" 2>&1)" || rc=$?
   case "$rc" in
@@ -523,20 +552,139 @@ plugin_remove() { # ID
   rescan_if_running
 }
 
+# The seconds one outdated fetch may take.
+outdated_fetch_timeout=10
+
+# Print checkout DIR's HEAD commit, its upstream commit and the count of
+# upstream commits HEAD lacks, space-separated, after fetching the upstream
+# with no terminal prompt and within the timeout. The fetch writes the
+# remote-tracking refs and their objects, and no FETCH_HEAD, maintenance
+# or submodule. Refuses as fast_forward does for the same cause, and a
+# fetch the timeout ended as fetch=LABEL timeout=<seconds>s.
+outdated_probe() { # DIR LABEL
+  local dir="$1" label="$2" err behind rc=0
+  own_checkout "$dir"
+  err="$(GIT_TERMINAL_PROMPT=0 timeout "$outdated_fetch_timeout" git "${git_flags[@]}" -C "$dir" \
+    fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance 2>&1)" || rc=$?
+  case "$rc" in
+    0) [[ -z $err ]] || printf '%s\n' "$err" >&2 ;;
+    124) refuse 1 "fetch=$label timeout=${outdated_fetch_timeout}s" ${err:+"$err"} ;;
+    *) refuse 1 "fetch=$label" ${err:+"$err"} ;;
+  esac
+  checkout_commits "$dir"
+  behind="$(git_or_refuse "git=rev-list path=$dir" -C "$dir" rev-list --count "$ff_old..$ff_new")" || exit 1
+  printf '%s %s %s\n' "$ff_old" "$ff_new" "$behind"
+}
+
+# RESOLVE ID prints the checkout directory of ID or refuses as update does;
+# the probe then reads that checkout. Run in a command substitution, so a
+# refusal ends only this row.
+outdated_row() { # RESOLVE ID
+  local dir
+  dir="$("$1" "$2")" || exit 1
+  outdated_probe "$dir" "$2"
+}
+
+# Five fields per row for outdated_print: id, behind, head, upstream and
+# error. A read checkout leaves error empty; a refused one leaves the
+# three between empty and holds its keyed refusal line in error.
+outdated_fields=()
+
+# Append the row of each ID to outdated_fields. Each row runs without
+# descriptor 9, so nothing it starts holds the theme lock. Every line a row
+# prints on stderr besides its refusal passes through to stderr.
+outdated_rows() { # RESOLVE ID...
+  local resolve="$1" id out rc line key rest
+  shift
+  for id in "$@"; do
+    rc=0
+    out="$(outdated_row "$resolve" "$id" 2>&1 9>&-)" || rc=$?
+    if [[ $rc == 0 ]]; then
+      [[ ${out##*$'\n'} =~ ^([0-9a-f]+)\ ([0-9a-f]+)\ ([0-9]+)$ ]] ||
+        refuse 1 "outdated=$id reason=probe-output" "$out"
+      outdated_fields+=("$id" "${BASH_REMATCH[3]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "")
+      if [[ $out == *$'\n'* ]]; then printf '%s\n' "${out%$'\n'*}" >&2; fi
+      continue
+    fi
+    # The refusal is the one keyed line: git's warnings from an earlier
+    # step print before it, and its cause after it.
+    key="" rest=""
+    while IFS= read -r line; do
+      if [[ -z $key && $line == "vgsh: refused: "?* ]]; then
+        key="${line#vgsh: refused: }"
+      else
+        rest+="$line"$'\n'
+      fi
+    done <<<"$out"
+    [[ -n $key ]] || key="probe=failed exit=$rc"
+    outdated_fields+=("$id" "" "" "" "$key")
+    printf '%s' "$rest" >&2
+  done
+}
+
+# Print outdated_fields in FORMAT, sorted by id: json is one line holding
+# an array of { id, behind, head, upstream, error }; text is one line per
+# row, `<id> behind=<n> head=<commit> upstream=<commit>` with 12-digit
+# commits, or `<id> error=<refusal>`.
+outdated_print() { # FORMAT
+  python3 - "$1" "${outdated_fields[@]}" <<'PY'
+import json, sys
+fmt, fields = sys.argv[1], sys.argv[2:]
+rows = []
+for i in range(0, len(fields), 5):
+    id_, behind, head, upstream, error = fields[i:i + 5]
+    if error:
+        rows.append({"id": id_, "behind": None, "head": None, "upstream": None, "error": error})
+    else:
+        rows.append({"id": id_, "behind": int(behind), "head": head, "upstream": upstream, "error": None})
+rows.sort(key=lambda r: r["id"])
+# A directory name need not be UTF-8; its bytes go out as they came in.
+sys.stdout.reconfigure(errors="surrogateescape")
+if fmt == "json":
+    print(json.dumps(rows, separators=(",", ":")))
+else:
+    for r in rows:
+        if r["error"] is None:
+            print(f"{r['id']} behind={r['behind']} head={r['head'][:12]} upstream={r['upstream'][:12]}")
+        else:
+            print(f"{r['id']} error={r['error']}")
+PY
+}
+
+# Every entry under the user plugin directory that is a directory or a
+# symlink is a row, resolved as update resolves its id.
+plugin_outdated() { # FORMAT
+  local entries=() ids=() entry
+  if [[ -e $user_plugins || -L $user_plugins ]]; then
+    [[ -d $user_plugins && -r $user_plugins && -x $user_plugins ]] || refuse 1 "unreadable=$user_plugins"
+    shopt -s nullglob dotglob
+    entries=("$user_plugins"/*)
+    shopt -u nullglob dotglob
+  fi
+  for entry in "${entries[@]}"; do
+    if [[ -d $entry || -L $entry ]]; then ids+=("${entry##*/}"); fi
+  done
+  outdated_rows installed_dir "${ids[@]}"
+  outdated_print "$1"
+}
+
 user_themes="$config_home/vgs/themes"
 
 # Hold the theme lock on descriptor 9 until this process exits, so no apply
 # reads a package while add, update or remove changes it, and no two of
-# them change one at once. A lock held elsewhere refuses with reason=busy.
-theme_lock_hold() { # NAME
+# them change one at once. -s holds it shared, for a command that reads the
+# packages and changes none, so several such commands run at once and no
+# change starts under them. A lock held elsewhere refuses with KEY
+# reason=busy.
+theme_lock_hold() { # KEY [-s]
   local rc=0
   mkdir -p -- "$config_home/vgs" 2>/dev/null && { exec 9>>"$theme_lock"; } 2>/dev/null ||
-    refuse 1 "theme=$1 reason=lock-failed path=$theme_lock"
-  flock -n -E 75 9 || rc=$?
+    refuse 1 "$1 reason=lock-failed path=$theme_lock"
+  flock "${@:2}" -n -E 75 9 || rc=$?
   case "$rc" in
     0) ;;
-    75) refuse 75 "theme=$1 reason=busy" "a theme apply, add, update or remove is running" ;;
-    *) refuse 1 "theme=$1 reason=lock-failed path=$theme_lock" ;;
+    75) refuse 75 "$1 reason=busy" "another theme command holds the theme lock" ;;
+    *) refuse 1 "$1 reason=lock-failed path=$theme_lock" ;;
   esac
 }
 
@@ -580,7 +728,7 @@ theme_add() { # URL
   accept_theme "$stage/package" || refuse 1 "package=$url $verdict"
   name="$verdict"
   target="$user_themes/$name"
-  theme_lock_hold "$name"
+  theme_lock_hold "theme=$name"
   [[ -e $target || -L $target ]] && refuse 1 "theme=$name reason=exists path=$target"
   mv -T -- "$stage/package" "$target" || refuse 1 "theme=$name reason=move path=$target"
   line="ok added=$name path=$target"
@@ -591,7 +739,7 @@ theme_add() { # URL
 theme_update() { # NAME
   local name="$1" dir
   dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
-  theme_lock_hold "$name"
+  theme_lock_hold "theme=$name"
   fast_forward "$dir" "$name"
   if [[ $ff_old == "$ff_new" ]]; then
     echo "ok up-to-date=$name"
@@ -611,9 +759,22 @@ theme_update() { # NAME
 theme_remove() { # NAME
   local name="$1" dir
   dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
-  theme_lock_hold "$name"
+  theme_lock_hold "theme=$name"
   rm -rf -- "${dir:?}" || refuse 1 "theme=$name reason=remove path=$dir"
   echo "ok removed=$name"
+}
+
+installed_theme() { node "$theme_judge" installed "$config_home/vgs" "$1"; } # NAME
+
+# Every installed package is a row, resolved as update resolves its name,
+# under a shared hold of the theme lock.
+theme_outdated() { # FORMAT
+  local names=()
+  theme_lock_hold "outdated=themes" -s
+  mapfile -d '' -t names < <(node "$theme_judge" checkouts "$config_home/vgs")
+  wait "$!" || exit $?
+  outdated_rows installed_theme "${names[@]}"
+  outdated_print "$1"
 }
 
 # The release version: VERSION's one line, and a release tag after its v.
@@ -757,6 +918,12 @@ case "$cmd" in
         if [[ -z $dir ]]; then printf 'vgsh: refused: dir=missing\n' >&2; usage; exit 2; fi
         exec node "$manifest_check" -- "$dir"
         ;;
+      outdated)
+        format=text
+        if [[ ${1:-} == --json ]]; then format=json; shift; fi
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        plugin_outdated "$format"
+        ;;
       *)
         printf 'vgsh: refused: plugin-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
         ;;
@@ -839,6 +1006,10 @@ case "$cmd" in
         fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         "theme_$sub" "$arg"
+        ;;
+      outdated)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        theme_outdated "$format"
         ;;
       *)
         printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2

@@ -1,8 +1,8 @@
 # The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
 # the scratch directory, the child environment, the row helpers, the theme
-# tree fixture and the git source fixture. It sets `set -euo pipefail`,
-# `repo`, `tmp` (removed on exit), `rt_empty`, `node_bin`, `base_path`,
-# `base_env`, `git_env` and `failures`.
+# tree fixture and the plugin and theme git source fixtures. It sets
+# `set -euo pipefail`, `repo`, `tmp` (removed on exit), `rt_empty`,
+# `node_bin`, `base_path`, `base_env`, `git_env` and `failures`.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -31,6 +31,8 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 # inst NAME CONFIG_HOME RUNTIME_DIR WANT_EXIT WANT_LAST_STDOUT WANT_FIRST_STDERR ARGS...
 # Stdout lands in $tmp/out for rows that read more than its last line;
 # WANT_LAST_STDOUT is $any_out for a row whose checks after it read that.
+# WANT_FIRST_STDERR is $any_out for a row whose stderr begins with git's
+# own words; its checks read $tmp/err.
 # INST_BIN names the vgsh under test; the mutation control runs its copy.
 # INST_PATH replaces the rows' PATH. Stdin is /dev/null, so no row reads
 # the terminal the suite runs on; on_terminal hands vgsh one.
@@ -46,6 +48,7 @@ inst() {
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
   local last="${out##*$'\n'}"
   [[ $want_out == "$any_out" ]] && want_out="$last"
+  [[ $want_err == "$any_out" ]] && want_err="$err"
   if [[ $status == "$want_exit" && $last == "$want_out" && $err == "$want_err" ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit last=[$last] want=[$want_out] stderr=[$err] want=[$want_err]"; fi
 }
 any_out=$'\x01any'
@@ -160,6 +163,30 @@ theme_commit() { # NAME FILE TEXT: commit TEXT as FILE in source NAME and push i
   g -C "$tmp/tsrc/$1" commit -q -m change
   g -C "$tmp/tsrc/$1" push -q "$tmp/tsrc/$1.git" main
 }
+# A plugin source: a work tree at $tmp/src/NAME and its bare repository at
+# $tmp/src/NAME.git, holding one commit with MANIFEST and a service entry.
+source_repo() { # NAME MANIFEST
+  local work="$tmp/src/$1"
+  mkdir -p "$work"
+  printf '%s\n' "$2" >"$work/manifest.json"
+  printf 'import QtQuick\nItem { property var shell: null }\n' >"$work/Service.qml"
+  g init -q "$work"
+  g -C "$work" add -A
+  g -C "$work" commit -q -m init
+  g init -q --bare "$work.git"
+  g -C "$work" push -q "$work.git" main
+}
+# Commit MANIFEST in source NAME and push it.
+source_commit() { # NAME MANIFEST
+  local work="$tmp/src/$1"
+  printf '%s\n' "$2" >"$work/manifest.json"
+  g -C "$work" commit -q -am change
+  g -C "$work" push -q "$work.git" main
+}
+manifest() { # ID VERSION [EXTRA_JSON_MEMBERS]
+  printf '{ "schemaVersion": 1, "id": "%s", "name": "Probe", "version": "%s", "author": "acme", "description": "fixture",\n  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }%s }' "$1" "$2" "${3:-}"
+}
+head_of() { g -C "$1" rev-parse HEAD; }
 doc() { printf '{ "schemaVersion": 1, "name": "%s", "tokens": %s }' "$1" "${2:-"{}"}"; } # NAME [TOKENS_JSON]
 
 rows_done() { # SUITE

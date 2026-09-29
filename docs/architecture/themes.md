@@ -49,6 +49,7 @@ A package is shipped under `themes/<name>/`, installed under the configuration h
 - **Remove.** Remove deletes `themes/<name>`, an installed `vgs` included, and never a shipped package, a symlink or a file.
 - **Resolution.** Update and remove refuse a name `isPackageName` refuses as `malformed-name`, `targets` and `catalog` as `reserved-name`, a name only a shipped package has as `shipped`, and any other absent name as `unknown`.
 - **Lock.** Each verb holds the `theme.lock` apply holds, from before it changes `themes/` until it exits, so no apply reads a package mid-change. Add takes it after the clone and the judge. No git call inherits its descriptor, so a gc git detaches never holds it. A held lock exits 75 with `vgsh: refused: theme=<name> reason=busy`, and an apply started meanwhile is refused `reason=busy`.
+- **Outdated.** `vgsh theme outdated [--json]` fetches each installed package's checkout and reports how far it is behind, holding the theme lock shared. It changes no package and runs no hook: [manager.md § Outdated](manager.md#outdated).
 - **Refusals.** A judge refusal prints `vgsh: refused: package=<url> reason=<key> ...` on add and `vgsh: refused: theme=<name> reason=<key> ... rolled-back=<commit>` on update. Every other refusal names `theme=<name> reason=<key>`, or the git key the plugin verbs use. Exit 0, 1 on a refusal, 75 when busy, 2 on a bad invocation; the verbs take no `--json`.
 
 ## Apply

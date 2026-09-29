@@ -66,9 +66,13 @@
 //   vgsh-theme-judge installed <config-dir> <name>
 //       print the directory of installed package NAME under
 //       <config-dir>/themes, which `vgsh theme update` and `remove` act on.
+//   vgsh-theme-judge checkouts <config-dir>
+//       print the name of every installed package under
+//       <config-dir>/themes, each followed by a NUL: the rows of `vgsh
+//       theme outdated`, each of which it resolves through `installed`.
 //
-// list, apply, follow, reload, background and installed refuse with one
-// line on stderr, `vgsh: refused: <key>=...`, through
+// list, apply, follow, reload, background, installed and checkouts refuse
+// with one line on stderr, `vgsh: refused: <key>=...`, through
 // bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under `json`,
 // apply prints its structured result on stdout first, refusals included,
 // and so do follow, reload and background. A partial apply, follow or
@@ -1732,6 +1736,19 @@ function installed(configDir, name) {
     console.log(real);
 }
 
+// The installed package names `vgsh theme outdated` reports, in the order
+// packageDirs sorts them; none when the themes directory is absent.
+function checkouts(configDir) {
+    const base = path.join(configDir, "themes");
+    let names;
+    try {
+        names = packageDirs(base);
+    } catch (e) {
+        refuse("themes=unreadable path=" + base + " error=" + e.code, "unreadable");
+    }
+    for (const name of names || []) process.stdout.write(name + "\0");
+}
+
 const [command, ...args] = process.argv.slice(2);
 main(() => {
     switch (command) {
@@ -1770,6 +1787,10 @@ main(() => {
     case "installed":
         if (args.length !== 2) usage("arguments=" + command);
         installed(args[0], args[1]);
+        break;
+    case "checkouts":
+        if (args.length !== 1) usage("arguments=" + command);
+        checkouts(args[0]);
         break;
     default:
         usage("command=" + (command || "missing"));

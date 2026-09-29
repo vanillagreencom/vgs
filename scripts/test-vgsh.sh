@@ -526,31 +526,7 @@ if [[ $restart_status == 1 && -z $restart_out && $restart_err =~ ^vgsh:\ refused
 if [[ -n $exited_pid && ! -d /proc/$exited_pid ]]; then ok "the exited restart names a dead replacement pid"; else fail "exited restart pid live=$([[ -n $exited_pid && -d /proc/$exited_pid ]] && echo yes || echo no) pid=${exited_pid:-missing}"; fi
 
 # Install, update and remove, with local bare repositories as the source,
-# through the library's `g`.
-
-# A plugin source: a work tree at $tmp/src/NAME and its bare repository at
-# $tmp/src/NAME.git, holding one commit with MANIFEST and a service entry.
-source_repo() { # NAME MANIFEST
-  local work="$tmp/src/$1"
-  mkdir -p "$work"
-  printf '%s\n' "$2" >"$work/manifest.json"
-  printf 'import QtQuick\nItem { property var shell: null }\n' >"$work/Service.qml"
-  g init -q "$work"
-  g -C "$work" add -A
-  g -C "$work" commit -q -m init
-  g init -q --bare "$work.git"
-  g -C "$work" push -q "$work.git" main
-}
-# Commit MANIFEST in source NAME and push it.
-source_commit() { # NAME MANIFEST
-  local work="$tmp/src/$1"
-  printf '%s\n' "$2" >"$work/manifest.json"
-  g -C "$work" commit -q -am change
-  g -C "$work" push -q "$work.git" main
-}
-manifest() { # ID VERSION [EXTRA_JSON_MEMBERS]
-  printf '{ "schemaVersion": 1, "id": "%s", "name": "Probe", "version": "%s", "author": "acme", "description": "fixture",\n  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }%s }' "$1" "$2" "${3:-}"
-}
+# through the library's `g` and plugin source fixture.
 source_repo probe "$(manifest acme.probe 0.1.0)"
 source_repo broken "$(manifest acme.broken 0.1.0 ', "requires": []')"
 source_repo taken "$(manifest vgs.bar 0.1.0)"
@@ -560,7 +536,6 @@ no_residue() { # CONFIG_HOME: nothing staged is left and no plugin landed
   left="$(find "$1/vgs" -mindepth 1 -maxdepth 2 \( -name '.vgsh-add.*' -o -path "$1/vgs/plugins/*" \) -print)" || return 1
   [[ -z $left ]]
 }
-head_of() { g -C "$1" rev-parse HEAD; }
 
 # Git hooks are live for every git call from here on: the fixture home's
 # global configuration points core.hooksPath at hooks that leave a marker
@@ -1030,7 +1005,7 @@ check "a busy remove leaves the package" test -f "$moss/theme.json"
 # The must-fail control: a copy of vgsh whose install verbs never take the
 # lock removes the package under the held lock.
 mutant="$tmp/tree-install-nolock"; cp -R -- "$tree" "$mutant"
-take='flock -n -E 75 9 || rc=$?'
+take='flock "${@:2}" -n -E 75 9 || rc=$?'
 check "the install verbs take the theme lock once in bin/vgsh" test "$(grep -o -F -- "$take" "$repo/bin/vgsh" | wc -l)" == 1
 sed -i "s/$take/true/" "$mutant/bin/vgsh"
 check "the install lockless mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
