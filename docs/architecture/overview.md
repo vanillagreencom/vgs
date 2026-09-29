@@ -70,7 +70,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-wiring.md](theme-wiring.md): read before touching the wiring text, the profile wiring or the entry form's links.
 - [theme-editors.md](theme-editors.md): read before touching an editor's target or its one-time step.
 - [theme-toolkits.md](theme-toolkits.md): read before touching the GTK, Qt, KDE or icon theme target.
-- [theme-tool-targets.md](theme-tool-targets.md): read before touching a Discord client's, btop's, fastfetch's, tmux's, Oh My Posh's or Obsidian's target.
+- [theme-tool-targets.md](theme-tool-targets.md): read before touching a Discord client's, btop's, fastfetch's, tmux's, Oh My Posh's, Obsidian's or gum's target.
 - [theme-browsers.md](theme-browsers.md): read before touching the Zen or pywalfox target, or a target's `profiles` wiring.
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.

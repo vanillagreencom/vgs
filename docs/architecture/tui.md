@@ -57,7 +57,7 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 
 ## Colours
 
-- `present` reads `${XDG_STATE_HOME:-~/.local/state}/vgs/theme/gum.env` at every run, so a TUI follows the theme applied last with no login-time environment.
+- `present` reads `${XDG_STATE_HOME:-~/.local/state}/vgs/theme/gum.env` at every run, so a TUI follows the theme applied last with no login-time environment. The `gum` theme target writes it: [theme-tool-targets.md § Floating TUI colours](theme-tool-targets.md#floating-tui-colours).
 - The file is parsed, never sourced. Every line must be `KEY=#rrggbb` with a key that `bin/vgsh-tui`'s `gum_key` accepts: gum's own `GUM_*`, `FOREGROUND`, `BACKGROUND` and `BORDER_FOREGROUND` variables, and the library's `VGS_TUI_*` colours. One bad line rejects the whole file: `present` prints `vgsh-tui: gum-env=rejected line=<n> path=<file>`, exports none of it and runs the command with gum's defaults. An absent file exports nothing and prints nothing.
 - The logo takes `VGS_TUI_ACCENT`, the prompt `VGS_TUI_SUCCESS` or `VGS_TUI_DANGER`, and the library's lines `VGS_TUI_ACCENT`, `VGS_TUI_WARNING` and `VGS_TUI_DANGER`, each as a truecolor escape with an ANSI fallback when the value is absent.
 
