@@ -1,7 +1,7 @@
 # Maintainer: VanillaGreen <brad@vanillagreen.com>
 #
-# The development package, built from main. docs/architecture/distribution.md
-# § Arch packages states the rules scripts/check-packaging.js enforces on
+# The development package, built from main. docs/architecture/distribution-arch.md
+# states the rules scripts/check-packaging.js enforces on
 # this file and on ../vgs/PKGBUILD. makepkg rewrites pkgver from pkgver().
 
 pkgname=vgs-git

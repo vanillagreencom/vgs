@@ -68,7 +68,7 @@ Both take `--dry-run`, which makes every check and changes nothing outside `dist
    AUR_SSH_KEY_FILE=~/.ssh/aur scripts/publish-aur.sh vgs vgs-git
    ```
 
-7. Rebuild the Fedora package: [distribution.md § Publication](architecture/distribution.md#publication).
+7. Rebuild the Fedora package: [distribution-fedora.md § Publication](architecture/distribution-fedora.md#publication).
 8. Verify every channel, as below.
 
 ## Verification

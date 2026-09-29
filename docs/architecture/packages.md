@@ -75,7 +75,7 @@ Omarchy's `omarchy-update-available` filters `checkupdates` for the Omarchy pack
 
 ## Queries
 
-A row's `owner` names the package that owns a file, and its `installed` names a package's installed version. Each is an argv and the pattern whose first group reads the answer from the first line the query prints. `vgsh pkg owner <path>` runs the primary manager's two queries and prints `{ manager, package, version }`. Both queries only read the package database. `vgsh self status` asks it which package owns a VGS tree: [distribution.md § Install methods](distribution.md#install-methods).
+A row's `owner` names the package that owns a file, and its `installed` names a package's installed version. Each is an argv and the pattern whose first group reads the answer from the first line the query prints. `vgsh pkg owner <path>` runs the primary manager's two queries and prints `{ manager, package, version }`. Both queries only read the package database. `vgsh self status` asks it which package owns a VGS tree: [distribution-methods.md](distribution-methods.md).
 
 - `installed` answers the upstream version, with no epoch and no packaging revision, so a `vgs-git` version ends in its commit on every manager.
 - The table asks no `installed` query of xbps and emerge, which no VGS package serves, so their `version` is null.

@@ -1,6 +1,6 @@
 # The release package of COPR vanillagreen/vgs. Build its source RPM with
 # packaging/fedora/srpm.sh from a checkout at the release tag:
-# docs/architecture/distribution.md § Fedora. The dependency block is the
+# docs/architecture/distribution-fedora.md. The dependency block is the
 # same in vgs-git.spec; scripts/check-packaging.js holds both to the
 # requirement data and the preflight floor.
 

@@ -290,7 +290,7 @@
 # `ok updated=vgs from=<old> to=<new>` and restarts a running shell from
 # the updated tree, whose restart status becomes the command's, or prints
 # shell=not-running; a current tree prints `ok up-to-date=vgs`.
-# docs/architecture/distribution.md § Install methods.
+# docs/architecture/distribution-methods.md.
 #
 # `pkg` reads the one package-manager table, shell/Core/PackageManagers.js,
 # through bin/vgsh-pkg, which states its output and refusals. It needs no

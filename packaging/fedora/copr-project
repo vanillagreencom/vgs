@@ -2,7 +2,7 @@
 # `chroot NAME` per build target and one `repo OWNER/NAME` per third-party
 # COPR the project's additional_repos name. scripts/fedora-container.sh
 # enables these repos for its install test, and the setup commands in
-# docs/architecture/distribution.md § Fedora read this file.
+# docs/architecture/distribution-fedora.md § Publication read this file.
 project vanillagreen/vgs
 chroot fedora-44-x86_64
 chroot fedora-44-aarch64

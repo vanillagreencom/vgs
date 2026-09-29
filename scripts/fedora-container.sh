@@ -5,7 +5,7 @@
 #
 # The pre-publication test of COPR vanillagreen/vgs, run by hand before the
 # project is created and before a new Fedora release's chroots are added:
-# docs/architecture/distribution.md § Fedora. IMAGE defaults to
+# docs/architecture/distribution-fedora.md. IMAGE defaults to
 # registry.fedoraproject.org/fedora:44. Needs podman and the network; the
 # host's session, configuration and package manager are never touched.
 #

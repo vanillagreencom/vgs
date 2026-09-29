@@ -81,6 +81,11 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [tui.md](tui.md): read before touching a floating TUI.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
-- [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS.
+- [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version`, the shared install tree or the recipe check.
+- [distribution-methods.md](distribution-methods.md): read before touching `vgsh self status`, `vgsh self update` or `bin/lib/self.js`.
+- [distribution-curl.md](distribution-curl.md): read before touching `install.sh` or the curl layout.
+- [distribution-arch.md](distribution-arch.md): read before touching an Arch recipe or its AUR publication.
+- [distribution-fedora.md](distribution-fedora.md): read before touching a Fedora spec or COPR `vanillagreen/vgs`.
+- [distribution-nix.md](distribution-nix.md): read before touching the Nix flake.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
 - [decisions.md](decisions.md): read for the one-line list of decisions, and add a line there with each new decision record.

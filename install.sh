@@ -11,8 +11,8 @@
 # A release lands in ${XDG_DATA_HOME:-~/.local/share}/vgs/X.Y.Z. The link
 # vgs/current names it and is replaced by rename alone, and ~/.local/bin/vgsh
 # links to vgs/current/bin/vgsh: the curl layout `vgsh self status` detects
-# and `vgsh self update` keeps (docs/architecture/distribution.md § Curl
-# installer). --git clones main into vgs/git and links ~/.local/bin/vgsh to
+# and `vgsh self update` keeps (docs/architecture/distribution-curl.md
+# § Curl layout). --git clones main into vgs/git and links ~/.local/bin/vgsh to
 # it. Every write under vgs/ holds flock on vgs/.self.lock.
 #
 # Before it writes anything it refuses root, a system other than Linux, an
@@ -102,8 +102,7 @@ flock      present ^flock[[:space:]]from[[:space:]]util-linux[[:space:]]([0-9]+(
   # The package that provides each floor tool, per primary manager. The rows
   # for node, python3, git and flock are config/requirements.json's. A
   # manager with no entry for quickshell or hyprland has no package in its
-  # own repositories that meets the floor (docs/architecture/distribution.md
-  # § Curl installer).
+  # own repositories that meets the floor (docs/architecture/distribution-curl.md).
   packages='
 quickshell pacman=quickshell nix=quickshell
 hyprland   pacman=hyprland nix=hyprland
@@ -298,7 +297,7 @@ EOF
       fi
     done <<<"$managers"
     for tool in "${unpackaged[@]}"; do
-      printf '%s: %s has no package VGS knows of that meets the floor; see https://github.com/%s/blob/main/docs/architecture/distribution.md#curl-installer\n' "$tool" "$manager" "$repository" >&2
+      printf '%s: %s has no package VGS knows of that meets the floor; see https://github.com/%s/blob/main/docs/architecture/distribution-curl.md\n' "$tool" "$manager" "$repository" >&2
     done
     exit 78
   }

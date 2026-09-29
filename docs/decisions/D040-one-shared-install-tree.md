@@ -52,4 +52,4 @@ Omarchy's development channel is a git checkout that `omarchy-update-dev` fast-f
 
 **Revisit When**: VGS ships architecture-specific binaries, the owner reinstates CI (a `release.yml` and an AUR workflow then call the same two scripts), a channel needs a different runtime tree, or Fedora ships Quickshell and Hyprland at the floor, or a third-party COPR falls behind it.
 
-**References**: [distribution.md](../architecture/distribution.md) § Install methods, [validation.md](../architecture/validation.md), [D001](D001-hyprland-only.md), [D009](D009-one-manifest-judge-under-node.md)
+**References**: [distribution-methods.md](../architecture/distribution-methods.md), [validation.md](../architecture/validation.md), [D001](D001-hyprland-only.md), [D009](D009-one-manifest-judge-under-node.md)

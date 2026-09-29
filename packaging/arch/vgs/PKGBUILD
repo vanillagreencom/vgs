@@ -1,6 +1,6 @@
 # Maintainer: VanillaGreen <brad@vanillagreen.com>
 #
-# The release package. docs/architecture/distribution.md § Arch packages
+# The release package. docs/architecture/distribution-arch.md
 # states the rules scripts/check-packaging.js enforces on this file and on
 # ../vgs-git/PKGBUILD. sha256sums stays SKIP only until the tag v$pkgver
 # exists; the release pins the tarball's sum.
