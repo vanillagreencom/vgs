@@ -51,7 +51,7 @@ VGS catalog theme packages listed below were ported from community Omarchy theme
 | `vurple` | https://github.com/tahfizhabib/omarchy-vurple-theme | no LICENSE file |
 | `x-1632` | https://github.com/OldJobobo/omarchy-x-1632-theme | no LICENSE file |
 
-`moon-orbit` is listed for provenance, but the v2 catalog holds it back because its body text misses the readability floor. `synthwave84` is the one exception to the palette sentence above: its palette and terminal colours come from the upstream extension, not from the Omarchy source.
+`synthwave84` is the one exception to the palette sentence above: its palette and terminal colours come from the upstream extension, not from the Omarchy source.
 
 ## Vendor ports
 

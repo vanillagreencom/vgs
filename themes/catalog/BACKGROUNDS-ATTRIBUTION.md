@@ -54,6 +54,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `mechanoonna` | `1-bg1.jpg` | no |
 | `miasma` | `01-nature-of-fear.jpg` | no |
 | `monokai` | `1-1.jpg` | no |
+| `moon-orbit` | `1-moon-orbit3.jpg` | no |
 | `nagai-twilight` | `1-01-pacific-breeze-2.jpg` | no |
 | `nebulite` | `1-2.jpg` | no |
 | `noctalia` | `1-noctalia-nightfall.png` | no |
@@ -88,8 +89,6 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `vurple` | `1-wallhaven-ympwkk.jpg` | yes |
 | `white` | `1-white.jpg` | no |
 | `x-1632` | `1-3-foundry-overhead.jpg` | no |
-
-Held-back themes have no shipped thumbnail in this catalog: `moon-orbit`.
 
 ## Omarchy — [basecamp/omarchy](https://github.com/basecamp/omarchy) (MIT, © 37signals)
 
