@@ -78,6 +78,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { parseFloors, DOTTED } = require("./preflight-floor.js");
 
 // The repository this script runs from: the judge, its loader and the scan.
 const codeRoot = path.resolve(__dirname, "..");
@@ -107,8 +108,6 @@ function readText(rel, key) {
     }
 }
 
-const DOTTED = /^[0-9]+(\.[0-9]+)*$/;
-
 // True when HAVE >= NEED, both dotted decimal integers compared component
 // by component, a missing component 0: bin/vgsh's version_at_least.
 function atLeast(have, need) {
@@ -120,20 +119,12 @@ function atLeast(have, need) {
     return true;
 }
 
-// bin/vgsh's preflight_floor rows as [{ tool, need, probe }]: need a dotted
-// version or "present", probe the first word of the probe command. The
-// table is the lines between `preflight_floor='` and the closing `'`.
+// bin/vgsh's preflight_floor rows as [{ tool, need, probe }], read by
+// scripts/preflight-floor.js.
 function readFloors() {
-    const text = readText("bin/vgsh", "floors=unreadable");
-    const block = /^preflight_floor='\n([\s\S]*?)^'$/m.exec(text);
-    if (block === null) refuse("floors=unreadable path=bin/vgsh", "no preflight_floor='...' table");
-    const rows = block[1].split("\n").filter(line => line.trim() !== "").map(line => {
-        const fields = line.trim().split(/\s+/);
-        if (fields.length < 4 || (fields[1] !== "present" && !DOTTED.test(fields[1]))) refuse("floors=unreadable path=bin/vgsh", "row: " + line);
-        return { tool: fields[0], need: fields[1], probe: fields[3] };
-    });
-    if (rows.length === 0) refuse("floors=empty path=bin/vgsh", "the table always has rows, so the reader is broken");
-    return rows;
+    const read = parseFloors(readText("bin/vgsh", "floors=unreadable"));
+    if (!read.ok) refuse(read.key + " path=bin/vgsh", read.detail);
+    return read.rows;
 }
 
 function readRequirements() {

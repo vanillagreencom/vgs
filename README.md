@@ -4,7 +4,20 @@ A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the
 
 ## Install
 
-On any distribution, `install.sh` installs the newest release into your home directory: the tree in `~/.local/share/vgs`, and `vgsh` in `~/.local/bin`. It never uses sudo, checks every download against the release's `SHA256SUMS`, and names the package to install when a required tool is missing. Read it first: [install.sh](install.sh).
+VGS needs Hyprland 0.56 or later, configured in Lua (`~/.config/hypr/hyprland.lua`), Quickshell 0.3.1 or later, node 18 or later, python3 and git. `vgsh run` checks them before it starts and names the first one that is missing or too old.
+
+### Arch Linux
+
+```bash
+yay -S vgs        # the latest release
+yay -S vgs-git    # the development version, built from main
+```
+
+Each package conflicts with v1's `vgs-shell`, so pacman offers to remove it.
+
+### Any distribution: install script
+
+`install.sh` installs VGS into your home directory: the tree in `~/.local/share/vgs`, and `vgsh` in `~/.local/bin`. It never uses sudo, checks every download against the release's `SHA256SUMS`, and names the package to install when a required tool is missing. Read it first: [install.sh](install.sh).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash
@@ -14,17 +27,40 @@ curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh
 curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash -s -- --uninstall
 ```
 
-`vgsh self update` updates it. `--uninstall` keeps your settings in `~/.config/vgs`.
+`vgsh self update` updates a release install and the `--git` clone. `--uninstall` keeps your settings in `~/.config/vgs`.
 
-Package recipes call `packaging/install-system.sh`. It installs one tree under `$PREFIX/share/vgs/` and links `$PREFIX/bin/vgsh` to it. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
+### Nix
 
-It needs Quickshell 0.3.1 or later, Hyprland 0.56 or later with a Lua configuration, node 18 or later, python3 and git. `bin/vgsh run` checks them before it starts and names the first one that is missing or too old.
+```bash
+nix run github:vanillagreencom/vgs/v0.1.0 -- run
+```
 
-With `bin/vgsh` on your PATH as `vgsh`, this line in `~/.config/hypr/hyprland.lua` starts the shell with Hyprland:
+Every `vgsh` command works after `--`. To install VGS, add the flake's `packages.<system>.default` to your configuration, for `x86_64-linux` or `aarch64-linux`. The package puts Quickshell and every tool VGS runs on the `PATH` of `vgsh`. Hyprland comes from your session, not from the package.
+
+### From a checkout
+
+```bash
+git clone https://github.com/vanillagreencom/vgs
+vgs/bin/vgsh run
+```
+
+`vgsh self update` fast-forwards the checkout.
+
+### Start VGS with Hyprland
+
+Add this line to `~/.config/hypr/hyprland.lua`:
 
 ```lua
 hl.on("hyprland.start", function () hl.exec_cmd("vgsh run") end)
 ```
+
+The line needs `vgsh` on the `PATH` Hyprland starts programs with. When that `PATH` lacks `~/.local/bin`, use the absolute path the install script prints. From a checkout, use the absolute path of `bin/vgsh`.
+
+On its first run VGS adds one line to the top of `hyprland.lua`. That line loads the keys, border colours and blur rules VGS generates. `vgsh hypr unwire` removes it.
+
+### Other distributions
+
+Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, openSUSE, Gentoo and Void wait until their repositories carry Quickshell 0.3.1 and Hyprland with Lua configuration. Until then, the install script or a checkout works on them when you install those tools yourself.
 
 ## Features
 
@@ -43,6 +79,9 @@ hl.on("hyprland.start", function () hl.exec_cmd("vgsh run") end)
 | [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces and clock, and three sections for plugin widgets. |
 | [Settings](shell/plugins/vgs.settings/README.md) | A window that lists every plugin and opens a page for each, with its details, settings and keys. `SUPER+M` or the gear in the bar opens it. |
 | [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click, and the applied theme's wallpaper on every screen, with Previous and Next in the panel. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
+| [Launcher](shell/plugins/vgs.launcher/README.md) | A search field over the screen that finds applications, menu entries and files. `SUPER+SPACE` opens it. |
+| [Notifications](shell/plugins/vgs.notifications/README.md) | The desktop notification daemon: notifications at the top of every screen, an Inbox and History panel, and Silence. `SUPER+N` opens the panel. |
+| [Gallery](shell/plugins/vgs.gallery/) | Every component of the design system in every variant and state, to preview a theme. `bin/vgsh ipc call shell summon panel vgs.gallery '{}'` opens it. |
 
 ## How it works
 
