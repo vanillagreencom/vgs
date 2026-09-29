@@ -117,15 +117,24 @@ if [[ -n $rev ]]; then
   git -C "$checkout" archive "$rev" scripts/smoke/fixtures/plugins | tar -x -C "$sandbox/rev-fixtures" || fail "the fixtures of $rev could not be exported"
 fi
 
-# The Settings window's kind in the tree the sandbox runs, `window` since
-# D044 and `panel` before, and the surface the window is drawn in.
+# The kind a first-party window has in the tree the sandbox runs: `window`
+# since D044, or `panel` in a tree from before, which shipped it as a layer
+# panel; and the surface it is drawn in, as surface_box names one.
+summoned_kind() { # ID
+  python3 -c 'import json,sys; print("window" if "window" in json.load(open(sys.argv[1]))["kinds"] else "panel")' "$repo/shell/plugins/$1/manifest.json"
+}
+summoned_surface() { # KIND TITLE
+  if [[ $1 == window ]]; then echo "window:$2"; else echo vgs:panel; fi
+}
+surface_count() { # SURFACE
+  if [[ $1 == window:* ]]; then window_count "${1#window:}"; else layer_count "$1"; fi
+}
+gallery_kind="$(summoned_kind vgs.gallery)" || fail "the gallery's manifest is unreadable"
+gallery_surface="$(summoned_surface "$gallery_kind" Gallery)"
 settings_kind=panel
-settings_surface=vgs:panel
-if [[ $manager_scene == settings ]] && python3 -c 'import json,sys; sys.exit(0 if "window" in json.load(open(sys.argv[1]))["kinds"] else 1)' "$repo/shell/plugins/vgs.settings/manifest.json"; then
-  settings_kind=window
-  settings_surface=window:Settings
-fi
-settings_count() { if [[ $settings_kind == window ]]; then window_count Settings; else layer_count "$settings_surface"; fi; }
+if [[ $manager_scene == settings ]]; then settings_kind="$(summoned_kind vgs.settings)" || fail "the Settings manifest is unreadable"; fi
+settings_surface="$(summoned_surface "$settings_kind" Settings)"
+settings_count() { surface_count "$settings_surface"; }
 
 SHOT_RUNTIME_DIR="$rt_dir"
 if ! SHOT_SOCKET="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")"; then
@@ -180,19 +189,19 @@ set_mode() { # dark|light
 # 40 px apart so each page repeats the last lines of the one before.
 scene_gallery() { # MODE
   local page=1 y=0 at cy ch h
-  expect "the gallery summons" ok ipc shell summon panel vgs.gallery '{}'
-  expect_poll "the gallery maps its panel" 1 layer_count vgs:panel
-  expect_poll "the gallery draws every component" '[]' ipc smoke galleryMissing panel vgs.gallery
+  expect "the gallery summons" ok ipc shell summon "$gallery_kind" vgs.gallery '{}'
+  expect_poll "the gallery maps its surface" 1 surface_count "$gallery_surface"
+  expect_poll "the gallery draws every component" '[]' ipc smoke galleryMissing "$gallery_kind" vgs.gallery
   while (( page <= 12 )); do
-    at="$(ipc smoke scrollTo panel vgs.gallery "$y")" || at=""
+    at="$(ipc smoke scrollTo "$gallery_kind" vgs.gallery "$y")" || at=""
     if [[ $at != "["* ]]; then fail "the gallery did not scroll: ${at:-no reply}"; break; fi
     read -r cy ch h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$at")
     take "gallery-$1-p$page"
     (( cy + h < ch )) || break
     y=$(( cy + h - 40 )); page=$(( page + 1 ))
   done
-  expect "the gallery hides" ok ipc shell hide panel vgs.gallery
-  expect_poll "the gallery's panel is gone" 0 layer_count vgs:panel
+  expect "the gallery hides" ok ipc shell hide "$gallery_kind" vgs.gallery
+  expect_poll "the gallery's surface is gone" 0 surface_count "$gallery_surface"
 }
 
 settings_page() { ipc smoke readInstance "$settings_kind" vgs.settings page; }

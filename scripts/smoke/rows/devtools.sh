@@ -8,11 +8,13 @@
 # runs the real presenter with no terminal behind it, where the engine
 # refuses to change anything, so a run ends at once.
 # Rows: the service publishes the status its manifest declares; IPC open
-# summons the panel, which draws the VGS section and every catalog section
-# from the published catalog; a click on the agent's Install records the
-# install TUI's argv, and the list is read again once that run ended; the
-# panel's switch writes writeLaunchers, whose launcher verb writes and then
-# removes the agent's launcher; the VGS section lists a fixture's missing
+# summons the window, which is read as every application window is
+# (app_window_rows, scripts/smoke/app-window.sh) and, opened again, draws
+# the VGS section and every catalog section from the published catalog; a
+# click on the agent's Install records the install TUI's argv, and the list
+# is read again once that run ended; the window's switch writes
+# writeLaunchers, whose launcher verb writes and then removes the agent's
+# launcher; the VGS section lists a fixture's missing
 # requirement once the core's scan reports it, and its Install raises the
 # core's requirement notice; the doctor capability answers for the core's
 # commands and refuses a disabled or unknown owner; the Settings page reads
@@ -78,10 +80,10 @@ devtools() { ipc vgs.devtools invoke "$1" "${2:-}"; }
 # Its arguments as one JSON list, written as row_texts writes one.
 texts() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))' "$@"; }
 dev_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.devtools"); print(json.dumps(r if r is None else r["keys"]))'; }
-panel_shown() { [[ $(ipc smoke instanceGeometry panel vgs.devtools) != absent ]] && echo shown || echo hidden; }
-section_titles() { ipc smoke itemTexts panel vgs.devtools SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
+window_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent ]] && echo shown || echo hidden; }
+section_titles() { ipc smoke itemTexts window vgs.devtools SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
 # The texts the first row drawing NAME draws, as JSON, or null.
-row_texts() { ipc smoke itemTexts panel vgs.devtools ToolRow | python3 -c 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
+row_texts() { ipc smoke itemTexts window vgs.devtools ToolRow | python3 -c 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
 # The VGS row's texts with its error line, which names the sandbox's
 # path, read as `error=<key>`.
 vgs_texts() { row_texts VGS | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(None if r is None else [t if not t.startswith("method=") else "error=" + t.split(" ")[0] for t in r], ensure_ascii=False))'; }
@@ -92,17 +94,17 @@ ended_record() { local stem="${1/\//@}" f found=none; for f in "$rt_dir/vgs/tui/
 # than BEFORE, so the presenter of the run a click started has exited and
 # expect_run_end times only the core's reading of it.
 ended_record_moved() { [[ $(ended_record "$1") != "$2" ]] && echo moved || echo waiting; }
-# reveal_row NAME: the panel scrolled so the first row drawing NAME sits
+# reveal_row NAME: the window scrolled so the first row drawing NAME sits
 # near its top, from where the row's box lies with the list at its start.
 reveal_row() {
   local box y
-  ipc smoke scrollTo panel vgs.devtools 0 >/dev/null || return
-  box="$(ipc smoke scopedWindowGeometry panel vgs.devtools ToolRow "$1" Label "$1")" || return
+  ipc smoke scrollTo window vgs.devtools 0 >/dev/null || return
+  box="$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow "$1" Label "$1")" || return
   [[ $box == \[* ]] || { echo "absent"; return; }
   y="$(python3 -c 'import json,sys; print(max(0, int(json.loads(sys.argv[1])[1]) - 200))' "$box")" || return
-  ipc smoke scrollTo panel vgs.devtools "$y" >/dev/null && echo revealed
+  ipc smoke scrollTo window vgs.devtools "$y" >/dev/null && echo revealed
 }
-scroll_bottom() { local r; r="$(ipc smoke scrollTo panel vgs.devtools 100000)" || return; [[ $r == \[* ]] && echo scrolled || echo "$r"; }
+scroll_bottom() { local r; r="$(ipc smoke scrollTo window vgs.devtools 100000)" || return; [[ $r == \[* ]] && echo scrolled || echo "$r"; }
 launcher_state() { [[ -f $home/.local/bin/$1 ]] && sed -n 2p "$home/.local/bin/$1" || echo absent; }
 
 expect "rescan after adding the requirement fixture answers ok" ok ipc shell rescanPlugins
@@ -111,10 +113,13 @@ expect "enabling Dev Tools is allowed" ok ipc shell setPluginEnabled vgs.devtool
 expect_poll "the Dev Tools service is built" True record_exists vgs.devtools
 expect_poll "the service publishes every status its manifest declares" '["catalog", "checks", "installed", "mise", "missingRequirements", "outdated"]' dev_lent
 
-# The panel: IPC open summons it, and it draws the published catalog.
-expect "IPC open summons the panel" ok devtools open
-expect_poll "the panel is shown" shown panel_shown
-expect_poll "the panel draws the VGS section and every catalog section in order" \
+# The window: IPC open summons it, a Hyprland window like any other, and
+# opened again it draws the published catalog.
+expect "IPC open summons the window" ok devtools open
+app_window_rows "Dev Tools" vgs.devtools
+expect "IPC open summons the window again" ok devtools open
+expect_poll "the window is shown" shown window_shown
+expect_poll "the window draws the VGS section and every catalog section in order" \
   '["VGS", "Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]' section_titles
 expect_poll "the VGS row names the version and the install method it could not read" \
   "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" error=method=unknown Unknown)" vgs_texts
@@ -128,19 +133,19 @@ expect "no list runs before a trigger" "$(texts "$agent_name" "Not installed" In
 install_before="$(ended_record vgs.devtools/install)"
 forget_record
 expect "the agent's row scrolls into view" revealed reveal_row "$agent_name"
-click_scoped_in vgs:panel panel vgs.devtools ToolRow "$agent_name" Button Install || fail "the click on the agent's Install failed"
+click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow "$agent_name" Button Install || fail "the click on the agent's Install failed"
 expect_poll "the click hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
 expect_poll "the install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
 expect_run_end "the install run ends" vgs.devtools/install
 expect_poll "the list read after the run shows the agent installed" "$(texts "$agent_name" 1.0.0 mise Update Remove)" row_texts "$agent_name"
 
-# The panel's switch writes writeLaunchers; the service runs the launcher
+# The window's switch writes writeLaunchers; the service runs the launcher
 # verb it picks, so the agent's launcher is written and then removed.
-expect "the panel scrolls to its switch" scrolled scroll_bottom
-click_in vgs:panel panel vgs.devtools Switch "Write launchers" || fail "the click on the launcher switch failed"
+expect "the window scrolls to its switch" scrolled scroll_bottom
+click_in "window:Dev Tools" window vgs.devtools Switch "Write launchers" || fail "the click on the launcher switch failed"
 expect_poll "turning launchers on writes the agent's launcher" "# vgs.devtools launcher" launcher_state "$agent_command"
-expect "the panel scrolls to its switch again" scrolled scroll_bottom
-click_in vgs:panel panel vgs.devtools Switch "Write launchers" || fail "the second click on the launcher switch failed"
+expect "the window scrolls to its switch again" scrolled scroll_bottom
+click_in "window:Dev Tools" window vgs.devtools Switch "Write launchers" || fail "the second click on the launcher switch failed"
 expect_poll "turning launchers off removes it" absent launcher_state "$agent_command"
 
 # The VGS section: a plugin's missing requirement, listed once enabling
@@ -155,7 +160,7 @@ expect_poll "the doctor capability reports the fixture's missing command and the
 expect_poll "the VGS section lists the fixture's missing requirement with Install" \
   "$(texts vgs-smoke-devtool "acme.requires · A command no sandbox has, which a package names" Missing Optional Install)" row_texts vgs-smoke-devtool
 expect "the requirement's row scrolls into view" revealed reveal_row vgs-smoke-devtool
-click_scoped_in vgs:panel panel vgs.devtools ToolRow vgs-smoke-devtool Button Install || fail "the click on the requirement's Install failed"
+click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow vgs-smoke-devtool Button Install || fail "the click on the requirement's Install failed"
 expect_poll "Install raises the core's notice for the fixture's command" '["acme.requires", ["vgs-smoke-devtool"], ["vgs-smoke-devtool"], false]' notice_shown
 expect_poll "the notice maps" 1 layer_count vgs:notice
 expect_poll "the notice holds the keyboard" true ipc smoke noticeFocused
@@ -184,7 +189,7 @@ if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
   expect_poll "the manager row carries the published status" \
     "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
   expect_poll "the page draws each status row, the catalog data not" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools panel lists", "vgsh pkg run install mise"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
+    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools window lists", "vgsh pkg run install mise"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
   expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
 else
   fail "the list or the doctor report is unreadable for the status counts"
@@ -213,7 +218,7 @@ if [[ $(grep -c -F -- "$relist_line" "$control_dir/Service.qml") == 1 && $(grep 
   install_before="$(ended_record vgs.devtools/install)"
   expect "the control's agent row scrolls into view" revealed reveal_row "$agent_name"
   forget_record
-  click_scoped_in vgs:panel panel vgs.devtools ToolRow "$agent_name" Button Install || fail "the control's click on Install failed"
+  click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow "$agent_name" Button Install || fail "the control's click on Install failed"
   expect_poll "the control's click hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
   expect_poll "the control's install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
   expect_run_end "the control's install run ends" vgs.devtools/install
@@ -241,7 +246,7 @@ else
   fail "the control's lines occur once each in the Dev Tools service"
 fi
 
-expect "hiding the panel answers ok" ok ipc shell hide panel vgs.devtools
+expect "hiding the window answers ok" ok ipc shell hide window vgs.devtools
 expect "disabling Dev Tools is allowed" ok ipc shell setPluginEnabled vgs.devtools false
 expect_poll "a disabled Dev Tools holds no status record" null dev_lent
 expect "disabling the requirement fixture is allowed" ok ipc shell setPluginEnabled acme.requires false

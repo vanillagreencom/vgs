@@ -3,9 +3,10 @@ set -euo pipefail
 source "$repo/scripts/smoke/verdict.sh"
 source "$repo/scripts/smoke/tree.sh"
 source "$repo/scripts/smoke/shot.sh"
+source "$repo/scripts/smoke/app-window.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
-# grim reads the pixels rows/windows.sh checks.
+# grim reads the pixels app-window.sh checks.
 for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done

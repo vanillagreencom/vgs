@@ -201,7 +201,7 @@ for (const key of token.split(".")) value = value === undefined ? undefined : va
 if (typeof value !== "string") { process.stderr.write("resolved_token: absent token=" + token + "\n"); process.exit(1); }
 console.log(value);' "$repo" "$1" "$2"
 }
-gallery_colour() { ipc smoke galleryColour panel vgs.gallery "$@"; }
+gallery_colour() { ipc smoke galleryColour window vgs.gallery "$@"; }
 
 revision_before="$(theme_member revision)"
 expect "the fixture applies the light package" ok probe theme-apply light
@@ -209,8 +209,8 @@ expect_poll "the light apply's result reaches the fixture" 4 applies
 expect "the light apply wrote the shell's file" "applied applied light None" applied
 expect_poll "current follows the light apply" '"light"' theme_member current
 expect_poll "revision rose after the light apply" rose revision_rose
-expect "the gallery summons under the light package" ok ipc shell summon panel vgs.gallery '{}'
-expect_poll "the light gallery maps one panel surface" 1 layer_count vgs:panel
+expect "the gallery summons under the light package" ok ipc shell summon window vgs.gallery '{}'
+expect_poll "the light gallery maps one window" 1 window_count Gallery
 for row in "${gallery_colours[@]}"; do
   read -r section type property token <<<"$row"
   if ! light="$(resolved_token light "$token")" || ! default="$(resolved_token vgs "$token")"; then
@@ -220,8 +220,8 @@ for row in "${gallery_colours[@]}"; do
   if [[ $light == "$default" ]]; then fail "the light package's $token differs from vgs: both $light"; else ok "the light package's $token differs from vgs"; fi
   expect_poll "the gallery's $section example draws the light package's $token" "$light" gallery_colour "$section" "$type" "$property"
 done
-expect "hiding the light gallery is allowed" ok ipc shell hide panel vgs.gallery
-expect_poll "the light gallery's surface is gone" 0 layer_count vgs:panel
+expect "hiding the light gallery is allowed" ok ipc shell hide window vgs.gallery
+expect_poll "the light gallery's window is gone" 0 window_count Gallery
 
 revision_before="$(theme_member revision)"
 expect "the fixture applies vgs after the light package" ok probe theme-apply vgs
