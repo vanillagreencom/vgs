@@ -65,3 +65,7 @@ Omarchy (basecamp/omarchy `main` at `e332dc9`) gives windows tagged `floating-wi
 
 - **Exact classes, no tag.** Three sizes would need three tags, and a tag is a name any other rule, a user's included, can add to an unrelated window. Each rule matches its app-id anchored, with its dots escaped, so the default rule never matches `org.vgs.tui.wide`.
 - **In the generated layer.** Omarchy's rules live in the configuration it ships and owns. VGS owns one line of the user's `hyprland.lua`, so its rules live in the layer that line loads, and a user's rule after the line wins.
+
+## Revisit Outcome (2026-09-29, VGS-582)
+
+The decision holds. The layer gains a second constant core section after the floating TUIs' rules: `vgs:window`, one `hl.window_rule` that floats and centres every window of the shell's class, `org.vgs.shell`, with no size ([D044](D044-application-windows-are-hyprland-toplevels.md)). No plugin text reaches it, and a plugin still writes no window rule. A user disables it by name after the line, as for the floating TUIs' rules.

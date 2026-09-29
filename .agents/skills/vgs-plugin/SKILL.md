@@ -1,6 +1,6 @@
 ---
 name: vgs-plugin
-description: "Load to create, change or review a v2 shell plugin: a bar widget, a bar, a panel, an overlay, a menu, a service or a background."
+description: "Load to create, change or review a v2 shell plugin: a bar widget, a bar, a panel, an overlay, a menu, a window, a service or a background."
 summary: "The plugin contract as a checklist, a scaffold command, templates for every kind, and the API a plugin may use."
 license: MIT
 user-invocable: true
@@ -44,6 +44,7 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 - The manifest is the plugin's settings page: name an `icon` from the shipped Lucide set, and give every setting a user would reasonably change, and the plugin reads, a `schema` entry, with `min`, `max` and `step` on a number and a `group` for its section; a constant earns an entry only when a user has a reason to change it. A key is `hyprland.binds`, never a schema entry. The Settings window draws the page from these alone: [`docs/architecture/plugins.md` § Manifest](../../../docs/architecture/plugins.md#manifest), [D032](../../../docs/decisions/D032-settings-plugin-and-manifest-settings-convention.md).
 - A bar widget extends `BarWidget` from `qs.Ui` and sizes itself with `implicitWidth` and `implicitHeight`. The core assigns `bar`, `moduleName` and `settings` after creation; the widget sets none of them.
 - A bar declares `leftSection`, `centerSection` and `rightSection`. The core mounts every plugin widget; a widget the bar draws itself registers through `shell.builtins`.
+- A surface the user works in, moves or tiles, such as a settings or tools window, is kind `window`, a Hyprland window; a flyout from a widget is an anchored `panel` or `menu`, which closes on a click outside it: [`docs/architecture/surfaces.md`](../../../docs/architecture/surfaces.md), [D044](../../../docs/decisions/D044-application-windows-are-hyprland-toplevels.md).
 - Compose the components of `qs.Ui` ([`references/api.md` § Components in `qs.Ui`](references/api.md#components-in-qsui)) before drawing anything by hand. Every colour, size, font, radius, opacity and duration reads a token through `Theme` in `qs.Commons`. `scripts/check-design-tokens.py` refuses a `Theme` path that names no token and reports each literal it finds.
 - A plugin whose design must look the same under every theme owns its look instead: the manifest's `appearance` names a table of its own, every value is `look.<path>` from `Theme.appearance(TOKENS, LIGHT)`, and the theme reaches it through its mode, accent and motion scale alone. [`docs/architecture/appearance.md`](../../../docs/architecture/appearance.md) is the contract; it reads no other `Theme` member.
 - One owner per timer, watcher, poller and subprocess, inside the entry point's tree. A `Process` gets its stdout parser before it starts.
@@ -64,4 +65,4 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 ## References
 
 - [`references/api.md`](references/api.md): what a plugin receives and may call, per kind.
-- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Bar.qml`, `Background.qml`, `tui.sh`.
+- [`templates/`](templates/): `manifest.json.tmpl`, `BarWidget.qml`, `Service.qml`, `Panel.qml`, `Window.qml`, `Bar.qml`, `Background.qml`, `tui.sh`.

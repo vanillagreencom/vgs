@@ -3,7 +3,7 @@
 Steps, in order. Each step names the command or file and the check that proves it.
 
 1. Pick the id: `author.name`, lower case, dotted. The manifest judge refuses any other shape.
-2. Pick the kinds from the table in [`../references/api.md`](../references/api.md). A plugin with a bar presence and a popup declares `bar-widget` and `panel`; a background job declares `service`.
+2. Pick the kinds from the table in [`../references/api.md`](../references/api.md). A plugin with a bar presence and a popup declares `bar-widget` and `panel`; a window the user works in declares `window`; a background job declares `service`.
 3. Scaffold: `.agents/skills/vgs-plugin/scripts/vgs-plugin new <id> --kinds <kinds>`. It runs the manifest judge before writing, writes the directory under `shell/plugins/` (or `--dir` elsewhere) from the templates, and runs the manifest and boundary checks on it.
 4. Fill each entry point. Keep the template's imports and its `shell` property. Read settings through `shell.settings` or, in a widget, `setting()`; compose `qs.Ui` components and read colours and sizes through `Theme`. Put every default in the manifest's `settings`.
 5. For every core API the plugin uses (including surfaces, built-ins and the manager), add the capability to `capabilities` and call `shell.<capability>` from the entry point. The capability table in [`../references/api.md`](../references/api.md) lists each. A plugin that writes its own settings declares a `schema`.
@@ -15,6 +15,7 @@ Steps, in order. Each step names the command or file and the check that proves i
    - a bar widget: the widget listed in its section and a property it derives from its settings;
    - a bar: the widgets mounted per section and the surface and reserved space read from `hyprctl`;
    - a panel, overlay or menu: `summon` answers `ok`, the payload read back from the instance, the surface and its geometry read from `hyprctl layers`, and the surface gone after `hide`;
+   - a window: `summon` answers `ok`, the payload read back from the instance, the window read from `hyprctl clients` by the shell's class and the manifest's `name` as its title (`window_count` and `window_of` in `scripts/smoke/harness.sh`), and the window gone after `hide`;
    - a background: the surface on the bottom layer per screen and the `screen` it received;
    - a capability: a property proving the delivered API is callable;
    - plugin status: the value the service published read back from each other instance that shows it, and from the lending record, gone after disable;
