@@ -576,7 +576,28 @@ has_section() { ipc smoke itemTexts window vgs.settings SectionHeader | py_reply
 expect_poll "the page draws a Requirements section" True has_section Requirements
 requirement_texts() { ipc smoke itemTexts window vgs.settings RequirementRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect_poll "each requirement reads back with its state and purpose" '[["sh", "Present", "A command every sandbox has"], ["vgs-smoke-absent", "Missing, optional", "A command no sandbox has"]]' requirement_texts
-expect "Install asks for the missing requirements" ok ipc smoke invokeInstance window vgs.settings installRequirements acme.bare
+click_install() {
+  local area bx by
+  for _ in $(seq 1 6); do
+    if install_visible; then settings_click Button Install && return 0; fi
+    area="$(page_scroll)" || return 1
+    [[ $area == \{* ]] || return 1
+    [[ $(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["barVisible"])' "$area") == True ]] || return 1
+    read -r bx by < <(at_centre window:Settings "$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=a["bar"]; t=a["thumb"]; print(json.dumps([b[0], t[1] + t[3] + 2, b[2], 2]))' "$area")")
+    click "$bx" "$by" || return 1
+    sleep 0.2
+  done
+  return 1
+}
+install_visible() {
+  local area rect
+  area="$(page_scroll)" || return 1
+  rect="$(ipc smoke windowGeometry window vgs.settings Button Install)" || return 1
+  [[ $area == \{* && $rect == \[* ]] || return 1
+  python3 -c 'import json,sys
+a=json.loads(sys.argv[1]); x,y,w,h=json.loads(sys.argv[2]); top=a["bar"][1]; bottom=top+a["height"]; print(top <= y and y+h <= bottom)' "$area" "$rect" | grep -Fx True >/dev/null
+}
+click_install || fail "the click on Install failed"
 expect_poll "Install shows the requirement notice with the optional command" '["acme.bare", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
 expect "Install leaves the Settings window open under the notice" 1 window_count Settings
 expect_poll "the Settings request's notice holds the keyboard" true ipc smoke noticeFocused
