@@ -214,7 +214,8 @@
 # fast-forwards a checkout with no diff and no question, refusing a
 # modified one as `plugin update` does; replaces a curl install by the
 # newest release under ${XDG_DATA_HOME:-~/.local/share}/vgs/.self.lock,
-# refused self=busy with exit 75 while held; and refuses a package with
+# refused self=busy with exit 75 while held, keeping the tree a running
+# shell was started from; and refuses a package with
 # method=package package=<name> manager=<id> and a Nix install with
 # method=nix, naming the step that updates it. After an update it prints
 # `ok updated=vgs from=<old> to=<new>` and restarts a running shell from
@@ -1059,6 +1060,23 @@ self_lock_hold() {
   flock -n 8 || refuse 75 "self=busy path=$self_lock" "another vgsh self update runs"
 }
 
+# Prints the tree the running shell was started from, read from its
+# command line, `qs -p <tree>/shell`, as `run` execs it; `-` with no shell
+# running. A command line with no such argument refuses: the update would
+# not know which tree to keep.
+shell_tree() {
+  local pid arg previous=""
+  if ! pid="$(shell_pid 2>/dev/null)"; then echo -; return 0; fi
+  while IFS= read -r -d '' arg; do
+    if [[ $previous == -p && $arg == */shell ]]; then
+      printf '%s\n' "${arg%/shell}"
+      return 0
+    fi
+    previous="$arg"
+  done <"/proc/$pid/cmdline" || true
+  refuse 1 "shell=unreadable pid=$pid" "the running shell's command line names no tree; stop it before updating"
+}
+
 # After an update, restart a running shell through VGSH, the updated tree's
 # command, whose restart status becomes this command's; with no shell
 # running, say so.
@@ -1069,7 +1087,7 @@ self_restart() { # VGSH
 
 # Updates this tree as its install method allows, as the header states.
 self_update() {
-  local version checkout=false line method package manager out
+  local version checkout=false line method package manager out running
   version="$(version_line)" || exit 1
   tree_is_checkout && checkout=true
   line="$(node "$self_judge" detect "$root" "$data_home" "$version" "$checkout")" || exit 1
@@ -1083,7 +1101,8 @@ self_update() {
       ;;
     curl)
       self_lock_hold
-      out="$(node "$self_judge" install "$self_repository" "$data_home" "$root" "$version")" || exit 1
+      running="$(shell_tree)" || exit 1
+      out="$(node "$self_judge" install "$self_repository" "$data_home" "$root" "$version" "$running")" || exit 1
       printf '%s\n' "$out"
       [[ $out == "ok updated="* ]] || return 0
       exec 8>&-

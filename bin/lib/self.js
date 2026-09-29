@@ -11,8 +11,10 @@
 //       the newest release's version, X.Y.Z, from the GitHub API
 //   self.js report text|json <version> <method> <package> <current> <latest> <behind-count> <error>
 //       judge `behind` and print the status; `-` is an absent value
-//   self.js install <repository> <data-home> <root> <current>
-//       replace a curl install by the newest release when it is newer
+//   self.js install <repository> <data-home> <root> <current> <shell-tree>
+//       replace a curl install by the newest release when it is newer;
+//       <shell-tree> is the tree the running shell was started from, `-`
+//       with no shell running
 //
 // The methods, judged in this order on the real path of the tree:
 //   checkout  the tree is the top level of its own git checkout
@@ -209,14 +211,17 @@ function run(argv, options, key) {
     if (r.status !== 0) refuse(key + " exit=" + (r.status === null ? r.signal : r.status), undefined, 1, r.stdout + r.stderr);
 }
 
-// Replace the curl install whose data directory is DATA and whose running
-// tree ROOT holds version CURRENT by REPOSITORY's newest release, when it is
-// newer. The release is staged under DATA, checked against its SHA256SUMS,
-// installed by its own packaging/install-system.sh, moved to DATA/<version>
-// and made current by renaming a new `current` link over the old one. The
-// tree that was current stays; every other version directory is removed.
-// bin/vgsh holds DATA/.self.lock around the call.
-async function install(repository, dataHome, root, current) {
+// Replace the curl install whose data directory is DATA and whose tree
+// ROOT, the one this command runs from, holds version CURRENT by
+// REPOSITORY's newest release, when it is newer. The release is staged
+// under DATA, checked against its SHA256SUMS, installed by its own
+// packaging/install-system.sh, moved to DATA/<version> and made current by
+// renaming a new `current` link over the old one. ROOT and SHELL_TREE, the
+// tree a running shell was started from, stay, since a shell whose restart
+// was refused still runs from a tree `current` no longer names; every other
+// version directory is removed. bin/vgsh holds DATA/.self.lock around the
+// call.
+async function install(repository, dataHome, root, current, shellTree) {
     const data = path.join(dataHome, "vgs");
     const api = apiBase();
     const release = await latestRelease(repository, api);
@@ -272,10 +277,12 @@ async function install(repository, dataHome, root, current) {
     } finally {
         fs.rmSync(stage, { recursive: true, force: true });
     }
-    const previous = path.basename(root);
+    const kept = [release.version, path.basename(root)];
+    const running = shellTree === "-" ? null : real(shellTree);
+    if (running !== null && path.dirname(running) === real(data)) kept.push(path.basename(running));
     writing(data, "prune", () => {
         for (const entry of fs.readdirSync(data)) {
-            if (!VERSION_PATTERN.test(entry) || entry === release.version || entry === previous) continue;
+            if (!VERSION_PATTERN.test(entry) || kept.includes(entry)) continue;
             const dir = path.join(data, entry);
             if (fs.lstatSync(dir).isDirectory()) fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -323,8 +330,8 @@ main(() => {
         report(args[0], args.slice(1));
         return undefined;
     case "install":
-        if (args.length !== 4) usage("install-arguments=" + JSON.stringify(args));
-        return install(args[0], args[1], args[2], args[3]);
+        if (args.length !== 5) usage("install-arguments=" + JSON.stringify(args));
+        return install(args[0], args[1], args[2], args[3], args[4]);
     default:
         usage("self-subcommand=" + (verb === undefined ? "missing" : verb));
     }

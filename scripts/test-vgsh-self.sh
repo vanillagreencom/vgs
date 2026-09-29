@@ -173,6 +173,37 @@ check "no staging directory stays" test -z "$(find "$data/vgs" -maxdepth 1 -name
 INST_BIN="$curl_bin" inst "the new tree is current" "$cfg" "$rt_empty" 0 "$(status_json "$release" curl null "$release" "$release" false null)" "" self status --json
 INST_BIN="$curl_bin" inst "a current curl install is up to date" "$cfg" "$rt_empty" 0 "ok up-to-date=vgs version=$release" "" self update
 
+# A shell whose restart was refused still runs from a tree `current` no
+# longer names. A stub qs started as `qs -p <tree>/shell`, as `vgsh run`
+# execs it, with its pid in the instance lock, stands in for that shell.
+# The update keeps its tree; the restart then refuses below the runtime
+# floor, since the stub answers no version.
+cat >"$stubs/qs" <<'EOF'
+#!/bin/sh
+[ "$1" = -p ] || exit 1
+while :; do sleep 1; done
+EOF
+chmod +x "$stubs/qs"
+running_layout() { # DATA: current 0.1.0, the running shell's 0.0.8, a stale 0.0.7
+  install_tree "$seed" "$1/vgs/$version_text"
+  install_tree "$seed" "$1/vgs/0.0.8"
+  install_tree "$seed" "$1/vgs/0.0.7"
+  ln -s -- "$version_text" "$1/vgs/current"
+}
+rt_running="$tmp/rt-running"; mkdir -p "$rt_running"
+running_data="$tmp/data-running"; running_layout "$running_data"
+"$stubs/qs" -p "$running_data/vgs/0.0.8/shell" &
+fake_shell=$!
+trap 'kill "$fake_shell" "$www_pid" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
+printf '%s\n' "$fake_shell" >"$rt_running/vgsh.lock"
+inst_env=(VGS_RELEASE_API="$api" XDG_DATA_HOME="$running_data")
+INST_BIN="$running_data/vgs/current/bin/vgsh" inst "an update beside a running shell restarts it, refused here below the floor" "$cfg" "$rt_running" 78 \
+  "ok updated=vgs from=$version_text to=$release path=$running_data/vgs/$release" "vgsh: refused: preflight=quickshell have=unknown need=0.3.1" self update
+check "the running shell's tree stays" test -d "$running_data/vgs/0.0.8/shell"
+check "the tree the update ran from stays" test -d "$running_data/vgs/$version_text"
+check "a tree nothing runs is removed" test ! -e "$running_data/vgs/0.0.7"
+inst_env=("${saved_env[@]}")
+
 # Package: the tree a package recipe installs, owned by a stub pacman
 # answering -Qoq and -Q as pacman(8) states, for the file and package the
 # row names; any other call exits 99. The os-release fixture names Arch.
@@ -254,5 +285,16 @@ inst_env=(VGS_RELEASE_API="$api" XDG_DATA_HOME="$mut_data")
 INST_BIN="$mut_data/vgs/current/bin/vgsh" inst "the checksum-blind mutant installs an archive its sums do not list" "$cfg" "$rt_empty" 0 "shell=not-running" "" self update
 inst_env=("${saved_env[@]}")
 printf '%s  %s\n' "$good_sum" "$archive" >"$www/dl/SHA256SUMS"
+
+# The running-tree control: a curl tree whose self.js keeps no running
+# shell's tree removes it.
+self_control shellblind 'if (running !== null && path.dirname(running) === real(data)) kept.push(path.basename(running));' ''
+blind_data="$tmp/data-shellblind"; running_layout "$blind_data"
+cp -- "$(dirname -- "$(dirname -- "$control_bin")")/bin/lib/self.js" "$blind_data/vgs/$version_text/bin/lib/self.js"
+printf '%s\n' "$fake_shell" >"$rt_running/vgsh.lock"
+inst_env=(VGS_RELEASE_API="$api" XDG_DATA_HOME="$blind_data")
+INST_BIN="$blind_data/vgs/current/bin/vgsh" inst "the shell-blind mutant updates beside the running shell" "$cfg" "$rt_running" 78 "$any_out" "$any_out" self update
+check "and removes the running shell's tree, which the row above keeps" test ! -e "$blind_data/vgs/0.0.8"
+inst_env=("${saved_env[@]}")
 
 rows_done test-vgsh-self
