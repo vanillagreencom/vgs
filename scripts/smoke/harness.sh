@@ -486,29 +486,29 @@ control_hovered() {
   else ipc smoke itemHovered "$1" "$2" "$3" "$4"
   fi
 }
-# click_item LOOKUP [DX DY]: one click on a control_box LOOKUP, at its
-# centre or at (DX, DY) from its top-left corner, `-` for the centre on
-# that axis, once the control reports the pointer over that point. The
-# compositor routes a click by where it has placed the surface, which can
-# trail the layout the probe reads after the surface resizes, and a list
-# that grows after it opens or a card that slides in moves the control, so
-# a box read once goes stale. Every 100 ms, for up to 5 s, the helper reads
-# the control's box again, moves the pointer to its point, one pixel apart
-# each time so each move is a motion, and reads whether the control reports
-# the pointer. It clicks after two such readings in a row at one box, so a
-# reading taken before the move reached the shell never decides it, and
-# reads the box once more before the press: a box that moved starts the
-# count again. Returns 1, with no click, when the control is absent at the
-# first reading or never reports the pointer; a control absent at a later
-# reading is being laid out again, and the count starts again. The rows
-# that click through it: agent-warden.sh, updates.sh, themes.sh (its
-# click_row and click_button, and the helper's controls) and
-# notifications.sh (the Reply pill, a card's default action, Mark read and
-# Clear history). A hover that only reveals a control stays a hover.
-click_item() { # LOOKUP [DX DY]
+# point_item LOOKUP [DX DY]: the pointer left resting on a control_box
+# LOOKUP, at its centre or at (DX, DY) from its top-left corner, `-` for
+# the centre on that axis, once the control reports the pointer over that
+# point; prints that point as `X Y`. The compositor routes the pointer by
+# where it has placed the surface, which can trail the layout the probe
+# reads after the surface resizes, and a list that grows after it opens or
+# a card that slides in moves the control, so a box read once goes stale.
+# Every 100 ms, for up to 5 s, the helper reads the control's box again,
+# moves the pointer to its point, one pixel apart each time so each move
+# is a motion, and reads whether the control reports the pointer. It stops
+# after two such readings in a row at one box, so a reading taken before
+# the move reached the shell never decides it, and reads the box once more
+# before it returns: a box that moved starts the count again. Returns 1
+# when the control is absent at the first reading or never reports the
+# pointer; a control absent at a later reading is being laid out again,
+# and the count starts again. notifications.sh rests the pointer through
+# it on the cards whose hover pauses a clock or shows actions: the held
+# toast, the actionable toast, the hover geometry card and the restored
+# toast.
+point_item() { # LOOKUP [DX DY]
   local n=4 lookup rect seen="" x="" y="" px hovered held=0 i
   [[ $1 == vgs:* ]] && n=5
-  if (( $# != n && $# != n + 2 )); then echo "click_item: refused: arguments=$# lookup=$n" >&2; return 1; fi
+  if (( $# != n && $# != n + 2 )); then echo "point_item: refused: arguments=$# lookup=$n" >&2; return 1; fi
   lookup=("${@:1:n}")
   shift "$n"
   for i in $(seq 1 50); do
@@ -525,10 +525,21 @@ click_item() { # LOOKUP [DX DY]
     hover "$px" "$y" || return 1
     hovered="$(control_hovered "${lookup[@]}")" || return 1
     if [[ $hovered == true ]]; then held=$((held + 1)); else held=0; fi
-    if [[ $held -ge 2 && $(control_box "${lookup[@]}") == "$seen" ]]; then click "$px" "$y"; return; fi
+    if [[ $held -ge 2 && $(control_box "${lookup[@]}") == "$seen" ]]; then printf '%s %s\n' "$px" "$y"; return; fi
     sleep 0.1
   done
   return 1
+}
+# click_item LOOKUP [DX DY]: point_item, then one click at the point it
+# settled on; returns 1, with no click, when point_item does. The rows that
+# click through it: agent-warden.sh, updates.sh, themes.sh (its click_row
+# and click_button, and the helper's controls) and notifications.sh (the
+# Reply pill, a card's default action, Mark read and Clear history).
+click_item() { # LOOKUP [DX DY]
+  local at x y
+  at="$(point_item "$@")" || return 1
+  read -r x y <<<"$at" || return 1
+  click "$x" "$y"
 }
 
 # expect_cursor_at LABEL SHAPE X Y: the pointer moved to the layout

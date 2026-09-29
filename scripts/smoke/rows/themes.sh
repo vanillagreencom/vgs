@@ -489,14 +489,15 @@ click_row smoke || fail "the second click on the smoke row failed"
 expect "the second smoke apply ends" idle theme_idle
 expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
 
-# A control that moves after click_item first read its box, as a catalog
+# A control that moves after point_item first read its box, as a catalog
 # row does when the panel's list grows under a scroll position set before
-# it. planted_click FUNCTION TEXT runs FUNCTION on the list item TEXT with
+# it. planted_click MODE TEXT runs click_item on the list item TEXT with
 # the list at its top; its first pointer move first scrolls the list down
 # by twice the vgs item's height and writes the item's box before and
-# after the scroll to $click_plant. click_item follows the item and clicks it. A copy of
-# click_item that reads the box once, the form that clicked before the
-# list settled, hovers where the item was, never finds it under the
+# after the scroll to $click_plant. With MODE `real`, click_item follows
+# the item and clicks it. With MODE `single-read`, click_item runs on a
+# copy of point_item that reads the box once, the form that clicked before
+# the list settled: it hovers where the item was, never finds it under the
 # pointer and clicks nothing. The vgs item is the target: the scroll
 # leaves it drawn whole, and a click on it applies vgs.
 click_plant="$sandbox/click-plant"
@@ -505,6 +506,11 @@ planted_click() {
   rm -f -- "$click_plant" || return 1
   (
     source "$sandbox/planted-hover.sh" || exit 1
+    case "$1" in
+      real) ;;
+      single-read) source "$sandbox/point-item-single-read.sh" || exit 1 ;;
+      *) echo "planted_click: refused: mode=$1" >&2; exit 1 ;;
+    esac
     hover() {
       if [[ ! -e $click_plant ]]; then
         local first offset second
@@ -517,29 +523,28 @@ planted_click() {
       fi
       planted_hover "$@"
     }
-    "$1" panel vgs.themes ListItem "$2"
+    click_item panel vgs.themes ListItem "$2"
   )
 }
 # Whether the plant moved the vgs item by more than its own height: True
 # or False, or the plant file's lines when it holds no two boxes.
 plant_moved() { python3 -c 'import json,sys; b=[json.loads(l) for l in open(sys.argv[1]).read().splitlines()]; print(abs(b[1][1]-b[0][1]) > b[0][3] if len(b)==2 else b)' "$click_plant"; }
 single_read_needle='rect="$(control_box "${lookup[@]}")" || return 1'
-click_item_def="$(declare -f click_item)"
-click_item_rest="${click_item_def//"$single_read_needle"/}"
-if [[ $(( (${#click_item_def} - ${#click_item_rest}) / ${#single_read_needle} )) == 1 ]] \
-  && single_read_def="${click_item_def/"$single_read_needle"/"[[ \$i -gt 1 ]] || $single_read_needle"}" \
-  && [[ $single_read_def != "$click_item_def" ]] \
-  && printf 'click_item_single_read %s\n' "${single_read_def#click_item }" >"$sandbox/click-item-single-read.sh" \
-  && printf 'planted_%s\n' "$(declare -f hover)" >"$sandbox/planted-hover.sh" \
-  && source "$sandbox/click-item-single-read.sh"; then
-  if planted_click click_item_single_read vgs; then
-    fail "the single-read click_item clicked for the vgs item the plant moved"
+point_item_def="$(declare -f point_item)"
+point_item_rest="${point_item_def//"$single_read_needle"/}"
+if [[ $(( (${#point_item_def} - ${#point_item_rest}) / ${#single_read_needle} )) == 1 ]] \
+  && single_read_def="${point_item_def/"$single_read_needle"/"[[ \$i -gt 1 ]] || $single_read_needle"}" \
+  && [[ $single_read_def != "$point_item_def" ]] \
+  && printf '%s\n' "$single_read_def" >"$sandbox/point-item-single-read.sh" \
+  && printf 'planted_%s\n' "$(declare -f hover)" >"$sandbox/planted-hover.sh"; then
+  if planted_click single-read vgs; then
+    fail "click_item on the single-read point_item clicked for the vgs item the plant moved"
   else
-    expect "the plant moved the vgs item under the single-read click_item" True plant_moved
-    expect "no apply runs after the single-read click_item" idle theme_idle
-    expect "the single-read click_item clicked nothing" '"smoke"' lent theme.last.result.theme
+    expect "the plant moved the vgs item under the single-read point_item" True plant_moved
+    expect "no apply runs after the single-read point_item" idle theme_idle
+    expect "click_item on the single-read point_item clicked nothing" '"smoke"' lent theme.last.result.theme
   fi
-  planted_click click_item vgs || fail "click_item did not click the vgs item the plant moved"
+  planted_click real vgs || fail "click_item did not click the vgs item the plant moved"
   expect "the plant moved the vgs item under click_item" True plant_moved
   expect_poll "click_item's click on the moved vgs item applies vgs" '"vgs"' lent theme.last.result.theme
   expect "the planted vgs apply ends" idle theme_idle
@@ -549,7 +554,7 @@ if [[ $(( (${#click_item_def} - ${#click_item_rest}) / ${#single_read_needle} ))
   expect "the smoke apply after the plant ends" idle theme_idle
   expect_poll "the shell displays smoke again after the plant" smoke ipc smoke themeName
 else
-  fail "the single-read click_item copy could not be written"
+  fail "the single-read point_item copy could not be written"
 fi
 
 # Control: click_item aimed at the vgs row's centre, a stand-in for a

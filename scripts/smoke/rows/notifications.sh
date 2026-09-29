@@ -171,11 +171,9 @@ print(len(edges) >= 1 and all(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders
 render expect_poll "the edge light's shader compiled from the published revision" True edge_shaders_ok
 key_of() { ipc smoke modelRows vgs.notifications rows key,summary | py_reply 'import json,sys; print(next((k for k, s in json.load(sys.stdin) if s == sys.argv[1]), "none"))' "$1"; }
 clock_of() { read_notes clocks | py_reply 'import json,sys; c=json.load(sys.stdin).get(sys.argv[1]); print("none" if c is None else ("running" if c["since"] is not None else "paused") + " " + str(c["remaining"]))' "$1"; }
-# A card's centre on the screen: its rectangle in its window plus the
-# window's origin from the compositor.
-card_centre() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; y0=int(sys.argv[2])
-for screen, (x, y, w, h), v in json.load(sys.stdin):
-    if v["summary"] == sys.argv[1]: print(x + w // 2, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
+# rest_on_card SUMMARY: the pointer left on the centre of the card
+# SUMMARY once the card reports it, through point_item.
+rest_on_card() { point_item vgs:layer vgs.notifications NotificationCard summary "$1" >/dev/null; }
 # click_pill TEXT: one click_item on the shown pill TEXT in the layer.
 click_pill() { click_item vgs:layer vgs.notifications PillButton text "$1"; }
 shown_pills() { ipc smoke layerItems vgs.notifications CardSlot summary,actions | python3 -c 'import json,sys; print(json.dumps(next(([a["label"] for a in v["actions"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
@@ -228,9 +226,7 @@ expect_poll "a low-urgency toast shows" True has_row live "Brief"
 wait_for "the low-urgency toast expires after its five seconds" none 9 key_of Brief
 notify smoke-app 0 "Held" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
 expect_poll "a second low-urgency toast shows" True has_row live "Held"
-sleep 1
-read -r hx hy < <(card_centre Held) || fail "the held toast has no card"
-hover "$hx" "$hy" || fail "the hover over the held toast failed"
+rest_on_card Held || fail "the pointer never rested on the held toast"
 held_key="$(key_of Held)"
 expect_poll "the pointer on a toast pauses its clock" paused clock_state Held
 expect_poll "the state file keeps the paused toast's time left" remaining stored_clock "$held_key"
@@ -255,9 +251,7 @@ spawn "$signals" "${shell_env[@]}" stdbuf -oL gdbus monitor --session --dest org
 sleep 0.5
 notify smoke-chat 0 "Actioned" "Pick one" '["default", "Open", "reply", "Reply"]' '{}' 0 >/dev/null
 expect_poll "an actionable toast shows" True has_row live "Actioned"
-sleep 1
-read -r ax ay < <(card_centre Actioned) || fail "the actionable toast has no card"
-hover "$ax" "$ay" || fail "the hover over the actionable toast failed"
+rest_on_card Actioned || fail "the pointer never rested on the actionable toast"
 expect_poll "the hover reveals the sender's actions and Dismiss" '["Open", "Reply", "Dismiss"]' shown_pills Actioned
 sleep 0.5
 # The hover actions draw nothing past the capsule's rounded ends: the card
@@ -495,8 +489,7 @@ notify "" 0 "New message in master-operator" $'app.slack.com\n\nada: the deploym
 notify smoke-app 0 "Even max" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}' 0 >/dev/null
 notify smoke-chat 0 "Hover geometry" "Pick one" '["default", "Open", "reply", "Reply"]' '{}' 30000 >/dev/null
 expect_poll "the hover geometry card shows" True has_row live "Hover geometry"
-read -r gx gy < <(card_centre "Hover geometry") || fail "the hover geometry toast has no card"
-hover "$gx" "$gy" || fail "the hover over the geometry toast failed"
+rest_on_card "Hover geometry" || fail "the pointer never rested on the hover geometry toast"
 expect_poll "the hover geometry card shows actions" '["Open", "Reply", "Dismiss"]' shown_pills "Hover geometry"
 expect "the inset predicate rejects text under the rounded end" "violation left,right" inset_contract_value avatarless "" "top=14 bottom=14 left=14 right=14 height=45 slot=-1 pad=14"
 expect "the header predicate rejects a title under the rounded end" "violation left" header_contract_value <<<"left=20 height=48 control=10 centre=24.0"
@@ -725,9 +718,7 @@ expect "a rescan after editing the plugin answers ok" ok ipc shell rescanPlugins
 restored_sorted() { row_summaries restored | py_reply 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
 expect_poll "the rebuilt service restored the toasts on screen" '["Survivor", "Urgent CLI"]' restored_sorted
 expect "a rebuild keeps Silence" true note_status silence
-sleep 1
-read -r sx sy < <(card_centre Survivor) || fail "the restored toast has no card"
-hover "$sx" "$sy" || fail "the hover over the restored toast failed"
+rest_on_card Survivor || fail "the pointer never rested on the restored toast"
 expect_poll "a restored toast offers no live action" '["Dismiss"]' shown_pills Survivor
 hover "$((mon_w - 5))" "$((mon_h - 5))" || fail "moving the pointer off the restored toast failed"
 
