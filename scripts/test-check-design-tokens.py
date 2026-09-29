@@ -21,11 +21,15 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 # singleton and loader, so a row judges against the shipped token paths.
 SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "shell/Core/PackageManagers.js", "shell/Core/HyprlandLayer.js", "shell/Ui/icons/Lucide.js", "bin/lib/qml-library.js")
 # Every tree the default scope walks, each with one clean file, so a fixture
-# walks what the repository walks: these six, the three shipped files under
-# shell/Commons, the shipped manifest judge under shell/Core with the icon
-# set, the package-manager table and the Hyprland layer it imports, and the
-# planted file.
+# walks what the repository walks: these six, the shipped files under shell/
+# (the three under shell/Commons, and the manifest judge under shell/Core with
+# every file it imports), and the planted file.
 TREES = ("shell/Ui", "shell/Hosts", "shell/plugins/acme.widget", ".agents/skills/vgs-plugin/templates", "shell/Core", "scripts/smoke/fixtures/plugins/acme.probe")
+# The source files a fixture holds before a row plants any: each shipped
+# `.qml` or `.js` file under shell/, since no tree walks bin/, and one clean
+# file per tree. Counted from the two lists above, so a file added to
+# SHIPPED moves every row's count at once.
+FIXTURE_FILES = sum(1 for f in SHIPPED if f.startswith("shell/") and f.endswith((".qml", ".js"))) + len(TREES)
 CLEAN = "import QtQuick\nimport qs.Commons\nItem {\n    color: Theme.color.surface\n    radius: Theme.radius.md\n    width: 2 * Theme.space.md\n}\n"
 WIDGET_MANIFEST = '{"schemaVersion": 1, "id": "acme.widget", "name": "Widget", "version": "1", "author": "a", "description": "d", "kinds": ["service"], "entryPoints": {"service": "Clean.qml"}}'
 UI = "shell/Ui/Thing.qml"
@@ -128,8 +132,9 @@ def run_look_row(name, files, want):
                 fh.write(text)
         proc = run_check(root)
         keys = keys_of(proc)
+        # The look plugin adds Look.js and View.qml to the fixture.
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=15"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == [f"check-design-tokens: ok files={FIXTURE_FILES + 2}"]
         else:
             good = proc.returncode == 1 and keys == {want}
         return report(name, good, proc)
@@ -177,8 +182,9 @@ def run_row(name, path, text, want):
     with tempfile.TemporaryDirectory() as tmp:
         proc = run_check(build_repo(tmp, (path, text)))
         keys = keys_of(proc)
+        # The planted file adds one to the fixture.
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=14"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == [f"check-design-tokens: ok files={FIXTURE_FILES + 1}"]
         else:
             good = proc.returncode == 1 and keys == {want} and proc.stdout.splitlines()[-1] == "check-design-tokens: findings=1"
         return report(name, good, proc)
@@ -192,7 +198,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         root = build_repo(tmp, ("shell/plugins/acme.notes/Appearance.js", '.pragma library\nvar c = "#ff0000";\n'))
         proc = run_check(root)
-        results.append(report("a directory without a manifest under plugins is not checked as a plugin", proc.returncode == 0 and not keys_of(proc) and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=12"], proc))
+        results.append(report("a directory without a manifest under plugins is not checked as a plugin", proc.returncode == 0 and not keys_of(proc) and proc.stdout.splitlines()[-1:] == [f"check-design-tokens: ok files={FIXTURE_FILES}"], proc))
     with tempfile.TemporaryDirectory() as tmp:
         root = build_repo(tmp, ("shell/plugins/acme.widget/manifest.json", '{"schemaVersion": 1, "id": "acme.widget"}'))
         proc = run_check(root)
