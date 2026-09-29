@@ -3,8 +3,8 @@
 # PATH directory. The real bin/vgsh-tui launches it; it records the argv it
 # was handed and opens nothing, so no terminal starts. The fixture acme.tui
 # declares one listed script. Rows: the published list, the app-id of the
-# script's size, the snapshot path it runs from and its arguments, each
-# refusal, a launcher that finds no terminal and the synchronous
+# script's size, the snapshot path it runs from and its arguments, the
+# core's own sudo grant opened by key as the core's bin/vgsh, each refusal, a launcher that finds no terminal and the synchronous
 # `launcher-missing` answer that follows until a probe finds one again, the
 # launchers the core holds, and a disabled plugin's list and hold gone.
 set -euo pipefail
@@ -36,7 +36,8 @@ expect "enabling the tui fixture is allowed" ok ipc shell setPluginEnabled acme.
 expect_poll "the tui fixture's service is built" True record_exists acme.tui
 expect_poll "the fixture holds the tui capability" True tui_held
 
-listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}]'
+core_listed='{"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}'
+listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}, '"$core_listed"']'
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
 
@@ -80,6 +81,14 @@ forget_record
 expect "the capability opens a listed key" ok tui open acme.tui/hello
 expect_poll "the capability's open reaches the terminal" \
   "$(words --app-id=org.vgs.tui.wide "--title=VGS · Hello" -- "$tui_self" present --presentation full --plugin acme.tui --dir "$snapshot" -- tui/hello.sh)" recorded
+
+# The core's own TUI: its command is the core's bin/vgsh beside the shell
+# directory, whatever the shell's PATH holds, with no plugin copy.
+core_vgsh="$(dirname -- "$(dirname -- "$tui_self")")/shell/../bin/vgsh"
+forget_record
+expect "openTui opens the core's sudo grant" ok ipc shell openTui core/sudo-grant
+expect_poll "the terminal is handed the core's vgsh sudo grant" \
+  "$(words --app-id=org.vgs.tui "--title=VGS · Passwordless sudo" -- "$tui_self" present --presentation full -- "$core_vgsh" sudo grant)" recorded
 
 # Refusals, each before any launcher starts.
 forget_record
@@ -126,6 +135,6 @@ expect_poll "the later request reaches the terminal" \
 
 # A disabled plugin's TUIs leave the list and no longer open.
 expect "disabling the tui fixture is allowed" ok ipc shell setPluginEnabled acme.tui false
-expect_poll "a disabled plugin's TUIs leave the list" '[]' respaced ipc shell listTuis
+expect_poll "a disabled plugin's TUIs leave the list" "[$core_listed]" respaced ipc shell listTuis
 expect "openTui refuses a disabled plugin's key" "refused: tui=acme.tui/hello reason=disabled" ipc shell openTui acme.tui/hello
 expect_poll "a disabled plugin holds no tui capability" False tui_held

@@ -50,7 +50,7 @@ Scope {
     // open: any listed TUI by key, with no arguments; the `openTui` IPC
     // function answers with this.
     function open(key) {
-        return start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, launcher, Logic.CORE_TUIS, key));
+        return start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, Quickshell.shellDir + "/../bin", launcher, Logic.CORE_TUIS, key));
     }
 
     function start(launch) {

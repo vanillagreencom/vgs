@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Table-driven checks for the floating TUI decisions in
 // shell/Core/PluginLogic.js: the manifest's `tui` key and its normalized
-// shape, the arguments a plugin's script takes, the launch of a plugin's own
+// shape, the core's own TUI table, the arguments a plugin's script takes, the launch of a plugin's own
 // script and of a listed TUI by key, the listed rows and the log line of a
 // launcher's end. The file loads under node through bin/lib/qml-library.js,
 // as the shell loads it. The controls at the end edit a copy of the judge,
@@ -14,6 +14,7 @@ const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
 const CORE = path.join(__dirname, "..", "shell", "Core");
+const BIN = path.join(__dirname, "..", "bin");
 const LOGIC = path.join(CORE, "PluginLogic.js");
 const IMPORTS = [
     [path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join("shell", "Ui", "icons", "Lucide.js")],
@@ -149,7 +150,7 @@ function suite(ctx, check) {
     // and whether it asks for a probe].
     const openRows = [
         ["a listed plugin script opens with no arguments", ["acme.tui"], "present", "acme.tui/update", ["launch", "--title", "Update", "--size", "wide", "--presentation", "plain", "--plugin", "acme.tui", "--dir", "/run/src/r1", "--", "tui/update.sh"]],
-        ["a core TUI opens its command with no plugin", [], "present", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "vgsh", "doctor"]],
+        ["a core TUI opens its command with no plugin", [], "present", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "/core/bin/vgsh", "doctor"]],
         ["a declared script without an entry is not listed", ["acme.tui"], "present", "acme.tui/hello", ["refused: tui=acme.tui/hello reason=undeclared", false]],
         ["a disabled plugin's listed script", ["acme.tui"], "present", "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", false]],
         ["an unknown plugin", ["acme.tui"], "present", "acme.none/fix", ["refused: tui=acme.none/fix reason=undeclared", false]],
@@ -162,20 +163,66 @@ function suite(ctx, check) {
         ["a core TUI with a missing launcher", [], "missing", "core/doctor", ["refused: tui=core/doctor reason=launcher-missing", true]],
         ["an unknown key is refused before a missing launcher", [], "missing", "core/none", ["refused: tui=core/none reason=undeclared", false]],
         ["a disabled plugin is refused before a missing launcher", ["acme.tui"], "missing", "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", false]],
-        ["a launcher no probe has answered yet opens the key", [], "unknown", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "vgsh", "doctor"]],
+        ["a launcher no probe has answered yet opens the key", [], "unknown", "core/doctor", ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--", "/core/bin/vgsh", "doctor"]],
     ];
     for (const [name, enabledIds, launcher, key, want] of openRows) {
-        const r = ctx.tuiOpen(manifests, enabledIds, "/run/src", launcher, core, key);
+        const r = ctx.tuiOpen(manifests, enabledIds, "/run/src", "/core/bin", launcher, core, key);
         check("tuiOpen: " + name, r.ok ? r.argv : [r.answer, r.probe], want);
     }
-    check("tuiOpen keys a launch by the key it opened", ctx.tuiOpen(manifests, [], "/run/src", "present", core, "core/doctor").key, "core/doctor");
+    check("tuiOpen keys a launch by the key it opened", ctx.tuiOpen(manifests, [], "/run/src", "/core/bin", "present", core, "core/doctor").key, "core/doctor");
     check("tuiEntries: the core's and every enabled plugin's listed TUIs, by key", ctx.tuiEntries(manifests, ["acme.tui"], core), [
         { key: "acme.tui/update", plugin: "acme.tui", name: "update", title: "Update", label: "Update the system", icon: "terminal", group: "System" },
         { key: "core/doctor", plugin: "core", name: "doctor", title: "Doctor", label: "Check the system", icon: "stethoscope", group: "System" },
     ]);
     check("tuiEntries: a plugin enabled again lists its TUIs again", ctx.tuiEntries(manifests, ["acme.other", "acme.tui"], {}).map(e => e.key), ["acme.other/fix", "acme.tui/update"]);
     check("tuiEntries: an enabled id with no manifest lists nothing", ctx.tuiEntries(manifests, ["acme.gone"], {}), []);
-    check("the core's own table lists only judged sizes and presentations", Object.keys(ctx.CORE_TUIS).filter(n => ctx.TUI_SIZES.indexOf(ctx.CORE_TUIS[n].size) === -1 || ctx.TUI_PRESENTATIONS.indexOf(ctx.CORE_TUIS[n].presentation) === -1), []);
+
+    // coreTuiError: [name, TUI name, row, null for accepted or the start of
+    // the refusal].
+    const doctor = core.doctor;
+    const coreRow = (change) => Object.assign({}, doctor, change);
+    const without = (key) => { const row = coreRow({}); delete row[key]; return row; };
+    const coreRows = [
+        ["a row with every key", "doctor", doctor, null],
+        ["a row without an entry", "quiet", coreRow({ entry: null }), null],
+        ["a command with arguments at the limit", "doctor", coreRow({ argv: ["vgsh"].concat(Array(16).fill("a")) }), null],
+        ["a helper of the core's bin/", "doctor", coreRow({ argv: ["vgsh-sudo-grant", "status"] }), null],
+        ["a name with an upper case letter", "Doctor", doctor, "core TUI name \"Doctor\" must be lower case letters, digits and dashes"],
+        ["a row that is a string", "doctor", "vgsh doctor", "core/doctor must be an object"],
+        ["a row with a script", "doctor", coreRow({ script: "tui/x.sh" }), "core/doctor has unknown key \"script\""],
+        ["a row without an entry key", "doctor", without("entry"), "core/doctor needs key entry"],
+        ["a row without a size", "doctor", without("size"), "core/doctor needs key size"],
+        ["a row without a presentation", "doctor", without("presentation"), "core/doctor needs key presentation"],
+        ["an argv that is a string", "doctor", coreRow({ argv: "vgsh doctor" }), "core/doctor.argv must start with a command of the core's bin/ directory, got \"vgsh doctor\""],
+        ["an empty argv", "doctor", coreRow({ argv: [] }), "core/doctor.argv must start with a command of the core's bin/ directory"],
+        ["a command that is a path", "doctor", coreRow({ argv: ["/usr/bin/vgsh", "doctor"] }), "core/doctor.argv must start with a command of the core's bin/ directory"],
+        ["a command outside the core", "doctor", coreRow({ argv: ["sh", "-c", "x"] }), "core/doctor.argv must start with a command of the core's bin/ directory"],
+        ["a command with a trailing dash", "doctor", coreRow({ argv: ["vgsh-"] }), "core/doctor.argv must start with a command of the core's bin/ directory"],
+        ["an empty argument", "doctor", coreRow({ argv: ["vgsh", ""] }), "core/doctor.argv takes at most 16 arguments of 1 to 256 characters with no control character"],
+        ["an argument with a control character", "doctor", coreRow({ argv: ["vgsh", "a\nb"] }), "core/doctor.argv takes at most 16 arguments"],
+        ["seventeen arguments", "doctor", coreRow({ argv: ["vgsh"].concat(Array(17).fill("a")) }), "core/doctor.argv takes at most 16 arguments"],
+        ["a blank title", "doctor", coreRow({ title: " " }), "core/doctor.title must be one printable line"],
+        ["a size no window class has", "doctor", coreRow({ size: "huge" }), "core/doctor.size must be one of default, wide, tall"],
+        ["an unknown presentation", "doctor", coreRow({ presentation: "loud" }), "core/doctor.presentation must be one of full, plain"],
+        ["an entry that is a string", "doctor", coreRow({ entry: "Doctor" }), "core/doctor.entry must be an object"],
+        ["an entry icon outside the shipped set", "doctor", coreRow({ entry: { label: "L", icon: "no-such-icon", group: "System" } }), "core/doctor.entry.icon must name an icon of the shipped set"],
+    ];
+    for (const [name, tuiName, row, want] of coreRows) {
+        const got = ctx.coreTuiError(tuiName, row);
+        check("coreTuiError: " + name, want === null ? got : got.slice(0, want.length), want === null ? "" : want);
+    }
+    const thrown = (table) => { try { return ctx.coreTuiTable(table) === table ? "accepted" : "replaced"; } catch (e) { return e.message; } };
+    check("coreTuiTable returns a judged table", thrown({ doctor: doctor }), "accepted");
+    check("coreTuiTable throws on a row's first defect", thrown({ doctor: doctor, bad: without("argv") }), "tui: core/bad needs key argv");
+
+    // The shipped table: the passwordless sudo grant, each command a file of
+    // the core's bin/ its owner may run.
+    check("the core lists its passwordless sudo grant", ctx.CORE_TUIS["sudo-grant"], { argv: ["vgsh", "sudo", "grant"], title: "Passwordless sudo", size: "default", presentation: "full", entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" } });
+    check("every core command is an executable file of bin/", Object.keys(ctx.CORE_TUIS).filter(n => {
+        const file = path.join(BIN, ctx.CORE_TUIS[n].argv[0]);
+        const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+        return stat === undefined || !stat.isFile() || (stat.mode & 0o100) === 0;
+    }), []);
 
     // tuiLaunchOutcome: [name, completion, stderr, log line].
     const outcomeRows = [
@@ -233,11 +280,25 @@ const CONTROLS = [
     ["text holds no control character", " && !CONTROL_CHARACTER.test(value);", ";"],
     ["a size is a window class", "row.size !== undefined && TUI_SIZES.indexOf(row.size) === -1", "false"],
     ["a presentation is known", "row.presentation !== undefined && TUI_PRESENTATIONS.indexOf(row.presentation) === -1", "false"],
-    ["an entry is an object", "if (!isPlainObject(row.entry))", "if (false)"],
+    ["an entry is an object", "if (!isPlainObject(entry))\n        return at + \".entry must be an object\";", "if (false)\n        return at + \".entry must be an object\";"],
     ["an entry holds known keys", "if (TUI_ENTRY_KEYS.indexOf(entryKeys[e]) === -1)", "if (false)"],
-    ["an entry has a label", "if (!tuiText(row.entry.label))", "if (false)"],
-    ["an entry icon is shipped", "if (typeof row.entry.icon !== \"string\" || !hasOwn(Lucide.ICONS, row.entry.icon))", "if (false)"],
-    ["an entry has a group", "if (!tuiText(row.entry.group))", "if (false)"],
+    ["an entry has a label", "if (!tuiText(entry.label))", "if (false)"],
+    ["an entry icon is shipped", "if (typeof entry.icon !== \"string\" || !hasOwn(Lucide.ICONS, entry.icon))", "if (false)"],
+    ["an entry has a group", "if (!tuiText(entry.group))", "if (false)"],
+    ["the tui judge runs the window judge", "        var windowError = tuiWindowError(at, row);\n        if (windowError !== \"\")\n            return windowError;\n", ""],
+    ["the tui judge runs the entry judge", "        var entryError = tuiEntryError(at, row.entry);\n        if (entryError !== \"\")\n            return entryError;\n", ""],
+    ["a core TUI name is a name", "if (!NAME_PATTERN.test(name))\n        return \"core TUI name ", "if (false)\n        return \"core TUI name "],
+    ["a core row is an object", "if (!isPlainObject(row))\n        return at + \" must be an object\";", "if (false)\n        return at + \" must be an object\";"],
+    ["a core row holds known keys", "if (CORE_TUI_KEYS.indexOf(keys[k]) === -1)", "if (false)"],
+    ["a core row holds every key", "if (row[CORE_TUI_KEYS[m]] === undefined)", "if (false)"],
+    ["a core command is judged", " || !CORE_TUI_COMMAND.test(row.argv[0]))", ")"],
+    ["a core command is a core file name", "var CORE_TUI_COMMAND = /^vgsh(-[a-z]+)*$/;", "var CORE_TUI_COMMAND = /^[a-z\\/-]+$/;"],
+    ["a core row's arguments are judged", "if (!tuiArgsValid(row.argv.slice(1)))", "if (false)"],
+    ["a core row's window is judged", "    var windowError = tuiWindowError(at, row);\n    if (windowError !== \"\")\n        return windowError;\n    return row.entry", "    return row.entry"],
+    ["a core row's entry is judged", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return \"\";"],
+    ["a core row may have no entry", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return tuiEntryError(at, row.entry);"],
+    ["the core table throws on a defect", "if (error !== \"\")\n            throw new Error(\"tui: \" + error);", "if (false)\n            throw new Error(\"tui: \" + error);"],
+    ["open resolves a core command under the core's bin/", "[coreBin + \"/\" + row.argv[0]].concat(row.argv.slice(1))", "row.argv"],
     ["the manifest judge runs the tui judge", "var badTui = tuiError(raw.tui, capabilities);", "var badTui = \"\";"],
     ["the manifest carries its tui normalized", "manifest.tui = normalTui(raw.tui === undefined ? {} : raw.tui);", "manifest.tui = raw.tui;"],
     ["an absent size is default", "size: row.size === undefined ? \"default\" : row.size", "size: row.size"],

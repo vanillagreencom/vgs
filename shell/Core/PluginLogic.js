@@ -714,11 +714,26 @@ var TUI_LAUNCHER_MISSING = 69;
 // launch answers, `present` once one exited 0, `missing` once one exited
 // TUI_LAUNCHER_MISSING. tuiLauncherAfter moves it.
 var TUI_LAUNCHER_STATES = ["unknown", "present", "missing"];
+// What a row of the core's own TUI table holds, and the command its argv
+// starts with: a file of the core's own bin/ directory, which tuiOpen
+// resolves under the directory the shell hands it, since the shell's PATH
+// need not hold the core's commands.
+var CORE_TUI_KEYS = ["argv", "title", "size", "presentation", "entry"];
+var CORE_TUI_COMMAND = /^vgsh(-[a-z]+)*$/;
 // The core's own floating TUIs, by name, listed in shell.tui.entries as
 // `core/<name>` and opened by that key: each { argv, title, size,
 // presentation, entry }, `argv` the core command the terminal runs and the
-// rest as a normalized manifest `tui` entry has them.
-var CORE_TUIS = {};
+// rest as a normalized manifest `tui` entry has them. coreTuiTable judges
+// the table when this file loads.
+var CORE_TUIS = coreTuiTable({
+    "sudo-grant": {
+        argv: ["vgsh", "sudo", "grant"],
+        title: "Passwordless sudo",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" }
+    }
+});
 
 // One printable line of 1 to TUI_TEXT_MAX characters.
 function tuiText(value) {
@@ -756,29 +771,90 @@ function tuiError(tui, capabilities) {
         }
         if (typeof row.script !== "string" || !TUI_SCRIPT.test(row.script))
             return at + ".script must be a relative path under tui/ inside the plugin, got " + JSON.stringify(row.script);
-        if (!tuiText(row.title))
-            return at + ".title must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
-        if (row.size !== undefined && TUI_SIZES.indexOf(row.size) === -1)
-            return at + ".size must be one of " + TUI_SIZES.join(", ") + ", got " + JSON.stringify(row.size);
-        if (row.presentation !== undefined && TUI_PRESENTATIONS.indexOf(row.presentation) === -1)
-            return at + ".presentation must be one of " + TUI_PRESENTATIONS.join(", ") + ", got " + JSON.stringify(row.presentation);
+        var windowError = tuiWindowError(at, row);
+        if (windowError !== "")
+            return windowError;
         if (row.entry === undefined)
             continue;
-        if (!isPlainObject(row.entry))
-            return at + ".entry must be an object";
-        var entryKeys = Object.keys(row.entry);
-        for (var e = 0; e < entryKeys.length; e++) {
-            if (TUI_ENTRY_KEYS.indexOf(entryKeys[e]) === -1)
-                return at + ".entry has unknown key " + JSON.stringify(entryKeys[e]);
-        }
-        if (!tuiText(row.entry.label))
-            return at + ".entry.label must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
-        if (typeof row.entry.icon !== "string" || !hasOwn(Lucide.ICONS, row.entry.icon))
-            return at + ".entry.icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got " + JSON.stringify(row.entry.icon);
-        if (!tuiText(row.entry.group))
-            return at + ".entry.group must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+        var entryError = tuiEntryError(at, row.entry);
+        if (entryError !== "")
+            return entryError;
     }
     return "";
+}
+
+// The first defect of the window a TUI row at AT opens, or "": `title`
+// passes tuiText, and `size` and `presentation`, when present, come from
+// TUI_SIZES and TUI_PRESENTATIONS.
+function tuiWindowError(at, row) {
+    if (!tuiText(row.title))
+        return at + ".title must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+    if (row.size !== undefined && TUI_SIZES.indexOf(row.size) === -1)
+        return at + ".size must be one of " + TUI_SIZES.join(", ") + ", got " + JSON.stringify(row.size);
+    if (row.presentation !== undefined && TUI_PRESENTATIONS.indexOf(row.presentation) === -1)
+        return at + ".presentation must be one of " + TUI_PRESENTATIONS.join(", ") + ", got " + JSON.stringify(row.presentation);
+    return "";
+}
+
+// The first defect of the `entry` of a TUI row at AT, or "": an object of
+// TUI_ENTRY_KEYS holding a tuiText `label` and `group` and an `icon` of the
+// shipped set.
+function tuiEntryError(at, entry) {
+    if (!isPlainObject(entry))
+        return at + ".entry must be an object";
+    var entryKeys = Object.keys(entry);
+    for (var e = 0; e < entryKeys.length; e++) {
+        if (TUI_ENTRY_KEYS.indexOf(entryKeys[e]) === -1)
+            return at + ".entry has unknown key " + JSON.stringify(entryKeys[e]);
+    }
+    if (!tuiText(entry.label))
+        return at + ".entry.label must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+    if (typeof entry.icon !== "string" || !hasOwn(Lucide.ICONS, entry.icon))
+        return at + ".entry.icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got " + JSON.stringify(entry.icon);
+    if (!tuiText(entry.group))
+        return at + ".entry.group must be one printable line of 1 to " + TUI_TEXT_MAX + " characters";
+    return "";
+}
+
+// The first defect of the core's own TUI NAME, ROW, or "": NAME matches
+// NAME_PATTERN; ROW holds every key of CORE_TUI_KEYS and no other; `argv`
+// is a CORE_TUI_COMMAND followed by arguments tuiArgsValid accepts; the
+// window passes tuiWindowError with a `size` and `presentation` set; and
+// `entry` is null or passes tuiEntryError.
+function coreTuiError(name, row) {
+    var at = "core/" + name;
+    if (!NAME_PATTERN.test(name))
+        return "core TUI name " + JSON.stringify(name) + " must be lower case letters, digits and dashes";
+    if (!isPlainObject(row))
+        return at + " must be an object";
+    var keys = Object.keys(row);
+    for (var k = 0; k < keys.length; k++) {
+        if (CORE_TUI_KEYS.indexOf(keys[k]) === -1)
+            return at + " has unknown key " + JSON.stringify(keys[k]);
+    }
+    for (var m = 0; m < CORE_TUI_KEYS.length; m++) {
+        if (row[CORE_TUI_KEYS[m]] === undefined)
+            return at + " needs key " + CORE_TUI_KEYS[m];
+    }
+    if (!Array.isArray(row.argv) || typeof row.argv[0] !== "string" || !CORE_TUI_COMMAND.test(row.argv[0]))
+        return at + ".argv must start with a command of the core's bin/ directory, got " + JSON.stringify(row.argv);
+    if (!tuiArgsValid(row.argv.slice(1)))
+        return at + ".argv takes at most " + TUI_ARGS_MAX + " arguments of 1 to " + TUI_ARG_MAX + " characters with no control character";
+    var windowError = tuiWindowError(at, row);
+    if (windowError !== "")
+        return windowError;
+    return row.entry === null ? "" : tuiEntryError(at, row.entry);
+}
+
+// TABLE once every row passes coreTuiError. The table is the core's own
+// code, so a defect throws when this file loads.
+function coreTuiTable(table) {
+    Object.keys(table).forEach(function (name) {
+        var error = coreTuiError(name, table[name]);
+        if (error !== "")
+            throw new Error("tui: " + error);
+    });
+    return table;
 }
 
 // A `tui` key tuiError accepted, each entry with every key: `size`
@@ -871,12 +947,13 @@ function tuiRun(manifest, enabled, sourceDir, launcher, name, args) {
 }
 
 // The listed TUI KEY, with no arguments: `core/<name>` from CORE, the
-// CORE_TUIS table, or `<plugin id>/<name>` of a script whose manifest in
+// CORE_TUIS table, its command resolved under CORE_BIN, the core's bin/
+// directory, or `<plugin id>/<name>` of a script whose manifest in
 // MANIFESTS gives it an `entry`, from the plugin's snapshot under
 // SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key nothing
 // lists, `reason=disabled` for a plugin not in ENABLED_IDS, then
 // `reason=launcher-missing` as tuiLauncherRefusal decides for LAUNCHER.
-function tuiOpen(manifests, enabledIds, sourceDir, launcher, core, key) {
+function tuiOpen(manifests, enabledIds, sourceDir, coreBin, launcher, core, key) {
     var slash = typeof key === "string" ? key.indexOf("/") : -1;
     if (slash === -1)
         return tuiRefusal(key, "undeclared");
@@ -888,7 +965,8 @@ function tuiOpen(manifests, enabledIds, sourceDir, launcher, core, key) {
         var coreMissing = tuiLauncherRefusal(launcher, key);
         if (coreMissing !== null)
             return coreMissing;
-        return { ok: true, key: key, argv: tuiArgv(core[name], null, core[name].argv) };
+        var row = core[name];
+        return { ok: true, key: key, argv: tuiArgv(row, null, [coreBin + "/" + row.argv[0]].concat(row.argv.slice(1))) };
     }
     if (!hasOwn(manifests, owner) || !hasOwn(manifests[owner].tui, name) || manifests[owner].tui[name].entry === null)
         return tuiRefusal(key, "undeclared");
