@@ -308,7 +308,7 @@ git_or_refuse() { # KEY GIT_ARGS...
 
 # The shell's manifest judge run offline on one plugin directory; it also
 # checks every entry point exists. Prints its verdict lines.
-manifest_check="$root/scripts/check-manifests.js"
+manifest_check="$root/bin/lib/check-manifests.js"
 
 # Plugin directories whose manifest the judge accepts with ID, one per line.
 owners_of() { # ID

@@ -79,7 +79,7 @@ const os = require("os");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
-const { load } = require(path.join(repo, "scripts", "qml-library.js"));
+const { load } = require(path.join(__dirname, "lib", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
 const pluginLogic = load(path.join(repo, "shell", "Core", "PluginLogic.js"));

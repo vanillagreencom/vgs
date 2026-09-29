@@ -1,7 +1,7 @@
 // Load one of the shell's `.pragma library` JavaScript files under node, so a
 // script makes its decision through the shell's own judge instead of a copy.
 // Every offline reader of shell/Core/PluginLogic.js and shell/Core/Dispatch.js
-// goes through here: scripts/check-manifests.js, bin/vgsh-plugin-judge,
+// goes through here: bin/lib/check-manifests.js, bin/vgsh-plugin-judge,
 // scripts/test-plugin-logic.js and scripts/test-dispatch.js.
 //
 // The pragma is what marks a file as a library Quickshell shares between QML

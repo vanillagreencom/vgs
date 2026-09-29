@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Controls for scripts/qml-library.js, the loader every offline reader of the
+// Controls for bin/lib/qml-library.js, the loader every offline reader of the
 // shell's libraries uses: a library loads with its functions callable, a
 // library's `.import` of another library binds it under its qualifier, a
 // file without the pragma is refused with its key and exit 2, and so are a
@@ -13,7 +13,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const LOADER = path.join(__dirname, "qml-library.js");
+const LOADER = path.join(__dirname, "..", "bin", "lib", "qml-library.js");
 const ENV = { PATH: process.env.PATH, LC_ALL: "C" };
 
 // Load FILE in a child through LOADER and print the JSON of `probe(library)`.

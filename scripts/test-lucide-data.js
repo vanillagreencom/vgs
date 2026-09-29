@@ -8,7 +8,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 const dataFile = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
 const PINNED_VERSION = "1.48.0";

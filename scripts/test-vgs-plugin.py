@@ -2,7 +2,7 @@
 """Controls for .agents/skills/vgs-plugin/scripts/vgs-plugin, the plugin scaffold.
 
 Its template table covers exactly the kinds shell/Core/PluginLogic.js hosts
-(read under node through scripts/qml-library.js, never restated here); `new`
+(read under node through bin/lib/qml-library.js, never restated here); `new`
 then `check` round-trips a plugin of two kinds in a temporary directory, with
 the bar widget's label default and its schema entry landing in the manifest;
 the icon given, `package` by default, lands in the manifest; a quoted
@@ -21,7 +21,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 SCAFFOLD = os.path.join(REPO, ".agents", "skills", "vgs-plugin", "scripts", "vgs-plugin")
-LOADER = os.path.join(HERE, "qml-library.js")
+LOADER = os.path.join(REPO, "bin", "lib", "qml-library.js")
 LOGIC = os.path.join(REPO, "shell", "Core", "PluginLogic.js")
 ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "LC_ALL": "C"}
 

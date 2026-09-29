@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Table-driven checks for shell/Core/PluginLogic.js, loaded under node through
-// scripts/qml-library.js. The controls at the end edit a copy of the judge,
+// bin/lib/qml-library.js. The controls at the end edit a copy of the judge,
 // one rule at a time, and the suite must fail on every copy. Exit 1 when any
 // row or control fails.
 "use strict";
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Controls for scripts/check-manifests.js: one planted defect per rule the
+// Controls for bin/lib/check-manifests.js: one planted defect per rule the
 // script adds beyond PluginLogic.js (duplicate id, missing entry point,
 // unreadable directory, unparseable manifest), one manifest the judge itself
 // refuses so a judge that passed everything would turn a row red, the icon
@@ -14,7 +14,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const CHECK = path.join(__dirname, "check-manifests.js");
+const CHECK = path.join(__dirname, "..", "bin", "lib", "check-manifests.js");
 const ENV = { PATH: process.env.PATH, LC_ALL: "C" };
 const good = { schemaVersion: 1, id: "acme.one", name: "One", version: "1.0.0", author: "acme", description: "d", kinds: ["service"], entryPoints: { service: "Service.qml" } };
 

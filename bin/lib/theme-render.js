@@ -4,7 +4,7 @@
 // package's curated files and hands over their text or bytes.
 //
 // LOGIC is the shell's theme judge, shell/Commons/ThemeLogic.js, and TOKENS
-// its token table, both loaded by the caller through scripts/qml-library.js,
+// its token table, both loaded by the caller through bin/lib/qml-library.js,
 // so a token path and a terminal slot name mean here what they mean to the
 // shell. docs/architecture/theme-targets.md holds the rules.
 //

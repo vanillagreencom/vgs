@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 REPO = os.path.abspath(os.path.join(SKILL, "..", "..", ".."))
 TEMPLATES = os.path.join(SKILL, "templates")
-MANIFEST_CHECK = os.path.join(REPO, "scripts", "check-manifests.js")
+MANIFEST_CHECK = os.path.join(REPO, "bin", "lib", "check-manifests.js")
 BOUNDARY_CHECK = os.path.join(REPO, "scripts", "check-plugin-boundary.py")
 TOKEN_CHECK = os.path.join(REPO, "scripts", "check-design-tokens.py")
 # Every child runs under this environment and nothing inherited beyond it;
@@ -38,7 +38,7 @@ ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "
 
 # kind -> (template file, entry file name). Which kinds exist, and every
 # other manifest rule, is the repository's one judge, shell/Core/PluginLogic.js,
-# run through scripts/check-manifests.js before anything is written; this
+# run through bin/lib/check-manifests.js before anything is written; this
 # table only selects a template, and scripts/test-vgs-plugin.py holds it to
 # PluginLogic.KINDS.
 TEMPLATE_FOR = {

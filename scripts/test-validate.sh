@@ -105,6 +105,44 @@ d="$tmp/prefix"; fresh "$d"; printf 'true\n' >"$d/scripts/test-validate"
 row "a scripts/test-* file whose name prefixes a listed suite is refused" "$d" 1 "" \
   "validate: refused: test-without-row=scripts/test-validate"
 
+# The runtime boundary: one file planted per row, untracked unless the row
+# says committed. A load of scripts/ under bin/ or shell/ is refused with the
+# count and the line; prose, markdown, a scripts directory under another
+# name and a file outside bin/ and shell/ pass.
+runtime_cases=(
+  'path.join component|bin/judge|untracked|1|const l = require(path.join(repo, "scripts", "qml-library.js"));'
+  'committed path.join component|bin/judge|committed|1|const l = require(path.join(repo, "scripts", "qml-library.js"));'
+  'variable expansion|bin/vgsh|untracked|1|check="$root/scripts/check-manifests.js"'
+  'braced expansion|bin/tool|untracked|1|. "${repo}/scripts/lib.sh"'
+  'relative climb|bin/tool|untracked|1|node "$(dirname -- "$0")/../scripts/x.js"'
+  'QML import|shell/Core/X.qml|untracked|1|import "../../scripts"'
+  'python component|shell/plugins/acme.p/helper.py|untracked|1|ROOT = os.path.join(HERE, '"'"'scripts'"'"', "x.py")'
+  'comment naming a test|bin/judge|untracked|0|// scripts/test-plugin-logic.js runs this under node.'
+  'markdown|shell/AGENTS.md|untracked|0|node reads "$root/scripts/qml-library.js".'
+  'scripts under another name|shell/plugins/acme.p/Run.qml|untracked|0|property url run: Qt.resolvedUrl("helpers/scripts/run.sh")'
+  'outside bin and shell|scripts/tool.sh|untracked|0|. "$root/scripts/lib.sh"'
+)
+for spec in "${runtime_cases[@]}"; do
+  IFS='|' read -r name file state want text <<<"$spec"
+  d="$tmp/runtime-${name// /-}"; fresh "$d"
+  mkdir -p -- "$d/$(dirname -- "$file")"
+  printf '%s\n' "$text" >"$d/$file"
+  if [[ $state == committed ]]; then
+    "${base_env[@]}" git -C "$d" add -- "$file"
+    "${base_env[@]}" git -C "$d" commit -q -m planted
+  fi
+  if [[ $want == 1 ]]; then
+    row "a $name under $file is refused" "$d" 1 "" \
+      "validate: refused: runtime-reads-scripts=1" "$file:1:$text"
+  else
+    row "a $name under $file passes" "$d" 0 "" "validate: the runtime loads nothing under scripts/"
+  fi
+done
+
+d="$tmp/runtime-unreadable"; fresh "$d"; mkdir -p "$d/bin"; printf 'x\n' >"$d/bin/locked"; chmod 000 "$d/bin/locked"
+row "a file under bin/ the boundary check cannot read is an error, not a pass" "$d" 1 "" \
+  "validate: unreadable: runtime-reads-scripts status=1"
+
 # Exercise the real manifest rows, including the static smoke fixtures. The
 # checker controls run unchanged; this control proves validate includes the
 # fixture tree, so removing that row makes the planted defect pass wrongly.
@@ -130,10 +168,10 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 
 # Selection is checked through the command the caller will run. Expected
 # plans name consumers independently of the dependency table under test.
-repo_plan=$'whitespace_check\nrows_cover_tests'
+repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
-fixture_plan=$'node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
+fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
 version_plan=$'scripts/test-vgsh-version.sh\n'"$repo_plan"
 cases=(
@@ -186,9 +224,9 @@ printf 'source\n' >"$d/shell/Core/Dispatch.js"
 if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$dispatch_plan" ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
 
 d="$tmp/plan-shared"; fresh "$d"
-printf 'changed\n' >"$d/scripts/qml-library.js"
+mkdir -p "$d/bin/lib"; printf 'changed\n' >"$d/bin/lib/qml-library.js"
 out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")"
-for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node scripts/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
+for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node bin/lib/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
   if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
 done
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi

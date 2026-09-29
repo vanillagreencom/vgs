@@ -192,7 +192,7 @@ resolved_token() {
   node -e '
 const fs = require("fs"), path = require("path");
 const [repo, name, token] = process.argv.slice(1);
-const { load } = require(path.join(repo, "scripts", "qml-library.js"));
+const { load } = require(path.join(repo, "bin", "lib", "qml-library.js"));
 const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
 const { TOKENS } = load(path.join(repo, "shell", "Commons", "Tokens.js"));
 const result = logic.accept(TOKENS, fs.readFileSync(path.join(repo, "themes", name, "theme.json"), "utf8"));

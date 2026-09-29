@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Validate plugin manifests offline through the shell's own judge,
-// shell/Core/PluginLogic.js, loaded through scripts/qml-library.js.
+// shell/Core/PluginLogic.js, loaded through bin/lib/qml-library.js.
 //
 //   check-manifests.js [--base DIR] [--] [PLUGIN_DIR...]
 //
@@ -18,8 +18,8 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const repo = path.join(__dirname, "..");
-const ctx = require("./qml-library.js").load(path.join(repo, "shell", "Core", "PluginLogic.js"));
+const repo = path.join(__dirname, "..", "..");
+const ctx = require(path.join(__dirname, "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 
 function unreadable(where, cause) {
     console.log("check-manifests: unreadable: " + where + ": " + cause);

@@ -4,7 +4,7 @@
 // under PluginLogic.configError, PluginLogic.hyprlandSection, the text
 // shell/Core/HyprlandLayer.js renders, and the writer's sequence,
 // HyprlandLayer.step. Both files load under node through
-// scripts/qml-library.js, as the shell loads them.
+// bin/lib/qml-library.js, as the shell loads them.
 //
 // The controls at the end edit a copy of one file, one rule at a time, and
 // the suite must fail on every copy. Exit 1 when a row or a control fails.
@@ -13,7 +13,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 // A library's objects come from another realm, so they are compared as the
 // JSON they write.

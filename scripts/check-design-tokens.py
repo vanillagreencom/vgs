@@ -5,7 +5,7 @@ Token rule, on every QML and JS file under shell/, the vgs-plugin skill
 templates and the smoke fixtures:
   token-unknown      a `Theme.<path>` names no token, no group and no
                      read-only property or function Theme.qml declares; the
-                     paths come from Tokens.js through scripts/qml-library.js,
+                     paths come from Tokens.js through bin/lib/qml-library.js,
                      never from a second list
   group-unpublished  a top-level group of Tokens.js has no read-only property
                      in Theme.qml, so no file could read its tokens
@@ -36,7 +36,7 @@ with its own table, `look`, instead of Theme, so
                      ThemeLogic.acceptAppearance refuses its TOKENS and LIGHT
                      in dark or in light mode against the shell's defaults;
                      the manifest is read through PluginLogic.validateManifest,
-                     and a manifest it refuses or a file scripts/qml-library.js
+                     and a manifest it refuses or a file bin/lib/qml-library.js
                      refuses (absent, no pragma) is unreadable
   look-unknown       a `look.<path>` names no path of that table
   theme-read         a `Theme.<path>` other than `Theme.appearance`, since
@@ -194,7 +194,7 @@ class Look:
 
     def __init__(self, repo, plugin):
         commons = os.path.join(repo, "shell", "Commons")
-        command = ["node", "-e", APPEARANCE, os.path.join(repo, "scripts", "qml-library.js"), os.path.join(repo, "shell", "Core", "PluginLogic.js"),
+        command = ["node", "-e", APPEARANCE, os.path.join(repo, "bin", "lib", "qml-library.js"), os.path.join(repo, "shell", "Core", "PluginLogic.js"),
                    os.path.join(commons, "ThemeLogic.js"), os.path.join(commons, "Tokens.js"), plugin]
         try:
             run = subprocess.run(command, capture_output=True, text=True, check=False, env=NODE_ENV)
@@ -220,7 +220,7 @@ class Table:
 
     def __init__(self, repo):
         commons = os.path.join(repo, "shell", "Commons")
-        command = ["node", "-e", TOKEN_PATHS, os.path.join(repo, "scripts", "qml-library.js"), os.path.join(commons, "Tokens.js"), os.path.join(commons, "ThemeLogic.js")]
+        command = ["node", "-e", TOKEN_PATHS, os.path.join(repo, "bin", "lib", "qml-library.js"), os.path.join(commons, "Tokens.js"), os.path.join(commons, "ThemeLogic.js")]
         try:
             run = subprocess.run(command, capture_output=True, text=True, check=False, env=NODE_ENV)
         except OSError as exc:

@@ -19,7 +19,7 @@
 
 **Revisit When**: A decision needs QML types (a `ShellScreen`, a `Process`) that node cannot host, or node becomes unavailable on the reference machine.
 
-**Verification**: `scripts/test-plugin-logic.js` and `scripts/check-manifests.js` both load the same file.
+**Verification**: `scripts/test-plugin-logic.js` and `bin/lib/check-manifests.js` both load the same file.
 
 **References**: [D011](D011-native-manifest-no-cross-shell-compatibility.md)
 

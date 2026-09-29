@@ -274,7 +274,7 @@ translucent_check() { # ROOT: the tree whose agent targets are judged
 const fs = require("fs");
 const path = require("path");
 const [root, ...names] = process.argv.slice(2);
-const { load } = require(path.join(root, "scripts", "qml-library.js"));
+const { load } = require(path.join(root, "bin", "lib", "qml-library.js"));
 const logic = load(path.join(root, "shell", "Commons", "ThemeLogic.js"));
 const tokens = load(path.join(root, "shell", "Commons", "Tokens.js")).TOKENS;
 const render = require(path.join(root, "bin", "lib", "theme-render.js"));

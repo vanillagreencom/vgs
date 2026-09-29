@@ -23,7 +23,7 @@ const fs = require("fs");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
-const logic = require(path.join(repo, "scripts", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
+const logic = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 const { refuse, main, readJson, readConfig, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 function manifestOf(dir) {

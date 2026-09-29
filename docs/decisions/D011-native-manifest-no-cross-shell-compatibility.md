@@ -20,6 +20,6 @@
 
 **Revisit When**: A plugin marketplace with a stable, versioned schema exists that v2 would gain more from joining than from owning its own.
 
-**Verification**: `scripts/test-plugin-logic.js` pins the unknown-key refusal and every field rule; `scripts/check-manifests.js` validates every bundled manifest.
+**Verification**: `scripts/test-plugin-logic.js` pins the unknown-key refusal and every field rule; `bin/lib/check-manifests.js` validates every bundled manifest.
 
 **References**: [D009](D009-one-manifest-judge-under-node.md)

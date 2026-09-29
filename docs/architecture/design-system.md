@@ -8,7 +8,7 @@ Every value the shell draws with is a token: one table, one judge, one singleton
 
 Each layer reads only the layer above it.
 
-1. The table and the judge, `shell/Commons/Tokens.js` and `shell/Commons/ThemeLogic.js`: plain JavaScript with no Qt object and no I/O. Node runs the same files through `scripts/qml-library.js`, so a script judges with the shell's own judge.
+1. The table and the judge, `shell/Commons/Tokens.js` and `shell/Commons/ThemeLogic.js`: plain JavaScript with no Qt object and no I/O. Node runs the same files through `bin/lib/qml-library.js`, so a script judges with the shell's own judge.
 2. `Theme` in `qs.Commons`: the accepted values as QML values, one read-only, deep-frozen object of primitives per top-level group, plus `name`, `revision` and `fileState`, the theme file's state as `ThemeSource` last read it (`pending`, `loaded`, `absent`, `refused`, `unreadable`), which a refused edit moves without a new revision. `ThemeSource.qml` owns the theme file and the accept call; `qmldir` marks it internal to the module, so no plugin can name it.
 3. The components in `qs.Ui`: every control extends a `QtQuick.Templates` type or a plain `QtQuick` item and supplies its `background`, `contentItem`, `indicator`, `handle` or `delegate` from tokens. The overlays are Quickshell popup windows; everything else imports no Quickshell module, and the unit runner stands in for the popup window, so all of it runs under `qmltestrunner` with no compositor.
 4. Every QML file that draws, a plugin's included: it composes components, reads `Theme.<group>.<token>` for what they do not cover, and holds no literal style value.
@@ -64,7 +64,7 @@ Every one-line control is `size.control.md` tall, with `control.paddingX` a side
 
 ## Boundaries
 
-- The table and the judge import nothing and take the table as an argument, so `scripts/test-theme-logic.js` runs them under node with no copy. Enforced by the `.pragma library` header `scripts/qml-library.js` requires.
+- The table and the judge import nothing and take the table as an argument, so `scripts/test-theme-logic.js` runs them under node with no copy. Enforced by the `.pragma library` header `bin/lib/qml-library.js` requires.
 - `Theme` publishes frozen objects of primitives through read-only properties. A write to `Theme.color.accent` or to a group from any file changes nothing. Enforced by `Object.freeze` in `Theme.convert` and by publishing no QML colour value, whose channels a frozen object cannot protect; `scripts/smoke/rows/theme.sh` reads every group back frozen and writes a token and a group.
 - Shipped QML (`shell/Ui`, `shell/Hosts`, `shell/plugins`) and the vgs-plugin skill templates hold no literal colour, font, metric, opacity or duration, every radius reads a token, and every `Theme.<path>` anywhere under `shell/`, the templates and the smoke fixtures names a token. Enforced by `scripts/check-design-tokens.py`, whose header names each rule; `scripts/test-check-design-tokens.py` plants one violation per rule. A plugin that owns its look reads it from its own table, under the rules [appearance.md § The style check](appearance.md#the-style-check) adds. `shell/Commons` and `shell/Core` draw nothing and a fixture's fixed geometry is what a placement row measures, so those trees are under the token rule alone.
 - `vgs-plugin check` runs the same check on a third-party plugin: an unknown token fails it and a literal is a notice, since an author may choose one.

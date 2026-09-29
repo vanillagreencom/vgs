@@ -1,6 +1,6 @@
 # Validation
 
-Covers: scripts/validate, scripts/qml-smoke.sh, scripts/smoke/, scripts/qml-library.js, scripts/test-qml-library.js, scripts/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-plugin-logic.js, scripts/test-vgs-plugin.py, scripts/test-validate.sh, scripts/test-smoke-verdict.sh, .github/workflows/**
+Covers: scripts/validate, scripts/qml-smoke.sh, scripts/smoke/, bin/lib/qml-library.js, scripts/test-qml-library.js, bin/lib/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-plugin-logic.js, scripts/test-vgs-plugin.py, scripts/test-validate.sh, scripts/test-smoke-verdict.sh, .github/workflows/**
 
 How the shell's changes are checked: the check selector, the nested sandbox and its harness, and the smoke's verdicts. The process rules the sandbox obeys are in [runtime.md § Process](runtime.md#process).
 

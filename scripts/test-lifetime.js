@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 const file = path.join(__dirname, "..", "shell", "Core", "Lifetime.js");
 
 function verify(library) {

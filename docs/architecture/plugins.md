@@ -6,7 +6,7 @@ The plugin contract: what a plugin is, what the core builds for it, what it may 
 
 ## Manifest
 
-A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `scripts/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text, the `hyprland` key's in `scripts/test-hyprland-layer.js`. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
+A plugin is a directory with `manifest.json` at its root. `shell/Core/PluginLogic.js` is the one judge of a manifest; `bin/lib/check-manifests.js` and `vgsh plugin validate` run that judge offline, and `scripts/test-plugin-logic.js` pins each refusal by its text, the `hyprland` key's in `scripts/test-hyprland-layer.js`. A key not in this table refuses the manifest, so a misspelt key fails loudly instead of being carried and ignored.
 
 | Field | Required | Meaning |
 |---|---|---|

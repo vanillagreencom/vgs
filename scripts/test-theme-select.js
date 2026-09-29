@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 const repo = path.join(__dirname, "..");
 const lib = path.join(repo, "bin", "lib");

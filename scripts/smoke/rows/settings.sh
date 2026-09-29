@@ -69,7 +69,7 @@ expect_poll "the compositor ends on the later of two queued requests" 1 active_w
 expect "two workspace requests in the other order are accepted" "ok,ok" probe batch "focusWorkspace 1;focusWorkspace 2"
 expect_poll "the compositor ends on the later request in that order too" 2 active_ws
 reset_workspace
-if queue_limit="$(node -e 'process.stdout.write(String(require("./scripts/qml-library.js").load("shell/Core/Dispatch.js").QUEUE_LIMIT))')"; then
+if queue_limit="$(node -e 'process.stdout.write(String(require("./bin/lib/qml-library.js").load("shell/Core/Dispatch.js").QUEUE_LIMIT))')"; then
   expected_errors+=('compositor: refused: dispatch-queue=full ')
   overflow() { probe flood "$((queue_limit + 2)) focusWorkspace 1" | sed 's/ request=.*//'; }
   expect "the request past the queue bound is refused" "refused: dispatch-queue=full limit=$queue_limit" overflow

@@ -1,6 +1,6 @@
 # scripts/
 
-Validation and measurement scripts. A script here reads the repository and the nested sandbox.
+Validation and measurement scripts. A script here reads the repository and the nested sandbox. Nothing under `bin/` or `shell/` may load a file here, since an install ships without `scripts/`: a helper the runtime needs goes in `bin/lib/`, and the `runtime_reads_no_scripts` check in `validate` refuses the load.
 
 - A check is a row in `scripts/validate` with its must-fail control beside it, named `test-<subject>` for the script it exercises. `qml-smoke.sh` is a runner and has none; the checks `validate` makes itself have theirs in `test-validate.sh`.
 - What the sandbox needs, how it exits and where the shell's log is: `docs/architecture/validation.md` and `docs/architecture/runtime.md` § Process.

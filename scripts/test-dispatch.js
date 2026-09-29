@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Table-driven checks for shell/Core/Dispatch.js, loaded under node through
-// scripts/qml-library.js: every dispatcher in both syntaxes, and one refusal
+// bin/lib/qml-library.js: every dispatcher in both syntaxes, and one refusal
 // per argument class. The Lua forms are the ones scripts/qml-smoke.sh sends
 // to a nested Hyprland; the classic forms are pinned here only.
 "use strict";
 const path = require("path");
 
-const ctx = require("./qml-library.js").load(path.join(__dirname, "..", "shell", "Core", "Dispatch.js"));
+const ctx = require("../bin/lib/qml-library.js").load(path.join(__dirname, "..", "shell", "Core", "Dispatch.js"));
 
 let failures = 0;
 function check(name, got, want) {
