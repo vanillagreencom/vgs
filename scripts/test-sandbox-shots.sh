@@ -4,7 +4,9 @@
 # sockets, and a stub grim on PATH writes the image each case needs. Each
 # case pins the exit status and the first line on stderr. The controls at
 # the end plant one defect per guard in a copy of the file and require the
-# case that guard owns to go red.
+# case that guard owns to go red. The scene cases drive
+# scripts/sandbox-shots.sh itself up to its harness, in a scratch git
+# repository.
 #
 # Exit 0 when every case and control holds, 1 otherwise.
 set -euo pipefail
@@ -149,6 +151,73 @@ for (( i = 0; i < ${#controls[@]}; i += 4 )); do
   if [[ ${#row[@]} -eq 0 ]]; then fail "control: $label names no case: $target"; continue; fi
   if run_case "$mutant" "${row[@]}" >/dev/null; then fail "control: $label left '$target' green"; else ok "control: $label"; fi
 done
+
+# The scene choice of scripts/sandbox-shots.sh, before any sandbox starts:
+# a tree ships either the Settings plugin or the bar's manager built-in, and
+# a scene the tree does not ship is refused with exit 2. A scratch git
+# repository holds the script, a link to the smoke directory, a revision
+# with the bar's manager and a later one with vgs.settings, so --rev reads
+# an older tree. A scene the tree ships passes the choice and reaches the
+# harness, which, with no Wayland socket in the environment, exits 77.
+shots_repo="$tmp/shots-repo"
+mkdir -p "$shots_repo/scripts" "$shots_repo/shell/plugins/vgs.bar" "$shots_repo/bin" "$shots_repo/config" "$shots_repo/themes" "$shots_repo/tmp"
+ln -s "$repo/scripts/smoke" "$shots_repo/scripts/smoke"
+: >"$shots_repo/shell/plugins/vgs.bar/Manager.qml"; : >"$shots_repo/bin/vgsh"; : >"$shots_repo/config/shell.json"; : >"$shots_repo/themes/.keep"
+git_quiet() { git -C "$shots_repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@" >/dev/null; }
+git_quiet init -q
+git_quiet add shell bin config themes
+git_quiet commit -q -m manager
+old_rev="$(git -C "$shots_repo" rev-parse HEAD)"
+mkdir -p "$shots_repo/shell/plugins/vgs.settings"
+: >"$shots_repo/shell/plugins/vgs.settings/manifest.json"
+git -C "$shots_repo" rm -q shell/plugins/vgs.bar/Manager.qml
+git_quiet add shell
+git_quiet commit -q -m settings
+# scene_case SCRIPT LABEL STATUS LINE ARG...: SCRIPT run from the scratch
+# repository gives STATUS and LINE on stderr, or with STATUS 77 a stdout
+# line starting LINE.
+scene_case() {
+  local script="$1" label="$2" want_status="$3" want_line="$4" status=0 out err
+  shift 4
+  cp -- "$script" "$shots_repo/scripts/sandbox-shots.sh"
+  out="$(env -i PATH="$tmp/bin:$PATH" HOME="$tmp" bash "$shots_repo/scripts/sandbox-shots.sh" --out "$shots_repo/tmp/shots-$RANDOM$RANDOM" "$@" 2>"$tmp/scene.err")" || status=$?
+  err="$(head -n 1 "$tmp/scene.err")"
+  if [[ $status -eq $want_status && ( $err == "$want_line" || ( $want_status -eq 77 && $out == "$want_line"* ) ) ]]; then return 0; fi
+  echo "$label: exit=$status stderr=$err stdout=$(head -n 1 <<<"$out")"
+  return 1
+}
+scene_cases=(
+  "a checkout with the Settings plugin refuses the manager scene" 2 "sandbox-shots: refused: scene=manager tree=checkout" manager
+  "a revision before the Settings plugin refuses the settings scene" 2 "sandbox-shots: refused: scene=settings tree=$old_rev" --rev "$old_rev" settings
+  "a revision before the Settings plugin takes the manager scene" 77 "qml-smoke: status=not-measured" --rev "$old_rev" manager
+  "a checkout with the Settings plugin takes the settings scene" 77 "qml-smoke: status=not-measured" settings
+)
+# Each case is label, status, line, then its arguments up to the next case,
+# counted by the arguments each row above carries.
+scene_arity=(1 3 3 1)
+at=0
+for n in "${!scene_arity[@]}"; do
+  label="${scene_cases[at]}"; status="${scene_cases[at + 1]}"; line="${scene_cases[at + 2]}"
+  args=("${scene_cases[@]:at + 3:${scene_arity[n]}}")
+  at=$((at + 3 + ${scene_arity[n]}))
+  if scene_case "$repo/scripts/sandbox-shots.sh" "$label" "$status" "$line" "${args[@]}"; then ok "$label"; else fail "$label"; fi
+done
+# Control: a copy that never refuses an unshipped scene sends the manager
+# scene of a Settings checkout on to the harness.
+shots_mutant="$tmp/sandbox-shots-mutant.sh"
+if python3 - "$repo/scripts/sandbox-shots.sh" "$shots_mutant" <<'PY'
+import sys
+src, dst = sys.argv[1:]
+text = open(src).read()
+needle = 'if [[ ($scene == settings || $scene == manager) && $scene != "$manager_scene" ]]; then'
+assert text.count(needle) == 1, "the scene refusal must match once"
+open(dst, "w").write(text.replace(needle, "if false; then"))
+PY
+then
+  if scene_case "$shots_mutant" "control" 2 "sandbox-shots: refused: scene=manager tree=checkout" manager >/dev/null; then fail "control: an unshipped scene is not refused left the refusal case green"; else ok "control: an unshipped scene is not refused"; fi
+else
+  fail "control: the scene refusal could not be planted"
+fi
 
 if [[ $failures -gt 0 ]]; then
   echo "test-sandbox-shots: failed=$failures"

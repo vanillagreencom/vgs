@@ -11,12 +11,18 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, settings, launcher or notifications; the default is all
-# four, or gallery and settings with --rev. --modes is a comma list of dark
+# SCENE is gallery, settings, manager, launcher or notifications. The
+# default is gallery, the plugin manager's scene, the launcher and the
+# notifications, or gallery and the manager's scene with --rev; the
+# manager's scene is `settings` for a tree that ships vgs.settings and
+# `manager`, the bar's manager panel, for one that ships the bar's manager
+# built-in. A scene the tree does not ship is refused as
+# `sandbox-shots: refused: scene=<scene> tree=<rev or checkout>`. --modes is a comma list of dark
 # and light, dark by default with --rev and both otherwise: dark is the
 # defaults (theme `vgs`), light is this checkout's themes/light package.
 # --rev REV runs that revision's shell, bin, config and themes (git archive)
-# under this checkout's harness and probe, for a before shot.
+# under this checkout's harness and probe, for a before shot; the plugin
+# fixtures a scene installs are that revision's, which its judge accepts.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
 # tmp/sandbox-shots/<UTC time>[-REV]. shots.tsv beside them lists each shot
@@ -43,13 +49,10 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|launcher|notifications) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
-if [[ ${#scenes[@]} -eq 0 ]]; then
-  if [[ -n $rev ]]; then scenes=(gallery settings); else scenes=(gallery settings launcher notifications); fi
-fi
 [[ -n $modes ]] || { if [[ -n $rev ]]; then modes=dark; else modes=dark,light; fi; }
 IFS=, read -r -a mode_list <<<"$modes"
 for mode in "${mode_list[@]}"; do
@@ -82,9 +85,35 @@ if [[ -n $rev ]]; then
   fi
 fi
 
+# Which plugin manager the tree ships picks the manager's scene.
+tree="${source_tree:-$checkout}"
+manager_scene=""
+if [[ -f $tree/shell/plugins/vgs.settings/manifest.json ]]; then manager_scene=settings
+elif [[ -f $tree/shell/plugins/vgs.bar/Manager.qml ]]; then manager_scene=manager
+fi
+if [[ ${#scenes[@]} -eq 0 ]]; then
+  scenes=(gallery)
+  [[ -z $manager_scene ]] || scenes+=("$manager_scene")
+  [[ -n $rev ]] || scenes+=(launcher notifications)
+fi
+for scene in "${scenes[@]}"; do
+  if [[ ($scene == settings || $scene == manager) && $scene != "$manager_scene" ]]; then
+    printf 'sandbox-shots: refused: scene=%s tree=%s\n' "$scene" "${rev:-checkout}" >&2
+    exit 2
+  fi
+done
+
 source "$checkout/scripts/smoke/harness.sh"
 # The harness copied the tree into the sandbox; the export is no longer read.
 [[ -z $source_tree ]] || rm -rf -- "$source_tree"
+# The plugin fixtures a scene installs: this checkout's, or with --rev that
+# revision's, since its manifest judge is the one that reads them.
+fixtures="$checkout/scripts/smoke/fixtures/plugins"
+if [[ -n $rev ]]; then
+  fixtures="$sandbox/rev-fixtures/scripts/smoke/fixtures/plugins"
+  mkdir -p -- "$sandbox/rev-fixtures"
+  git -C "$checkout" archive "$rev" scripts/smoke/fixtures/plugins | tar -x -C "$sandbox/rev-fixtures" || fail "the fixtures of $rev could not be exported"
+fi
 
 SHOT_RUNTIME_DIR="$rt_dir"
 if ! SHOT_SOCKET="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")"; then
@@ -227,6 +256,20 @@ scene_settings() { # MODE
   expect_poll "the monitor has its width back" "$mon_w" first_width
 }
 
+# The bar's manager panel of a tree before the Settings plugin: opened from
+# its button, then with the pointer on its first row.
+manager_listed() { ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 0)'; }
+scene_manager() { # MODE
+  local first
+  expect "the manager panel opens" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+  expect_poll "the manager panel lists its plugins" True manager_listed
+  take "manager-$1"
+  first="$(ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || first=""
+  hover_on "the pointer rests on the manager's first row" panel vgs.bar ListItem "$first" && take "manager-$1-hover"
+  park_pointer
+  expect "the manager panel closes" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+}
+
 launcher_rows() { ipc smoke launcherRows overlay vgs.launcher; }
 launcher_listed() { launcher_rows | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 2)'; }
 scene_launcher() { # MODE
@@ -340,7 +383,7 @@ for scene in "${scenes[@]}"; do
       # scrolls.
       for fixture in acme.probe acme.bare acme.idle acme.locker; do
         mkdir -p "$home/.config/vgs/plugins/$fixture"
-        cp -R -- "$checkout/scripts/smoke/fixtures/plugins/$fixture/." "$home/.config/vgs/plugins/$fixture/"
+        cp -R -- "$fixtures/$fixture/." "$home/.config/vgs/plugins/$fixture/"
       done
       expect "the fixtures are scanned" ok ipc shell rescanPlugins
       expect_poll "the probe fixture is listed" True plugin_known acme.probe
