@@ -134,16 +134,19 @@ var TOKENS = {
         squashWide: share(0.16),
         squashFlat: share(0.14),
         lift: length(2),
-        // The capsule's text inset: a fixed part and a share of its height.
-        inset: length(12),
-        insetShare: share(0.18),
-        padY: length(10),
-        padYSingle: length(7),
+        // The space around the card's content, the same above, below and at
+        // both ends at every height. The card grows with its text up to
+        // maxHeight and no further: the body then shows the whole lines
+        // that fit. At maxHeight the capsule's ends are circles of radius
+        // maxHeight / 2, and a content corner `pad` in from both edges stays
+        // inside them while pad >= (1 - 1/sqrt(2)) / 2 * maxHeight, 13.8
+        // for 94; scripts/test-notifications-logic.js holds the table to it.
+        pad: length(14),
+        maxHeight: length(94),
         gapIcon: length(12),
         icon: length(40),
         lineGap: length(2),
         summaryLines: number(2, 1, 8),
-        bodyLines: number(3, 1, 16),
         panelEnterScale: share(0.97),
         fadeScale: share(0.96),
         exitScale: share(0.3)
@@ -190,8 +193,6 @@ var TOKENS = {
     // The hover actions: pills at the right end, over a fade of the glass so
     // the text under them does not collide with them.
     tray: {
-        inset: length(10),
-        insetShare: share(0.7),
         spacing: length(6),
         slide: length(8),
         fadeOverhang: length(6),

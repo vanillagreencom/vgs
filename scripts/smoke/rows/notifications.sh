@@ -242,6 +242,42 @@ notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slac
 expect_poll "a workspace with no cached icon keeps its name" '"[globex] in eng"' card_value "[globex] in eng" title
 expect "and draws no icon" false card_value "[globex] in eng" showsBadge
 
+# The space around a card's text, from the card's rectangle and its visible
+# text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card
+# whose summary is SUMMARY on the first screen.
+text_space() {
+  local cards texts
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary)" || return
+  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible)" || return
+  python3 -c 'import json,sys
+cards, texts = json.loads(sys.argv[2]), json.loads(sys.argv[3])
+card = next(((s, r) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
+if card is None: print("absent"); sys.exit()
+screen, (x, y, w, h) = card
+lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and x <= r[0] < x + w and y <= r[1] < y + h]
+top, bottom, left = min(r[1] for r in lines), max(r[1] + r[3] for r in lines), min(r[0] for r in lines)
+print("top=%d bottom=%d side=%d height=%d" % (top - y, y + h - bottom, left - x, h))' "$1" "$cards" "$texts"
+}
+# Even: the space above and below the text within a pixel, and the pad
+# (Appearance card.pad, 14) at the top and at the start; `clamped`, whether the
+# card's height sits between card.maxHeight, 94, and one body line under it.
+even_space() { # SUMMARY [clamped]
+  text_space "$1" | python3 -c 'import re,sys
+t = sys.stdin.read().strip()
+m = re.fullmatch(r"top=(\d+) bottom=(\d+) side=(\d+) height=(\d+)", t)
+if not m: print(t); sys.exit()
+top, bottom, side, height = map(int, m.groups())
+out = "even=%s top=%d side=%d" % (abs(top - bottom) <= 1, top, side)
+if sys.argv[1] == "clamped": out += " clamped=%s" % (80 <= height <= 94)
+print(out)' "${2:-}"
+}
+notify smoke-app 0 "Even one" "" '[]' '{}' 0 >/dev/null
+notify smoke-app 0 "Even two" "One line of body text" '[]' '{}' 0 >/dev/null
+notify smoke-app 0 "Even max" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}' 0 >/dev/null
+expect_poll "a one-line card has the same space above and below its text as at its start" "even=True top=14 side=14" even_space "Even one"
+expect_poll "a two-line card keeps its text centred with the same space" "even=True top=14 side=14" even_space "Even two"
+expect_poll "a card past its most lines stops at its maximum height, text centred, the same space kept" "even=True top=14 side=14 clamped=True" even_space "Even max" clamped
+
 # A full stack lets the oldest non-critical toast go for a new one.
 on_screen() { note_status onScreen; }
 expect "clearing the screen before the flood is allowed" ok notes dismiss-all

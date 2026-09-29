@@ -38,13 +38,14 @@ Item {
     signal cardClicked()
 
     readonly property real fullWidth: look.card.width
-    readonly property real fullHeight: content.implicitHeight + 2 * padY
-    readonly property real inset: look.card.inset + fullHeight * look.card.insetShare
+    // The content with `pad` all round. The content never outgrows
+    // maxHeight less that pad: the body shows only the lines that fit.
+    readonly property real fullHeight: content.implicitHeight + 2 * pad
+    readonly property real pad: look.card.pad
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
     readonly property bool singleLine: sanitizedBody.length === 0
     readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
-    readonly property real padY: singleLine ? look.card.padYSingle : look.card.padY
     readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
     // NotificationLogic.enrich's reading of this sender, or null.
     readonly property var enrichment: Logic.enrich(app, desktopEntry, summary, body)
@@ -85,7 +86,7 @@ Item {
         id: content
         anchors.verticalCenter: parent.verticalCenter
         anchors.horizontalCenter: parent.horizontalCenter
-        width: card.fullWidth - 2 * Math.max(card.look.card.inset, card.inset)
+        width: card.fullWidth - 2 * card.pad
         opacity: card.contentOpacity
         spacing: card.showsSlot ? card.look.card.gapIcon : 0
 
@@ -119,11 +120,13 @@ Item {
         }
 
         ColumnLayout {
+            id: textBlock
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
             spacing: card.look.card.lineGap
 
             RowLayout {
+                id: summaryRow
                 Layout.fillWidth: true
                 visible: card.summary.length > 0
                 spacing: card.showsBadge ? card.look.badge.gap : 0
@@ -180,6 +183,10 @@ Item {
             }
 
             Text {
+                id: bodyText
+                // The height left for the body under maxHeight, and so the
+                // whole lines it shows; the last one elides.
+                readonly property real room: card.look.card.maxHeight - 2 * card.pad - Layout.topMargin - (summaryRow.visible ? summaryRow.implicitHeight + textBlock.spacing : 0)
                 Layout.fillWidth: true
                 Layout.topMargin: card.look.card.lineGap
                 visible: !card.singleLine
@@ -193,7 +200,12 @@ Item {
                 font.pixelSize: card.look.text.subtitle.size
                 wrapMode: Text.WordWrap
                 elide: Text.ElideRight
-                maximumLineCount: card.look.card.bodyLines
+                maximumLineCount: Math.max(1, Math.floor(room / bodyMetrics.height))
+            }
+
+            FontMetrics {
+                id: bodyMetrics
+                font: bodyText.font
             }
         }
     }
@@ -220,11 +232,12 @@ Item {
         }
     }
 
-    // The hover actions float over the right end of the text.
+    // The hover actions float over the right end of the text, the card's pad
+    // in from its end as the text is from its start.
     Item {
         id: tray
         anchors.right: parent.right
-        anchors.rightMargin: Math.max(card.look.tray.inset, card.inset * card.look.tray.insetShare)
+        anchors.rightMargin: card.pad
         anchors.verticalCenter: parent.verticalCenter
         width: actionRow.width
         height: actionRow.height

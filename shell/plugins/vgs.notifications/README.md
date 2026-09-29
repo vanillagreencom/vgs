@@ -59,6 +59,8 @@ The file is written whole at the end of each change. After a restart or a rebuil
 
 The glass, the edge light, the pills and the switch are the plugin's own files, drawn from its own table: a plugin imports no other plugin's files.
 
+A card's content has the same space, `card.pad`, above, below and at both ends, on a toast and in a panel alike. The card grows with its text up to `card.maxHeight`. A longer body shows the whole lines that fit and elides the last one, so the space stays the same.
+
 The stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
 
 ```lua

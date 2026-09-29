@@ -244,6 +244,20 @@ scene_notifications() { # MODE
   done
   expect "the history clears" ok notes clear-history
   expect_poll "no toast is left" 0 on_screen
+  # Heights: a one-line card, a two-line card and one past its most lines,
+  # which stops at the look's maximum height.
+  ids=()
+  ids+=("$(notify smoke-heights "Screenshot saved" "" '[]' '{}')")
+  ids+=("$(notify smoke-heights "Download complete" "report.pdf is in Downloads" '[]' '{}')")
+  ids+=("$(notify smoke-heights "Release notes" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}')")
+  expect_poll "three height toasts are on screen" 3 on_screen
+  take "notifications-$1-heights"
+  for id in "${ids[@]}"; do
+    "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications \
+      --method org.freedesktop.Notifications.CloseNotification "$id" >/dev/null || fail "closing notification $id failed"
+  done
+  expect "the history clears" ok notes clear-history
+  expect_poll "no toast is left" 0 on_screen
 }
 
 for scene in "${scenes[@]}"; do
