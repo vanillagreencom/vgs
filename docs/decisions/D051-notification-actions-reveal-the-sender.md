@@ -1,4 +1,4 @@
-# D050: Every notification action reveals the sender's window through one core helper, and an expired toast stays deliverable
+# D051: Every notification action reveals the sender's window through one core helper, and an expired toast stays deliverable
 
 [← Decision Index](INDEX.md)
 
