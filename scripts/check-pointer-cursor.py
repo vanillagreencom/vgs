@@ -14,15 +14,18 @@ through `PointerCursor` from qs.Ui, the one owner of the hand:
                    `// pointer-cursor-exempt: <reason>` in the comment block
                    directly above the element exempts it; a marker with no
                    reason exempts nothing.
-  cursor-literal   `Qt.PointingHandCursor` in any file but
-                   Ui/foundation/PointerCursor.qml under a checked tree.
+  cursor-literal   `Qt.PointingHandCursor` in any file but the
+                   repository's own shell/Ui/foundation/PointerCursor.qml,
+                   matched by resolved path, so a file of that name under
+                   any other tree, a plugin's included, is no owner.
 Both rules read code with comments blanked, through scripts/qml_source.py;
 the structure is read with string contents blanked too, so a brace inside a
 string opens no block.
 
 Usage: check-pointer-cursor.py [DIR...]
 With no directory, the repository's shell/ and the vgs-plugin skill
-templates, which a plugin author copies.
+templates, which a plugin author copies. `vgs-plugin check` passes one
+plugin directory.
 
 Every finding is one line: `<rule> <file>:<line> <detail>`. The pass is
 `check-pointer-cursor: ok files=<n> clickable=<n> exempt=<n>`. Exit 0 when
@@ -41,7 +44,7 @@ from qml_source import Unreadable, blank_comments, source_texts
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DEFAULT_ROOTS = (os.path.join(REPO, "shell"), os.path.join(REPO, ".agents", "skills", "vgs-plugin", "templates"))
-OWNER = os.path.join("Ui", "foundation", "PointerCursor.qml")
+OWNER = os.path.realpath(os.path.join(REPO, "shell", "Ui", "foundation", "PointerCursor.qml"))
 COMPONENT = "PointerCursor"
 
 # Qt Quick Templates types that take a click on their own item: AbstractButton
@@ -135,7 +138,7 @@ def check_tree(root, findings, counts):
     files = 0
     for path, text in source_texts(root):
         code = blank_comments(text)
-        if os.path.relpath(path, root) != OWNER:
+        if os.path.realpath(path) != OWNER:
             for number, code_line in enumerate(code.split("\n"), 1):
                 if LITERAL.search(code_line):
                     findings.append(f"cursor-literal {path}:{number} {code_line.strip()}")

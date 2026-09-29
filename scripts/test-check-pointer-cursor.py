@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One planted violation per rule of check-pointer-cursor.py, the elements it
 must pass, the exemption marker's reach, the parser's edges, the unreadable
-trees, and the repository's own trees against a coverage floor.
-Each row builds a throwaway tree holding the owner component and one file,
+trees, a file at the owner's tree-relative path in another tree, and the
+repository's own trees against a coverage floor, which also holds the one
+real owner exempt. Each row builds a throwaway tree holding one plugin file,
 runs the check on it and asserts the rule key, the line and the exit status."""
 import os
 import subprocess
@@ -12,6 +13,7 @@ import tempfile
 CHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pointer-cursor.py")
 ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
+# The owner's text, which only the repository's own copy may hold.
 OWNER = "import QtQuick\nHoverHandler {\n    cursorShape: Qt.PointingHandCursor\n}\n"
 HEAD = "import QtQuick\nimport QtQuick.Templates as T\nimport qs.Ui\n"
 # Every element that takes a click, each with its cursor, and the elements
@@ -74,10 +76,7 @@ JS_ROWS = [
 
 def build(tmp, qml, js=None):
     root = os.path.join(tmp, "shell")
-    os.makedirs(os.path.join(root, "Ui", "foundation"))
     os.makedirs(os.path.join(root, "plugins", "acme.widget"))
-    with open(os.path.join(root, "Ui", "foundation", "PointerCursor.qml"), "w", encoding="utf-8") as fh:
-        fh.write(OWNER)
     with open(os.path.join(root, "plugins", "acme.widget", "Widget.qml"), "w", encoding="utf-8") as fh:
         fh.write(qml)
     if js is not None:
@@ -122,11 +121,27 @@ def run_unreadable_rows():
     return results
 
 
+def run_impostor_owner_row():
+    """A plugin tree may hold its own Ui/foundation/PointerCursor.qml; only
+    the repository's file of that path names the hand unflagged."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "acme.widget")
+        impostor = os.path.join(root, "Ui", "foundation", "PointerCursor.qml")
+        os.makedirs(os.path.dirname(impostor))
+        with open(impostor, "w", encoding="utf-8") as fh:
+            fh.write(OWNER)
+        proc = subprocess.run([sys.executable, CHECK, root], capture_output=True, text=True, check=False, env=ENV)
+        findings = [l for l in proc.stdout.splitlines() if not l.startswith("check-pointer-cursor:")]
+        good = proc.returncode == 1 and len(findings) == 1 and findings[0].startswith(f"cursor-literal {impostor}:3 ")
+        return report("the owner's path under another tree names the hand as a finding", good, proc)
+
+
 def run_repository_floor():
     """The repository's own trees pass and the parser found what they hold:
     142 QML files and 31 elements that take a click when this row was
     written. A count under the floor names the extractor as broken, not the
-    tree as sparse."""
+    tree as sparse. shell/Ui/foundation/PointerCursor.qml names the hand, so
+    the pass also holds the one real owner exempt."""
     proc = subprocess.run([sys.executable, CHECK], capture_output=True, text=True, check=False, env=ENV)
     fields = dict(part.split("=", 1) for part in proc.stdout.strip().split()[2:] if "=" in part) if proc.returncode == 0 else {}
     good = proc.returncode == 0 and int(fields.get("files", 0)) >= 100 and int(fields.get("clickable", 0)) >= 25
@@ -139,6 +154,7 @@ def main():
     results = [run_row(*row) for row in ROWS]
     results += [run_row(name, CLEAN, want, line, js) for name, js, want, line in JS_ROWS]
     results += run_unreadable_rows()
+    results.append(run_impostor_owner_row())
     results.append(run_repository_floor())
     if all(results):
         print("test-check-pointer-cursor: ok")
