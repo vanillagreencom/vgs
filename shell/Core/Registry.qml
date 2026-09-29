@@ -21,6 +21,7 @@ Singleton {
     // Where the scanner publishes each plugin's source revision for this
     // shell process; the runner removes the roots of earlier shells.
     readonly property string sourceDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgsh-sources-" + Quickshell.processId
+    readonly property string coreRequirementsFile: Quickshell.shellDir + "/../config/requirements.json"
 
     // id -> validated manifest, a prototype-free object replaced whole on
     // every scan whose result differs, so bindings re-evaluate once. Each
@@ -31,6 +32,18 @@ Singleton {
     // finds a different set, apart from the manifests, so a command
     // installed or removed rebuilds nothing.
     property var missingCommands: Object.create(null)
+    // The core's own requirements, config/requirements.json as
+    // PluginLogic.normalRequirements returns it, and the commands of it the
+    // last scan did not find on PATH; each replaced only when a scan reads
+    // a different one. An unreadable or refused file leaves both empty and
+    // is one of `errors`.
+    property var coreRequirements: []
+    property var coreMissing: []
+    // Whose requirements a notice can list, by owner id: every plugin's
+    // manifest and the core's owner, PluginLogic.coreOwner; and each
+    // owner's missing commands.
+    readonly property var requirementOwners: Object.assign(Object.create(null), manifests, { [Logic.CORE_OWNER]: Logic.coreOwner(coreRequirements) })
+    readonly property var ownerMissing: Object.assign(Object.create(null), missingCommands, { [Logic.CORE_OWNER]: coreMissing })
     // { dir, error } for every directory whose manifest was refused.
     property var errors: []
     // ids seen in a lower-precedence directory after a higher one claimed them.
@@ -62,7 +75,7 @@ Singleton {
     // instance, which the build records know, and prunes the rest.
     function rescan() {
         if (scanner.running) { rescanPending = true; return "busy"; }
-        const command = [Quickshell.shellDir + "/../bin/vgsh-scan", "--snapshot-dir", sourceDir];
+        const command = [Quickshell.shellDir + "/../bin/vgsh-scan", "--core", coreRequirementsFile, "--snapshot-dir", sourceDir];
         const keep = Object.create(null);
         for (const id of Object.keys(manifests)) keep[manifests[id].__revision] = true;
         for (const revision of Plugins.liveRevisions()) keep[revision] = true;
@@ -71,6 +84,21 @@ Singleton {
         completion = null;
         scanner.running = true;
         return "ok";
+    }
+
+    // The scan's core element: { requirements, error }, the list judged as a
+    // manifest's `requirements` is and normalized, or the reason it is not.
+    function readCore(entry) {
+        let list;
+        try {
+            list = JSON.parse(entry.text);
+        } catch (e) {
+            return { requirements: [], error: "core requirements do not parse: " + e.message };
+        }
+        const error = Logic.requirementsError(list);
+        if (error !== "") return { requirements: [], error: "core requirements: " + error };
+        if (!Array.isArray(entry.missing)) return { requirements: [], error: "core requirements carry no missing list" };
+        return { requirements: Logic.normalRequirements(list), error: "" };
     }
 
     function applyScan(text) {
@@ -86,8 +114,17 @@ Singleton {
         const nextMissing = Object.create(null);
         const errs = [];
         const cols = [];
+        let nextCore = [];
+        let nextCoreMissing = [];
         for (const entry of entries) {
             if (entry.error !== undefined) { errs.push({ dir: entry.dir, error: entry.error }); continue; }
+            if (entry.core !== undefined) {
+                const core = readCore(entry);
+                if (core.error !== "") { errs.push({ dir: entry.core, error: core.error }); continue; }
+                nextCore = core.requirements;
+                nextCoreMissing = entry.missing;
+                continue;
+            }
             let raw;
             try {
                 raw = JSON.parse(entry.text);
@@ -117,6 +154,8 @@ Singleton {
         // Before the map, so no row reads a new plugin's requirements against
         // the last scan's probe.
         if (JSON.stringify(nextMissing) !== JSON.stringify(root.missingCommands)) root.missingCommands = nextMissing;
+        if (JSON.stringify(nextCore) !== JSON.stringify(root.coreRequirements)) root.coreRequirements = nextCore;
+        if (JSON.stringify(nextCoreMissing) !== JSON.stringify(root.coreMissing)) root.coreMissing = nextCoreMissing;
         if (isChanged) root.manifests = next;
         // `scanned` gates every slot key, so it moves after the map.
         root.scanned = true;
@@ -222,6 +261,16 @@ Singleton {
     // plugins[] row, for a host that reads a plugin's settings for itself.
     function settingsOf(id, kind) {
         return has(id) ? Logic.settingsFor(Config.effective, manifests[id], Logic.settingTargetOf(kind), null) : {};
+    }
+
+    // The commands the last scan did not find, by owner: the core's and
+    // every enabled plugin's, each list a copy. The `doctor` capability's
+    // `missing`; a binding on it follows each scan, enable and disable.
+    function enabledOwnerMissing() {
+        const out = { [Logic.CORE_OWNER]: coreMissing.slice() };
+        for (const id of Object.keys(manifests))
+            if (isEnabled(id)) out[id] = Logic.hasOwn(missingCommands, id) ? missingCommands[id].slice() : [];
+        return out;
     }
 
     // Plugin `id`'s requirement rows, each with its state from the last

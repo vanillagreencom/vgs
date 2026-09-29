@@ -43,13 +43,17 @@ var QUERIES = {
 // a launcher verb changes what the list reports. `start` is the service's
 // first shell, `refresh` the IPC call, `open` the IPC call that summons the
 // panel, `tui` the end of a run of one of the plugin's own TUIs and
-// `setting` a change of writeLaunchers.
+// `setting` a change of writeLaunchers, `scan` a change of the missing
+// commands the core's scan reports for the core and each enabled plugin
+// (the `doctor` capability's `missing`), such as an install the core's
+// requirement notice ran.
 var TRIGGERS = {
     start: ["launchers", "requirements", "vgs", "updates"],
     refresh: ["launchers", "requirements", "vgs", "updates"],
     open: ["launchers", "requirements", "vgs", "updates"],
     tui: ["launchers", "requirements", "updates"],
-    setting: ["launchers"]
+    setting: ["launchers"],
+    scan: ["requirements"]
 };
 
 // An `open` asks a remote again only when that query's last answer is
@@ -59,9 +63,8 @@ var TRIGGERS = {
 var NETWORK_FRESH_MS = 10 * 60 * 1000;
 
 // The plugin's TUI names, as the manifest's `tui` key declares them: one
-// per engine verb, and `requirement` for a missing requirement's package.
+// per engine verb.
 var VERBS = ["install", "update", "remove"];
-var REQUIREMENT_TUI = "requirement";
 
 // The group whose first listed TUI entry updates VGS: the launcher's Update
 // row reads the same group (docs/architecture/tui-capability.md).
@@ -70,6 +73,9 @@ var UPDATE_GROUP = "Update";
 // A status `text` and `state` text are at most this long
 // (docs/architecture/status.md).
 var STATUS_TEXT_MAX = 200;
+
+// What the `checks` status names each query that failed by.
+var QUERY_LABELS = { catalog: "The tool list", requirements: "vgsh doctor", vgs: "vgsh self status", updates: "The update check" };
 
 var METHOD_LABELS = { checkout: "Git checkout", package: "Package", curl: "Install script", nix: "Nix" };
 var ORIGIN_CHIPS = { mise: "mise", installer: "Installer", foreign: "Foreign" };
@@ -215,13 +221,26 @@ function catalogValue(answers) {
     };
 }
 
+// The `checks` status: whether every query that answered did so without a
+// failure, and else which failed and why. A published count keeps the
+// value of its query's last answer that succeeded, since a status key is
+// never unset, so this names the counts that are older than the check.
+function checksValue(answers) {
+    var failed = Object.keys(QUERY_LABELS).filter(function (name) { return hasOwn(answers, name) && answers[name].error !== null; });
+    if (failed.length === 0) return { tone: "ok", text: "Every check answered" };
+    return { tone: "warning", text: clip(failed.map(function (name) { return QUERY_LABELS[name] + " failed: " + answers[name].error; }).join("; ")
+        + "; a count it feeds is from its last check that answered") };
+}
+
 // The status values ANSWERS support now, by key, for Service.qml to
-// publish: `catalog` always; `mise`, `installed` and `outdated` from the
-// list and the mise updates; `missingRequirements` from the doctor report.
-// A value no answer supports yet is left out, so Settings reads it as not
-// reported rather than as a guess.
+// publish: `catalog` always; `checks` once a query answered; `mise`,
+// `installed` and `outdated` from the list and the mise updates;
+// `missingRequirements` from the doctor report. A value no answer supports
+// yet is left out, so Settings reads it as not reported rather than as a
+// guess.
 function statusValues(answers) {
     var out = { catalog: catalogValue(answers) };
+    if (Object.keys(QUERY_LABELS).some(function (name) { return hasOwn(answers, name); })) out.checks = checksValue(answers);
     var tools = answers.catalog;
     if (tools !== undefined) {
         if (tools.value === null) {
@@ -267,12 +286,6 @@ function verbArgs(verb, row, channel) {
     var args = [row.id];
     if (verb === "install" && channel !== "" && Array.isArray(row.channels) && channel !== row.channels[0]) args.push("--channel", channel);
     return args;
-}
-
-// The arguments the requirement script hands `vgsh pkg run install` for a
-// missing requirement's package.
-function requirementArgs(requirement) {
-    return ["--manager", requirement.package.manager, requirement.package.name];
 }
 
 // The key of the first listed TUI entry of UPDATE_GROUP, or "".
@@ -361,7 +374,8 @@ function vgsRow(answer, entry) {
 }
 
 // One missing requirement as a row, with Install when this system has a
-// package for it.
+// package for it: the core's requirement notice for its owner and command,
+// through the `doctor` capability.
 function requirementRow(requirement, index) {
     var out = {
         key: "vgs/requirement/" + index + "/" + requirement.owner + "/" + requirement.command,
@@ -380,7 +394,7 @@ function requirementRow(requirement, index) {
     };
     if (requirement.optional) out.chips.push({ text: "Optional", tone: "neutral" });
     if (requirement.package === null) out.lines.push("No package on this system provides it; install " + requirement.command + " by hand");
-    else out.actions.push({ kind: "requirement", verb: REQUIREMENT_TUI, label: "Install", variant: "primary" });
+    else out.actions.push({ kind: "doctor", verb: "", label: "Install", variant: "primary" });
     return out;
 }
 
@@ -419,10 +433,11 @@ function summary(catalog) {
     parts.push(listedRows(tools).filter(function (row) { return row.installed === true; }).length + " installed");
     var updates = catalog.updates;
     if (updates !== null && updates.value !== null) parts.push(updates.value.count + (updates.value.count === 1 ? " update" : " updates"));
+    else if (updates !== null) parts.push("the update check failed: " + updates.error);
     return parts.join(" · ");
 }
 
-var RUN_LABELS = { install: "An install", update: "An update", remove: "A removal", requirement: "A requirement install" };
+var RUN_LABELS = { install: "An install", update: "An update", remove: "A removal" };
 
 // One line per TUI of the plugin whose run is live in STATE,
 // `shell.tui.state`, in RUN_LABELS order.
@@ -434,9 +449,18 @@ function runningLines(state) {
     });
 }
 
-// The line the panel shows for the REPLY a TUI request answered: none for
-// `ok`, and none for `busy`, whose answer is the live run's window raised.
+// The line the panel shows for the REPLY an action was answered with: none
+// for `ok`, none for a TUI's `busy`, whose answer is the live run's window
+// raised, and for a requirement notice's `satisfied` that the scan already
+// finds the command.
 function replyLine(reply) {
     if (reply === "ok" || /^refused: tui=\S+ reason=busy$/.test(reply)) return "";
+    if (reply === "satisfied") return "Nothing to install: the core's last scan finds the command";
     return clip(reply);
+}
+
+// The owners and commands of MISSING, the `doctor` capability's `missing`,
+// as one comparable text: a change is a scan that found another set.
+function missingKey(missing) {
+    return JSON.stringify(Object.keys(missing).sort().map(function (owner) { return [owner, missing[owner]]; }));
 }

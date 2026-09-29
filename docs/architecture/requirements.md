@@ -22,6 +22,7 @@ A manifest's `requirements` key, and the core's own `config/requirements.json`, 
 ## Probe
 
 - `bin/vgsh-scan` reads each manifest's `requirements` and probes every `command` it finds with `shutil.which`, once per command per scan, in the scan's own process. Each plugin element carries `missing`, the commands not found, in declaration order. The scan judges nothing; a refused manifest's list is never read.
+- The shell's scan also probes the core's own list, `bin/vgsh-scan --core config/requirements.json`, whose element comes first; `Registry.coreRequirements` and `Registry.coreMissing` hold it, and the requirement notice and the `doctor` capability read it ([requirement-notice.md](requirement-notice.md)).
 - The shell's PATH decides: the scan runs as the shell's child.
 - A rescan is the only new probe. A command installed while the shell runs is reported present after the next rescan.
 

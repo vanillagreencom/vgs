@@ -19,6 +19,9 @@ import "ViewLogic.js" as ViewLogic
 //   instance started it       the launchers, the list, the requirements and
 //                              the updates
 //   writeLaunchers changing    the launchers and the list
+//   the core's scan finding another set of missing commands for the core
+//   or an enabled plugin (shell.doctor.missing)
+//                              the requirements
 // The panel reads the published `catalog` and runs nothing itself.
 Item {
     id: root
@@ -39,6 +42,9 @@ Item {
     // runs (docs/architecture/runtime-qml.md).
     readonly property bool writeLaunchers: shell !== null && shell.settings.writeLaunchers === true
     readonly property var tuiState: shell === null ? null : shell.tui.state
+    readonly property var ownerMissing: shell === null ? null : shell.doctor.missing
+    // ViewLogic.missingKey of the last `missing` this service saw.
+    property string seenMissing: ""
     // The writeLaunchers value the last launcher verb ran for, null before
     // the first.
     property var launchersFor: null
@@ -56,6 +62,7 @@ Item {
         shell.ipc.handle("open", () => root.open());
         shell.ipc.handle("refresh", () => { root.trigger("refresh"); return "ok"; });
         seenEnds = ViewLogic.endings(shell.tui.state);
+        seenMissing = ViewLogic.missingKey(shell.doctor.missing);
         trigger("start");
     }
 
@@ -70,6 +77,14 @@ Item {
         const finished = ViewLogic.endedSince(seenEnds, state);
         seenEnds = ViewLogic.endings(state);
         if (finished.length > 0) trigger("tui");
+    }
+
+    onOwnerMissingChanged: {
+        if (registeredWith === null) return;
+        const key = ViewLogic.missingKey(shell.doctor.missing);
+        if (key === seenMissing) return;
+        seenMissing = key;
+        trigger("scan");
     }
 
     // Summon the panel on the focused monitor, then refresh; answers the

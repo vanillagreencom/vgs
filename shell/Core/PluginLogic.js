@@ -17,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -708,23 +708,52 @@ var NOTICE_OFFER_MAX = 16;
 // What raises a notice: `installed`, the pluginInstalled IPC function
 // `vgsh plugin add` calls; `enabled`, setPluginEnabled turning a plugin on;
 // `offered`, the plugin's own `requirements` capability; `requested`, the
-// `manager` capability's installRequirements, the Settings window's Install.
-var NOTICE_TRIGGERS = ["installed", "enabled", "offered", "requested"];
+// `manager` capability's installRequirements, the Settings window's
+// Install; `chosen`, the `doctor` capability, a view of every owner's
+// requirements, asking for the core's or an enabled plugin's commands on a
+// user's press.
+var NOTICE_TRIGGERS = ["installed", "enabled", "offered", "requested", "chosen"];
+// The owner a notice is raised for when it is the core's own requirements,
+// config/requirements.json, rather than a plugin's. A plugin id is dotted,
+// so no plugin can take it.
+var CORE_OWNER = "core";
 
-// The notice TRIGGER asks for plugin MANIFEST, whose commands MISSING the
-// last scan did not find: { answer, commands, required }, `commands` the
-// commands the notice lists and `required` those whose absence keeps it
-// open. `answer` is "ok", "satisfied" when `required` is empty and no
-// notice is due, or a refusal. The install and enable triggers list every
-// missing command and require those the plugin does not mark optional, so
-// a plugin missing only optional commands raises none. A request lists and
-// requires every missing command, optional ones included, since the user
-// asked to install them. An offer lists and requires each of COMMANDS
-// still missing, and is refused as
+// The owner the notice lists the core's requirements for: the shape a
+// manifest gives noticeRequest and noticeView, `requirements` the core's
+// list as normalRequirements returns it.
+function coreOwner(requirements) {
+    return { id: CORE_OWNER, name: "VGS", requirements: requirements };
+}
+
+// The first reason the `doctor` capability's request for OWNER is refused,
+// or "": OWNER is a string, a key of OWNERS, the core's owner and every
+// known plugin's manifest by id, and, for a plugin, one of ENABLED, the
+// enabled ids, since a disabled plugin's commands run nowhere.
+function noticeOwnerError(owner, owners, enabled) {
+    if (typeof owner !== "string")
+        return "refused: owner=malformed";
+    if (!hasOwn(owners, owner))
+        return "refused: owner=" + tuiLabel(owner) + " reason=unknown";
+    if (owner !== CORE_OWNER && enabled.indexOf(owner) === -1)
+        return "refused: owner=" + owner + " reason=disabled";
+    return "";
+}
+
+// The notice TRIGGER asks for MANIFEST, a plugin's manifest or the core's
+// owner, whose commands MISSING the last scan did not find: { answer,
+// commands, required }, `commands` the commands the notice lists and
+// `required` those whose absence keeps it open. `answer` is "ok",
+// "satisfied" when `required` is empty and no notice is due, or a refusal.
+// The install and enable triggers list every missing command and require
+// those the plugin does not mark optional, so a plugin missing only
+// optional commands raises none. A request lists and requires every
+// missing command, optional ones included, since the user asked to install
+// them. An offer, and a choice, lists and requires each of COMMANDS still
+// missing, and is refused as
 // `refused: requirements=malformed` for anything but a list of 1 to
 // NOTICE_OFFER_MAX strings, then as `refused: requirement=<command>
 // reason=undeclared` for the first command MANIFEST does not declare, so a
-// plugin never raises a notice for a package it did not declare.
+// notice never names a package its owner did not declare.
 function noticeRequest(manifest, missing, trigger, commands) {
     var rows = requirementRows(manifest, missing);
     var listed;
@@ -737,6 +766,7 @@ function noticeRequest(manifest, missing, trigger, commands) {
         required = trigger === "requested" ? listed : listed.filter(function (row) { return !row.optional; });
         break;
     case "offered":
+    case "chosen":
         if (!Array.isArray(commands) || commands.length === 0 || commands.length > NOTICE_OFFER_MAX || !commands.every(function (c) { return typeof c === "string"; }))
             return { answer: "refused: requirements=malformed", commands: [], required: [] };
         var declared = rows.map(function (row) { return row.command; });
@@ -809,20 +839,20 @@ function noticeView(manifest, missing, notice, found) {
     };
 }
 
-// QUEUE after a scan, the notices of MANIFESTS' plugins whose missing
-// commands MISSING, plugin id -> commands, now holds: a notice whose plugin
-// went is dropped, and so is one noticeView finds satisfied, except the
+// QUEUE after a scan, the notices of OWNERS, the core's owner and each
+// plugin's manifest by id, whose missing commands MISSING, owner id ->
+// commands, now holds: a notice whose owner went is dropped, and so is one noticeView finds satisfied, except the
 // notice of INSTALLING, the plugin id whose install runs or "". That notice
 // stays until the scan after its run ended, however the run's own steps
 // asked for a rescan first, so no waiting notice comes to the front while
 // its terminal still holds the install's key.
-function noticeSettle(queue, manifests, missing, installing) {
+function noticeSettle(queue, owners, missing, installing) {
     return queue.filter(function (n) {
-        if (!hasOwn(manifests, n.id))
+        if (!hasOwn(owners, n.id))
             return false;
         if (n.id === installing)
             return true;
-        return !noticeView(manifests[n.id], hasOwn(missing, n.id) ? missing[n.id] : [], n, null).satisfied;
+        return !noticeView(owners[n.id], hasOwn(missing, n.id) ? missing[n.id] : [], n, null).satisfied;
     });
 }
 

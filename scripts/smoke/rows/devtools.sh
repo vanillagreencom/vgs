@@ -13,10 +13,12 @@
 # install TUI's argv, and the list is read again once that run ended; the
 # panel's switch writes writeLaunchers, whose launcher verb writes and then
 # removes the agent's launcher; the VGS section lists a fixture's missing
-# requirement, whose Install records the requirement TUI's argv with the
-# package `vgsh doctor` names; the Settings page reads the status rows
-# back; and, as the control, a copy of the plugin whose service ignores a
-# run's end leaves the list as it was after one.
+# requirement once the core's scan reports it, and its Install raises the
+# core's requirement notice; the doctor capability answers for the core's
+# commands and refuses a disabled or unknown owner; the Settings page reads
+# the status rows back; and, as the controls, a copy of the plugin whose
+# service ignores a run's end and a change of the scan's missing commands
+# leaves the list as it was after each.
 set -euo pipefail
 dev_state="$sandbox/devtools-mise"
 mkdir -p "$dev_state"
@@ -112,7 +114,7 @@ expect "rescan after adding the requirement fixture answers ok" ok ipc shell res
 expect_poll "the requirement fixture is discovered" True plugin_known acme.requires
 expect "enabling Dev Tools is allowed" ok ipc shell setPluginEnabled vgs.devtools true
 expect_poll "the Dev Tools service is built" True record_exists vgs.devtools
-expect_poll "the service publishes every status its manifest declares" '["catalog", "installed", "mise", "missingRequirements", "outdated"]' dev_lent
+expect_poll "the service publishes every status its manifest declares" '["catalog", "checks", "installed", "mise", "missingRequirements", "outdated"]' dev_lent
 
 # The panel: IPC open summons it, and it draws the published catalog.
 expect "IPC open summons the panel" ok devtools open
@@ -145,24 +147,30 @@ expect "the panel scrolls to its switch again" scrolled scroll_bottom
 click_in vgs:panel panel vgs.devtools Switch "Write launchers" || fail "the second click on the launcher switch failed"
 expect_poll "turning launchers off removes it" absent launcher_state "$agent_command"
 
-# The VGS section: a plugin's missing requirement, with the package this
-# system's package manager names for it. The fixture marks it optional, so
-# enabling it raises no core requirement notice over the panel.
-doctor_package() { in_shell_env "$repo/bin/vgsh" doctor --json | python3 -c 'import json,sys; p=[r["package"] for r in json.load(sys.stdin)["plugins"]["acme.requires"] if r["command"] == "vgs-smoke-devtool"][0]; print("none" if p is None else p["manager"] + " " + p["name"])'; }
-expect "enabling the requirement fixture is allowed" ok ipc shell setPluginEnabled acme.requires true
+# The VGS section: a plugin's missing requirement, listed once enabling
+# the fixture moves the core scan's missing commands, which the service
+# follows through the doctor capability with no refresh. The fixture marks
+# it optional, so enabling it raises no core requirement notice. Install
+# raises the core's notice for it, which Escape closes.
 expect "a refresh answers ok" ok devtools refresh
+expect "enabling the requirement fixture is allowed" ok ipc shell setPluginEnabled acme.requires true
+has_fixture_missing() { ipc smoke doctorMissing service vgs.devtools | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.requires"), "core" in d]))'; }
+expect_poll "the doctor capability reports the fixture's missing command and the core's list" '[["vgs-smoke-devtool"], true]' has_fixture_missing
 expect_poll "the VGS section lists the fixture's missing requirement with Install" \
   "$(texts vgs-smoke-devtool "acme.requires · A command no sandbox has, which a package names" Missing Optional Install)" row_texts vgs-smoke-devtool
-if read -r req_manager req_name < <(doctor_package) && [[ $req_manager != none ]]; then
-  forget_record
-  expect "the requirement's row scrolls into view" revealed reveal_row vgs-smoke-devtool
-  click_scoped_in vgs:panel panel vgs.devtools ToolRow vgs-smoke-devtool Button Install || fail "the click on the requirement's Install failed"
-  expect_poll "the click hands the requirement TUI the package vgsh doctor names" \
-    "$(words vgs.devtools/requirement tui/requirement.sh --manager "$req_manager" "$req_name")" recorded_tail
-  expect_poll "the requirement run ends before the next request" idle key_idle vgs.devtools/requirement
-else
-  fail "vgsh doctor names no package for the fixture's requirement on this host"
-fi
+expect "the requirement's row scrolls into view" revealed reveal_row vgs-smoke-devtool
+click_scoped_in vgs:panel panel vgs.devtools ToolRow vgs-smoke-devtool Button Install || fail "the click on the requirement's Install failed"
+expect_poll "Install raises the core's notice for the fixture's command" '["acme.requires", ["vgs-smoke-devtool"], ["vgs-smoke-devtool"], false]' notice_shown
+expect_poll "the notice maps" 1 layer_count vgs:notice
+expect_poll "the notice holds the keyboard" true ipc smoke noticeFocused
+type_keys -k Escape || fail "sending Escape to the notice failed"
+expect_poll "Escape closes the notice" 0 layer_count vgs:notice
+# The doctor capability's other owners: the core's commands the scan
+# finds, and a disabled or unknown plugin.
+expect "the doctor capability finds a core command present" satisfied ipc smoke doctorOffer service vgs.devtools core git
+expect "the doctor capability refuses a command the core does not declare" "refused: requirement=vgs-smoke-nope reason=undeclared" ipc smoke doctorOffer service vgs.devtools core vgs-smoke-nope
+expect "the doctor capability refuses a disabled plugin" "refused: owner=acme.status reason=disabled" ipc smoke doctorOffer service vgs.devtools acme.status token
+expect "the doctor capability refuses an unknown owner" "refused: owner=acme.gone reason=unknown" ipc smoke doctorOffer service vgs.devtools acme.gone x
 
 # Settings reads the status rows back, read-only.
 installed_count() { in_shell_env node "$repo/shell/plugins/vgs.devtools/bin/devtools" --tree "$repo" list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in d["sections"].values() for r in rows if r["installed"] is True) + sum(1 for r in d["other"] if r["installed"] is True))'; }
@@ -172,10 +180,10 @@ expect_poll "the Settings service is built" True record_exists vgs.settings
 expect "Settings opens the Dev Tools page" ok ipc vgs.settings invoke open '{"plugin":"vgs.devtools"}'
 if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
   expect_poll "the manager row carries the published status" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", "vgsh doctor"]]))' "$dev_installed" "$dev_missing")" status_of vgs.devtools
+    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "ok", "text": "Every check answered"}, "success", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", "vgsh doctor"]]))' "$dev_installed" "$dev_missing")" status_of vgs.devtools
   expect_poll "the page draws each status row, the catalog data not" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools panel lists", "vgsh pkg run install mise"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing")" drawn_status
-  expect "no Dev Tools status row takes an edit" '[[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
+    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools panel lists", "vgsh pkg run install mise"], ["Checks", "Every check answered", "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing")" drawn_status
+  expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
 else
   fail "the list or the doctor report is unreadable for the status counts"
 fi
@@ -187,13 +195,14 @@ expect "disabling Settings after its rows is allowed" ok ipc shell setPluginEnab
 control_dir="$home/.config/vgs/plugins/vgs.devtools"
 cp -R "$repo/shell/plugins/vgs.devtools" "$control_dir"
 relist_line='        if (finished.length > 0) trigger("tui");'
-if [[ $(grep -c -F -- "$relist_line" "$control_dir/Service.qml") == 1 ]]; then
-  python3 -c 'import sys; p, old = sys.argv[1:]; text = open(p).read(); open(p, "w").write(text.replace(old, "        if (false) trigger(\"tui\");"))' "$control_dir/Service.qml" "$relist_line"
+scan_line='        trigger("scan");'
+if [[ $(grep -c -F -- "$relist_line" "$control_dir/Service.qml") == 1 && $(grep -c -F -- "$scan_line" "$control_dir/Service.qml") == 1 ]]; then
+  python3 -c 'import sys; p, a, b = sys.argv[1:]; text = open(p).read(); open(p, "w").write(text.replace(a, "        if (false) trigger(\"tui\");").replace(b, "        if (false) trigger(\"scan\");"))' "$control_dir/Service.qml" "$relist_line" "$scan_line"
   expected_errors+=('plugins: hidden by a higher-precedence plugin with the same id: .*vgs\.devtools')
   scans="$(log_lines 'plugins: scan complete changed=true')" || fail "the instance log is unreadable before the control copy"
   expect "rescan after adding the control copy answers ok" ok ipc shell rescanPlugins
   expect_log "the rescan publishes the control copy" "$((scans + 1))" 'plugins: scan complete changed=true'
-  expect_poll "the control copy's service publishes" '["catalog", "installed", "mise", "missingRequirements", "outdated"]' dev_lent
+  expect_poll "the control copy's service publishes" '["catalog", "checks", "installed", "mise", "missingRequirements", "outdated"]' dev_lent
   grep -vxF -- "$agent_key" "$dev_state/installed" >"$dev_state/installed.next" || true
   mv -f -- "$dev_state/installed.next" "$dev_state/installed"
   expect "the control's summon answers ok" ok devtools open
@@ -213,10 +222,20 @@ if [[ $(grep -c -F -- "$relist_line" "$control_dir/Service.qml") == 1 ]]; then
     sleep 0.2
   done
   if [[ $relisted == no ]]; then ok "the control copy leaves the list as it was after the run"; else fail "the control copy listed again after the run"; fi
+  expect "disabling the requirement fixture under the control copy is allowed" ok ipc shell setPluginEnabled acme.requires false
+  expect_poll "the doctor capability drops the disabled fixture" '[null, true]' has_fixture_missing
+  # expect_poll's own window again: the shipped service lists the
+  # requirements anew within it and drops the row.
+  dropped=no
+  for _ in $(seq 1 25); do
+    if [[ $(row_texts vgs-smoke-devtool) == null ]]; then dropped=yes; break; fi
+    sleep 0.2
+  done
+  if [[ $dropped == no ]]; then ok "the control copy keeps the disabled fixture's requirement"; else fail "the control copy listed the requirements again after the scan changed"; fi
   rm -rf -- "$control_dir"
   expect "rescan after removing the control copy answers ok" ok ipc shell rescanPlugins
 else
-  fail "the control's line occurs once in the Dev Tools service"
+  fail "the control's lines occur once each in the Dev Tools service"
 fi
 
 expect "hiding the panel answers ok" ok ipc shell hide panel vgs.devtools

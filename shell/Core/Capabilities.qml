@@ -148,6 +148,10 @@ Singleton {
         requirements: ctx => ({
             offer: commands => Notices.offer(ctx, commands),
             get missing() { return Notices.missingOf(ctx.id).slice(); }
+        }),
+        doctor: ctx => ({
+            offer: (owner, commands) => Notices.request(owner, commands),
+            get missing() { return Registry.enabledOwnerMissing(); }
         })
     })
 

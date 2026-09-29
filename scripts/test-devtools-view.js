@@ -63,13 +63,14 @@ function verify(logic) {
     same(logic.TOOL_SECTIONS.map(s => s.key).filter(k => k !== "other").sort(), JSON.parse(JSON.stringify(Catalog.SECTION_NAMES)).sort(), "the panel draws every catalog section");
     same(logic.TOOL_SECTIONS.map(s => s.title), ["Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]);
     // The TUI names the panel runs are the manifest's.
-    same(logic.VERBS.concat([logic.REQUIREMENT_TUI]).sort(), Object.keys(manifest.tui).sort(), "every TUI the panel runs is declared");
+    same(JSON.parse(JSON.stringify(logic.VERBS)).sort(), Object.keys(manifest.tui).sort(), "every TUI the panel runs is declared");
 
     // Triggers.
     same(logic.queriesFor("start", {}, 0), ["launchers", "requirements", "vgs", "updates"]);
     same(logic.queriesFor("refresh", { vgs: 0, updates: 0 }, 1), ["launchers", "requirements", "vgs", "updates"]);
     same(logic.queriesFor("tui", {}, 0), ["launchers", "requirements", "updates"]);
     same(logic.queriesFor("setting", {}, 0), ["launchers"]);
+    same(logic.queriesFor("scan", {}, 0), ["requirements"]);
     const fresh = logic.NETWORK_FRESH_MS;
     same(logic.queriesFor("open", { vgs: 1000, updates: 1000 }, 1000 + fresh - 1), ["launchers", "requirements"], "an open inside the window asks no remote");
     same(logic.queriesFor("open", { vgs: 1000, updates: 2000 }, 1000 + fresh), ["launchers", "requirements", "vgs"], "an open asks each remote whose answer is stale");
@@ -103,6 +104,7 @@ function verify(logic) {
 
     // Status values.
     same(logic.statusValues({}), { catalog: { tools: null, requirements: null, vgs: null, updates: null } }, "nothing answered publishes the empty catalog alone");
+    same(logic.statusValues({ vgs: ok(self({})) }).checks, { tone: "ok", text: "Every check answered" });
     const listed = list({ agents: [row({ installed: true, origin: "mise", version: "2", actions: ["update", "remove"] }), row({ id: "codex" })], apps: [row({ id: "cmux", installed: null, error: "e" })] },
         [{ id: "github:o/x", installed: true, version: "1", actions: ["update", "remove"] }]);
     const values = logic.statusValues({ catalog: ok(listed), updates: ok({ count: 3, packages: [] }), requirements: ok({ core: [requirement({})], plugins: { "acme.y": [requirement({ state: "present" })] } }) });
@@ -112,6 +114,8 @@ function verify(logic) {
     const failed = logic.statusValues({ catalog: { value: null, error: "mise=absent" }, updates: { value: null, error: "timeout=120" }, requirements: { value: null, error: "exit=1" } });
     same(failed.mise, { tone: "danger", text: "Unknown: the tool list failed: mise=absent" });
     same(["installed", "outdated", "missingRequirements"].filter(k => k in failed), [], "a failed query publishes no count");
+    same(failed.checks, { tone: "warning", text: "The tool list failed: mise=absent; vgsh doctor failed: exit=1; The update check failed: timeout=120; a count it feeds is from its last check that answered" },
+        "a failure after a count was published names the count as older than the check");
 
     // TUI ends.
     same(logic.endedSince(null, { install: { running: false, code: 0, endedAt: 5 } }), [], "the first reading reports no end");
@@ -127,7 +131,6 @@ function verify(logic) {
     same(logic.verbArgs("update", herdr, "preview"), ["herdr"], "only install takes a channel");
     same(logic.verbArgs("remove", { section: "other", id: "github:o/x", channels: [] }, ""), ["--mise", "github:o/x"]);
     assert.throws(() => logic.verbArgs("launch", herdr, ""), /verb "launch" is not one of/);
-    same(logic.requirementArgs({ package: { manager: "aur", name: "vsys" } }), ["--manager", "aur", "vsys"]);
     assert.equal(logic.updateEntry([{ key: "a/x", group: "Dev Tools" }, { key: "b/update", group: "Update" }, { key: "c/update", group: "Update" }]), "b/update");
     assert.equal(logic.updateEntry([{ key: "a/x", group: "Dev Tools" }]), "");
 
@@ -169,7 +172,7 @@ function verify(logic) {
     // A requirement row.
     const req = r => { const v = logic.requirementRow(r, 0); return [v.name, v.secondary, v.chips, v.actions, v.lines]; };
     same(req({ owner: "core", command: "gum", purpose: "Draws", optional: true, package: { manager: "pacman", name: "gum" } }),
-        ["gum", "VGS · Draws", [{ text: "Missing", tone: "neutral" }, { text: "Optional", tone: "neutral" }], [{ kind: "requirement", verb: "requirement", label: "Install", variant: "primary" }], []]);
+        ["gum", "VGS · Draws", [{ text: "Missing", tone: "neutral" }, { text: "Optional", tone: "neutral" }], [{ kind: "doctor", verb: "", label: "Install", variant: "primary" }], []]);
     same(req({ owner: "acme.y", command: "z", purpose: "Draws", optional: false, package: null }),
         ["z", "acme.y · Draws", [{ text: "Missing", tone: "warning" }], [], ["No package on this system provides it; install z by hand"]]);
 
@@ -189,6 +192,7 @@ function verify(logic) {
     assert.equal(logic.summary(catalog), "mise 2026.9.9 · 2 installed · 3 updates");
     assert.equal(logic.summary(null), "Listing tools");
     assert.equal(logic.summary({ tools: { value: null, error: "x" }, updates: null }), "The tool list failed");
+    assert.equal(logic.summary(Object.assign({}, catalog, { updates: { value: null, error: "timeout=120" } })), "mise 2026.9.9 · 2 installed · the update check failed: timeout=120");
 
     // The panel's lines.
     same(logic.runningLines({ remove: { running: true }, install: { running: true }, update: { running: false } }),
@@ -196,6 +200,10 @@ function verify(logic) {
     assert.equal(logic.replyLine("ok"), "");
     assert.equal(logic.replyLine("refused: tui=install reason=busy"), "", "a busy answer raised the live window");
     assert.equal(logic.replyLine("refused: tui=install reason=launcher-missing"), "refused: tui=install reason=launcher-missing");
+    assert.equal(logic.replyLine("satisfied"), "Nothing to install: the core's last scan finds the command");
+    assert.equal(logic.replyLine("refused: owner=acme.x reason=disabled"), "refused: owner=acme.x reason=disabled");
+    assert.equal(logic.missingKey({ "acme.b": ["x"], core: [] }), logic.missingKey({ core: [], "acme.b": ["x"] }), "the owners' order is no change");
+    assert.notEqual(logic.missingKey({ core: [] }), logic.missingKey({ core: ["gum"] }), "another missing command is a change");
 }
 
 verify(load(file));
@@ -218,6 +226,9 @@ const CONTROLS = [
     ["update only with an entry", 'if (entry !== "") out.actions.push', "out.actions.push"],
     ["install only with a package", 'if (requirement.package === null) out.lines.push("No package on this system provides it; install " + requirement.command + " by hand");\n    else out.actions', "out.actions"],
     ["empty sections are left out", "if (drawn.rows.length > 0 || drawn.lines.length > 0) out.push(drawn);", "out.push(drawn);"],
+    ["checks name a failure", "if (failed.length === 0) return", "if (true) return"],
+    ["summary names a failed update check", '    else if (updates !== null) parts.push("the update check failed: " + updates.error);\n', ""],
+    ["the missing key sorts its owners", "Object.keys(missing).sort().map(", "Object.keys(missing).map("],
     ["busy says nothing", ' || /^refused: tui=\\S+ reason=busy$/.test(reply)', ""]
 ];
 

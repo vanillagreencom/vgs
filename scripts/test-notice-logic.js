@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Table-driven checks for the requirement notice's decisions in
-// shell/Core/PluginLogic.js: what each trigger asks for, how the queue
+// shell/Core/PluginLogic.js: what each trigger asks for, whose notice the
+// doctor capability may ask for, how the queue
 // merges, rests and fills, which notices a scan keeps, what the shown
 // notice lists and installs, and
 // how a detection's answer is read. The file loads under node through
@@ -68,12 +69,37 @@ function suite(ctx, check) {
         ["an offer holding a number", allMissing, "offered", ["vgs-one", 7], ["refused: requirements=malformed", [], []]],
         ["an offer of seventeen commands", allMissing, "offered", Array(17).fill("vgs-one"), ["refused: requirements=malformed", [], []]],
         ["an offer of sixteen commands", allMissing, "offered", Array(16).fill("vgs-one"), ["ok", ["vgs-one"], ["vgs-one"]]],
+        ["a choice lists and requires its missing commands, optional ones too", allMissing, "chosen", ["vgs-bare"], ["ok", ["vgs-bare"], ["vgs-bare"]]],
+        ["a choice of a command the owner did not declare", allMissing, "chosen", ["pacman"], ["refused: requirement=pacman reason=undeclared", [], []]],
+        ["a choice that is not a list", allMissing, "chosen", "vgs-one", ["refused: requirements=malformed", [], []]],
     ];
     for (const [name, missing, trigger, commands, want] of requestRows) {
         const r = ctx.noticeRequest(needs, missing, trigger, commands);
         check("noticeRequest: " + name, [r.answer, r.commands, r.required], want);
     }
-    check("noticeRequest throws on a trigger no rule covers", (() => { try { ctx.noticeRequest(needs, [], "asked", undefined); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested");
+    check("noticeRequest throws on a trigger no rule covers", (() => { try { ctx.noticeRequest(needs, [], "asked", undefined); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested, chosen");
+
+    // The core's owner: the core's list, drawn under the name VGS, asked
+    // for as a plugin's manifest is.
+    const core = ctx.coreOwner([{ command: "gum", packages: { pacman: "gum" }, optional: true, purpose: "Dialogs" }, { command: "git", packages: { pacman: "git" }, optional: false, purpose: "Plugins" }]);
+    check("the core's owner is named core and drawn as VGS", [core.id, core.name, ctx.CORE_OWNER], ["core", "VGS", "core"]);
+    const coreRequest = ctx.noticeRequest(core, ["gum"], "chosen", ["gum", "git"]);
+    check("noticeRequest: a choice of the core's commands lists its missing ones", [coreRequest.answer, coreRequest.commands, coreRequest.required], ["ok", ["gum"], ["gum"]]);
+
+    // noticeOwnerError: [name, owner, want]. acme.needs is enabled,
+    // acme.off known and disabled.
+    const owners = { core: core, "acme.needs": needs, "acme.off": Object.assign({}, needs, { id: "acme.off" }) };
+    const ownerRows = [
+        ["the core is always an owner", "core", ""],
+        ["an enabled plugin is an owner", "acme.needs", ""],
+        ["a disabled plugin is refused", "acme.off", "refused: owner=acme.off reason=disabled"],
+        ["an unknown owner is refused", "acme.gone", "refused: owner=acme.gone reason=unknown"],
+        ["an unprintable owner is named quoted", "a b", "refused: owner=\"a b\" reason=unknown"],
+        ["an owner that is no string is malformed", 7, "refused: owner=malformed"],
+        ["an inherited name is no owner", "toString", "refused: owner=toString reason=unknown"],
+    ];
+    for (const [name, owner, want] of ownerRows)
+        check("noticeOwnerError: " + name, ctx.noticeOwnerError(owner, owners, ["acme.needs"]), want);
 
     // noticeAdmit: [name, queue, rest, id, request commands and required,
     // trigger, want as [answer, queue as id: commands / required]].
@@ -89,6 +115,7 @@ function suite(ctx, check) {
         ["an install is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "installed", ["ok", ["acme.needs: a / a"]]],
         ["an enable is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "enabled", ["ok", ["acme.needs: a / a"]]],
         ["a request is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "requested", ["ok", ["acme.needs: a / a"]]],
+        ["a choice is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "chosen", ["ok", ["acme.needs: a / a"]]],
         ["another plugin's rest refuses nothing", [], { "acme.other": 1500 }, "acme.needs", n("", ["a"], ["a"]), "offered", ["ok", ["acme.needs: a / a"]]],
         ["a resting plugin's offer merges into its held notice", [n("acme.needs", ["a"], ["a"])], { "acme.needs": 1500 }, "acme.needs", n("", ["b"], ["b"]), "offered", ["ok", ["acme.needs: a,b / a,b"]]],
         ["a full queue refuses a ninth plugin", full, {}, "acme.needs", n("", ["a"], ["a"]), "installed", ["refused: notices=full limit=8", shown(full)]],
@@ -100,7 +127,7 @@ function suite(ctx, check) {
         check("noticeAdmit: " + name, [r.answer, shown(r.queue)], want);
         check("noticeAdmit leaves the queue it was handed alone: " + name, JSON.stringify(queue), before);
     }
-    check("noticeAdmit throws on a trigger no rule covers", (() => { try { ctx.noticeAdmit([], {}, "acme.needs", n("", ["a"], ["a"]), "asked", 0); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested");
+    check("noticeAdmit throws on a trigger no rule covers", (() => { try { ctx.noticeAdmit([], {}, "acme.needs", n("", ["a"], ["a"]), "asked", 0); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested, chosen");
     check("the queue holds eight plugins and an offer names sixteen commands", [ctx.NOTICE_QUEUE_MAX, ctx.NOTICE_OFFER_MAX], [8, 16]);
     check("a plugin's offers rest ten minutes after Not now", ctx.NOTICE_OFFER_REST_MS, 600000);
 
@@ -126,6 +153,8 @@ function suite(ctx, check) {
         const v = ctx.noticeView(needs, missing, notice, found);
         check("noticeView: " + name, [v.satisfied, v.rows.map(rowText), v.install, v.byHand], want);
     }
+    const coreView = ctx.noticeView(core, ["gum"], n("core", ["gum"], ["gum"]), ARCH);
+    check("noticeView: the core's notice installs its package", [coreView.satisfied, coreView.rows.map(rowText), coreView.install], [false, ["gum (pacman/gum) optional: Dialogs"], ["gum"]]);
 
     // noticeSettle: [name, queue, missing per plugin, installing id, the
     // ids kept]. acme.gone has no manifest.
@@ -141,6 +170,9 @@ function suite(ctx, check) {
     ];
     for (const [name, queue, missing, installing, want] of settleRows)
         check("noticeSettle: " + name, ctx.noticeSettle(queue, manifests, missing, installing).map(e => e.id), want);
+    const coreHeld = [n("core", ["gum"], ["gum"])];
+    check("noticeSettle: the core's notice stays while its command is missing", ctx.noticeSettle(coreHeld, { core: core }, { core: ["gum"] }, "").map(e => e.id), ["core"]);
+    check("noticeSettle: the core's notice goes once the scan finds its command", ctx.noticeSettle(coreHeld, { core: core }, { core: [] }, "").map(e => e.id), []);
 
     // noticeDetected: [name, completion, stdout, stderr, want as the
     // managers found or the log line].
@@ -192,8 +224,13 @@ const CONTROLS = [
     ["a view is satisfied only without a required command", "var satisfied = !notice.required.some(", "var satisfied = notice.required.some("],
     ["a view installs only through an installing manager", "var installable = plan.groups.filter(function (g) { return g.installs; });", "var installable = plan.groups;"],
     ["a settle keeps the installing notice", "        if (n.id === installing)\n            return true;\n", ""],
-    ["a settle drops a notice whose plugin went", "        if (!hasOwn(manifests, n.id))\n            return false;\n", ""],
-    ["a settle drops a satisfied notice", "        return !noticeView(manifests[n.id]", "        return true || !noticeView(manifests[n.id]"],
+    ["a settle drops a notice whose owner went", "        if (!hasOwn(owners, n.id))\n            return false;\n", ""],
+    ["a settle drops a satisfied notice", "        return !noticeView(owners[n.id]", "        return true || !noticeView(owners[n.id]"],
+    ["a choice lists as an offer", "    case \"offered\":\n    case \"chosen\":\n", "    case \"offered\":\n"],
+    ["an owner is a string", "    if (typeof owner !== \"string\")\n        return \"refused: owner=malformed\";\n", ""],
+    ["an owner is known", "    if (!hasOwn(owners, owner))\n        return \"refused: owner=\"", "    if (false)\n        return \"refused: owner=\""],
+    ["a plugin owner is enabled", "if (owner !== CORE_OWNER && enabled.indexOf(owner) === -1)", "if (false)"],
+    ["the core owner needs no enabling", "if (owner !== CORE_OWNER && enabled.indexOf(owner) === -1)", "if (enabled.indexOf(owner) === -1)"],
     ["a detection that crashed is a failure", "if (completion.status !== 0 || completion.code !== 0)\n        return { ok: false, line: \"notices: detect=failed", "if (completion.code !== 0)\n        return { ok: false, line: \"notices: detect=failed"],
     ["a detected manager is a known one", " && PackageManagers.managerRow(e.id) !== null", ""],
     ["a detection names its sources", " || !Array.isArray(found.sources) || !found.sources.every(entry))", ")"],

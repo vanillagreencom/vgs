@@ -4,8 +4,8 @@
 # there. bin/vgsh-tui runs it from a private copy of the plugin's snapshot,
 # so the engine and the catalog beside tui/ are under VGS_PLUGIN_DIR, and
 # the VGS tree is the one VGS_TUI_LIB lies in. The manifest's entries run it
-# through install.sh, update.sh, remove.sh and requirement.sh, one per
-# verb, since a TUI entry names a script and no arguments.
+# through install.sh, update.sh and remove.sh, one per verb, since a TUI
+# entry names a script and no arguments.
 #
 #   devtools.sh install <id> [--channel <channel>] [--launchers]
 #   devtools.sh update <id> [--launchers] | update --mise <key>
@@ -16,18 +16,11 @@
 #       the engine's `targets`, in a gum filter, then the verb on the row
 #       picked. No row to offer, or leaving the filter with Esc, exits 0
 #       and runs nothing; Ctrl-C exits 130.
-#   devtools.sh requirement --manager <id> <name>...
-#       `vgsh pkg run install --manager <id> <name>...`: the package of a
-#       missing requirement, which the panel's VGS section names from
-#       `vgsh doctor --json`
 #
-# The exit status is the engine's or vgsh's. `devtools: refused:
-# picked=<line> reason=unlisted`, exit 1, when the filter answers a line it
-# was not offered. Refusals, exit 2:
-# `devtools: refused: tui=missing` outside the presenter,
-# `devtools: refused: verb=<verb>` for any other verb and
-# `devtools: refused: requirement=arguments` without --manager, a manager
-# and one name at least.
+# The exit status is the engine's. `devtools: refused: picked=<line>
+# reason=unlisted`, exit 1, when the filter answers a line it was not
+# offered. Refusals, exit 2: `devtools: refused: tui=missing` outside the
+# presenter, and `devtools: refused: verb=<verb>` for any other verb.
 set -euo pipefail
 
 lib="${VGS_TUI_LIB:-}"
@@ -40,16 +33,8 @@ engine=("$VGS_PLUGIN_DIR/bin/devtools" --tree "$tree")
 verb="${1:-}"
 case "$verb" in
   install|update|remove) ;;
-  requirement)
-    shift
-    if [[ $# -lt 3 || $1 != --manager ]]; then
-      printf 'devtools: refused: requirement=arguments\nusage: devtools.sh requirement --manager <id> <name>...\n' >&2
-      exit 2
-    fi
-    exec "$tree/bin/vgsh" pkg run install "$@"
-    ;;
   *)
-    printf 'devtools: refused: verb=%s\nusage: devtools.sh install|update|remove [<id> [flags...] | --mise <key>] | requirement --manager <id> <name>...\n' "${verb:-missing}" >&2
+    printf 'devtools: refused: verb=%s\nusage: devtools.sh install|update|remove [<id> [flags...] | --mise <key>]\n' "${verb:-missing}" >&2
     exit 2
     ;;
 esac

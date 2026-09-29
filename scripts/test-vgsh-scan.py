@@ -7,7 +7,9 @@ error, and the failing path where the row names one) plus the exit status.
 The revision rows then read the scanner twice over one tree and compare
 revisions, snapshots and pruning. The probe rows run the scanner with a PATH
 of one stub directory and read each plugin's `missing` list; their control
-runs them against a copy of the scanner that finds every command. Permission rows need a uid that
+runs them against a copy of the scanner that finds every command. The core
+rows probe a --core requirements file beside a plugin; their control reads
+that file as a manifest. Permission rows need a uid that
 permissions bind; under euid 0 the script reports status=not-measured and
 exits 77 instead of passing vacuously."""
 import json
@@ -236,6 +238,58 @@ def probe_control():
         return report("control: the probe rows fail on a scanner that finds every command", not all(probe_rows(mutant, quiet=True)))
 
 
+# core rows: name, the --core file's text (None: no file), {plugin dir:
+# manifest}, want as the first element's kind and its missing list or error
+# prefix, then {plugin dir: missing list}. The stub PATH is the probe rows'.
+CORE_ROWS = [
+    ("the core's absent command is missing and comes first", json.dumps([requirement("gone"), requirement("here")]), {"a": {"id": "acme.a", "requirements": [requirement("gone")]}},
+     ("core", ["gone"]), {"a": ["gone"]}),
+    ("the core's list of present commands misses nothing", json.dumps([requirement("here")]), {}, ("core", []), {}),
+    ("a core file that is no list misses nothing", json.dumps({"requirements": [requirement("gone")]}), {}, ("core", []), {}),
+    ("an absent core file is an error element", None, {"a": {"id": "acme.a", "requirements": [requirement("gone")]}},
+     ("error", "cannot read core requirements: "), {"a": ["gone"]}),
+]
+
+
+def core_rows(script=SCAN, quiet=False):
+    """Each core row's verdict, run against SCRIPT."""
+    results = []
+    for name, core, manifests, want_core, want_plugins in CORE_ROWS:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = {os.path.join("plugins", d, "manifest.json"): json.dumps(m) for d, m in manifests.items()}
+            files["stubs/here"] = "#!/bin/sh\n"
+            if core is not None:
+                files["requirements.json"] = core
+            plant(tmp, files)
+            os.chmod(os.path.join(tmp, "stubs", "here"), 0o755)
+            proc = scan("--core", os.path.join(tmp, "requirements.json"), os.path.join(tmp, "plugins"), script=script, env={"PATH": os.path.join(tmp, "stubs"), "LC_ALL": "C"})
+            try:
+                elements = json.loads(proc.stdout)
+                first = elements[0]
+                got_core = ("error", first["error"][:len(want_core[1])]) if "error" in first else ("core" if first["core"].endswith("requirements.json") and "text" in first else "?", first["missing"])
+                got_plugins = {os.path.basename(e["dir"]): e["missing"] for e in elements[1:]}
+            except (ValueError, KeyError, IndexError):
+                got_core, got_plugins = None, None
+            good = proc.returncode == 0 and got_core == want_core and got_plugins == want_plugins
+            results.append(good if quiet else report(name, good, f" (exit={proc.returncode} core={got_core} plugins={got_plugins})\n{proc.stderr}"))
+    return results
+
+
+def core_control():
+    """The core rows must fail on a copy of the scanner that reads the core
+    file as a manifest."""
+    with open(SCAN, encoding="utf-8") as fh:
+        source = fh.read()
+    needle = "missing_commands(text, probed, core=True)"
+    if source.count(needle) != 1:
+        return report("control: the core probe's text occurs once", False, f" (count={source.count(needle)})")
+    with tempfile.TemporaryDirectory() as tmp:
+        mutant = os.path.join(tmp, "vgsh-scan")
+        with open(mutant, "w", encoding="utf-8") as fh:
+            fh.write(source.replace(needle, "missing_commands(text, probed)"))
+        return report("control: the core rows fail on a scanner that reads the core list as a manifest", not all(core_rows(mutant, quiet=True)))
+
+
 def main():
     if os.geteuid() == 0:
         print("status=not-measured reason=euid-0")
@@ -244,6 +298,8 @@ def main():
     results += revision_rows()
     results += probe_rows()
     results.append(probe_control())
+    results += core_rows()
+    results.append(core_control())
     if all(results):
         print("test-vgsh-scan: ok")
         return 0

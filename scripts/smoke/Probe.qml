@@ -521,6 +521,19 @@ Scope {
             root.heldStatus = item.shell.status;
             return "held";
         }
+        // The `doctor` capability of an instance: an offer for OWNER's
+        // COMMANDS, comma-separated since qs reads a bracketed argument as a
+        // list, and its `missing` as JSON.
+        function doctorOffer(hostKey: string, id: string, owner: string, commands: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.shell === null || item.shell.doctor === undefined) return "absent";
+            return item.shell.doctor.offer(owner, commands.split(","));
+        }
+        function doctorMissing(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.shell === null || item.shell.doctor === undefined) return "absent";
+            return JSON.stringify(item.shell.doctor.missing);
+        }
         // Publish a JSON value through the kept provider; its reply.
         function heldStatusSet(key: string, valueJson: string): string {
             return root.heldStatus === null ? "absent" : root.heldStatus.set(key, JSON.parse(valueJson));

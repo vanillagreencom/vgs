@@ -17,6 +17,7 @@
   },
   "capabilities": [
     "configure",
+    "doctor",
     "ipc",
     "screens",
     "status",
@@ -55,6 +56,11 @@
       "hint": "Installs, updates and removes every tool the Dev Tools panel lists",
       "command": "vgsh pkg run install mise"
     },
+    "checks": {
+      "type": "state",
+      "label": "Checks",
+      "hint": "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"
+    },
     "installed": {
       "type": "count",
       "label": "Tools installed"
@@ -90,10 +96,6 @@
       "script": "tui/remove.sh",
       "title": "Remove a developer tool",
       "entry": { "label": "Remove a developer tool", "icon": "package-minus", "group": "Dev Tools" }
-    },
-    "requirement": {
-      "script": "tui/requirement.sh",
-      "title": "Install a requirement"
     }
   },
   "appearance": "Appearance.js"

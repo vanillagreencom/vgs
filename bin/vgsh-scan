@@ -7,7 +7,7 @@ Validation is not done here: the shell's PluginLogic.js is the one judge of
 a manifest, and this script only reads bytes and probes PATH for the
 commands a manifest declares.
 
-  vgsh-scan [--require-base] [--snapshot-dir ROOT [--retain REVISION]...] BASE...
+  vgsh-scan [--require-base] [--core FILE] [--snapshot-dir ROOT [--retain REVISION]...] BASE...
 
 A plugin element is `{"dir", "text", "revision", "missing"}`, plus
 `"loadUrl"` under --snapshot-dir. The revision is a SHA-256 over every
@@ -22,6 +22,14 @@ it, and is empty when the text is not a JSON object with a `requirements`
 list. The scan probes each command once, however many plugins declare it,
 and judges nothing: PluginLogic.js decides whether an entry is well formed,
 and a refused manifest's list is never read (D035).
+
+--core names the core's own requirements file, config/requirements.json,
+whose commands the scan probes the same way, sharing each command's answer
+with the plugins that declare it. Its element comes first,
+`{"core", "text", "missing"}`, `core` the file's path, `text` its bytes and
+`missing` its commands not on PATH; a file that cannot be read is an error
+element like a plugin's. The shell judges the text as it judges a
+manifest's `requirements` list.
 
 --snapshot-dir publishes each plugin's files under ROOT/<revision>/, written
 once and never changed, and `loadUrl` is that directory's file:// URL. The
@@ -110,30 +118,46 @@ def publish_source(root, revision, files):
     return pathlib.Path(destination).absolute().as_uri()
 
 
-def declared_commands(text):
+def declared_commands(text, core=False):
     """Each string `command` of the requirements entries the manifest text
     declares, in order; none when the text is no object with a
-    `requirements` list."""
+    `requirements` list. With CORE the text is the list itself."""
     try:
-        manifest = json.loads(text)
+        document = json.loads(text)
     except ValueError:
         return []
-    requirements = manifest.get("requirements") if isinstance(manifest, dict) else None
+    if core:
+        requirements = document
+    else:
+        requirements = document.get("requirements") if isinstance(document, dict) else None
     if not isinstance(requirements, list):
         return []
     return [entry["command"] for entry in requirements if isinstance(entry, dict) and isinstance(entry.get("command"), str)]
 
 
-def missing_commands(text, probed):
+def missing_commands(text, probed, core=False):
     """The declared commands not on PATH, each once. `probed` caches each
     command's answer for the whole scan."""
     missing = []
-    for command in declared_commands(text):
+    for command in declared_commands(text, core):
         if command not in probed:
             probed[command] = shutil.which(command) is not None
         if not probed[command] and command not in missing:
             missing.append(command)
     return missing
+
+
+def scan_core(path, out, probed):
+    try:
+        with open(path, "rb") as fh:
+            text = fh.read().decode("utf-8")
+    except OSError as exc:
+        out.append({"dir": path, "path": path, "error": f"cannot read core requirements: {exc.strerror}"})
+        return
+    except UnicodeDecodeError as exc:
+        out.append({"dir": path, "path": path, "error": f"core requirements are not UTF-8: {exc.reason} at byte {exc.start}"})
+        return
+    out.append({"core": path, "text": text, "missing": missing_commands(text, probed, core=True)})
 
 
 def scan_base(base, out, require_base, snapshot_dir, probed):
@@ -213,6 +237,7 @@ def prune_snapshots(root, keep, out):
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--require-base", action="store_true")
+    parser.add_argument("--core")
     parser.add_argument("--snapshot-dir")
     parser.add_argument("--retain", action="append", default=[])
     parser.add_argument("bases", nargs="*")
@@ -221,10 +246,12 @@ def main(argv):
         parser.error("--retain needs --snapshot-dir")
     out = []
     probed = {}
+    if args.core:
+        scan_core(args.core, out, probed)
     for base in args.bases:
         scan_base(base, out, args.require_base, args.snapshot_dir, probed)
     if args.snapshot_dir and not any("error" in entry for entry in out):
-        prune_snapshots(args.snapshot_dir, set(args.retain) | {entry["revision"] for entry in out}, out)
+        prune_snapshots(args.snapshot_dir, set(args.retain) | {entry["revision"] for entry in out if "revision" in entry}, out)
     json.dump(out, sys.stdout)
     return 0
 

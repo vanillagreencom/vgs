@@ -8,7 +8,7 @@
 - `Appearance.js`: The plugin-owned brand colour table. `scripts/check-devtools-catalog.js` accepts it through `ThemeLogic.acceptAppearance` in dark and light mode.
 - `CatalogLogic.js`: The pure catalog judge and the catalog's rules: a mise spec's parts and key, the spec a row installs, the specs a row declares and the machines a row builds on. It imports nothing. Callers inject the package-manager ids, Lucide icon names, brand table and package-name rule through `judgeCatalog`.
 - `bin/devtools`: The engine, in node. Its header states each verb, its output and its refusals.
-- `tui/devtools.sh`: The floating TUI script. `install.sh`, `update.sh`, `remove.sh` and `requirement.sh` run it with their verb. Its header states the arguments and refusals.
+- `tui/devtools.sh`: The floating TUI script. `install.sh`, `update.sh` and `remove.sh` run it with their verb. Its header states the arguments and refusals.
 - `Service.qml`, `Query.qml`: The service and the one read-only command each of its queries runs.
 - `Panel.qml`, `ToolRow.qml`: The panel and one of its rows.
 - `ViewLogic.js`: Every decision the service and the panel make, pure.
@@ -34,10 +34,10 @@ The catalog's sections, fields, install routes, mise specs and security rules ar
 
 The service owns every command the plugin runs in the background. The panel draws what the service publishes and runs nothing itself.
 
-- The service runs four read-only queries: the engine's `list --json`, `vgsh doctor --json`, `vgsh self status --json` and `vgsh pkg check --json --source mise`. It runs them at start and on IPC `refresh`. IPC `open` summons the panel and runs them too, but it asks the network again only when that answer is older than 10 minutes. When one of the plugin's TUI runs ends, the service lists again and asks doctor and mise again.
-- The service publishes plugin status: `mise` (its version, or Not installed), `installed`, `outdated` and `missingRequirements` for the Settings page, and `catalog`, the data the panel draws.
+- The service runs four read-only queries: the engine's `list --json`, `vgsh doctor --json`, `vgsh self status --json` and `vgsh pkg check --json --source mise`. It runs them at start and on IPC `refresh`. IPC `open` summons the panel and runs them too, but it asks the network again only when that answer is older than 10 minutes. When one of the plugin's TUI runs ends, the service lists again and asks doctor and mise again. When the core's scan finds another set of missing commands for the core or an enabled plugin, through the `doctor` capability's `missing`, it asks doctor again.
+- The service publishes plugin status: `mise` (its version, or Not installed), `checks`, `installed`, `outdated` and `missingRequirements` for the Settings page, and `catalog`, the data the panel draws. A count keeps its last answer when its query fails, and `checks` names each query that failed.
 - The panel shows the VGS section, then Agents, Apps, CLI tools, Languages, Editors, Databases, Terminals and Other mise tools. Each row shows its icon on a brand tile, its version, where it comes from, a channel `Select` for an install, and Install, Update or Remove. A row that something outside VGS provides shows Managed outside VGS and offers no action.
-- The VGS section shows how VGS is installed and its version. When VGS is behind, Update opens the first TUI entry of group `Update`, which the Updates plugin declares. The section also lists every missing requirement of VGS and of each enabled plugin. Install runs `vgsh pkg run install` on the package that doctor names.
+- The VGS section shows how VGS is installed and its version. When VGS is behind, Update opens the first TUI entry of group `Update`, which the Updates plugin declares. The section also lists every missing requirement of VGS and of each enabled plugin. Install raises the core's requirement notice for that command through the `doctor` capability ([requirement-notice.md](../../../docs/architecture/requirement-notice.md)).
 - Every action opens the plugin's floating TUI. The install, update and remove entries are listed in group `Dev Tools`. Opened with no row, as the launcher opens them, each offers the rows its verb accepts now, from the engine's `targets` verb.
 
 ## Launchers

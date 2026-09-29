@@ -6,10 +6,13 @@ import "PluginLogic.js" as Logic
 
 // The requirement notice: which plugins' missing commands the user is
 // shown, in what order, on which screen, and the install the shown notice
-// runs (requirement-notice.md). Four triggers raise a notice: the
+// runs (requirement-notice.md). Five triggers raise a notice: the
 // pluginInstalled IPC function `vgsh plugin add` calls, Plugins.setEnabled
-// turning a plugin on, a plugin's own `requirements` capability, and the
-// `manager` capability's installRequirements.
+// turning a plugin on, a plugin's own `requirements` capability, the
+// `manager` capability's installRequirements, and the `doctor` capability
+// asking for the core's or an enabled plugin's commands. A notice belongs
+// to one owner, a plugin or the core, whose requirements and missing
+// commands Registry holds.
 // PluginLogic decides what each trigger asks for, whether it joins the
 // queue, and what the shown notice lists and installs; NoticeHost draws
 // it. The managers come from `bin/vgsh-pkg detect --json`, run when the
@@ -20,7 +23,8 @@ import "PluginLogic.js" as Logic
 Singleton {
     id: root
 
-    // The notices held, each { id, commands, required }, the first shown.
+    // The notices held, each { id, commands, required }, the first shown;
+    // `id` is the owner's, a plugin id or PluginLogic.CORE_OWNER.
     // Replaced whole on every change.
     property var queue: []
     // Plugin id -> the end, in ms since the epoch, of the rest its own
@@ -46,18 +50,18 @@ Singleton {
     property var afterScans: []
 
     readonly property var current: queue.length > 0 ? queue[0] : null
-    // What the shown notice draws, PluginLogic.noticeView with the plugin's
+    // What the shown notice draws, PluginLogic.noticeView with the owner's
     // id and name, or null while none shows, before the first detection
-    // ended, or while its plugin is gone before the scan that drops it.
+    // ended, or while its owner is gone before the scan that drops it.
     readonly property var view: {
         const notice = current;
-        const manifests = Registry.manifests;
-        const missing = Registry.missingCommands;
+        const owners = Registry.requirementOwners;
+        const missing = Registry.ownerMissing;
         const found = managers;
-        if (notice === null || detection === "pending" || !Logic.hasOwn(manifests, notice.id)) return null;
-        const shown = Logic.noticeView(manifests[notice.id], Logic.hasOwn(missing, notice.id) ? missing[notice.id] : [], notice, found);
+        if (notice === null || detection === "pending" || !Logic.hasOwn(owners, notice.id)) return null;
+        const shown = Logic.noticeView(owners[notice.id], Logic.hasOwn(missing, notice.id) ? missing[notice.id] : [], notice, found);
         shown.id = notice.id;
-        shown.name = manifests[notice.id].name;
+        shown.name = owners[notice.id].name;
         return shown;
     }
     readonly property bool installing: current !== null && installingId === current.id
@@ -95,11 +99,11 @@ Singleton {
     }
 
     function missingOf(id) {
-        return Logic.hasOwn(Registry.missingCommands, id) ? Registry.missingCommands[id] : [];
+        return Logic.hasOwn(Registry.ownerMissing, id) ? Registry.ownerMissing[id] : [];
     }
 
     function settle() {
-        const kept = Logic.noticeSettle(queue, Registry.manifests, Registry.missingCommands, installingId);
+        const kept = Logic.noticeSettle(queue, Registry.requirementOwners, Registry.ownerMissing, installingId);
         if (kept.length !== queue.length) queue = kept;
     }
 
@@ -122,12 +126,13 @@ Singleton {
         return answer;
     }
 
-    // Plugin ID's notice for TRIGGER, one of PluginLogic.NOTICE_TRIGGERS,
-    // and, for an offer, COMMANDS: PluginLogic.noticeRequest's answer, then
-    // noticeAdmit's.
+    // Owner ID's notice for TRIGGER, one of PluginLogic.NOTICE_TRIGGERS,
+    // and, for an offer or a request, COMMANDS: PluginLogic.noticeRequest's
+    // answer, then noticeAdmit's.
     function raise(id, trigger, commands) {
-        if (!Registry.has(id)) return "unknown: " + id;
-        const request = Logic.noticeRequest(Registry.manifests[id], missingOf(id), trigger, commands);
+        const owners = Registry.requirementOwners;
+        if (!Logic.hasOwn(owners, id)) return "unknown: " + id;
+        const request = Logic.noticeRequest(owners[id], missingOf(id), trigger, commands);
         if (request.answer !== "ok") return request.answer;
         const admitted = Logic.noticeAdmit(queue, rest, id, request, trigger, Date.now());
         if (admitted.queue !== queue) {
@@ -172,6 +177,14 @@ Singleton {
         return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
     }
 
+    // The `doctor` capability's request for OWNER's COMMANDS, the core's or
+    // an enabled plugin's, judged by PluginLogic.noticeOwnerError first.
+    function request(owner, commands) {
+        const refusal = Logic.noticeOwnerError(owner, Registry.requirementOwners, Object.keys(Registry.manifests).filter(id => Registry.isEnabled(id)));
+        if (refusal !== "") return refusal;
+        return raise(owner, "chosen", commands);
+    }
+
     // Install: the shown notice's first installable group through the core
     // TUI. Answers the TUI's answer; a busy key focuses the live install.
     function accept() {
@@ -199,8 +212,8 @@ Singleton {
         });
     }
 
-    // Not now, Escape or Close: the shown notice goes, and its plugin's own
-    // offers rest.
+    // Not now, Escape or Close: the shown notice goes, and its owner's own
+    // offers rest; a `doctor` request, the user's press, never rests.
     function dismiss() {
         const notice = current;
         if (notice === null || installing) return;

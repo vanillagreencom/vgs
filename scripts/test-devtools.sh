@@ -412,11 +412,6 @@ check "a Ctrl-C in the filter exits 130" test "$status" == 130
 ENGINE_TTY=pty tui "$plugin" install.sh GUM_PICK="Not offered" --
 check "a pick the filter was not offered is refused" out_has "devtools: refused: picked=Not offered reason=unlisted"
 check "that refusal runs nothing" log_is ""
-ENGINE_TTY=pty tui "$plugin" requirement.sh -- --manager pacman libyaml
-check "the requirement entry installs the package through vgsh pkg run" log_is "pacman [-S] [--needed] [--] [libyaml]"
-tui "$plugin" requirement.sh -- libyaml
-check "the requirement entry without --manager is refused" out_has "devtools: refused: requirement=arguments"
-check "that refusal exits 2" test "$status" == 2
 tui "$plugin" devtools.sh -- list --json
 check "the TUI script refuses a verb it does not run" out_has "devtools: refused: verb=list"
 in_world -- "$plugin/tui/install.sh" claude

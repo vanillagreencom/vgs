@@ -10,8 +10,9 @@ import "ViewLogic.js" as ViewLogic
 // section of the catalog and the global mise tools no row declares, each
 // row with its state and its actions. It draws the `catalog` the service
 // publishes as plugin status and runs nothing itself: an action opens the
-// plugin's floating TUI for that row, or the Update group's entry for VGS,
-// and the service lists again when the run ends. The switch at the end
+// plugin's floating TUI for that row, the Update group's entry for VGS, or
+// the core's requirement notice for a missing requirement, and the service
+// lists again when the run ends or the core's scan finds another set. The switch at the end
 // writes the writeLaunchers setting. The panel is built on summon and
 // destroyed on hide, and takes no payload. Everything it draws itself reads
 // `look`, the plugin's own table (Appearance.js, D023).
@@ -46,14 +47,14 @@ Item {
         case "verb":
             reply = shell.tui.run(action.verb, ViewLogic.verbArgs(action.verb, row, channel));
             break;
-        case "requirement":
-            reply = shell.tui.run(action.verb, ViewLogic.requirementArgs(row.requirement));
+        case "doctor":
+            reply = shell.doctor.offer(row.requirement.owner, [row.requirement.command]);
             break;
         case "entry":
             reply = shell.tui.open(action.verb);
             break;
         default:
-            throw new Error("devtools: action kind " + JSON.stringify(action.kind) + " is not one of verb, requirement, entry");
+            throw new Error("devtools: action kind " + JSON.stringify(action.kind) + " is not one of verb, doctor, entry");
         }
         problem = ViewLogic.replyLine(reply);
         if (problem !== "") console.warn("devtools panel: " + reply);
