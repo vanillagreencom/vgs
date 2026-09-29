@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.notifications/tui/open.sh, scripts/test-notifications-open.sh
 
-The four freedesktop hints any sender may add to a notification so that `vgs.notifications` draws a Lucide icon in a status tone and opens a file on a click. They are data the card stores with the notification, so a card in the history, or one restored after a shell restart, draws and clicks as it did live. The notifications plugin names no sender: `vgs.automations` is one, and any script can send them with `notify-send`. [D050](../decisions/D050-automations-engine.md) records the choice.
+The four freedesktop hints any sender may add to a notification so that `vgs.notifications` draws a Lucide icon in a status tone and opens a file on a click. They are data the card stores with the notification, so a card in the history, or one restored after a shell restart, draws and clicks as it did live. The notifications plugin names no sender: `vgs.automations` is one, and any script can send them with `notify-send`. [D051](../decisions/D051-automations-engine.md) records the choice.
 
 ## The hints
 
