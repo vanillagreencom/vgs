@@ -10,7 +10,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 
 - Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
 - One manifest format, judged once, with every field in [docs/architecture/plugins.md](docs/architecture/plugins.md).
-- A plugin manager in the bar: a panel that switches plugins on and off and edits their settings.
+- A Settings window, `SUPER+M` or the gear in the bar: every plugin with a page of its details, its settings and its keys, and a switch to turn it on or off.
 - A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
 - Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
 - A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
@@ -20,7 +20,8 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 
 | Plugin | What it does |
 |---|---|
-| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces, clock and plugin manager, and three sections for plugin widgets. |
+| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces and clock, and three sections for plugin widgets. |
+| [Settings](shell/plugins/vgs.settings/README.md) | A window that lists every plugin and opens a page for each, with its details, settings and keys. `SUPER+M` or the gear in the bar opens it. |
 | [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click, and the applied theme's wallpaper on every screen, with Previous and Next in the panel. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
 
 ## How it works
@@ -37,7 +38,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 - `~/.config/vgs/shell.json`: which bar is active, which widgets sit in which section, which plugins are on.
 - `~/.config/vgs/theme.json`: the theme, a document that overrides any design token every plugin reads: colours, fonts, spacing, radius and motion.
 - A widget's settings sit inline on its layout entry, for example `{ "id": "acme.weather", "units": "metric" }`; every other plugin's sit on its row in `plugins`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`. A change reaches the running plugin without a restart.
-- A plugin's Hyprland keys sit in `keys` on its row in `plugins`, for example `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` unbinds a key.
+- A plugin's Hyprland keys sit in `keys` on its row in `plugins`, for example `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` unbinds a key. The Settings window writes both.
 
 ## Writing a plugin
 

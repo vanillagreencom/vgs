@@ -1,21 +1,20 @@
 # Bar
 
-The bar across the top of every screen. It draws its own workspaces, clock and plugin manager, and holds plugin widgets in a left, a center and a right section.
+The bar across the top of every screen. It draws its own workspaces and clock, and holds plugin widgets in a left, a center and a right section.
 
 ## Features
 
 - One bar per screen, above windows, with space reserved so windows never sit under it.
 - Built-in workspaces: one number per existing workspace, lowest first, the focused one highlighted. Click a number to focus that workspace.
 - Built-in clock: the date and time in the format you choose. It ticks once a minute, or once a second when the format shows seconds.
-- Built-in plugin manager: a Plugins button that opens a panel listing every plugin. Switch a plugin on or off there, and change the settings a plugin offers.
-- Three sections for plugin widgets, after the built-ins in each section. Place a widget by editing `bar.layout` in `~/.config/vgs/shell.json` or with `bin/vgsh plugin enable <id>`.
+- Three sections for plugin widgets, after the built-ins in each section. Place a widget by editing `bar.layout` in `~/.config/vgs/shell.json` or with `bin/vgsh plugin enable <id>`. The shipped layout puts the Settings gear, `vgs.settings`, in the right section.
 - Colours, the font and every size follow the design tokens, so `~/.config/vgs/theme.json` restyles the bar.
 
 ## Settings
 
 On the bar's row in `plugins` in `~/.config/vgs/shell.json`, for example `{ "id": "vgs.bar", "clockFormat": "HH:mm" }`:
 
-- `left`, `center`, `right`: the built-in widgets each section shows, in order, from `workspaces`, `clock` and `manager`. A name listed twice in one section is drawn once and the repeat is logged. Default: `["workspaces"]`, `["clock"]`, `["manager"]`. An empty list hides them.
+- `left`, `center`, `right`: the built-in widgets each section shows, in order, from `workspaces` and `clock`. A name listed twice in one section is drawn once and the repeat is logged. `manager` draws nothing and logs `vgsh plugin enable vgs.settings`, which places the Settings gear instead. Default: `["workspaces"]`, `["clock"]`, `[]`. An empty list hides them. These lists are not on the Settings page, since the page draws no list.
 - `clockFormat`: the clock's format in Qt date format. Default: `ddd d MMM  HH:mm`.
 
 ## Limits

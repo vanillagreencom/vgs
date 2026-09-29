@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.settings",
+  "name": "Settings",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Every plugin the shell found, with a page for each: its details, its settings and its keys. Open it with SUPER+M, its gear in the bar or IPC.",
+  "license": "MIT",
+  "icon": "settings",
+  "kinds": [
+    "panel",
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml",
+    "bar-widget": "Widget.qml",
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "ipc",
+    "manager",
+    "screens",
+    "shortcut",
+    "surfaces"
+  ],
+  "settings": {},
+  "defaultSection": "right",
+  "hyprland": {
+    "binds": [
+      { "shortcut": "toggle", "key": "SUPER+M" }
+    ]
+  }
+}

@@ -2,28 +2,25 @@
   "schemaVersion": 1,
   "id": "vgs.bar",
   "name": "Bar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "VanillaGreen",
-  "description": "The top bar. Draws its own workspaces, clock and plugin manager, and lays out plugin widgets in left, center and right sections.",
+  "description": "The top bar. Draws its own workspaces and clock, and lays out plugin widgets in left, center and right sections.",
   "license": "MIT",
+  "icon": "panel-top",
   "kinds": [
-    "bar",
-    "panel"
+    "bar"
   ],
   "entryPoints": {
-    "bar": "Bar.qml",
-    "panel": "ManagerPanel.qml"
+    "bar": "Bar.qml"
   },
   "capabilities": [
     "builtins",
-    "compositor",
-    "manager",
-    "surfaces"
+    "compositor"
   ],
   "settings": {
     "left": ["workspaces"],
     "center": ["clock"],
-    "right": ["manager"],
+    "right": [],
     "clockFormat": "ddd d MMM  HH:mm"
   },
   "schema": {
