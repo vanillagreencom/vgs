@@ -1,6 +1,21 @@
 .pragma library
 
+// The Dev Tools panel's own look, the table the manifest's `appearance`
+// names and ThemeLogic.acceptAppearance judges (D023): each tool's brand
+// colour, the tile each row draws its icon on, and the panel's metrics.
+// The panel composes qs.Ui components, which follow the theme; what it
+// draws itself reads this table alone. The active theme reaches it through
+// `palette.accent`, `motion.scale` and its `scheme.mode`, which applies
+// LIGHT. The metrics are the shipped theme's own values, from
+// shell/Commons/Tokens.js: `space.lg` 12, `space.xs` 4, `size.control.lg`
+// 36 for a tile, `size.window.width` 600 for the width and
+// `size.panel.maxHeight` 600 for the height, `size.window.gutter` 12 kept
+// clear of a narrower or shorter screen's edges, so the panel sits beside the
+// shell's surfaces under that theme. The tile's corner and glyph are the
+// panel's own.
+
 function color(value) { return { type: "color", value: value }; }
+function length(value) { return { type: "length", value: value }; }
 function number(value, min, max) { return { type: "number", value: value, min: min, max: max }; }
 
 var TOKENS = {
@@ -69,4 +84,41 @@ var TOKENS = {
     }
 };
 
-var LIGHT = {};
+// A tile's glyph takes the colour that reads on its fill, black or white by
+// ThemeLogic's `contrast`, so a white brand (xAI, Vercel) and a black one
+// (Symfony) both read in either mode.
+TOKENS.tile = {
+    size: length(36),
+    glyph: length(18),
+    radius: length(6),
+    neutral: color("#3f3f46"),
+    neutralInk: color("contrast({tile.neutral})"),
+    accent: color("{palette.accent}"),
+    accentInk: color("contrast({tile.accent})"),
+    ink: {}
+};
+Object.keys(TOKENS.brand).forEach(function (key) {
+    TOKENS.tile.ink[key] = color("contrast({brand." + key + "})");
+});
+
+TOKENS.panel = {
+    width: length(600),
+    maxHeight: length(600),
+    gutter: length(12),
+    padding: length(12),
+    gap: length(4),
+    sectionGap: length(12)
+};
+
+TOKENS.row = {
+    paddingX: length(12),
+    paddingY: length(6),
+    gap: length(12),
+    lineGap: length(4)
+};
+
+var LIGHT = {
+    tile: {
+        neutral: "#d4d4d8"
+    }
+};

@@ -38,6 +38,7 @@ optdepends=(
   'sudo: package installs and the browser policy writer in floating TUIs'
   'imagemagick: square Slack profile photos in notifications'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
+  'mise: Dev Tools installs, updates and removes developer tools'
 )
 conflicts=('vgs-shell' 'vgs-shell-git')
 source=("vgs-$pkgver.tar.gz::$url/releases/download/v$pkgver/vgs-$pkgver.tar.gz")

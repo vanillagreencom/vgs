@@ -103,6 +103,20 @@ Scope {
         return found === undefined ? null : found;
     }
 
+    // The first visible, enabled item named `type` whose `text` is `text`
+    // inside the first visible item named `scopeType` that draws
+    // `scopeText`, under an instance, or null: one row's button among rows
+    // that each draw a button with the same text.
+    function scopedItem(hostKey, id, scopeType, scopeText, type, text) {
+        const item = root.instance(hostKey, id);
+        if (item === null) return null;
+        const draws = node => root.descendants(node).some(child => child instanceof Text && child.visible && child.text === scopeText);
+        const scope = root.descendants(item).find(child => root.typeName(child) === scopeType && child.visible && draws(child));
+        if (scope === undefined) return null;
+        const found = root.descendants(scope).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
+        return found === undefined ? null : found;
+    }
+
     function fieldOf(panel, id, key) {
         return descendants(panel).find(item => item.pluginId === id && item.key === key && typeof item.apply === "function") || null;
     }
@@ -514,6 +528,11 @@ Scope {
         // The first visible, enabled item named `type` under an instance
         // whose `text`, or `label` for an icon button, is `text`, as its
         // box in its window's coordinates, or "absent".
+        // windowGeometry for the item scopedItem finds.
+        function scopedWindowGeometry(hostKey: string, id: string, scopeType: string, scopeText: string, type: string, text: string): string {
+            const found = root.scopedItem(hostKey, id, scopeType, scopeText, type, text);
+            return found === null ? "absent" : JSON.stringify(root.windowBox(found));
+        }
         function windowGeometry(hostKey: string, id: string, type: string, text: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";

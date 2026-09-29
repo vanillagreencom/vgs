@@ -37,6 +37,14 @@
 //       stays the source of truth. A row whose `arch` excludes the machine
 //       is left out. mise answers one `mise ls --json` and one
 //       `mise ls --global --json` per list.
+//   devtools --tree <dir> targets install|update|remove
+//       one line per row the verb accepts now, as list reads the rows, in
+//       the Dev Tools panel's section order: `<label>\t<word>...`, the label
+//       the row's name and its section's title from ViewLogic.js, the
+//       words what the verb takes after it: the row's id, or --mise and the
+//       key of an other mise tool, whose label is its key. The floating TUI
+//       script offers these lines when it was opened with no row. Reads
+//       what list reads and changes nothing.
 //   devtools --tree <dir> install <id> [--channel <channel>] [--launchers]
 //   devtools --tree <dir> update <id> [--launchers]
 //   devtools --tree <dir> update --mise <key>
@@ -112,7 +120,7 @@ const path = require("path");
 
 const PLUGIN_DIR = path.join(__dirname, "..");
 const LAUNCHER_MARK = "# vgs.devtools launcher";
-const USAGE = "usage: devtools --tree <dir> list --json | install <id> [--channel <channel>] [--launchers] | update <id> [--launchers] | update --mise <key> | remove <id> | remove --mise <key> | launchers refresh|remove";
+const USAGE = "usage: devtools --tree <dir> list --json | targets install|update|remove | install <id> [--channel <channel>] [--launchers] | update <id> [--launchers] | update --mise <key> | remove <id> | remove --mise <key> | launchers refresh|remove";
 const PACKAGE_SECTIONS = ["agents", "apps", "tools"];
 // Every mise mutation runs without mise's release cooldown, which would
 // hold a tool back for days after it ships (v1 D011).
@@ -140,6 +148,7 @@ const PackageManagers = load(path.join(args.tree, "shell", "Core", "PackageManag
 const Lucide = load(path.join(args.tree, "shell", "Ui", "icons", "Lucide.js"));
 const Catalog = load(path.join(PLUGIN_DIR, "CatalogLogic.js"));
 const Appearance = load(path.join(PLUGIN_DIR, "Appearance.js"));
+const View = load(path.join(PLUGIN_DIR, "ViewLogic.js"));
 const VGSH = path.join(args.tree, "bin", "vgsh");
 const RUNNER = path.join(args.tree, "bin", "lib", "pkg-run.sh");
 const HOME = process.env.HOME || os.homedir();
@@ -809,6 +818,21 @@ async function launchersVerb(catalog, action) {
         if (typeof row.exec !== "string" || !installOf(installs[Catalog.specKey(row.package)]).installed) deleteLauncher(row.command, "removed");
 }
 
+// The lines `targets VERB` prints, from a survey's REPORT.
+function targetLines(report, verb) {
+    const lines = [];
+    for (const section of View.TOOL_SECTIONS) {
+        if (section.key === "other") {
+            for (const tool of report.other)
+                if (tool.actions.includes(verb)) lines.push(tool.id + " · " + section.title + "\t--mise\t" + tool.id);
+            continue;
+        }
+        for (const row of report.sections[section.key])
+            if (row.actions.includes(verb)) lines.push(row.name + " · " + section.title + "\t" + row.id);
+    }
+    return lines;
+}
+
 // `<verb> <id>` or `<verb> --mise <key>`, with the flags FLAGS allows.
 function readTarget(rest, flags) {
     const out = { id: null, key: null, channel: null, launchers: false };
@@ -830,6 +854,9 @@ main(async () => {
     if (verb === "list") {
         if (rest.length !== 1 || rest[0] !== "--json") bad("list=json-required");
         process.stdout.write(JSON.stringify((await survey(readCatalog())).report) + "\n");
+    } else if (verb === "targets") {
+        if (rest.length !== 1 || !["install", "update", "remove"].includes(rest[0])) bad("targets=" + (rest[0] || "missing"));
+        process.stdout.write(targetLines((await survey(readCatalog())).report, rest[0]).map(line => line + "\n").join(""));
     } else if (verb === "install") {
         const t = readTarget(rest, ["--channel", "--launchers"]);
         await install(readCatalog(), t.id, t.channel, t.launchers);

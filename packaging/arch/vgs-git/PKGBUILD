@@ -37,6 +37,7 @@ optdepends=(
   'sudo: package installs and the browser policy writer in floating TUIs'
   'imagemagick: square Slack profile photos in notifications'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
+  'mise: Dev Tools installs, updates and removes developer tools'
 )
 makedepends=('git')
 provides=("vgs=$pkgver")

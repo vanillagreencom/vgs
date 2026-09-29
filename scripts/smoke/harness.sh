@@ -278,14 +278,17 @@ fi
 # service would be one more build in the bar rows' count;
 # rows/manager.sh enables it and rows/settings.sh disables it again.
 # vgs.agent-warden starts disabled for the same reason; rows/agent-warden.sh
-# enables it and disables it again. vgs.themes stays enabled, its background built on every
+# enables it and disables it again. vgs.devtools starts disabled too: its
+# service's IPC target and status record would sit in the capability rows'
+# lending records, and its queries would run the host's mise;
+# rows/devtools.sh enables it over stub commands. vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
 tick="$home/.config/vgs/plugins/acme.tick"
 mkdir -p "$tick"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
 cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools"] }
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
@@ -543,6 +546,20 @@ click_in() {
   rect="$(ipc smoke windowGeometry "$2" "$3" "$4" "$5")" || return 1
   [[ $rect == \[* ]] || { echo "click_in: no $4 $5: $rect" >&2; return 1; }
   read -r x y < <(at_centre "$1" "$rect") || return 1
+  click "$x" "$y"
+}
+# click_scoped_in NAMESPACE HOST_KEY ID SCOPE_TYPE SCOPE_TEXT TYPE TEXT: the
+# same for the item of TYPE reading TEXT inside the first shown SCOPE_TYPE
+# that draws SCOPE_TEXT, such as one row's button among rows that each
+# draw one with the same text. The pointer moves there a pixel off first:
+# a surface mapped since the last press takes no click until the pointer
+# moves (validation-smoke.md).
+click_scoped_in() {
+  local rect x y
+  rect="$(ipc smoke scopedWindowGeometry "$2" "$3" "$4" "$5" "$6" "$7")" || return 1
+  [[ $rect == \[* ]] || { echo "click_scoped_in: no $6 $7 in $4 $5: $rect" >&2; return 1; }
+  read -r x y < <(at_centre "$1" "$rect") || return 1
+  hover "$((x + 1))" "$y" || return 1
   click "$x" "$y"
 }
 

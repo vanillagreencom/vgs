@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # The vgs.devtools engine, shell/plugins/vgs.devtools/bin/devtools, and its
-# floating TUI script, tui/devtools.sh. Every command a row reaches is a
+# floating TUI scripts, tui/devtools.sh and the entry scripts that run it.
+# Every command a row reaches is a
 # stub on a PATH that holds nothing else but the tools the engine and
 # `vgsh pkg run` need: mise keeps its installs in a scratch state and data
 # directory and records each call that changes something, with the
 # MISE_MINIMUM_RELEASE_AGE it ran under; pacman records its argv; sudo runs
-# the rest of its argv; uname answers the machine a row names. No row
+# the rest of its argv; uname answers the machine a row names; gum's
+# filter records the lines it was offered and answers the one $GUM_PICK
+# names, or exits $GUM_STATUS. No row
 # reaches a real package manager, the owner's mise config or a live session.
 #
 # Rows run under `unshare -rm` with a fixture os-release bound over
@@ -37,6 +40,7 @@ stubs="$tmp/stubs"; mkdir -p "$stubs"
 printf '#!/bin/sh\nprintf "pacman" >>"$LOG"; for a; do printf " [%%s]" "$a" >>"$LOG"; done; echo >>"$LOG"\n' >"$stubs/pacman"
 printf '#!/bin/sh\ncase "$1" in -k) exit 0 ;; -n) shift ;; esac\nexec "$@"\n' >"$stubs/sudo"
 printf '#!/bin/sh\necho "$STUB_MACHINE"\n' >"$stubs/uname"
+printf '#!/bin/sh\n[ "$1" = filter ] || exit 64\ncat >"$GUM_OFFERED"\n[ -z "${GUM_STATUS-}" ] || exit "$GUM_STATUS"\nprintf "%%s\\n" "$GUM_PICK"\n' >"$stubs/gum"
 # mise: $MISE_STATE/installed holds one installed key per line,
 # $MISE_STATE/global-extra the global config's keys no install backs,
 # $MISE_STATE/auto_prune the setting, and $MISE_STATE/which/<command> what
@@ -135,20 +139,18 @@ reset_world() {
   : >"$log"
 }
 
-# engine PLUGIN_DIR [VAR=VALUE...] -- ARGS: the plugin's engine against
-# this repository's tree, as `devtools --tree <repo> ARGS`, with the
-# fixture os-release. ENGINE_TTY=pty runs it on a pseudo-terminal, none
+# in_world [VAR=VALUE...] -- WORDS...: WORDS in the stub world with the
+# fixture os-release. ENGINE_TTY=pty runs them on a pseudo-terminal, none
 # with no controlling terminal, and plain (the default) with neither.
 # Output lands in $tmp/out, stripped of carriage returns, the exit status
 # in $status.
-engine() {
-  local at="$1" extra=() cmd words
-  shift
+in_world() {
+  local extra=() cmd words
   while [[ $1 != -- ]]; do extra+=("$1"); shift; done
   shift
   words=(env -i PATH="$stubs:$tools" HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty"
     LC_ALL=C LOG="$log" MISE_STATE="$state" MISE_DATA_DIR="$data" STUB_MACHINE="${MACHINE:-x86_64}"
-    VGS_TEST_RUN=1 TMPDIR="$tmp" "${extra[@]}" "$node_bin" "$at/bin/devtools" --tree "$repo" "$@")
+    GUM_OFFERED="$tmp/offered" VGS_TEST_RUN=1 TMPDIR="$tmp" "${extra[@]}" "$@")
   status=0
   case "${ENGINE_TTY:-plain}" in
     pty)
@@ -163,6 +165,25 @@ engine() {
         "${words[@]}" </dev/null >"$tmp/out.raw" 2>&1 || status=$? ;;
   esac
   tr -d '\r' <"$tmp/out.raw" >"$tmp/out"
+}
+# engine PLUGIN_DIR [VAR=VALUE...] -- ARGS: the plugin's engine against
+# this repository's tree, as `devtools --tree <repo> ARGS`.
+engine() {
+  local at="$1" extra=()
+  shift
+  while [[ $1 != -- ]]; do extra+=("$1"); shift; done
+  shift
+  in_world "${extra[@]}" -- "$node_bin" "$at/bin/devtools" --tree "$repo" "$@"
+}
+# tui PLUGIN_DIR SCRIPT [VAR=VALUE...] -- ARGS: the plugin's TUI script
+# tui/SCRIPT as the presenter runs it, with VGS_TUI_LIB this repository's
+# library and VGS_PLUGIN_DIR the plugin.
+tui() {
+  local at="$1" script="$2" extra=()
+  shift 2
+  while [[ $1 != -- ]]; do extra+=("$1"); shift; done
+  shift
+  in_world VGS_TUI_LIB="$repo/bin/lib/tui.sh" VGS_PLUGIN_DIR="$at" "${extra[@]}" -- "$at/tui/$script" "$@"
 }
 out_has() { grep -qF -- "$1" "$tmp/out"; }
 log_is() { [[ "$(cat "$log")" == "$1" ]] || { printf '    log:\n%s\n    want:\n%s\n' "$(cat "$log")" "$1"; return 1; }; }
@@ -217,6 +238,22 @@ row_rails_remove_kept() { # PLUGIN: rails installed, and with it ruby, which sta
   ENGINE_TTY=pty engine "$1" -- remove rails
   [[ $status == 0 ]] && out_has "devtools: kept=ruby reason=declared-by-installed-row" && log_is \
     "mise [x] [ruby] [--] [gem] [uninstall] [rails] [railties] [--all] [--executables] [--ignore-dependencies] {age=0}"
+}
+# The rows remove offers with claude installed: the catalog row by id and
+# the other tool by --mise and its key, and no row it cannot remove.
+row_targets() { # PLUGIN
+  reset_world
+  printf 'claude\ngithub:owner/extra\n' >"$state/installed"
+  engine "$1" -- targets remove
+  [[ $status == 0 ]] && [[ "$(cat "$tmp/out")" == "$(lines "Claude Code · Agents"$'\t'"claude" "github:owner/extra · Other mise tools"$'\t'"--mise"$'\t'"github:owner/extra")" ]]
+}
+# The install entry opened with no row offers the absent rows and installs
+# the one picked, which is not the first offered.
+row_picker() { # PLUGIN
+  reset_world
+  echo false >"$state/auto_prune"
+  ENGINE_TTY=pty tui "$1" install.sh GUM_PICK="Codex · Agents" --
+  [[ $status == 0 ]] && grep -qxF "Claude Code · Agents" "$tmp/offered" && log_is "mise [use] [-g] [codex] {age=0}"
 }
 row_remove_mirror() { # PLUGIN: after row_install_order's install
   : >"$log"
@@ -341,18 +378,48 @@ check "an unknown id is refused" out_has "devtools: refused: id=no-such-row reas
 engine "$plugin" -- list
 check "list without --json is a bad invocation" test "$status" == 2
 
-# The floating TUI script hands its arguments to the engine of the copy it
-# runs from, against the tree VGS_TUI_LIB lies in.
-tui_run() { # [VAR=VALUE...]
-  timeout 60 unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "$tmp/os-release" \
-    env -i PATH="$stubs:$tools" HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" LC_ALL=C LOG="$log" \
-    MISE_STATE="$state" MISE_DATA_DIR="$data" STUB_MACHINE=x86_64 "$@" "$plugin/tui/devtools.sh" list --json </dev/null >"$tmp/out" 2>&1 || status=$?
-}
-status=0
-tui_run VGS_TUI_LIB="$repo/bin/lib/tui.sh" VGS_PLUGIN_DIR="$plugin"
-check "the TUI script lists through the engine" list_has 'd["manager"] == "pacman"'
-status=0
-tui_run
+# The targets a picker offers.
+check "targets lists what remove takes for each row it offers" row_targets "$plugin"
+engine "$plugin" -- targets list
+check "targets of a verb the TUI does not run is a bad invocation" test "$status" == 2
+
+# The floating TUI scripts: each entry script runs devtools.sh with its
+# verb, which hands a row to the engine of the copy it runs from, against
+# the tree VGS_TUI_LIB lies in, or offers the rows the verb takes.
+reset_world
+echo false >"$state/auto_prune"
+ENGINE_TTY=pty tui "$plugin" install.sh -- claude
+check "the install entry installs the row it is handed" log_is "mise [use] [-g] [claude] {age=0}"
+: >"$log"
+ENGINE_TTY=pty tui "$plugin" update.sh -- claude
+check "the update entry updates the row it is handed" log_is "mise [up] [claude] {age=0}"
+: >"$log"
+ENGINE_TTY=pty tui "$plugin" remove.sh -- claude
+check "the remove entry removes the row it is handed" log_is "$(lines "mise [uninstall] [--all] [claude] {age=0}" "mise [rm] [-g] [claude] {age=0}")"
+check "an entry opened with no row installs the row picked" row_picker "$plugin"
+check "the picker offers no row the verb does not take" test "$(grep -c -F "Other mise tools" "$tmp/offered" || true)" == 0
+reset_world
+echo false >"$state/auto_prune"
+printf 'github:owner/extra\n' >"$state/installed"
+ENGINE_TTY=pty tui "$plugin" update.sh GUM_PICK="github:owner/extra · Other mise tools" --
+check "the update picker updates an other mise tool by its key" log_is "mise [up] [github:owner/extra] {age=0}"
+: >"$log"
+ENGINE_TTY=pty tui "$plugin" install.sh GUM_STATUS=1 --
+check "leaving the filter with Esc exits 0" test "$status" == 0
+check "leaving the filter runs nothing" log_is ""
+ENGINE_TTY=pty tui "$plugin" install.sh GUM_STATUS=130 --
+check "a Ctrl-C in the filter exits 130" test "$status" == 130
+ENGINE_TTY=pty tui "$plugin" install.sh GUM_PICK="Not offered" --
+check "a pick the filter was not offered is refused" out_has "devtools: refused: picked=Not offered reason=unlisted"
+check "that refusal runs nothing" log_is ""
+ENGINE_TTY=pty tui "$plugin" requirement.sh -- --manager pacman libyaml
+check "the requirement entry installs the package through vgsh pkg run" log_is "pacman [-S] [--needed] [--] [libyaml]"
+tui "$plugin" requirement.sh -- libyaml
+check "the requirement entry without --manager is refused" out_has "devtools: refused: requirement=arguments"
+check "that refusal exits 2" test "$status" == 2
+tui "$plugin" devtools.sh -- list --json
+check "the TUI script refuses a verb it does not run" out_has "devtools: refused: verb=list"
+in_world -- "$plugin/tui/install.sh" claude
 check "the TUI script outside the presenter is refused" out_has "devtools: refused: tui=missing"
 check "that refusal exits 2" test "$status" == 2
 
@@ -379,6 +446,8 @@ control no-mise-which bin/devtools '        for (const finder of [resolveCommand
 control update-skips-postinstall bin/devtools $'    runSteps((row.postInstall || []).map(step => stepArgv(catalog, step)), env);\n    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' $'    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' rails_update_after_install
 control rails-only-postremove catalog.json $'"rails",\n            "railties",' '"rails",' rails_remove_kept
 control skips-postremove bin/devtools '    runSteps((row.postRemove || []).map(step => stepArgv(catalog, step)), buildEnv(row));' '' rails_remove_kept
+control targets-every-row bin/devtools '            if (row.actions.includes(verb)) lines.push(row.name' '            lines.push(row.name' targets
+control picks-first tui/devtools.sh '  [[ ${labels[i]} == "$picked" ]] || continue' '  :' picker
 control keeps-packages bin/devtools $'            runPackages("remove", picked.manager,' $'            if (false) runPackages("remove", picked.manager,' remove_mirror_after_install
 
 if [[ $failures -gt 0 ]]; then echo "test-devtools: $failures failure(s)"; exit 1; fi

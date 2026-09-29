@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.devtools",
+  "name": "Dev Tools",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "A panel over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and Install, Update and Remove in a floating TUI, and a VGS section with how VGS is installed and every missing requirement. Open it with vgsh ipc call vgs.devtools invoke open.",
+  "license": "MIT",
+  "icon": "code-xml",
+  "kinds": [
+    "panel",
+    "service"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "configure",
+    "ipc",
+    "screens",
+    "status",
+    "surfaces",
+    "tui"
+  ],
+  "settings": {
+    "writeLaunchers": false,
+    "placement": "center"
+  },
+  "schema": {
+    "writeLaunchers": {
+      "type": "boolean",
+      "label": "Write launchers",
+      "description": "Write a launcher in ~/.local/bin for every agent, app and tool, which installs it through mise on first run; VGS never replaces or deletes a file it did not write"
+    },
+    "placement": {
+      "type": "enum",
+      "label": "Placement",
+      "description": "Where the Dev Tools panel opens on its monitor",
+      "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
+    }
+  },
+  "requirements": [
+    {
+      "command": "mise",
+      "packages": { "pacman": "mise", "nix": "mise" },
+      "optional": false,
+      "purpose": "Installs, updates and removes the tools the Dev Tools catalog lists"
+    }
+  ],
+  "status": {
+    "mise": {
+      "type": "state",
+      "label": "mise",
+      "hint": "Installs, updates and removes every tool the Dev Tools panel lists",
+      "command": "vgsh pkg run install mise"
+    },
+    "installed": {
+      "type": "count",
+      "label": "Tools installed"
+    },
+    "outdated": {
+      "type": "count",
+      "label": "Updates available",
+      "hint": "Tools mise can update, as mise outdated counts them"
+    },
+    "missingRequirements": {
+      "type": "count",
+      "label": "VGS requirements missing",
+      "hint": "Commands VGS or an enabled plugin runs that are not on PATH",
+      "command": "vgsh doctor"
+    },
+    "catalog": {
+      "type": "data",
+      "label": "Catalog"
+    }
+  },
+  "tui": {
+    "install": {
+      "script": "tui/install.sh",
+      "title": "Install a developer tool",
+      "entry": { "label": "Install a developer tool", "icon": "package-plus", "group": "Dev Tools" }
+    },
+    "update": {
+      "script": "tui/update.sh",
+      "title": "Update a developer tool",
+      "entry": { "label": "Update a developer tool", "icon": "refresh-cw", "group": "Dev Tools" }
+    },
+    "remove": {
+      "script": "tui/remove.sh",
+      "title": "Remove a developer tool",
+      "entry": { "label": "Remove a developer tool", "icon": "package-minus", "group": "Dev Tools" }
+    },
+    "requirement": {
+      "script": "tui/requirement.sh",
+      "title": "Install a requirement"
+    }
+  },
+  "appearance": "Appearance.js"
+}
