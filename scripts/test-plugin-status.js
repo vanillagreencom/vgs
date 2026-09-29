@@ -14,6 +14,7 @@ const { load } = require("../bin/lib/qml-library.js");
 
 const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
+const MANAGERS = path.join(__dirname, "..", "shell", "Core", "PackageManagers.js");
 
 let failures = 0;
 function report(name, got, want) {
@@ -180,6 +181,7 @@ try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
+    fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
     const source = fs.readFileSync(LOGIC, "utf8");
     for (const [label, needle, replacement] of CONTROLS) {
         const count = source.split(needle).length - 1;
