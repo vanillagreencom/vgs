@@ -28,6 +28,13 @@ Scope {
         return JSON.stringify([at.x, at.y, button.width, button.height]);
     }
 
+    function toastGeometry(index) {
+        const item = loader.item === null ? null : loader.item.toastAt(index);
+        if (item === null) return "absent";
+        const at = item.mapToGlobal(0, 0);
+        return JSON.stringify([at.x, at.y, item.width, item.height]);
+    }
+
     Loader {
         id: loader
         active: Toasts.visible.length > 0 && Toasts.screen !== null
@@ -50,10 +57,26 @@ Scope {
 
             Region {
                 id: inputRegion
-                // PluginLogic.TOAST_VISIBLE_MAX is three; null items make empty regions.
-                Region { item: win.toastAt(0) }
-                Region { item: win.toastAt(1) }
-                Region { item: win.toastAt(2) }
+                regions: inputRegions.items
+            }
+
+            Instantiator {
+                id: inputRegions
+                property var items: []
+                model: Toasts.visible
+                onObjectAdded: (index, object) => {
+                    const next = items.slice();
+                    next.splice(index, 0, object);
+                    items = next;
+                }
+                onObjectRemoved: (index, object) => {
+                    const next = items.filter(item => item !== object);
+                    items = next;
+                }
+                delegate: Region {
+                    required property int index
+                    item: win.toastAt(index)
+                }
             }
 
             Column {

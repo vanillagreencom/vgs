@@ -9,6 +9,8 @@ toast_titles() { ipc shell lent | python3 -c 'import json,sys; t=json.load(sys.s
 toast_screen() { ipc shell lent | python3 -c 'import json,sys; print(json.load(sys.stdin)["toasts"]["screen"])'; }
 toast_surface_height() { layers_of vgs:toast | python3 -c 'import json,sys; l=json.load(sys.stdin); print(l[0][3] if l else 0)'; }
 settings_open() { [[ $(ipc smoke instanceGeometry window vgs.settings) != absent ]] && echo open || echo closed; }
+layered() { ipc acme.layers invoke "$1" "${2:-}"; }
+read_layers() { ipc smoke readInstance service acme.layers "$1"; }
 toast_bar_geometry() {
   local toast_layers bar_layers margin
   toast_layers="$(layers_of vgs:toast)" || return
@@ -50,8 +52,42 @@ note_toast_bar_geometry() {
   t="$(toast_bar_geometry)" || { fail "toast geometry unreadable"; return; }
   ok "toast geometry measured: $t"
 }
+toast_point_between_first_two() {
+  local first second
+  first="$(ipc smoke toastGeometry 0)" || return
+  second="$(ipc smoke toastGeometry 1)" || return
+  python3 - "$first" "$second" <<'PY'
+import json, sys
+first, second = [json.loads(v) for v in sys.argv[1:]]
+if not isinstance(first, list) or not isinstance(second, list):
+    sys.exit(1)
+x = int(first[0] + first[2] / 2)
+y = int((first[1] + first[3] + second[1]) / 2)
+print(x, y)
+PY
+}
+toast_point_inside_first() {
+  local first
+  first="$(ipc smoke toastGeometry 0)" || return
+  python3 - "$first" <<'PY'
+import json, sys
+first = json.loads(sys.argv[1])
+if not isinstance(first, list):
+    sys.exit(1)
+print(int(first[0] + first[2] / 2), int(first[1] + first[3] / 2))
+PY
+}
 
 # An earlier row left the fixture disabled; its service is the consumer here.
+layers_dir="$home/.config/vgs/plugins/acme.layers"
+mkdir -p "$layers_dir"
+cp -R "$repo/scripts/smoke/fixtures/plugins/acme.layers/." "$layers_dir/"
+expect "rescan after adding the layers fixture for toast mask checks answers ok" ok ipc shell rescanPlugins
+expect_poll "the layers fixture for toast mask checks is discovered" True plugin_known acme.layers
+expect "enabling the layers fixture for toast mask checks is allowed" ok ipc shell setPluginEnabled acme.layers true
+expect_poll "the layers fixture service for toast mask checks is built" True record_exists acme.layers
+expect "the layer under the toasts is shown" ok layered draw
+expect "the layer under the toasts takes input everywhere" ok layered full 1
 expect "enabling the fixture for the toast rows is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect_poll "the fixture service is back" True record_exists acme.probe
 expect "no toast shows at first" '[]' toast_titles visible
@@ -75,6 +111,13 @@ note_toast_bar_geometry
 
 # The stack shows three; the fourth waits and shows when one ends.
 expect "a second toast shows" ok toast "Two|info|0"
+read -r gap_x gap_y < <(toast_point_between_first_two) || fail "the gap between two toasts was not measured"
+presses="$(read_layers presses)"
+click "$gap_x" "$gap_y" || fail "the click in the gap between toasts failed"
+expect_poll "a click in the gap between two toasts reaches the layer below" "$((presses + 1))" read_layers presses
+read -r card_x card_y < <(toast_point_inside_first) || fail "the first toast was not measured"
+click "$card_x" "$card_y" || fail "the click inside a toast card failed"
+expect "control: a click inside a toast card does not reach the layer below" "$((presses + 1))" read_layers presses
 expect "a third toast shows" ok toast "Three|warning|0"
 expect "a fourth toast is queued" ok toast "Four||0"
 expect "three toasts show" '["Saved", "Two", "Three"]' toast_titles visible
@@ -103,6 +146,9 @@ expect "a toast with an unknown tone is refused" "refused: toast=tone must be on
 for i in $(seq 1 22); do toast "Fill $i||0" >/dev/null; done
 expect "the stack past its ceiling refuses" "refused: toasts=full limit=23" toast "Over||0"
 expect "the ceiling holds the record at its limit" 20 python3 -c 'import json,sys; print(len(json.load(sys.stdin)["toasts"]["waiting"]))' < <(ipc shell lent)
+expect "the layer under the toasts is hidden after mask checks" ok layered undraw
+expect "disabling the layers fixture after toast mask checks is allowed" ok ipc shell setPluginEnabled acme.layers false
+expect_poll "the layers fixture after toast mask checks is gone" False record_exists acme.layers
 
 # Disabling the plugin releases every toast it holds and the surface.
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
