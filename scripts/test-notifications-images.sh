@@ -21,11 +21,9 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 helper="$repo/shell/plugins/vgs.notifications/images.sh"
 slack="$repo/scripts/smoke/fixtures/slack"
-# The EXIT trap is armed only on the scratch directory this suite made under
-# the repository, so an empty or non-directory answer never reaches rm -rf.
-TMP_ROOT="$repo/tmp/test-notifications-images-$$"
-rm -rf -- "$TMP_ROOT"
-mkdir -p -- "$TMP_ROOT" || { echo "test-notifications-images: scratch=mkdir-failed" >&2; exit 1; }
+# The EXIT trap is armed only on the directory mktemp made: an empty or
+# non-directory answer never reaches rm -rf.
+TMP_ROOT="$(mktemp -d)" || { echo "test-notifications-images: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "test-notifications-images: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT

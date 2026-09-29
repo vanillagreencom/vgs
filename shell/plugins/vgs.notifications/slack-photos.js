@@ -74,12 +74,13 @@ function lookupToken() {
         maxBuffer: 1024 * 1024
     });
     if (secret.error && secret.error.code === "ENOENT") {
-        fail(5, "notifications-slack-photos: secret-tool=missing");
+        return "";
     }
     if (secret.error) {
         fail(5, "notifications-slack-photos: secret-tool=failed");
     }
-    if (secret.status !== 0) return "";
+    if (secret.status === 1) return "";
+    if (secret.status !== 0) fail(5, "notifications-slack-photos: secret-tool=failed status=" + secret.status);
     return String(secret.stdout || "").replace(/\r?\n$/, "");
 }
 
@@ -152,14 +153,22 @@ function allowedImageUrl(value) {
         || url.hostname === "secure.gravatar.com";
 }
 
+function downloadProtocolArgs() {
+    return process.env.VGS_NOTIFICATIONS_SLACK_TEST === "1"
+        ? ["--proto", "=http,https", "--proto-redir", "=http,https"]
+        : ["--proto", "=https", "--proto-redir", "=https"];
+}
+
 function downloadImage(url, file) {
-    if (!allowedImageUrl(url)) return false;
+    if (!allowedImageUrl(url)) return "skipped";
     const dir = path.dirname(file);
     mkdir(dir);
-    if (!inside(dir, file)) return false;
+    if (!inside(dir, file)) return "skipped";
     const tmp = path.join(dir, "." + path.basename(file) + "." + process.pid + ".download");
     const curl = childProcess.spawnSync("curl", [
         "--silent", "--show-error", "--fail", "--location",
+        "--max-redirs", "3",
+        ...downloadProtocolArgs(),
         "--max-time", "10", "--connect-timeout", "5",
         "--max-filesize", String(MAX_IMAGE_BYTES),
         "--output", tmp,
@@ -167,12 +176,12 @@ function downloadImage(url, file) {
     ], { encoding: "utf8", maxBuffer: 1024 * 1024 });
     if (curl.error || curl.status !== 0) {
         fs.rmSync(tmp, { force: true });
-        return false;
+        return "failed";
     }
     const size = fs.statSync(tmp).size;
     if (size <= 0 || size > MAX_IMAGE_BYTES) {
         fs.rmSync(tmp, { force: true });
-        return false;
+        return "failed";
     }
     const magick = commandPath("magick") || commandPath("convert");
     if (magick !== "") {
@@ -184,12 +193,12 @@ function downloadImage(url, file) {
         if (!resize.error && resize.status === 0 && fs.existsSync(resized) && fs.statSync(resized).size > 0) {
             fs.rmSync(tmp, { force: true });
             fs.renameSync(resized, file);
-            return true;
+            return "saved";
         }
         fs.rmSync(resized, { force: true });
     }
     fs.renameSync(tmp, file);
-    return true;
+    return "saved";
 }
 
 function uniqueNames(values) {
@@ -206,7 +215,16 @@ function uniqueNames(values) {
     return out;
 }
 
-function userRecord(user, teamDir, budget) {
+function keepExistingImage(file, budget, keepName) {
+    if (!fs.existsSync(file)) return "";
+    const size = fs.statSync(file).size;
+    if (size <= 0 || size > MAX_IMAGE_BYTES || size > budget.remaining) return "";
+    budget.remaining -= size;
+    budget.keep.add(keepName);
+    return "file://" + file;
+}
+
+function userRecord(user, teamDir, budget, stats) {
     const id = safeSegment(user && user.id);
     if (id === "") return null;
     const profile = user && user.profile && typeof user.profile === "object" ? user.profile : {};
@@ -214,7 +232,11 @@ function userRecord(user, teamDir, budget) {
     if (names.length === 0) return null;
     let photo = "";
     const wanted = path.join(teamDir, id + ".png");
-    if (budget.remaining > 0 && typeof profile.image_48 === "string" && downloadImage(profile.image_48, wanted)) {
+    if (budget.remaining > 0 && typeof profile.image_48 === "string") {
+        const downloaded = downloadImage(profile.image_48, wanted);
+        if (downloaded === "failed") stats.downloadFailed += 1;
+        if (downloaded === "failed") photo = keepExistingImage(wanted, budget, path.basename(wanted));
+        if (downloaded !== "saved") return { id, names, photo };
         const size = fs.statSync(wanted).size;
         if (size <= budget.remaining) {
             budget.remaining -= size;
@@ -238,13 +260,25 @@ function sweep(dir, keep) {
 function loadFresh(indexFile) {
     try {
         const stat = fs.statSync(indexFile);
-        if (Date.now() - stat.mtimeMs > DAILY_MS) return null;
         const cached = readJson(indexFile);
-        if (cached && cached.status === "loaded" && Array.isArray(cached.teams)) return cached;
+        if (cached && cached.status === "loaded" && Array.isArray(cached.teams)) {
+            const failed = Number(cached.downloadFailed || 0);
+            const maxAge = failed > 0 ? RETRY_MS : DAILY_MS;
+            if (Date.now() - stat.mtimeMs <= maxAge) return cached;
+        }
     } catch (_e) {
         return null;
     }
     return null;
+}
+
+function loadIndex(indexFile) {
+    const cached = readJson(indexFile);
+    return cached && cached.status === "loaded" && Array.isArray(cached.teams) ? cached : null;
+}
+
+function staleOutput(index) {
+    return Object.assign({}, index, { stale: true });
 }
 
 function failureHeld(failureFile) {
@@ -253,9 +287,6 @@ function failureHeld(failureFile) {
 }
 
 function refresh(root) {
-    mkdir(root);
-    const indexFile = path.join(root, "index.json");
-    const failureFile = path.join(root, "failure.json");
     const token = lookupToken();
     if (token === "") {
         output({ status: "absent" });
@@ -264,13 +295,16 @@ function refresh(root) {
     if (/[\r\n"]/.test(token)) {
         fail(5, "notifications-slack-photos: token=invalid");
     }
+    const indexFile = path.join(root, "index.json");
+    const failureFile = path.join(root, "failure.json");
     const fresh = loadFresh(indexFile);
     if (fresh !== null) {
         output(fresh);
         return;
     }
     if (failureHeld(failureFile)) {
-        output({ status: "absent" });
+        const stale = loadIndex(indexFile);
+        output(stale === null ? { status: "absent" } : staleOutput(stale));
         return;
     }
     let teamInfo;
@@ -288,6 +322,12 @@ function refresh(root) {
     } catch (e) {
         const reason = String(e.message || "failed").replace(/xox[pboa]-[A-Za-z0-9-]+/g, "xoxp-redacted");
         writeJson(failureFile, { at: Date.now(), reason });
+        const stale = loadIndex(indexFile);
+        if (stale !== null) {
+            console.error("notifications-slack-photos: " + reason);
+            output(staleOutput(stale));
+            return;
+        }
         fail(6, "notifications-slack-photos: " + reason);
     }
     const teamId = safeSegment(teamInfo && teamInfo.id);
@@ -295,26 +335,34 @@ function refresh(root) {
     const teamDir = path.join(root, teamId);
     mkdir(teamDir);
     const budget = { remaining: MAX_CACHE_BYTES, keep: new Set(["team.json", "users.json"]) };
+    const stats = { downloadFailed: 0 };
     const teamNames = uniqueNames([teamInfo.domain, teamInfo.name]);
     let icon = "";
     const iconUrl = teamInfo && teamInfo.icon && typeof teamInfo.icon === "object"
         ? (teamInfo.icon.image_88 || teamInfo.icon.image_68 || "")
         : "";
     const iconFile = path.join(teamDir, "workspace.png");
-    if (typeof iconUrl === "string" && downloadImage(iconUrl, iconFile)) {
-        const size = fs.statSync(iconFile).size;
-        if (size <= budget.remaining) {
-            budget.remaining -= size;
-            budget.keep.add("workspace.png");
-            icon = "file://" + iconFile;
-        } else {
-            fs.rmSync(iconFile, { force: true });
+    if (typeof iconUrl === "string" && iconUrl !== "") {
+        const downloaded = downloadImage(iconUrl, iconFile);
+        if (downloaded === "failed") {
+            stats.downloadFailed += 1;
+            icon = keepExistingImage(iconFile, budget, "workspace.png");
+        }
+        if (downloaded === "saved") {
+            const size = fs.statSync(iconFile).size;
+            if (size <= budget.remaining) {
+                budget.remaining -= size;
+                budget.keep.add("workspace.png");
+                icon = "file://" + iconFile;
+            } else {
+                fs.rmSync(iconFile, { force: true });
+            }
         }
     }
     const users = [];
     for (const member of members.slice(0, MAX_USERS)) {
         if (member && member.deleted === true) continue;
-        const user = userRecord(member, teamDir, budget);
+        const user = userRecord(member, teamDir, budget, stats);
         if (user !== null) users.push(user);
     }
     users.sort((a, b) => a.id.localeCompare(b.id));
@@ -322,9 +370,12 @@ function refresh(root) {
     writeJson(path.join(teamDir, "team.json"), { id: team.id, names: team.names, icon: team.icon });
     writeJson(path.join(teamDir, "users.json"), { users: team.users });
     sweep(teamDir, budget.keep);
-    const index = { status: "loaded", generatedAt: Date.now(), teams: [team] };
+    if (stats.downloadFailed > 0) {
+        console.error("notifications-slack-photos: downloads=failed count=" + stats.downloadFailed);
+    }
+    const index = { status: "loaded", generatedAt: Date.now(), downloadFailed: stats.downloadFailed, teams: [team] };
     writeJson(indexFile, index);
-    fs.rmSync(failureFile, { force: true });
+    if (stats.downloadFailed === 0) fs.rmSync(failureFile, { force: true });
     output(index);
 }
 

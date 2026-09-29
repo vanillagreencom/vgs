@@ -27,7 +27,7 @@ function write(file, text) {
 
 function run(cache, env) {
     return new Promise(resolve => {
-        const child = childProcess.spawn("node", [helper, "refresh", cache], { cwd: repo, env });
+        const child = childProcess.spawn(process.execPath, [helper, "refresh", cache], { cwd: repo, env });
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8");
@@ -73,9 +73,15 @@ printf '%s\\n' '${token}'
     });
 
     let touched = false;
-    const absent = await runJson(path.join(scratch, "absent-cache"), Object.assign({}, baseEnv, { SECRET_TOOL_EMPTY: "1" }));
+    const absentCache = path.join(scratch, "absent-cache");
+    const absent = await runJson(absentCache, Object.assign({}, baseEnv, { SECRET_TOOL_EMPTY: "1" }));
     assert.deepEqual(absent, { status: "absent" }, "no token returns no cache");
     assert.equal(touched, false, "no token starts no HTTP request");
+    assert.equal(fs.existsSync(absentCache), false, "no token creates no cache directory");
+    const missingSecretToolCache = path.join(scratch, "missing-secret-tool-cache");
+    const missingSecretTool = await runJson(missingSecretToolCache, Object.assign({}, baseEnv, { PATH: path.dirname(process.execPath) }));
+    assert.deepEqual(missingSecretTool, { status: "absent" }, "missing secret-tool is the same as no token");
+    assert.equal(fs.existsSync(missingSecretToolCache), false, "missing secret-tool creates no cache directory");
 
     await withServer((req, res) => {
         touched = true;
@@ -108,6 +114,7 @@ printf '%s\\n' '${token}'
         const cache = path.join(scratch, "cache");
         const loaded = await runJson(cache, env);
         assert.equal(loaded.status, "loaded");
+        assert.equal(loaded.downloadFailed, 0);
         assert.equal(loaded.teams.length, 1);
         assert.deepEqual(loaded.teams[0].names, ["acme", "Acme Corp"]);
         assert.equal(loaded.teams[0].users.length, 3, "only safe synthetic users are stored");
@@ -124,6 +131,99 @@ printf '%s\\n' '${token}'
         assert.equal(fresh.status, "loaded", "fresh cache is reused");
         assert.equal(touched, false, "fresh cache avoids another API call");
         assert.ok(fs.readFileSync(secretLog, "utf8").split("\n").length > before, "fresh cache still requires a present token");
+    });
+
+    const cache = path.join(scratch, "cache");
+    const indexFile = path.join(cache, "index.json");
+    const oldDaily = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const oldRetry = new Date(Date.now() - 16 * 60 * 1000);
+    fs.utimesSync(indexFile, oldDaily, oldDaily);
+    let downloadFailureCalls = 0;
+    await withServer((req, res) => {
+        downloadFailureCalls++;
+        if (req.url.startsWith("/api/team.info")) {
+            assert.equal(req.headers.authorization, "Bearer " + token);
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ ok: true, team: { id: "T1", domain: "acme", name: "Acme Corp", icon: { image_68: `http://127.0.0.1:${req.socket.localPort}/images/team.png` } } }));
+            return;
+        }
+        if (req.url.startsWith("/api/users.list")) {
+            assert.equal(req.headers.authorization, "Bearer " + token);
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ ok: true, members: [
+                { id: "U1", name: "ada", real_name: "Ada Lovelace", profile: { display_name: "Ada", real_name: "Ada Lovelace", image_48: `http://127.0.0.1:${req.socket.localPort}/images/ada.png` } },
+                { id: "U2", name: "grace", real_name: "Grace Hopper", profile: { display_name: "Grace", real_name: "Grace Hopper", image_48: `http://127.0.0.1:${req.socket.localPort}/images/grace.png` } }
+            ], response_metadata: { next_cursor: "" } }));
+            return;
+        }
+        res.statusCode = 503;
+        res.end("offline");
+    }, async port => {
+        const env = Object.assign({}, baseEnv, { VGS_NOTIFICATIONS_SLACK_API_BASE: `http://127.0.0.1:${port}/api` });
+        const failedDownloads = await run(cache, env);
+        assert.equal(failedDownloads.status, 0, failedDownloads.stderr);
+        assert.match(failedDownloads.stderr, /^notifications-slack-photos: downloads=failed count=3/m);
+        const loaded = JSON.parse(failedDownloads.stdout);
+        assert.equal(loaded.status, "loaded");
+        assert.equal(loaded.downloadFailed, 3);
+        assert.match(loaded.teams[0].icon, /^file:\/\//, "a failed workspace-icon refresh keeps the previous file");
+        assert.match(loaded.teams[0].users[0].photo, /^file:\/\//, "a failed photo refresh keeps the previous file");
+        downloadFailureCalls = 0;
+        const held = await runJson(cache, env);
+        assert.equal(held.downloadFailed, 3, "download failures are retried after the retry gap, not immediately");
+        assert.equal(downloadFailureCalls, 0, "a download-failure cache avoids API calls during the retry gap");
+    });
+
+    fs.utimesSync(indexFile, oldRetry, oldRetry);
+    let retryCalls = 0;
+    await withServer((req, res) => {
+        retryCalls++;
+        if (req.url.startsWith("/api/team.info")) {
+            assert.equal(req.headers.authorization, "Bearer " + token);
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ ok: true, team: { id: "T1", domain: "acme", name: "Acme Corp", icon: { image_68: `http://127.0.0.1:${req.socket.localPort}/images/team.png` } } }));
+            return;
+        }
+        if (req.url.startsWith("/api/users.list")) {
+            assert.equal(req.headers.authorization, "Bearer " + token);
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ ok: true, members: [
+                { id: "U1", name: "ada", real_name: "Ada Lovelace", profile: { display_name: "Ada", real_name: "Ada Lovelace", image_48: `http://127.0.0.1:${req.socket.localPort}/images/ada.png` } }
+            ], response_metadata: { next_cursor: "" } }));
+            return;
+        }
+        if (req.url.startsWith("/images/")) {
+            res.setHeader("content-type", "image/png");
+            res.end(png);
+            return;
+        }
+        res.statusCode = 404;
+        res.end("missing");
+    }, async port => {
+        const env = Object.assign({}, baseEnv, { VGS_NOTIFICATIONS_SLACK_API_BASE: `http://127.0.0.1:${port}/api` });
+        const retried = await runJson(cache, env);
+        assert.equal(retried.downloadFailed, 0, "the helper retries downloads after the retry gap");
+        assert.ok(retryCalls > 0, "the expired download-failure cache reaches the API");
+    });
+
+    fs.utimesSync(indexFile, oldDaily, oldDaily);
+    let staleCalls = 0;
+    await withServer((req, res) => {
+        staleCalls++;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "ratelimited" }));
+    }, async port => {
+        const env = Object.assign({}, baseEnv, { VGS_NOTIFICATIONS_SLACK_API_BASE: `http://127.0.0.1:${port}/api` });
+        const stale = await run(cache, env);
+        assert.equal(stale.status, 0, stale.stderr);
+        assert.match(stale.stderr, /^notifications-slack-photos: api=team\.info error=ratelimited/m);
+        const loaded = JSON.parse(stale.stdout);
+        assert.equal(loaded.status, "loaded");
+        assert.equal(loaded.stale, true, "an API failure serves the stale index when one exists");
+        staleCalls = 0;
+        const held = await runJson(cache, env);
+        assert.equal(held.stale, true, "the API-failure backoff serves the stale index");
+        assert.equal(staleCalls, 0, "the API-failure backoff avoids another API call");
     });
 
     let calls = 0;
@@ -155,19 +255,19 @@ function controls() {
     const dir = path.join(scratch, "controls");
     fs.mkdirSync(dir, { recursive: true });
     const controls = [
-        ["Authorization header", '"header = \\"Authorization: Bearer " + token.replace(/"/g, "") + "\\"",', '"header = \\"Authorization: Bearer \\"",'],
-        ["fresh cache", "if (fresh !== null) {", "if (false && fresh !== null) {"],
-        ["failure backoff", "if (failureHeld(failureFile)) {", "if (false && failureHeld(failureFile)) {"],
-        ["safe user id", "const id = safeSegment(user && user.id);", "const id = user && user.id || \"\";"]
+        ["Authorization header", '"header = \\"Authorization: Bearer " + token.replace(/"/g, "") + "\\""', '"header = \\"Authorization: Bearer wrong\\""', /API calls carry the token in a header|Expected values to be strictly equal/],
+        ["fresh cache", "if (fresh !== null) {", "if (false && fresh !== null) {", /fresh cache avoids another API call/],
+        ["failure backoff", "if (failureHeld(failureFile)) {", "if (false && failureHeld(failureFile)) {", /a recent failure is held|api=users\.list error=missing_scope|api=team\.info error=ratelimited/],
+        ["safe user id", "const id = safeSegment(user && user.id);", "const id = user && user.id || \"\";", /only safe synthetic users are stored/]
     ];
     let passed = 0;
     for (let index = 0; index < controls.length; index++) {
-        const [label, needle, replacement] = controls[index];
+        const [label, needle, replacement, failure] = controls[index];
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);
         const copy = path.join(dir, String(index), "slack-photos.js");
         fs.mkdirSync(path.dirname(copy), { recursive: true });
         fs.writeFileSync(copy, source.replace(needle, replacement), { mode: 0o700 });
-        const result = childProcess.spawnSync("node", [__filename], {
+        const result = childProcess.spawnSync(process.execPath, [__filename], {
             cwd: repo,
             env: Object.assign({}, process.env, {
                 NOTIFICATIONS_SLACK_PHOTOS_HELPER: copy,
@@ -177,6 +277,7 @@ function controls() {
             maxBuffer: 8 * 1024 * 1024
         });
         assert.notEqual(result.status, 0, `control "${label}": the suite passed on a helper without that rule`);
+        assert.match(result.stdout + result.stderr, failure, `control "${label}": failed for the intended reason`);
         passed++;
     }
     assert.equal(passed, controls.length);

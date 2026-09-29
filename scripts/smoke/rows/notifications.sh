@@ -37,6 +37,61 @@ expect "the notifications start disabled in the sandbox" False plugin_enabled vg
 # service starts and reads its workspace list.
 mkdir -p -- "$home/.config/Slack"
 cp -R -- "$repo/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
+# The row runs after the shell process starts, so it cannot add the
+# helper's test API environment to that process without changing core. The
+# helper's own suite covers the HTTP refresh. This row seeds the same cache
+# shape and proves the loaded-photo path through QML.
+slack_photo_cache="$home/.cache/vgs/notifications/slack-photos/TSMOKE"
+mkdir -p -- "$slack_photo_cache"
+python3 - "$slack_photo_cache" <<'PY'
+import json, pathlib, struct, sys, time, zlib
+
+root = pathlib.Path(sys.argv[1])
+
+def crc32(data):
+    import binascii
+    return binascii.crc32(data) & 0xffffffff
+
+def chunk(kind, data):
+    name = kind.encode()
+    return struct.pack(">I", len(data)) + name + data + struct.pack(">I", crc32(name + data))
+
+def png(r, g, b):
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    idat = zlib.compress(bytes([0, r, g, b, 255]))
+    return b"\x89PNG\r\n\x1a\n" + chunk("IHDR", ihdr) + chunk("IDAT", idat) + chunk("IEND", b"")
+
+images = {
+    "workspace.png": png(20, 80, 180),
+    "UALAN.png": png(180, 40, 40),
+    "UADA.png": png(40, 160, 80),
+    "UGRACE.png": png(150, 70, 180),
+}
+for name, body in images.items():
+    (root / name).write_bytes(body)
+team = {
+    "id": "TSMOKE",
+    "names": ["acme", "globex"],
+    "icon": "file://" + str(root / "workspace.png"),
+    "users": [
+        {"id": "UALAN", "names": ["alan"], "photo": "file://" + str(root / "UALAN.png")},
+        {"id": "UADA", "names": ["ada", "Ada Lovelace"], "photo": "file://" + str(root / "UADA.png")},
+        {"id": "UGRACE", "names": ["grace", "Grace Hopper"], "photo": "file://" + str(root / "UGRACE.png")},
+    ],
+}
+(root / "team.json").write_text(json.dumps({"id": team["id"], "names": team["names"], "icon": team["icon"]}) + "\n")
+(root / "users.json").write_text(json.dumps({"users": team["users"]}) + "\n")
+(root.parent / "index.json").write_text(json.dumps({"status": "loaded", "generatedAt": int(time.time() * 1000), "downloadFailed": 0, "teams": [team]}) + "\n")
+PY
+cat >"$shim/secret-tool" <<'SH'
+#!/usr/bin/env bash
+if [[ ${1:-} == lookup && $* == *"service vgs-notifications account slack"* ]]; then
+  printf '%s\n' 'xoxp-smoke-token'
+  exit 0
+fi
+exit 1
+SH
+chmod 755 "$shim/secret-tool"
 expect "enabling the notifications is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the notification service is built" True record_exists vgs.notifications
 expect_poll "the service registered its shortcut, IPC target and subscriber and holds no layer" '[["vgs.notifications:inbox"], ["vgs.notifications"], ["vgs.notifications"], []]' lent_notes
@@ -238,9 +293,19 @@ expect "a direct message shows its sender's face" '{"rule": "slack", "workspace"
 notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
 expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
+token_faces_loaded() { ipc smoke layerItems vgs.notifications Faces names,images | python3 -c 'import json,sys
+for _screen, _rect, value in json.load(sys.stdin):
+    if value["names"] == ["alan", "ada", "grace"]:
+        images = value["images"]
+        print(len(images) == 3 and all(str(i).startswith("file://") for i in images) and len(set(images)) == 3)
+        break
+else:
+    print(False)' ; }
+expect_poll "the token cache supplies distinct Slack group photos" True token_faces_loaded
 notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
-expect_poll "a workspace with no cached icon keeps its name" '"[globex] in eng"' card_value "[globex] in eng" title
-expect "and draws no icon" false card_value "[globex] in eng" showsBadge
+expect_poll "a workspace with no disk-cache icon uses the token-cache icon" true card_value "[globex] in eng" showsBadge
+expect "the token-cache workspace icon replaces that workspace name" '"in eng"' card_value "[globex] in eng" title
+expect "the fallback icon came from the Slack photo cache" "\"file://$home/.cache/vgs/notifications/slack-photos/TSMOKE/workspace.png\"" card_value "[globex] in eng" workspaceIcon
 
 # The space around a card's text, from the card's rectangle and its visible
 # text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card

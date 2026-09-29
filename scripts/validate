@@ -129,7 +129,7 @@ rows=(
   "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"
   "tools|sandbox shot controls|scripts/test-sandbox-shots.sh|scripts/smoke/shot.sh scripts/sandbox-shots.sh"
   "tools|scratch directory guard controls|scripts/test-scratch-dirs.sh|scripts/vgsh-rows.sh scripts/test-launcher-file-search.sh scripts/test-notifications-images.sh scripts/test-sandbox-shots.sh scripts/test-smoke-verdict.sh"
-  "repo|whitespace errors against the base|whitespace_check|tools/doc-limits-excludes"
+  "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js bin/vgsh-scan scripts/smoke/fixtures/*"
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js themes/*"
@@ -282,7 +282,7 @@ if [[ -n $change_base ]]; then
       done
       if [[ $known == false ]]; then
         case "$path" in
-          *.md|*.markdown|docs/*|tools/doc-limits-excludes|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
+          *.md|*.markdown|docs/*|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
           .agents/skills/vgs-plugin/*)
             printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
           .agents/*|.bot-instructions/*) ;;

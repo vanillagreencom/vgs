@@ -47,7 +47,7 @@ Slack is the one rule. Slack on Linux sends no image, so the default face is ini
 
 ## Slack photos
 
-Slack photos are optional. With no token, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
+Slack photos are optional. With no token, or with no `secret-tool` binary installed, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
 
 The token lives in libsecret under `service vgs-notifications` and `account slack`. Store it with:
 
@@ -65,7 +65,9 @@ secret-tool clear service vgs-notifications account slack
 
 The Slack token needs only `users:read` and `team:read`. The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo. It does not read or store messages, channels, presence, email, profile text or tokens.
 
-The helper writes to `$XDG_CACHE_HOME/vgs/notifications/slack-photos/<team id>/`. It keeps `team.json`, `users.json`, `workspace.png` and one `<user id>.png` per cached user. It writes files through a sibling temporary file and rename. It refreshes at most once a day. After an API failure it waits 15 minutes before another network attempt. It keeps at most 512 users, accepts each image only up to 512 KiB and keeps one team's downloaded images within 10 MiB. Slack's `image_48` is already the card's face size; when ImageMagick is present the helper crops it to 48 by 48 pixels, otherwise it keeps Slack's 48-pixel image. Network or API failures keep initials in the card and write one `notifications-slack-photos:` log line without the token.
+The helper writes to `$XDG_CACHE_HOME/vgs/notifications/slack-photos/<team id>/`. It keeps `team.json`, `users.json`, `workspace.png` and one `<user id>.png` per cached user. It writes files through a sibling temporary file and rename. It refreshes at most once a day. The shell starts one helper owner and runs it again after the cache reaches its daily boundary. With no token, or after a retryable failure, it tries again after 15 minutes. The helper still decides whether a network call is due, so a no-token retry stays cheap and silent. After an API failure it waits 15 minutes before another network attempt. If an older index exists, the card keeps using that stale cache while the failure is logged. The shell logs a repeated failure only when the reason changes, and logs one recovery line after photos refresh cleanly again. It keeps at most 512 users, accepts each image only up to 512 KiB and keeps one team's downloaded images within 10 MiB. Slack's `image_48` is already the card's face size; when ImageMagick is present the helper crops it to 48 by 48 pixels, otherwise it keeps Slack's 48-pixel image. Network or API failures keep initials in the card when no stale cache exists and write one `notifications-slack-photos:` log line without the token.
+
+An image URL that is missing or outside Slack's allowed image hosts is skipped as unavailable. A failed download from an allowed image URL writes one sanitized `notifications-slack-photos: downloads=failed count=<n>` line. The helper keeps any older file for that photo when it can. An index with download failures is retried after 15 minutes instead of staying fresh for the full day.
 
 Production image URLs must be HTTPS and must come from Slack's image hosts or `secure.gravatar.com`. Tests alone can set `VGS_NOTIFICATIONS_SLACK_TEST=1` and point `VGS_NOTIFICATIONS_SLACK_API_BASE` at `127.0.0.1`.
 

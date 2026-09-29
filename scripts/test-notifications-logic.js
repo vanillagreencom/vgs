@@ -289,12 +289,12 @@ function verify(logic) {
             ]
         }]
     };
-    same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", teams: photoCache.teams }, "a Slack photo cache is accepted");
-    same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", teams: [] }, "no token leaves no cache");
+    same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", generatedAt: 0, downloadFailed: 0, stale: false, teams: photoCache.teams }, "a Slack photo cache is accepted");
+    same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", generatedAt: 0, downloadFailed: 0, stale: false, teams: [] }, "no token leaves no cache");
     same(logic.slackPhotos("{"), { ok: false, error: "not-json" });
     same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.id want=safe" });
-    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }] }] })), { ok: true, status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }] }, "a non-file photo is ignored");
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }] }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }] }, "a non-file photo is ignored");
     const group = logic.enrich("Slack", "slack", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
     same(logic.slackFaceImages(group, photoCache.teams, "file:///sender.png"), ["file:///cache/T1/U1.png", "file:///cache/T1/U2.png", ""], "each Slack face takes its own photo");
     same(logic.slackFaceImages(Object.assign({}, group, { workspace: "unknown" }), photoCache.teams, "file:///sender.png"), ["file:///sender.png", "", ""], "an unknown workspace has no photos");

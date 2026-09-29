@@ -330,7 +330,7 @@ function slackPhotos(text) {
         return { ok: false, error: "not-json" };
     }
     if (!isPlainObject(parsed)) return { ok: false, error: "not-object" };
-    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [] };
+    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [], generatedAt: 0, downloadFailed: 0, stale: false };
     if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };
     if (!Array.isArray(parsed.teams)) return { ok: false, error: "teams want=list" };
     var teams = [];
@@ -355,7 +355,14 @@ function slackPhotos(text) {
         var icon = typeof team.icon === "string" && /^file:\/\/\/[^\s]+$/.test(team.icon) ? team.icon : "";
         teams.push({ id: team.id, names: names, icon: icon, users: users });
     }
-    return { ok: true, status: "loaded", teams: teams };
+    return {
+        ok: true,
+        status: "loaded",
+        generatedAt: typeof parsed.generatedAt === "number" && isFinite(parsed.generatedAt) ? parsed.generatedAt : 0,
+        downloadFailed: typeof parsed.downloadFailed === "number" && isFinite(parsed.downloadFailed) && parsed.downloadFailed > 0 ? Math.floor(parsed.downloadFailed) : 0,
+        stale: parsed.stale === true,
+        teams: teams
+    };
 }
 
 function uniqueNames(names) {
