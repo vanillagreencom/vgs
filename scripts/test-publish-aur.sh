@@ -55,11 +55,11 @@ base="$tmp/base"
 work_tree_repo "$base"
 version="$(cat -- "$base/VERSION")"
 
-# fixture NAME SCRIPT: sets r to a new clone of $base holding SCRIPT as
-# scripts/publish-aur.sh, aur to its AUR stand-in with an empty bare
-# repository per package whose HEAD is master, as the AUR's is, and h to
-# its home. The gh answers start as no
-# release. A fixture that cannot be built stops the suite.
+# fixture NAME SCRIPT: sets r to a new clone of FIXTURE_BASE, default
+# $base, holding SCRIPT as scripts/publish-aur.sh, aur to its AUR stand-in
+# with an empty bare repository per package whose HEAD is master, as the
+# AUR's is, and h to its home. The gh answers start as no release. A
+# fixture that cannot be built stops the suite.
 fixtures=0
 fixture() {
   fixtures=$((fixtures + 1))
@@ -67,29 +67,38 @@ fixture() {
   aur="$tmp/aur/$fixtures-$1"
   h="$tmp/homes/$fixtures-$1"
   {
-    g clone -q "$base" "$r" && cp -- "$2" "$r/scripts/publish-aur.sh" &&
+    g clone -q "${FIXTURE_BASE:-$base}" "$r" && cp -- "$2" "$r/scripts/publish-aur.sh" &&
       mkdir -p "$aur" "$h" && g init -q --bare -b master "$aur/vgs.git" && g init -q --bare -b master "$aur/vgs-git.git" &&
       g config --file "$h/.gitconfig" user.name maintainer && g config --file "$h/.gitconfig" user.email maintainer@example.invalid &&
       g config --file "$h/.gitconfig" "url.file://$aur/.insteadOf" https://aur.archlinux.org/ &&
       printf '[]\n' >"$gh_dir/list.json" && printf '{"assets":[]}\n' >"$gh_dir/view.json" && rm -f -- "$gh_dir/list.exit"
   } || { echo "$suite: fixture=$1" >&2; exit 1; }
 }
-# pin: tags the fixture v$version and pins $sha in the vgs recipe, as the
-# release step does.
-pin() {
+# set_sum SUM: sets the one sha256sums entry of $r's vgs recipe to SUM,
+# whatever the copied recipe held, regenerates its .SRCINFO with makepkg
+# and commits. Every fixture states its checksum through here, so the
+# suite reads the same states before and after the real recipe is pinned.
+set_sum() {
   {
-    g -C "$r" tag -a "v$version" -m "VGS $version" &&
-      python3 - "$r/packaging/arch/vgs/PKGBUILD" "$sha" <<'PY' &&
+    python3 - "$r/packaging/arch/vgs/PKGBUILD" "$1" <<'PY' &&
 import re, sys
-path, sha = sys.argv[1:]
+path, value = sys.argv[1:]
 text = open(path).read()
-changed, n = re.subn(r"^sha256sums=\('SKIP'\)$", "sha256sums=('" + sha + "')", text, flags=re.M)
+changed, n = re.subn(r"^sha256sums=\('[^']*'\)$", "sha256sums=('" + value + "')", text, flags=re.M)
 if n != 1:
     sys.exit("sha256sums lines: %d" % n)
 open(path, "w").write(changed)
 PY
-      (cd -- "$r/packaging/arch/vgs" && makepkg --printsrcinfo >.SRCINFO) && g -C "$r" commit -q -am pin
-  } || { echo "$suite: fixture=pin" >&2; exit 1; }
+      (cd -- "$r/packaging/arch/vgs" && makepkg --printsrcinfo >.SRCINFO) &&
+      g -C "$r" commit -q --allow-empty -am "sha256sums $1" &&
+      grep -qxF $'\t'"sha256sums = $1" "$r/packaging/arch/vgs/.SRCINFO"
+  } || { echo "$suite: fixture=set-sum value=$1" >&2; exit 1; }
+}
+# pin: tags the fixture v$version and pins $sha in the vgs recipe, as the
+# release step does.
+pin() {
+  g -C "$r" tag -a "v$version" -m "VGS $version" || { echo "$suite: fixture=pin" >&2; exit 1; }
+  set_sum "$sha"
 }
 # release_answer TAG DRAFT DIGEST: gh lists TAG, a draft when DRAFT is
 # true, whose asset vgs-$version.tar.gz has DIGEST; an empty DIGEST lists
@@ -189,10 +198,11 @@ release_row() { # SCRIPT: vgs is published once GitHub's digest of its asset is 
 release view v$version --repo vanillagreencom/vgs --json assets" ]]
 }
 
-# Deferrals of vgs: name | fixture: pinned or base | the gh answer | the
+# Deferrals of vgs: name | fixture: pinned, or unpinned at SKIP | the gh
+# answer | the
 # reason. vgs-git, named after it, is still published, and the run exits 75.
 declare -A deferrals=(
-  [unpinned]="base||unpinned"
+  [unpinned]="unpinned||unpinned"
   [no-release]="pinned|v0.0.1 false $sha|no-release"
   [draft]="pinned|v$version true $sha|draft"
   [no-asset]="pinned|v$version false |no-asset"
@@ -202,7 +212,7 @@ deferral_row() { # SCRIPT NAME
   local kind answer reason
   IFS='|' read -r kind answer reason <<<"${deferrals[$2]}"
   fixture "defer-$2" "$1"
-  [[ $kind == base ]] || pin
+  if [[ $kind == unpinned ]]; then set_sum SKIP; else pin; fi
   # shellcheck disable=SC2086 # answer holds the three release_answer words, the last possibly empty
   [[ -z $answer ]] || release_answer $answer ""
   run vgs vgs-git
@@ -258,6 +268,21 @@ for name in $(printf '%s\n' "${!refusals[@]}" | LC_ALL=C sort); do
   check "refusal: $name" refusal_row "$script" "$name"
 done
 unset RUN_KEY
+
+# The fixtures from a source whose vgs recipe is already pinned to another
+# sum, as it is after a release: each still reaches the checksum state it
+# states.
+pinned_source_row() { # SCRIPT
+  local verdict=0
+  FIXTURE_BASE="$tmp/base-pinned"
+  { release_row "$1" && deferral_row "$1" unpinned && deferral_row "$1" checksum-mismatch; } || verdict=1
+  unset FIXTURE_BASE
+  return "$verdict"
+}
+r="$tmp/base-pinned"
+g clone -q "$base" "$r" || { echo "$suite: fixture=base-pinned" >&2; exit 1; }
+set_sum "$(printf '%064d' 9)"
+check "the fixtures reach their checksum state from an already-pinned recipe" pinned_source_row "$script"
 
 echo "controls"
 # rule NAME ROW NEEDLE REPLACEMENT [ROW_ARG]: a copy of the script without

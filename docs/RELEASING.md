@@ -22,8 +22,22 @@ Both take `--dry-run`, which makes every check and changes nothing outside `dist
 
 ## Flow
 
-1. Run `scripts/validate --full` once. A release is an explicit full sweep.
-2. Set `VERSION` to `X.Y.Z`, add the version's changelog entry, commit on `main` and push.
+1. Prepare the version. `scripts/check-packaging.js` refuses a recipe whose version differs from `VERSION`, so every file below moves to `X.Y.Z` in the same commit:
+   - `VERSION`: the one line `X.Y.Z`.
+   - `packaging/arch/vgs/PKGBUILD`: `pkgver=X.Y.Z`, `pkgrel=1` and `sha256sums=('SKIP')`. The sum stays `SKIP` until the archive exists; a sum left from the previous release passes the check but makes `scripts/publish-aur.sh` hold `vgs` back.
+   - `packaging/arch/vgs/.SRCINFO`: regenerated from that PKGBUILD, which the check compares byte for byte.
+   - `packaging/fedora/vgs.spec`: `Version: X.Y.Z`, `Release: 1%{?dist}`, and a new first `%changelog` entry whose header line ends in `- X.Y.Z-1`.
+   - The version's changelog entry.
+
+   ```bash
+   printf '%s\n' X.Y.Z >VERSION
+   # packaging/arch/vgs/PKGBUILD: pkgver=X.Y.Z, pkgrel=1, sha256sums=('SKIP')
+   (cd packaging/arch/vgs && makepkg --printsrcinfo > .SRCINFO)
+   # packaging/fedora/vgs.spec: Version, Release and the new %changelog entry
+   node scripts/check-packaging.js
+   ```
+
+2. Run `scripts/validate --full` once. A release is an explicit full sweep. Then commit on `main` and push.
 3. Tag and push the tag:
 
    ```bash
