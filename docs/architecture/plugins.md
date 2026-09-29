@@ -35,7 +35,7 @@ A kind names a surface the core can host. A plugin declares every kind it can fi
 |---|---|---|---|
 | `bar-widget` | an `Item` extending `BarWidget` from `qs.Ui` | the active bar's sections | placed in a bar section, enabled, and a bar is active |
 | `bar` | an `Item` declaring `leftSection`, `centerSection` and `rightSection` | `BarHost`, one per screen | it is the active bar; one at a time |
-| `service` | a headless `Item` | `ServiceHost` | enabled |
+| `service` | a headless `Item` | `ServiceHost` | enabled; at start, once the first bars have drawn a frame ([D045](../decisions/D045-services-build-after-the-first-bar-frame.md)) |
 | `background` | an `Item` declaring `screen` | `BackgroundHost`, one per screen, on the layer under every window | enabled |
 | `panel`, `overlay`, `menu` | an `Item` with `open(payloadJson)` and `close()` | `SummonHost`, one per kind | enabled and summoned, until hidden |
 | `window` | the same | `SummonHost`, as a Hyprland window | enabled and summoned, until hidden or closed |
