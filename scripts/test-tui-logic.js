@@ -346,7 +346,8 @@ function suite(ctx, check) {
     check("tuiRuns: a key's ended run survives its next run's start", runs.keys["acme.tui/hello"].ended.run, "1-1");
     check("tuiRuns: a run with an ended record is not running", runs.keys["acme.tui/update"].running, null);
     check("tuiRuns: an ended record wins over its run's running one in either order", ctx.tuiRuns(set.slice().reverse()).keys["acme.tui/update"].running, null);
-    check("tuiRuns: the ended run is the one that ended last", runs.keys["acme.other/fix"].ended.run, "5-1");
+    check("tuiRuns: the ended run is the one that started last", runs.keys["acme.other/fix"].ended.run, "5-1");
+    check("tuiRuns: a run reap ended late does not stand over a later run", ctx.tuiRuns([rec("acme.tui/hello", "9-1", "ended", 0, "10", "11"), rec("acme.tui/hello", "8-1", "ended", null, "08", "12")]).keys["acme.tui/hello"].ended.run, "9-1");
     check("tuiRuns: the live run is the one that started last", ctx.tuiRuns([rec("acme.tui/hello", "6-1", "running", null, "06", null), rec("acme.tui/hello", "8-1", "running", null, "08", null)]).keys["acme.tui/hello"].running.run, "8-1");
     check("tuiRuns: runs by id", Object.keys(runs.runs).sort(), ["1-1", "2-1", "3-1", "4-1", "5-1"]);
     check("tuiRuns: no record, no key", ctx.tuiRuns([]), { runs: {}, keys: {} });
@@ -486,7 +487,8 @@ const CONTROLS = [
     ["a record's window has an app-id and a title", "if (!isPlainObject(value.window) || typeof value.window.appId !== \"string\" || typeof value.window.title !== \"string\")", "if (!isPlainObject(value.window))"],
     ["an ended record wins over its run's running one", "if (!hasOwn(runs, record.run) || record.state === \"ended\")", "if (true)"],
     ["the live run is the one that started last", "if (slot.running === null || record.startedAt > slot.running.startedAt)", "if (slot.running === null)"],
-    ["the ended run is the one that ended last", "} else if (slot.ended === null || record.endedAt > slot.ended.endedAt) {", "} else if (slot.ended === null) {"],
+    ["the ended run is the one that started last", "} else if (slot.ended === null || record.startedAt > slot.ended.startedAt) {", "} else if (slot.ended === null) {"],
+    ["the ended run is not the one that ended last", "} else if (slot.ended === null || record.startedAt > slot.ended.startedAt) {", "} else if (slot.ended === null || record.endedAt > slot.ended.endedAt) {"],
     ["a key whose runs ended is not busy", "if (runs.keys[key].running !== null && busy.indexOf(key) === -1)", "if (busy.indexOf(key) === -1)"],
     ["a busy key is listed once", "if (runs.keys[key].running !== null && busy.indexOf(key) === -1)", "if (runs.keys[key].running !== null)"],
     ["busy keys are sorted", "    return busy.sort();", "    return busy;"],

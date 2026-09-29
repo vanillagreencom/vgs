@@ -1180,7 +1180,9 @@ function tuiRecord(text) {
 // `runs` each run's record by run id, an ended record over the running
 // one of the same run, and `keys` per key { running, ended }: the running
 // run with the latest startedAt, or null, and the ended run with the latest
-// endedAt, or null. A running record whose run also ended is not running.
+// startedAt, or null: a record `vgsh-tui reap` wrote carries the time the
+// reap found the run, which can follow a later run's end. A running record
+// whose run also ended is not running.
 function tuiRuns(records) {
     var runs = {};
     records.forEach(function (record) {
@@ -1196,7 +1198,7 @@ function tuiRuns(records) {
         if (record.state === "running") {
             if (slot.running === null || record.startedAt > slot.running.startedAt)
                 slot.running = record;
-        } else if (slot.ended === null || record.endedAt > slot.ended.endedAt) {
+        } else if (slot.ended === null || record.startedAt > slot.ended.startedAt) {
             slot.ended = record;
         }
     });
