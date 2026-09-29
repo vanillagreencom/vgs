@@ -14,7 +14,8 @@ import "Reply.js" as Reply
 // sit side by side and slide on `motion.duration.normal`, so a
 // `motion.scale` of 0 makes a push or a pop instant; the page not shown is
 // hidden once the slide ends, so the keyboard reaches the shown page alone.
-// Escape pops a page, then closes the window. Enabling, disabling, a
+// Escape pops a page; on the list it is left to the window host, which
+// closes the window. Enabling, disabling, a
 // setting and a key go through the manager capability; the rows come back
 // from the core, so the window shows what the configuration holds. Adding,
 // updating and removing a plugin open the manager's core TUIs, a floating
@@ -111,14 +112,10 @@ FocusScope {
         return "ok";
     }
 
-    // Pop the plugin page, or close the window from the list; answers `ok`
-    // or the window host's reply.
+    // Pop the plugin page to the list; answers `ok`.
     function back() {
-        if (page !== "") {
-            showList();
-            return "ok";
-        }
-        return shell.surfaces.hide("window");
+        showList();
+        return "ok";
     }
 
     // Enable or disable plugin `id`, the opposite of its state now; answers
@@ -161,7 +158,12 @@ FocusScope {
         return keep(id, shell.manager.setKey(id, shortcut, key));
     }
 
-    Keys.onEscapePressed: back()
+    // Escape on a plugin page pops it; on the list it goes on to the window
+    // host, which closes the window.
+    Keys.onEscapePressed: event => {
+        if (page === "") event.accepted = false;
+        else back();
+    }
 
     Item {
         anchors.fill: parent

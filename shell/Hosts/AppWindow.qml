@@ -13,7 +13,10 @@ import qs.Commons
 // no size change once it is shown, so that size is the first request only,
 // and the plugin fills whatever size Hyprland gives the window after. A
 // close through Hyprland, such as its killactive key, is `dismissed`, which
-// the host treats as a hide.
+// the host treats as a hide, and so is an Escape the plugin leaves
+// unaccepted while the window has the keyboard: the slot holds the focus
+// the plugin takes none of, and a key the focused item does not accept
+// climbs its parents to the slot.
 FloatingWindow {
     id: win
 
@@ -39,6 +42,8 @@ FloatingWindow {
         screen: win.screen
         closeOnUnload: true
         anchors.fill: parent
+        focus: true
+        Keys.onEscapePressed: win.dismissed()
         onBuilt: instance => {
             win.built(instance);
             win.visible = true;
