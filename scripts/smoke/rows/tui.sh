@@ -28,6 +28,10 @@ tui_record="$sandbox/tui-argv"
 # command, such as the sudo grant, runs in the sandbox. While the file
 # $sandbox/core-hold exists, a core command's `true` waits for it to go,
 # polled every 0.05 s, so a row can read the shell while a core run is live.
+# The wait ends after 2400 polls, 120 s, whatever the file does: a ceiling
+# well past the longest held section's polls, not a measurement, so a run
+# interrupted before its row removes the file leaves no presenter behind,
+# since bin/vgsh-tui starts the stand-in outside the harness's groups.
 cat >"$shim/xdg-terminal-exec" <<EOF
 #!/usr/bin/env bash
 : >"$tui_record.next"
@@ -49,7 +53,7 @@ while [[ \$# -gt 0 && \$1 != -- ]]; do
   shift
 done
 if [[ \$fixture != yes ]]; then
-  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'while [ -e "\$1" ]; do sleep 0.05; done' sh "$sandbox/core-hold"; else set -- -- true; fi
+  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'n=0; while [ -e "\$1" ] && [ "\$n" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done' sh "$sandbox/core-hold"; else set -- -- true; fi
 fi
 "$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
 window=\$!
