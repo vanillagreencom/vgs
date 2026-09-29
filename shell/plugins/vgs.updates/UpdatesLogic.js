@@ -97,9 +97,12 @@ function parseProbeJson(name, probe) {
     }
 }
 
+// `vgsh pkg check --json` rows, primary first. With no manager detected it
+// prints `[]`, so the snapshot holds only the VGS rows; a probe that failed
+// as a whole is one `packages` row carrying the failure.
 function normalizePkg(probe) {
     var parsed = parseProbeJson("pkg", probe);
-    if (!parsed.ok) return parsed.error.indexOf("manager=none") !== -1 ? [] : [sourceRow("packages", null, [], null, parsed.error)];
+    if (!parsed.ok) return [sourceRow("packages", null, [], null, parsed.error)];
     if (!Array.isArray(parsed.value)) return [sourceRow("packages", null, [], null, "unparseable pkg")];
     var out = [];
     for (var i = 0; i < parsed.value.length; i++) {
@@ -121,6 +124,16 @@ function normalizeSelf(probe, checkedAt) {
     return sourceRow("vgs", error ? null : (behind ? 1 : 0), packages, checkedAt, error);
 }
 
+// An installed directory that is not its own git checkout (a copied or
+// hand-made plugin) has no upstream, and `vgsh plugin update` refuses it
+// the same way: it is not an update source, so its row is left out rather
+// than failing the whole source.
+var UNTRACKED_REFUSAL = /^not-a-checkout=/;
+
+// Plugins or themes from `vgsh plugin|theme outdated --json`: one update per
+// checkout that is behind, its commit count kept as `behind`. A checkout
+// whose own probe failed names itself in the source's error; the others
+// still count, so one unreachable remote does not hide the rest.
 function normalizeOutdated(source, probe, checkedAt) {
     var parsed = parseProbeJson(source, probe);
     if (!parsed.ok) return sourceRow(source, null, [], checkedAt, parsed.error);
@@ -132,7 +145,7 @@ function normalizeOutdated(source, probe, checkedAt) {
         var row = parsed.value[i];
         if (!isPlainObject(row) || typeof row.id !== "string") continue;
         if (row.error) {
-            errors.push(row.id + ": " + row.error);
+            if (!UNTRACKED_REFUSAL.test(String(row.error))) errors.push(row.id + ": " + row.error);
             continue;
         }
         var behind = Number(row.behind || 0);
@@ -141,7 +154,7 @@ function normalizeOutdated(source, probe, checkedAt) {
             packages.push({ name: row.id, old: row.head === undefined ? null : row.head, new: row.upstream === undefined ? null : row.upstream, behind: behind });
         }
     }
-    return sourceRow(source, errors.length > 0 ? null : count, packages, checkedAt, errors.length > 0 ? errors.join("; ") : null);
+    return sourceRow(source, count, packages, checkedAt, errors.length > 0 ? errors.join("; ") : null);
 }
 
 function normalizeSnapshot(probes, now) {

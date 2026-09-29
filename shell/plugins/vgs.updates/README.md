@@ -53,9 +53,7 @@ Package `name`, `old` and `new` text is cut to eighty characters in shared statu
 
 The full package list stays in `status.json`.
 
-`error` is for a whole snapshot error that still produced JSON.
-
-A process failure before JSON leaves the last good file unchanged.
+`error` is null in every file `bin/check` writes: each probe's failure is its own source row. A check that fails before it writes leaves the last good file unchanged, and the service reports that failure in `checkState`. The service still reads a non-null `error` as a failed check.
 
 ## Counts
 
@@ -66,6 +64,10 @@ VGS counts as one update when `vgsh self status --json` reports `behind: true`.
 Plugins and themes count one update per checkout or catalog package that is behind.
 
 Their package rows keep the commit count as `behind` for the flyout.
+
+An installed directory that is not its own git checkout, such as a copied plugin, has no upstream and `vgsh plugin update` refuses it too, so it is not an update source and is left out.
+
+A checkout whose fetch failed names itself in the source's `error`; the other checkouts still count.
 
 ## Cadence
 
@@ -134,6 +136,10 @@ VGS uses the same cadence.
 Omarchy checks only whether Omarchy itself has an update.
 
 VGS counts every source because the badge represents the whole system.
+
+## Validation
+
+`scripts/test-updates-logic.js` pins every decision in `UpdatesLogic.js` with a control. `scripts/test-updates-check.sh` pins `bin/check`'s argv, concurrency and signal handling. `scripts/smoke/rows/updates.sh` runs the service in the nested sandbox against stand-in package managers and git.
 
 ## Later issues
 

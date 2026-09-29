@@ -1,2 +1,4 @@
 #!/usr/bin/env bash
+# Stand-in pacman for rows/updates.sh: package detection needs the binary
+# on PATH; the check itself runs checkupdates, never pacman.
 exit 0

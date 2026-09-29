@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Stand-in mise for rows/updates.sh: `outdated --json` lists one tool.
 set -euo pipefail
 root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
 mkdir -p -- "$root"

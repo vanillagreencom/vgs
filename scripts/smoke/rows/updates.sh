@@ -1,90 +1,104 @@
-# vgs.updates service: one owner runs bin/check, publishes the cached
-# snapshot as plugin status, reports source failures, and keeps manager rows
-# readable for Settings. Stubs live in scripts/smoke/fixtures/updates-bin.
+# vgs.updates, the service that owns every update probe. A copy of the
+# plugin in the user directory, which wins the id over the shipped one,
+# runs the shipped Service.qml and bin/check against the shipped bin/vgsh,
+# with two changes only: one stub `tui` script, because the update TUIs
+# belong to a later issue and shell.tui.state carries declared scripts
+# only, listed with an entry so `openTui` reaches it, and the vgsh it runs,
+# a wrapper that confines each verb:
+#
+# - `pkg` runs the shipped `vgsh pkg` in an unprivileged mount namespace
+#   whose /etc/os-release names the identity this row picks, `arch` or
+#   `none`, with a PATH that holds the stand-ins under
+#   scripts/smoke/fixtures/updates-bin and the few tools vgsh needs, so
+#   bin/vgsh-pkg's own detection and parsers read stub output and no host
+#   package manager runs;
+# - every other verb runs the shipped vgsh with only the stand-in git ahead
+#   of the shell's PATH: it answers for this checkout and the plugin copy
+#   alone, so `self status` and `plugin outdated` reach no remote.
+#
+# Read back from the accepted status record: every source's count, one
+# probe run per check however often it is read, a failing source named and
+# kept, a list past the status ceiling cut with its count kept, a request
+# during a check queued once, a TUI run's end starting one check, and only
+# the VGS rows where no manager is detected. The control is a bar widget
+# that runs the check itself: on two bars it probes twice for one check.
 set -euo pipefail
 updates_dir="$home/.config/vgs/plugins/vgs.updates"
 updates_state="$home/.local/state/vgs/updates-smoke"
-if ! command -v unshare >/dev/null 2>&1; then
-  printf 'qml-smoke: status=not-measured missing=unshare\n'
+updates_fixtures="$repo/scripts/smoke/fixtures/updates-bin"
+if ! command -v unshare >/dev/null 2>&1 || ! unshare -rm true 2>/dev/null; then
+  printf 'qml-smoke: status=not-measured missing=unprivileged-mount-namespace\n'
   exit 77
 fi
 mkdir -p "$updates_dir" "$updates_state"
-rm -rf -- "$home/.local/state/vgs/updates"
 cp -R "$repo/shell/plugins/vgs.updates/." "$updates_dir/"
-cp -- "$repo/scripts/smoke/fixtures/updates-bin/"* "$shim/"
-updates_cleanup() { rm -f -- "$shim/checkupdates" "$shim/pacman" "$shim/paru" "$shim/flatpak" "$shim/mise" "$shim/git" "$shim/xdg-terminal-exec"; }
-trap updates_cleanup RETURN
-updates_vgsh="$repo/bin/vgsh"
 expected_errors+=('plugins: hidden by a higher-precedence plugin with the same id: vgs\.updates')
-updates_status() { ipc vgs.updates invoke status ''; }
-updates_pending() { updates_status | python3 -c 'import json,sys; print(json.load(sys.stdin)["pending"])'; }
-updates_state_text() { updates_status | python3 -c 'import json,sys; print(json.load(sys.stdin)["checkState"]["text"])'; }
-updates_sources() { updates_status | python3 -c 'import json,sys; print(json.dumps([[s["source"], s["count"], s["error"]] for s in json.load(sys.stdin)["sources"]]))'; }
-updates_source_names() { updates_status | python3 -c 'import json,sys; print(json.dumps([s["source"] for s in json.load(sys.stdin)["sources"]]))'; }
-updates_source_detail() { updates_status | python3 -c 'import json,sys; row=[s for s in json.load(sys.stdin)["sources"] if s["source"]==sys.argv[1]][0]; print(json.dumps([row["count"], len(row["packages"]), row.get("more", 0)]))' "$1"; }
-updates_failed_visible() { updates_status | python3 -c 'import json,sys; rows=json.load(sys.stdin)["sources"]; print(any(r["source"] == "pacman" and r["count"] is None and r["error"] for r in rows))'; }
-updates_status_rows() { settings_rows | python3 -c 'import json,sys; rows=[p for p in json.load(sys.stdin) if p["id"]=="vgs.updates"][0]["status"]; print(json.dumps([[r["key"], r["report"]] for r in rows]))'; }
-call_count() { python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(0 if not p.exists() else len([l for l in p.read_text().splitlines() if l.startswith(sys.argv[2])]))' "$updates_state/calls.log" "$1"; }
-direct_pkg_check() {
-  "${shell_env[@]}" unshare -rm "$controlled_path/bash" -c 'mount --bind "$1" /etc/os-release && shift && export PATH="$1" HOME="$2" XDG_RUNTIME_DIR="$3" XDG_STATE_HOME="$4" && shift 4 && exec node "$1" check --json' bash "$arch_os" "$controlled_path" "$home" "$rt_dir" "$home/.local/state" "$repo/bin/vgsh-pkg"
+
+# The stand-in git, alone in its own directory.
+mkdir -p "$updates_state/git-bin"
+cp -- "$updates_fixtures/git" "$updates_state/git-bin/git"
+
+# One directory per identity: its os-release and the PATH `vgsh pkg` gets.
+# `arch` holds the stand-in managers; `none` holds no manager at all.
+updates_identity() { # NAME OS_ID STAND_INS...
+  local dir="$updates_state/identity-$1" tool
+  mkdir -p "$dir/bin"
+  printf 'ID=%s\n' "$2" >"$dir/os-release"
+  for tool in bash env readlink dirname flock setsid timeout mkdir cat sleep seq; do ln -sf -- "$(command -v "$tool")" "$dir/bin/$tool"; done
+  ln -sf -- "$node_bin" "$dir/bin/node"
+  shift 2
+  for tool; do cp -- "$updates_fixtures/$tool" "$dir/bin/$tool"; done
 }
-write_controlled_vgsh() {
-  local target="$1" os_release="$2" path_value="$3"
-  mkdir -p "$(dirname -- "$target")" "$(dirname -- "$target")/lib"
-  ln -sf -- "$repo/bin/lib/qml-library.js" "$(dirname -- "$target")/lib/qml-library.js"
-  cat >"$target" <<EOF
+updates_identity arch arch pacman checkupdates paru flatpak mise
+updates_identity none opensuse-tumbleweed
+use_identity() { printf '%s\n' "$1" >"$updates_state/identity"; }
+use_identity arch
+
+# The wrapper the service copy runs as its vgsh. bin/check finds the core's
+# library loader beside the vgsh it is given, so the loader is linked in.
+updates_vgsh="$updates_state/vgsh-bin/vgsh"
+mkdir -p "$updates_state/vgsh-bin/lib"
+ln -sf -- "$repo/bin/lib/qml-library.js" "$updates_state/vgsh-bin/lib/qml-library.js"
+cat >"$updates_vgsh" <<EOF
 #!/usr/bin/env bash
-if [[ \$1 == pkg && \$2 == check ]]; then
-  shift
-  exec unshare -rm "$path_value/bash" -c 'mount --bind "\$1" /etc/os-release && shift && export PATH="\$1" HOME="\$2" XDG_RUNTIME_DIR="\$3" XDG_STATE_HOME="\$4" && shift 4 && exec node "\$@"' bash "$os_release" "$path_value" "$home" "$rt_dir" "$home/.local/state" "$repo/bin/vgsh-pkg" "\$@"
+set -euo pipefail
+if [[ \${1:-} == pkg ]]; then
+  identity="$updates_state/identity-\$(<"$updates_state/identity")"
+  exec unshare -rm "\$identity/bin/bash" -c 'mount --bind "\$1/os-release" /etc/os-release && export PATH="\$1/bin" && shift && exec "\$@"' \\
+    bash "\$identity" "$repo/bin/vgsh" "\$@"
 fi
-exec "$updates_vgsh" "\$@"
+exec env PATH="$updates_state/git-bin:\$PATH" UPDATES_SMOKE_CHECKOUTS="$repo:$updates_dir" "$repo/bin/vgsh" "\$@"
 EOF
-  chmod 755 "$target"
-}
-patch_service_vgsh() { python3 - "$updates_dir/Service.qml" "$1" <<'PY'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-lines = path.read_text().splitlines()
-needle = "    readonly property string vgshPath:"
-replaced = 0
-for i, line in enumerate(lines):
-    if line.startswith(needle):
-        lines[i] = '    readonly property string vgshPath: "' + sys.argv[2] + '"'
-        replaced += 1
-assert replaced == 1
-path.write_text("\n".join(lines) + "\n")
-PY
-}
-controlled_path="$updates_state/controlled-bin"
-mkdir -p "$controlled_path"
-for tool in bash node python3 flock readlink dirname sleep seq env mount mkdir cat wc sed head rm date timeout setsid; do ln -sf -- "$(command -v "$tool")" "$controlled_path/$tool"; done
-for tool in pacman checkupdates paru flatpak git; do ln -sf -- "$shim/$tool" "$controlled_path/$tool"; done
-arch_os="$updates_state/os-release-arch"
-cat >"$arch_os" <<'OS'
-ID=arch
-OS
-controlled_vgsh="$updates_state/arch/bin/vgsh"
-write_controlled_vgsh "$controlled_vgsh" "$arch_os" "$controlled_path"
-patch_updates_manifest() { python3 - "$updates_dir/manifest.json" <<'PY'
-import json, sys
-path = sys.argv[1]
-doc = json.load(open(path))
+chmod 755 "$updates_vgsh"
+
+# The copy's two changes, each checked to apply once.
+python3 - "$updates_dir" "$updates_vgsh" <<'PY'
+import json, pathlib, sys
+plugin, vgsh = pathlib.Path(sys.argv[1]), sys.argv[2]
+manifest = plugin / "manifest.json"
+doc = json.loads(manifest.read_text())
+assert "tui" not in doc
 doc["tui"] = {"finish": {"script": "tui/finish.sh", "title": "Updates smoke", "size": "default", "presentation": "plain", "entry": {"label": "Updates smoke", "icon": "terminal", "group": "Smoke"}}}
-with open(path, "w") as out:
-    json.dump(doc, out)
+manifest.write_text(json.dumps(doc))
+service = plugin / "Service.qml"
+lines = service.read_text().splitlines()
+hits = [i for i, line in enumerate(lines) if line.startswith("    readonly property string vgshPath:")]
+assert len(hits) == 1, hits
+lines[hits[0]] = "    readonly property string vgshPath: " + json.dumps(vgsh)
+service.write_text("\n".join(lines) + "\n")
 PY
 mkdir -p "$updates_dir/tui"
 cat >"$updates_dir/tui/finish.sh" <<'TUI'
 #!/usr/bin/env bash
-set -euo pipefail
+# Runs until the row opens its gate.
 gate="${XDG_STATE_HOME:?}/vgs/updates-smoke/tui-gate"
 while [[ ! -e $gate ]]; do sleep 0.05; done
 TUI
 chmod 755 "$updates_dir/tui/finish.sh"
-}
-install_terminal_stub() {
-  cat >"$shim/xdg-terminal-exec" <<'EOF'
+
+# A terminal stand-in that runs the presenter with no window; rows/tui.sh
+# writes its own over it.
+cat >"$shim/xdg-terminal-exec" <<'EOF'
 #!/usr/bin/env bash
 while [[ $# -gt 0 && $1 != -- ]]; do shift; done
 shift
@@ -92,115 +106,146 @@ presenter=()
 while [[ $# -gt 0 && $1 != -- ]]; do presenter+=("$1"); shift; done
 "${presenter[@]}" "$@" </dev/null >/dev/null 2>&1
 EOF
-  chmod 755 "$shim/xdg-terminal-exec"
+chmod 755 "$shim/xdg-terminal-exec"
+
+# The accepted status record, as every instance reads it.
+updates_values() { ipc vgs.updates invoke status ''; }
+updates_field() { updates_values | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get(sys.argv[1])))' "$1"; }
+updates_sources() { updates_values | python3 -c 'import json,sys; print(json.dumps([[s["source"], s["count"], s["error"]] for s in json.load(sys.stdin).get("sources", [])]))'; }
+updates_source_names() { updates_values | python3 -c 'import json,sys; print(json.dumps([s["source"] for s in json.load(sys.stdin).get("sources", [])]))'; }
+updates_state_text() { updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin).get("checkState", {}).get("text", ""))'; }
+# Whether the check state names the failing system source.
+updates_names_system_failure() { [[ $(updates_state_text) == "System: exit=1"* ]] && echo True || echo False; }
+# Whether the failing system row stays listed, with no count, beside AUR's.
+updates_keeps_failed_row() { updates_sources | python3 -c 'import json,sys; r=json.load(sys.stdin); print(any(s[0] == "pacman" and s[1] is None and s[2] for s in r) and ["aur", 1, None] in r)'; }
+# SOURCE's [count, listed packages, more] in the accepted record.
+updates_listed() { updates_values | python3 -c 'import json,sys; r=[s for s in json.load(sys.stdin).get("sources", []) if s["source"]==sys.argv[1]]; print(json.dumps([r[0]["count"], len(r[0]["packages"]), r[0]["more"]] if r else None))' "$1"; }
+# SOURCE's [count, packages] in status.json on disk.
+updates_cached() { python3 -c 'import json,sys; r=[s for s in json.load(open(sys.argv[1]))["sources"] if s["source"]==sys.argv[2]]; print(json.dumps([r[0]["count"], len(r[0]["packages"])] if r else None))' "$home/.local/state/vgs/updates/status.json" "$1"; }
+updates_idle() { [[ $(updates_state_text) == Checking ]] && echo checking || echo idle; }
+updates_status_rows() { settings_rows | python3 -c 'import json,sys; rows=[p for p in json.load(sys.stdin) if p["id"]=="vgs.updates"][0]["status"]; print(json.dumps([[r["key"], r["report"]] for r in rows]))'; }
+updates_tui_running() { lent tui.runs | python3 -c 'import json,sys; r=(json.load(sys.stdin) or {}).get("vgs.updates/finish"); print(json.dumps(r is not None and r.get("running") is not None))'; }
+# Runs of one stand-in, from the log every stand-in appends to.
+runs_of() { python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(0 if not p.exists() else sum(1 for l in p.read_text().splitlines() if l.split(" ")[0] == sys.argv[2]))' "$updates_state/calls.log" "$1"; }
+package_queries() { echo "$(runs_of checkupdates) $(runs_of paru) $(runs_of flatpak) $(runs_of mise)"; }
+checks() { runs_of checkupdates; }
+# STEADY once the check count stays at WANT for a second, else the count.
+checks_settle_at() { # WANT
+  local got
+  got="$(checks)"
+  if [[ $got != "$1" ]]; then echo "$got"; return; fi
+  sleep 1
+  got="$(checks)"
+  if [[ $got == "$1" ]]; then echo STEADY; else echo "$got"; fi
 }
-patch_updates_manifest
-install_terminal_stub
-patch_service_vgsh "$controlled_vgsh"
-"${shell_env[@]}" "$updates_dir/bin/check" --vgsh "$controlled_vgsh" >/dev/null
-expect "rescan after adding the updates plugin copy answers ok" ok ipc shell rescanPlugins
-expect_poll "the updates plugin copy is discovered" True plugin_known vgs.updates
+
+# First check: no snapshot exists, so the service checks at start.
+rm -rf -- "$home/.local/state/vgs/updates"
+expect "rescan after adding the updates copy answers ok" ok ipc shell rescanPlugins
+expect_poll "the updates copy is discovered" True plugin_known vgs.updates
 expect "enabling the updates service is allowed" ok ipc shell setPluginEnabled vgs.updates true
 expect_poll "the updates service is built" True record_exists vgs.updates
-expect_poll "the updates service uses the controlled vgsh" "\"$controlled_vgsh\"" ipc smoke readInstance service vgs.updates vgshPath
-direct_sources() { echo '[["pacman", 2, null], ["aur", 1, null], ["flatpak", 1, null]]'; }
-expect "the real package checker parses the controlled source rows" '[["pacman", 2, null], ["aur", 1, null], ["flatpak", 1, null]]' direct_sources
-before_status_read="$(call_count checkupdates)"
-expect "reading status does not start a second check" "$before_status_read" call_count checkupdates
-expect "a second status read still does not start a check" "$before_status_read" call_count checkupdates
-expect "the Settings panel opens for updates rows" ok ipc shell summon panel vgs.settings '{}'
-expect_poll "the Settings panel is open for updates rows" open settings_open
+expect_poll "the first check publishes every source vgsh reports" \
+  '[["pacman", 2, null], ["aur", 1, null], ["flatpak", 1, null], ["mise", 1, null], ["vgs", 1, null], ["plugins", 1, null], ["themes", 0, null]]' updates_sources
+expect "pending sums every source" 7 updates_field pending
+expect "the check state says updates wait" "Updates waiting" updates_state_text
+expect "the first check ran each package query once" "1 1 1 1" package_queries
+expect "status.json holds the same system rows" '[2, 2]' updates_cached pacman
+
+# Reads are not checks.
+for _ in 1 2 3; do updates_values >/dev/null; done
+expect "three reads start no check" STEADY checks_settle_at 1
+expect "the Settings panel opens for the updates rows" ok ipc shell summon panel vgs.settings '{}'
+expect_poll "the Settings panel is open for the updates rows" open settings_open
 expect "the Settings window opens the updates page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.updates
-expect_poll "the Settings status rows are reported" '[["pending", "reported"], ["lastCheck", "reported"], ["checkState", "reported"]]' updates_status_rows
+expect_poll "the Settings page reads the three status rows" '[["pending", "reported"], ["lastCheck", "reported"], ["checkState", "reported"]]' updates_status_rows
+expect "the Settings page started no check" STEADY checks_settle_at 1
+expect "the Settings panel closes" ok ipc shell hide panel vgs.settings
+
+# A request during a check is queued once, not run beside it.
+touch "$updates_state/slow-checkupdates"
+expect "an on-demand check starts" started ipc vgs.updates invoke check ''
+expect "a request during the check is queued" queued ipc vgs.updates invoke check ''
+expect "a third request during the check joins the queued one" queued ipc vgs.updates invoke check ''
+rm -f -- "$updates_state/slow-checkupdates"
+expect_poll "the check and the one queued check both run" 3 checks
+expect "no third check follows" STEADY checks_settle_at 3
+expect_poll "the service is idle after the queued check" idle updates_idle
+
+# A failing source is named and kept beside the others.
+touch "$updates_state/fail-checkupdates"
+expect "a check with a failing system source starts" started ipc vgs.updates invoke check ''
+expect_poll "the check state names the failing source" True updates_names_system_failure
+expect "the failing source stays listed with no count" True updates_keeps_failed_row
+rm -f -- "$updates_state/fail-checkupdates"
+
+# A list past the status ceiling: the record lists the first packages and
+# counts the rest; status.json keeps every one.
 touch "$updates_state/many-checkupdates"
-large_snapshot="$(python3 - <<'PY'
-import json
-print(json.dumps([{"source":"pacman","count":1400,"packages":[{"name":str(i)} for i in range(1400)]}]))
-PY
-)"
-expect "rebuilding the updates service for the large cache is allowed" ok ipc shell setPluginEnabled vgs.updates false
-expect "re-enabling the updates service for the large cache is allowed" ok ipc shell setPluginEnabled vgs.updates true
-large_direct_detail() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); row=[s for s in d if s["source"]=="pacman"][0]; print(json.dumps([row["count"], len(row["packages"])]))' "$large_snapshot"; }
-expect "large package details stay complete in status.json" '[1400, 1400]' large_direct_detail
+expect "a check with 1400 system updates starts" started ipc vgs.updates invoke check ''
+expect_poll "the record lists the first packages and counts the rest" '[1400, 12, 1388]' updates_listed pacman
+expect "pending keeps the full count" 1405 updates_field pending
+expect "status.json keeps every package" '[1400, 1400]' updates_cached pacman
 rm -f -- "$updates_state/many-checkupdates"
-: >"$updates_state/fail-checkupdates"
-failure_snapshot='[{"source":"pacman","count":null,"error":"exit=1"}]'
-expect "rebuilding the updates service for the failure cache is allowed" ok ipc shell setPluginEnabled vgs.updates false
-expect "re-enabling the updates service for the failure cache is allowed" ok ipc shell setPluginEnabled vgs.updates true
-failure_direct() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); row=[s for s in d if s["source"]=="pacman"][0]; print(json.dumps([row["count"], row["error"]]))' "$failure_snapshot"; }
-expect "a failing source stays visible in status.json" '[null, "exit=1"]' failure_direct
-rm -f -- "$updates_state/fail-checkupdates" "$updates_state/tui-gate"
-"${shell_env[@]}" "$updates_dir/bin/check" --vgsh "$controlled_vgsh" >/dev/null
-expect "rebuilding the updates service after failure rows is allowed" ok ipc shell setPluginEnabled vgs.updates false
-expect "re-enabling the updates service after failure rows is allowed" ok ipc shell setPluginEnabled vgs.updates true
+
+# A TUI run's end starts one check; a running TUI starts none.
 expect_poll "the TUI startup probe has answered" false lent tui.probing
 if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
   expect "a request on a host without a terminal refreshes the launcher" "refused: tui=vgs.updates/finish reason=launcher-missing" ipc shell openTui vgs.updates/finish
 fi
-expect_poll "the launcher state is present for the updates TUI" '"present"' lent tui.launcher
+expect_poll "the launcher state is present" '"present"' lent tui.launcher
 expect_poll "the launcher refresh is idle" false lent tui.probing
-before="$(call_count checkupdates)"
-expect "opening the updates TUI starts the run" ok ipc shell openTui vgs.updates/finish
-sleep 0.2
-expect "a running TUI does not trigger a check" "$before" call_count checkupdates
+rm -f -- "$updates_state/tui-gate"
+before="$(checks)"
+expect "opening the updates TUI answers ok" ok ipc shell openTui vgs.updates/finish
+expect_poll "the updates TUI is running" true updates_tui_running
+expect "a running TUI starts no check" STEADY checks_settle_at "$before"
 touch "$updates_state/tui-gate"
-expect_poll "an ended TUI leaves package checks controlled" "$before" call_count checkupdates
-updates_tui_idle() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["tui"]["runs"].get("vgs.updates/finish"); print("idle" if r is not None and r["running"] is None else "busy")'; }
-expect_poll "the updates TUI ended before later TUI rows" idle updates_tui_idle
+expect_poll "the TUI's end starts a check" "$((before + 1))" checks
+expect "the TUI's end starts exactly one check" STEADY checks_settle_at "$((before + 1))"
+expect_poll "the service is idle after the TUI check" idle updates_idle
+
+# Control: a copy that checks per widget probes once per bar.
 updates_control="$home/.config/vgs/plugins/acme.updates-control"
 mkdir -p "$updates_control"
 cat >"$updates_control/manifest.json" <<'JSON'
-{ "schemaVersion": 1, "id": "acme.updates-control", "name": "Updates control", "version": "0.1.0", "author": "acme", "description": "control that checks per widget", "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Widget.qml" }, "defaultSection": "right" }
+{ "schemaVersion": 1, "id": "acme.updates-control", "name": "Updates control", "version": "0.1.0", "author": "acme", "description": "A copy of the updates check that every widget runs itself", "kinds": ["bar-widget"], "entryPoints": { "bar-widget": "Widget.qml" }, "defaultSection": "right" }
 JSON
+control_command="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$updates_dir/bin/check" --vgsh "$updates_vgsh")"
 cat >"$updates_control/Widget.qml" <<EOF
 import QtQuick
 import qs.Ui
-import Quickshell
 import Quickshell.Io
 BarWidget {
     property var shell: null
-    Component.onCompleted: check.running = true
     Process {
-        id: check
-        command: ["$updates_dir/bin/check", "--vgsh", "$updates_vgsh"]
-        stdout: StdioCollector {}
-        stderr: StdioCollector {}
+        running: true
+        command: $control_command
     }
 }
 EOF
 expect "rescan after adding the per-widget control answers ok" ok ipc shell rescanPlugins
 control_output=SMOKE-UPDATES-CONTROL
-expect "the nested compositor adds a monitor for the updates control" ok hypr output create headless "$control_output"
-expect_poll "the updates control monitor gets a bar" "$((monitors + 1))" bar_count
-before="$(call_count checkupdates)"
+expect "the nested compositor adds a monitor for the control" ok hypr output create headless "$control_output"
+expect_poll "the control monitor gets a bar" "$((monitors + 1))" bar_count
+before="$(checks)"
 expect "enabling the per-widget control is allowed" ok ipc shell setPluginEnabled acme.updates-control true
 control_widgets() { ipc shell built | python3 -c 'import json,sys; print(sum(1 for rows in json.load(sys.stdin).values() for r in rows if r["id"] == "acme.updates-control"))'; }
-control_widgets_gt_one() { [[ $(control_widgets) -gt 1 ]] && echo True || echo False; }
-expect_poll "the per-widget control is built on more than one bar" True control_widgets_gt_one
-control_target() { echo $(( before + $(control_widgets) )); }
-expect_poll "the per-widget control proves the one-process assertion would fail" "$(control_target)" call_count checkupdates
+expect_poll "the control is built on every bar" "$((monitors + 1))" control_widgets
+expect_poll "the control probes once per widget, not once per check" "$((before + monitors + 1))" checks
 expect "disabling the per-widget control is allowed" ok ipc shell setPluginEnabled acme.updates-control false
-expect "the nested compositor removes the updates control monitor" ok hypr output remove "$control_output"
-expect_poll "the updates control monitor's bar is gone" "$monitors" bar_count
-no_manager_vgsh="$updates_state/bin/vgsh"
-unknown_os="$updates_state/os-release-unknown"
-no_manager_path="$updates_state/no-manager-bin"
-mkdir -p "$no_manager_path" "$updates_state/bin/lib"
-ln -sf -- "$(command -v bash)" "$no_manager_path/bash"
-ln -sf -- "$node_bin" "$no_manager_path/node"
-ln -sf -- "$(command -v flock)" "$no_manager_path/flock"
-ln -sf -- "$(command -v readlink)" "$no_manager_path/readlink"
-ln -sf -- "$(command -v dirname)" "$no_manager_path/dirname"
-ln -sf -- "$(command -v timeout)" "$no_manager_path/timeout"
-ln -sf -- "$(command -v setsid)" "$no_manager_path/setsid"
-cat >"$unknown_os" <<'OS'
-ID=opensuse-tumbleweed
-OS
-write_controlled_vgsh "$no_manager_vgsh" "$unknown_os" "$no_manager_path"
-patch_service_vgsh "$no_manager_vgsh"
-expect "rescan after switching updates to no-manager vgsh answers ok" ok ipc shell rescanPlugins
-expect_poll "the rebuilt updates service is built" True record_exists vgs.updates
-expect_poll "with real vgsh detecting no manager, the service publishes only VGS rows" '["vgs", "plugins", "themes"]' updates_source_names
+expect "the nested compositor removes the control monitor" ok hypr output remove "$control_output"
+expect_poll "the control monitor's bar is gone" "$monitors" bar_count
+
+# No manager detected: only the VGS rows remain.
+use_identity none
+before="$(checks)"
+expect "a check with no package manager starts" started ipc vgs.updates invoke check ''
+expect_poll "with no manager detected only the VGS rows remain" '["vgs", "plugins", "themes"]' updates_source_names
+expect "no package query ran" STEADY checks_settle_at "$before"
+
+# Leave the later rows the shipped plugin, disabled.
 expect "disabling the updates service is allowed" ok ipc shell setPluginEnabled vgs.updates false
-expect "the Settings panel closes after updates rows" ok ipc shell hide panel vgs.settings
-updates_cleanup
+rm -rf -- "$updates_dir" "$updates_control"
+expect "rescan after removing the updates copies answers ok" ok ipc shell rescanPlugins
+expect_poll "the updates control is gone" False plugin_known acme.updates-control

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
+# Stand-in checkupdates for rows/updates.sh. Marker files under the row's
+# state directory select a mode: fail-checkupdates exits 1 as a network
+# failure does, many-checkupdates lists 1400 updates, slow-checkupdates
+# holds the check for two seconds so a second request meets it running.
 set -euo pipefail
 root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
 mkdir -p -- "$root"
-printf 'checkupdates\n' >>"$root/calls.log"
+printf 'checkupdates %s\n' "$*" >>"$root/calls.log"
+if [[ -f $root/slow-checkupdates ]]; then sleep 2; fi
 if [[ -f $root/fail-checkupdates ]]; then echo 'network down' >&2; exit 1; fi
 if [[ -f $root/many-checkupdates ]]; then
-  for i in $(seq 1 1400); do printf 'pkg-%04d 1.0 -> 2.0\n' "$i"; done
+  for i in $(seq 1 1400); do printf 'pkg-%04d 1.0-1 -> 2.0-1\n' "$i"; done
   exit 0
 fi
 cat <<'OUT'

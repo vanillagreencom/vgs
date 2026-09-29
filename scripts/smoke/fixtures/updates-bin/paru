@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Stand-in paru for rows/updates.sh: `paru -Qua` lists one AUR update.
 set -euo pipefail
 root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
 mkdir -p -- "$root"

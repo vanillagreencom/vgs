@@ -77,11 +77,15 @@ function verify(logic) {
   same(logic.parseSnapshotText("{"), { ok: false, error: "not-json" });
   same(logic.snapshotFromObject({ checkedAt: now, sources: [{ source: "x", count: -1 }] }), { ok: false, error: "sources.0.count" });
 
-  const failedPlugins = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([{ id: "bad", behind: null, head: null, upstream: null, error: "fetch=bad" }]), themes: probe([]) }, now);
+  const failedPlugins = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([{ id: "bad", behind: null, head: null, upstream: null, error: "fetch=bad" }, { id: "good", behind: 3, head: "a", upstream: "b", error: null }]), themes: probe([]) }, now);
   const pluginRow = failedPlugins.sources.find(s => s.source === "plugins");
-  same([pluginRow.count, pluginRow.error], [null, "bad: fetch=bad"]);
-  const failedCommand = logic.normalizeSnapshot({ pkg: probe("", 1, "vgsh: refused: manager=none"), self: probe({ behind: false, error: null }), plugins: probe([]), themes: probe([]) }, now);
-  same(failedCommand.sources.map(s => s.source), ["vgs", "plugins", "themes"]);
+  same([pluginRow.count, pluginRow.error], [1, "bad: fetch=bad"]);
+  same(logic.checkState(failedPlugins, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "Plugins: bad: fetch=bad" });
+  const untracked = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([{ id: "local", behind: null, head: null, upstream: null, error: "not-a-checkout=/home/u/.config/vgs/plugins/local" }]), themes: probe([]) }, now);
+  const untrackedRow = untracked.sources.find(s => s.source === "plugins");
+  same([untrackedRow.count, untrackedRow.packages, untrackedRow.error], [0, [], null]);
+  const noManager = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([]), themes: probe([]) }, now);
+  same(noManager.sources.map(s => s.source), ["vgs", "plugins", "themes"]);
   const failedPkg = logic.normalizeSnapshot({ pkg: probe("", 1, "vgsh: refused: lock=failed"), self: probe({ behind: false, error: null }), plugins: probe([]), themes: probe([]) }, now);
   same(failedPkg.sources[0], { source: "packages", label: "Packages", count: null, packages: [], checkedAt: null, error: "exit=1 lock=failed" });
 
@@ -101,14 +105,16 @@ const controls = [
   ["check failure wins state", "if (checkFailure !== null && checkFailure !== undefined && checkFailure !== \"\") return { tone: \"danger\", text: String(checkFailure).slice(0, 200) };", "if (false) return { tone: \"danger\", text: \"\" };"],
   ["status writes skip unchanged", "if (!hasOwn(before, key) || !sameJson(before[key], next[key])) out.push({ key: key, value: clone(next[key]) });", "out.push({ key: key, value: clone(next[key]) });"],
   ["failure retry uses short delay", "failedAt + RETRY_AFTER_FAILURE_MS - now", "failedAt + interval - now"],
-  ["no package manager omits the package row", "if (!parsed.ok) return parsed.error.indexOf(\"manager=none\") !== -1 ? [] : [sourceRow(\"packages\", null, [], null, parsed.error)];", "if (!parsed.ok) return [sourceRow(\"packages\", null, [], null, parsed.error)];"],
+  ["a failed package probe is one packages row", "if (!parsed.ok) return [sourceRow(\"packages\", null, [], null, parsed.error)];", "if (!parsed.ok) return [];"],
   ["published packages are bounded", "var limit = Math.min(row.packages.length, PUBLISHED_PACKAGES_PER_SOURCE_MAX);", "var limit = row.packages.length;"],
   ["published rows carry the omitted package count", "made.more = Math.max(0, row.packages.length - packages.length);", "made.more = 0;"],
   ["published package text is bounded", "return text.length > PUBLISHED_PACKAGE_TEXT_MAX ? text.slice(0, PUBLISHED_PACKAGE_TEXT_MAX) : text;", "return text;"],
   ["source errors set warning", "if (source !== null) return { tone: \"warning\", text: (source.label || source.source) + \": \" + String(source.error).slice(0, 180) };", "if (false) return { tone: \"warning\", text: \"\" };"] ,
   ["stale after twice the interval", "now - snapshot.checkedAt >= 2 * intervalMs", "now - snapshot.checkedAt > 3 * intervalMs"],
   ["TUI endedAt advances", "if (Number(next.endedAt) > Number(prior.endedAt)) return true;", "if (false) return true;"],
-  ["outdated error makes a source error", "errors.push(row.id + \": \" + row.error);", "count += 0;"],
+  ["outdated error makes a source error", "if (!UNTRACKED_REFUSAL.test(String(row.error))) errors.push(row.id + \": \" + row.error);", "count += 0;"],
+  ["an untracked directory is not a source error", "var UNTRACKED_REFUSAL = /^not-a-checkout=/;", "var UNTRACKED_REFUSAL = /^$never/;"],
+  ["one failing checkout keeps the others' count", "return sourceRow(source, count, packages, checkedAt, errors.length > 0 ? errors.join(\"; \") : null);", "return sourceRow(source, errors.length > 0 ? null : count, packages, checkedAt, errors.length > 0 ? errors.join(\"; \") : null);"],
   ["failed probe is reported", "if (!probe || probe.status !== 0) return { ok: false, error: commandError(name, probe || { status: null, stderr: \"\" }) };", "if (!probe || probe.status !== 0) return { ok: true, value: [] };"],
 ];
 
