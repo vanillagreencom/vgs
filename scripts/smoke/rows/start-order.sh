@@ -211,4 +211,3 @@ if bar_hidden no-deadline && edit_tree no-deadline shell/Core/ServiceGate.qml $'
   && restart_over "$sandbox/start-order-no-deadline" "$sandbox/start-order-no-deadline-qs.log" '[]' no-bar; then
   expect "control: a gate with no deadline never releases past a bar that never presents" unreleased release_reason
 fi
-
