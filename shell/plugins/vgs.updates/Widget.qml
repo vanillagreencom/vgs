@@ -95,6 +95,7 @@ BarWidget {
             }
         }
 
+        // pointer-cursor-exempt: it adds the middle click to the Button it sits in, whose own PointerCursor shows the hand
         TapHandler {
             acceptedButtons: Qt.MiddleButton
             onTapped: root.updateAll()
