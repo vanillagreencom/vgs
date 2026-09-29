@@ -149,6 +149,8 @@ var TOKENS = {
         maxHeight: length(94),
         // Between the media slot and the text, at either tier.
         gapIcon: length(12),
+        // The stroke of the Lucide icon an x-vgs-icon hint names, in pixels.
+        glyphStroke: length(2),
         lineGap: length(2),
         summaryLines: number(2, 1, 8),
         panelEnterScale: share(0.97),
@@ -162,15 +164,16 @@ var TOKENS = {
     // tier alone places the text, `card.pad + size + card.gapIcon` in, so
     // every card of a tier starts its text at the same x. An image is
     // cropped to the square with corners of `radius`, an application icon
-    // is drawn `icon` wide in the middle, and people fill it as faces.
+    // is drawn `icon` wide in the middle, a hinted Lucide icon `glyph` wide
+    // in the middle, and people fill it as faces.
     // `regular` keeps the reference's 40 px icon slot, the one slot
     // Omarchy's notification card draws every image and icon in
     // (shell/plugins/notifications/components/NotificationCard.qml on
     // quattro, read 2026-09-29); `compact` is 28, so a one-line card with
     // media is 28 plus twice `card.pad` tall.
     media: {
-        compact: { size: length(28), icon: length(24), radius: length(6) },
-        regular: { size: length(40), icon: length(40), radius: length(8) }
+        compact: { size: length(28), icon: length(24), radius: length(6), glyph: length(20) },
+        regular: { size: length(40), icon: length(40), radius: length(8), glyph: length(28) }
     },
 
     // The people a notification names, as faces in the media slot, laid
@@ -201,6 +204,16 @@ var TOKENS = {
         // The initials' size as a share of the face's diameter.
         initials: share(0.42),
         initialsWeight: weight(600)
+    },
+
+    // The colour of a hinted icon per x-vgs-tone, one per design-system
+    // status tone and each the default theme's `palette` value of the same
+    // name; LIGHT darkens them for the pale glass.
+    tone: {
+        success: color("#b4c96f"),
+        warning: color("#ffb000"),
+        danger: color("#f43f5e"),
+        info: color("#74a7f7")
     },
 
     // The workspace a summary names, as its small rounded icon before it.
@@ -301,5 +314,11 @@ var LIGHT = {
     },
     edge: {
         neutral: "#2d2d2d"
+    },
+    tone: {
+        success: "mix(#b4c96f, #2a2a2a, 0.35)",
+        warning: "mix(#ffb000, #2a2a2a, 0.3)",
+        danger: "mix(#f43f5e, #2a2a2a, 0.15)",
+        info: "mix(#74a7f7, #2a2a2a, 0.3)"
     }
 };

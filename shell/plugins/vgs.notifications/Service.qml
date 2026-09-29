@@ -270,7 +270,7 @@ Item {
             return {
                 id: n.id, appName: n.appName, appIcon: n.appIcon, summary: n.summary, body: n.body,
                 image: n.image, desktopEntry: n.desktopEntry, urgency: n.urgency,
-                expireTimeout: n.expireTimeout, transient: n.transient
+                expireTimeout: n.expireTimeout, transient: n.transient, hints: n.hints
             };
         } catch (e) {
             return null;
@@ -289,6 +289,8 @@ Item {
     function receive(n) {
         const fields = fieldsOf(n);
         if (fields === null) return false;
+        const refusedHints = Logic.readHints(fields.hints).refused;
+        if (refusedHints.length > 0) console.warn("notifications: hints refused: app=" + JSON.stringify(fields.appName) + " names=" + refusedHints.join(","));
         const entry = Logic.entryOf(fields, Date.now(), k => root.taken(k));
         // A second copy of a message that stays out is not kept.
         if (!keepCopy(entry)) return false;
@@ -668,13 +670,27 @@ Item {
     }
 
     // A choice on a card, a toast's or an inbox row's: open, action:<id> or
-    // dismiss, as NotificationLogic.choicePlan says, then the row leaves.
+    // dismiss. An open on a card whose VGS hints name a click
+    // (NotificationLogic.clickRoute) opens the hinted file in the `open` TUI
+    // or only dismisses; every other choice goes as
+    // NotificationLogic.choicePlan says. Then the row leaves.
     // The sender's window comes into view through the core's reveal, which
     // after a delivered action first gives the sender the chance to raise
     // it itself. Logs what the choice reached, with no content.
     function choose(key, choice) {
         const at = indexOf(key);
         if (at === -1) return;
+        const route = Logic.clickRoute(choice, rowModel.get(at));
+        if (route === "open") {
+            const reply = shell.tui.run("open", [rowModel.get(at).hintOpen]);
+            if (reply !== "ok") console.warn("notifications: open " + reply);
+            leave(key, "invoke");
+            return;
+        }
+        if (route === "dismiss") {
+            leave(key, "dismiss");
+            return;
+        }
         const plan = Logic.choicePlan(choice, offered(key).map(a => a.identifier));
         if (plan === null) {
             console.error("notifications: refused: choice=" + choice + " want=open|action:<id>|dismiss");

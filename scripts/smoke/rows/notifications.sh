@@ -220,6 +220,42 @@ close_note "$first_id"
 expect_poll "the sender's close ends the toast" none key_of "First toast, updated"
 expect_poll "the closed toast is in the history" True in_history "First toast, updated"
 
+# The VGS hints (docs/architecture/notification-hints.md): a card keeps the
+# hints the judge accepts, draws the hinted Lucide icon, and a click on an
+# `open` card hands the open TUI the file through the stand-in terminal,
+# whose presenter runs the plugin's script; with no EDITOR in the shell's
+# environment the script hands the file to xdg-open, here a stand-in that
+# records its argv, so no opener runs. A `none` card is only dismissed.
+terminal_stand_in
+hint_file="$sandbox/hint-transcript.log"
+printf 'transcript\n' >"$hint_file"
+hint_opened="$sandbox/xdg-open-argv"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >%q\n' "$hint_opened" >"$shim/xdg-open"
+chmod 755 "$shim/xdg-open"
+hint_roles() { ipc smoke modelRows vgs.notifications rows summary,hintIcon,hintTone,hintOpen,hintClick | py_reply 'import json,sys; print(json.dumps(next((r[1:] for r in json.load(sys.stdin) if r[0] == sys.argv[1]), None)))' "$1"; }
+hint_drawn() { ipc smoke layerItems vgs.notifications NotificationCard summary,mediaKind,showsSlot | py_reply 'import json,sys; print(json.dumps(next(([v["mediaKind"], v["showsSlot"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
+opened_file() { if [[ -f $hint_opened ]]; then cat -- "$hint_opened"; else echo absent; fi; }
+forget_record
+notify smoke-app 0 "Hinted error" "Exit code 3" '[]' "{\"x-vgs-icon\": <\"circle-x\">, \"x-vgs-tone\": <\"danger\">, \"x-vgs-open\": <\"$hint_file\">, \"x-vgs-click\": <\"open\">}" 0 >/dev/null
+expect_poll "a hinted notification keeps its hints" "[\"circle-x\", \"danger\", \"$hint_file\", \"open\"]" hint_roles "Hinted error"
+expect_poll "its card's media slot draws the hinted icon in place of the application icon" '["glyph", true]' hint_drawn "Hinted error"
+expect "a click on the newest card is allowed" ok notes invoke-latest
+expect_poll "the click hands the open TUI the hinted file" "$(words vgs.notifications/open tui/open.sh "$hint_file")" recorded_tail
+expect_poll "the open TUI hands the file to xdg-open without an EDITOR" "$hint_file" opened_file
+expect_poll "the clicked card leaves" none key_of "Hinted error"
+forget_record
+notify smoke-app 0 "Hinted start" "" '[]' '{"x-vgs-icon": <"play">, "x-vgs-tone": <"warning">, "x-vgs-click": <"none">}' 0 >/dev/null
+expect_poll "a none card shows" '["play", "warning", "", "none"]' hint_roles "Hinted start"
+expect "a click on the none card is allowed" ok notes invoke-latest
+expect_poll "the none card is dismissed" none key_of "Hinted start"
+sleep 1
+expect "a click on a none card opens nothing" absent recorded
+notify smoke-app 0 "Bad hints" "" '[]' '{"x-vgs-tone": <"red">, "x-vgs-click": <"open">}' 0 >/dev/null
+expect_poll "refused hints leave no role" '["", "", "", ""]' hint_roles "Bad hints"
+expected_errors+=('notifications: hints refused: app="smoke-app" names=x-vgs-tone,x-vgs-click')
+# The stand-in stays, answering 1, so no later row reaches the host's opener.
+printf '#!/usr/bin/env bash\nexit 1\n' >"$shim/xdg-open"
+
 # A toast expires on its own; the pointer on it pauses its clock.
 notify smoke-app 0 "Brief" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
 expect_poll "a low-urgency toast shows" True has_row live "Brief"
@@ -1177,7 +1213,7 @@ import json, os, sys, time
 p = sys.argv[1]
 d = json.load(open(p))
 ts = int(time.time() * 1000) - 60000
-d["live"].append({"key": "%d-900" % ts, "originalId": 900, "app": "smoke-app", "appIcon": "", "summary": "Stale", "body": "", "image": "", "desktopEntry": "", "urgency": 1, "expireTimeout": 0, "timestamp": ts})
+d["live"].append({"key": "%d-900" % ts, "originalId": 900, "app": "smoke-app", "appIcon": "", "summary": "Stale", "body": "", "image": "", "desktopEntry": "", "urgency": 1, "expireTimeout": 0, "timestamp": ts, "hintIcon": "", "hintTone": "", "hintOpen": "", "hintClick": ""})
 json.dump(d, open(p + ".tmp", "w"))
 os.replace(p + ".tmp", p)
 PY

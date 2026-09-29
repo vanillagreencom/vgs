@@ -19,7 +19,8 @@
     "layers",
     "notifications",
     "shortcut",
-    "status"
+    "status",
+    "tui"
   ],
   "settings": {
     "duration": 8,
@@ -49,6 +50,12 @@
       "hint": "One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
     }
   },
+  "tui": {
+    "open": { "script": "tui/open.sh", "title": "Open a notification's file", "presentation": "plain" }
+  },
+  "requirements": [
+    { "command": "xdg-open", "packages": { "pacman": "xdg-utils", "apt": "xdg-utils", "dnf": "xdg-utils" }, "optional": true, "purpose": "Opens the file a notification's x-vgs-open hint names when EDITOR is unset" }
+  ],
   "appearance": "Appearance.js",
   "hyprland": {
     "binds": [

@@ -10,8 +10,9 @@
 // notifications the service keeps holding for the history, the paused and
 // running clocks of the toasts on screen, the per-application rules that
 // read a sender's workspace and people, the Slack token rows, photo and
-// custom emoji lookups, and which two notifications are one message sent
-// twice.
+// custom emoji lookups, which two notifications are one message sent
+// twice, and the VGS hints a sender may add and what a click on a card
+// that carries them does.
 
 // The history keeps the newest HISTORY_MAX notifications; the Inbox and the
 // History panel show at most PANEL_ROWS_MAX of them. LIVE_MAX toasts show at
@@ -29,12 +30,12 @@ var BODY_MAX = 4096;
 var LOW_LIFETIME = 5000;
 var MAX_LIFETIME = 30000;
 // The state file's format.
-var STATE_VERSION = 1;
+var STATE_VERSION = 2;
 // The entry roles an image can sit in, each owned as a copy by a stored
 // entry, named <key>-<role> in the images directory.
 var IMAGE_ROLES = ["appIcon", "image"];
 // Every role of a toast row, the model's and the state file's, in order.
-var ENTRY_ROLES = ["key", "originalId", "app", "appIcon", "summary", "body", "image", "desktopEntry", "urgency", "expireTimeout", "timestamp"];
+var ENTRY_ROLES = ["key", "originalId", "app", "appIcon", "summary", "body", "image", "desktopEntry", "urgency", "expireTimeout", "timestamp", "hintIcon", "hintTone", "hintOpen", "hintClick"];
 
 // The urgency values Quickshell's NotificationUrgency enum takes, which the
 // state file stores as numbers.
@@ -880,6 +881,72 @@ function lifetimeFor(urgency, expireTimeout, normal) {
     return Math.min(MAX_LIFETIME, Math.max(floor, Math.round(asked)));
 }
 
+// -------------------------------------------------------------- hints
+
+// The VGS hints any sender may add, each a string hint, and the roles an
+// entry keeps them in (docs/architecture/notification-hints.md):
+//   x-vgs-icon   a Lucide icon name the card draws in its left slot
+//   x-vgs-tone   the design-system status tone the icon draws in
+//   x-vgs-open   an absolute path a click opens in the user's editor
+//   x-vgs-click  open (a click opens x-vgs-open) or none (a click only
+//                dismisses); without it a click runs the sender's default
+//                action or shows its window
+// A hint of another shape is refused whole: its role stays "" and the
+// service logs its name.
+var HINTS = { "x-vgs-icon": "hintIcon", "x-vgs-tone": "hintTone", "x-vgs-open": "hintOpen", "x-vgs-click": "hintClick" };
+var HINT_TONES = ["success", "warning", "danger", "info"];
+var HINT_CLICKS = ["open", "none"];
+// A Lucide name's grammar; a name the shipped set lacks is drawn as no icon
+// by `Icon`, which logs it.
+var HINT_ICON = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+var HINT_ICON_MAX = 64;
+// The longest argument shell.tui.run hands a script, so the open TUI takes
+// every path the judge accepts.
+var HINT_OPEN_MAX = 256;
+
+function hintValueFits(role, value) {
+    switch (role) {
+    case "hintIcon": return value === "" || (value.length <= HINT_ICON_MAX && HINT_ICON.test(value));
+    case "hintTone": return value === "" || HINT_TONES.indexOf(value) !== -1;
+    case "hintOpen": return value === "" || (value.charAt(0) === "/" && value.length <= HINT_OPEN_MAX && !/[\u0000-\u001f\u007f]/.test(value));
+    case "hintClick": return value === "" || HINT_CLICKS.indexOf(value) !== -1;
+    default: throw new Error("notifications: hint role " + JSON.stringify(role) + " unjudged");
+    }
+}
+
+// The hint roles a notification's hints map gives, and the names of the
+// VGS hints it refused: { roles: { hintIcon, hintTone, hintOpen, hintClick },
+// refused }. `x-vgs-click: open` without an x-vgs-open to open is refused.
+function readHints(hints) {
+    var roles = { hintIcon: "", hintTone: "", hintOpen: "", hintClick: "" };
+    var refused = [];
+    var map = isPlainObject(hints) ? hints : {};
+    var names = Object.keys(HINTS);
+    for (var i = 0; i < names.length; i++) {
+        if (!hasOwn(map, names[i])) continue;
+        var value = map[names[i]];
+        if (typeof value === "string" && value !== "" && hintValueFits(HINTS[names[i]], value)) roles[HINTS[names[i]]] = value;
+        else refused.push(names[i]);
+    }
+    if (roles.hintClick === "open" && roles.hintOpen === "") {
+        roles.hintClick = "";
+        refused.push("x-vgs-click");
+    }
+    return { roles: roles, refused: refused };
+}
+
+// What a choice on a card does once its hints are read: for `open`, a
+// click on the card or invoke-latest, `open` opens its x-vgs-open file
+// through the plugin's open TUI and `dismiss` only dismisses it; every
+// other choice, and an `open` on a card without a click hint, is `default`,
+// the plan choicePlan makes.
+function clickRoute(choice, row) {
+    if (choice !== "open") return "default";
+    if (row.hintClick === "open" && row.hintOpen !== "") return "open";
+    if (row.hintClick === "none") return "dismiss";
+    return "default";
+}
+
 // ------------------------------------------------------------ entries
 
 function clip(text, max) {
@@ -905,6 +972,7 @@ function entryOf(fields, timestamp, taken) {
     if (!isFinite(expire) || expire < 0) expire = 0;
     var urgency = Number(f.urgency);
     if (urgency !== URGENCY.low && urgency !== URGENCY.critical) urgency = URGENCY.normal;
+    var hints = readHints(f.hints).roles;
     return {
         key: keyOf(at, id),
         originalId: id,
@@ -916,7 +984,11 @@ function entryOf(fields, timestamp, taken) {
         desktopEntry: String(f.desktopEntry || ""),
         urgency: urgency,
         expireTimeout: expire,
-        timestamp: at
+        timestamp: at,
+        hintIcon: hints.hintIcon,
+        hintTone: hints.hintTone,
+        hintOpen: hints.hintOpen,
+        hintClick: hints.hintClick
     };
 }
 
@@ -1019,9 +1091,13 @@ function entryError(value, where) {
     var keys = Object.keys(value);
     for (var k = 0; k < keys.length; k++)
         if (ENTRY_ROLES.indexOf(keys[k]) === -1 && CLOCK_FIELDS.indexOf(keys[k]) === -1) return where + "." + keys[k] + " unknown";
-    var strings = ["key", "app", "appIcon", "summary", "body", "image", "desktopEntry"];
+    var strings = ["key", "app", "appIcon", "summary", "body", "image", "desktopEntry", "hintIcon", "hintTone", "hintOpen", "hintClick"];
     for (var s = 0; s < strings.length; s++)
         if (typeof value[strings[s]] !== "string") return where + "." + strings[s] + " want=string";
+    var roles = ["hintIcon", "hintTone", "hintOpen", "hintClick"];
+    for (var h = 0; h < roles.length; h++)
+        if (!hintValueFits(roles[h], value[roles[h]])) return where + "." + roles[h] + " refused";
+    if (value.hintClick === "open" && value.hintOpen === "") return where + ".hintClick open without hintOpen";
     var numbers = ["originalId", "expireTimeout", "timestamp"];
     for (var n = 0; n < numbers.length; n++)
         if (typeof value[numbers[n]] !== "number" || !isFinite(value[numbers[n]])) return where + "." + numbers[n] + " want=number";

@@ -45,6 +45,8 @@ A click on a toast or an inbox row, Show and `invoke-latest` open a notification
 
 Dismiss sends nothing and raises nothing. A toast that expires stays open for its inbox row until the row leaves the history, the user dismisses it or clears the history, or the sender closes it; `held` in `status` counts these. A Slack message from a browser raises that browser. Slack's notifications carry no link to their channel or message, so a Slack row no longer open raises Slack alone. Unlike Omarchy's, an inbox row opens too: [notification-actions.md](../../../docs/architecture/notification-actions.md).
 
+Any sender can add the VGS hints, a Lucide icon, a status tone and a file a click opens in your `$EDITOR`: [notification-hints.md](../../../docs/architecture/notification-hints.md).
+
 ## Slack
 
 A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message, optional sender photos from a token per workspace, and each workspace's custom emoji in the body. [slack.md](slack.md) holds what each shows, how to store a token and how to turn the custom emoji off.

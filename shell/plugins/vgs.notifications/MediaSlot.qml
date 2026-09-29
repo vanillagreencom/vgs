@@ -9,7 +9,9 @@ import "NotificationLogic.js" as Logic
 // `faces`, the people `names` holds through the AvatarGroup of qs.Ui, one
 // person as a circle that fills the slot; `thumbnail`, the image `source`
 // cropped to the square with the tier's corner radius; `icon`, the
-// application icon `source` drawn at the tier's icon size in the middle.
+// application icon `source` drawn at the tier's icon size in the middle;
+// `glyph`, the Lucide icon `glyph` names at the tier's glyph size in
+// `glyphColor`, the x-vgs-icon hint's.
 Item {
     id: slot
 
@@ -24,10 +26,12 @@ Item {
     property int more: 0
     property var images: []
     property string carried: ""
+    property string glyph: ""
+    property color glyphColor: look.text.foreground
     readonly property var spec: look.media[tier]
     // False while the image or icon the slot draws failed to load, so the
     // card leaves the slot out.
-    readonly property bool drawable: kind === "faces" || (kind === "thumbnail" && thumbnail.status !== Image.Error) || (kind === "icon" && icon.status !== Image.Error)
+    readonly property bool drawable: kind === "faces" || (kind === "thumbnail" && thumbnail.status !== Image.Error) || (kind === "icon" && icon.status !== Image.Error) || (kind === "glyph" && glyphIcon.paths[0] !== "")
 
     function imageFor(index) {
         if (index < images.length && images[index] !== "") return images[index];
@@ -83,5 +87,15 @@ Item {
         fillMode: Image.PreserveAspectFit
         asynchronous: true
         smooth: true
+    }
+
+    Icon {
+        id: glyphIcon
+        anchors.centerIn: parent
+        visible: slot.kind === "glyph"
+        name: slot.kind === "glyph" ? slot.glyph : ""
+        size: slot.spec.glyph
+        stroke: slot.look.card.glyphStroke
+        color: slot.glyphColor
     }
 }

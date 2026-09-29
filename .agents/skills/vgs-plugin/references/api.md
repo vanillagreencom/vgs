@@ -194,6 +194,10 @@ A name a component does not know is logged and drawn as the default. A control's
 | `rescanPlugins` | yes | `ok`, or `busy` while a scan runs and one more is queued |
 | `summon <kind> <id> <payloadJson>`, `hide <kind> <id>`, `toggle <kind> <id> <payloadJson>` | yes | `ok`, `unknown: <id>`, or `refused: not-summonable=<kind>`, `refused: no-host=<kind>`, `refused: kind=<kind> id=<id>`, `refused: scan=pending`, `refused: config=<state>` (the state `Config.notReady` names, [`surfaces.md` § Summoning](../../../../docs/architecture/surfaces.md#summoning)), `refused: disabled=<id>`, `refused: capability=<name> held-by=<id>`, `refused: screen=none`, `refused: build-failed=<id>`, `refused: open-failed=<id>`; a summon opens on the focused monitor. qs reads a bracketed argument as a list, so a payload is a JSON object |
 
+## Notification hints
+
+A plugin's script that sends a desktop notification, such as `notify-send` from a runner, may add the string hints `x-vgs-icon` (a Lucide name), `x-vgs-tone` (`success`, `warning`, `danger`, `info`), `x-vgs-open` (an absolute path) and `x-vgs-click` (`open` or `none`); `vgs.notifications` draws the icon in the tone and opens the file on a click, from the card in the history too: [`docs/architecture/notification-hints.md`](../../../../docs/architecture/notification-hints.md).
+
 ## Manifest
 
 The field table is [`docs/architecture/plugin-manifest.md` § Manifest](../../../../docs/architecture/plugin-manifest.md#manifest). An unknown key refuses the manifest.

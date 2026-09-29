@@ -30,6 +30,8 @@ Item {
     required property string image
     required property string desktopEntry
     required property int urgency
+    required property string hintIcon
+    required property string hintTone
     required property string origin
     required property string leaving
 
@@ -152,6 +154,8 @@ Item {
         body: slot.body
         image: slot.image
         desktopEntry: slot.desktopEntry
+        hintIcon: slot.hintIcon
+        hintTone: slot.hintTone
         workspace: slot.service !== null ? slot.service.workspaceOf(card.enrichment) : ""
         workspaceIcon: slot.service !== null && card.enrichment !== null ? slot.service.workspaceIcon(card.enrichment.rule, card.workspace) : ""
         faceImages: slot.service !== null && card.enrichment !== null ? slot.service.faceImages(card.enrichment, slot.image, card.workspace) : []

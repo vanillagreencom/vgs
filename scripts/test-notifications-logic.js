@@ -5,9 +5,9 @@
 // restart restores, the history's and the panel's limits, which toast a
 // full stack lets go, the hover actions, what a choice on a card does,
 // which notifications stay held, the sender's window, the paused and
-// running clocks, and the per-application rules that read a sender's
-// workspace, people and workspace icons. Every expected value is written
-// out by hand.
+// running clocks, the per-application rules that read a sender's
+// workspace, people and workspace icons, and the VGS hints with what a click
+// on a hinted card does. Every expected value is written out by hand.
 //
 // The controls at the end edit a copy of the logic, one rule at a time, and
 // require this suite to fail on each copy.
@@ -30,10 +30,10 @@ const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(
 
 // An entry as the state file stores it.
 function stored(timestamp, id, extra) {
-    return Object.assign({ key: timestamp + "-" + id, originalId: id, app: "app", appIcon: "", summary: "s" + id, body: "", image: "", desktopEntry: "", urgency: 1, expireTimeout: 0, timestamp: timestamp }, extra || {});
+    return Object.assign({ key: timestamp + "-" + id, originalId: id, app: "app", appIcon: "", summary: "s" + id, body: "", image: "", desktopEntry: "", urgency: 1, expireTimeout: 0, timestamp: timestamp, hintIcon: "", hintTone: "", hintOpen: "", hintClick: "" }, extra || {});
 }
 function stateText(value) {
-    return JSON.stringify(Object.assign({ version: 1, dnd: false, readBefore: 0, live: [], history: [] }, value));
+    return JSON.stringify(Object.assign({ version: 2, dnd: false, readBefore: 0, live: [], history: [] }, value));
 }
 
 // Bodies: [label, body, app, what the card renders].
@@ -66,7 +66,7 @@ const STATE_REFUSED = [
     ["not JSON", "{ nope", "not-json"],
     ["a list", "[]", "not-object"],
     ["an unknown key", stateText({ extra: 1 }), "extra unknown"],
-    ["another version", stateText({ version: 2 }), "version want=1"],
+    ["another version", stateText({ version: 1 }), "version want=2"],
     ["a Silence that is no boolean", stateText({ dnd: "on" }), "dnd want=boolean"],
     ["a read cutoff that is no number", stateText({ readBefore: "0" }), "readBefore want=number"],
     ["a history that is no list", stateText({ history: {} }), "history want=list"],
@@ -81,7 +81,35 @@ const STATE_REFUSED = [
     ["a deadline that is no number", stateText({ live: [stored(5, 1, { deadline: "9" })] }), "live.0.deadline want=number"],
     ["a remaining time that is no number", stateText({ live: [stored(5, 1, { remaining: null })] }), "live.0.remaining want=number"],
     ["a clock both running and paused", stateText({ live: [stored(5, 1, { deadline: 9, remaining: 3 })] }), "live.0 deadline and remaining both set"],
-    ["a key twice", stateText({ live: [stored(5, 1)], history: [stored(5, 1)] }), "history.0.key duplicate"]
+    ["a key twice", stateText({ live: [stored(5, 1)], history: [stored(5, 1)] }), "history.0.key duplicate"],
+    ["an entry without its hint roles", stateText({ history: [(({ hintIcon, ...rest }) => rest)(stored(5, 1))] }), "history.0.hintIcon want=string"],
+    ["a stored hint tone outside the tones", stateText({ history: [stored(5, 1, { hintTone: "red" })] }), "history.0.hintTone refused"],
+    ["a stored hint path that is relative", stateText({ history: [stored(5, 1, { hintOpen: "runs/a.log" })] }), "history.0.hintOpen refused"],
+    ["a stored open click with nothing to open", stateText({ history: [stored(5, 1, { hintClick: "open" })] }), "history.0.hintClick open without hintOpen"]
+];
+
+// The VGS hints: [label, hints map, the roles an entry keeps, the names
+// refused, what a click does]. docs/architecture/notification-hints.md.
+const NO_HINTS = { hintIcon: "", hintTone: "", hintOpen: "", hintClick: "" };
+const HINT_ROWS = [
+    ["no hints", {}, NO_HINTS, [], "default"],
+    ["hints that are not a map", "x-vgs-icon", NO_HINTS, [], "default"],
+    ["an automation's error", { "x-vgs-icon": "circle-x", "x-vgs-tone": "danger", "x-vgs-open": "/state/runs/a@1.log", "x-vgs-click": "open" },
+        { hintIcon: "circle-x", hintTone: "danger", hintOpen: "/state/runs/a@1.log", hintClick: "open" }, [], "open"],
+    ["an automation's start", { "x-vgs-icon": "play", "x-vgs-tone": "warning", "x-vgs-click": "none" },
+        { hintIcon: "play", hintTone: "warning", hintOpen: "", hintClick: "none" }, [], "dismiss"],
+    ["a file with no click hint keeps the default click", { "x-vgs-open": "/tmp/a.log" }, Object.assign({}, NO_HINTS, { hintOpen: "/tmp/a.log" }), [], "default"],
+    ["an icon outside the grammar", { "x-vgs-icon": "Circle X" }, NO_HINTS, ["x-vgs-icon"], "default"],
+    ["an icon past its length", { "x-vgs-icon": "a".repeat(65) }, NO_HINTS, ["x-vgs-icon"], "default"],
+    ["a tone outside the status tones", { "x-vgs-tone": "red" }, NO_HINTS, ["x-vgs-tone"], "default"],
+    ["a relative path", { "x-vgs-open": "a.log", "x-vgs-click": "open" }, NO_HINTS, ["x-vgs-open", "x-vgs-click"], "default"],
+    ["a path with a line break", { "x-vgs-open": "/tmp/a\nb" }, NO_HINTS, ["x-vgs-open"], "default"],
+    ["a path past the TUI argument limit", { "x-vgs-open": "/" + "a".repeat(256) }, NO_HINTS, ["x-vgs-open"], "default"],
+    ["an open click with nothing to open", { "x-vgs-click": "open" }, NO_HINTS, ["x-vgs-click"], "default"],
+    ["a click hint outside the clicks", { "x-vgs-click": "run" }, NO_HINTS, ["x-vgs-click"], "default"],
+    ["a hint that is no string", { "x-vgs-icon": 5 }, NO_HINTS, ["x-vgs-icon"], "default"],
+    ["an empty hint", { "x-vgs-tone": "" }, NO_HINTS, ["x-vgs-tone"], "default"],
+    ["another sender's hint", { "x-other": "circle-x", "urgency": 2 }, NO_HINTS, [], "default"]
 ];
 
 // Senders a rule reads, in the title forms Slack's web client builds:
@@ -140,7 +168,22 @@ function verify(logic) {
 
     // Entries.
     const fields = { id: 7, appName: "Chat", appIcon: "chat", summary: "Hi", body: "b", image: "image://icon//tmp/a.png", desktopEntry: "chat", urgency: U.critical, expireTimeout: 4000 };
-    same(logic.entryOf(fields, 1000, null), { key: "1000-7", originalId: 7, app: "Chat", appIcon: "chat", summary: "Hi", body: "b", image: "file:///tmp/a.png", desktopEntry: "chat", urgency: 2, expireTimeout: 4000, timestamp: 1000 });
+    same(logic.entryOf(fields, 1000, null), { key: "1000-7", originalId: 7, app: "Chat", appIcon: "chat", summary: "Hi", body: "b", image: "file:///tmp/a.png", desktopEntry: "chat", urgency: 2, expireTimeout: 4000, timestamp: 1000, hintIcon: "", hintTone: "", hintOpen: "", hintClick: "" });
+
+    // Hints: an entry keeps the ones the judge accepts, and a click follows them.
+    for (const [label, hints, roles, refused, route] of HINT_ROWS) {
+        const read = logic.readHints(hints);
+        same(read.roles, roles, "hint roles: " + label);
+        same(read.refused, refused, "hints refused: " + label);
+        const made = logic.entryOf(Object.assign({}, fields, { hints: hints }), 1000, null);
+        same([made.hintIcon, made.hintTone, made.hintOpen, made.hintClick], [roles.hintIcon, roles.hintTone, roles.hintOpen, roles.hintClick], "entry hints: " + label);
+        assert.equal(logic.clickRoute("open", made), route, "click: " + label);
+        assert.equal(logic.clickRoute("action:reply", made), "default", "a pill ignores the click hints: " + label);
+        assert.equal(logic.clickRoute("dismiss", made), "default", "dismiss ignores the click hints: " + label);
+        same(logic.parseState(stateText({ history: [logic.persistable(made, IMAGES).entry] })).ok, true, "a stored hinted entry reads back: " + label);
+    }
+    const hinted = logic.entryOf(Object.assign({}, fields, { hints: HINT_ROWS[2][1] }), 1000, null);
+    assert.equal(logic.entryChanged(hinted, logic.updatedEntry(hinted, Object.assign({}, fields, { hints: HINT_ROWS[3][1] }))), true, "a replacement with other hints is a change");
     assert.equal(logic.entryOf(fields, 1000, k => k === "1000-7" || k === "1001-7").key, "1002-7", "a taken key moves the timestamp on");
     assert.equal(logic.entryOf({ id: 1, urgency: 9 }, 5, null).urgency, U.normal, "an unknown urgency is normal");
     assert.equal(logic.entryOf({ id: 1, summary: "x".repeat(600) }, 5, null).summary.length, 512, "a summary is cut at its limit");
@@ -170,7 +213,7 @@ function verify(logic) {
     // The state file's judge.
     for (const [label, text, want] of STATE_REFUSED)
         same(logic.parseState(text), { ok: false, error: want }, "state: " + label);
-    const good = { version: 1, dnd: true, readBefore: 50, live: [stored(9, 2, { deadline: 99 })], history: [stored(5, 1)] };
+    const good = { version: 2, dnd: true, readBefore: 50, live: [stored(9, 2, { deadline: 99 })], history: [stored(5, 1)] };
     same(logic.parseState(JSON.stringify(good)), { ok: true, state: { dnd: true, readBefore: 50, live: good.live, history: good.history } });
     same(logic.parseState(logic.serializeState(logic.emptyState())), { ok: true, state: { dnd: false, readBefore: 0, live: [], history: [] } }, "an empty state reads back");
     same(logic.parseState(logic.serializeState({ dnd: true, readBefore: 50, live: good.live, history: good.history })).state.history, good.history, "a state reads back as written");
@@ -721,7 +764,18 @@ const CONTROLS = [
     ["an emoji name is judged", "if (!EMOJI_NAME.test(names[n])) return", "if (false) return"],
     ["an emoji file is sixteen hex digits", "if (typeof hex !== \"string\" || !/^[0-9a-f]{16}$/.test(hex)) return", "if (false) return"],
     ["an emoji lookup has no prototype", "var lookup = Object.create(null);", "var lookup = {};"],
-    ["the remembered messages keep the window", "return message.at - r.at <= DUPLICATE_WINDOW; }).concat(", "return true; }).concat("]
+    ["the remembered messages keep the window", "return message.at - r.at <= DUPLICATE_WINDOW; }).concat(", "return true; }).concat("],
+    ["a hint icon keeps the Lucide grammar", "return value === \"\" || (value.length <= HINT_ICON_MAX && HINT_ICON.test(value));", "return true;"],
+    ["a hint tone is a status tone", "return value === \"\" || HINT_TONES.indexOf(value) !== -1;", "return true;"],
+    ["a hint path is absolute and fits the TUI argument", "return value === \"\" || (value.charAt(0) === \"/\" && value.length <= HINT_OPEN_MAX && !/[\\u0000-\\u001f\\u007f]/.test(value));", "return true;"],
+    ["a hint click is open or none", "return value === \"\" || HINT_CLICKS.indexOf(value) !== -1;", "return true;"],
+    ["an open click needs a file", "if (roles.hintClick === \"open\" && roles.hintOpen === \"\") {", "if (false) {"],
+    ["an entry keeps its hints", "hintIcon: hints.hintIcon,", "hintIcon: \"\","],
+    ["a click opens the hinted file", "if (row.hintClick === \"open\" && row.hintOpen !== \"\") return \"open\";", "if (false) return \"open\";"],
+    ["a none click only dismisses", "if (row.hintClick === \"none\") return \"dismiss\";", "if (false) return \"dismiss\";"],
+    ["only an open reads the click hints", "if (choice !== \"open\") return \"default\";", ""],
+    ["the state judge reads the hint values", "if (!hintValueFits(roles[h], value[roles[h]])) return where + \".\" + roles[h] + \" refused\";", "if (false) return \"\";"],
+    ["the state judge refuses an open click with no file", "if (value.hintClick === \"open\" && value.hintOpen === \"\") return where + \".hintClick open without hintOpen\";", "if (false) return \"\";"]
 ];
 
 const source = fs.readFileSync(file, "utf8");
@@ -744,4 +798,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-notifications-logic: ok bodies=${BODIES.length} states=${STATE_REFUSED.length} enriched=${ENRICHED.length} controls=${CONTROLS.length}`);
+console.log(`test-notifications-logic: ok bodies=${BODIES.length} states=${STATE_REFUSED.length} hints=${HINT_ROWS.length} enriched=${ENRICHED.length} controls=${CONTROLS.length}`);

@@ -5,8 +5,10 @@ import Quickshell.Widgets
 import qs.Ui
 import "NotificationLogic.js" as Logic
 
-// One notification as a glass capsule: its image or application icon, its
-// summary and its body, and the hover actions over its right end. A sender
+// One notification as a glass capsule: its image, the Lucide icon its
+// x-vgs-icon hint names in the tone its x-vgs-tone hint names, or its
+// application icon, its summary and its body, and the hover actions over
+// its right end. A sender
 // a NotificationLogic rule reads shows the people it names as faces in the
 // icon's place, and the workspace it belongs to as that workspace's icon,
 // when there is one, before the rule's title in place of the summary. It draws no fill of its
@@ -23,6 +25,10 @@ Item {
     property string body: ""
     property string image: ""
     property string desktopEntry: ""
+    // The VGS hint roles (NotificationLogic.readHints): a Lucide name and a
+    // status tone, or "".
+    property string hintIcon: ""
+    property string hintTone: ""
     // The workspace the card belongs to: the one `enrichment` names, or the
     // one the service resolved for it (NotificationLogic.slackWorkspaceFor),
     // or "".
@@ -68,9 +74,11 @@ Item {
     readonly property bool showsFaces: enrichment !== null && enrichment.faces.length > 0
     readonly property bool showsBadge: enrichment !== null && workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
     // What the media slot draws: the people the rule read, else the
-    // notification's image, else its application's icon; none when the
-    // one-line summary opens with its own icon glyph.
-    readonly property string mediaKind: showsFaces ? "faces" : iconInSummary || iconSource.length === 0 ? "" : image.length > 0 ? "thumbnail" : "icon"
+    // notification's image, else the Lucide icon its x-vgs-icon hint names,
+    // else its application's icon; none when the one-line summary opens
+    // with its own icon glyph. A hint name the Lucide set lacks draws no
+    // media, and Icon logs it.
+    readonly property string mediaKind: showsFaces ? "faces" : iconInSummary ? "" : image.length > 0 ? "thumbnail" : hintIcon.length > 0 ? "glyph" : iconSource.length > 0 ? "icon" : ""
     readonly property bool showsSlot: mediaKind !== "" && mediaSlot.drawable
     // The lines the text runs to at the compact tier's width, which no
     // tier changes, so the tier the judge reads from it moves no line: a
@@ -137,6 +145,8 @@ Item {
             more: card.showsFaces ? card.enrichment.more : 0
             images: card.showsFaces ? card.faceImages : []
             carried: card.image
+            glyph: card.hintIcon
+            glyphColor: card.hintTone === "" ? card.look.text.foreground : card.look.tone[card.hintTone]
         }
 
         ColumnLayout {
