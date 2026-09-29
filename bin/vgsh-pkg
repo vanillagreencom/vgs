@@ -363,7 +363,7 @@ function rescanShell() {
 // table's preview, becomes one: every word single-quoted, and "{name}"
 // replaced by fzf's own placeholder {1}, which fzf fills with the first
 // field of the line under the cursor, quoted. The table's preview words
-// hold no brace (scripts/test-vgsh-pkg.js), so fzf finds no other
+// hold no brace (scripts/test-vgsh-pkg-table.js), so fzf finds no other
 // placeholder, and fzf runs with SHELL=/bin/sh, so the quoting is POSIX's
 // whatever the user's login shell.
 function previewCommand(argv) {

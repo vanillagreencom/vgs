@@ -43,6 +43,6 @@ DankMaterialShell's system updater picks one primary backend plus overlays, the 
 
 **Revisit When**: A supported distribution's manager cannot be expressed as argv steps, or the shell must change a package with no terminal open.
 
-**Verification**: `scripts/test-vgsh-pkg.js` judges the shipped table (no elevation command, no `-Sy` alone), pins each manager's plan and the detection over os-release texts and stub PATHs, and runs `vgsh pkg` with a fixture os-release bound over `/etc/os-release`. `scripts/test-vgsh-pkg-run.sh` runs `vgsh pkg run` and the pickers against stub elevation commands and managers, with controls that run without a terminal and elevate inside the shell.
+**Verification**: `scripts/test-vgsh-pkg-table.js` judges the shipped table (no elevation command, no `-Sy` alone), pins each manager's plan and the detection over os-release texts and stub PATHs. `scripts/test-vgsh-pkg-cli.js` runs `vgsh pkg` with a fixture os-release bound over `/etc/os-release`. `scripts/test-vgsh-pkg-run.sh` runs `vgsh pkg run` and the pickers against stub elevation commands and managers, with controls that run without a terminal and elevate inside the shell.
 
 **References**: [D003](D003-everything-is-a-plugin.md), [D009](D009-one-manifest-judge-under-node.md), [D029](D029-chromium-policy-writer.md), [packages.md](../architecture/packages.md)

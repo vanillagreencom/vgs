@@ -1,6 +1,6 @@
 # Packages
 
-Covers: shell/Core/PackageManagers.js, bin/vgsh-pkg, bin/lib/pkg-run.sh, scripts/test-vgsh-pkg.js, scripts/test-vgsh-pkg-run.sh, scripts/fixtures/pkg
+Covers: shell/Core/PackageManagers.js, bin/vgsh-pkg, bin/lib/pkg-run.sh, scripts/test-vgsh-pkg-*.js, scripts/vgsh-pkg-shared.js, scripts/test-vgsh-pkg-run.sh, scripts/fixtures/pkg
 
 VGS knows a system's package managers through one table, `shell/Core/PackageManagers.js`. Every flow that installs, removes, upgrades or checks a package reads that table: [D034](../decisions/D034-one-package-manager-table.md). `bin/vgsh-pkg` loads it under node through `bin/lib/qml-library.js`, and `vgsh pkg` is its command. Its header states each verb's output and refusals.
 
@@ -95,13 +95,13 @@ The shell process never elevates for a package. The table names no elevation com
 
 ## Invariants
 
-1. The table names no elevation command in a step or a picker, no pacman-family step refreshes without upgrading, and no preview word holds a brace. Enforced by `scripts/test-vgsh-pkg.js`, which judges the shipped table, with a copy planting `-Sy`, a copy planting `sudo` in a step and in a picker, and a copy planting `{q}` in a preview as its controls.
-2. Each manager's plan is the argv its row states. Enforced by the same suite's plan rows, one per manager and action.
-3. Detection takes the first os-release identifier a present primary serves. Enforced by the same suite's detection rows and, for the command, a fixture os-release bound over `/etc/os-release` under `unshare -rm`.
-4. An exit status a query does not list fails the check, and each parser reads its manager's output into the packages written by hand beside it. Enforced by the same suite's outcome and parser rows over the canned outputs in `scripts/fixtures/pkg/`, with a copy that reads an unlisted status as output and one copy per parser as controls.
-5. A check holds the lock, a query past its timeout ends with its process group, and a check stopped by a signal ends every query's group, SIGKILL included for one that ignores SIGTERM, and holds the lock until the last has ended. Enforced by the same suite's `check` rows against stub commands, with copies that signal only the query's leader, send no SIGKILL, install no signal handler or exit when the first query ends as controls.
-6. Each manager's owner and installed queries are the argv its row states, and each reads its manager's output. Enforced by the same suite's query and answer rows, and for `vgsh pkg owner` by stub `pacman` and `xbps-query` commands under fixture os-release files. Its controls are a copy whose answer ignores the pattern and a copy of `bin/vgsh-pkg` that asks no installed version.
+1. The table names no elevation command in a step or a picker, no pacman-family step refreshes without upgrading, and no preview word holds a brace. Enforced by `scripts/test-vgsh-pkg-table.js`, with controls that plant `-Sy`, `sudo` and `{q}`.
+2. Each manager's plan is the argv its row states. Enforced by `scripts/test-vgsh-pkg-table.js`'s plan rows.
+3. Detection takes the first os-release identifier a present primary serves. Enforced by `scripts/test-vgsh-pkg-table.js`'s detection rows and by `scripts/test-vgsh-pkg-cli.js`'s bound os-release command rows.
+4. An exit status a query does not list fails the check, and each parser reads its manager's output into the packages written by hand beside it. Enforced by `scripts/test-vgsh-pkg-table.js`'s outcome and parser rows over `scripts/fixtures/pkg/`, with table-copy controls.
+5. A check holds the lock, a query past its timeout ends with its process group, and a check stopped by a signal ends every query's group, SIGKILL included for one that ignores SIGTERM, and holds the lock until the last has ended. Enforced by `scripts/test-vgsh-pkg-cli.js`'s `check` rows and CLI-copy controls.
+6. Each manager's owner and installed queries are the argv its row states, and each reads its manager's output. Enforced by `scripts/test-vgsh-pkg-table.js`'s query and answer rows, and for `vgsh pkg owner` by `scripts/test-vgsh-pkg-cli.js`. Its controls are a copy whose answer ignores the pattern and a copy of `bin/vgsh-pkg` that asks no installed version.
 7. `run` refuses without a terminal and in a process the shell started, before any command runs. Enforced by `scripts/test-vgsh-pkg-run.sh` with stub elevation commands and managers that record their argv, with a copy that skips the terminal test and a copy that ignores `VGSH_RUNNER_PID` as controls.
 8. A sudo run asks once and drops the credential at the end, the first failing step ends the run, a step reaches the manager as argv, and a row with `elevate` false runs with no elevation command. Enforced by the same suite, with copies that hold no sudo session, run past a failure, run a step through `bash -c` and always elevate.
-9. The elevation command is `packages.elevate`, else the first of `sudo`, `doas` and `run0` on PATH; `PluginLogic.configError` refuses any other value. Enforced by `scripts/test-vgsh-pkg.js`'s elevator rows, the run suite's rows and `scripts/test-plugin-logic.js`, each with its own control.
+9. The elevation command is `packages.elevate`, else the first of `sudo`, `doas` and `run0` on PATH; `PluginLogic.configError` refuses any other value. Enforced by `scripts/test-vgsh-pkg-table.js`'s elevator rows, the run suite's rows and `scripts/test-plugin-logic.js`, each with its own control.
 10. A picker offers the table's list, previews through the table's quoted query, colours from `gum.env` and runs nothing when left. Enforced by the run suite with a stub fzf, with copies that leave the preview unquoted, ignore the colour and run after Esc.

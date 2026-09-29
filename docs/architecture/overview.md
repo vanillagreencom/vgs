@@ -32,7 +32,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Plugin: depends on the import set [plugins.md § Isolation](plugins.md#isolation) lists, the capabilities its manifest names, and its own directory. Enforced by the same check.
 - Plugin manager: depends on the core and git. Runs no code from a plugin. Enforced by the install rows in `scripts/test-vgsh.sh`.
 - Validation: depends on the nested compositor sandbox, built from the repository alone, with its runtime dir under the host's `XDG_RUNTIME_DIR`. Never touches the live session.
-- Packages: `shell/Core/PackageManagers.js` is the one package-manager table. The shell never elevates for a package. Enforced for the table by `scripts/test-vgsh-pkg.js`.
+- Packages: `shell/Core/PackageManagers.js` is the one package-manager table. The shell never elevates for a package. Enforced for the table by `scripts/test-vgsh-pkg-table.js`.
 - The plugin boundary is a static import check plus a scoped API object. It is not a process sandbox. Read [plugins.md § Isolation](plugins.md#isolation) before relying on it.
 
 ## Invariants
