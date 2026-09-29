@@ -159,12 +159,12 @@ expect "status.json holds the same system rows" '[2, 2]' updates_cached pacman
 # Reads are not checks.
 for _ in 1 2 3; do updates_values >/dev/null; done
 expect "three reads start no check" STEADY checks_settle_at 1
-expect "the Settings panel opens for the updates rows" ok ipc shell summon panel vgs.settings '{}'
-expect_poll "the Settings panel is open for the updates rows" open settings_open
-expect "the Settings window opens the updates page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.updates
+expect "the Settings window opens for the updates rows" ok ipc shell summon window vgs.settings '{}'
+expect_poll "the Settings window is open for the updates rows" open settings_open
+expect "the Settings window opens the updates page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.updates
 expect_poll "the Settings page reads the three status rows" '[["pending", "reported"], ["lastCheck", "reported"], ["checkState", "reported"]]' updates_status_rows
 expect "the Settings page started no check" STEADY checks_settle_at 1
-expect "the Settings panel closes" ok ipc shell hide panel vgs.settings
+expect "the Settings window closes" ok ipc shell hide window vgs.settings
 
 # A request during a check is queued once, not run beside it.
 touch "$updates_state/slow-checkupdates"

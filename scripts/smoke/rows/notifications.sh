@@ -574,8 +574,8 @@ expect_poll "the last toast's exit has played" 0 layer_count vgs:layer
 # with the command that stores it. The probe runs when the service starts,
 # so each state is read after a disable and an enable.
 store_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
-token_row() { ipc smoke readInstance panel vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
-drawn_token_row() { ipc smoke itemTexts panel vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+token_row() { ipc smoke readInstance window vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
+drawn_token_row() { ipc smoke itemTexts window vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 restart_notes() {
   expect "the notifications are disabled to read the token $1" ok ipc shell setPluginEnabled vgs.notifications false
   expect_poll "the service is gone before the token $1 is read" False record_exists vgs.notifications
@@ -584,7 +584,7 @@ restart_notes() {
 }
 expect "enabling the Settings plugin for the token rows is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings service is built for the token rows" True record_exists vgs.settings
-expect "the notifications' Settings page opens" ok ipc shell summon panel vgs.settings '{"plugin":"vgs.notifications"}'
+expect "the notifications' Settings page opens" ok ipc shell summon window vgs.settings '{"plugin":"vgs.notifications"}'
 expect_poll "the page reads the stored token present" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "reported", "present", "success", sys.argv[1]]]))' "$store_command")" token_row
 for flip in "absent Absent warning" "present Present success" "locked Locked info"; do
   read -r state word tone <<<"$flip"
@@ -597,7 +597,7 @@ done
 # record and row and nowhere the token.
 leaks() {
   local text count status=0
-  text="$(ipc shell lent)" && text+="$(ipc smoke readInstance panel vgs.settings plugins)" || return
+  text="$(ipc shell lent)" && text+="$(ipc smoke readInstance window vgs.settings plugins)" || return
   [[ $text == *'"vgs.notifications"'* && $text == *slackToken* ]] || { echo "unread"; return; }
   count="$(grep -c -F -- 'xoxp-smoke-token' <<<"$text")" || status=$?
   [[ $status -le 1 ]] || return 1
@@ -608,7 +608,7 @@ probe_failures() { log_lines 'notifications-token-status: probe=failed'; }
 expect "the probe answered every state with the stub" 0 probe_failures
 token_in_log() { log_lines 'xoxp-smoke-token'; }
 expect "the shell's log holds no token" 0 token_in_log
-expect "the Settings window closes after the token rows" ok ipc shell hide panel vgs.settings
+expect "the Settings window closes after the token rows" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the token rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 expect_poll "the Settings service is gone after the token rows" False record_exists vgs.settings
 printf 'present\n' >"$shim/secret-tool.state"

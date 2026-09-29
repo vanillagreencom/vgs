@@ -51,6 +51,23 @@ shot_dir_under() {
   printf '%s\n' "$dir"
 }
 
+# shot_pixel SOCKET RUNTIME_DIR X Y: the colour at layout position (X, Y)
+# as rrggbb, one pixel grim captures as a binary PPM, alone in an empty
+# environment beside SOCKET, which shot_socket gave. A capture that fails,
+# times out or is no 1 by 1 PPM prints `pixel=unreadable` and returns 1.
+shot_pixel() {
+  local out
+  out="$(timeout "${SHOT_GRIM_TIMEOUT_S:-10}" env -i PATH="$PATH" XDG_RUNTIME_DIR="$2" WAYLAND_DISPLAY="${1##*/}" \
+    grim -g "$3,$4 1x1" -t ppm - 2>/dev/null | python3 -c '
+import sys
+data = sys.stdin.buffer.read()
+head = data.split(b"\n", 3)
+if len(head) == 4 and head[:3] == [b"P6", b"1 1", b"255"] and len(head[3]) == 3:
+    print(head[3].hex())
+')" && [[ $out =~ ^[0-9a-f]{6}$ ]] || { echo "pixel=unreadable"; return 1; }
+  printf '%s\n' "$out"
+}
+
 shot_last_name=""
 shot_last_hash=""
 

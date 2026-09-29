@@ -1,38 +1,41 @@
 # The Settings plugin, vgs.settings, the plugin manager's user interface.
 # Enabled here, it places its gear in every bar and binds SUPER+M; the gear
-# opens a window centred on its monitor, half the monitor tall and
-# `size.window.width` wide or clamped on a narrower monitor, which takes the
-# keyboard. The window lists every plugin, itself included, and opens a page
+# opens a Hyprland window centred on its monitor's work area, half the
+# monitor tall and `size.window.width` wide or clamped on a narrower
+# monitor, which takes the keyboard. The window lists every plugin, itself
+# included, and opens a page
 # per plugin whose settings, keys and enablement it writes through the
 # manager capability; the title's menu jumps between pages, the back button
 # and Escape return, a deep link opens one page, and the page's scroll bar
 # drags. An installed plugin's Update and Remove buttons, the list's Add
 # plugin button and a missing requirement's Install button each open the
 # manager's core floating TUI for that plugin, read back from the stand-in
-# terminal's recorded argv, which runs none of them, and hide the window,
-# which would cover that terminal; a bundled plugin's
+# terminal's recorded argv, which runs none of them, and the window stays
+# open behind the terminal, which Hyprland focuses; a bundled plugin's
 # page draws neither button, and each requirement row reads back with its
 # state and purpose. rows/settings.sh continues with the same window and
 # disables the plugin again.
 set -euo pipefail
 read -r mon_w mon_h bar_reserved < <(monitor_size)
 
-settings_rows() { ipc smoke readInstance panel vgs.settings plugins; }
-settings_page() { ipc smoke readInstance panel vgs.settings page; }
-settings_open() { [[ $(ipc smoke instanceGeometry panel vgs.settings) != absent ]] && echo open || echo closed; }
-settings_layer() { one_layer vgs:panel; }
-settings_click() { click_in vgs:panel panel vgs.settings "$1" "$2"; }
+settings_rows() { ipc smoke readInstance window vgs.settings plugins; }
+settings_page() { ipc smoke readInstance window vgs.settings page; }
+settings_open() { [[ $(ipc smoke instanceGeometry window vgs.settings) != absent ]] && echo open || echo closed; }
+settings_layer() { one_window Settings; }
+settings_click() { click_in window:Settings window vgs.settings "$1" "$2"; }
 user_file="$home/.config/vgs/shell.json"
 # The key the user file gives vgs.settings' shortcut: its value as JSON, or
 # `absent` when the row holds no entry.
 user_key() { python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"] == "vgs.settings"]; k=rows[0].get("keys", {}) if rows else {}; print(json.dumps(k["toggle"]) if "toggle" in k else "absent")' "$user_file"; }
 # The binds Hyprland holds for the Settings shortcut, as [modmask, key].
 settings_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle")))'; }
-# window_fits MONITOR [MODE]: [] when the Settings layer on MONITOR is
+# window_fits MONITOR [MODE]: [] when the Settings window on MONITOR is
 # min(size.window.width, width - 2 * size.window.gutter) wide,
-# size.window.heightShare of the height tall and centred on the whole
-# monitor, bar included, within one pixel; else the misfits. The monitor and
-# the layers come from one batched request, which the compositor answers
+# size.window.heightShare of the height tall and centred on the monitor's
+# work area, its box less the space the bar reserves and general:float_gaps,
+# where Hyprland centres a floating window (docs/architecture/runtime.md
+# § Hyprland), within one pixel; else the misfits. The monitor, the clients
+# and the gaps come from one batched request, which the compositor answers
 # from one state. Given MODE, the mode a row holds, a monitor at another
 # mode reads ["mode=<WxH> want=<MODE>"] and no window is measured against it.
 window_fits() {
@@ -40,12 +43,16 @@ window_fits() {
   width="$(ipc smoke themeValue size.window.width)" || return
   share="$(ipc smoke themeValue size.window.heightShare)" || return
   gutter="$(ipc smoke themeValue size.window.gutter)" || return
-  hypr --batch 'j/monitors; j/layers' | python3 -c '
+  hypr --batch 'j/monitors; j/clients; j/getoption general:float_gaps' | python3 -c '
 import json, math, sys
 text = sys.stdin.read()
-monitors, at = json.JSONDecoder().raw_decode(text)
-layers = json.loads(text[at:])
-name, held, (width, share, gutter) = sys.argv[1], sys.argv[2], (json.loads(a) for a in sys.argv[3:])
+decoder, at, parts = json.JSONDecoder(), 0, []
+while len(parts) < 3:
+    while text[at].isspace(): at += 1
+    part, at = decoder.raw_decode(text, at)
+    parts.append(part)
+monitors, clients, gaps = parts
+name, held, klass, (width, share, gutter) = sys.argv[1], sys.argv[2], sys.argv[3], (json.loads(a) for a in sys.argv[4:])
 mon = [m for m in monitors if m["name"] == name]
 if len(mon) != 1:
     print(json.dumps(["monitor=%s absent" % name])); sys.exit()
@@ -54,15 +61,19 @@ mode = "%dx%d" % (m["width"], m["height"])
 if held and mode != held:
     print(json.dumps(["mode=%s want=%s" % (mode, held)])); sys.exit()
 mw, mh = m["width"] / m["scale"], m["height"] / m["scale"]
-boxes = [[l["x"], l["y"], l["w"], l["h"]] for lv in layers.get(name, {"levels": {}})["levels"].values() for l in lv if l["namespace"] == "vgs:panel" and l["pid"] != -1]
+boxes = [c["at"] + c["size"] for c in clients if c["class"] == klass and c["title"] == "Settings" and c["mapped"] and c["monitor"] == m["id"]]
 if len(boxes) != 1:
-    print(json.dumps(["panels=%d" % len(boxes)])); sys.exit()
+    print(json.dumps(["windows=%d" % len(boxes)])); sys.exit()
 x, y, w, h = boxes[0]
+top, right, bottom, left = (int(v) for v in gaps["css"].split())
+rl, rt, rr, rb = m["reserved"]
+area_x, area_y = m["x"] + rl + left, m["y"] + rt + top
+area_w, area_h = mw - rl - rr - left - right, mh - rt - rb - top - bottom
 want_w, want_h = math.floor(min(width, mw - 2 * gutter)), math.floor(share * mh)
 out = []
-for key, got, want in (("w", w, want_w), ("h", h, want_h), ("x", x, m["x"] + (mw - want_w) / 2), ("y", y, m["y"] + (mh - want_h) / 2)):
+for key, got, want in (("w", w, want_w), ("h", h, want_h), ("x", x, area_x + (area_w - want_w) / 2), ("y", y, area_y + (area_h - want_h) / 2)):
     if abs(got - want) > 1: out.append("%s=%s want=%s" % (key, got, want))
-print(json.dumps(out))' "$1" "${2:-}" "$width" "$share" "$gutter"
+print(json.dumps(out))' "$1" "${2:-}" "$shell_class" "$width" "$share" "$gutter"
 }
 first_monitor() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])'; }
 
@@ -98,16 +109,16 @@ PY
 }
 geometry expect_poll "the gear and its icon sit on the bar's vertical centre" '[]' gear_centred
 
-# The gear opens the window on its bar's monitor, centred on the whole
-# monitor, and the window takes the keyboard: typed letters reach its
-# search field.
+# The gear opens the window on its bar's monitor, the focused one, centred
+# on its work area, and the window takes the keyboard: typed letters reach
+# its search field.
 click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
 expect_poll "the gear opens the Settings window" open settings_open
-expect_poll "the Settings window maps one layer" 1 layer_count vgs:panel
+expect_poll "the Settings window is one window" 1 window_count Settings
 main_monitor="$(first_monitor)" || fail "the first monitor's name is unreadable"
-geometry expect_poll "the window is the token width, half the monitor tall and centred within one pixel" '[]' window_fits "$main_monitor"
-expect_poll "the window takes the keyboard when it opens" true ipc smoke activeFocusIn panel vgs.settings
-listed_names() { ipc smoke itemTexts panel vgs.settings ListItem | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
+geometry expect_poll "the window is the token width, half the monitor tall and centred on the work area within one pixel" '[]' window_fits "$main_monitor"
+expect_poll "the window takes the keyboard when it opens" true ipc smoke activeFocusIn window vgs.settings
+listed_names() { ipc smoke itemTexts window vgs.settings ListItem | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
 type_keys probe || fail "typing into the Settings search failed"
 expect_poll "typing filters the list to the matching plugin" '["Probe"]' listed_names
 type_keys -k BackSpace -k BackSpace -k BackSpace -k BackSpace -k BackSpace || fail "clearing the Settings search failed"
@@ -125,7 +136,7 @@ expect_poll "the cleared search lists every plugin again" True list_complete
 # the row, all within one pixel. `[]` is the pass.
 list_alignment() {
   local rows pad gutter
-  rows="$(ipc smoke descendantGeometry panel vgs.settings)" || return
+  rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   pad="$(ipc smoke themeValue row.paddingX)" || return
   gutter="$(ipc smoke themeValue scrollArea.gutter)" || return
   python3 - "$rows" "$pad" "$gutter" <<'PY'
@@ -171,7 +182,7 @@ geometry expect_poll "the list's heading, search field and rows share its edges,
 # The keyboard reaches the shown page alone: twelve steps of Tab and of
 # Shift+Tab from the focused item stay on it, and a real Tab moves focus on
 # it; the page slid out is hidden, not merely offscreen.
-focus_pages() { ipc smoke focusChain panel vgs.settings "$1" | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.dumps(sorted(set(json.loads(t)))) if t.startswith("[") else t.strip())'; }
+focus_pages() { ipc smoke focusChain window vgs.settings "$1" | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.dumps(sorted(set(json.loads(t)))) if t.startswith("[") else t.strip())'; }
 expect_poll "Tab from the search field stays on the list" '["ListPage"]' focus_pages 12
 expect_poll "Shift+Tab from the search field stays on the list" '["ListPage"]' focus_pages -12
 
@@ -199,11 +210,11 @@ expect_poll "Tab from the pushed page stays on it" '["PluginPage"]' focus_pages 
 expect_poll "Shift+Tab from the pushed page stays on it" '["PluginPage"]' focus_pages -12
 type_keys -k Tab || fail "sending Tab to the page failed"
 expect_poll "a real Tab keeps the focus on the page" '["PluginPage"]' focus_pages 0
-section_names() { ipc smoke itemTexts panel vgs.settings SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin) if t]))'; }
+section_names() { ipc smoke itemTexts window vgs.settings SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin) if t]))'; }
 expect_poll "the page draws one section per schema group, ungrouped first" '["Settings", "Layout", "Behaviour", "Look"]' section_names
-page_fields() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
+page_fields() { ipc smoke drawnFields window vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
 expect_poll "the page draws one field per schema entry and no other plugin's" '[9, 0]' page_fields
-sliders() { ipc smoke descendantGeometry panel vgs.settings | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
+sliders() { ipc smoke descendantGeometry window vgs.settings | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
 expect "the two bounded numbers draw sliders" 2 sliders
 # page_alignment SETTINGS KEYS: [] when the shown page draws SETTINGS
 # setting fields and KEYS key rows and every inline field, the details and
@@ -215,7 +226,7 @@ expect "the two bounded numbers draw sliders" 2 sliders
 # so its box is its glyphs; else the misfits.
 page_alignment() {
   local rows pad label_w label_gap gutter
-  rows="$(ipc smoke descendantGeometry panel vgs.settings)" || return
+  rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   pad="$(ipc smoke themeValue row.paddingX)" || return
   label_w="$(ipc smoke themeValue field.labelWidth)" || return
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
@@ -269,12 +280,12 @@ geometry expect_poll "the page's fields share one label edge, one control edge a
 
 # The page scrolls under its bar: a drag on the thumb moves the content
 # with it, and a press on the track under the thumb pages one view down.
-page_scroll() { ipc smoke scrollAreas panel vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
+page_scroll() { ipc smoke scrollAreas window vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
 scroll_value() { page_scroll | python3 -c 'import json,sys; t=sys.stdin.read(); a=json.loads(t) if t.startswith("{") else None; print(json.dumps([a[k] for k in sys.argv[1:]]) if a else t.strip())' "$@"; }
 overflowing() { page_scroll | python3 -c 'import json,sys; a=json.loads(sys.stdin.read()); print(json.dumps([a["contentHeight"] > a["height"], a["barVisible"], a["contentWidth"] < a["width"]]))'; }
 expect_poll "the fixture's page overflows, shows its bar and leaves it a gutter" '[true, true, true]' overflowing
 if area="$(page_scroll)" && [[ $area == \{* ]]; then
-  read -r tx ty < <(at_centre vgs:panel "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
+  read -r tx ty < <(at_centre window:Settings "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
   thumb_top_before="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["thumb"][1])' "$area")"
   drag "$tx" "$ty" "$tx" "$((ty + 40))" || fail "the drag on the page's thumb failed"
   dragged() { page_scroll | python3 -c 'import json,sys; a=json.loads(sys.stdin.read()); moved=a["thumb"][1]-float(sys.argv[1]); travel=a["bar"][3]-a["thumb"][3]; want=moved/travel*(a["contentHeight"]-a["height"]) if travel > 0 else -1; print(a["contentY"] > 0 and abs(moved - 40) <= 2 and abs(a["contentY"] - want) <= 2)' "$thumb_top_before"; }
@@ -282,7 +293,7 @@ if area="$(page_scroll)" && [[ $area == \{* ]]; then
   y_before="$(scroll_value contentY | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')"
   # A 2 px box on the track just under the thumb.
   area="$(page_scroll)"
-  read -r bx by < <(at_centre vgs:panel "$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=a["bar"]; t=a["thumb"]; print(json.dumps([b[0], t[1] + t[3] + 2, b[2], 2]))' "$area")")
+  read -r bx by < <(at_centre window:Settings "$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=a["bar"]; t=a["thumb"]; print(json.dumps([b[0], t[1] + t[3] + 2, b[2], 2]))' "$area")")
   click "$bx" "$by" || fail "the press on the page's track failed"
   paged() { page_scroll | python3 -c 'import json,sys; a=json.loads(sys.stdin.read()); y=float(sys.argv[1]); print(abs(a["contentY"] - min(y + a["height"], a["contentHeight"] - a["height"])) <= 1)' "$y_before"; }
   geometry expect_poll "a press on the track under the thumb pages one view down" True paged
@@ -292,51 +303,67 @@ fi
 
 # Update and Remove: an installed plugin's buttons open the manager's core
 # TUIs for its id, the update wide for its diff and with no --yes, so each
-# question stays a question on the terminal, and the window, which sits on
-# the top layer over that terminal, hides. The stand-in terminal records
-# the argv and runs none of it, so the plugin stays installed.
+# question stays a question on the terminal. The terminal is a newer
+# window, which Hyprland focuses and stacks over the Settings window, and
+# the Settings window stays open behind it; a held run keeps the terminal
+# mapped while the row reads that. The stand-in terminal records the argv
+# and runs none of it, so the plugin stays installed.
 terminal_stand_in
 terminal_ready "Settings' TUIs"
 # settings_button TEXT: whether the window draws a shown Button TEXT.
-settings_button() { ipc smoke windowGeometry panel vgs.settings Button "$1" | python3 -c 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
-# settings_reopen PAGE: the gear opens the window again on its bar's
-# monitor, the one the pointer reaches, and a row opens PAGE, "" for the
-# list, whose slide has ended once the list's Add plugin button is hidden.
-# A summon over IPC would open it on the focused monitor, which a floating
-# terminal can have moved.
-settings_reopen() {
-  click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
-  expect_poll "the gear opens the window again for ${1:-the list}" 1 layer_count vgs:panel
-  expect_poll "the window shows the list first" '""' settings_page
-  [[ -n $1 ]] || return 0
-  expect "a row opens the page of $1" ok ipc smoke invokeInstance panel vgs.settings openPlugin "$1"
+settings_button() { ipc smoke windowGeometry window vgs.settings Button "$1" | python3 -c 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
+# How many floating TUI windows the nested instance maps.
+tui_windows() { hypr -j clients | python3 -c 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"].startswith("org.vgs.tui")))'; }
+settings_focused="[\"$shell_class\", \"Settings\"]"
+# settings_show PAGE: the Settings window open on PAGE, "" for the list,
+# whose slide has ended once the list's Add plugin button is hidden. A
+# closed window is opened by the gear on its bar's monitor, the one the
+# pointer reaches: a summon over IPC would open it on the focused monitor,
+# which a floating terminal can have moved.
+settings_show() {
+  if [[ $(window_count Settings) == 0 ]]; then
+    click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
+    expect_poll "the gear opens the window again for ${1:-the list}" 1 window_count Settings
+  fi
+  if [[ -z $1 ]]; then
+    expect "the window shows its list" '' ipc smoke invokeInstance window vgs.settings showList ''
+    expect_poll "the window shows the list" '""' settings_page
+    return 0
+  fi
+  expect "a row opens the page of $1" ok ipc smoke invokeInstance window vgs.settings openPlugin "$1"
   expect_poll "the window shows $1 again" "\"$1\"" settings_page
   expect_poll "the page of $1 has slid in" absent settings_button "Add plugin"
 }
 # The rows above scrolled the page; a new window opens it at its top.
-expect "the scrolled window hides" ok ipc shell hide panel vgs.settings
-expect_poll "the scrolled window is gone" 0 layer_count vgs:panel
-settings_reopen acme.probe
+expect "the scrolled window hides" ok ipc shell hide window vgs.settings
+expect_poll "the scrolled window is gone" 0 window_count Settings
+settings_show acme.probe
 forget_record
+hold_core
 settings_click Button Update || fail "the click on Update failed"
 expect_poll "Update opens vgsh plugin update for the plugin in the wide floating TUI" \
   "$(core_words core/plugin-update "Update a plugin" org.vgs.tui.wide plugin update acme.probe)" recorded
-expect_poll "Update hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the update's terminal is focused over the Settings window" '["org.vgs.tui.wide", "VGS · Update a plugin"]' active_window
+expect "Update leaves the Settings window open behind the terminal" 1 window_count Settings
+release_core
 expect_run_end "the update's run ends" core/plugin-update
-settings_reopen acme.probe
+expect_poll "the update's terminal closes" 0 tui_windows
+expect_poll "the Settings window takes the focus back" "$settings_focused" active_window
+expect "the window still shows the plugin's page" '"acme.probe"' settings_page
 forget_record
 settings_click Button Remove || fail "the click on Remove failed"
 expect_poll "Remove opens vgsh plugin remove for the plugin in the floating TUI" \
   "$(core_words core/plugin-remove "Remove a plugin" org.vgs.tui plugin remove acme.probe)" recorded
-expect_poll "Remove hides the window over the terminal" 0 layer_count vgs:panel
+expect "Remove leaves the Settings window open" 1 window_count Settings
 expect_run_end "the remove's run ends" core/plugin-remove
+expect_poll "the remove's terminal closes" 0 tui_windows
 expect "the stand-in's run left the plugin installed" True plugin_known acme.probe
-settings_reopen acme.probe
+expect_poll "the Settings window has the focus after the remove" "$settings_focused" active_window
 
 # The title's menu lists every plugin with the current one checked, scrolls
 # past its maximum height under its own bar, and typed letters then Enter
 # jump to another plugin's page.
-title_menu() { ipc smoke menus panel vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(json.dumps([m[0][k] for k in sys.argv[1:]]) if len(m) == 1 else "menus=%d" % len(m))' "$@"; }
+title_menu() { ipc smoke menus window vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(json.dumps([m[0][k] for k in sys.argv[1:]]) if len(m) == 1 else "menus=%d" % len(m))' "$@"; }
 settings_click TitleButton Probe || fail "the click on the page's title failed"
 expect_poll "a click on the title opens its menu on the current plugin" '[true, ["Probe"], "Probe"]' title_menu opened checked current
 menu_lists_all() { { settings_rows; title_menu entries; } | python3 -c '
@@ -359,22 +386,22 @@ expect_poll "the jump closes the menu" '[false]' title_menu opened
 # rebinds, an emptied field unbinds, the reset button returns to the
 # manifest's key, each written to its shell.json keys and reaching the
 # Hyprland layer; a malformed key is refused and shown on the page.
-expect "a key typed in the Keys row is applied" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":"shift+super+m"}'
+expect "a key typed in the Keys row is applied" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":"shift+super+m"}'
 expect_poll "the rebind reaches shell.json keys, normalised" '"SUPER+SHIFT+M"' user_key
 expect_poll "the rebind reaches the Hyprland layer" '[[65, "M"]]' settings_binds
 expect_poll "the page's Keys row shows the key in effect beside its default" '[[{"shortcut": "toggle", "key": "SUPER+SHIFT+M", "default": "SUPER+M", "description": "Open or close Settings"}]]' row_of vgs.settings binds
-expect "an emptied key unbinds the shortcut" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":null}'
+expect "an emptied key unbinds the shortcut" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":null}'
 expect_poll "the unbind reaches shell.json keys as null" null user_key
 expect_poll "the unbind leaves Hyprland no Settings bind" '[]' settings_binds
-expect "the reset button returns the shortcut to the manifest's key" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
+expect "the reset button returns the shortcut to the manifest's key" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
 expect_poll "the reset removes the shell.json entry" absent user_key
 expect_poll "the reset binds SUPER+M again" '[[64, "M"]]' settings_binds
 expected_errors+=('settings: vgs\.settings refused: key=toggle has an empty part')
-expect "a malformed key typed in the Keys row is sent" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":"SUPER+"}'
-expect "the page shows the key's refusal" '{"vgs.settings":"refused: key=toggle has an empty part: \"SUPER+\""}' ipc smoke readInstance panel vgs.settings replies
+expect "a malformed key typed in the Keys row is sent" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":"SUPER+"}'
+expect "the page shows the key's refusal" '{"vgs.settings":"refused: key=toggle has an empty part: \"SUPER+\""}' ipc smoke readInstance window vgs.settings replies
 expect "the refused key left shell.json alone" absent user_key
-expect "a reset after the refusal is applied" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
-expect "the accepted key clears the page's refusal" '{}' ipc smoke readInstance panel vgs.settings replies
+expect "a reset after the refusal is applied" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
+expect "the accepted key clears the page's refusal" '{}' ipc smoke readInstance window vgs.settings replies
 # A problem the Hyprland layer reports for a plugin, a `keys` name its
 # manifest binds nothing under, is among that plugin's errors on its row,
 # as in listPlugins, and the list's badge counts it.
@@ -395,7 +422,7 @@ os.replace(path + ".tmp", path)
 PY
 }
 listed_problem() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([e["error"] for e in json.load(sys.stdin)["errors"] if "vgs.settings" in e["error"]]))'; }
-settings_badge() { ipc smoke itemTexts panel vgs.settings ListItem | python3 -c 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin) if t[0] == "Settings"]))'; }
+settings_badge() { ipc smoke itemTexts window vgs.settings ListItem | python3 -c 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin) if t[0] == "Settings"]))'; }
 settings_keys_row '{"nope": "SUPER+F9"}'
 expect_poll "a keys name no bind declares is among the plugin's errors" '[["hyprland: shell.json keys.nope names no bind of vgs.settings"]]' row_of vgs.settings errors
 expect "listPlugins reads the same problem" '["hyprland: shell.json keys.nope names no bind of vgs.settings"]' listed_problem
@@ -410,66 +437,86 @@ settings_keys_row '{}'
 expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 
 # Add plugin: the list's button opens the core's plugin add, which asks for
-# the git URL on the terminal. A held run leaves the key busy, and the
-# second click hides the window through the shared shown answer.
+# the git URL on the terminal. A held run leaves the key busy, and a second
+# Add plugin from the focused Settings window focuses the live terminal
+# through the shared shown answer. The terminal covers the window, so the
+# second request is the window's own call, as its button makes it.
 forget_record
 hold_core
 settings_click Button "Add plugin" || fail "the click on Add plugin failed"
 expect_poll "Add plugin opens vgsh plugin add in the floating TUI" "$(core_words core/plugin-add "Add a plugin" org.vgs.tui plugin add)" recorded
-expect_poll "Add plugin hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the add's terminal is focused over the Settings window" '["org.vgs.tui", "VGS · Add a plugin"]' active_window
+expect "Add plugin leaves the Settings window open" 1 window_count Settings
+# The colour at the Settings window's centre: the stand-in terminal, the
+# toplevel helper, fills its window with 336699.
+settings_centre_pixel() {
+  local box x y
+  box="$(one_window Settings)" && [[ $box == \[* ]] || { echo "$box"; return; }
+  read -r x y < <(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(b[0] + b[2] // 2, b[1] + b[3] // 2)' "$box")
+  pixel "$x" "$y"
+}
+render expect_poll "the add's terminal draws over the Settings window" 336699 settings_centre_pixel
 expect_poll "the add's run is live under the hold" busy key_idle core/plugin-add
-settings_reopen ""
-settings_click Button "Add plugin" || fail "the second click on Add plugin failed"
-expect_poll "busy Add plugin hides the window over the live terminal" 0 layer_count vgs:panel
+if settings_address="$(window_of Settings address)" && [[ $settings_address == \[\"0x* ]]; then
+  settings_address="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])[0])' "$settings_address")"
+  expect "a focus dispatch gives the Settings window the focus over the live terminal" ok hypr dispatch "hl.dsp.focus({ window = \"address:$settings_address\" })"
+  expect_poll "the Settings window is focused over the live terminal" "$settings_focused" active_window
+else
+  fail "the Settings window's address is unreadable: ${settings_address:-}"
+fi
+expect "busy Add plugin answers ok" ok ipc smoke invokeInstance window vgs.settings addPlugin ''
+expect_poll "busy Add plugin focuses the live terminal" '["org.vgs.tui", "VGS · Add a plugin"]' active_window
+expect "busy Add plugin leaves the Settings window open" 1 window_count Settings
 expect_poll "the add's run stays live until release" busy key_idle core/plugin-add
 release_core
 expect_run_end "the add's run ends" core/plugin-add
+expect_poll "the add's terminal closes" 0 tui_windows
 
 # Requirements: one row per requirement with its state from the scan and
 # its purpose, and Install, while one is missing, shows the core's
 # requirement notice for the plugin with every missing command, the
-# optional one included, and hides the window under it; Escape closes the
-# notice.
-settings_reopen acme.bare
-has_section() { ipc smoke itemTexts panel vgs.settings SectionHeader | python3 -c 'import json,sys; print(sys.argv[1] in [t[0] for t in json.load(sys.stdin) if t])' "$1"; }
+# optional one included, over the window, which stays open; Escape closes
+# the notice.
+settings_show acme.bare
+has_section() { ipc smoke itemTexts window vgs.settings SectionHeader | python3 -c 'import json,sys; print(sys.argv[1] in [t[0] for t in json.load(sys.stdin) if t])' "$1"; }
 expect_poll "the page draws a Requirements section" True has_section Requirements
-requirement_texts() { ipc smoke itemTexts panel vgs.settings RequirementRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+requirement_texts() { ipc smoke itemTexts window vgs.settings RequirementRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect_poll "each requirement reads back with its state and purpose" '[["sh", "Present", "A command every sandbox has"], ["vgs-smoke-absent", "Missing, optional", "A command no sandbox has"]]' requirement_texts
 settings_click Button Install || fail "the click on Install failed"
 expect_poll "Install shows the requirement notice with the optional command" '["acme.bare", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
-expect_poll "Install hides the window under the notice" 0 layer_count vgs:panel
+expect "Install leaves the Settings window open under the notice" 1 window_count Settings
 expect_poll "the Settings request's notice holds the keyboard" true ipc smoke noticeFocused
 type_keys -k Escape || fail "sending Escape to the notice failed"
 expect_poll "Escape closes the Settings request's notice" null notice_shown
-settings_reopen ""
-expect "a row opens its page by name" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+settings_show ""
+expect "a row opens its page by name" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.probe
 expect_poll "the page is open again" '"acme.probe"' settings_page
 type_keys -k Escape || fail "sending Escape to the page failed"
 expect_poll "Escape pops the page" '""' settings_page
 type_keys -k Escape || fail "sending Escape to the list failed"
-expect_poll "Escape on the list hides the window" 0 layer_count vgs:panel
+expect_poll "Escape on the list hides the window" 0 window_count Settings
 
 # Deep links: a summon's payload opens one plugin's page, an unknown id
 # opens the list with a notice naming it, and any other key refuses the
 # summon. The shortcut and the plugin's IPC open it too.
-expect "a deep link summons the Settings window" ok ipc shell summon panel vgs.settings '{"plugin":"acme.probe"}'
+expect "a deep link summons the Settings window" ok ipc shell summon window vgs.settings '{"plugin":"acme.probe"}'
 expect_poll "the deep link opens that plugin's page" '"acme.probe"' settings_page
-expect "a deep link to an id no plugin has is accepted" ok ipc shell summon panel vgs.settings '{"plugin":"acme.nowhere"}'
+expect "a deep link to an id no plugin has is accepted" ok ipc shell summon window vgs.settings '{"plugin":"acme.nowhere"}'
 expect_poll "an unknown id opens the list" '""' settings_page
-notice_names() { ipc smoke readInstance panel vgs.settings notice | python3 -c 'import json,sys; print("acme.nowhere" in json.load(sys.stdin))'; }
+notice_names() { ipc smoke readInstance window vgs.settings notice | python3 -c 'import json,sys; print("acme.nowhere" in json.load(sys.stdin))'; }
 expect "the list's notice names the unknown id" True notice_names
 expected_errors+=('summon host: vgs\.settings open\(\) failed: payload key "page" unknown')
-expect "a payload key other than plugin refuses the summon" "refused: open-failed=vgs.settings" ipc shell summon panel vgs.settings '{"page":"x"}'
-expect_poll "the refused summon leaves no window" 0 layer_count vgs:panel
+expect "a payload key other than plugin refuses the summon" "refused: open-failed=vgs.settings" ipc shell summon window vgs.settings '{"page":"x"}'
+expect_poll "the refused summon leaves no window" 0 window_count Settings
 expect "the plugin's IPC opens a page" ok ipc vgs.settings invoke open '{"plugin":"vgs.bar"}'
 expect_poll "the IPC deep link opens that page" '"vgs.bar"' settings_page
 expect "the compositor's shortcut toggles the window closed" ok hypr dispatch 'hl.dsp.global("vgs.settings:toggle")'
-expect_poll "the shortcut closed the window" 0 layer_count vgs:panel
+expect_poll "the shortcut closed the window" 0 window_count Settings
 expect "the compositor's shortcut toggles the window open" ok hypr dispatch 'hl.dsp.global("vgs.settings:toggle")'
 expect_poll "the shortcut opened the window" open settings_open
 geometry expect_poll "the shortcut's window fits the focused monitor" '[]' window_fits "$main_monitor"
 expect "the shortcut toggles it closed again" ok hypr dispatch 'hl.dsp.global("vgs.settings:toggle")'
-expect_poll "the window is gone after the shortcut" 0 layer_count vgs:panel
+expect_poll "the window is gone after the shortcut" 0 window_count Settings
 
 # A monitor narrower than the window's width token: the nested output
 # holds a 480 by 720 mode, and the window keeps `size.window.gutter` a side
@@ -485,7 +532,7 @@ expect_poll "the monitor is 480 logical pixels wide" 480 first_width
 bar_width() { one_layer vgs:bar | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
 expect_poll "the bar follows the narrow monitor" 480 bar_width
 expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
-expect_poll "the window maps on the narrow monitor" 1 layer_count vgs:panel
+expect_poll "the window maps on the narrow monitor" 1 window_count Settings
 geometry expect_poll "a monitor narrower than the width token keeps the gutters, half its height, centred" '[]' window_fits "$main_monitor" "$narrow_mode"
 clamped_width() { settings_layer | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
 gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
@@ -499,43 +546,43 @@ expect_poll "the window check names the mode reset under the held row" "[\"mode=
 expect "the hold reads the reset" reset held_mode_state
 release_mode "the nested compositor restores its monitor's mode" "$main_monitor" "$main_mode"
 expect "the gear closes the window" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
-expect_poll "the window is gone" 0 layer_count vgs:panel
+expect_poll "the window is gone" 0 window_count Settings
 expect_poll "the monitor has its width back" "$mon_w" first_width
 expect_poll "the bar follows the restored monitor" "$mon_w" bar_width
 
 # Enable and disable, and a setting, through the page.
-expect "the deep link reopens the fixture's page" ok ipc shell summon panel vgs.settings '{"plugin":"acme.probe"}'
+expect "the deep link reopens the fixture's page" ok ipc shell summon window vgs.settings '{"plugin":"acme.probe"}'
 expect_poll "the fixture's page is open" '"acme.probe"' settings_page
 manager_rows() { settings_rows | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(json.dumps({r["id"]: r["enabled"] for r in rows if r["id"] in ("acme.probe", "acme.bare", "vgs.bar")}, sort_keys=True))'; }
-expect "the window toggles the fixture off" ok ipc smoke invokeInstance panel vgs.settings toggle acme.probe
+expect "the window toggles the fixture off" ok ipc smoke invokeInstance window vgs.settings toggle acme.probe
 expect_poll "listPlugins reads the fixture disabled" False plugin_enabled acme.probe
 expect_poll "the window shows the fixture disabled" '{"acme.bare": true, "acme.probe": false, "vgs.bar": true}' manager_rows
 # The window logs each refusal it shows on a page.
 expected_errors+=('settings: acme\.probe refused: disabled=acme\.probe' 'settings: acme\.probe refused: setting=tags undeclared' 'settings: acme\.probe refused: setting=size want=at-most:40')
-expect "the window refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"x"}'
-expect "the page shows the refusal" '{"acme.probe":"refused: disabled=acme.probe"}' ipc smoke readInstance panel vgs.settings replies
-expect "the window toggles the fixture back on" ok ipc smoke invokeInstance panel vgs.settings toggle acme.probe
+expect "the window refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"x"}'
+expect "the page shows the refusal" '{"acme.probe":"refused: disabled=acme.probe"}' ipc smoke readInstance window vgs.settings replies
+expect "the window toggles the fixture back on" ok ipc smoke invokeInstance window vgs.settings toggle acme.probe
 expect_poll "listPlugins reads the fixture enabled" True plugin_enabled acme.probe
-expect "the window writes the fixture's setting" ok ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'
-expect "a successful write clears the page's refusal" '{}' ipc smoke readInstance panel vgs.settings replies
+expect "the window writes the fixture's setting" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'
+expect "a successful write clears the page's refusal" '{}' ipc smoke readInstance window vgs.settings replies
 expect_poll "the running service received the window's setting" '"via-manager"' read_service label
 expect_poll "the running widget received the window's setting" '"via-manager"' read_widget label
 manager_label() { settings_rows | python3 -c 'import json,sys; print(json.dumps([r["settings"]["label"] for r in json.load(sys.stdin) if r["id"]=="acme.probe"][0]))'; }
-expect "the fixture's drawn label field applies an edit" applied ipc smoke invokeInstance panel vgs.settings applyField '{"id":"acme.probe","key":"label","value":"via-field"}'
+expect "the fixture's drawn label field applies an edit" applied ipc smoke invokeInstance window vgs.settings applyField '{"id":"acme.probe","key":"label","value":"via-field"}'
 expect_poll "the window reads back the setting the field wrote" '"via-field"' manager_label
 manager_size() { settings_rows | python3 -c 'import json,sys; print(json.dumps([r["settings"]["size"] for r in json.load(sys.stdin) if r["id"]=="acme.probe"][0]))'; }
-expect "the fixture's drawn slider applies a value" applied ipc smoke invokeInstance panel vgs.settings applyField '{"id":"acme.probe","key":"size","value":20}'
+expect "the fixture's drawn slider applies a value" applied ipc smoke invokeInstance window vgs.settings applyField '{"id":"acme.probe","key":"size","value":20}'
 expect_poll "the window reads back the slider's value" 20 manager_size
-expect "a number past its max is refused" "refused: setting=size want=at-most:40" ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"size","value":41}'
-expect "the window refuses a setting outside the schema" "refused: setting=tags undeclared" ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"tags","value":"x"}'
-expect "a later write clears the refusal" ok ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"size","value":12}'
+expect "a number past its max is refused" "refused: setting=size want=at-most:40" ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"size","value":41}'
+expect "the window refuses a setting outside the schema" "refused: setting=tags undeclared" ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"tags","value":"x"}'
+expect "a later write clears the refusal" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"size","value":12}'
 
 # The Settings plugin disabled from its own page closes its window and
 # takes its gear away; setPluginEnabled brings both back.
-expect "the window opens its own page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.settings
-expect "the window disables its own plugin" ok ipc smoke invokeInstance panel vgs.settings toggle vgs.settings
+expect "the window opens its own page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.settings
+expect "the window disables its own plugin" ok ipc smoke invokeInstance window vgs.settings toggle vgs.settings
 expect_poll "listPlugins reads the Settings plugin disabled" False plugin_enabled vgs.settings
-expect_poll "the disabled plugin's window is gone" 0 layer_count vgs:panel
+expect_poll "the disabled plugin's window is gone" 0 window_count Settings
 gear_gone() { bar_widget_ids | python3 -c 'import json,sys; print(all("vgs.settings" not in ids for ids in json.load(sys.stdin)))'; }
 expect_poll "the disabled plugin's gear left every bar" True gear_gone
 expect "enabling the Settings plugin again is allowed" ok ipc shell setPluginEnabled vgs.settings true

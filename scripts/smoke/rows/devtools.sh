@@ -185,7 +185,7 @@ if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
     "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
   expect_poll "the page draws each status row, the catalog data not" \
     "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools panel lists", "vgsh pkg run install mise"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
-  expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
+  expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
 else
   fail "the list or the doctor report is unreadable for the status counts"
 fi

@@ -117,6 +117,16 @@ if [[ -n $rev ]]; then
   git -C "$checkout" archive "$rev" scripts/smoke/fixtures/plugins | tar -x -C "$sandbox/rev-fixtures" || fail "the fixtures of $rev could not be exported"
 fi
 
+# The Settings window's kind in the tree the sandbox runs, `window` since
+# D044 and `panel` before, and the surface the window is drawn in.
+settings_kind=panel
+settings_surface=vgs:panel
+if [[ $manager_scene == settings ]] && python3 -c 'import json,sys; sys.exit(0 if "window" in json.load(open(sys.argv[1]))["kinds"] else 1)' "$repo/shell/plugins/vgs.settings/manifest.json"; then
+  settings_kind=window
+  settings_surface=window:Settings
+fi
+settings_count() { if [[ $settings_kind == window ]]; then window_count Settings; else layer_count "$settings_surface"; fi; }
+
 SHOT_RUNTIME_DIR="$rt_dir"
 if ! SHOT_SOCKET="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")"; then
   fail "the nested socket is not safe to capture"
@@ -185,13 +195,13 @@ scene_gallery() { # MODE
   expect_poll "the gallery's panel is gone" 0 layer_count vgs:panel
 }
 
-settings_page() { ipc smoke readInstance panel vgs.settings page; }
-settings_menu_open() { ipc smoke menus panel vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
+settings_page() { ipc smoke readInstance "$settings_kind" vgs.settings page; }
+settings_menu_open() { ipc smoke menus "$settings_kind" vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
 # The page's one scroll area as the probe reads it.
-settings_scroll() { ipc smoke scrollAreas panel vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
+settings_scroll() { ipc smoke scrollAreas "$settings_kind" vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
 settings_close() {
-  expect "the Settings window closes" ok ipc shell hide panel vgs.settings
-  expect_poll "the Settings window is gone" 0 layer_count vgs:panel
+  expect "the Settings window closes" ok ipc shell hide "$settings_kind" vgs.settings
+  expect_poll "the Settings window is gone" 0 settings_count
 }
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a plugin page with many grouped settings at its top and dragged
@@ -201,8 +211,8 @@ settings_close() {
 scene_settings() { # MODE
   local area at tx ty title x y
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
-  expect_poll "the gear opens the Settings window" 1 layer_count vgs:panel
-  expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn panel vgs.settings
+  expect_poll "the gear opens the Settings window" 1 settings_count
+  expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
   take "settings-$1-list"
   # The gear draws no text, so it is found by its label.
   if at="$(centre_of "$(ipc smoke labelledGeometry "$(bar_key)" vgs.settings IconButton Settings)")" && [[ $at != none ]]; then
@@ -212,11 +222,11 @@ scene_settings() { # MODE
     fail "the gear has no box"
   fi
   park_pointer
-  expect "the window opens the probe's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+  expect "the window opens the probe's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin acme.probe
   expect_poll "the probe's page is shown" '"acme.probe"' settings_page
   take "settings-$1-page"
   if area="$(settings_scroll)" && [[ $area == \{* ]]; then
-    read -r tx ty < <(at_centre vgs:panel "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
+    read -r tx ty < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
     drag "$tx" "$ty" "$tx" "$((ty + 120))" || fail "the drag on the page's thumb failed"
     hover "$tx" "$((ty + 120))" || fail "the hover on the dragged thumb failed"
     take "settings-$1-page-scrolled"
@@ -224,15 +234,15 @@ scene_settings() { # MODE
     fail "the probe's page scroll area is unreadable: ${area:-}"
   fi
   park_pointer
-  expect "the window opens the launcher's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.launcher
+  expect "the window opens the launcher's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown" '"vgs.launcher"' settings_page
   take "settings-$1-keys"
-  click_in vgs:panel panel vgs.settings TitleButton Launcher || fail "the click on the title failed"
+  click_in "$settings_surface" "$settings_kind" vgs.settings TitleButton Launcher || fail "the click on the title failed"
   expect_poll "the title's menu opens" True settings_menu_open
   # The menu opens under the title; the pointer rests inside it, which
   # shows its scroll bar.
-  if title="$(ipc smoke windowGeometry panel vgs.settings TitleButton Launcher)" && [[ $title == \[* ]]; then
-    read -r x y < <(at_centre vgs:panel "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3] + 40, 80, 40]))' "$title")")
+  if title="$(ipc smoke windowGeometry "$settings_kind" vgs.settings TitleButton Launcher)" && [[ $title == \[* ]]; then
+    read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3] + 40, 80, 40]))' "$title")")
     hover "$x" "$y" || fail "the hover inside the title's menu failed"
   fi
   take "settings-$1-menu"
@@ -248,9 +258,9 @@ scene_settings() { # MODE
   expect "the monitor is made narrower than the window" ok output_mode "$main_name" 480x720
   expect_poll "the monitor is 480 logical pixels wide" 480 first_width
   expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
-  expect_poll "the narrow window maps" 1 layer_count vgs:panel
+  expect_poll "the narrow window maps" 1 settings_count
   take "settings-$1-narrow-list"
-  expect "the narrow window opens the probe's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+  expect "the narrow window opens the probe's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin acme.probe
   expect_poll "the probe's page is shown on the narrow monitor" '"acme.probe"' settings_page
   take "settings-$1-narrow-page"
   settings_close

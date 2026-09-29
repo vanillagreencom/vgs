@@ -5,6 +5,9 @@
 # press outside, on Escape and when its anchor hides. Popup rectangles are
 # read through the popup's content item in the bar window's coordinates,
 # the same coordinates a click takes, since the bar sits at the origin.
+# The press outside closes each one through its focus grab: a copy of each
+# without the grab, written beside the shipped file and built under the
+# same widget, stays open through it.
 set -euo pipefail
 ov="$home/.config/vgs/plugins/acme.overlays"
 mkdir -p "$ov"
@@ -89,6 +92,65 @@ expect_poll "the select list is open for the keys" true ovr selectOpen
 type_keys -k Down -k Return || fail "sending keys to the select failed"
 expect_poll "the keys choose the next entry" 2 ovr selected
 expect_poll "the keyboard choice closes the list" false ovr selectOpen
+
+# Every flyout closes on a press outside it, as the popover does above.
+expect "the widget opens its menu for the outside press" ok ovw openMenu
+expect_poll "the menu is open before the outside press" true ovr menuOpen
+click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the menu failed"
+expect_poll "a press outside closes the menu" false ovr menuOpen
+expect "the widget opens its select for the outside press" ok ovw openSelect
+expect_poll "the select list is open before the outside press" true ovr selectOpen
+click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the select failed"
+expect_poll "a press outside closes the select list" false ovr selectOpen
+
+# Controls: a popover, a menu and a select copied without their grab and
+# built under the widget stay open through the press outside that closes
+# the grabbing popover. The shell reads every popup's events on one
+# connection in order, so once the popover has closed each copy has had
+# any dismissal the same press brought. Every copy is written before the
+# first is built (runtime-qml.md). A copy is no member of qs.Ui and sees
+# the module's internal types only through their directories, so the
+# select's copy sits beside AnchorTracker in overlay/ and imports the
+# directory of ScrollBar, which its list draws.
+declare -A nograb_copy=(
+  [popover]="$repo/shell/Ui/overlay/Popover.qml|$repo/shell/Ui/overlay/PopoverNoGrab.qml"
+  [menu]="$repo/shell/Ui/overlay/Menu.qml|$repo/shell/Ui/overlay/MenuNoGrab.qml"
+  [select]="$repo/shell/Ui/controls/Select.qml|$repo/shell/Ui/overlay/SelectNoGrab.qml"
+)
+for name in popover menu select; do
+  python3 - "${nograb_copy[$name]%%|*}" "${nograb_copy[$name]##*|}" "$name" <<'PYEDIT'
+import pathlib, sys
+source, target, name = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+text = source.read_text()
+assert text.count("        grabFocus: true\n") == 1, "the grab must occur once in " + source.name
+text = text.replace("        grabFocus: true\n", "        grabFocus: false\n")
+if name == "select":
+    assert text.count("import qs.Ui\n") == 1, "the qs.Ui import must occur once in " + source.name
+    text = text.replace("import qs.Ui\n", "import qs.Ui\nimport \"../layout\"\n")
+target.write_text(text)
+PYEDIT
+done
+# name -> [the member that opens it, the property that reads it open, its properties]
+declare -A nograb_use=(
+  [popover]='open opened {"width":160}'
+  [menu]='open opened {}'
+  [select]='openList listOpen {"width":40,"height":20,"model":["one","two"]}'
+)
+for name in popover menu select; do
+  read -r opener reader props <<<"${nograb_use[$name]}"
+  expect "the probe builds the $name copy without the grab" ok ipc smoke popupLoad "$name-nograb" "${nograb_copy[$name]##*|}" "$ov_key" acme.overlays "$props"
+  expect "the $name copy opens" ok ipc smoke popupCall "$name-nograb" "$opener"
+  expect_poll "the $name copy is open" true ipc smoke popupRead "$name-nograb" "$reader"
+done
+expect "the widget opens its popover beside the copies" ok ovw openPopover
+expect_poll "the popover is open beside the copies" true ovr popoverOpen
+click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the copies failed"
+expect_poll "the press outside closes the grabbing popover" false ovr popoverOpen
+for name in popover menu select; do
+  read -r opener reader props <<<"${nograb_use[$name]}"
+  expect "the press outside leaves the $name copy without the grab open" true ipc smoke popupRead "$name-nograb" "$reader"
+  expect "the probe drops the $name copy" ok ipc smoke popupDrop "$name-nograb"
+done
 
 # A select inside a summoned panel opens its list over the panel's popup
 # and the panel stays open through the choice.

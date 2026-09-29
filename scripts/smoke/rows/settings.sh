@@ -1,5 +1,5 @@
 # Settings edits and the dispatch queue. The Settings window opens from a
-# real click on the gear, so the compositor gives its layer the keyboard,
+# real click on the gear, so the compositor gives its window the keyboard,
 # and a click on a text field gives that field keyboard focus. A write is
 # published once: its own file notification is read and found identical.
 # An unrelated change keeps an edit in progress: the same drawn field, its
@@ -11,22 +11,22 @@
 set -euo pipefail
 click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
 expect_poll "the gear's click opens the Settings window" open settings_open
-expect "the window opens the fixture's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+expect "the window opens the fixture's page" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.probe
 expect_poll "the page draws the fixture's fields again" '[9, 0]' page_fields
-held_rect="$(ipc smoke invokeInstance panel vgs.settings holdField '{"id":"acme.probe","key":"label","text":"draft"}')" || fail "holdField failed"
+held_rect="$(ipc smoke invokeInstance window vgs.settings holdField '{"id":"acme.probe","key":"label","text":"draft"}')" || fail "holdField failed"
 if [[ $held_rect == \[* ]]; then ok "an edit begins in the fixture's label field"; else fail "an edit begins in the fixture's label field: got $held_rect"; fi
-read -r field_cx field_cy < <(at_centre vgs:panel "$held_rect")
+read -r field_cx field_cy < <(at_centre window:Settings "$held_rect")
 click "$field_cx" "$field_cy" || fail "the click on the held field failed"
-held_state() { ipc smoke invokeInstance panel vgs.settings heldFieldState ''; }
+held_state() { ipc smoke invokeInstance window vgs.settings heldFieldState ''; }
 # The click also puts the cursor where it landed; the state read after it
 # is what the unrelated changes must preserve.
 held_focused() { held_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["same"] and d["focus"] and d["activeFocus"] and d["text"] == "draft")'; }
 expect_poll "the clicked field holds keyboard focus with its draft" True held_focused
 held_before="$(held_state)" || fail "held field state unreadable"
-expect "the window toggles the bare fixture off around the edit" ok ipc smoke invokeInstance panel vgs.settings toggle acme.bare
+expect "the window toggles the bare fixture off around the edit" ok ipc smoke invokeInstance window vgs.settings toggle acme.bare
 expect_poll "the window shows the bare fixture disabled" '{"acme.bare": false, "acme.probe": true, "vgs.bar": true}' manager_rows
 expect "the edit in progress survives the unrelated change" "$held_before" held_state
-expect "the window toggles the bare fixture back on" ok ipc smoke invokeInstance panel vgs.settings toggle acme.bare
+expect "the window toggles the bare fixture back on" ok ipc smoke invokeInstance window vgs.settings toggle acme.bare
 expect_poll "the window shows the bare fixture enabled" '{"acme.bare": true, "acme.probe": true, "vgs.bar": true}' manager_rows
 expect "the edit in progress survives the second unrelated change" "$held_before" held_state
 
@@ -35,7 +35,7 @@ user_loads() { ipc smoke configUserLoads; }
 config_settled() { ipc smoke configSettled; }
 user_label() { python3 -c 'import json,sys; print([e.get("label") for e in json.load(open(sys.argv[1])).get("plugins", []) if e["id"]=="acme.probe"][0])' "$home/.config/vgs/shell.json"; }
 if changes_before="$(config_changes)" && loads_before="$(user_loads)"; then
-  expect "the window writes the fixture's setting" ok ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"published-once"}'
+  expect "the window writes the fixture's setting" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"published-once"}'
   expect_poll "the write's own file notification was read" "$((loads_before + 1))" user_loads
   expect_poll "the save settled" true config_settled
   expect "the user file holds the written setting" published-once user_label
@@ -46,8 +46,8 @@ else
 fi
 # Two writes back to back: the second waits for the first save and wins.
 if changes_before="$(config_changes)"; then
-  expect "the first of two rapid writes is accepted" ok ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"rapid-first"}'
-  expect "the second of two rapid writes is accepted" ok ipc smoke invokeInstance panel vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"rapid-second"}'
+  expect "the first of two rapid writes is accepted" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"rapid-first"}'
+  expect "the second of two rapid writes is accepted" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"rapid-second"}'
   expect_poll "the user file holds the later of two rapid writes" rapid-second user_label
   expect_poll "the rapid writes settled" true config_settled
   expect "each rapid write is published once" "$((changes_before + 2))" config_changes
@@ -64,8 +64,8 @@ fi
 # the harness starts disabled, have published nothing.
 fixture_command="secret-tool store --label='acme token' service acme account token"
 status_of() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
-drawn_status() { ipc smoke itemTexts panel vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
-page_fields_of() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
+drawn_status() { ipc smoke itemTexts window vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+page_fields_of() { ipc smoke drawnFields window vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
 # The drawn rows with the `Last check` value replaced by `time` when it
 # draws the fixture's moment as a local date and time: it names that
 # moment's hour and minute, in the 24-hour or the 12-hour form, and not the
@@ -84,21 +84,21 @@ expect "the fixture publishes a state" ok ipc acme.status invoke set 'check={"to
 expect "the fixture publishes a count" ok ipc acme.status invoke set 'pending=3'
 expect "the fixture publishes a time" ok ipc acme.status invoke set "lastCheck=$fixture_time"
 expect "the fixture publishes data" ok ipc acme.status invoke detail ''
-expect "the window opens the status fixture's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.status
+expect "the window opens the status fixture's page" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.status
 expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", int(sys.argv[2]), "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command" "$fixture_time")" status_of acme.status
 expect_poll "the page draws the ungrouped entries, then each group's, read-only" "$(python3 -c 'import json,sys; print(json.dumps([["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", sys.argv[1]], ["Pending", "3"]]))' "$fixture_command")" drawn_status_timeless
 expect_poll "the page heads the status sections before any other" '["Status", "Sync"]' section_names
-expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
+expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
 expect "the page draws no settings field for the status fixture" '[0, 0]' page_fields_of acme.status
-expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance panel vgs.settings toggle acme.status
+expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
-expect "the window opens the notifications' page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.notifications
+expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
 expect_poll "the disabled notifications list the Slack token row unreported" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "unreported", None, "", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" status_of vgs.notifications
 expect_poll "the page draws the Slack token row with its hint and command" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "Not reported", "Needed for sender photos in Slack notifications", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" drawn_status
-expect "no Slack token row takes an edit" '[[]]' ipc smoke statusRowInputs panel vgs.settings
+expect "no Slack token row takes an edit" '[[]]' ipc smoke statusRowInputs window vgs.settings
 
 expect "the gear closes the Settings window after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
-expect_poll "the Settings window is gone after the edit rows" 0 layer_count vgs:panel
+expect_poll "the Settings window is gone after the edit rows" 0 window_count Settings
 expect "disabling the Settings plugin after its rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 expect_poll "the Settings service released its shortcut and IPC target" False settings_lent
 

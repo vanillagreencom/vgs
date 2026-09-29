@@ -28,6 +28,10 @@ Scope {
     // result }. The copy's context is never torn down.
     property var runnerCopy: null
     property var runnerAnswers: ({})
+    // Copies of a core popup, a qs.Ui overlay or SummonPopup, built from a
+    // file a row writes beside the shipped one for a dismissal control, by
+    // the name the row gives each.
+    property var popupCopies: ({})
     readonly property var runnerContext: ({ id: "smoke-runner-copy", onDispose: () => () => {} })
 
     // Call the copy's member VERB with ARGS, then `done`, then any EXTRA,
@@ -647,6 +651,62 @@ Scope {
             const shader = root.descendants(item).find(child => child instanceof ShaderEffect);
             if (shader === undefined) return "no-shader";
             return JSON.stringify({ url: String(shader.fragmentShader), compiled: shader.status === ShaderEffect.Compiled, log: shader.log });
+        }
+        // Build a copy of a popup from FILE, a path beside the shipped file
+        // so its imports and sibling types resolve as the shipped one's do,
+        // as a child of the instance HOST_KEY/ID, whose item it anchors to,
+        // with PROPERTIES, a JSON object, as its initial properties; a value
+        // "@instance" there, at the top or one object down, is that item.
+        // A list is assigned once the copy is made, since a list handed to
+        // createObject stops being an array (runtime-qml.md). Kept under
+        // NAME: `ok`, or the component's error.
+        function popupLoad(name: string, file: string, hostKey: string, id: string, properties: string): string {
+            if (name in root.popupCopies) return "loaded";
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const resolve = value => value === "@instance" ? item : value;
+            const given = JSON.parse(properties);
+            const initial = {};
+            const lists = {};
+            for (const key of Object.keys(given)) {
+                const value = given[key];
+                if (Array.isArray(value)) lists[key] = value;
+                else if (value !== null && typeof value === "object") {
+                    const inner = {};
+                    for (const k of Object.keys(value)) inner[k] = resolve(value[k]);
+                    initial[key] = inner;
+                } else initial[key] = resolve(value);
+            }
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return "error: " + component.errorString().trim().replace(/\n/g, " ");
+            const made = component.createObject(item, initial);
+            if (made === null) return "error: create";
+            for (const key of Object.keys(lists)) made[key] = lists[key];
+            const next = Object.assign({}, root.popupCopies);
+            next[name] = made;
+            root.popupCopies = next;
+            return "ok";
+        }
+        // Call member VERB of copy NAME with no argument: `ok`, or `absent`.
+        function popupCall(name: string, verb: string): string {
+            const copy = root.popupCopies[name];
+            if (copy === undefined) return "absent";
+            copy[verb]();
+            return "ok";
+        }
+        // PROPERTY of copy NAME as JSON, or `absent`.
+        function popupRead(name: string, property: string): string {
+            const copy = root.popupCopies[name];
+            return copy === undefined ? "absent" : JSON.stringify(copy[property]);
+        }
+        function popupDrop(name: string): string {
+            const copy = root.popupCopies[name];
+            if (copy === undefined) return "absent";
+            const next = Object.assign({}, root.popupCopies);
+            delete next[name];
+            root.popupCopies = next;
+            copy.destroy();
+            return "ok";
         }
         // Build a copy of ThemeRunner from FILE, a path under the shell's
         // Core directory so its imports resolve as the shipped one's do:

@@ -1,4 +1,4 @@
 { "schemaVersion": 1, "id": "acme.surfaces", "name": "Surfaces", "version": "0.1.0", "author": "acme", "description": "smoke fixture for the hosts",
-  "kinds": ["panel", "overlay", "menu", "background", "bar-widget"],
-  "entryPoints": { "panel": "Summoned.qml", "overlay": "Summoned.qml", "menu": "Summoned.qml", "background": "Background.qml", "bar-widget": "Widget.qml" },
+  "kinds": ["panel", "overlay", "menu", "window", "background", "bar-widget"],
+  "entryPoints": { "panel": "Summoned.qml", "overlay": "Summoned.qml", "menu": "Summoned.qml", "window": "Summoned.qml", "background": "Background.qml", "bar-widget": "Widget.qml" },
   "defaultSection": "right", "settings": { "placement": "top-right" }, "capabilities": ["surfaces", "run"] }

@@ -12,6 +12,11 @@
  * whatever size the compositor asks. It answers the compositor's ping,
  * prints `mapped APP_ID` once its first buffer is committed, and exits 0
  * when the compositor closes the toplevel or on SIGTERM, SIGINT or SIGHUP.
+ * When the seat has a keyboard it also prints, one line each as they
+ * arrive, `keyboard enter` and `keyboard leave` when the compositor gives
+ * the window the keyboard focus or takes it away, and `key <code>
+ * pressed` or `key <code> released` for each key the window receives, so
+ * a row reads which window the keyboard reached.
  * Exit 2 on a bad invocation, 1 when the display cannot be opened, lacks a
  * global the helper needs or fails, or a buffer cannot be made, printed as
  * `toplevel: refused: <key>=<value>`.
@@ -36,6 +41,8 @@
 static struct wl_compositor *compositor = NULL;
 static struct wl_shm *shm = NULL;
 static struct xdg_wm_base *wm_base = NULL;
+static struct wl_seat *seat = NULL;
+static struct wl_keyboard *keyboard = NULL;
 static struct wl_surface *surface = NULL;
 static const char *app_id = NULL;
 static const char *title = NULL;
@@ -52,6 +59,8 @@ static void on_global(void *data, struct wl_registry *registry, uint32_t name, c
         shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
     else if (strcmp(interface, xdg_wm_base_interface.name) == 0 && wm_base == NULL)
         wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
+    else if (strcmp(interface, wl_seat_interface.name) == 0 && seat == NULL)
+        seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
 }
 
 static void on_global_remove(void *data, struct wl_registry *registry, uint32_t name) {
@@ -161,6 +170,73 @@ static void on_wm_capabilities(void *data, struct xdg_toplevel *toplevel, struct
 
 static const struct xdg_toplevel_listener toplevel_listener = { on_toplevel_configure, on_close, on_configure_bounds, on_wm_capabilities };
 
+/* Keyboard events, printed for the row that reads which window the keys
+ * reached; the keymap is not needed to name a key by its code. */
+static void on_keymap(void *data, struct wl_keyboard *kb, uint32_t format, int32_t fd, uint32_t size) {
+    (void)data;
+    (void)kb;
+    (void)format;
+    (void)size;
+    close(fd);
+}
+
+static void on_enter(void *data, struct wl_keyboard *kb, uint32_t serial, struct wl_surface *entered, struct wl_array *keys) {
+    (void)data;
+    (void)kb;
+    (void)serial;
+    (void)entered;
+    (void)keys;
+    printf("keyboard enter\n");
+    fflush(stdout);
+}
+
+static void on_leave(void *data, struct wl_keyboard *kb, uint32_t serial, struct wl_surface *left) {
+    (void)data;
+    (void)kb;
+    (void)serial;
+    (void)left;
+    printf("keyboard leave\n");
+    fflush(stdout);
+}
+
+static void on_key(void *data, struct wl_keyboard *kb, uint32_t serial, uint32_t time, uint32_t key, uint32_t state) {
+    (void)data;
+    (void)kb;
+    (void)serial;
+    (void)time;
+    printf("key %u %s\n", key, state == WL_KEYBOARD_KEY_STATE_PRESSED ? "pressed" : "released");
+    fflush(stdout);
+}
+
+static void on_modifiers(void *data, struct wl_keyboard *kb, uint32_t serial, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
+    (void)data;
+    (void)kb;
+    (void)serial;
+    (void)depressed;
+    (void)latched;
+    (void)locked;
+    (void)group;
+}
+
+/* The seat is bound at version 1, which sends no repeat_info. */
+static const struct wl_keyboard_listener keyboard_listener = { on_keymap, on_enter, on_leave, on_key, on_modifiers, NULL };
+
+static void on_capabilities(void *data, struct wl_seat *s, uint32_t capabilities) {
+    (void)data;
+    if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && keyboard == NULL) {
+        keyboard = wl_seat_get_keyboard(s);
+        wl_keyboard_add_listener(keyboard, &keyboard_listener, NULL);
+    }
+}
+
+static void on_seat_name(void *data, struct wl_seat *s, const char *name) {
+    (void)data;
+    (void)s;
+    (void)name;
+}
+
+static const struct wl_seat_listener seat_listener = { on_capabilities, on_seat_name };
+
 static int broken(struct wl_display *display) {
     fprintf(stderr, "toplevel: refused: display=broken error=%d\n", wl_display_get_error(display));
     return 1;
@@ -199,6 +275,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     xdg_wm_base_add_listener(wm_base, &wm_base_listener, NULL);
+    if (seat != NULL) wl_seat_add_listener(seat, &seat_listener, NULL);
     surface = wl_compositor_create_surface(compositor);
     struct xdg_surface *xdg_surface = xdg_wm_base_get_xdg_surface(wm_base, surface);
     xdg_surface_add_listener(xdg_surface, &surface_listener, NULL);
@@ -238,6 +315,8 @@ int main(int argc, char **argv) {
         if (fds[1].revents != 0) stopped = 1;
     }
     if (buffer_failed) status = 1;
+    if (keyboard != NULL) wl_keyboard_destroy(keyboard);
+    if (seat != NULL) wl_seat_destroy(seat);
     xdg_toplevel_destroy(toplevel);
     xdg_surface_destroy(xdg_surface);
     wl_surface_destroy(surface);

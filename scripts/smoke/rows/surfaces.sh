@@ -1,9 +1,10 @@
 # Hosts: a fixture of every summonable kind plus a background and a bar
 # widget. Each summonable kind opens on demand, in its own layer surface
 # without an anchor or as a popup of its anchor's window with one, and is
-# destroyed on hide; the background is drawn on every screen while
-# enabled. Layer geometry is read from the compositor's layer list, popup
-# geometry from the built instance.
+# destroyed on hide; a window is a Hyprland window with or without an
+# anchor. The background is drawn on every screen while enabled. Layer
+# geometry is read from the compositor's layer list, window geometry from
+# its client list, popup geometry from the built instance.
 set -euo pipefail
 surf="$home/.config/vgs/plugins/acme.surfaces"
 mkdir -p "$surf"
@@ -51,6 +52,45 @@ expect "a menu summons over IPC" ok ipc shell summon menu acme.surfaces '{}'
 expect_poll "the menu host maps one surface" 1 layer_count vgs:menu
 expect "hiding the menu is allowed" ok ipc shell hide menu acme.surfaces
 expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
+
+# An application window: a client of the shell's class titled with the
+# plugin's name, at the size the instance asks, whatever the plugin's
+# placement setting. Summoning an open one hands it the new payload and
+# builds nothing; hide and a close through Hyprland each call close() and
+# destroy it; an anchored summon builds a window all the same.
+window_size() { window_of Surfaces size; }
+expect "a window summons over IPC" ok ipc shell summon window acme.surfaces '{"n":1}'
+expect "the window received its payload" '"{\"n\":1}"' ipc smoke readInstance window acme.surfaces lastPayload
+expect_poll "the window host maps one window titled with the plugin's name" 1 window_count Surfaces
+geometry expect_poll "the window asks for the instance's size, whatever its placement setting" '[[200, 120]]' window_size
+expect "the window host maps no layer surface" 0 layer_count vgs:window
+if before="$(builds)"; then
+  expect "summoning an open window is allowed" ok ipc shell summon window acme.surfaces '{"n":2}'
+  expect "the open window received the new payload" 2 ipc smoke readInstance window acme.surfaces opened
+  expect "summoning an open window builds nothing" "$before" builds
+else
+  fail "buildCount unreadable before the window rows"
+fi
+expect "summoning the window with a close marker is allowed" ok ipc shell summon window acme.surfaces "{\"closeMarker\":\"$sandbox/window-closed-by-hide\"}"
+expect "hiding the window is allowed" ok ipc shell hide window acme.surfaces
+expect_poll "hide called the window's close()" yes marker "$sandbox/window-closed-by-hide"
+expect_poll "the window host destroyed the window" 0 window_count Surfaces
+expect "toggle opens a closed window" ok ipc shell toggle window acme.surfaces '{}'
+expect_poll "the toggled window is mapped" 1 window_count Surfaces
+expect "toggle closes an open window" ok ipc shell toggle window acme.surfaces '{}'
+expect_poll "the toggled window is gone" 0 window_count Surfaces
+expect "the widget summons its window with itself as the anchor" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces windowHere "{\"closeMarker\":\"$sandbox/window-closed-by-hyprland\"}"
+expect_poll "an anchored window summon maps a window" 1 window_count Surfaces
+expect "an anchored window summon maps no popup panel" absent ipc smoke readInstance panel acme.surfaces opened
+if surfaces_address="$(window_of Surfaces address)" && [[ $surfaces_address == \[\"0x* ]]; then
+  surfaces_address="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])[0])' "$surfaces_address")"
+  expect "a close dispatch aimed at the window answers ok" ok hypr dispatch "hl.dsp.window.close({ window = \"address:$surfaces_address\" })"
+  expect_poll "a close through Hyprland called the window's close()" yes marker "$sandbox/window-closed-by-hyprland"
+  expect_poll "a close through Hyprland removed the window from the build records" absent ipc smoke readInstance window acme.surfaces opened
+  expect_poll "a close through Hyprland left no window" 0 window_count Surfaces
+else
+  fail "the fixture window's address is unreadable: ${surfaces_address:-}"
+fi
 
 # Popup geometry is read from the instance through Item.mapToGlobal, which
 # answers in the coordinates of the window the popup was anchored in, after
@@ -105,11 +145,32 @@ expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 # and calls the plugin's close(). The clicks go through the nested
 # compositor's virtual pointer. The first click lands on the widget itself,
 # as a user's would before its menu opens.
+#
+# Control: a SummonPopup copy without the grab, written beside the shipped
+# file and built under the same widget as the host builds an anchored
+# panel, stays open through the click that closes the menu. The shell
+# reads both popups' events on one connection in order, so once the menu
+# has closed the copy has had any dismissal the same click brought.
+summon_copy="$repo/shell/Hosts/SummonPopupNoGrab.qml"
+python3 - "$repo/shell/Hosts/SummonPopup.qml" "$summon_copy" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+assert text.count("    grabFocus: true\n") == 1, "the SummonPopup grab must occur once"
+target.write_text(text.replace("    grabFocus: true\n", "    grabFocus: false\n"))
+PYEDIT
 click_centre "bar:$screen_name" acme.surfaces || fail "the click on the widget failed"
+expect "the probe builds the SummonPopup copy without the grab" ok ipc smoke popupLoad summon-nograb "$summon_copy" "bar:$screen_name" acme.surfaces '{"pluginId":"acme.surfaces","kind":"panel","request":{"anchor":"@instance","anchored":true,"payloadJson":"{}"}}'
+expect_poll "the grabless copy has built its panel" 0 ipc smoke readInstance panel acme.surfaces opened
+expect "the grabless copy's panel takes a payload" '' ipc smoke invokeInstance panel acme.surfaces open '{}'
+expect_poll "the grabless copy is shown" true ipc smoke popupRead summon-nograb visible
 expect "the widget opens a menu with a close marker" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces menuHere "{\"closeMarker\":\"$sandbox/closed-by-click\"}"
 expect_poll "the menu is open before the outside click" 1 ipc smoke readInstance menu acme.surfaces opened
 click "$((mon_w / 2))" "$((mon_h / 2))" || fail "the click outside the menu failed"
 expect_poll "the outside click called the menu's close()" yes marker "$sandbox/closed-by-click"
+expect "the outside click leaves the grabless copy shown" true ipc smoke popupRead summon-nograb visible
+expect "the probe drops the grabless copy" ok ipc smoke popupDrop summon-nograb
+expect_poll "the grabless copy's panel leaves the build records" absent ipc smoke readInstance panel acme.surfaces opened
 expect_poll "the outside click removed the menu from the build records" absent ipc smoke readInstance menu acme.surfaces opened
 expect "the widget opens an anchored panel" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 expect_poll "the panel is open before the outside click" 1 ipc smoke readInstance panel acme.surfaces opened

@@ -2,9 +2,11 @@
 set -euo pipefail
 source "$repo/scripts/smoke/verdict.sh"
 source "$repo/scripts/smoke/tree.sh"
+source "$repo/scripts/smoke/shot.sh"
 missing=()
-# fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs.
-for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file; do
+# fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
+# grim reads the pixels rows/windows.sh checks.
+for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists wayland-client; then missing+=("wayland-client.pc"); fi
@@ -529,18 +531,57 @@ first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.s
 first_width() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]))'; }
 # The one live layer with a namespace as [x, y, w, h], or layers=<n>.
 one_layer() { layers_of "$1" | python3 -c 'import json,sys; l=json.load(sys.stdin); print(json.dumps(l[0]) if len(l) == 1 else "layers=%d" % len(l))'; }
-# at_centre NAMESPACE RECT_JSON: the layout position of the centre of a box
-# given in the coordinates of that namespace's one layer window, the
-# layer's position added: a layer the compositor centres knows no place of
-# its own, so the probe answers boxes in window coordinates.
-at_centre() {
-  local layer
-  layer="$(one_layer "$1")" || return 1
-  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); print(int(l[0] + r[0] + r[2] / 2), int(l[1] + r[1] + r[3] / 2))' "$layer" "$2"
+# The shell's application windows are the nested instance's clients of the
+# shell's class, HyprlandLayer.APP_WINDOW.appId, read from the file the
+# shell reads it from, each named by its title. A tree older than
+# application windows has none, and its class is empty, which no client has.
+if ! shell_class="$(node -e 'const w = require(process.argv[1]).load(process.argv[2]).APP_WINDOW; process.stdout.write(w === undefined ? "" : w.appId)' "$repo/bin/lib/qml-library.js" "$repo/shell/Core/HyprlandLayer.js")"; then
+  printf 'qml-smoke: status=not-measured missing=app-window-class\n'
+  exit 77
+fi
+# windows_of TITLE: the shell's live windows titled TITLE as
+# [[x, y, w, h], ...], sorted; window_count TITLE: how many; one_window
+# TITLE: the one such window as [x, y, w, h], or windows=<n>; window_of
+# TITLE FIELD...: those fields of the one such window from `clients -j`,
+# as one JSON list, or windows=<n>.
+windows_of() { hypr -j clients | python3 -c 'import json,sys; print(json.dumps(sorted(c["at"] + c["size"] for c in json.load(sys.stdin) if c["class"] == sys.argv[1] and c["title"] == sys.argv[2] and c["mapped"])))' "$shell_class" "$1"; }
+window_count() { windows_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+one_window() { windows_of "$1" | python3 -c 'import json,sys; w=json.load(sys.stdin); print(json.dumps(w[0]) if len(w) == 1 else "windows=%d" % len(w))'; }
+window_of() { local title="$1"; shift; hypr -j clients | python3 -c '
+import json, sys
+cs = [c for c in json.load(sys.stdin) if c["class"] == sys.argv[1] and c["title"] == sys.argv[2] and c["mapped"]]
+print(json.dumps([cs[0][k] for k in sys.argv[3:]]) if len(cs) == 1 else "windows=%d" % len(cs))' "$shell_class" "$title" "$@"; }
+# The focused window as [class, title], or [] for none.
+active_window() { hypr -j activewindow | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["class"], d["title"]] if d.get("address") else [], ensure_ascii=False))'; }
+# surface_box SURFACE: the box of one drawn surface as [x, y, w, h]: a
+# layer by its namespace, `vgs:<name>`, or an application window as
+# `window:<title>`.
+surface_box() {
+  case "$1" in
+    window:*) one_window "${1#window:}" ;;
+    vgs:*) one_layer "$1" ;;
+    *) echo "surface_box: refused: surface=$1 want=vgs:<name>|window:<title>" >&2; return 1 ;;
+  esac
 }
-# click_in NAMESPACE HOST_KEY ID TYPE TEXT: one click on the centre of the
+# at_centre SURFACE RECT_JSON: the layout position of the centre of a box
+# given in the coordinates of SURFACE's window, a surface_box name, its
+# position added: neither a layer the compositor centres nor a toplevel
+# knows its place, so the probe answers boxes in window coordinates.
+at_centre() {
+  local box
+  box="$(surface_box "$1")" || return 1
+  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); print(int(l[0] + r[0] + r[2] / 2), int(l[1] + r[1] + r[3] / 2))' "$box" "$2"
+}
+# pixel X Y: the colour the nested output shows at layout position (X, Y)
+# as rrggbb, through grim given the nested socket alone (shot.sh).
+pixel() {
+  local socket
+  socket="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")" || return 1
+  shot_pixel "$socket" "$rt_dir" "$1" "$2"
+}
+# click_in SURFACE HOST_KEY ID TYPE TEXT: one click on the centre of the
 # first shown item of TYPE whose text or label is TEXT in that instance,
-# drawn in the namespace's one layer.
+# drawn in SURFACE, a surface_box name.
 click_in() {
   local rect x y
   rect="$(ipc smoke windowGeometry "$2" "$3" "$4" "$5")" || return 1
@@ -548,7 +589,7 @@ click_in() {
   read -r x y < <(at_centre "$1" "$rect") || return 1
   click "$x" "$y"
 }
-# click_scoped_in NAMESPACE HOST_KEY ID SCOPE_TYPE SCOPE_TEXT TYPE TEXT: the
+# click_scoped_in SURFACE HOST_KEY ID SCOPE_TYPE SCOPE_TEXT TYPE TEXT: the
 # same for the item of TYPE reading TEXT inside the first shown SCOPE_TYPE
 # that draws SCOPE_TEXT, such as one row's button among rows that each
 # draw one with the same text. The pointer moves there a pixel off first:

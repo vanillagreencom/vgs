@@ -128,9 +128,9 @@ expect_poll "a fresh status after the refusals reads as calm again" '["calm", nu
 # The Settings page draws the four rows, never `detail`.
 expect "enabling the Settings plugin for the warden's rows is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings service is built" True record_exists vgs.settings
-expect "the Settings window is summoned" ok ipc shell summon panel vgs.settings '{}'
+expect "the Settings window is summoned" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings rows show the warden, the agents, the last check and vsys" "$(python3 -c 'import json,sys; print(json.dumps([["Warden", "reported", {"tone": "ok", "text": "Checking"}, "success", "vsys warden install"], ["Agents running", "reported", 1, "", ""], ["Last check", "reported", int(sys.argv[1]) * 1000, "", ""], ["vsys", "reported", json.loads(sys.argv[2]), {"present": "success", "absent": "warning"}[json.loads(sys.argv[2])], "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"]]))' "$calm_time" "$vsys_first")" warden_rows
-expect "the Settings window is hidden" ok ipc shell hide panel vgs.settings
+expect "the Settings window is hidden" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 
 # vsys follows the scan: a stub on the sandbox PATH is present after a
