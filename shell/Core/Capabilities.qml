@@ -143,8 +143,11 @@ Singleton {
         }),
         theme: themes.provider,
         tui: tuis.provider,
+        // `missing`: the plugin's own requirement commands the last scan did
+        // not find, in declaration order, a copy per read; bindable.
         requirements: ctx => ({
-            offer: commands => Notices.offer(ctx, commands)
+            offer: commands => Notices.offer(ctx, commands),
+            get missing() { return Notices.missingOf(ctx.id).slice(); }
         })
     })
 

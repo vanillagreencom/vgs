@@ -108,6 +108,9 @@ expect_poll "the needs fixture's service is built" True record_exists acme.needs
 
 # The requirements capability: an offer merges into the plugin's held
 # notice, and while the notice is gone and the plugin rests, it is refused.
+# `missing` lists the declared commands the last scan did not find; the
+# rows after the install and after the command goes read it change.
+expect "the capability lists the declared commands the scan did not find" '["vgs-smoke-needs","vgs-smoke-extra","vgs-smoke-unmapped"]' needs missing
 expect "an offer while the notice shows merges into it" ok needs offer "vgs-smoke-extra"
 expect "an offer of a present command is satisfied" satisfied needs offer "sh"
 expect "an offer of a command the manifest does not declare is refused" "refused: requirement=pacman reason=undeclared" needs offer "vgs-smoke-needs|pacman"
@@ -188,6 +191,7 @@ expect_poll "the second install runs" "[\"acme.needs\", $all_needs, [\"vgs-smoke
 printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-smoke-needs"; chmod 755 "$shim/vgs-smoke-needs"
 expect "a rescan while the install's terminal is open starts" ok ipc shell rescanPlugins
 expect_poll "that scan finds the installed command" '"present"' needs_state
+expect_poll "the capability no longer lists the installed command" '["vgs-smoke-extra","vgs-smoke-unmapped"]' needs missing
 expect "the installing notice stays after a scan that finds its command" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
 expect "the waiting notice stays behind the live install" '["acme.other"]' notice_waiting
 expect "no notice surface maps while the install runs" 0 layer_count vgs:notice
@@ -207,6 +211,7 @@ expect_poll "acme.other leaves the list" False plugin_known acme.other
 rm -f -- "$shim/vgs-smoke-needs"
 expect "a rescan after the command goes starts" ok ipc shell rescanPlugins
 expect_poll "the removed command is missing again" '"missing"' needs_state
+expect_poll "the capability lists the removed command again" '["vgs-smoke-needs","vgs-smoke-extra","vgs-smoke-unmapped"]' needs missing
 
 # A detection that fails: the notice lists the commands with no package
 # and offers Close alone.

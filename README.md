@@ -89,6 +89,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 | [Launcher](shell/plugins/vgs.launcher/README.md) | A search field over the screen that finds applications, menu entries and files. `SUPER+SPACE` opens it. |
 | [Notifications](shell/plugins/vgs.notifications/README.md) | The desktop notification daemon: notifications at the top of every screen, an Inbox and History panel, and Silence. `SUPER+N` opens the panel. |
 | [Updates](shell/plugins/vgs.updates/README.md) | A service that counts waiting updates for the system packages, AUR, Flatpak, mise tools, VGS itself, plugins and themes, every six hours, on demand and after each update run, without root. Its Settings page shows the count, the last check and any source that failed. |
+| [Agent Warden](shell/plugins/vgs.agent-warden/README.md) | Whether the agent warden vsys ships keeps your AI agents within their memory and task limits, as rows on its Settings page. It reads the warden's status and never changes an agent. |
 | [Gallery](shell/plugins/vgs.gallery/) | Every component of the design system in every variant and state, to preview a theme. `bin/vgsh ipc call shell summon panel vgs.gallery '{}'` opens it. |
 
 ## How it works

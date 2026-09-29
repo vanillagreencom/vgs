@@ -44,6 +44,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-28 | D040 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | Every channel installs one `/usr/share/vgs` tree | One installer keeps packages, flake and curl aligned | Architecture-specific binaries or workflow publishing | Active | [Full](D040-one-shared-install-tree.md) |
 | 2026-09-28 | D036 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | An opt-in core TUI grants passwordless sudo until a NOTAFTER deadline | sudo ends it itself; a timer and a boot cleanup remove the rule | VGS ships a package that can own the root half and a revoke hook | Active | [Full](D036-time-boxed-passwordless-sudo-grant.md) |
 | 2026-09-29 | D042 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | A plugin TUI script runs from a copy of its whole snapshot | A TUI can run its plugin's own program and data safely | A plugin's snapshot makes each copy slow | Active | [Full](D042-tui-scripts-run-from-a-copy-of-the-whole-snapshot.md) |
+| 2026-09-29 | D041 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | Agent Warden observes the warden vsys ships; the enforcer stays a systemd user timer | Enforcement must survive the shell; QML holds no pidfd | Status schema major changes, or a panel gains a channel to its service | Active | [Full](D041-agent-warden-observes-the-vsys-warden.md) |
 
 ---
 

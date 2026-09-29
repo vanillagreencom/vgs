@@ -276,14 +276,16 @@ fi
 # capability rows read back. rows/launcher.sh and rows/notifications.sh
 # enable them. vgs.settings starts disabled for the same reason, and its
 # service would be one more build in the bar rows' count;
-# rows/manager.sh enables it and rows/settings.sh disables it again. vgs.themes stays enabled, its background built on every
+# rows/manager.sh enables it and rows/settings.sh disables it again.
+# vgs.agent-warden starts disabled for the same reason; rows/agent-warden.sh
+# enables it and disables it again. vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
 tick="$home/.config/vgs/plugins/acme.tick"
 mkdir -p "$tick"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
 cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden"] }
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }

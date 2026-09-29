@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.agent-warden",
+  "name": "Agent Warden",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits. It reads the warden's status and never changes an agent itself.",
+  "license": "MIT",
+  "icon": "shield-check",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["ipc", "requirements", "status"],
+  "requirements": [
+    { "command": "vsys", "packages": { "aur": "vsys" }, "optional": true, "purpose": "The agent dashboard that ships the warden" }
+  ],
+  "status": {
+    "warden": { "type": "state", "label": "Warden", "hint": "Keeps AI agents within their memory and task limits. Run this once to set it up.", "command": "vsys warden install" },
+    "agents": { "type": "count", "label": "Agents running" },
+    "lastCheck": { "type": "time", "label": "Last check" },
+    "vsys": { "type": "presence", "label": "vsys", "hint": "The agent dashboard that ships the warden", "command": "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash" },
+    "detail": { "type": "data", "label": "Detail" }
+  }
+}

@@ -36,6 +36,7 @@ optdepends=(
   'pacman-contrib: checkupdates, for the package update check'
   'sudo: package installs and the browser policy writer in floating TUIs'
   'imagemagick: square Slack profile photos in notifications'
+  'vsys: the agent dashboard and warden the Agent Warden plugin reads'
 )
 makedepends=('git')
 provides=("vgs=$pkgver")

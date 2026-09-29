@@ -27,6 +27,7 @@ pkgbase = vgs
 	optdepends = pacman-contrib: checkupdates, for the package update check
 	optdepends = sudo: package installs and the browser policy writer in floating TUIs
 	optdepends = imagemagick: square Slack profile photos in notifications
+	optdepends = vsys: the agent dashboard and warden the Agent Warden plugin reads
 	conflicts = vgs-shell
 	conflicts = vgs-shell-git
 	source = vgs-0.1.0.tar.gz::https://github.com/vanillagreencom/vgs/releases/download/v0.1.0/vgs-0.1.0.tar.gz
