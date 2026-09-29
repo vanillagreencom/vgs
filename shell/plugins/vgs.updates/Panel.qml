@@ -146,6 +146,7 @@ Item {
                         }
                         Label {
                             x: Theme.row.paddingX
+                            width: source.width - 2 * Theme.row.paddingX
                             visible: text !== ""
                             role: "hint"
                             text: source.modelData.more
