@@ -36,7 +36,6 @@ last_part() { probe theme last | python3 -c 'import json,sys; v=json.load(sys.st
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
 print(json.dumps(v))' "$1"; }
 swatch_accent() { probe theme "swatch=$1" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["accent"]))'; }
-theme_jobs() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([[j["verb"], j["name"], j["waiters"]] for j in json.load(sys.stdin)["theme"]["jobs"]]))'; }
 revision_rose() { local now; now="$(theme_member revision)" && [[ $now -gt $revision_before ]] && echo rose || echo same; }
 # The sandbox copy's vgsh runs BODY for a theme command and the real
 # runner for everything else, so the rows' own ipc calls keep working.
@@ -231,10 +230,6 @@ expect "the vgs apply after the light package wrote the shell's file" "applied a
 expect_poll "current follows the vgs apply after the light package" '"vgs"' theme_member current
 expect_poll "revision rose after the vgs apply after the light package" rose revision_rose
 
-# An apply lasts past expect_poll's 5 s when a target's hook runs, so an
-# apply here is waited out, for up to 20 s polled every 200 ms.
-theme_idle() { local _; for _ in $(seq 1 100); do [[ $(theme_jobs) == '[]' ]] && { echo idle; return; }; sleep 0.2; done; theme_jobs; }
-
 # Every scan ends with a follow, which applies the applied package again
 # once it changed under an unedited theme file. The installed smoke
 # package's accent changes, a rescan re-applies it, and the package's own
@@ -279,17 +274,15 @@ theme_swatch() {
   texts="$(ipc smoke itemTexts panel vgs.themes ThemeRow)" && colours="$(ipc smoke itemColours panel vgs.themes ThemeRow Surface)" || return
   python3 -c 'import json,sys; t,c=json.loads(sys.argv[1]),json.loads(sys.argv[2]); m=[c[i] for i,r in enumerate(t) if r[:2]==sys.argv[3:5]]; print(json.dumps([len(m[0]), sys.argv[5] in m[0]]) if len(m)==1 else "rows=%d" % len(m))' "$texts" "$colours" "$1" "$2" "$3"
 }
-# click_row NAME: one click on the centre of the enabled list item NAME,
-# polled for up to 5 s while a running apply disables the rows.
+# click_row NAME: one click_item on the enabled list item NAME, which is
+# waited for for up to 5 s while a running apply disables the rows.
 click_row() {
-  local rect=absent
+  local _
   for _ in $(seq 1 25); do
-    rect="$(ipc smoke itemGeometry panel vgs.themes ListItem "$1")" && [[ $rect != absent ]] && break
+    [[ $(ipc smoke itemGeometry panel vgs.themes ListItem "$1") != absent ]] && break
     sleep 0.2
   done
-  [[ $rect != absent ]] || return 1
-  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
-  click "$cx" "$cy"
+  click_item panel vgs.themes ListItem "$1"
 }
 # Whether the panel draws a label reading TEXT: True or False.
 panel_label() { ipc smoke itemTexts panel vgs.themes Label | python3 -c 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
@@ -327,6 +320,20 @@ expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' the
 rm -r -- "$fixture_targets/smoke-fails"
 click_row smoke || fail "the second click on the smoke row failed"
 expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
+
+# Control: click_item aimed at the vgs row's centre, a stand-in for a
+# panel surface the compositor has not yet placed where the probe reads
+# it, never finds the smoke row under the pointer, so it clicks nothing.
+if vgs_rect="$(ipc smoke itemGeometry panel vgs.themes ListItem vgs)" && [[ $vgs_rect != absent ]]; then
+  read -r vx vy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$vgs_rect")
+  if click_item panel vgs.themes ListItem smoke "$vx" "$vy"; then
+    fail "click_item clicked for the smoke row at the vgs row's centre"
+  else
+    ok "click_item clicks nothing at a point the smoke row does not report the pointer over"
+  fi
+else
+  fail "the vgs row's geometry is unreadable for the click control: ${vgs_rect:-failed}"
+fi
 
 # An installed package's own file for a target that runs code is dropped
 # and the template renders in its place: the target is written and the row

@@ -322,6 +322,32 @@ click_centre() {
   read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
   click "$cx" "$cy"
 }
+# click_item HOST_KEY ID TYPE TEXT [X Y]: one click on the first visible,
+# enabled control TYPE reading TEXT under an instance, at its centre or at
+# (X, Y), once the control reports the pointer over that point. The
+# compositor routes a click by where it has placed the surface, which can
+# trail the layout the probe reads after the surface resizes, so a click
+# at the probe's coordinates alone can land on a neighbour. The pointer
+# moves there every 100 ms, one pixel apart so each move is a motion, for
+# up to 5 s, and the click follows two readings in a row, so a reading
+# taken before the move reached the shell never decides it. Returns 1,
+# with no click, when the control is absent or never reports the pointer.
+click_item() { # HOST_KEY ID TYPE TEXT [X Y]
+  local rect x y px hovered="" held=0 i
+  rect="$(ipc smoke itemGeometry "$1" "$2" "$3" "$4")" && [[ $rect != absent ]] || return 1
+  if [[ $# -ge 6 ]]; then x="$5"; y="$6"
+  else read -r x y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect") || return 1
+  fi
+  for i in $(seq 1 50); do
+    px=$((x + i % 2))
+    hover "$px" "$y" || return 1
+    hovered="$(ipc smoke itemHovered "$1" "$2" "$3" "$4")" || return 1
+    if [[ $hovered == true ]]; then held=$((held + 1)); else held=0; fi
+    if [[ $held -ge 2 ]]; then click "$px" "$y"; return; fi
+    sleep 0.1
+  done
+  return 1
+}
 
 # Latency from the runner's exec to the first bar surface with a client,
 # polled every 10 ms from the compositor's layer list, which answers in a
@@ -339,6 +365,42 @@ done
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
 ipc() {
   "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
+}
+
+# The theme runner's jobs as [verb, name, waiters] rows, from the lending
+# record of the shell IPC_FN reaches (default ipc).
+theme_jobs() { # [IPC_FN]
+  "${1:-ipc}" shell lent | python3 -c 'import json,sys; print(json.dumps([[j["verb"], j["name"], j["waiters"]] for j in json.load(sys.stdin)["theme"]["jobs"]]))'
+}
+# Whether the shell holds the theme lock, read once: `idle` when its first
+# plugin scan has ended and its theme runner then holds no job;
+# `scan=pending` before that scan ends; else the runner's jobs.
+# Registry.qml marks a scan done and emits scanFinished in one handler, and
+# shell.qml queues the follow on that signal, so no reply lands between
+# the two; the runner is the shell's one theme-lock holder, so `idle` means
+# no follow runs or waits. The scan is read first; a scan ending between the two reads
+# shows its follow as a job. A later scan in flight shows no job, so a row
+# that rescans reads the rescan's own effect before it asks.
+theme_state() { # [IPC_FN]
+  local via="${1:-ipc}" scanned jobs
+  scanned="$("$via" shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanned"])')" || return
+  if [[ $scanned != True ]]; then echo "scan=pending"; return; fi
+  jobs="$(theme_jobs "$via")" || return
+  if [[ $jobs == '[]' ]]; then echo idle; else printf '%s\n' "$jobs"; fi
+}
+# theme_state polled every 200 ms until `idle`, for up to 20 s, since an
+# apply lasts past expect_poll's 5 s when a target's hook runs; the last
+# answer otherwise. A row runs a `vgsh theme` command only once the shell
+# is idle: a command started under the shell's follow is refused
+# reason=busy, the product's answer, which a retry would hide.
+theme_idle() { # [IPC_FN]
+  local state=""
+  for _ in $(seq 1 100); do
+    state="$(theme_state "$@")" || return
+    [[ $state == idle ]] && { echo idle; return; }
+    sleep 0.2
+  done
+  printf '%s\n' "$state"
 }
 
 up=false

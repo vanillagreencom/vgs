@@ -110,9 +110,45 @@ else
 fi
 
 installed_apply_vgs() {
-  "${shell_env[@]}" PATH="$signal_shim:$shim:$(dirname -- "$node_bin"):$PATH" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$installed_bin" theme apply vgs >/dev/null || return 1
-  printf 'ok\n'
+  local err status=0
+  err="$("${shell_env[@]}" PATH="$signal_shim:$shim:$(dirname -- "$node_bin"):$PATH" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$installed_bin" theme apply vgs 2>&1 >/dev/null)" || status=$?
+  if [[ $status == 0 ]]; then echo ok; else printf 'exit=%s %s\n' "$status" "${err%%$'\n'*}"; fi
 }
+# The first scan queues the theme follow, which holds the theme lock while
+# it runs, and ping answers before that scan ends. An apply started under
+# the follow is refused busy, the product's answer, so the row waits for
+# the installed shell to go idle and never retries the apply.
+# Controls for the wait's two reads, against stand-in shell replies: a
+# shell that answers before its first scan ends holds no job yet and is
+# not idle, and a follow queued at the scan's end keeps it busy.
+stand_in_scanned="" stand_in_jobs=""
+stand_in_shell() { # the IPC replies of a shell in the stand-in state
+  case "$1 $2" in
+    "shell listPlugins") printf '{"scanned": %s}\n' "$stand_in_scanned" ;;
+    "shell lent") printf '{"theme": {"jobs": %s}}\n' "$stand_in_jobs" ;;
+    *) return 1 ;;
+  esac
+}
+# LABEL | scanned | jobs | theme_state's answer
+wait_rows=(
+  "a shell whose first scan runs|false|[]|scan=pending"
+  "a shell whose follow runs|true|[{\"verb\": \"follow\", \"name\": null, \"started\": true, \"waiters\": 0}]|[[\"follow\", null, 0]]"
+  "a shell with its scan ended and no job|true|[]|idle"
+)
+for row in "${wait_rows[@]}"; do
+  IFS='|' read -r label stand_in_scanned stand_in_jobs want <<<"$row"
+  expect "the wait reads $label" "$want" theme_state stand_in_shell
+done
+expect "the installed shell's startup follow ends" idle theme_idle
+# Control: the apply with no wait, under the lock a stand-in holds as the
+# follow does, is refused busy, and the row's apply check fails on it.
+exec {startup_lock}>>"$home/.config/vgs/theme.lock"
+if flock -n "$startup_lock"; then
+  expect "an apply under the held theme lock is refused busy" "exit=75 vgsh: refused: theme=vgs reason=busy" installed_apply_vgs
+else
+  fail "the stand-in could not take the theme lock once the installed shell was idle"
+fi
+exec {startup_lock}>&-
 expect "theme apply runs from the non-writable installed prefix" ok installed_apply_vgs
 if calls="$(read_only_prefix_signal_calls "$signal_log")" && [[ -z $calls ]]; then
   ok "the installed prefix row called no process-signalling command"

@@ -37,6 +37,8 @@ guard_pkg="$home/.config/vgs/themes/guardfollow"
 guard_doc() { printf '{ "schemaVersion": 1, "name": "guardfollow", "tokens": { "palette": { "accent": "%s" } } }\n' "$1" >"$guard_pkg/theme.json"; }
 same_bytes() { cmp -s -- "$1" "$2" && echo same || echo differ; }
 scanned_at() { "${shell_env[@]}" qs ipc --pid "$1" call shell listPlugins 2>/dev/null | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanned"])'; }
+# The unguarded qs's reply to an IPC call, for theme_idle.
+unguarded_call() { "${shell_env[@]}" qs ipc --pid "$unguarded_pid" call "$@" 2>/dev/null | tail -n 1; }
 # Start a qs on SHELL_DIR, logging to LOG, set unguarded_pid, and pass the
 # row NAME once it answers that it is unguarded.
 start_unguarded() { # LOG SHELL_DIR NAME
@@ -71,6 +73,9 @@ if [[ $(grep -c -F -- "$gate" "$guard_mutant/shell/shell.qml") == 1 ]]; then
   start_unguarded "$sandbox/guard-mutant.log" "$guard_mutant/shell" "the ungated mutant started over the same due follow is unguarded"
   expect_poll "the ungated mutant's scan completes" True scanned_at "$unguarded_pid"
   expect_poll "the ungated mutant follows the changed package" same same_bytes "$guard_pkg/theme.json" "$theme_file"
+  # The mutant's follow holds the theme lock past the file it wrote, and
+  # stopping qs leaves its runner to finish, so the apply below waits.
+  expect "the ungated mutant's follow ends" idle theme_idle unguarded_call
   kill -TERM "$unguarded_pid" 2>/dev/null || true
 else
   fail "the follow gate's text occurs once in $guard_mutant/shell/shell.qml"

@@ -81,6 +81,15 @@ Scope {
         return found;
     }
 
+    // The first visible, enabled item named `type` whose `text` is `text`
+    // under an instance, or null.
+    function textItem(hostKey, id, type, text) {
+        const item = root.instance(hostKey, id);
+        if (item === null) return null;
+        const found = root.descendants(item).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
+        return found === undefined ? null : found;
+    }
+
     function fieldOf(panel, id, key) {
         return descendants(panel).find(item => item.pluginId === id && item.key === key && typeof item.apply === "function") || null;
     }
@@ -390,10 +399,15 @@ Scope {
         // The box of the first visible, enabled item named `type` whose
         // `text` is `text`, in screen coordinates, so a row can click it.
         function itemGeometry(hostKey: string, id: string, type: string, text: string): string {
-            const item = root.instance(hostKey, id);
-            if (item === null) return "absent";
-            const found = root.descendants(item).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
-            return root.geometry(found === undefined ? null : found);
+            return root.geometry(root.textItem(hostKey, id, type, text));
+        }
+        // Whether that item reports the pointer over it: "true", "false",
+        // or "absent" with no such item. The compositor routes a click by
+        // where it has placed the surface, which can trail the layout
+        // itemGeometry reads, so a row clicks once this reads "true".
+        function itemHovered(hostKey: string, id: string, type: string, text: string): string {
+            const found = root.textItem(hostKey, id, type, text);
+            return found === null ? "absent" : String(found.hovered === true);
         }
         // The same for the first visible, enabled item named `type` whose
         // `label` is `label`, for an icon button, which draws no text.
