@@ -34,7 +34,8 @@
 #                                  show one package's or the user folder's image, on one output only, or on every output
 #   vgsh theme background [--json] list [--all]
 #                                  the applied package's background images, or every package's and the user folder's
-#   vgsh theme add [<git url>]     clone, judge and install one theme package; without a url, ask for it on a terminal
+#   vgsh theme add [<git url>]     clone, judge and install one theme package; without a url, ask for it on a terminal,
+#                                  then offer to apply the new package
 #   vgsh theme update [--yes] <name>
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -212,11 +213,13 @@
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>, remove without a
 # question: add asks for a missing url as plugin add does, stages the clone,
 # lands it under its theme.json name once the theme judge accepts it and
-# refuses an occupied name and the reserved `vgs`; update asks, and takes
-# --yes, as plugin update does, refuses a modified checkout and rolls back
-# a version the judge refuses, and a version it accepts follows as
-# `theme follow` does for that package, its line last and its exit status
-# update's; remove deletes only an installed package, never a shipped one.
+# refuses an occupied name and the reserved `vgs`; when add asked for the
+# URL, it prints the apply command and asks whether to run it. A URL on the
+# command line keeps add non-interactive. update asks, and takes --yes, as
+# plugin update does, refuses a modified checkout and rolls back a version
+# the judge refuses, and a version it accepts follows as `theme follow`
+# does for that package, its line last and its exit status update's; remove
+# deletes only an installed package, never a shipped one.
 # Each holds the theme lock while it changes the package, update through
 # its question too; a held lock is reason=busy.
 # docs/architecture/theme-install.md.
@@ -1104,6 +1107,7 @@ theme_stage() { # KIND
 
 theme_add() { # URL
   local url="$1" name target line
+  theme_added=""
   mkdir -p -- "$user_themes"
   theme_stage add
   git_or_refuse "clone=$url" clone --quiet --no-recurse-submodules -- "$url" "$stage/package"
@@ -1116,6 +1120,25 @@ theme_add() { # URL
   line="ok added=$name path=$target"
   [[ -d $root/themes/$name ]] && line+=" shadows=$root/themes/$name"
   echo "$line"
+  theme_added="$name"
+}
+
+# After an interactive theme add: show the apply command and, on a yes,
+# run it through the same judged path a user would run by hand.
+offer_theme_apply() { # NAME
+  local name="$1" status=0
+  [[ -n $name ]] || return 0
+  printf 'apply:%s\n' "$(printf ' %q' vgsh theme apply "$name")"
+  # shellcheck source=lib/tui.sh
+  source "$root/bin/lib/tui.sh" || refuse 1 "library=missing path=$root/bin/lib/tui.sh"
+  vgs_tui_confirm "Apply theme $name now?" --default=false || status=$?
+  case "$status" in
+    0) ;;
+    1 | 130) return 0 ;;
+    *) refuse 1 "apply-prompt=failed exit=$status" ;;
+  esac
+  exec 9>&- || true
+  "$self" theme apply "$name"
 }
 
 theme_update() { # NAME
@@ -1630,9 +1653,11 @@ case "$cmd" in
         if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         arg="${1:-}"
-        if [[ -z $arg && $sub == add ]]; then arg="$(ask_url theme)" || exit $?; fi
+        prompted=0
+        if [[ -z $arg && $sub == add ]]; then arg="$(ask_url theme)" || exit $?; prompted=1; fi
         if [[ -z $arg ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
         "theme_$sub" "$arg"
+        if [[ $sub == add && $prompted == 1 ]]; then offer_theme_apply "$theme_added"; fi
         ;;
       outdated)
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi

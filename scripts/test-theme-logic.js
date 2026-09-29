@@ -404,15 +404,6 @@ function verify(judge) {
     assert.equal(defaults.name, "vgs");
     for (const [token, want] of DEFAULTS)
         assert.deepEqual(at(defaults.values, token), want, token);
-    assert.equal(judge.formatBytes(0), "0 B");
-    assert.equal(judge.formatBytes(42), "42 B");
-    assert.equal(judge.formatBytes(999_999), "999999 B");
-    assert.equal(judge.formatBytes(1_000_000), "1 MB");
-    assert.equal(judge.formatBytes(1_450_000), "1.5 MB");
-    assert.equal(judge.formatBytes(12_582_912), "12.6 MB");
-    assert.equal(judge.formatBytes(-1), "");
-    assert.equal(judge.formatBytes(1.5), "");
-
     assert.deepEqual(plain(judge.READABILITY_TEXT_ROLES), READABILITY_ROLES);
     assert.deepEqual(plain(judge.READABILITY_SURFACES), READABILITY_SURFACES);
     assert.equal(judge.READABILITY_FLOOR, 4.5);
@@ -708,7 +699,6 @@ const CONTROLS = [
     ["catalog archive", "if (!isPackageName(imagery.archive))", "if (false)"],
     ["catalog size integer", "!Number.isSafeInteger(imagery.size) || ", ""],
     ["catalog size positive", " || imagery.size <= 0", ""],
-    ["format bytes rounds to one decimal megabyte", "var rounded = Math.round(bytes / 100000) / 10;", "var rounded = bytes / mb;"],
     ["catalog sha256", "if (typeof imagery.sha256 !== \"string\" || !SHA256_PATTERN.test(imagery.sha256))", "if (false)"],
     ["catalog entry files", "if (!isPlainObject(files))\n        return refusal(\"package\", \"\", \"got=\" + JSON.stringify(files));\n    var accepted", "if (false)\n        return refusal(\"package\", \"\", \"got=\" + JSON.stringify(files));\n    var accepted"],
     ["catalog entry installed", "terminalJson: files.terminalJson, shipped: false });", "terminalJson: files.terminalJson, shipped: true });"],

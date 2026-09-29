@@ -289,16 +289,15 @@ click_row() {
 panel_label() { ipc smoke itemTexts panel vgs.themes Label | python3 -c 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
 panel_open() { [[ $(ipc smoke readInstance panel vgs.themes packages) != absent ]] && echo open || echo closed; }
 scroll_themes() { ipc smoke scrollTo panel vgs.themes "$1" >/dev/null; }
-# click_button TEXT: one click on the centre of the enabled button TEXT.
+# click_button TEXT: one click_item on the enabled button TEXT, which is
+# waited for for up to 5 s while a running action disables the buttons.
 click_button() {
-  local rect=absent
+  local _
   for _ in $(seq 1 25); do
-    rect="$(ipc smoke itemGeometry panel vgs.themes Button "$1")" && [[ $rect != absent ]] && break
+    [[ $(ipc smoke itemGeometry panel vgs.themes Button "$1") != absent ]] && break
     sleep 0.2
   done
-  [[ $rect != absent ]] || return 1
-  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
-  click "$cx" "$cy"
+  click_item panel vgs.themes Button "$1"
 }
 # A click the panel does not cover: the lower-left quarter of the screen,
 # away from the right section the panel opens under.
@@ -328,6 +327,7 @@ expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 catalog_installed="$sandbox/catalog-smoke-installed"
 catalog_wallpapers="$sandbox/catalog-smoke-wallpapers"
+catalog_wallpapers_gate="$sandbox/catalog-smoke-wallpapers-gate"
 catalog_installed_state() { [[ -e $catalog_installed ]] && echo installed || echo absent; }
 catalog_wallpapers_state() { [[ -e $catalog_wallpapers ]] && echo installed || echo absent; }
 wait_catalog_installed() { local _; for _ in $(seq 1 100); do [[ $(catalog_installed_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_installed_state; }
@@ -350,6 +350,8 @@ case \${2:-} in
     ;;
   wallpapers)
     if [[ \${4:-} == catalog-smoke ]]; then
+      printf '{\"state\":\"downloading\",\"bytes\":3000000,\"total\":12582912}\n'
+      for _ in \$(seq 1 100); do [[ -e $(printf %q "$catalog_wallpapers_gate") ]] && break; sleep 0.2; done
       touch -- $(printf %q "$catalog_wallpapers")
       printf '{\"state\":\"ok\",\"theme\":\"catalog-smoke\",\"wallpapers\":\"installed\",\"images\":1,\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"reason\":null}\n'
       exit 0
@@ -360,12 +362,12 @@ mkdir -p -- "$installed/light"
 cp -- "$repo/themes/light/theme.json" "$repo/themes/light/terminal.json" "$installed/light/"
 click_centre "$themes_key" vgs.themes || fail "the click on the themes widget failed"
 expect_poll "a click on the widget opens the themes panel" open panel_open
-expect_poll "the panel lists every package with its source and badges" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
+expect_poll "the panel lists every package with its source and badges" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
 expect "an accepted package's row draws its palette" '[7, true]' theme_swatch smoke installed '#12ab34ff'
 expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, name-mismatch" '#12ab34ff'
 expect "a shadowed package's row draws no swatch" '[0, false]' theme_swatch light shipped '#12ab34ff'
-expect_poll "the panel lists a catalog row with its mode, wallpaper size and install action" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"]]' theme_row catalog-smoke
-expect "the catalog row draws its palette" '[7, true]' theme_swatch catalog-smoke "dark, wallpapers 12.6 MB" '#3366ffff'
+expect_poll "the panel lists a catalog row with its mode, wallpaper size and install action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"]]' theme_row catalog-smoke
+expect "the catalog row draws its palette" '[7, true]' theme_swatch catalog-smoke "dark, wallpapers 13 MB" '#3366ffff'
 
 panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
 cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"
@@ -391,7 +393,7 @@ if [[ $(grep -c -F -- "$install_call" "$panel_qml") == 1 ]]; then
       && click_button "Install" \
       && expect "the catalog install control leaves the catalog uninstalled" absent catalog_installed_state
     panel_source "the restored catalog install action" "$sandbox/ThemesPanel.qml.real" \
-      && expect_poll "the restored catalog install action lists the row" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"]]' theme_row catalog-smoke
+      && expect_poll "the restored catalog install action lists the row" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"]]' theme_row catalog-smoke
   else
     fail "the catalog install control could not be written"
   fi
@@ -403,12 +405,14 @@ scroll_themes 10000
 click_button "Install" || fail "the click on the catalog Install button failed"
 expect "the catalog Install button reaches the theme capability" installed wait_catalog_installed
 expect_poll "the panel is open after catalog install" open panel_open
-expect_poll "the catalog install changes the row to an installed catalog theme without wallpapers" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+expect_poll "the catalog install changes the row to an installed catalog theme without wallpapers" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
 scroll_themes 10000
 click_button "Download wallpapers" || fail "the click on the catalog wallpaper button failed"
+expect_poll "the catalog wallpaper download shows the browser progress text" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke
+touch -- "$catalog_wallpapers_gate"
 expect "the catalog Download wallpapers button reaches the theme capability" installed wait_catalog_wallpapers
 expect_poll "the panel is open after catalog wallpaper download" open panel_open
-expect_poll "the catalog wallpaper download removes the download action" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Installed"]]' theme_row catalog-smoke
+expect_poll "the catalog wallpaper download removes the download action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed"]]' theme_row catalog-smoke
 scroll_themes 0
 forget_record
 click_button "Add from URL" || fail "the click on Add from URL failed"

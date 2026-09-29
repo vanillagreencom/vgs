@@ -6,8 +6,8 @@ A bar button that opens a panel listing every theme package, a full-screen theme
 
 - A Themes button for the bar. The shipped bar does not show it: `bin/vgsh plugin enable vgs.themes` adds it to the right section.
 - One row per package, shipped and installed, with its colours, the package the shell displays, and a package that is refused or hidden by an installed one of the same name.
-- A Catalog section with every catalog theme, its colours, mode and wallpaper archive size in MB. Install adds the theme definition. Download wallpapers fetches the archive for an installed catalog theme that has no wallpapers.
-- A catalog row shows Installing or Downloading wallpapers while that action runs. A click on an installed catalog row applies it.
+- A Catalog section with every catalog theme, its colours, mode and the same wallpaper archive size text as the browser. Install adds the theme definition. Download wallpapers fetches the archive for an installed catalog theme that has no wallpapers.
+- A catalog row shows Installing while an install runs. It shows the browser's progress text while a wallpaper download runs. A click on an installed catalog row applies it.
 - Add from URL opens the floating TUI for `bin/vgsh theme add`, asks for a git URL, then offers to apply the new theme.
 - A click on a row applies that package, as `bin/vgsh theme apply <name>` does.
 - A full-screen theme browser opens on `SUPER+T`. It lists shipped, installed and catalog themes as angled cards. Type to filter. Select All or Installed. Press Enter, or click the selected card, to install a catalog theme when needed and apply it.

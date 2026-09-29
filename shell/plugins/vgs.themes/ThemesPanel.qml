@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "BrowserLogic.js" as BrowserLogic
 
 // The themes panel: the current wallpaper with a step to the next or the
 // previous one, then every theme package the runner lists, each with its
@@ -35,6 +36,8 @@ Item {
     property var refusal: null
     // The current wallpaper's file name, "" while no image is current.
     readonly property string wallpaperName: wallpaper.path === "" ? "" : wallpaper.path.slice(wallpaper.path.lastIndexOf("/") + 1)
+    // The running wallpaper download's progress line, "" while none runs.
+    readonly property string downloadProgress: BrowserLogic.progressText(last.downloading)
     // Whether a wallpaper step this instance asked for is still running.
     property bool stepping: false
     // Why the last wallpaper step failed, "" when it did not; shown until
@@ -114,7 +117,7 @@ Item {
     }
 
     function wallpaperText(entry) {
-        return entry.imagery === null ? "no wallpapers" : "wallpapers " + Theme.formatBytes(entry.imagery.size);
+        return entry.imagery === null ? "no wallpapers" : "wallpapers " + BrowserLogic.sizeText(entry.imagery.size);
     }
 
     function catalogActionLabel(entry) {
@@ -129,13 +132,10 @@ Item {
         return lines;
     }
 
-    function catalogBusy(entry) {
-        return (catalogAction === entry.name && catalogActionKind !== "") || (last.downloading !== null && last.downloading.name === entry.name);
-    }
-
     function catalogBusyLabel(entry) {
         if (catalogAction === entry.name && catalogActionKind === "install") return "Installing";
-        if ((catalogAction === entry.name && catalogActionKind === "wallpapers") || (last.downloading !== null && last.downloading.name === entry.name)) return "Downloading wallpapers";
+        if ((catalogAction === entry.name && catalogActionKind === "wallpapers") || (last.downloading !== null && last.downloading.name === entry.name))
+            return downloadProgress === "" ? "Downloading wallpapers" : downloadProgress;
         return "";
     }
 
@@ -180,6 +180,13 @@ Item {
     }
 
     WallpaperState { id: wallpaper }
+
+    Timer {
+        interval: BrowserLogic.PROGRESS_POLL_MS
+        repeat: true
+        running: root.catalogActionKind === "wallpapers" || root.last.downloading !== null
+        onTriggered: root.readLast()
+    }
 
     // The lines the row of package `name` shows for the last result: the
     // result's own refusal reason, then every target that did not land and
