@@ -52,11 +52,12 @@
 # started any other way is never reached. `plugin validate`, `plugin add`,
 # `plugin update` and `plugin remove` work with no shell running.
 #
-# `restart` refuses while the session is locked, because the shell owns the
-# lock client. Otherwise it stops the pid in the instance lock, waits for
-# that lock to free and asks Hyprland to run `vgsh run`, so the new shell
-# inherits the session environment. It prints the new pid once that shell
-# answers as the guarded instance.
+# `restart` checks the same floor first, so below it restart refuses as run
+# does and leaves the running shell alone. It refuses while the session is
+# locked, because the shell owns the lock client. Otherwise it stops the pid
+# in the instance lock, waits for that lock to free and asks Hyprland to run
+# `vgsh run`, so the new shell inherits the session environment. It prints
+# the new pid once that shell answers as the guarded instance.
 #
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
@@ -267,17 +268,21 @@ version_at_least() { # HAVE NEED: dotted decimal integers
 # Refuses with exit 78 on the first tool that is absent (have=none), whose
 # probe fails or prints no version the regex reads (have=unknown), or whose
 # version is below its floor. Hyprland answers through its socket, so no
-# running Hyprland is have=unknown too.
+# running Hyprland is have=unknown too. Only the probe's stdout is read, so
+# a warning a tool prints on stderr ahead of its version never hides it;
+# hyprctl prints its connection error on stdout.
 preflight() {
-  local tool need pattern probe out have
+  local tool need pattern probe out have status
   local -a argv
   while read -r tool need pattern probe; do
     [[ -n $tool ]] || continue
     read -ra argv <<<"$probe"
     command -v -- "${argv[0]}" >/dev/null ||
       refuse 78 "preflight=$tool have=none need=$need" "${argv[0]} is not on PATH"
-    out="$("${argv[@]}" 2>&1 </dev/null)" ||
-      refuse 78 "preflight=$tool have=unknown need=$need" "$probe failed:" "$out"
+    out="$("${argv[@]}" 2>/dev/null </dev/null)" || {
+      status=$?
+      refuse 78 "preflight=$tool have=unknown need=$need" "$probe exited $status:" "$out"
+    }
     [[ $out =~ $pattern ]] ||
       refuse 78 "preflight=$tool have=unknown need=$need" "$probe printed no version:" "$out"
     have="${BASH_REMATCH[1]}"
@@ -696,6 +701,9 @@ case "$cmd" in
     if [[ $# -gt 0 ]]; then
       refuse 2 "argument=$1" "restart takes no arguments"
     fi
+    # Before the stop: the relaunched `vgsh run` would refuse below the
+    # floor and leave no shell.
+    preflight
     shell_restart
     ;;
   pid)

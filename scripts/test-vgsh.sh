@@ -27,13 +27,15 @@ trap 'cleanup_started_pids; rm -rf -- "${tmp:?}"' EXIT
 # The stub answers `qs ipc ... call <target> <fn> ...` from STUB_REPLY and
 # STUB_STATUS, prints STUB_NOISE on stdout before the reply (as qs does with
 # its log) and STUB_STDERR on stderr after it. `qs --version` prints
-# STUB_QS_VERSION and exits STUB_QS_VERSION_EXIT. Invoked as the shell (no
+# STUB_QS_STDERR on stderr, then STUB_QS_VERSION, and exits
+# STUB_QS_VERSION_EXIT. Invoked as the shell (no
 # `ipc` argument) it records its pid, VGSH_RUNNER_PID, the file-watcher
 # environment and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
 # process and the inherited instance lock alive for restart rows.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
 if [[ ${1:-} == --version ]]; then
+  [[ -n ${STUB_QS_STDERR:-} ]] && printf '%s\n' "$STUB_QS_STDERR" >&2
   printf '%s\n' "${STUB_QS_VERSION-Quickshell 0.3.1 (revision stub, distributed by test-vgsh)}"
   exit "${STUB_QS_VERSION_EXIT:-0}"
 fi
@@ -349,6 +351,7 @@ done <<'ROWS'
 run starts the shell with every tool at or above its floor|full||0|
 Quickshell 0.3.0 is below the floor|full|STUB_QS_VERSION=Quickshell 0.3.0 (revision x)|78|vgsh: refused: preflight=quickshell have=0.3.0 need=0.3.1
 Quickshell 0.10.0 meets 0.3.1: components compare as numbers|full|STUB_QS_VERSION=Quickshell 0.10.0|0|
+a warning qs prints on stderr ahead of its version is not read|full|STUB_QS_STDERR=qt.qpa: warning|0|
 a Quickshell version line with no number is unknown|full|STUB_QS_VERSION=Quickshell git|78|vgsh: refused: preflight=quickshell have=unknown need=0.3.1
 a failed qs --version is unknown|full|STUB_QS_VERSION_EXIT=1|78|vgsh: refused: preflight=quickshell have=unknown need=0.3.1
 no qs on PATH is none|no-qs||78|vgsh: refused: preflight=quickshell have=none need=0.3.1
@@ -363,14 +366,16 @@ no git on PATH is none|no-git||78|vgsh: refused: preflight=git have=none need=pr
 ROWS
 
 # Must-fail controls, one per rule of the preflight, each on a copy of
-# bin/vgsh with NEEDLE replaced once by REPLACEMENT: the row the rule
-# decides must no longer hold on the copy.
-pre_control() { # NAME KIND ASSIGNMENT WANT_EXIT WANT_ERR NEEDLE REPLACEMENT [NEEDLE REPLACEMENT...]
-  local name="$1" kind="$2" assignment="$3" want_exit="$4" want_err="$5" copy="$tmp/pre-mutant-$pre_case"
-  shift 5
+# bin/vgsh with each NEEDLE replaced once by its REPLACEMENT: the row the
+# rule decides must no longer hold on the copy. pre_copy prints the copy.
+pre_copies=0
+pre_copy() { # NEEDLE REPLACEMENT [NEEDLE REPLACEMENT...]
+  local copy
+  pre_copies=$((pre_copies + 1))
+  copy="$tmp/pre-mutant-$pre_copies"
   mkdir -p -- "$copy/bin" "$copy/shell"
   cp -- "$repo/bin/vgsh" "$copy/bin/vgsh"
-  if ! python3 - "$copy/bin/vgsh" "$@" <<'PY'
+  python3 - "$copy/bin/vgsh" "$@" <<'PY' || return 1
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 text = original = path.read_text()
@@ -383,19 +388,24 @@ if text == original:
     raise SystemExit("preflight-control: mutation changed nothing")
 path.write_text(text)
 PY
-  then
-    fail "the $name control could not edit its copy"
-    return 0
-  fi
-  pre_run "$copy/bin/vgsh" "$kind" "$assignment"
+  printf '%s\n' "$copy/bin/vgsh"
+}
+pre_control() { # NAME KIND ASSIGNMENT WANT_EXIT WANT_ERR NEEDLE REPLACEMENT [NEEDLE REPLACEMENT...]
+  local name="$1" kind="$2" assignment="$3" want_exit="$4" want_err="$5" copy
+  shift 5
+  if ! copy="$(pre_copy "$@")"; then fail "the $name control could not edit its copy"; return 0; fi
+  pre_run "$copy" "$kind" "$assignment"
   if pre_held "$want_exit" "$want_err"; then fail "the $name control still holds: exit=$pre_status stderr=[$pre_err]"; else ok "the $name control fails its row"; fi
 }
+probe_line='out="$("${argv[@]}" 2>/dev/null </dev/null)"'
 pre_control "floor row" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   'hyprland   0.56    "version"' 'hyprland   present "version"'
 pre_control "numeric compare" full "STUB_QS_VERSION=Quickshell 0.10.0" 0 "" \
   $'    ((h > w)) && return 0\n' ''
 pre_control "failed probe" full STUB_HYPR_VERSION_EXIT=4 78 "vgsh: refused: preflight=hyprland have=unknown need=0.56" \
-  'out="$("${argv[@]}" 2>&1 </dev/null)" ||' 'out="$("${argv[@]}" 2>&1 </dev/null)" || true ||'
+  "$probe_line || {" "$probe_line || true || {"
+pre_control "stdout only" full "STUB_QS_STDERR=qt.qpa: warning" 0 "" \
+  "$probe_line" 'out="$("${argv[@]}" 2>&1 </dev/null)"'
 pre_control "unread version" full "STUB_QS_VERSION=Quickshell git" 78 "vgsh: refused: preflight=quickshell have=unknown need=0.3.1" \
   '[[ $out =~ $pattern ]] ||' '[[ $out =~ $pattern ]] || true ||'
 pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none need=present" \
@@ -403,6 +413,7 @@ pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none n
 pre_control "preflight first" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   $'    preflight\n    # The shell watches' '    # The shell watches' \
   '    VGSH_RUNNER_PID=$$ QS_DISABLE' $'    preflight\n    VGSH_RUNNER_PID=$$ QS_DISABLE'
+
 # Restart stops only the recorded pid, waits for the lock to free and asks
 # Hyprland to launch the new runner so it inherits the session environment.
 cmd="$(printf '%q run' "$repo/bin/vgsh")"
@@ -468,6 +479,29 @@ run_restart_capture "$rt_restart_unreachable" "$tmp/record-unreachable-new" "$di
 if [[ $restart_status == 69 && -z $restart_out && $restart_err == "vgsh: refused: hyprland=unreachable" ]]; then ok "restart refuses when Hyprland is unreachable"; else fail "unreachable restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ -d /proc/$unreachable_pid ]]; then ok "an unreachable Hyprland leaves the shell running"; else fail "unreachable restart stopped pid=$unreachable_pid"; fi
 if [[ ! -e $dispatch ]]; then ok "an unreachable Hyprland never dispatches"; else fail "unreachable restart dispatched: $(cat "$dispatch")"; fi
+
+# Below the floor restart refuses as run does, before it stops the shell.
+# restart_below LABEL BIN sets below_pid and below_held; the control's copy
+# of bin/vgsh has no preflight call in restart and must not hold.
+restart_below() { # LABEL BIN
+  local rt="$tmp/rt-restart-below-$1" dispatch
+  dispatch="$rt/dispatch"
+  start_fake_shell "restart below-floor fixture starts a shell" "$rt" "$rt/record-old"
+  below_pid="$fake_pid"
+  # A refused dispatch ends a restart that got past the floor at once,
+  # rather than after its wait for a runner that refused to start.
+  RESTART_BIN="$2" run_restart_capture "$rt" "$rt/record-new" "$dispatch" false STUB_HYPR_VERSION=0.55.9 STUB_HYPR_REPLY=nope
+  below_held=false
+  if [[ $restart_status == 78 && -z $restart_out && $restart_err == "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" && -d /proc/$below_pid && ! -e $dispatch ]]; then below_held=true; fi
+}
+restart_below real "$repo/bin/vgsh"
+if [[ $below_held == true ]]; then ok "restart below the floor exits 78, leaves the shell running and never dispatches"; else fail "restart below floor: exit=$restart_status out=[$restart_out] stderr=[$restart_err] old_live=$([[ -d /proc/$below_pid ]] && echo yes || echo no)"; fi
+if restart_copy="$(pre_copy $'    preflight\n    shell_restart\n' $'    shell_restart\n')"; then
+  restart_below mutant "$restart_copy"
+  if [[ $below_held == false ]]; then ok "the restart preflight control fails its row"; else fail "the restart preflight control still holds"; fi
+else
+  fail "the restart preflight control could not edit its copy"
+fi
 
 run_restart_capture "$rt_empty" "$tmp/record-not-running" "$tmp/dispatch-not-running" false
 if [[ $restart_status == 69 && -z $restart_out && $restart_err == "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock" ]]; then ok "restart with no shell exits 69"; else fail "restart not-running: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
