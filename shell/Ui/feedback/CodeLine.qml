@@ -3,12 +3,15 @@ import qs.Commons
 import qs.Ui
 
 // A command or path the reader copies: the text in the code role on a
-// sunken fill, wrapped anywhere so a long line shows whole, and a Copy
-// button, an `IconButton` of size `sm`, at its right edge. The text is
-// read-only and takes no focus. `copy()`, which the button calls, puts
-// `text` on the clipboard, emits `copied()` and shows a check mark on the
-// button for `codeLine.confirm` milliseconds. `copyLabel` is what a screen
-// reader and a tooltip say for the button.
+// sunken fill, wrapped anywhere so a long command shows whole. A single
+// line is placed by capital height on the box centre. Wrapped text is
+// top-aligned with CSS half-leading, so the top and bottom padding are
+// equal around the line boxes. The Copy button, an `IconButton` of size
+// `sm`, sits inside the padding at the top right. The text is read-only
+// and takes no focus. `copy()`, which the button calls, puts `text` on the
+// clipboard, emits `copied()` and shows a check mark on the button for
+// `codeLine.confirm` milliseconds. `copyLabel` is what a screen reader and
+// a tooltip say for the button.
 Rectangle {
     id: root
 
@@ -28,8 +31,8 @@ Rectangle {
         root.copied();
     }
 
-    implicitWidth: Theme.codeLine.paddingX + label.implicitWidth + Theme.codeLine.gap + button.implicitWidth + Theme.codeLine.paddingY
-    implicitHeight: Math.max(label.implicitHeight, button.implicitHeight) + 2 * Theme.codeLine.paddingY
+    implicitWidth: 2 * Theme.codeLine.padding + label.implicitWidth + Theme.codeLine.gap + button.implicitWidth
+    implicitHeight: 2 * Theme.codeLine.padding + Math.max(Math.max(1, label.lineCount) * label.lineBox, button.implicitHeight)
     radius: Theme.codeLine.radius
     color: Theme.codeLine.background
     border.width: Theme.codeLine.border
@@ -40,10 +43,10 @@ Rectangle {
         role: "code"
         text: root.text
         color: Theme.codeLine.foreground
-        x: Theme.codeLine.paddingX
+        x: Theme.codeLine.padding
+        y: lineCount <= 1 ? topForCapCenter(root.height) : Theme.codeLine.padding + halfLeading
         width: Math.max(0, button.x - Theme.codeLine.gap - x)
         wrapMode: Text.WrapAnywhere
-        anchors.verticalCenter: parent.verticalCenter
     }
 
     IconButton {
@@ -51,8 +54,8 @@ Rectangle {
         size: "sm"
         iconName: root.confirming ? "check" : "copy"
         label: root.copyLabel
-        x: root.width - width - Theme.codeLine.paddingY
-        anchors.verticalCenter: parent.verticalCenter
+        x: root.width - width - Theme.codeLine.padding
+        y: Theme.codeLine.padding
         onClicked: root.copy()
     }
 

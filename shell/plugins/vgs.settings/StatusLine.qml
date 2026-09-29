@@ -31,8 +31,8 @@ Column {
     }
 
     CodeLine {
-        x: Theme.field.paddingX
-        width: line.width - 2 * Theme.field.paddingX
+        x: Theme.field.paddingX + Theme.field.labelWidth + Theme.field.labelGap
+        width: line.width - x - Theme.field.paddingX
         visible: line.command !== ""
         text: line.command
         copyLabel: "Copy the command"

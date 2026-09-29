@@ -42,6 +42,7 @@ Singleton {
     readonly property var control: published.control
     readonly property var row: published.row
     readonly property var inset: published.inset
+    readonly property var stack: published.stack
     readonly property var surface: published.surface
     readonly property var divider: published.divider
     readonly property var focusRing: published.focusRing
@@ -62,6 +63,7 @@ Singleton {
     readonly property var tabs: published.tabs
     readonly property var listItem: published.listItem
     readonly property var sectionHeader: published.sectionHeader
+    readonly property var iconButton: published.iconButton
     readonly property var scrollArea: published.scrollArea
     readonly property var titleButton: published.titleButton
     readonly property var popover: published.popover

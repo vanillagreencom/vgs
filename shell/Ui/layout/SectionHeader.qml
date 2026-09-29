@@ -3,9 +3,10 @@ import qs.Commons
 import qs.Ui
 
 // The heading of one section of a panel: an eyebrow title and an optional
-// description under it, with the theme's space above and below. It spans
-// its parent, as a heading does, unless given a width; a surface that
-// insets its rows sets `leftPadding` and `rightPadding` to match.
+// description under it, with the theme's space below. `Section` owns the
+// space above. It spans its parent, as a heading does, unless given a
+// width; a surface that insets its rows sets `leftPadding` and
+// `rightPadding` to match.
 Column {
     id: root
 
@@ -17,7 +18,7 @@ Column {
 
     width: parent ? parent.width : implicitWidth
 
-    topPadding: Theme.sectionHeader.paddingTop
+    topPadding: 0
     bottomPadding: Theme.sectionHeader.paddingBottom
     spacing: Theme.sectionHeader.gap
 

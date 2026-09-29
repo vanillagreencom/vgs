@@ -15,10 +15,11 @@ import qs.Unit
 Item {
     id: root
     width: 300
-    height: 150
+    height: 220
 
     Rectangle { anchors.fill: parent; color: "black" }
     Label { id: body; text: "Plugin updates" }
+    Label { id: bodyTwo; text: "Plugin updates\nready"; y: 120 }
     Label { id: eyebrow; role: "eyebrow"; text: "Community registry"; y: 30 }
     Label { id: light; text: "Weight"; y: 60; font.weight: 300; font.variableAxes: ({ wght: 300 }); color: "white" }
     Label { id: heavy; text: "Weight"; y: 90; font.weight: 800; font.variableAxes: ({ wght: 800 }); color: "white" }
@@ -27,7 +28,7 @@ Item {
         model: Object.keys(Theme.text)
         Label { required property string modelData; role: modelData; text: "10" }
     }
-    Label { id: bar; role: "bar"; text: "10"; y: 120 }
+    Label { id: bar; role: "bar"; text: "10"; y: 170 }
     FontMetrics { id: barMetrics; font: bar.font }
 
     TestCase {
@@ -54,7 +55,7 @@ Item {
             // QFont keeps letter spacing to a sixteenth of a pixel.
             fuzzyCompare(eyebrow.font.letterSpacing, role.letterSpacing * role.size, 0.07);
             compare(eyebrow.font.capitalization, Font.AllUppercase);
-            compare(eyebrow.lineHeight, role.lineHeight);
+            compare(eyebrow.typography.lineHeight, role.lineHeight);
             compare(String(eyebrow.color), String(Qt.color(role.color)));
             compare(body.font.capitalization, Font.MixedCase);
             compare(String(body.color), String(Qt.color(Theme.text.body.color)));
@@ -83,7 +84,7 @@ Item {
                 { tag: "label", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
                 { tag: "button", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
                 { tag: "kbd", family: mono, size: 11, weight: 600, spacing: 0.02, uppercase: false, lineHeight: 1 },
-                { tag: "code", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.65 },
+                { tag: "code", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.5 },
                 { tag: "tooltip", family: mono, size: 11, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.3 },
                 { tag: "bar", family: mono, size: 12, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 }
             ];
@@ -101,7 +102,7 @@ Item {
             // QFont keeps letter spacing to a sixteenth of a pixel.
             fuzzyCompare(label.font.letterSpacing, data.spacing * data.size, 0.07);
             compare(label.font.capitalization, data.uppercase ? Font.AllUppercase : Font.MixedCase);
-            compare(label.lineHeight, data.lineHeight);
+            compare(label.typography.lineHeight, data.lineHeight);
         }
 
         // Every role of the table is a row above, so a role added without
@@ -111,8 +112,32 @@ Item {
         }
 
         function test_bar_line_box_is_the_font_height() {
-            compare(bar.lineHeightMode, Text.ProportionalHeight);
+            compare(bar.lineHeightMode, Text.FixedHeight);
+            compare(bar.lineHeight, bar.lineBox);
+            compare(bar.lineBox, Math.ceil(bar.fontHeight));
             fuzzyCompare(bar.implicitHeight, barMetrics.height, 1);
+        }
+
+        function test_every_role_line_box_is_whole_pixel() {
+            for (let i = 0; i < roles.count; i++) {
+                const label = roles.itemAt(i);
+                compare(label.lineBox, Math.round(label.lineBox), label.role);
+            }
+        }
+
+        function test_body_line_height_uses_font_size_multiple() {
+            const lineBox = Math.round(15 * 1.55);
+            compare(bodyTwo.lineHeightMode, Text.FixedHeight);
+            compare(bodyTwo.lineHeight, lineBox);
+            fuzzyCompare(bodyTwo.implicitHeight, 2 * lineBox, 1);
+        }
+
+        function test_measurements_read_back() {
+            verify(bodyTwo.halfLeading > 0, "body text has fixed leading");
+            fuzzyCompare(bar.halfLeading, 0, 0.1);
+            verify(eyebrow.capCentre > 0, "the cap centre is measured");
+            verify(eyebrow.opticalWidth < eyebrow.implicitWidth, "tracked text has a smaller optical width");
+            fuzzyCompare(eyebrow.topForCapCenter(Theme.badge.size.sm.height) + eyebrow.capCentre, Theme.badge.size.sm.height / 2, 1);
         }
 
         // expected-log: theme: font=No Such Family VGS unavailable; drawing JetBrains Mono -- the eyebrow names an absent family on purpose

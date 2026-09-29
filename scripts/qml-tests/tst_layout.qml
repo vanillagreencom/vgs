@@ -12,7 +12,7 @@ import qs.Unit
 Item {
     id: root
     width: 400
-    height: 400
+    height: 620
 
     ScrollArea { id: scroll; width: 100; height: 50; Column { Repeater { model: 10; Rectangle { width: 80; height: 20; color: "transparent" } } } }
     Tabs { id: tabs; model: ["Installed", "Available"]; y: 60 }
@@ -20,6 +20,29 @@ Item {
     ListItem { id: bare; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; y: 300 }
     SectionHeader { id: header; text: "Listed since"; description: "Sep 24"; width: 300; y: 150 }
     SectionHeader { id: inset; text: "Plugins"; description: "Every plugin the shell found"; leftPadding: Theme.row.paddingX; rightPadding: Theme.row.paddingX; width: 300; y: 330 }
+    Column {
+        id: sectionColumn
+        width: 300
+        y: 380
+        spacing: Theme.stack.group
+        Rectangle { id: beforeSection; width: parent.width; height: Theme.row.height; color: "transparent" }
+        Section {
+            id: section
+            title: "Status"
+            description: "Values from the plugin"
+            headerInset: Theme.row.paddingX
+            width: parent.width
+            Field { label: "One"; inline: true; width: parent.width; Label { role: "item"; text: "Ready" } }
+            Field { label: "Two"; inline: true; width: parent.width; Label { role: "item"; text: "Set" } }
+        }
+    }
+    Column {
+        id: firstSectionColumn
+        width: 300
+        y: 540
+        spacing: Theme.stack.group
+        Section { id: firstSection; title: "First"; width: parent.width; Field { label: "One"; inline: true; width: parent.width; Label { role: "item"; text: "Ready" } } }
+    }
     Surface { id: surface; level: "raised"; width: 100; height: 40; y: 220 }
     Divider { id: divider; width: 100; y: 270 }
     SignalSpy { id: clicks; target: row; signalName: "clicked" }
@@ -61,16 +84,17 @@ Item {
             verify(bare.implicitWidth > 100, "a populated row without a width is " + bare.implicitWidth + " wide");
         }
 
-        // The title and secondary lines draw at line height 1, so the pair's
-        // line boxes are their glyphs, and the pair sits on the icon's
-        // centre, which is the row's.
+        // The title and secondary lines draw with whole-pixel line boxes,
+        // so the pair sits on the icon's centre, which is the row's.
         function test_list_item_centres_its_lines_on_its_icon() {
             const icon = row.contentItem.children[0];
             const column = row.contentItem.children[1];
             const title = column.children[0];
             const secondary = column.children[1];
-            compare(title.lineHeight, 1);
-            compare(secondary.lineHeight, 1);
+            compare(title.role, "item");
+            compare(secondary.role, "itemHint");
+            compare(title.lineHeight, title.lineBox);
+            compare(secondary.lineHeight, secondary.lineBox);
             const top = title.mapToItem(row, 0, 0).y;
             const bottom = secondary.mapToItem(row, 0, secondary.height).y;
             const iconMid = icon.mapToItem(row, 0, icon.height / 2).y;
@@ -86,6 +110,7 @@ Item {
             const eyebrow = header.children[0];
             compare(eyebrow.role, "eyebrow");
             compare(eyebrow.text, "Listed since");
+            compare(header.topPadding, 0);
             // A padded header keeps its lines inside the padding.
             for (const line of inset.children) {
                 compare(line.x, inset.leftPadding);
@@ -93,6 +118,17 @@ Item {
             }
             compare(divider.height, Theme.divider.thickness);
             compare(String(divider.color), String(Qt.color(Theme.divider.color)));
+        }
+
+        function test_section_spacing_and_inset() {
+            const headerItem = section.children[0];
+            const rows = section.children[1];
+            compare(section.topPadding, Theme.stack.section - sectionColumn.spacing);
+            fuzzyCompare(headerItem.mapToItem(sectionColumn, 0, 0).y - beforeSection.height, Theme.stack.section, 1);
+            compare(firstSection.topPadding, 0);
+            compare(rows.spacing, Theme.stack.row);
+            compare(headerItem.leftPadding, Theme.row.paddingX);
+            compare(headerItem.children[0].x, Theme.row.paddingX);
         }
 
         // expected-log: Surface: no level named "floating" -- the test names an unknown level on purpose
@@ -105,9 +141,11 @@ Item {
         }
 
         function test_theme_change_moves_the_layout() {
-            compare(UnitTheme.override({ tabs: { height: 44 }, listItem: { height: 50 }, divider: { thickness: 3 }, surface: { radius: 9 } }), "ok");
+            compare(UnitTheme.override({ tabs: { height: 44 }, row: { height: 50 }, stack: { row: 9, section: 30 }, divider: { thickness: 3 }, surface: { radius: 9 } }), "ok");
             compare(tabs.height, 44);
             verify(row.height >= 50);
+            compare(section.topPadding, 30 - sectionColumn.spacing);
+            compare(section.children[1].spacing, 9);
             compare(divider.height, 3);
             compare(surface.radius, 9);
         }

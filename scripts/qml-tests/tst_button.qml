@@ -11,13 +11,15 @@ import qs.Unit
 Item {
     id: root
     width: 300
-    height: 200
+    height: 260
 
     Button { id: primary; text: "Publish" }
     Button { id: secondary; text: "Browse"; variant: "secondary"; y: 40 }
     ToggleButton { id: toggle; text: "Pin"; y: 80 }
     Button { id: off; text: "Off"; enabled: false; y: 120 }
     IconButton { id: iconOnly; iconName: "x"; label: "Close"; y: 160 }
+    IconButton { id: checkedIcon; iconName: "check"; label: "Checked"; y: 200; checkable: true; checked: true }
+    IconButton { id: disabledIcon; iconName: "ban"; label: "Disabled"; y: 230; enabled: false }
     SignalSpy { id: clicks; target: primary; signalName: "clicked" }
 
     TestCase {
@@ -85,6 +87,24 @@ Item {
             compare(iconOnly.Accessible.name, "Close");
             const unnamed = Qt.createQmlObject("import qs.Ui\nIconButton { iconName: \"x\" }", root);
             unnamed.destroy();
+        }
+
+        function test_icon_button_opacity_states() {
+            fuzzyCompare(iconOnly.contentItem.opacity, Theme.iconButton.restOpacity, 0.001);
+            mouseMove(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
+            tryCompare(iconOnly.contentItem, "opacity", 1);
+            mousePress(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
+            tryCompare(iconOnly.contentItem, "opacity", 1);
+            mouseRelease(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
+            mouseMove(root, 0, root.height - 1);
+            checkedIcon.forceActiveFocus(Qt.TabFocusReason);
+            tryCompare(checkedIcon.contentItem, "opacity", 1);
+            compare(disabledIcon.opacity, Theme.opacity.disabled);
+            fuzzyCompare(disabledIcon.contentItem.opacity, 1, 0.001);
+            compare(UnitTheme.override({ iconButton: { restOpacity: 0.25 } }), "ok");
+            iconOnly.focus = false;
+            mouseMove(root, 0, root.height - 1);
+            tryCompare(iconOnly.contentItem, "opacity", 0.25);
         }
 
         function test_theme_change_keeps_the_text_readable() {

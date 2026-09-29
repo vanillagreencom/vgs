@@ -119,6 +119,7 @@ f share/vgs/shell/Ui/layout/ListItem.qml
 f share/vgs/shell/Ui/layout/Pane.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
 f share/vgs/shell/Ui/layout/ScrollBar.qml
+f share/vgs/shell/Ui/layout/Section.qml
 f share/vgs/shell/Ui/layout/SectionHeader.qml
 f share/vgs/shell/Ui/layout/Tabs.qml
 f share/vgs/shell/Ui/overlay/AnchorTracker.qml

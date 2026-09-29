@@ -5,7 +5,9 @@ import qs.Ui
 // A square button with one icon and no text. `label` is what a screen
 // reader and a tooltip say for it; a button without one is logged, since
 // an icon alone names nothing. The ghost variant is the default, so a row
-// of icon buttons draws no fills until one is hovered.
+// of icon buttons draws no fills until one is hovered. The icon rests at
+// `iconButton.restOpacity`, and goes opaque on hover, focus, press or
+// checked. A disabled button fades once on the whole control.
 Button {
     id: root
 
@@ -25,5 +27,7 @@ Button {
         name: root.iconName
         size: Theme.icon.size.md
         color: root.foreground
+        opacity: root.enabled && !(root.hovered || root.visualFocus || root.down || root.checked) ? Theme.iconButton.restOpacity : 1
+        Behavior on opacity { NumberAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
     }
 }

@@ -144,6 +144,7 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                     },
                     Switch {
+                        size: "sm"
                         checked: entry.modelData.enabled
                         anchors.verticalCenter: parent.verticalCenter
                         onToggled: {

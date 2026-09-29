@@ -14,10 +14,11 @@ Item {
 
     Switch { id: sw; text: "Notifications" }
     Switch { id: bare; y: 20 }
-    Switch { id: mirrored; y: 40; LayoutMirroring.enabled: true }
-    Checkbox { id: box; text: "Verified"; y: 40 }
+    Switch { id: small; size: "sm"; y: 40 }
+    Switch { id: mirrored; y: 60; LayoutMirroring.enabled: true }
+    Checkbox { id: box; text: "Verified"; y: 80 }
     Column {
-        y: 80
+        y: 120
         Radio { id: one; text: "One"; checked: true }
         Radio { id: two; text: "Two" }
     }
@@ -41,10 +42,20 @@ Item {
         }
 
         function test_toggle_widths_count_the_gap_once() {
-            compare(bare.width, Theme.toggle.width);
+            compare(bare.width, Theme.toggle.size.md.width);
             compare(sw.width, sw.contentItem.implicitWidth);
             compare(box.width, box.contentItem.implicitWidth);
             compare(one.width, one.contentItem.implicitWidth);
+        }
+
+        function test_switch_sizes_set_track_and_knob_travel() {
+            compare(sw.indicator.width, Theme.toggle.size.md.width);
+            compare(sw.indicator.height, Theme.toggle.size.md.height);
+            compare(small.indicator.width, Theme.toggle.size.sm.width);
+            compare(small.indicator.height, Theme.toggle.size.sm.height);
+            compare(small.indicator.children[0].width, Theme.toggle.size.sm.height - 2 * Theme.toggle.inset);
+            small.checked = true;
+            tryCompare(small.indicator.children[0], "x", small.indicator.width - small.indicator.children[0].width - Theme.toggle.inset);
         }
 
         function test_knob_follows_the_drag_and_the_mirror() {
@@ -88,8 +99,10 @@ Item {
         }
 
         function test_theme_change_moves_the_indicators() {
-            compare(UnitTheme.override({ toggle: { width: 50, on: "#00ff00" }, checkbox: { size: 24 }, radio: { size: 24, dot: 10 } }), "ok");
+            compare(UnitTheme.override({ toggle: { size: { md: { width: 50 }, sm: { width: 32, height: 18 } }, on: "#00ff00" }, checkbox: { size: 24 }, radio: { size: 24, dot: 10 } }), "ok");
             compare(sw.indicator.width, 50);
+            compare(small.indicator.width, 32);
+            compare(small.indicator.height, 18);
             sw.checked = true;
             tryCompare(sw.indicator, "color", Qt.color("#00ff00"));
             compare(box.indicator.width, 24);

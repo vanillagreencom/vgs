@@ -250,179 +250,171 @@ Item {
             Column {
                 id: list
                 width: parent.width
-                spacing: Theme.space.xs
+                spacing: Theme.stack.group
 
-                SectionHeader {
-                    text: "Wallpaper"
+                Section {
+                    title: "Wallpaper"
                     description: "The applied theme's background image; the buttons step through its package's images"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
-                }
 
-                Item {
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    implicitHeight: Math.max(wallpaperLabel.implicitHeight, nextWallpaper.implicitHeight)
+                    Item {
+                        x: Theme.row.paddingX
+                        width: parent.width - 2 * Theme.row.paddingX
+                        implicitHeight: Math.max(wallpaperLabel.implicitHeight, nextWallpaper.implicitHeight)
 
-                    Label {
-                        id: wallpaperLabel
-                        role: "body"
-                        anchors.left: parent.left
-                        anchors.right: previousWallpaper.left
-                        anchors.rightMargin: Theme.space.sm
-                        anchors.verticalCenter: parent.verticalCenter
-                        elide: Text.ElideMiddle
-                        text: root.wallpaperName === "" ? "None" : root.wallpaperName
+                        Label {
+                            id: wallpaperLabel
+                            role: "body"
+                            anchors.left: parent.left
+                            anchors.right: previousWallpaper.left
+                            anchors.rightMargin: Theme.space.sm
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideMiddle
+                            text: root.wallpaperName === "" ? "None" : root.wallpaperName
+                        }
+                        IconButton {
+                            id: previousWallpaper
+                            anchors.right: nextWallpaper.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            size: "sm"
+                            iconName: "chevron-left"
+                            label: "Previous wallpaper"
+                            enabled: root.canStep
+                            onClicked: root.step("previous")
+                        }
+                        IconButton {
+                            id: nextWallpaper
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            size: "sm"
+                            iconName: "chevron-right"
+                            label: "Next wallpaper"
+                            enabled: root.canStep
+                            onClicked: root.step("next")
+                        }
                     }
-                    IconButton {
-                        id: previousWallpaper
-                        anchors.right: nextWallpaper.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        size: "sm"
-                        iconName: "chevron-left"
-                        label: "Previous wallpaper"
-                        enabled: root.canStep
-                        onClicked: root.step("previous")
-                    }
-                    IconButton {
-                        id: nextWallpaper
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        size: "sm"
-                        iconName: "chevron-right"
-                        label: "Next wallpaper"
-                        enabled: root.canStep
-                        onClicked: root.step("next")
-                    }
-                }
 
-                Label {
-                    role: "hint"
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    visible: text !== ""
-                    text: root.stepProblem
-                    color: Theme.color.danger
-                    wrapMode: Text.Wrap
-                }
-
-                SectionHeader {
-                    text: "Installed"
-                    description: "Every theme package; a click applies one to the shell and every application target"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
-                }
-
-                Row {
-                    x: Theme.row.paddingX
-                    spacing: Theme.space.sm
-                    Button {
-                        text: "Add from URL"
-                        iconName: "package-plus"
-                        variant: "secondary"
-                        onClicked: root.addFromUrl()
-                    }
                     Label {
                         role: "hint"
-                        text: root.tuiProblem
-                        color: Theme.color.danger
+                        x: Theme.row.paddingX
+                        width: parent.width - 2 * Theme.row.paddingX
                         visible: text !== ""
+                        text: root.stepProblem
+                        color: Theme.color.danger
                         wrapMode: Text.Wrap
-                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
 
-                Label {
-                    role: "hint"
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    visible: text !== ""
-                    text: root.listReason === "" ? "" : "The theme list failed: " + root.listReason
-                    color: Theme.color.danger
-                    wrapMode: Text.Wrap
-                }
+                Section {
+                    title: "Installed"
+                    description: "Every theme package; a click applies one to the shell and every application target"
 
-                // A list asked for during an apply arrives after it, so a
-                // panel opened while one runs names it here until then.
-                Row {
-                    x: Theme.row.paddingX
-                    spacing: Theme.space.sm
-                    visible: root.last.applying !== null
-                    Spinner { anchors.verticalCenter: parent.verticalCenter }
+                    Row {
+                        x: Theme.row.paddingX
+                        spacing: Theme.space.sm
+                        Button {
+                            text: "Add from URL"
+                            iconName: "package-plus"
+                            variant: "secondary"
+                            onClicked: root.addFromUrl()
+                        }
+                        Label {
+                            role: "hint"
+                            text: root.tuiProblem
+                            color: Theme.color.danger
+                            visible: text !== ""
+                            wrapMode: Text.Wrap
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
                     Label {
-                        role: "body"
-                        text: "Applying " + root.last.applying
-                        anchors.verticalCenter: parent.verticalCenter
+                        role: "hint"
+                        x: Theme.row.paddingX
+                        width: parent.width - 2 * Theme.row.paddingX
+                        visible: text !== ""
+                        text: root.listReason === "" ? "" : "The theme list failed: " + root.listReason
+                        color: Theme.color.danger
+                        wrapMode: Text.Wrap
+                    }
+
+                    // A list asked for during an apply arrives after it, so a
+                    // panel opened while one runs names it here until then.
+                    Row {
+                        x: Theme.row.paddingX
+                        spacing: Theme.space.sm
+                        visible: root.last.applying !== null
+                        Spinner { anchors.verticalCenter: parent.verticalCenter }
+                        Label {
+                            role: "body"
+                            text: "Applying " + root.last.applying
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
+                    Repeater {
+                        model: ScriptModel {
+                            values: root.packages.map(p => Object.assign({ key: p.source + "/" + p.name }, p))
+                            objectProp: "key"
+                        }
+
+                        ThemeRow {
+                            required property var modelData
+                            width: list.width
+                            name: modelData.name
+                            source: modelData.source
+                            packageState: modelData.state
+                            reason: modelData.reason === null ? "" : modelData.reason
+                            swatch: modelData.state === "ok" ? root.shell.theme.swatch(modelData.name) : null
+                            displayed: modelData.state === "ok" && modelData.name === Theme.name
+                            modified: modelData.state === "ok" && modelData.current && root.file !== null && root.file.modified === true
+                            applying: modelData.state === "ok" && root.last.applying === modelData.name
+                            applicable: modelData.state === "ok" && root.last.applying === null
+                            lines: modelData.state === "shadowed" ? [] : root.linesFor(modelData.name)
+                            onActivated: root.apply(modelData.name)
+                        }
                     }
                 }
 
-                Repeater {
-                    model: ScriptModel {
-                        values: root.packages.map(p => Object.assign({ key: p.source + "/" + p.name }, p))
-                        objectProp: "key"
-                    }
-
-                    ThemeRow {
-                        required property var modelData
-                        // The list, not `parent`, which is null while the
-                        // repeater tears the row down.
-                        width: list.width
-                        name: modelData.name
-                        source: modelData.source
-                        packageState: modelData.state
-                        reason: modelData.reason === null ? "" : modelData.reason
-                        swatch: modelData.state === "ok" ? root.shell.theme.swatch(modelData.name) : null
-                        displayed: modelData.state === "ok" && modelData.name === Theme.name
-                        modified: modelData.state === "ok" && modelData.current && root.file !== null && root.file.modified === true
-                        applying: modelData.state === "ok" && root.last.applying === modelData.name
-                        applicable: modelData.state === "ok" && root.last.applying === null
-                        lines: modelData.state === "shadowed" ? [] : root.linesFor(modelData.name)
-                        onActivated: root.apply(modelData.name)
-                    }
-                }
-
-                SectionHeader {
-                    text: "Catalog"
+                Section {
+                    title: "Catalog"
                     description: "Themes VGS ships in its catalog; install a definition first, then download its wallpapers"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
-                }
 
-                Label {
-                    role: "hint"
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    visible: text !== ""
-                    text: root.catalogReason === "" ? "" : "The theme catalog failed: " + root.catalogReason
-                    color: Theme.color.danger
-                    wrapMode: Text.Wrap
-                }
-
-                Repeater {
-                    model: ScriptModel {
-                        values: root.catalogEntries.map(e => Object.assign({ key: e.name }, e))
-                        objectProp: "key"
+                    Label {
+                        role: "hint"
+                        x: Theme.row.paddingX
+                        width: parent.width - 2 * Theme.row.paddingX
+                        visible: text !== ""
+                        text: root.catalogReason === "" ? "" : "The theme catalog failed: " + root.catalogReason
+                        color: Theme.color.danger
+                        wrapMode: Text.Wrap
                     }
 
-                    ThemeRow {
-                        required property var modelData
-                        width: list.width
-                        name: modelData.name
-                        source: modelData.mode + ", " + root.wallpaperText(modelData)
-                        packageState: "catalog"
-                        swatch: root.catalogSwatch(modelData)
-                        installed: modelData.installed
-                        definitionUpdate: modelData.definitionUpdate
-                        imageryUpdate: modelData.imageryUpdate
-                        applicable: modelData.installed && root.last.applying === null
-                        applying: root.last.applying === modelData.name
-                        actionLabel: root.catalogActionLabel(modelData)
-                        actionIcon: modelData.installed ? "cloud-download" : "package-plus"
-                        actionEnabled: root.catalogAction === "" && root.last.applying === null
-                        lines: root.catalogLines(modelData)
-                        busyText: root.catalogBusyLabel(modelData)
-                        onActivated: root.apply(modelData.name)
-                        onActionRequested: modelData.installed ? root.downloadCatalogWallpapers(modelData.name) : root.installCatalog(modelData.name)
+                    Repeater {
+                        model: ScriptModel {
+                            values: root.catalogEntries.map(e => Object.assign({ key: e.name }, e))
+                            objectProp: "key"
+                        }
+
+                        ThemeRow {
+                            required property var modelData
+                            width: list.width
+                            name: modelData.name
+                            source: modelData.mode + ", " + root.wallpaperText(modelData)
+                            packageState: "catalog"
+                            swatch: root.catalogSwatch(modelData)
+                            installed: modelData.installed
+                            definitionUpdate: modelData.definitionUpdate
+                            imageryUpdate: modelData.imageryUpdate
+                            applicable: modelData.installed && root.last.applying === null
+                            applying: root.last.applying === modelData.name
+                            actionLabel: root.catalogActionLabel(modelData)
+                            actionIcon: modelData.installed ? "cloud-download" : "package-plus"
+                            actionEnabled: root.catalogAction === "" && root.last.applying === null
+                            lines: root.catalogLines(modelData)
+                            busyText: root.catalogBusyLabel(modelData)
+                            onActivated: root.apply(modelData.name)
+                            onActionRequested: modelData.installed ? root.downloadCatalogWallpapers(modelData.name) : root.installCatalog(modelData.name)
+                        }
                     }
                 }
             }

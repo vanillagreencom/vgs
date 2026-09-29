@@ -121,7 +121,7 @@ FocusScope {
         Column {
             id: body
             width: parent.width
-            spacing: Theme.space.md
+            spacing: Theme.stack.group
             visible: page.row !== null
 
             Label {
@@ -133,7 +133,7 @@ FocusScope {
 
             Flow {
                 width: parent.width
-                spacing: Theme.space.xs
+                spacing: Theme.stack.row
                 visible: page.row !== null && page.row.capabilities.length > 0
                 Repeater {
                     model: page.row === null ? [] : page.row.capabilities
@@ -168,6 +168,7 @@ FocusScope {
                 inline: true
                 hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
                 Switch {
+                    size: "sm"
                     checked: page.row !== null && page.row.enabled
                     onToggled: {
                         checked = Qt.binding(() => page.row !== null && page.row.enabled);
@@ -220,15 +221,11 @@ FocusScope {
                     values: page.statusSections
                     objectProp: "group"
                 }
-                Column {
+                Section {
                     id: statusSection
                     required property var modelData
                     width: body.width
-                    spacing: Theme.space.xs
-
-                    SectionHeader {
-                        text: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
-                    }
+                    title: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
 
                     Repeater {
                         model: ScriptModel {
@@ -243,15 +240,11 @@ FocusScope {
                 }
             }
 
-            Column {
+            Section {
                 width: parent.width
-                spacing: Theme.space.xs
                 visible: page.row !== null && page.row.requirements.length > 0
-
-                SectionHeader {
-                    text: "Requirements"
-                    description: "Commands the plugin runs, looked up on PATH at the last scan"
-                }
+                title: "Requirements"
+                description: "Commands the plugin runs, looked up on PATH at the last scan"
 
                 Repeater {
                     model: ScriptModel {
@@ -289,15 +282,11 @@ FocusScope {
                     values: page.sections
                     objectProp: "group"
                 }
-                Column {
+                Section {
                     id: section
                     required property var modelData
                     width: body.width
-                    spacing: Theme.space.xs
-
-                    SectionHeader {
-                        text: section.modelData.group === "" ? "Settings" : section.modelData.group
-                    }
+                    title: section.modelData.group === "" ? "Settings" : section.modelData.group
 
                     Repeater {
                         model: ScriptModel {
@@ -320,15 +309,11 @@ FocusScope {
                 }
             }
 
-            Column {
+            Section {
                 width: parent.width
-                spacing: Theme.space.xs
                 visible: page.row !== null && page.row.binds.length > 0
-
-                SectionHeader {
-                    text: "Keys"
-                    description: "Written to shell.json; an empty key unbinds it"
-                }
+                title: "Keys"
+                description: "Written to shell.json; an empty key unbinds it"
 
                 Repeater {
                     model: ScriptModel {

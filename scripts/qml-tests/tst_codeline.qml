@@ -64,9 +64,19 @@ Item {
             verify(label(line).lineCount > 1, "the command wraps: lines=" + label(line).lineCount);
             compare(label(short).lineCount, 1);
             verify(label(line).x + label(line).width <= button(line).x - Theme.codeLine.gap, "the text ends before the button");
-            compare(button(line).x + button(line).width, line.width - Theme.codeLine.paddingY);
-            compare(line.height, Math.max(label(line).implicitHeight, button(line).implicitHeight) + 2 * Theme.codeLine.paddingY);
+            compare(button(line).x + button(line).width, line.width - Theme.codeLine.padding);
+            compare(button(line).y, Theme.codeLine.padding);
+            compare(line.height, 2 * Theme.codeLine.padding + Math.max(label(line).lineCount * label(line).lineBox, button(line).implicitHeight));
             verify(line.height > short.height, "the wrapped line is taller");
+        }
+
+        function test_geometry_uses_equal_padding_and_optical_placement() {
+            compare(label(short).x, Theme.codeLine.padding);
+            compare(button(short).x + button(short).width, short.width - Theme.codeLine.padding);
+            compare(button(short).y, Theme.codeLine.padding);
+            fuzzyCompare(label(short).y + label(short).capCentre, short.height / 2, 1);
+            fuzzyCompare(label(line).y - label(line).halfLeading, Theme.codeLine.padding, 0.5);
+            fuzzyCompare(line.height - (label(line).y - label(line).halfLeading + label(line).lineCount * label(line).lineBox), Theme.codeLine.padding, 1);
         }
 
         function test_the_line_reads_its_tokens() {

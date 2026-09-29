@@ -52,6 +52,11 @@ Item {
         // The gap between the first two children of a row: an icon and
         // the text after it.
         function gapOf(row) { return row.children[1].x - (row.children[0].x + row.children[0].width); }
+        function badgeGap(item) {
+            const icon = item.children.find(child => child.name === item.iconName);
+            const label = item.children.find(child => child.role === "label");
+            return label.x - (icon.x + icon.width);
+        }
 
         function segment(index) { return segmented.children[0].children[index]; }
 
@@ -87,7 +92,7 @@ Item {
             same(() => iconed.leftPadding, pad + Theme.icon.size.sm + gap, "text field icon gap");
             same(() => gapOf(item.contentItem), Theme.listItem.iconGap, "list item icon gap");
             same(() => gapOf(entry.contentItem), gap, "menu item icon gap");
-            same(() => gapOf(badge.children[0]), gap, "badge icon gap");
+            same(() => badgeGap(badge), gap, "badge icon gap");
             same(() => gapOf(toast.children[0]), gap, "toast icon gap");
             same(() => check.contentItem.leftPadding - check.indicator.width, gap, "checkbox gap");
         }

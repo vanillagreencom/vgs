@@ -94,8 +94,8 @@ function merge() {
 // Reading text draws in sans; chrome (labels, buttons, key caps, code,
 // tips and the bar) draws in mono at 11 to 13 px. The reference rule each
 // role is read from is docs/reference/design-values.md § Text roles. A
-// single-line chrome role takes line height 1, so its line box is the
-// font's own height and centring the box centres the glyphs.
+// `lineHeight` is a multiple of the role's font size. Label turns it into
+// a fixed line box unless that would undercut the font's own line box.
 var TEXT = {
     display: role("sans", 2.27, 700, -0.02, 1.15, false, "textHeading"),
     h1: role("sans", 1.6, 700, -0.01, 1.2, false, "textHeading"),
@@ -116,7 +116,7 @@ var TEXT = {
     tooltip: role("mono", 0.73, 600, 0, 1.3, false, "text"),
     button: role("mono", 0.73, 500, 0.08, 1, true, "text"),
     kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
-    code: role("mono", 0.87, 500, 0, 1.65, false, "text"),
+    code: role("mono", 0.87, 500, 0, 1.5, false, "text"),
     bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
 };
 
@@ -301,6 +301,7 @@ var TOKENS = {
     // label from the line it names. `labelWidth` is the reference's own
     // 130 px label column.
     row: {
+        height: length("{size.control.lg}"),
         paddingX: length("{space.lg}"),
         gap: length("{space.lg}"),
         labelWidth: length(130),
@@ -312,6 +313,12 @@ var TOKENS = {
         dialog: length("{space.lg}"),
         popover: length("{space.md}"),
         panel: length("{space.lg}")
+    },
+
+    stack: {
+        row: length("{space.xs}"),
+        group: length("{space.lg}"),
+        section: length("{space.xxl}")
     },
 
     surface: {
@@ -378,8 +385,10 @@ var TOKENS = {
     },
 
     toggle: {
-        width: length(36),
-        height: length(20),
+        size: {
+            sm: { width: length(28), height: length(16) },
+            md: { width: length(36), height: length(20) }
+        },
         inset: length("{space.xxs}"),
         radius: length("{radius.full}"),
         on: color("{color.accent}"),
@@ -467,9 +476,11 @@ var TOKENS = {
     },
 
     badge: {
-        height: length(20),
         radius: length("{radius.sm}"),
-        paddingX: length("{space.xs}"),
+        size: {
+            sm: { height: length(20), paddingX: length("{space.sm}") },
+            md: { height: length(24), paddingX: length("{space.md}") }
+        },
         gap: length("{control.gap}"),
         tone: {
             neutral: { background: color("{color.surfaceRaised}"), foreground: color("{color.textMuted}") },
@@ -484,7 +495,8 @@ var TOKENS = {
     kbd: {
         radius: length("{radius.sm}"),
         border: length("{border.thin}"),
-        paddingX: length("{space.xxs}"),
+        paddingX: length("{space.xs}"),
+        paddingY: length("{space.xxs}"),
         background: color("{color.surfaceRaised}"),
         borderColor: color("{color.borderStrong}"),
         foreground: color("{color.textMuted}")
@@ -496,8 +508,7 @@ var TOKENS = {
     codeLine: {
         radius: length("{radius.sm}"),
         border: length("{border.thin}"),
-        paddingX: length("{control.paddingX}"),
-        paddingY: length("{space.xxs}"),
+        padding: length("{space.md}"),
         gap: length("{control.gap}"),
         background: color("{color.surfaceSunken}"),
         borderColor: color("{color.borderSubtle}"),
@@ -536,7 +547,7 @@ var TOKENS = {
     // `height` is a one-line row's; `twoLineHeight` a row with a
     // secondary line, whose two lines centre on the icon as one block.
     listItem: {
-        height: length("{size.control.lg}"),
+        height: length("{row.height}"),
         twoLineHeight: length("mul({listItem.height}, 1.5)"),
         paddingX: length("{row.paddingX}"),
         gap: length("{control.gap}"),
@@ -548,9 +559,12 @@ var TOKENS = {
     },
 
     sectionHeader: {
-        paddingTop: length("{space.md}"),
-        paddingBottom: length("{space.xs}"),
+        paddingBottom: length("{stack.row}"),
         gap: length("{row.lineGap}")
+    },
+
+    iconButton: {
+        restOpacity: share(0.6)
     },
 
     popover: {

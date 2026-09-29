@@ -5,11 +5,13 @@ import qs.Ui
 // A labelled control with a hint and an error line: the control goes in
 // the body, `label` above it (or beside it when `inline` holds, at the
 // theme's label width and label gap), `hint` under it, and `error` in the
-// hint's place in the error colour while it is set. Width comes from the
-// parent; the label, the control and the hint sit `field.paddingX` in from
-// each side. The default is zero, so a field's unboxed label sits on the
-// container's content edge and its control ends on that edge.
-Column {
+// hint's place in the error colour while it is set. An inline row is
+// exactly `row.height` tall unless its control is taller; the label is
+// placed by capital height and the control is centred in that row. An
+// inline hint starts under the value column. Width comes from the parent;
+// the label, the control and the hint sit `field.paddingX` in from each
+// side. The default is zero, so a field's unboxed label sits on the
+// container's content edge and its control ends on that edge.Column {
     id: root
 
     property string label: ""
@@ -35,31 +37,43 @@ Column {
     }
 
     Row {
+        id: controlRow
         width: root.bodyWidth
+        height: root.inline ? Math.max(Theme.row.height, inlineLabel.implicitHeight, slot.childrenRect.height) : slot.childrenRect.height
         spacing: Theme.field.labelGap
 
         Label {
+            id: inlineLabel
             role: "label"
             text: root.label
             visible: root.inline
             width: Theme.field.labelWidth
             elide: Text.ElideRight
-            anchors.verticalCenter: parent.verticalCenter
+            y: root.inline ? topForCapCenter(controlRow.height) : 0
         }
 
         Item {
             id: slot
             width: parent.width - (root.inline ? Theme.field.labelWidth + parent.spacing : 0)
             height: childrenRect.height
+            y: root.inline ? Math.round((controlRow.height - height) / 2) : 0
         }
     }
 
-    Label {
-        role: "hint"
-        text: root.error !== "" ? root.error : root.hint
-        color: root.error !== "" ? Theme.color.danger : Theme.text.hint.color
-        visible: text !== ""
+    Item {
+        id: hintSlot
+        visible: hintLine.text !== ""
         width: root.bodyWidth
-        wrapMode: Text.Wrap
+        height: hintLine.implicitHeight
+
+        Label {
+            id: hintLine
+            role: "hint"
+            text: root.error !== "" ? root.error : root.hint
+            color: root.error !== "" ? Theme.color.danger : Theme.text.hint.color
+            x: root.inline ? Theme.field.labelWidth + Theme.field.labelGap : 0
+            width: parent.width - x
+            wrapMode: Text.Wrap
+        }
     }
 }

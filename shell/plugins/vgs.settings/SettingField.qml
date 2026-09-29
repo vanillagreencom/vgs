@@ -51,6 +51,7 @@ Field {
     Component {
         id: toggle
         Switch {
+            size: "sm"
             checked: root.value === true
             enabled: root.editable
             onToggled: {

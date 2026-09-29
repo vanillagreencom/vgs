@@ -32,6 +32,7 @@ ListCursor 1.0 layout/ListCursor.qml
 ListEntrance 1.0 layout/ListEntrance.qml
 Disclosure 1.0 layout/Disclosure.qml
 SectionHeader 1.0 layout/SectionHeader.qml
+Section 1.0 layout/Section.qml
 AngledCard 1.0 layout/AngledCard.qml
 CardCarousel 1.0 layout/CardCarousel.qml
 Select 1.0 controls/Select.qml

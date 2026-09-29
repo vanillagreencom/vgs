@@ -3,14 +3,25 @@ import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
 
-// An on and off switch with an optional text after it. The template holds
-// `checked` and toggles it on a click, Space or Enter, and moves `position`
-// under a drag; the knob follows `visualPosition`, so it drags and mirrors,
-// and slides on `motion.duration.fast` when not dragged. The knob colour
-// follows the track it sits on.
+// An on and off switch with an optional text after it. `size` is `md`, the
+// default, or `sm` for inline rows. The template holds `checked` and
+// toggles it on a click, Space or Enter, and moves `position` under a drag;
+// the knob follows `visualPosition`, so it drags and mirrors, and slides
+// on `motion.duration.fast` when not dragged. The knob colour follows the
+// track it sits on.
 // Its tokens are `Theme.toggle`, since `switch` is a JavaScript keyword.
 T.Switch {
     id: root
+
+    property string size: "md"
+    readonly property var sizeTokens: sizeOf(size)
+
+    function sizeOf(name) {
+        const found = Theme.toggle.size[name];
+        if (found !== undefined) return found;
+        console.error("Switch: no size named " + JSON.stringify(name));
+        return Theme.toggle.size.md;
+    }
 
     // The content's left padding already holds the indicator and the gap.
     implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
@@ -22,8 +33,8 @@ T.Switch {
     Accessible.name: text
 
     indicator: Rectangle {
-        implicitWidth: Theme.toggle.width
-        implicitHeight: Theme.toggle.height
+        implicitWidth: root.sizeTokens.width
+        implicitHeight: root.sizeTokens.height
         y: (root.height - height) / 2
         radius: Theme.toggle.radius
         color: root.checked ? Theme.toggle.on : Theme.toggle.off

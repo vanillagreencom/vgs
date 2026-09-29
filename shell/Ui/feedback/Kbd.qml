@@ -8,8 +8,8 @@ Rectangle {
 
     property string text: ""
 
-    implicitWidth: label.implicitWidth + 2 * Theme.kbd.paddingX
-    implicitHeight: label.implicitHeight + 2 * Theme.kbd.paddingX
+    implicitWidth: label.opticalWidth + 2 * Theme.kbd.paddingX
+    implicitHeight: label.lineBox + 2 * Theme.kbd.paddingY
     radius: Theme.kbd.radius
     color: Theme.kbd.background
     border.width: Theme.kbd.border
@@ -20,6 +20,7 @@ Rectangle {
         role: "kbd"
         text: root.text
         color: Theme.kbd.foreground
-        anchors.centerIn: parent
+        x: Theme.kbd.paddingX
+        y: topForCapCenter(root.height)
     }
 }

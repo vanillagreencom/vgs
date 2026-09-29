@@ -1,6 +1,6 @@
 # Design reference values
 
-The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-27. The rules these values follow are [design-system.md § Text stack](../architecture/design-system.md#text-stack) and [design-layout.md § Component spacing](../architecture/design-layout.md#component-spacing).
+The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-29. Radix Themes 3.3.0 component sources supply switch and badge sizes. Omarchy default branch commit b421b1b adds no smaller content-row rule than the plugin stylesheet. The rules these values follow are [design-layout.md § Text stack](../architecture/design-layout.md#text-stack) and [§ Component spacing](../architecture/design-layout.md#component-spacing).
 
 ## Text roles
 
@@ -23,7 +23,7 @@ Each role is read from one rule of the stylesheet. A value the rule does not set
 | `text.label` | `.code-head` | mono, 11 px, 500, .08em, uppercase, line height 1.55 | line height 1 |
 | `text.button` | `.button` | mono, 11 px, 400, .08em, uppercase, line height 1.55 | 500, line height 1; `Button` draws the variant's weight |
 | `text.kbd` | `.sidebar-search kbd` | mono, 11 px, 600, .02em, line height 1 | |
-| `text.code` | `.code-block pre` | mono, 13 px, 500, line height 1.65 | |
+| `text.code` | `.code-block pre` | mono, 13 px, 500, line height 1.65 | line height 1.5, after owner review of wrapped commands |
 | `text.tooltip` | `.control-tooltip` | sans, 11 px, 600, 0em, line height 1.3 | mono, with the rest of the chrome |
 | `text.bar` | `.sidebar-brand`, `.button` | mono, 12 px, 700, .04em, uppercase; `.button` .08em | 500, .08em, line height 1 |
 
@@ -41,24 +41,26 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Select` | 30 | 9; 30 on the right, past the chevron | 7 | 0 | `textField.height`, `textField.paddingX`, `textField.gap` | `.sort-control select` | padding 0 34 0 12 | 9 and 30 |
 | `SegmentedControl` | 30 | 2 inset | 2 | 0 | `segmented.height`, `segmented.padding`, `segmented.gap` | `.catalog-view-mode` | gap 4 | inset 2, gap 2 |
 | a segment | 26 | 9 | | 0 | `segmented.paddingX` | `.catalog-view-mode button` | min-height 29, padding 0 9 | 26 tall: 30 less the inset |
-| `ListItem` | 36; 54 with a secondary line | 12 | 12 between icon and text; 7 before trailing controls; 4 between its lines | 0 | `listItem.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.iconGap`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 tall one line, 54 two; icon gap follows the larger row step |
+| `ListItem` | 36; 54 with a secondary line | 12 | 7; 4 between its lines | 0 | `row.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 tall one line, 54 two |
 | `MenuItem` | 30 | 12 | 7 | 0 | `menu.item.height`, `menu.item.paddingX`, `menu.item.gap` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
 | a `Select` list entry | 30 | 12 | | 0 | `menu.item.height`, `menu.item.paddingX` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
-| `Field`, inline | the control's | 0 by default | 12 after a 130 label; 4 between lines | | `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; the 4 px line gap has no rule; the container owns the outer inset |
-| `SectionHeader` | its lines, 8 above, 4 below | 0; 12 where the surface insets its rows | 4 | | `sectionHeader.paddingTop`, `sectionHeader.paddingBottom`, `sectionHeader.gap` | `.listing-checks h3` | min-height 40, padding 0 13 | no height floor; the 4 px line gap has no rule |
-| `Badge` | 20 | 4 | 7 | 0 | `badge.height`, `badge.paddingX`, `badge.gap` | `.listing-check-status` | min-height 20, padding 2 7 0 | padding 4 |
-| `Kbd` | line + 4 | 2 | | 0 | `kbd.paddingX` | `.sidebar-search kbd` | padding 3 7 | padding 2 |
-| `CodeLine` | its lines + 4, the `sm` Copy button's 24 at least | 9; 2 on the right, beside the button | 7 between the text and the button | 0 | `codeLine.paddingX`, `codeLine.paddingY`, `codeLine.gap`, `size.control.sm` | none | | |
+| `Field`, inline | 36 unless the control is taller | 12 | 12 after a 130 label; 4 between row and hint | | `row.height`, `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | min-height 45, padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; 36 tall to match VGS controls |
+| `SectionHeader` | its lines, 0 above, 4 below | 0; 12 where the surface insets its rows | 4 | | `sectionHeader.paddingBottom`, `sectionHeader.gap` | `.listing-checks h3` and `.detail-section` | heading after 28 px section gap, margin-bottom 12 | `Section` owns the 24 px section gap |
+| `Section` | content | 12 header inset by default | 4 between rows; 12 between groups; 24 above sections | | `stack.row`, `stack.group`, `stack.section` | `.detail-section` | 28 px above and below, heading margin-bottom 12 | 24 px section gap on the 4 px scale |
+| `Badge` sm | 20 | 6 | 7 | 0 | `badge.size.sm.height`, `badge.size.sm.paddingX`, `badge.gap` | Omarchy `.listing-check-status`; Radix Badge size 1 | min-height 20, padding 2 7 0; padding 2 × 6 | VGS uses optical centring instead of top padding |
+| `Badge` md | 24 | 8 | 7 | 0 | `badge.size.md.height`, `badge.size.md.paddingX`, `badge.gap` | Radix Badge size 2 | padding 4 × 8, 24 tall | VGS uses the label role |
+| `Kbd` | line + 4 | 4; 2 top and bottom | | 0 | `kbd.paddingX`, `kbd.paddingY` | `.sidebar-search kbd` | padding 3 7 | 4 px sides to keep compact keycaps readable; 2 px top and bottom to keep height |
+| `CodeLine` | 16 padding plus the larger of its line boxes and the Copy button | 8 | 7 between the text and the button | 0 | `codeLine.padding`, `codeLine.gap`, `size.control.sm` | Omarchy `.code-block pre` | padding 18 20, line-height 1.65 | one-line copy blocks use 8 px on each side; wrapped code uses line height 1.5 |
 | `Tabs` | 30 | 4 | 8 between tabs | | `tabs.height`, `space.xs`, `tabs.gap` | `.market-nav a` | height 32, padding 0 10 | 30 tall, padding 4 |
 | `Tooltip` | line + 4 | 6 | 4 from the anchor | 0 | `tooltip.paddingX`, `tooltip.paddingY`, `tooltip.gap` | `.control-tooltip` | padding 5 7 | padding 2 6 |
 | `Toast` | content + 16 | 8 | 7 between icon, text and close; 6 between toasts | 0 | `toast.padding`, `toast.contentGap`, `toast.gap` | `.toast` | padding 9 12 | padding 8 |
-| `Checkbox`, `Radio`, `Switch` | indicator 16, 16, 36 × 20 | | 7 | 0; round for `Radio` and `Switch` | `checkbox.gap`, `radio.gap`, `toggle.gap` | none | | |
+| `Checkbox`, `Radio`, `Switch` | indicator 16, 16, Switch sm 28 × 16 and md 36 × 20 | | 7 | 0; round for `Radio` and `Switch` | `checkbox.gap`, `radio.gap`, `toggle.size`, `toggle.gap` | Radix Switch size 1 and 2 | 28 × 16 and 35 × 20 | md width is 36 to keep the existing VGS size |
+| `IconButton` rest | 30 | 7 | | 0 | `iconButton.restOpacity` | Geist and Linear icon-only buttons | muted at rest, opaque on interaction | rest opacity 0.6 |
 | `Slider` | 14 handle, 4 track | | | round | `slider.handle`, `slider.track` | none | | |
-| `Pane` | content + 2 × effective inset, capped when fitted | the container's component padding or `inset.window`, cleared with `Inset.clearing` | 8 between header, body and footer | container radius | `inset.window`, `dialog.padding`, `popover.padding`, `surface.padding`, `pane.gap` | none | | scroll bar sits in the right inset strip |
-| `Popover` | content + 16, capped at its max-height share | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap`, `popover.maxHeightShare` | none | | composes `Pane` |
-| `Dialog` | content + 24, capped at its max-height share | 12 | 8 between the title, the message, the content and the actions; 6 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap`, `dialog.maxHeightShare` | none | | 360 wide; composes `Pane` |
+| `Popover` | content + 16 | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap` | none | | |
+| `Dialog` | content + 24 | 12 | 8 between the title, the message, the content and the actions; 6 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap` | none | | 360 wide |
 | `Menu` | items + 4, at least 160 wide, scrolling past 270, nine items | 2 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth`, `menu.maxHeight` | none | | |
-| the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter or a container's right inset | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
+| the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
 | `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |
 | a window-like panel | half the monitor | 12 from a narrower monitor's sides | | | `size.window.width`, `size.window.heightShare`, `size.window.gutter` | none | | 600 wide |
 | bar item, a workspace pill | line + 4 | 6 | 4 between items | 0 | `bar.item.paddingX`, `bar.item.gap` | `.market-nav a` | height 32, padding 0 10 | sized to the bar |

@@ -93,7 +93,8 @@ source_tree=""
 trap '[[ -z $source_tree ]] || rm -rf -- "$source_tree"' EXIT
 if [[ -n $rev ]]; then
   git -C "$checkout" rev-parse --verify --quiet "$rev^{commit}" >/dev/null || { printf 'sandbox-shots: refused: rev=%s\n' "$rev" >&2; exit 2; }
-  source_tree="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-shots-tree.XXXXXX")"
+  mkdir -p -- "${TMPDIR:-$checkout/tmp}"
+  source_tree="$(mktemp -d "${TMPDIR:-$checkout/tmp}/vgsh-shots-tree.XXXXXX")"
   if ! tree_export "$checkout" "$rev" "$source_tree"; then
     rm -rf -- "$source_tree"
     printf 'sandbox-shots: refused: rev-export=%s\n' "$rev" >&2
@@ -316,6 +317,14 @@ scene_settings() { # MODE
   expect "the window opens the launcher's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown" '"vgs.launcher"' settings_page
   take "settings-$1-keys"
+  expect "the window opens the Agent Warden page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.agent-warden
+  expect_poll "the Agent Warden page is shown" '"vgs.agent-warden"' settings_page
+  take "settings-$1-agent-warden"
+  expect "the window opens the Bar page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.bar
+  expect_poll "the Bar page is shown" '"vgs.bar"' settings_page
+  take "settings-$1-bar"
+  expect "the window opens the launcher's page again" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
+  expect_poll "the launcher's page is shown again" '"vgs.launcher"' settings_page
   click_in "$settings_surface" "$settings_kind" vgs.settings TitleButton Launcher || fail "the click on the title failed"
   expect_poll "the title's menu opens" True settings_menu_open
   # The menu opens under the title; the pointer rests inside it, which

@@ -124,20 +124,13 @@ Item {
                     objectProp: "key"
                 }
 
-                Column {
+                Section {
                     id: section
                     required property var modelData
                     width: content.width
-                    topPadding: root.look.window.sectionGap
-                    spacing: root.look.window.gap
-
-                    SectionHeader {
-                        width: parent.width
-                        text: section.modelData.title
-                        description: section.modelData.description
-                        leftPadding: root.look.row.paddingX
-                        rightPadding: root.look.row.paddingX
-                    }
+                    title: section.modelData.title
+                    description: section.modelData.description
+                    headerInset: root.look.row.paddingX
                     Repeater {
                         model: section.modelData.lines
                         Label {

@@ -11,12 +11,24 @@ import qs.Unit
 Item {
     id: root
     width: 400
-    height: 300
+    height: 650
 
     TextField { id: plain; placeholderText: "Search plugins"; width: 200 }
     TextField { id: iconed; leadingIcon: "search"; width: 200; y: 40; actions: [ IconButton { id: clear; iconName: "x"; label: "Clear"; size: "sm"; onClicked: iconed.clear() } ] }
     TextField { id: numeric; width: 200; y: 80; validator: IntValidator { bottom: 0; top: 99 } }
     Field { id: field; label: "Name"; hint: "Shown in the bar"; width: 200; y: 120; TextField { id: inner; width: parent.width } }
+    Column {
+        id: inlineGrid
+        y: 220
+        width: 360
+        spacing: Theme.stack.row
+        Field { id: switchField; label: "Switch"; inline: true; width: parent.width; Switch { id: inlineSwitch; size: "sm"; checked: true } }
+        Field { id: labelField; label: "Text"; inline: true; width: parent.width; Label { id: inlineLabel; role: "item"; text: "Value"; width: parent.width } }
+        Field { id: badgeField; label: "Badge"; inline: true; width: parent.width; Badge { id: inlineBadge; text: "Ready"; tone: "success" } }
+        Field { id: textFieldRow; label: "Text field"; inline: true; width: parent.width; TextField { id: inlineText; width: parent.width; text: "abc" } }
+        Field { id: buttonField; label: "Button"; inline: true; width: parent.width; Button { id: inlineButton; text: "Open"; size: "sm"; variant: "secondary" } }
+        Field { id: selectField; label: "Select"; hint: "Shown below the value."; inline: true; width: parent.width; Select { id: inlineSelect; width: parent.width; model: ["Default", "Ocean"] } }
+    }
 
     TestCase {
         name: "textfield"
@@ -89,7 +101,7 @@ Item {
 
         function test_field_lays_out_label_hint_and_error() {
             const labels = field.children.filter(child => child.role !== undefined);
-            const hint = labels[labels.length - 1];
+            const hint = field.children[2].children[0];
             compare(hint.text, "Shown in the bar");
             compare(String(hint.color), String(Qt.color(Theme.text.hint.color)));
             field.error = "Taken";
@@ -102,6 +114,19 @@ Item {
             const inset = pad + Theme.field.labelWidth + Theme.field.labelGap;
             tryVerify(() => inner.mapToItem(field, 0, 0).x === inset);
             compare(inner.width, field.width - inset - pad);
+            tryVerify(() => hint.mapToItem(field, 0, 0).x === inset);
+            compare(hint.width, field.width - inset - pad);
+        }
+
+        function test_inline_fields_share_row_height_and_value_column() {
+            const rows = [switchField, labelField, badgeField, textFieldRow, buttonField, selectField];
+            for (const row of rows)
+                compare(row.children[1].height, Theme.row.height);
+            const pairs = [[switchField, inlineSwitch], [labelField, inlineLabel], [badgeField, inlineBadge], [textFieldRow, inlineText], [buttonField, inlineButton], [selectField, inlineSelect]];
+            for (const pair of pairs)
+                fuzzyCompare(pair[1].mapToItem(pair[0], 0, pair[1].height / 2).y, Theme.row.height / 2, 1);
+            const hint = selectField.children[2].children[0];
+            compare(hint.x, Theme.field.labelWidth + Theme.field.labelGap);
         }
 
         function test_theme_change_moves_the_field() {
@@ -111,6 +136,7 @@ Item {
             compare(field.inline, true);
             tryVerify(() => inner.mapToItem(field, 0, 0).x === 3 + 80 + 5);
             compare(inner.width, field.width - 3 - 80 - 5 - 3);
+            compare(switchField.children[1].height, Theme.row.height);
         }
     }
 }
