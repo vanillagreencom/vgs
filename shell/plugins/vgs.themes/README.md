@@ -62,3 +62,6 @@ The plugin declares both shortcuts in its manifest. Remove the owner's old `SUPE
 On the plugin's row in `plugins` in `~/.config/vgs/shell.json`, for example `{ "id": "vgs.themes", "placement": "top-right" }`:
 
 - `placement`: where the panel opens when it is summoned without the button, for example from `bin/vgsh ipc call shell summon panel vgs.themes '{}'`, one of `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom` and `bottom-right`. The plugin's Settings page offers the same list. Default: `top-right`.
+- `setWindowBorders`: whether themes set Hyprland border colours, border thickness and shadow colour. A user's own Hyprland setting after the VGS include line still wins. Default: `true`.
+- `setCornerRadius`: whether themes set Hyprland window radius, rounding power and grouped-window tab radius. A user's own Hyprland setting after the VGS include line still wins. Default: `true`.
+- `setWindowAnimations`: whether themes set Hyprland window, layer, workspace and fade animation presets. A user's own Hyprland setting after the VGS include line still wins. Default: `false`.

@@ -51,6 +51,58 @@ var TUI_WINDOWS = {
 // shell's windows and centres them; each keeps the size it asks for.
 var APP_WINDOW = { appId: "org.vgs.shell", rule: "vgs:window" };
 
+var APPEARANCE_GROUPS = ["borders", "radius", "motion"];
+var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };
+
+// Hyprland animation presets VGS owns. `smooth` takes Omarchy's
+// default-branch window, layer and fade timings; VGS also gives workspaces a
+// leaf so the preset is complete for this layer's scope.
+var MOTION = {
+    none: { curves: {}, animations: [] },
+    snappy: {
+        curves: {
+            vgsSnappy: [[0.15, 0], [0.1, 1]],
+            vgsLinear: [[0, 0], [1, 1]]
+        },
+        animations: [
+            { leaf: "windows", speed: 1.8, bezier: "vgsSnappy" },
+            { leaf: "windowsIn", speed: 2.0, bezier: "vgsSnappy", style: "popin 85%" },
+            { leaf: "windowsOut", speed: 1.0, bezier: "vgsLinear", style: "popin 85%" },
+            { leaf: "layers", speed: 1.8, bezier: "vgsSnappy" },
+            { leaf: "layersIn", speed: 2.0, bezier: "vgsSnappy", style: "fade" },
+            { leaf: "layersOut", speed: 1.0, bezier: "vgsLinear", style: "fade" },
+            { leaf: "fadeIn", speed: 1.0, bezier: "vgsSnappy" },
+            { leaf: "fadeOut", speed: 0.8, bezier: "vgsLinear" },
+            { leaf: "fade", speed: 1.5, bezier: "vgsSnappy" },
+            { leaf: "fadeLayersIn", speed: 1.0, bezier: "vgsSnappy" },
+            { leaf: "fadeLayersOut", speed: 0.8, bezier: "vgsLinear" },
+            { leaf: "workspaces", speed: 1.6, bezier: "vgsSnappy", style: "slide" }
+        ]
+    },
+    smooth: {
+        curves: {
+            vgsEaseOutQuint: [[0.23, 1], [0.32, 1]],
+            vgsAlmostLinear: [[0.5, 0.5], [0.75, 1.0]],
+            vgsQuick: [[0.15, 0], [0.1, 1]],
+            vgsLinear: [[0, 0], [1, 1]]
+        },
+        animations: [
+            { leaf: "windows", speed: 3.79, bezier: "vgsEaseOutQuint" },
+            { leaf: "windowsIn", speed: 4.1, bezier: "vgsEaseOutQuint", style: "popin 87%" },
+            { leaf: "windowsOut", speed: 1.49, bezier: "vgsLinear", style: "popin 87%" },
+            { leaf: "layers", speed: 3.81, bezier: "vgsEaseOutQuint" },
+            { leaf: "layersIn", speed: 4, bezier: "vgsEaseOutQuint", style: "fade" },
+            { leaf: "layersOut", speed: 1.5, bezier: "vgsLinear", style: "fade" },
+            { leaf: "fadeIn", speed: 1.73, bezier: "vgsAlmostLinear" },
+            { leaf: "fadeOut", speed: 1.46, bezier: "vgsAlmostLinear" },
+            { leaf: "fade", speed: 3.03, bezier: "vgsQuick" },
+            { leaf: "fadeLayersIn", speed: 1.79, bezier: "vgsAlmostLinear" },
+            { leaf: "fadeLayersOut", speed: 1.39, bezier: "vgsAlmostLinear" },
+            { leaf: "workspaces", speed: 3.5, bezier: "vgsEaseOutQuint", style: "slide" }
+        ]
+    }
+};
+
 // A Theme colour, `#aarrggbb`, as Hyprland reads one: `rgba(rrggbbaa)`.
 function hyprColour(name, value) {
     if (typeof value !== "string" || !/^#[0-9a-fA-F]{8}$/.test(value))
@@ -70,6 +122,17 @@ function bindKeys(key) {
     return key.split("+").join(" + ");
 }
 
+function luaNumber(value) {
+    if (typeof value !== "number" || !isFinite(value))
+        throw new Error("HyprlandLayer: number must be finite, got " + JSON.stringify(value));
+    var rounded = Math.round(value * 100) / 100;
+    return Math.abs(rounded - Math.round(rounded)) < 0.000001 ? String(Math.round(rounded)) : String(rounded);
+}
+
+function boundedWhole(value, min, max) {
+    return Math.max(min, Math.min(max, Math.round(value)));
+}
+
 // The nested table TREE, built from BORDERS, as Lua lines at DEPTH.
 function tableLines(tree, depth) {
     var pad = new Array(depth + 1).join("    ");
@@ -77,6 +140,10 @@ function tableLines(tree, depth) {
     Object.keys(tree).forEach(function (name) {
         if (typeof tree[name] === "string") {
             lines.push(pad + name + " = \"" + tree[name] + "\",");
+        } else if (typeof tree[name] === "number") {
+            lines.push(pad + name + " = " + luaNumber(tree[name]) + ",");
+        } else if (typeof tree[name] === "boolean") {
+            lines.push(pad + name + " = " + (tree[name] ? "true" : "false") + ",");
         } else {
             lines.push(pad + name + " = {");
             lines = lines.concat(tableLines(tree[name], depth + 1));
@@ -86,7 +153,7 @@ function tableLines(tree, depth) {
     return lines;
 }
 
-function borderLines(colours, themeName) {
+function borderLines(theme, themeName) {
     var tree = {};
     BORDERS.forEach(function (row) {
         var node = tree;
@@ -95,10 +162,79 @@ function borderLines(colours, themeName) {
             if (node[path[i]] === undefined) node[path[i]] = {};
             node = node[path[i]];
         }
-        node[path[path.length - 1]] = hyprColour(row[1], colours[row[1]]);
+        node[path[path.length - 1]] = hyprColour(row[1], theme.colours[row[1]]);
     });
+    tree.general.border_size = theme.hyprland.border.size;
+    tree.decoration = { shadow: { color: hyprColour("hyprland.shadow.color", theme.hyprland.shadow.color) } };
     return ["-- Theme " + commentText(themeName) + ": window, group and group bar borders.", "hl.config({"]
         .concat(tableLines(tree, 1), ["})"]);
+}
+
+function radiusLines(theme, highestScale) {
+    var radius = theme.hyprland.window.radius;
+    var scale = typeof highestScale === "number" && isFinite(highestScale) && highestScale > 0 ? highestScale : 1;
+    var groupbar = boundedWhole(radius * scale, 0, 20);
+    return [
+        "-- Theme appearance: corner radius.",
+        "-- Group tabs use the window radius times the highest monitor scale (" + luaNumber(scale) + "), bounded to 20.",
+        "hl.config({",
+        "    decoration = {",
+        "        rounding = " + luaNumber(radius) + ",",
+        "        rounding_power = " + luaNumber(theme.hyprland.window.roundingPower) + ",",
+        "    },",
+        "    group = {",
+        "        groupbar = {",
+        "            rounding = " + luaNumber(groupbar) + ",",
+        "            gradient_rounding = " + luaNumber(groupbar) + ",",
+        "        },",
+        "    },",
+        "})"
+    ];
+}
+
+function motionLines(theme) {
+    var preset = theme.hyprland.motion.preset;
+    var scale = theme.motionScale;
+    if (scale === 0 || preset === "none")
+        return ["-- Theme appearance: window animations.", "hl.config({ animations = { enabled = false } })"];
+    var row = MOTION[preset];
+    if (row === undefined)
+        throw new Error("HyprlandLayer: motion preset " + JSON.stringify(preset) + " is not known");
+    var lines = ["-- Theme appearance: window animations.", "hl.config({ animations = { enabled = true } })"];
+    Object.keys(row.curves).forEach(function (name) {
+        var points = row.curves[name];
+        lines.push("hl.curve(\"" + name + "\", { type = \"bezier\", points = { { " + luaNumber(points[0][0]) + ", " + luaNumber(points[0][1]) + " }, { " + luaNumber(points[1][0]) + ", " + luaNumber(points[1][1]) + " } } })");
+    });
+    row.animations.forEach(function (animation) {
+        var speed = Math.max(0.01, animation.speed * scale);
+        var fields = ["leaf = \"" + animation.leaf + "\"", "enabled = true", "speed = " + luaNumber(speed), "bezier = \"" + animation.bezier + "\""];
+        if (animation.style !== undefined) fields.push("style = \"" + animation.style + "\"");
+        lines.push("hl.animation({ " + fields.join(", ") + " })");
+    });
+    return lines;
+}
+
+function appearanceOwner(sections) {
+    var owners = sections.filter(function (section) {
+        return section.appearance !== undefined && Object.keys(section.appearance).length > 0;
+    }).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+    return { owner: owners.length === 0 ? null : owners[0], conflicts: owners.slice(1).map(function (section) { return { id: section.id, heldBy: owners[0].id }; }) };
+}
+
+function groupSwitches(sections) {
+    var resolved = appearanceOwner(sections);
+    var groups = {};
+    APPEARANCE_GROUPS.forEach(function (group) {
+        if (resolved.owner !== null && resolved.owner.appearance[group] !== undefined)
+            groups[group] = resolved.owner.appearance[group];
+        else
+            groups[group] = { setting: "core default", enabled: APPEARANCE_DEFAULTS[group] };
+    });
+    return { groups: groups, owner: resolved.owner, conflicts: resolved.conflicts };
+}
+
+function disabledGroupLine(group, setting) {
+    return "-- Theme appearance: " + group + " left to the user's config; " + commentText(setting) + " is off.";
 }
 
 // The Lua string literal of the class pattern that matches APP_ID alone: the
@@ -136,7 +272,8 @@ function ruleLine(id, rule) {
     return "hl.layer_rule({ " + fields.join(", ") + " })";
 }
 
-// The layer's text and the binds it could not write.
+// The layer's text and the binds or appearance owner declarations it could
+// not write.
 //
 // SECTIONS are PluginLogic.hyprlandSection results for the enabled plugins,
 // in any order; they are written by plugin id, a section that asks nothing
@@ -145,12 +282,13 @@ function ruleLine(id, rule) {
 // first by id: the later bind becomes a `skipped` comment and one conflict,
 // { id, shortcut, key, heldBy }. A bind whose key the user set to null
 // becomes an `unbound` comment. A layer rule an earlier section already
-// wrote, the same namespace and effects, is written once. COLOURS and
-// THEME_NAME give the theme's border colours, written first, after the
-// header. The floating TUIs' window rules follow them, then the shell's
-// application window rule, before any plugin section, whatever the
-// sections.
-function render(sections, colours, themeName) {
+// wrote, the same namespace and effects, is written once. THEME gives the
+// theme's colours and Hyprland tokens. The fixed theme-appearance groups are
+// written after the header, in order, when their switch is on. The floating
+// TUIs' window rules follow them, then the shell's application window rule,
+// before any plugin section, whatever the sections.
+function render(sections, theme, themeName, highestScale) {
+    var switches = groupSwitches(sections);
     var lines = [
         "-- Generated by the vgs shell; an edit here is lost. The shell writes this",
         "-- file again when a plugin, shell.json or the theme changes, and",
@@ -158,7 +296,16 @@ function render(sections, colours, themeName) {
         "-- line `vgsh hypr wire` keeps first there, so every setting after that",
         "-- line wins.",
         ""
-    ].concat(borderLines(colours, themeName), [""], tuiWindowLines(), [""], appWindowLines());
+    ];
+    if (switches.groups.borders.enabled) lines = lines.concat(borderLines(theme, themeName));
+    else lines.push(disabledGroupLine("borders", switches.groups.borders.setting));
+    lines.push("");
+    if (switches.groups.radius.enabled) lines = lines.concat(radiusLines(theme, highestScale));
+    else lines.push(disabledGroupLine("radius", switches.groups.radius.setting));
+    lines.push("");
+    if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
+    else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines());
     var held = Object.create(null);
     var written = Object.create(null);
     var conflicts = [];
@@ -189,7 +336,7 @@ function render(sections, colours, themeName) {
             lines.push("hl.bind(\"" + bindKeys(bind.key) + "\", hl.dsp.global(\"" + global + "\"), { description = \"" + global + "\" })");
         });
     });
-    return { text: lines.join("\n") + "\n", conflicts: conflicts };
+    return { text: lines.join("\n") + "\n", conflicts: conflicts, appearanceConflicts: switches.conflicts };
 }
 
 // The writer's sequence, HyprlandLayer.qml's one decision about what to do

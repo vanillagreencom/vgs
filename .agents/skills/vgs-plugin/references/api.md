@@ -196,3 +196,5 @@ A name a component does not know is logged and drawn as the default. A control's
 ## Manifest
 
 The field table is [`docs/architecture/plugins.md` § Manifest](../../../../docs/architecture/plugins.md#manifest). An unknown key refuses the manifest.
+
+`hyprland.appearance` is an object for a plugin that has capability `theme`. It maps `borders`, `radius` or `motion` to a boolean setting key in the same manifest schema. The first enabled plugin by id that declares appearance owns the switches. A later declaration is reported as a Hyprland problem and ignored. The core uses defaults when no owner declares a group: borders on, radius on and motion off. A user's Hyprland setting after the VGS include line still wins.

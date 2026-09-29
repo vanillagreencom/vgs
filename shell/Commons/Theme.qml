@@ -34,6 +34,7 @@ Singleton {
     readonly property var border: published.border
     readonly property var opacity: published.opacity
     readonly property var motion: published.motion
+    readonly property var hyprland: published.hyprland
     readonly property var size: published.size
     readonly property var icon: published.icon
     readonly property var font: published.font

@@ -30,7 +30,10 @@
   ],
   "defaultSection": "right",
   "settings": {
-    "placement": "top-right"
+    "placement": "top-right",
+    "setWindowBorders": true,
+    "setCornerRadius": true,
+    "setWindowAnimations": false
   },
   "schema": {
     "placement": {
@@ -38,9 +41,32 @@
       "label": "Placement",
       "description": "Where the themes panel opens on its monitor when summoned without its bar button",
       "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
+    },
+    "setWindowBorders": {
+      "type": "boolean",
+      "label": "Themes set window borders",
+      "description": "Theme border colours, border thickness and shadow colour land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "group": "Hyprland"
+    },
+    "setCornerRadius": {
+      "type": "boolean",
+      "label": "Themes set corner radius",
+      "description": "Theme window rounding and grouped-window tab rounding land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "group": "Hyprland"
+    },
+    "setWindowAnimations": {
+      "type": "boolean",
+      "label": "Themes set window animations",
+      "description": "Theme animation presets land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "group": "Hyprland"
     }
   },
   "hyprland": {
+    "appearance": {
+      "borders": "setWindowBorders",
+      "radius": "setCornerRadius",
+      "motion": "setWindowAnimations"
+    },
     "binds": [
       { "shortcut": "themes", "key": "SUPER+T" },
       { "shortcut": "wallpapers", "key": "SUPER+W" }

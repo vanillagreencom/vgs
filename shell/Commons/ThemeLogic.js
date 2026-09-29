@@ -113,7 +113,8 @@ function nodeAt(tokens, path) {
 
 // The first defect of the table itself, or "". The table is a tree of
 // groups whose names match NAME_PATTERN; a leaf declares a type in TYPES, a
-// `number` its range, a `choice` its options.
+// `number` its range, a `length` its optional per-token range, and a
+// `choice` its options.
 function tableError(tokens) {
     if (!isPlainObject(tokens) || isLeaf(tokens))
         return "table must be a group";
@@ -138,6 +139,14 @@ function tableError(tokens) {
                 return at + " has unknown type " + JSON.stringify(child.type);
             if (child.type === "number" && !(typeof child.min === "number" && typeof child.max === "number" && child.min <= child.max))
                 return at + " is a number without a range";
+            if (child.type === "length") {
+                if (child.min !== undefined && (typeof child.min !== "number" || !isFinite(child.min)))
+                    return at + ".min must be a finite number";
+                if (child.max !== undefined && (typeof child.max !== "number" || !isFinite(child.max)))
+                    return at + ".max must be a finite number";
+                if (child.min !== undefined && child.max !== undefined && child.min > child.max)
+                    return at + ".min must not be greater than max";
+            }
             if (child.type === "choice" && !(Array.isArray(child.options) && child.options.length > 0))
                 return at + " is a choice without options";
         }
@@ -472,7 +481,11 @@ function resolve(tokens, overrides) {
             throw new Error("theme: settle: " + token + " evaluated to " + String(value));
         if (WHOLE_TYPES.indexOf(leaf.type) !== -1)
             value = Math.round(value);
-        var range = leaf.type === "number" ? [leaf.min, leaf.max] : RANGES[leaf.type];
+        var range = leaf.type === "number" ? [leaf.min, leaf.max]
+            : leaf.type === "length" ? [
+                leaf.min === undefined ? RANGES.length[0] : leaf.min,
+                leaf.max === undefined ? RANGES.length[1] : leaf.max
+            ] : RANGES[leaf.type];
         if (value < range[0] || value > range[1])
             return fail("range", token, "value=" + value + " min=" + range[0] + " max=" + range[1]);
         return value;

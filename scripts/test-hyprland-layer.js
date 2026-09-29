@@ -28,6 +28,7 @@ const overlayRule = { namespace: "^vgs:overlay$", blur: true, ignoreAlpha: 0.6 }
 const toggle = { shortcut: "toggle", key: "SUPER+SPACE" };
 // The border colours as Theme publishes them, `#aarrggbb`.
 const colours = { accent: "#ff5a3659", border: "#80112233", borderSubtle: "#ff222222", warning: "#ffffaa00", surfaceRaised: "#ff333333", onAccent: "#ff000000", text: "#ffeeeeee", onWarning: "#ff010101" };
+const theme = { colours, hyprland: { border: { size: 4 }, window: { radius: 8, roundingPower: 3 }, motion: { preset: "snappy" }, shadow: { color: "#99000088" } }, motionScale: 2 };
 // The floating TUIs' window rules as the layer writes them, byte for byte:
 // in the Lua literal `\\.` is the regex `\.`, a literal dot. Hyprland
 // v0.56.2 reads these fields back in scripts/smoke/rows/hyprland.sh.
@@ -85,7 +86,13 @@ const MANIFESTS = [
     ["hyprland with an unknown key", { hyprland: { binds: [toggle], windowRules: [] } }, "hyprland has unknown key \"windowRules\""],
     ["binds not a list", { hyprland: { binds: toggle } }, "hyprland.binds must be a list"],
     ["layerRules not a list", { hyprland: { layerRules: overlayRule } }, "hyprland.layerRules must be a list"],
-    ["no binds and no rules", { hyprland: { binds: [], layerRules: [] } }, "hyprland declares no binds and no layer rules"],
+    ["no binds, rules or appearance", { hyprland: { binds: [], layerRules: [] } }, "hyprland declares no binds, layer rules or appearance"],
+    ["appearance alone", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, null],
+    ["appearance unknown group", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { gaps: "setBorders" } } }, "hyprland.appearance.gaps must be one of borders, radius, motion"],
+    ["appearance missing schema key", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "missing" } } }, "hyprland.appearance.borders names no schema entry \"missing\""],
+    ["appearance non-boolean schema key", { capabilities: ["theme"], settings: { setBorders: "yes" }, schema: { setBorders: { type: "string", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, "hyprland.appearance.borders must name a boolean schema entry"],
+    ["appearance without theme capability", { settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, "hyprland.appearance needs capability theme"],
+    ["appearance empty", { capabilities: ["theme"], hyprland: { appearance: {} } }, "hyprland.appearance must be a non-empty object"],
     ["binds without capability shortcut", { capabilities: [], hyprland: { binds: [toggle] } }, "hyprland.binds needs capability shortcut"],
     ["a bind that is no object", { hyprland: { binds: ["toggle"] } }, "hyprland.binds.0 must be an object"],
     ["a bind with an unknown key", { hyprland: { binds: [{ shortcut: "toggle", key: "SUPER+N", lua: "x" }] } }, "hyprland.binds.0 has unknown key \"lua\""],
@@ -137,7 +144,7 @@ function verify(logic, layer, shellText) {
         else assert.ok(!r.ok && r.error.startsWith(want), "manifest " + name + " refused with " + JSON.stringify(want) + ", got " + JSON.stringify(r.ok ? "accepted" : r.error));
     }
     const declared = manifestOf(logic, { hyprland: { binds: [{ shortcut: "toggle", key: "super + space" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule] } });
-    same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule] }, "a normalised manifest holds normalised keys");
+    same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule], appearance: {} }, "a normalised manifest holds normalised keys");
     same(manifestOf(logic, { hyprland: { layerRules: [overlayRule] } }).hyprland.binds, [], "a normalised manifest without binds holds none");
     assert.strictEqual(manifestOf(logic, {}).hyprland, undefined, "a manifest declaring no hyprland key carries none");
 
@@ -151,15 +158,26 @@ function verify(logic, layer, shellText) {
         id: "acme.keys", version: "1.0.0",
         binds: [{ shortcut: "toggle", key: "SUPER+CTRL+T" }, { shortcut: "inbox", key: null }],
         layerRules: [overlayRule],
+        appearance: {},
         unknownKeys: ["early", "later"]
     }, "hyprlandSection takes the row's keys over the manifest's and names the unknown ones");
     same(logic.hyprlandSection({}, declared).binds, declared.hyprland.binds, "hyprlandSection keeps the manifest's keys without a row");
-    same(logic.hyprlandSection(config, manifestOf(logic, {})), { id: "acme.keys", version: "1.0.0", binds: [], layerRules: [], unknownKeys: ["early", "inbox", "later", "toggle"] }, "a manifest asking nothing leaves every row name unknown");
+    same(logic.hyprlandSection(config, manifestOf(logic, {})), { id: "acme.keys", version: "1.0.0", binds: [], layerRules: [], appearance: {}, unknownKeys: ["early", "inbox", "later", "toggle"] }, "a manifest asking nothing leaves every row name unknown");
+    const appearanceManifest = manifestOf(logic, { capabilities: ["theme"], settings: { setBorders: true, setMotion: false }, schema: { setBorders: { type: "boolean", label: "Set borders" }, setMotion: { type: "boolean", label: "Set motion" } }, hyprland: { appearance: { borders: "setBorders", motion: "setMotion" } } });
+    same(logic.hyprlandSection({ plugins: [{ id: "acme.keys", setBorders: false, setMotion: true }] }, appearanceManifest).appearance, {
+        borders: { setting: "setBorders", enabled: false },
+        motion: { setting: "setMotion", enabled: true }
+    }, "hyprlandSection resolves appearance switches from effective plugin settings");
 
-    const section = (id, binds, layerRules, version) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, unknownKeys: [] });
+    const section = (id, binds, layerRules, version, appearance) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, appearance: appearance || {}, unknownKeys: [] });
     const lines = out => out.text.split("\n");
-    const bare = layer.render([], colours, "vgs");
-    same(lines(bare).slice(lines(bare).indexOf("})") + 1), ["", ...TUI_SECTION, "", ...APP_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, right after the border colours, then the application window rule");
+    const bare = layer.render([], theme, "vgs", 2);
+    const bareLines = lines(bare);
+    assert.ok(bareLines.indexOf("-- Theme vgs: window, group and group bar borders.") < bareLines.indexOf("-- Theme appearance: corner radius."), "borders are before radius");
+    assert.ok(bareLines.indexOf("-- Theme appearance: corner radius.") < bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off."), "radius is before motion");
+    assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
+    assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
+    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, then the application window rule");
     same(layer.APP_WINDOW, { appId: "org.vgs.shell", rule: "vgs:window" }, "the application windows' app-id and rule name");
     same(pragmaAppId(shellText), layer.APP_WINDOW.appId, "shell.qml's AppId pragma is the application windows' app-id");
     assert.ok(lines(bare).some(line => line.includes("`" + layer.REGENERATE + "`")), "the header names the regenerate command");
@@ -168,17 +186,46 @@ function verify(logic, layer, shellText) {
     assert.ok(lines(bare).includes("            active_border = \"rgba(5a3659ff)\","), "a #aarrggbb accent is written rgba(rrggbbaa)");
     assert.ok(lines(bare).includes("            inactive_border = \"rgba(11223380)\","), "the border keeps its alpha last");
     assert.ok(lines(bare).includes("            text_color_locked_active = \"rgba(010101ff)\","), "the group bar's text colour is written");
-    assert.throws(() => layer.render([], Object.assign({}, colours, { accent: "#5a36" }), "vgs"), /colour accent must be #aarrggbb/, "a colour Theme never publishes is refused");
+    assert.ok(lines(bare).includes("        border_size = 4,"), "the border block writes the theme's border size");
+    assert.ok(lines(bare).includes("            color = \"rgba(00008899)\","), "the border block writes the theme's shadow colour");
+    assert.ok(lines(bare).includes("        rounding = 8,"), "the radius block writes the theme's window radius");
+    assert.ok(lines(bare).includes("        rounding_power = 3,"), "the radius block writes the theme's rounding power");
+    assert.ok(lines(bare).includes("            rounding = 16,"), "the radius block scales group bar rounding");
+    assert.throws(() => layer.render([], Object.assign({}, theme, { colours: Object.assign({}, colours, { accent: "#5a36" }) }), "vgs", 1), /colour accent must be #aarrggbb/, "a colour Theme never publishes is refused");
+
+    const switched = layer.render([section("vgs.themes", [], [], "1.0.0", {
+        borders: { setting: "setWindowBorders", enabled: false },
+        radius: { setting: "setCornerRadius", enabled: false },
+        motion: { setting: "setWindowAnimations", enabled: true }
+    })], theme, "vgs", 1.5);
+    const switchedLines = lines(switched);
+    assert.ok(!switchedLines.some(line => line.indexOf("border_size = 4") !== -1), "a disabled border group writes no border size");
+    assert.ok(!switchedLines.some(line => line.indexOf("rounding = 8") !== -1), "a disabled radius group writes no radius");
+    assert.ok(switchedLines.includes("-- Theme appearance: borders left to the user's config; setWindowBorders is off."), "a disabled border group names its switch");
+    assert.ok(switchedLines.includes("hl.curve(\"vgsSnappy\", { type = \"bezier\", points = { { 0.15, 0 }, { 0.1, 1 } } })"), "motion writes the preset curves");
+    assert.ok(switchedLines.includes("hl.animation({ leaf = \"windows\", enabled = true, speed = 3.6, bezier = \"vgsSnappy\" })"), "motion scales speeds by motion.scale");
+    const switchOn = layer.render([section("vgs.themes", [], [], "1.0.0", { borders: { setting: "setWindowBorders", enabled: true }, radius: { setting: "setCornerRadius", enabled: false }, motion: { setting: "setWindowAnimations", enabled: false } })], theme, "vgs", 1);
+    const switchOff = layer.render([section("vgs.themes", [], [], "1.0.0", { borders: { setting: "setWindowBorders", enabled: false }, radius: { setting: "setCornerRadius", enabled: false }, motion: { setting: "setWindowAnimations", enabled: false } })], theme, "vgs", 1);
+    assert.notStrictEqual(switchOn.text, switchOff.text, "a switch change changes the rendered layer text");
+    assert.ok(lines(switchOn).includes("        border_size = 4,"), "the on switch writes the theme border value");
+    assert.ok(!lines(switchOff).includes("        border_size = 4,"), "the off switch writes no border value");
+    const still = layer.render([section("vgs.themes", [], [], "1.0.0", { motion: { setting: "setWindowAnimations", enabled: true } })], Object.assign({}, theme, { motionScale: 0 }), "vgs", 1);
+    assert.ok(lines(still).includes("hl.config({ animations = { enabled = false } })"), "motion scale 0 disables animations");
+    const firstOwner = layer.render([
+        section("vgs.themes", [], [], "1.0.0", { borders: { setting: "b", enabled: false }, radius: { setting: "r", enabled: false } }),
+        section("acme.theme", [], [], "1.0.0", { borders: { setting: "a", enabled: true } })
+    ], theme, "vgs", 1);
+    same(firstOwner.appearanceConflicts, [{ id: "vgs.themes", heldBy: "acme.theme" }], "the first appearance owner by id wins");
+    assert.ok(!lines(firstOwner).includes("-- Theme appearance: radius left to the user's config; r is off."), "a later appearance owner is ignored");
 
     const out = layer.render([
         section("vgs.notes", [{ shortcut: "inbox", key: "SUPER+N" }, { shortcut: "open", key: "SUPER+SPACE" }], [{ namespace: "^vgs:layer$", blur: true, ignoreAlpha: 0.6 }, overlayRule]),
         section("acme.keys", [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "gone", key: null }], [overlayRule, { namespace: "^vgs:layer$", blur: false }], "2\nos.exit()"),
         section("acme.quiet", [], [])
-    ], colours, "night\nos.exit()");
+    ], theme, "night\nos.exit()", 1);
     const text = lines(out);
-    const tail = text.slice(text.indexOf("})") + 1);
+    const tail = text.slice(text.indexOf(TUI_SECTION[0]));
     same(tail, [
-        "",
         ...TUI_SECTION,
         "",
         ...APP_SECTION,
@@ -282,7 +329,7 @@ const CONTROLS = [
     [logicFile, "hyprland keys", "if (HYPRLAND_KEYS.indexOf(keys[u]) === -1)", "if (false)"],
     [logicFile, "binds list", "if (!Array.isArray(binds))", "if (false)"],
     [logicFile, "rules list", "if (!Array.isArray(rules))", "if (false)"],
-    [logicFile, "declares something", "if (binds.length === 0 && rules.length === 0)", "if (false)"],
+    [logicFile, "declares something", "if (binds.length === 0 && rules.length === 0 && appearance === undefined)", "if (false)"],
     [logicFile, "binds need shortcut", "if (binds.length > 0 && capabilities.indexOf(\"shortcut\") === -1)", "if (false)"],
     [logicFile, "bind object", "if (!isPlainObject(bind))", "if (false)"],
     [logicFile, "bind keys", "if (HYPRLAND_BIND_KEYS.indexOf(bindKeys[k]) === -1)", "if (false)"],
@@ -297,6 +344,11 @@ const CONTROLS = [
     [logicFile, "rule has an effect", "if (rule.blur === undefined && rule.ignoreAlpha === undefined)", "if (false)"],
     [logicFile, "blur boolean", "if (rule.blur !== undefined && typeof rule.blur !== \"boolean\")", "if (false)"],
     [logicFile, "ignoreAlpha range", "rule.ignoreAlpha < 0 || rule.ignoreAlpha > 1))", "false))"],
+    [logicFile, "appearance object", "if (!isPlainObject(appearance) || Object.keys(appearance).length === 0)", "if (false)"],
+    [logicFile, "appearance needs theme", "if (capabilities.indexOf(\"theme\") === -1)", "if (false)"],
+    [logicFile, "appearance known group", "if (HYPRLAND_APPEARANCE_GROUPS.indexOf(group) === -1)", "if (false)"],
+    [logicFile, "appearance schema key", "if (!hasOwn(schema, setting))", "if (false)"],
+    [logicFile, "appearance boolean setting", "if (schema[setting].type !== \"boolean\")", "if (false)"],
     [logicFile, "keys setting reserved", "if (hasOwn(settings, \"keys\"))", "if (false)"],
     [logicFile, "manifest keys normalised", "return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key };", "return { shortcut: bind.shortcut, key: bind.key };"],
     [logicFile, "config keys judged", "if (config.plugins[p].keys !== undefined && (bad = keysError(", "if (false && (bad = keysError("],
@@ -309,6 +361,7 @@ const CONTROLS = [
     [logicFile, "null unbinds", "if (keys[bind.shortcut] === null) return { shortcut: bind.shortcut, key: null };", ""],
     [logicFile, "row key normalised", "return { shortcut: bind.shortcut, key: key.key };\n    });", "return { shortcut: bind.shortcut, key: keys[bind.shortcut] };\n    });"],
     [logicFile, "unknown keys", "return names.indexOf(name) === -1; }).sort()", "return false; }).sort()"],
+    [logicFile, "appearance setting resolved", "appearance[group] = { setting: setting, enabled: settings[setting] === true };", "appearance[group] = { setting: setting, enabled: true };"],
     [layerFile, "sections by id", "sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; })", "sections.slice()"],
     [layerFile, "empty section unwritten", "if (section.binds.length === 0 && section.layerRules.length === 0) return;", ""],
     [layerFile, "first id keeps a key", "if (held[bind.key] !== undefined) {", "if (false) {"],
@@ -319,8 +372,15 @@ const CONTROLS = [
     [layerFile, "colour order", "return \"rgba(\" + value.slice(3, 9) + value.slice(1, 3) + \")\";", "return \"rgba(\" + value.slice(1, 9) + \")\";"],
     [layerFile, "colour judged", "if (typeof value !== \"string\" || !/^#[0-9a-fA-F]{8}$/.test(value))", "if (false)"],
     [layerFile, "bind keys spaced", "return key.split(\"+\").join(\" + \");", "return key;"],
-    [layerFile, "floating TUI rules written", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines(), ", ".concat(borderLines(colours, themeName), "],
-    [layerFile, "floating TUI rules after the borders", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines(), ", ".concat(tuiWindowLines(), [\"\"], borderLines(colours, themeName), "],
+    [layerFile, "border size written", "tree.general.border_size = theme.hyprland.border.size;", "tree.general.border_size = 2;"],
+    [layerFile, "shadow colour written", "tree.decoration = { shadow: { color: hyprColour(\"hyprland.shadow.color\", theme.hyprland.shadow.color) } };", "tree.decoration = { shadow: { color: hyprColour(\"hyprland.shadow.color\", theme.colours.border) } };"],
+    [layerFile, "groupbar radius scaled", "var groupbar = boundedWhole(radius * scale, 0, 20);", "var groupbar = radius;"],
+    [layerFile, "motion scale zero disables", "if (scale === 0 || preset === \"none\")", "if (preset === \"none\")"],
+    [layerFile, "motion speed scales", "var speed = Math.max(0.01, animation.speed * scale);", "var speed = Math.max(0.01, animation.speed);"],
+    [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
+    [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
+    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "lines = lines.concat([\"\"], appWindowLines());"],
+    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines());"],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
     [layerFile, "application window rule written", "[\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "[\"\"], tuiWindowLines());"],

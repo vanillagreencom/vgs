@@ -11,7 +11,12 @@
 // readable.
 
 function color(value) { return { type: "color", value: value }; }
-function length(value) { return { type: "length", value: value }; }
+function length(value, min, max) {
+    var out = { type: "length", value: value };
+    if (min !== undefined) out.min = min;
+    if (max !== undefined) out.max = max;
+    return out;
+}
 function duration(value) { return { type: "duration", value: value }; }
 function family(value) { return { type: "family", value: value }; }
 function weight(value) { return { type: "weight", value: value }; }
@@ -203,6 +208,23 @@ var TOKENS = {
         easing: {
             standard: easing("outCubic"),
             emphasized: easing("outQuint")
+        }
+    },
+
+    hyprland: {
+        border: {
+            size: length("{border.thick}", 0, 20)
+        },
+        window: {
+            radius: length("{radius.md}", 0, 32),
+            roundingPower: number(2, 1, 10)
+        },
+        motion: {
+            preset: { type: "choice", value: "smooth", options: ["none", "snappy", "smooth"] }
+        },
+        shadow: {
+            // Mix toward black before alpha so light themes keep a dark shadow.
+            color: color("alpha(mix({palette.background}, #000000, 0.72), 0.55)")
         }
     },
 

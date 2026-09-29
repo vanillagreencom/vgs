@@ -2,7 +2,7 @@
 
 Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/smoke/rows/gallery.sh, shell/plugins/vgs.gallery/**, shell/Ui/AGENTS.md, shell/Commons/AGENTS.md, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
 
-Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code. A plugin that owns its look takes the theme's mode and accent alone: [appearance.md](appearance.md).
+Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code. A plugin that owns its look takes the theme's mode, accent and motion scale alone: [appearance.md](appearance.md).
 
 ## Layers
 
@@ -19,19 +19,19 @@ Each layer reads only the layer above it.
 |---|---|---|
 | Scheme | `scheme` | `mode`, `dark` or `light`, which no component reads: it picks a plugin-owned look's light values |
 | Palette | `palette` | `background`, `foreground`, `accent`, `success`, `warning`, `danger`, `info` |
-| Scale | `space`, `radius`, `border`, `opacity`, `motion`, `size`, `icon`, `font` | the spacing unit and its steps, radius steps, border widths, the disabled opacity, `motion.scale` with the durations and easings, control, panel and window sizes, icon sizes and stroke, font families and the base size |
+| Scale | `space`, `radius`, `border`, `opacity`, `motion`, `hyprland`, `size`, `icon`, `font` | the spacing unit and its steps, radius steps, border widths, the disabled opacity, `motion.scale` with the durations and easings, Hyprland border thickness, window radius, rounding power, motion preset and shadow colour, control, panel and window sizes, icon sizes and stroke, font families and the base size |
 | Semantic | `color`, `text` | colour roles derived from the palette; one typography role per kind of text, each with `family`, `size`, `weight`, `letterSpacing` in em, `lineHeight` and `uppercase` |
 | Rhythm | `control`, `row` | the horizontal padding and icon-and-text gap every one-line control shares; a row's horizontal padding, its inline label's width and gap, and the gap between a label and the line it names |
 | Component | one group per component | every value a component draws with, derived from its own component first, so a theme that sets one fill keeps the text on it readable |
 
-The token list is `Tokens.js`; no document copies it. A theme that sets the seven palette colours restyles every surface. `motion.scale` of 0 sets every duration to 0, a theme's own timing included; a wait that is not an animation is a `number` token in milliseconds.
+The token list is `Tokens.js`; no document copies it. A theme that sets the seven palette colours restyles every surface. `motion.scale` of 0 sets every duration to 0, a theme's own timing included; a wait that is not an animation is a `number` token in milliseconds. The `hyprland` group reaches only the generated Hyprland layer and only for the groups whose switches are on: [hyprland.md](hyprland.md).
 
 ## Types and expressions
 
 | Type | Resolved value | Range |
 |---|---|---|
 | `color` | `#rrggbbaa`, alpha last; `Theme` publishes it as the string `#aarrggbb`, the order Qt reads, and a file that needs channels calls `Qt.color` on it | |
-| `length` | whole pixels | 0 to 4096 |
+| `length` | whole pixels | 0 to 4096, unless the token declares its own `min` and `max` |
 | `number` | unitless | the range the token declares |
 | `duration` | whole milliseconds; every duration resolves unscaled, then the published value is multiplied by `motion.scale` once | 0 to 10000 before the scale |
 | `weight` | whole font weight | 100 to 900 |

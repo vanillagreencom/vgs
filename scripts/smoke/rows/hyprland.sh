@@ -33,6 +33,7 @@ config_errors() { hypr -j configerrors | python3 -c 'import json,sys; print(json
 # leading zeros, then the angle.
 hypr_gradient() { hypr -j getoption "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gradient"])'; }
 gradient_of() { python3 -c 'import sys; h = sys.argv[1][1:]; print(format(int(h[6:8] + h[:6], 16), "x") + " 0deg")' "$1"; }
+hypr_option() { hypr -j getoption "$1" | python3 -c 'import json,sys; v=json.load(sys.stdin); print(v.get("int", v.get("float", v.get("str", v.get("set", v)))))'; }
 layer_has() { if grep -qxF -- "$1" "$hypr_layer"; then echo yes; else echo no; fi; }
 section_of() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("-- " + m["id"] + " " + m["version"] + ": binds and layer rules from its manifest")' "$repo/shell/plugins/$1/manifest.json"; }
 # How many plugin sections the layer holds. grep -c exits 1 on a count of
@@ -121,6 +122,27 @@ with open(path + ".next", "w") as f:
 os.replace(path + ".next", path)
 PY
 }
+set_theme_switches() {
+  python3 - "$user_config" "$1" "$2" "$3" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+values = {
+    "setWindowBorders": sys.argv[2] == "true",
+    "setCornerRadius": sys.argv[3] == "true",
+    "setWindowAnimations": sys.argv[4] == "true",
+}
+config = json.load(open(path))
+rows = config.setdefault("plugins", [])
+row = next((r for r in rows if r.get("id") == "vgs.themes"), None)
+if row is None:
+    row = {"id": "vgs.themes"}
+    rows.append(row)
+row.update(values)
+with open(path + ".next", "w") as f:
+    json.dump(config, f, indent=2)
+os.replace(path + ".next", path)
+PY
+}
 both_binds='[[64, "N", "__lua", "vgs.notifications:inbox"], [64, "SPACE", "__lua", "vgs.launcher:toggle"]]'
 rebound='[[72, "SPACE", "__lua", "vgs.launcher:toggle"]]'
 
@@ -131,6 +153,43 @@ expect "the layer's header names the command that writes it again" yes bash -c '
 expect "no plugin declaring Hyprland data is enabled, so no section is written" 0 section_count
 expect_poll "the nested instance holds no vgs bind" '[]' vgs_binds
 expect "the nested configuration, the floating TUIs' window rules included, holds no error" '[]' config_errors
+
+border_before="$(hypr_option general:border_size)" || fail "the nested border_size is readable"
+radius_before="$(hypr_option decoration:rounding)" || fail "the nested rounding is readable"
+cp -- "$user_config" "$sandbox/shell-before-appearance.json"
+mkdir -p "$repo/themes/hyprland-probe"
+cat >"$repo/themes/hyprland-probe/theme.json" <<'JSON'
+{
+  "schemaVersion": 1,
+  "name": "hyprland-probe",
+  "tokens": {
+    "hyprland": {
+      "border": { "size": 4 },
+      "window": { "radius": 8 },
+      "motion": { "preset": "snappy" }
+    }
+  }
+}
+JSON
+set_theme_switches true true false
+expect "the Hyprland probe package applies" "ok theme=hyprland-probe" applied hyprland-probe
+expect_poll "the theme border size reaches Hyprland" 4 hypr_option general:border_size
+expect_poll "the theme corner radius reaches Hyprland" 8 hypr_option decoration:rounding
+expect "the theme border and radius hold no configuration error" '[]' config_errors
+cat >>"$hypr_lua" <<LUA
+hl.config({ general = { border_size = $border_before }, decoration = { rounding = $radius_before } })
+LUA
+expect "the nested instance reloads with harness border and radius overrides" ok hypr reload config-only
+set_theme_switches false false false
+expect_poll "turning the border switch off leaves Hyprland's own border size" "$border_before" hypr_option general:border_size
+expect_poll "turning the radius switch off leaves Hyprland's own rounding" "$radius_before" hypr_option decoration:rounding
+expect "the switched-off theme appearance holds no configuration error" '[]' config_errors
+set_theme_switches false false true
+expect_poll "turning the motion switch on enables Hyprland animations" True hypr_option animations:enabled
+expect "the motion preset holds no configuration error" '[]' config_errors
+cp -- "$sandbox/shell-before-appearance.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
+expect "the shell reloads the restored theme settings" ok ipc shell reloadConfig
+expect "vgs applies after the Hyprland appearance probe" "ok theme=vgs" applied vgs
 
 # The floating TUIs' window rules: a window of each class floats, at its
 # class's size, centred on the work area.

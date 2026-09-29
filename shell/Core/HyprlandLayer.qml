@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import qs.Commons
 import "PluginLogic.js" as Logic
@@ -38,17 +39,31 @@ Scope {
         const config = Config.effective;
         return Object.keys(manifests).filter(id => Registry.isEnabled(id)).map(id => Logic.hyprlandSection(config, manifests[id]));
     }
-    readonly property var colours: ({
-        accent: Theme.palette.accent,
-        warning: Theme.palette.warning,
-        border: Theme.color.border,
-        borderSubtle: Theme.color.borderSubtle,
-        surfaceRaised: Theme.color.surfaceRaised,
-        onAccent: Theme.color.onAccent,
-        text: Theme.color.text,
-        onWarning: Theme.color.onWarning
+    readonly property real highestMonitorScale: {
+        let highest = 1;
+        for (const screen of Quickshell.screens) {
+            const monitor = Hyprland.monitorFor(screen);
+            const screenScale = typeof screen.devicePixelRatio === "number" && isFinite(screen.devicePixelRatio) && screen.devicePixelRatio > 0 ? screen.devicePixelRatio : 1;
+            const scale = monitor !== null && typeof monitor.scale === "number" && isFinite(monitor.scale) && monitor.scale > 0 ? monitor.scale : screenScale;
+            highest = Math.max(highest, scale);
+        }
+        return highest;
+    }
+    readonly property var themeAppearance: ({
+        colours: {
+            accent: Theme.palette.accent,
+            warning: Theme.palette.warning,
+            border: Theme.color.border,
+            borderSubtle: Theme.color.borderSubtle,
+            surfaceRaised: Theme.color.surfaceRaised,
+            onAccent: Theme.color.onAccent,
+            text: Theme.color.text,
+            onWarning: Theme.color.onWarning
+        },
+        hyprland: Theme.hyprland,
+        motionScale: Theme.motion.scale
     })
-    readonly property var rendered: inputsReady ? Layer.render(sections, colours, Theme.name) : null
+    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale) : null
 
     // What `listPlugins` and the plugin manager report beside the manifest
     // errors, as { id, dir, error }: each bind a conflict skipped and each
@@ -62,6 +77,9 @@ Scope {
         if (rendered !== null)
             for (const c of rendered.conflicts)
                 out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: " + c.key + " for " + c.id + ":" + c.shortcut + " skipped: already bound by " + c.heldBy });
+        if (rendered !== null)
+            for (const c of rendered.appearanceConflicts)
+                out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: appearance declaration ignored for " + c.id + ": already owned by " + c.heldBy });
         for (const section of sections)
             for (const name of section.unknownKeys)
                 out.push({ id: section.id, dir: dirOf(section.id), error: "hyprland: shell.json keys." + name + " names no bind of " + section.id });

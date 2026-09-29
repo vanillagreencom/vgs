@@ -50,6 +50,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D045 | VGS-590 | A TUI wait blocks on a per-run lock; a run a later run removed exits gone | A later run of the key holds only the key lock; the shell matches gone ends by run | The presenter keeps earlier runs' records, or a key stops being busy until its end is read | Active | [Full](D045-tui-wait-holds-a-per-run-lock.md) |
 | 2026-09-29 | D046 | VGS-588 | Slack tokens per workspace, a `presenceList` status type, and one card per Slack message | Photos for every workspace; manifests cannot list workspaces; the desktop copy names its workspace | Slack ships a local name-to-photo map or a browser names Slack | Active | [Full](D046-slack-tokens-per-workspace-and-one-card-per-message.md) |
 | 2026-09-29 | D047 | VGS-592 | Services build after every first bar presents a frame, with a deadline | No service build delays the first bar, whatever a plugin imports | A layer surface reports its first presented frame, or a service must precede the bar | Active | [Full](D047-services-build-after-the-first-bar-frame.md) |
+| 2026-09-29 | D048 | VGS-585 | Theme-owned Hyprland appearance groups use manifest switches | Core names no plugin; settings stay manifest-drawn | A theme needs layout-affecting Hyprland values | Active | [Full](D048-theme-owned-hyprland-appearance.md) |
 
 ---
 

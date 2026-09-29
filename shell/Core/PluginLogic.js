@@ -117,7 +117,7 @@ var NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // shortcuts and blur rules for the core's layer namespaces. Data only; the
 // core renders it (HyprlandLayer.js), so no plugin text reaches the
 // compositor's Lua.
-var HYPRLAND_KEYS = ["binds", "layerRules"];
+var HYPRLAND_KEYS = ["binds", "layerRules", "appearance"];
 var HYPRLAND_BIND_KEYS = ["shortcut", "key"];
 var HYPRLAND_RULE_KEYS = ["namespace", "blur", "ignoreAlpha"];
 // The modifiers a Hyprland key may hold, in the order a normalised key
@@ -127,6 +127,7 @@ var HYPRLAND_MODIFIERS = ["SUPER", "CTRL", "ALT", "SHIFT"];
 var HYPRLAND_KEY_NAME = /^[A-Za-z0-9_]+$/;
 // A layer rule matches one core host's namespace, anchored: `^vgs:<name>$`.
 var HYPRLAND_NAMESPACE = /^\^vgs:[a-z][a-z0-9-]*\$$/;
+var HYPRLAND_APPEARANCE_GROUPS = HyprlandLayer.APPEARANCE_GROUPS;
 
 function hasOwn(obj, key) {
     return obj !== null && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
@@ -598,13 +599,16 @@ function keysError(keys, at) {
 }
 
 // The first defect of a manifest's `hyprland` key, or "". It holds `binds`,
-// a list of { shortcut, key }, and `layerRules`, a list of { namespace,
-// blur, ignoreAlpha }, at least one of them non-empty. A bind's shortcut is
-// a name the plugin registers through its `shortcut` capability, which the
-// manifest must name, so a plugin binds only its own shortcuts. A rule
-// matches `^vgs:<name>$` and sets blur, ignoreAlpha from 0 to 1, or both.
-// Neither a shortcut, a key nor a namespace appears twice.
-function hyprlandError(hyprland, capabilities) {
+// a list of { shortcut, key }, `layerRules`, a list of { namespace,
+// blur, ignoreAlpha }, and `appearance`, an object mapping the fixed
+// theme-appearance groups to boolean settings in this manifest. A bind's
+// shortcut is a name the plugin registers through its `shortcut` capability,
+// which the manifest must name, so a plugin binds only its own shortcuts. A
+// rule matches `^vgs:<name>$` and sets blur, ignoreAlpha from 0 to 1, or
+// both. Appearance needs the `theme` capability because those switches change
+// how the theme reaches Hyprland. Neither a shortcut, a key nor a namespace
+// appears twice.
+function hyprlandError(hyprland, capabilities, schema) {
     if (!isPlainObject(hyprland))
         return "hyprland must be an object";
     var keys = Object.keys(hyprland);
@@ -614,12 +618,13 @@ function hyprlandError(hyprland, capabilities) {
     }
     var binds = hyprland.binds === undefined ? [] : hyprland.binds;
     var rules = hyprland.layerRules === undefined ? [] : hyprland.layerRules;
+    var appearance = hyprland.appearance;
     if (!Array.isArray(binds))
         return "hyprland.binds must be a list";
     if (!Array.isArray(rules))
         return "hyprland.layerRules must be a list";
-    if (binds.length === 0 && rules.length === 0)
-        return "hyprland declares no binds and no layer rules";
+    if (binds.length === 0 && rules.length === 0 && appearance === undefined)
+        return "hyprland declares no binds, layer rules or appearance";
     if (binds.length > 0 && capabilities.indexOf("shortcut") === -1)
         return "hyprland.binds needs capability shortcut";
     var shortcuts = [];
@@ -668,6 +673,26 @@ function hyprlandError(hyprland, capabilities) {
             return where + ".blur must be a boolean";
         if (rule.ignoreAlpha !== undefined && (typeof rule.ignoreAlpha !== "number" || !isFinite(rule.ignoreAlpha) || rule.ignoreAlpha < 0 || rule.ignoreAlpha > 1))
             return where + ".ignoreAlpha must be a number from 0 to 1";
+    }
+    if (appearance !== undefined) {
+        if (!isPlainObject(appearance) || Object.keys(appearance).length === 0)
+            return "hyprland.appearance must be a non-empty object";
+        if (capabilities.indexOf("theme") === -1)
+            return "hyprland.appearance needs capability theme";
+        var appearanceKeys = Object.keys(appearance);
+        for (var a = 0; a < appearanceKeys.length; a++) {
+            var group = appearanceKeys[a];
+            var at = "hyprland.appearance." + group;
+            if (HYPRLAND_APPEARANCE_GROUPS.indexOf(group) === -1)
+                return at + " must be one of " + HYPRLAND_APPEARANCE_GROUPS.join(", ");
+            var setting = appearance[group];
+            if (typeof setting !== "string" || setting.length === 0)
+                return at + " must name a boolean schema entry";
+            if (!hasOwn(schema, setting))
+                return at + " names no schema entry " + JSON.stringify(setting);
+            if (schema[setting].type !== "boolean")
+                return at + " must name a boolean schema entry, got " + schema[setting].type;
+        }
     }
     return "";
 }
@@ -1794,7 +1819,7 @@ function validateManifest(raw, sourceDir) {
             return { ok: false, error: "defaultSection must be one of " + SECTIONS.join(", ") + ", got " + JSON.stringify(raw.defaultSection) };
     }
     if (raw.hyprland !== undefined) {
-        var badHyprland = hyprlandError(raw.hyprland, capabilities);
+        var badHyprland = hyprlandError(raw.hyprland, capabilities, schema);
         if (badHyprland !== "")
             return { ok: false, error: badHyprland };
     }
@@ -1824,7 +1849,8 @@ function validateManifest(raw, sourceDir) {
     if (raw.hyprland !== undefined) {
         manifest.hyprland = {
             binds: (raw.hyprland.binds || []).map(function (bind) { return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key }; }),
-            layerRules: clone(raw.hyprland.layerRules || [])
+            layerRules: clone(raw.hyprland.layerRules || []),
+            appearance: clone(raw.hyprland.appearance || {})
         };
     }
     manifest.__sourceDir = sourceDir;
@@ -1937,17 +1963,19 @@ function settingsFor(config, manifest, target, layoutEntry) {
 var ENTRY_RESERVED_KEYS = ["id", "keys"];
 
 // What plugin MANIFEST asks of Hyprland under CONFIG: { id, version, binds,
-// layerRules, unknownKeys }. `binds` follows the manifest's `hyprland.binds`
-// in order, each { shortcut, key }: the key its plugins row's `keys` gives
-// that shortcut, normalised, null when the row gives it null (the user
-// unbinds it), else the manifest's. `unknownKeys` lists, sorted, each name
-// the row's `keys` gives that no bind declares. A manifest without
-// `hyprland` asks nothing: empty lists, and its row's names all unknown.
-// CONFIG passed configError, so every key it gives is well formed.
+// layerRules, appearance, unknownKeys }. `binds` follows the manifest's
+// `hyprland.binds` in order, each { shortcut, key }: the key its plugins
+// row's `keys` gives that shortcut, normalised, null when the row gives it
+// null (the user unbinds it), else the manifest's. `appearance` resolves
+// each declared group to the boolean effective setting the plugin receives.
+// `unknownKeys` lists, sorted, each name the row's `keys` gives that no bind
+// declares. A manifest without `hyprland` asks nothing: empty lists, no
+// appearance, and its row's names all unknown. CONFIG passed configError, so
+// every key it gives is well formed.
 function hyprlandSection(config, manifest) {
     var row = pluginRow(config, manifest.id);
     var keys = row !== undefined && isPlainObject(row.keys) ? row.keys : {};
-    var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [] } : manifest.hyprland;
+    var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [], appearance: {} } : manifest.hyprland;
     var binds = declared.binds.map(function (bind) {
         if (!hasOwn(keys, bind.shortcut)) return { shortcut: bind.shortcut, key: bind.key };
         if (keys[bind.shortcut] === null) return { shortcut: bind.shortcut, key: null };
@@ -1957,11 +1985,18 @@ function hyprlandSection(config, manifest) {
         return { shortcut: bind.shortcut, key: key.key };
     });
     var names = declared.binds.map(function (bind) { return bind.shortcut; });
+    var settings = settingsFor(config, manifest, "plugins", null);
+    var appearance = {};
+    Object.keys(declared.appearance || {}).forEach(function (group) {
+        var setting = declared.appearance[group];
+        appearance[group] = { setting: setting, enabled: settings[setting] === true };
+    });
     return {
         id: manifest.id,
         version: manifest.version,
         binds: binds,
         layerRules: clone(declared.layerRules),
+        appearance: appearance,
         unknownKeys: Object.keys(keys).filter(function (name) { return names.indexOf(name) === -1; }).sort()
     };
 }

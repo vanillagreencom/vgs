@@ -69,3 +69,7 @@ Omarchy (basecamp/omarchy `main` at `e332dc9`) gives windows tagged `floating-wi
 ## Revisit Outcome (2026-09-29, VGS-582)
 
 The decision holds. The layer gains a second constant core section after the floating TUIs' rules: `vgs:window`, one `hl.window_rule` that floats and centres every window of the shell's class, `org.vgs.shell`, with no size ([D044](D044-application-windows-are-hyprland-toplevels.md)). No plugin text reaches it, and a plugin still writes no window rule. A user disables it by name after the line, as for the floating TUIs' rules.
+
+## Revisit Outcome (2026-09-29, VGS-585)
+
+[D048](D048-theme-owned-hyprland-appearance.md) refines this decision. The one generated layer now writes theme-owned Hyprland appearance before the floating TUI rules and application window rule: borders, radius and motion, each behind a manifest-declared switch. The core still names no plugin. A plugin declares `hyprland.appearance` in its manifest, and the first enabled declaration by plugin id owns the switches. If no plugin owns a group, the core default keeps border and radius output on and motion output off.
