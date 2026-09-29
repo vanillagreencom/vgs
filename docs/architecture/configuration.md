@@ -20,7 +20,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 | `bar.id` | A string: the active bar's plugin id. |
 | `bar.layout.left[]`, `bar.layout.center[]`, `bar.layout.right[]` | Objects, each with a string `id` and the widget's settings beside it. |
 | `plugins[]` | Objects, each with a string `id` and the plugin's settings beside it. |
-| `plugins[].keys` | An object: each name is a shortcut the plugin's manifest binds in `hyprland.binds`, and each value the key that replaces its default, such as `SUPER+ALT+SPACE`, or `null` to unbind it. The Hyprland layer reads it and hands it to no plugin: [hyprland.md](hyprland.md). A name the manifest binds nothing under is reported by `listPlugins`, not refused. |
+| `plugins[].keys` | An object: each name is a shortcut the plugin's manifest binds in `hyprland.binds`, and each value the key that replaces its default, such as `SUPER+ALT+SPACE`, or `null` to unbind it. The Hyprland layer reads it and hands it to no plugin: [hyprland.md](hyprland.md). The manager's `setKey` writes it, normalised, from the Settings window's Keys rows, [manager.md](manager.md). A name the manifest binds nothing under is reported by `listPlugins`, not refused. |
 | `disabledPlugins[]` | Strings: plugin ids. |
 | `disabledTargets[]` | Strings: theme target names an apply skips. A user list replaces the shipped one. |
 

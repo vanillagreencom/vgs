@@ -4,11 +4,12 @@
 Its template table covers exactly the kinds shell/Core/PluginLogic.js hosts
 (read under node through scripts/qml-library.js, never restated here); `new`
 then `check` round-trips a plugin of two kinds in a temporary directory, with
-the bar widget's label default landing in the manifest; a quoted description
-lands as a valid manifest; and each refusal is pinned by its keyed first line
-and exit 2: a kind no template covers, an id the judge refuses (leaving no
-directory), a judge that exits above 1, an occupied target and a check on a
-directory with no manifest. Every child runs under an explicit environment."""
+the bar widget's label default and its schema entry landing in the manifest;
+the icon given, `package` by default, lands in the manifest; a quoted
+description lands as a valid manifest; and each refusal is pinned by its keyed
+first line and exit 2: a kind no template covers, an id or an icon the judge
+refuses (leaving no directory), a judge that exits above 1, an occupied target
+and a check on a directory with no manifest. Every child runs under an explicit environment."""
 import importlib.machinery
 import importlib.util
 import json
@@ -68,7 +69,8 @@ def main():
         report("new writes a plugin of two kinds and its check passes", made.returncode == 0 and made.stdout.rstrip().endswith("vgs-plugin: check ok"), f"exit={made.returncode}\n{made.stdout}{made.stderr}")
         report("new writes one entry point per kind", sorted(os.listdir(target)) == ["Service.qml", "Widget.qml", "manifest.json"] if os.path.isdir(target) else False, str(os.listdir(target) if os.path.isdir(target) else "absent"))
         manifest = json.load(open(os.path.join(target, "manifest.json"))) if os.path.isfile(os.path.join(target, "manifest.json")) else {}
-        report("a bar widget's manifest carries the label default and a section", manifest.get("settings") == {"label": "Probe"} and manifest.get("defaultSection") == "right", json.dumps(manifest))
+        report("a bar widget's manifest carries the label default, its schema entry and a section", manifest.get("settings") == {"label": "Probe"} and sorted(manifest.get("schema", {})) == ["label"] and manifest["schema"]["label"].get("type") == "string" and manifest.get("defaultSection") == "right", json.dumps(manifest))
+        report("new names the default icon", manifest.get("icon") == "package", json.dumps(manifest))
         checked = scaffold("check", target)
         report("check passes on the plugin new wrote", checked.returncode == 0 and first_line(checked.stdout.rstrip().rsplit("\n", 1)[-1]) == "vgs-plugin: check ok", f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
         again = scaffold("new", "acme.probe", "--kinds", "service", "--dir", tmp)
@@ -80,6 +82,11 @@ def main():
         wrong_kind = scaffold("new", "acme.x", "--kinds", "widget", "--dir", tmp)
         report("new refuses a kind no template covers", wrong_kind.returncode == 2 and first_line(wrong_kind.stdout) == "vgs-plugin: refused: kind=widget known=" + ",".join(table), f"exit={wrong_kind.returncode}\n{wrong_kind.stdout}{wrong_kind.stderr}")
         report("a refused kind leaves no directory", not os.path.exists(os.path.join(tmp, "acme.x")), str(os.listdir(tmp)))
+        iconed = scaffold("new", "acme.iconed", "--kinds", "service", "--dir", tmp, "--icon", "bell")
+        iconed_manifest = os.path.join(tmp, "acme.iconed", "manifest.json")
+        report("new writes the icon it is given", iconed.returncode == 0 and os.path.isfile(iconed_manifest) and json.load(open(iconed_manifest)).get("icon") == "bell", f"exit={iconed.returncode}\n{iconed.stdout}{iconed.stderr}")
+        unknown_icon = scaffold("new", "acme.noicon", "--kinds", "service", "--dir", tmp, "--icon", "no-such-icon")
+        report("new refuses an icon outside the shipped set with the judge's verdict", unknown_icon.returncode == 2 and first_line(unknown_icon.stdout) == "vgs-plugin: refused: manifest=acme.noicon" and "icon must name an icon of the shipped set" in unknown_icon.stdout and not os.path.exists(os.path.join(tmp, "acme.noicon")), f"exit={unknown_icon.returncode}\n{unknown_icon.stdout}{unknown_icon.stderr}")
         quoted = scaffold("new", "acme.quoted", "--kinds", "service", "--dir", tmp, "--description", 'A "quick" probe')
         quoted_manifest = os.path.join(tmp, "acme.quoted", "manifest.json")
         report("new writes a quoted description as a valid manifest that passes check", quoted.returncode == 0 and quoted.stdout.rstrip().endswith("vgs-plugin: check ok") and os.path.isfile(quoted_manifest) and json.load(open(quoted_manifest)).get("description") == 'A "quick" probe', f"exit={quoted.returncode}\n{quoted.stdout}{quoted.stderr}")

@@ -51,7 +51,10 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Checkbox`, `Radio`, `Switch` | indicator 16, 16, 36 × 20 | | 7 | 0; round for `Radio` and `Switch` | `checkbox.gap`, `radio.gap`, `toggle.gap` | none | | |
 | `Slider` | 14 handle, 4 track | | | round | `slider.handle`, `slider.track` | none | | |
 | `Popover` | content + 16 | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap` | none | | |
-| `Menu` | items + 4, at least 160 wide | 2 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth` | none | | |
+| `Menu` | items + 4, at least 160 wide, scrolling past 270, nine items | 2 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth`, `menu.maxHeight` | none | | |
+| the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
+| `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |
+| a window-like panel | half the monitor | 12 from a narrower monitor's sides | | | `size.window.width`, `size.window.heightShare`, `size.window.gutter` | none | | 600 wide |
 | bar item, a workspace pill | line + 4 | 6 | 4 between items | 0 | `bar.item.paddingX`, `bar.item.gap` | `.market-nav a` | height 32, padding 0 10 | sized to the bar |
-| the bar's manager button | line + 4 | 6 | 7 | 0 | `bar.item.paddingX`, `bar.item.iconGap` | `.card-install` | gap 7 | sized to the bar |
+| the bar's Settings gear | 24, an `IconButton` of size `sm` | | | 0 | `size.control.sm` | none | | |
 | the bar | 26 | 12 | 8 | | `bar.height`, `bar.padding`, `bar.gap` | `.market-toolbar` | min-height 44 | 26 tall |

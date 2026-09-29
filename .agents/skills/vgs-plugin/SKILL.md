@@ -10,7 +10,7 @@ metadata:
   source: in-place
   repository: "https://github.com/vanillagreencom/vgs"
   bugs: "https://github.com/vanillagreencom/vgs/issues"
-  version: "0.3.0"
+  version: "0.4.0"
 tags: [plugins, quickshell]
 ---
 
@@ -41,6 +41,7 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 - Imports and names: the allowed table in [`references/api.md`](references/api.md) § Allowed imports, and nothing else. `scripts/check-plugin-boundary.py` refuses the rest.
 - Every entry point declares `property var shell: null` or inherits it from `BarWidget`. Capabilities come from `shell.<name>` after naming them in `capabilities`; a widget never reads them from `bar`.
 - Settings default in the manifest's `settings` and arrive as `shell.settings` for every kind; a bar widget also reads them with `setting(name, fallback)`. A change reaches the running instance as a new `shell`; hold no copy.
+- The manifest is the plugin's settings page: name an `icon` from the shipped Lucide set, and give every setting a user would reasonably change, and the plugin reads, a `schema` entry, with `min`, `max` and `step` on a number and a `group` for its section; a constant earns an entry only when a user has a reason to change it. A key is `hyprland.binds`, never a schema entry. The Settings window draws the page from these alone: [`docs/architecture/plugins.md` § Manifest](../../../docs/architecture/plugins.md#manifest), [D032](../../../docs/decisions/D032-settings-plugin-and-manifest-settings-convention.md).
 - A bar widget extends `BarWidget` from `qs.Ui` and sizes itself with `implicitWidth` and `implicitHeight`. The core assigns `bar`, `moduleName` and `settings` after creation; the widget sets none of them.
 - A bar declares `leftSection`, `centerSection` and `rightSection`. The core mounts every plugin widget; a widget the bar draws itself registers through `shell.builtins`.
 - Compose the components of `qs.Ui` ([`references/api.md` § Components in `qs.Ui`](references/api.md#components-in-qsui)) before drawing anything by hand. Every colour, size, font, radius, opacity and duration reads a token through `Theme` in `qs.Commons`. `scripts/check-design-tokens.py` refuses a `Theme` path that names no token and reports each literal it finds.

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Scaffold and check v2 shell plugins.
 
-  vgs-plugin new <author.name> --kinds <kind,...> [--dir DIR] [--name NAME] [--author AUTHOR] [--description TEXT]
+  vgs-plugin new <author.name> --kinds <kind,...> [--dir DIR] [--name NAME] [--author AUTHOR] [--description TEXT] [--icon LUCIDE]
   vgs-plugin check <plugin-dir>
 
 `new` writes <DIR>/<id>/ (default DIR: shell/plugins) from the templates
-beside this script, one entry point per kind, then runs `check` on it.
+beside this script, one entry point per kind, then runs `check` on it. The
+manifest names the icon given, `package` by default, which the judge holds
+to the shipped icon set; a bar widget's `label` default gets its schema
+entry, so the Settings window draws its field.
 `check` runs the repository's manifest judge, boundary check and token check on one
 plugin directory. Exit 0 when clean, 1 on findings, 2 on a refusal, whose
 first line is keyed: `vgs-plugin: refused: <key>=<value>`, with `kind=` for
@@ -82,15 +85,18 @@ def cmd_new(args):
         "NAME": escaped(name),
         "AUTHOR": escaped(args.author or author),
         "DESCRIPTION": escaped(args.description or f"{name} plugin."),
+        "ICON": escaped(args.icon),
         "KINDS": json.dumps(kinds),
         "ENTRY_POINTS": json.dumps({k: TEMPLATE_FOR[k][1] for k in kinds}),
     }
     with open(os.path.join(TEMPLATES, "manifest.json.tmpl"), encoding="utf-8") as fh:
         data = json.loads(fill(fh.read(), values))
     if "bar-widget" in kinds:
-        # The widget template reads settings.label; its default lives here.
+        # The widget template reads settings.label; its default and its
+        # schema entry live here.
         data["defaultSection"] = "right"
         data["settings"] = {"label": name}
+        data["schema"] = {"label": {"type": "string", "label": "Label", "description": "The text the widget shows"}}
     manifest = json.dumps(data, indent=2) + "\n"
     # The repository's one manifest judge decides the id and the shape before
     # anything is written, on the manifest text that will be written, so a
@@ -156,6 +162,7 @@ def main(argv):
     new.add_argument("--name")
     new.add_argument("--author")
     new.add_argument("--description")
+    new.add_argument("--icon", default="package")
     new.set_defaults(func=cmd_new)
     check = sub.add_parser("check")
     check.add_argument("dir")
