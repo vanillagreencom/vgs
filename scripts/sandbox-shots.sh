@@ -294,7 +294,7 @@ scene_settings() { # MODE
   take "settings-$1-menu"
   type_keys -k Escape || fail "sending Escape to the title's menu failed"
   expect_poll "the title's menu closes" False settings_menu_open
-  expect "the window opens the Bar plugin page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.bar
+  expect "the window opens the Bar plugin page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.bar
   expect_poll "the Bar plugin page is shown" '"vgs.bar"' settings_page
   take "settings-$1-bar-page"
   park_pointer
