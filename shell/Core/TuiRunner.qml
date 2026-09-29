@@ -39,7 +39,6 @@ Scope {
     // The core's bin/ beside the shell directory, where a core TUI's command
     // lives: the shell's PATH need not hold it.
     readonly property string coreBin: Quickshell.shellDir + "/../bin"
-    readonly property var runs: recordStore.runs
 
     // Every listed TUI: the core's and every enabled plugin's, as
     // PluginLogic.tuiEntries returns them.
@@ -95,14 +94,14 @@ Scope {
         launches += 1;
         return {
             launcher: launcher,
-            busy: Logic.tuiBusyKeys(runs, pending.map(p => p.key)),
+            busy: Logic.tuiBusyKeys(recordStore.runs, pending.map(p => p.key)),
             run: Date.now() + "-" + launches
         };
     }
 
     // The calling plugin's own TUIs' state, one frozen copy per read.
     function stateOf(ctx) {
-        return frozen(Logic.tuiState(runs, ctx.id, Object.keys(ctx.manifest.tui)));
+        return frozen(Logic.tuiState(recordStore.runs, ctx.id, Object.keys(ctx.manifest.tui)));
     }
 
     function start(launch, ctx, done) {
@@ -168,7 +167,7 @@ Scope {
     // looked for among the dead once: a presenter killed outright leaves a
     // running record that only `vgsh-tui reap` ends.
     function focus(key) {
-        const slot = Object.prototype.hasOwnProperty.call(runs.keys, key) ? runs.keys[key] : null;
+        const slot = Object.prototype.hasOwnProperty.call(recordStore.runs.keys, key) ? recordStore.runs.keys[key] : null;
         if (slot === null || slot.running === null) return;
         const found = Logic.tuiWindow(windows(), slot.running.window);
         switch (found.state) {
@@ -195,8 +194,11 @@ Scope {
         }));
     }
 
+    // A launch whose run has a record is no longer pending. It reads the
+    // record owner's runs, not a binding on them: this handler runs from
+    // their change signal, before such a binding need have followed it.
     function recordsChanged() {
-        pending = pending.filter(p => !Object.prototype.hasOwnProperty.call(runs.runs, p.run));
+        pending = pending.filter(p => !Object.prototype.hasOwnProperty.call(recordStore.runs.runs, p.run));
     }
 
     // One probe at a time: a request refused while one runs starts none.
