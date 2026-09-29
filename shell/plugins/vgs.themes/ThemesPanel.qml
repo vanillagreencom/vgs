@@ -31,6 +31,8 @@ Item {
     // result. The capability's member is not a binding, so the panel reads
     // it again whenever an answer arrives.
     property var last: ({ applying: null, result: null, downloading: null })
+    // Whether this panel instance has seen a running wallpaper download.
+    property bool observedDownloadRunning: false
     // The package a click asked for and the refusal `apply` answered at
     // once, or null; shown on its row until the next click.
     property var refusal: null
@@ -68,6 +70,10 @@ Item {
             root.file = result.file;
             root.readLast();
         });
+        refreshCatalog();
+    }
+
+    function refreshCatalog() {
         shell.theme.catalog(result => {
             root.catalogReason = result.reason === null ? "" : result.reason;
             root.catalogEntries = result.reason === null ? result.entries : [];
@@ -75,7 +81,12 @@ Item {
         });
     }
 
-    function readLast() { last = shell.theme.last; }
+    function readLast() {
+        const wasDownloading = observedDownloadRunning;
+        last = shell.theme.last;
+        observedDownloadRunning = last.downloading !== null;
+        if (wasDownloading && !observedDownloadRunning) refreshCatalog();
+    }
 
     // Apply package `name`; answers the capability's reply.
     function apply(name) {

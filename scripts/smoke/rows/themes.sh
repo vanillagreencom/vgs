@@ -328,23 +328,39 @@ cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 catalog_installed="$sandbox/catalog-smoke-installed"
 catalog_wallpapers="$sandbox/catalog-smoke-wallpapers"
 catalog_wallpapers_gate="$sandbox/catalog-smoke-wallpapers-gate"
+catalog_row_installed="$sandbox/catalog-row-smoke-installed"
 catalog_installed_state() { [[ -e $catalog_installed ]] && echo installed || echo absent; }
 catalog_wallpapers_state() { [[ -e $catalog_wallpapers ]] && echo installed || echo absent; }
+catalog_row_installed_state() { [[ -e $catalog_row_installed ]] && echo installed || echo absent; }
 wait_catalog_installed() { local _; for _ in $(seq 1 100); do [[ $(catalog_installed_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_installed_state; }
 wait_catalog_wallpapers() { local _; for _ in $(seq 1 100); do [[ $(catalog_wallpapers_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_wallpapers_state; }
+wait_catalog_row_installed() { local _; for _ in $(seq 1 100); do [[ $(catalog_row_installed_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_row_installed_state; }
 stand_in_vgsh "
 case \${2:-} in
   catalog)
     installed=false; imagery=false
+    row_installed=false
     [[ -e $(printf %q "$catalog_installed") ]] && installed=true
     [[ -e $(printf %q "$catalog_wallpapers") ]] && imagery=true
-    printf '{\"entries\":[{\"name\":\"catalog-smoke\",\"mode\":\"dark\",\"thumbnail\":null,\"palette\":{\"background\":\"#101010ff\",\"foreground\":\"#eeeeeeff\",\"accent\":\"#3366ffff\",\"success\":\"#22aa22ff\",\"warning\":\"#ddaa00ff\",\"danger\":\"#cc2222ff\",\"info\":\"#3399ccff\"},\"imagery\":{\"repo\":\"https://example.invalid/themes\",\"release\":\"themes-v1\",\"archive\":\"catalog-smoke.tar.gz\",\"size\":12582912,\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},\"installed\":%s,\"imageryInstalled\":%s,\"imageryUpdate\":false,\"definitionUpdate\":false}]}\n' \"\$installed\" \"\$imagery\"
+    [[ -e $(printf %q "$catalog_row_installed") ]] && row_installed=true
+    printf '{\"entries\":[{\"name\":\"catalog-row-smoke\",\"mode\":\"light\",\"thumbnail\":null,\"palette\":{\"background\":\"#ffffffff\",\"foreground\":\"#111111ff\",\"accent\":\"#aa55ffff\",\"success\":\"#22aa22ff\",\"warning\":\"#ddaa00ff\",\"danger\":\"#cc2222ff\",\"info\":\"#3399ccff\"},\"imagery\":null,\"installed\":%s,\"imageryInstalled\":false,\"imageryUpdate\":false,\"definitionUpdate\":false},{\"name\":\"catalog-smoke\",\"mode\":\"dark\",\"thumbnail\":null,\"palette\":{\"background\":\"#101010ff\",\"foreground\":\"#eeeeeeff\",\"accent\":\"#3366ffff\",\"success\":\"#22aa22ff\",\"warning\":\"#ddaa00ff\",\"danger\":\"#cc2222ff\",\"info\":\"#3399ccff\"},\"imagery\":{\"repo\":\"https://example.invalid/themes\",\"release\":\"themes-v1\",\"archive\":\"catalog-smoke.tar.gz\",\"size\":12582912,\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},\"installed\":%s,\"imageryInstalled\":%s,\"imageryUpdate\":false,\"definitionUpdate\":false}]}\n' \"\$row_installed\" \"\$installed\" \"\$imagery\"
     exit 0
     ;;
   install)
     if [[ \${4:-} == catalog-smoke ]]; then
       touch -- $(printf %q "$catalog_installed")
       printf '{\"state\":\"ok\",\"theme\":\"catalog-smoke\",\"path\":\"%s\",\"shadows\":null,\"reason\":null}\n' $(printf %q "$installed/catalog-smoke")
+      exit 0
+    fi
+    if [[ \${4:-} == catalog-row-smoke ]]; then
+      touch -- $(printf %q "$catalog_row_installed")
+      printf '{\"state\":\"ok\",\"theme\":\"catalog-row-smoke\",\"path\":\"%s\",\"shadows\":null,\"reason\":null}\n' $(printf %q "$installed/catalog-row-smoke")
+      exit 0
+    fi
+    ;;
+  apply)
+    if [[ \${4:-} == catalog-row-smoke ]]; then
+      printf '{\"state\":\"applied\",\"shell\":\"applied\",\"targets\":[],\"theme\":\"catalog-row-smoke\",\"reason\":null}\n'
       exit 0
     fi
     ;;
@@ -362,12 +378,19 @@ mkdir -p -- "$installed/light"
 cp -- "$repo/themes/light/theme.json" "$repo/themes/light/terminal.json" "$installed/light/"
 click_centre "$themes_key" vgs.themes || fail "the click on the themes widget failed"
 expect_poll "a click on the widget opens the themes panel" open panel_open
-expect_poll "the panel lists every package with its source and badges" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
+expect_poll "the panel lists every package with its source and badges" '[["catalog-row-smoke", "light, no wallpapers", "Install"], ["catalog-smoke", "dark, wallpapers 13 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
 expect "an accepted package's row draws its palette" '[7, true]' theme_swatch smoke installed '#12ab34ff'
 expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, name-mismatch" '#12ab34ff'
 expect "a shadowed package's row draws no swatch" '[0, false]' theme_swatch light shipped '#12ab34ff'
 expect_poll "the panel lists a catalog row with its mode, wallpaper size and install action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"]]' theme_row catalog-smoke
 expect "the catalog row draws its palette" '[7, true]' theme_swatch catalog-smoke "dark, wallpapers 13 MB" '#3366ffff'
+expect_poll "an uninstalled catalog row can install from a row click" '[["catalog-row-smoke", "light, no wallpapers", "Install"]]' theme_row catalog-row-smoke
+scroll_themes 10000
+click_row catalog-row-smoke || fail "the click on the uninstalled catalog row failed"
+expect "the uninstalled catalog row click reaches install" installed wait_catalog_row_installed
+expect_poll "the installed catalog row loses its install action" '[["catalog-row-smoke", "light, no wallpapers", "Installed"]]' theme_row catalog-row-smoke
+click_row catalog-row-smoke || fail "the click on the installed catalog row failed"
+expect_poll "the installed catalog row click applies that package" '"catalog-row-smoke"' lent theme.last.result.theme
 
 panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
 cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"
@@ -406,9 +429,41 @@ click_button "Install" || fail "the click on the catalog Install button failed"
 expect "the catalog Install button reaches the theme capability" installed wait_catalog_installed
 expect_poll "the panel is open after catalog install" open panel_open
 expect_poll "the catalog install changes the row to an installed catalog theme without wallpapers" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+
+finish_refresh='if (wasDownloading && !observedDownloadRunning) refreshCatalog();'
+if [[ $(grep -c -F -- "$finish_refresh" "$panel_qml") == 1 ]]; then
+  if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, ""))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.download-finish-mutant" "$finish_refresh"; then
+    rm -f -- "$catalog_wallpapers" "$catalog_wallpapers_gate"
+    panel_source "the download finish refresh control" "$sandbox/ThemesPanel.qml.download-finish-mutant" \
+      && scroll_themes 10000 \
+      && click_button "Download wallpapers" \
+      && expect_poll "the download finish control shows progress" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke \
+      && click_outside \
+      && expect_poll "the download finish control panel closes during the download" closed panel_open \
+      && click_centre "$themes_key" vgs.themes \
+      && expect_poll "the download finish control panel reopens during the download" open panel_open \
+      && expect_poll "the download finish control reopened panel reads progress" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke \
+      && touch -- "$catalog_wallpapers_gate" \
+      && expect "the download finish control completes the wallpaper download" installed wait_catalog_wallpapers \
+      && expect_poll "the download finish control keeps the stale download action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+    rm -f -- "$catalog_wallpapers" "$catalog_wallpapers_gate"
+    panel_source "the restored download finish refresh" "$sandbox/ThemesPanel.qml.real" \
+      && expect_poll "the restored download finish refresh lists the row" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+  else
+    fail "the download finish refresh control could not be written"
+  fi
+else
+  fail "the download finish refresh control's text occurs once in $panel_qml"
+fi
+
 scroll_themes 10000
 click_button "Download wallpapers" || fail "the click on the catalog wallpaper button failed"
 expect_poll "the catalog wallpaper download shows the browser progress text" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke
+click_outside || fail "the click closing the themes panel during wallpaper download failed"
+expect_poll "the themes panel closes during wallpaper download" closed panel_open
+click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel during wallpaper download failed"
+expect_poll "the themes panel reopens during wallpaper download" open panel_open
+expect_poll "the reopened panel reads the wallpaper download progress" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke
 touch -- "$catalog_wallpapers_gate"
 expect "the catalog Download wallpapers button reaches the theme capability" installed wait_catalog_wallpapers
 expect_poll "the panel is open after catalog wallpaper download" open panel_open
