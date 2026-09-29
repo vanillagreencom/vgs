@@ -16,14 +16,16 @@
 # hand the stand-in terminal their TUI's argv, Start it hands a stand-in
 # systemctl its arguments, and, on a host without vsys, Get vsys raises the
 # core's notice, which the scan that finds vsys closes. Each open runs the
-# stand-in vsys's summary once.
-# Three controls are copies of the plugin installed over the bundled one: a
+# stand-in vsys's summary once, and a summary that fails when the open
+# panel is summoned again leaves no earlier line.
+# Four controls are copies of the plugin installed over the bundled one: a
 # logic copy that ignores staleness reads the stale document as calm, a
 # service copy whose timer derives nothing keeps the ageing status calm
-# past its stale moment, and a logic copy that hands the view each lane's
-# scope unit draws it in the panel. The harness starts the plugin disabled;
-# the row ends with it disabled, its runtime files gone and no stub on
-# PATH.
+# past its stale moment, a logic copy that hands the view each lane's
+# scope unit draws it in the panel, and a panel copy that keeps its last
+# summary line when a new run starts still draws it after a failed run.
+# The harness starts the plugin disabled; the row ends with it disabled,
+# its runtime files gone and no stub on PATH.
 set -euo pipefail
 warden_dir="$rt_dir/agent-warden"
 warden_fixtures="$repo/scripts/smoke/fixtures/agent-warden"
@@ -58,7 +60,7 @@ warden_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.st
 warden_rows() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.agent-warden"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
 # The answer the scan gives for vsys on the sandbox PATH.
 vsys_on_path() { if "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" bash -c 'command -v vsys' >/dev/null; then echo '"present"'; else echo '"absent"'; fi; }
-expected_errors+=('agent-warden: status=unreadable cause=json ' 'agent-warden: status=schema schema=2\.0 ' 'plugins: hidden by a higher-precedence plugin with the same id: vgs\.agent-warden')
+expected_errors+=('agent-warden: status=unreadable cause=json ' 'agent-warden: status=schema schema=2\.0 ' 'agent-warden: summary=failed ' 'plugins: hidden by a higher-precedence plugin with the same id: vgs\.agent-warden')
 
 expect "enabling the agent warden is allowed" ok ipc shell setPluginEnabled vgs.agent-warden true
 expect_poll "the agent warden's service is built" True record_exists vgs.agent-warden
@@ -157,12 +159,17 @@ expect_poll "an empty directory reads as not set up again" '["not-set-up", null,
 warden_key="$(bar_key)"
 warden_vsys_log="$sandbox/warden-vsys-calls"
 warden_systemctl_log="$sandbox/warden-systemctl-argv"
+# While this file exists the stand-in vsys fails its summary.
+warden_vsys_fails="$sandbox/warden-vsys-fails"
 warden_summary='{"schema": "vsys.summary.v1", "time": 1, "verdict": [{"cause": "memory-high", "level": "warn", "subject": "/agents.slice"}, {"cause": "scratch", "level": null, "subject": null}], "meters": [], "errors": []}'
 warden_vsys_stub() {
   cat >"$shim/vsys" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$warden_vsys_log"
-if [[ "\$*" == "--once --summary" ]]; then printf '%s\n' '$warden_summary'; fi
+if [[ "\$*" == "--once --summary" ]]; then
+  if [[ -e "$warden_vsys_fails" ]]; then echo "vsys: stand-in summary failed" >&2; exit 1; fi
+  printf '%s\n' '$warden_summary'
+fi
 EOF
   chmod 755 "$shim/vsys"
 }
@@ -245,6 +252,16 @@ warden_open() {
   fi
 }
 warden_line='vsys sees one thing worth a look on this computer.'
+# Whether the panel draws the stand-in summary's line: True or False.
+warden_panel_has_line() { warden_panel | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t != "absent" and sys.argv[1] in json.loads(t))' "$warden_line"; }
+# warden_resummon LABEL: the open panel summoned again runs the summary
+# once more, as the core calls open() on a panel already shown.
+warden_resummon() {
+  local runs
+  runs="$(warden_summary_runs)"
+  expect "$1: the open panel is summoned again" ok ipc shell summon panel vgs.agent-warden '{}'
+  expect_poll "$1: the summon runs the summary once more" "$((runs + 1))" warden_summary_runs
+}
 
 expect "enabling placed the shield in the bar's right section" right warden_section
 expect_poll "the shield is built on the bar" '"vgs.agent-warden"' ipc smoke readInstance "$warden_key" vgs.agent-warden moduleName
@@ -273,6 +290,16 @@ warden_put calm 0 >/dev/null
 expect_poll "the shield reads calm with one agent" '["shield-check", "neutral", "1", "1 agent running within its limits"]' warden_shield
 warden_open "calm"
 expect_poll "the calm panel says so, with the meter, the summary and the link" \
+  "$(words Agents "All good. 1 agent is running within its limits." "Agent memory: 38 of 64 GB before slowdown" "$warden_line" "Checked N ago" "Open vsys")" warden_panel
+# A summary that fails on a later open leaves no earlier verdict behind.
+touch -- "$warden_vsys_fails"
+warden_resummon "a failing summary"
+expect_poll "a failed summary on a later open draws no summary line" \
+  "$(words Agents "All good. 1 agent is running within its limits." "Agent memory: 38 of 64 GB before slowdown" "Checked N ago" "Open vsys")" warden_panel
+expect_log "the failed summary is logged" 1 'agent-warden: summary=failed '
+rm -f -- "$warden_vsys_fails"
+warden_resummon "a summary that answers again"
+expect_poll "the next summary that answers draws its line again" \
   "$(words Agents "All good. 1 agent is running within its limits." "Agent memory: 38 of 64 GB before slowdown" "$warden_line" "Checked N ago" "Open vsys")" warden_panel
 warden_put near-limit 0 >/dev/null
 expect_poll "the shield reads a look" '["shield-alert", "warning", "1", "claude in vsy-52 is using a lot of memory"]' warden_shield
@@ -394,5 +421,21 @@ expect_poll "the scope control reads the lane near its limits" '["look", null, 1
 expect "the scope control's panel is summoned" ok ipc shell summon panel vgs.agent-warden '{}'
 expect_poll "the scope control's panel names the lane's scope" agent-warden-100-200.scope warden_names_nothing near-limit
 expect "the scope control's panel is hidden" ok ipc shell hide panel vgs.agent-warden
+warden_uncontrol
+
+# Control: a panel copy that keeps the last line when a new summary run
+# starts still draws the earlier verdict after a failed run, so the
+# failed-summary row above turns red on it.
+warden_control Panel.qml "            summary = null;
+" ""
+warden_put calm 0 >/dev/null
+expect_poll "the summary control reads calm" '["calm", null, 0, []]' warden_state
+expect "the summary control's panel is summoned" ok ipc shell summon panel vgs.agent-warden '{}'
+expect_poll "the summary control's panel draws the summary line" True warden_panel_has_line
+touch -- "$warden_vsys_fails"
+warden_resummon "the summary control"
+expect_poll "the summary control keeps the earlier verdict after a failed run" True warden_panel_has_line
+rm -f -- "$warden_vsys_fails"
+expect "the summary control's panel is hidden" ok ipc shell hide panel vgs.agent-warden
 warden_uncontrol
 rm -f -- "$shim/vsys"

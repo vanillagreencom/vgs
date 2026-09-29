@@ -35,7 +35,10 @@ Item {
     function open(payloadJson) {
         problem = "";
         Time.holdSeconds(root, true);
+        // A new run drops the last line, so a run that fails shows none
+        // rather than an earlier verdict.
         if (!vsysMissing && !summaryRun.running) {
+            summary = null;
             summaryRun.completion = null;
             summaryRun.running = true;
         }
@@ -86,16 +89,18 @@ Item {
     }
 
     implicitWidth: Theme.size.panel.md
-    implicitHeight: body.implicitHeight + 2 * Theme.surface.padding
+    implicitHeight: body.implicitHeight + 2 * card.padding
 
     Surface {
+        id: card
         anchors.fill: parent
 
         Column {
             id: body
-            x: Theme.surface.padding
-            y: Theme.surface.padding
-            width: parent.width - 2 * Theme.surface.padding
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: card.padding
             spacing: Theme.space.sm
 
             Label {
