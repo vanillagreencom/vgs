@@ -785,7 +785,8 @@ Item {
     }
 
     // Hover moves the cursor only once the pointer has moved since the
-    // list last changed under it, so a resting pointer steals nothing.
+    // list last changed under it, so a resting pointer steals nothing;
+    // MenuModel.pointerMoved judges a motion.
     property bool pointerArmed: false
     property point pointerLast: Qt.point(-1, -1)
 
@@ -797,10 +798,9 @@ Item {
     function selectFromPointer(index, item, mouse) {
         const at = item.mapToItem(root, mouse.x, mouse.y);
         if (!pointerArmed) {
-            const first = pointerLast.x < 0 && pointerLast.y < 0;
-            const still = at.x === pointerLast.x && at.y === pointerLast.y;
+            const moved = MenuModel.pointerMoved(pointerLast, at);
             pointerLast = at;
-            if (first || still) return;
+            if (!moved) return;
             pointerArmed = true;
         }
         cursorActive = true;

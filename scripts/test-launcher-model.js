@@ -23,6 +23,23 @@ const menuText = items => JSON.stringify({ schemaVersion: 1, items: items });
 // one's; values are compared as JSON.
 const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(got)), want, message === undefined ? JSON.stringify(want) : message);
 
+// Hover points the launcher maps into its own coordinates: [label, last,
+// at, whether the pointer moved]. The roundoff rows are the points an
+// instrumented nested smoke read for a pointer resting over the rows while
+// the card animated (docs/architecture/runtime-qml.md); a wl_fixed_t step
+// is 1/256 px.
+const POINTER_MOVES = [
+    ["no reading yet", { x: -1, y: -1 }, { x: 877.5, y: 480 }, false],
+    ["the same point", { x: 877.5, y: 480 }, { x: 877.5, y: 480 }, false],
+    ["roundoff above", { x: 877.5, y: 480 }, { x: 877.5, y: 480.00000000000006 }, false],
+    ["roundoff below", { x: 877.5, y: 480 }, { x: 877.5, y: 479.99999999999994 }, false],
+    ["roundoff across", { x: 877.5, y: 480.00000000000006 }, { x: 877.49999999999994, y: 479.99999999999994 }, false],
+    ["one wl_fixed_t step down", { x: 877.5, y: 480 }, { x: 877.5, y: 480 + 1 / 256 }, true],
+    ["one wl_fixed_t step left", { x: 877.5, y: 480 }, { x: 877.5 - 1 / 256, y: 480 }, true],
+    ["one pixel", { x: 877.5, y: 480 }, { x: 878.5, y: 480 }, true],
+    ["to the origin", { x: 877.5, y: 480 }, { x: 0, y: 0 }, true]
+];
+
 // Menu files the judge refuses: [label, text, the start of the error].
 const MENU_REFUSED = [
     ["not JSON", "{ nope", "not-json"],
@@ -267,6 +284,9 @@ function verify(model) {
     same(constructor.rows.map(r => r.name), ["constructor"], "a file named like an object key is a name");
     const apps = model.parseOpenWith("other\t/usr/share/applications/b.desktop\ndefault\t/usr/share/applications/a.desktop\nnoise\n");
     same(apps.map(a => [a.id, a.isDefault]), [["a", true], ["b", false]]);
+
+    for (const [label, last, at, want] of POINTER_MOVES)
+        assert.equal(model.pointerMoved(last, at), want, `pointer: ${label}`);
 }
 verify(load(file));
 
@@ -307,7 +327,9 @@ const CONTROLS = [
     ["malformed counted", 'if (parts.length < 3 || !/^[0-9]+$/.test(parts[0]) || path.charAt(0) !== "/") {', "if (parts.length < 3) {"],
     ["default first", "return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);", "return 0;"],
     ["unchanged apply succeeds", '(result.state === "applied" || result.state === "unchanged")', '(result.state === "applied")'],
-    ["only success succeeds", '(result.state === "applied" || result.state === "unchanged")', '(result.state !== "failed")']
+    ["only success succeeds", '(result.state === "applied" || result.state === "unchanged")', '(result.state !== "failed")'],
+    ["pointer roundoff is still", "return Math.abs(at.x - last.x) >= POINTER_EPSILON || Math.abs(at.y - last.y) >= POINTER_EPSILON;", "return at.x !== last.x || at.y !== last.y;"],
+    ["pointer first reading", "if (last.x < 0 && last.y < 0) return false;", ""]
 ];
 
 const source = fs.readFileSync(file, "utf8");

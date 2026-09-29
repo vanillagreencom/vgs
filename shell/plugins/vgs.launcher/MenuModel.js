@@ -3,8 +3,8 @@
 // The launcher's decisions, with no QML object and no I/O, so
 // scripts/test-launcher-model.js runs every function under node: the menu
 // file and its merge, the TUI rows' resolution, routes, search and ranking,
-// the summon payload, the select options, and what the file search helper
-// prints.
+// the summon payload, the select options, what the file search helper
+// prints, and whether a hover point is a pointer motion.
 //
 // A menu file is `{ "schemaVersion": 1, "items": { "<id>": { ... } } }`. An
 // id is dotted, and its dots name its parent unless `parent` says
@@ -643,4 +643,20 @@ function parseOpenWith(raw) {
         apps.push({ desktopFile: parts[1], id: id, isDefault: parts[0] === "default" });
     }
     return apps.sort(function (a, b) { return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0); });
+}
+
+// Half a step of wl_fixed_t, the 24.8 fixed-point number Wayland reports a
+// pointer position in: two positions closer than this are one position.
+var POINTER_EPSILON = 1 / 512;
+
+// Whether the pointer moved from `last` to `at`, two hover points mapped
+// into the launcher's own coordinates. A `last` of (-1, -1) is no reading
+// yet, so the first hover after the list changed moves nothing. Qt delivers
+// hover again to a row that moves under a still pointer, as the card
+// animates, and the point it maps back differs by float roundoff
+// (docs/architecture/runtime-qml.md): an exact comparison reads that as
+// motion, and the resting pointer takes the cursor.
+function pointerMoved(last, at) {
+    if (last.x < 0 && last.y < 0) return false;
+    return Math.abs(at.x - last.x) >= POINTER_EPSILON || Math.abs(at.y - last.y) >= POINTER_EPSILON;
 }
