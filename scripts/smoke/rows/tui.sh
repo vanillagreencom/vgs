@@ -45,13 +45,18 @@ snapshot="$rt_dir/vgsh-sources-$shell_qs_pid/$revision"
 check_snapshot() { [[ -x $snapshot/tui/hello.sh && ! -L $snapshot/tui/hello.sh ]] && echo present || echo absent; }
 expect "the fixture's snapshot holds its executable script" present check_snapshot
 
-# The core probes the launcher when it starts, against the host's PATH. A
-# request made while the probe said missing answers so and probes again, now
-# against the stand-in, so the rows below start from a known present state
-# on any host.
-launcher_after_request() { tui run hello >/dev/null && lent tui.launcher; }
-expect_poll "the launcher probe finds the stand-in terminal" '"present"' launcher_after_request
+# The core probes the launcher when it starts, against the host's PATH and
+# before this row wrote the stand-in. A host without xdg-terminal-exec leaves
+# it missing; then one request answers launcher-missing, starts no launcher
+# and probes again, now against the stand-in. A present state takes no
+# request, so no setup launch can land its record over a later row's.
+expect_poll "the startup probe has answered" false lent tui.probing
+if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
+  expect "a request on a host without a terminal answers launcher-missing" "refused: tui=hello reason=launcher-missing" tui run hello
+fi
+expect_poll "the launcher state is present" '"present"' lent tui.launcher
 expect_poll "no probe is left running" false lent tui.probing
+expect "the setup started no launcher" '[]' lent tui.launching
 
 # run: the plugin's own script, from its snapshot, with its arguments as
 # argv; shell syntax in an argument stays one word.
