@@ -52,13 +52,17 @@
 # opened the window with, and after the fork waits up to start_ceiling
 # seconds for the run's record before it exits 0. Before the logo, present
 # holds <stem>.lock in that directory, <stem> being the key with its `/` as
-# `@`, for as long as it lives, removes the running records a dead presenter
-# of the key left, and writes <stem>@<run>.running.json. When it exits, after
+# `@`, for as long as it lives, removes the running records earlier runs of
+# the key left, and writes <stem>@<run>.running.json. When it exits, after
 # the prompt and on a hang-up or a termination too, it writes
-# <stem>@<run>.ended.json and removes its running record and every older
-# ended record of the key. A record is one JSON object written whole under a
-# hidden name and moved into place, and is never rewritten: a new state is a
-# new file, so a watcher of the directory's names sees every change.
+# <stem>@<run>.ended.json and removes every older ended record of the key.
+# Its own running record stays for the next run of the key or reap to
+# remove: the shell may not have read that file yet, and a file removed
+# between the shell's check and its open is logged as a failed read. A
+# record is one JSON object written whole under a hidden name and moved into
+# place, and is never rewritten: a new state is a new file, so a watcher of
+# the directory's names sees every change, and an ended record stands over
+# its run's running one.
 #   { "key", "run", "state": "running" | "ended", "code": <int> | null,
 #     "startedAt": <ISO 8601 UTC>, "endedAt": <ISO 8601 UTC> | null,
 #     "window": { "appId", "title" } }
@@ -297,8 +301,8 @@ record_text() { # STATE CODE ENDED_AT
 }
 
 # Holds the key's lock for the rest of present's life, exiting 75 while
-# another presenter holds it, removes the running records a dead presenter
-# of the key left and writes this run's. Sets refusal when the directory or
+# another presenter holds it, removes the running records earlier runs of
+# the key left and writes this run's. Sets refusal when the directory or
 # the record cannot be written, and record_active once the record is there.
 record_start() {
   local status=0 stale
@@ -323,15 +327,14 @@ record_start() {
   record_active=1
 }
 
-# Writes this run's ended record with CODE, then removes its running record
-# and every older ended record of the key.
+# Writes this run's ended record with CODE, then removes every older ended
+# record of the key; the shell read each of them before it launched this run.
 record_end() { # CODE
   local own="$stem@$record_run.ended.json" old
   if ! put_record "$window_dir" "$own" "$(record_text ended "$1" "\"$(record_now)\"")"; then
     printf 'vgsh-tui: refused: record=%s reason=unwritable\nthe shell does not learn that this run ended\n' "$window_dir/$own" >&2
     return 0
   fi
-  rm -f -- "$window_dir/$stem@$record_run.running.json"
   for old in "$window_dir/$stem@"*.ended.json; do
     if [[ $old != "$window_dir/$own" ]]; then rm -f -- "$old"; fi
   done

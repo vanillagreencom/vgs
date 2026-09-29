@@ -1,5 +1,4 @@
 import QtQuick
-import QtQml.Models
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
@@ -32,6 +31,8 @@ Scope {
     property string launcher: "unknown"
     // Each record file's path -> the record PluginLogic.tuiRecord accepted.
     property var records: ({})
+    // Each listed record file's path -> the FileView that reads it once.
+    property var readers: ({})
     // PluginLogic.tuiRuns of the records, replaced whole on every change.
     property var runs: Logic.tuiRuns([])
     // Each `done` waiting for its run: { id, run, done, release }.
@@ -54,7 +55,8 @@ Scope {
     }
 
     onRecordsWatchedChanged: {
-        if (!recordsWatched) console.error("tui: records=unwatched dir=" + recordDir + " folder=" + recordFiles.folder);
+        if (recordsWatched) syncReaders();
+        else console.error("tui: records=unwatched dir=" + recordDir + " folder=" + recordFiles.folder);
     }
 
     // Every enabled plugin id, read through Registry.isEnabled so a binding
@@ -213,6 +215,31 @@ Scope {
         refresh();
     }
 
+    // One reader per listed file, kept while the file is listed. A record
+    // is never rewritten, so each file is read once, however often the
+    // listing's rows are rebuilt; a file read again could be removed between
+    // FileView's check and its open, which it logs whatever printErrors says.
+    function syncReaders() {
+        const listed = {};
+        for (let i = 0; i < recordFiles.count; i++) listed[recordFiles.get(i, "filePath")] = true;
+        const next = {};
+        for (const path of Object.keys(readers)) {
+            if (Object.prototype.hasOwnProperty.call(listed, path)) {
+                next[path] = readers[path];
+                continue;
+            }
+            readers[path].destroy();
+            recordGone(path);
+        }
+        for (const path of Object.keys(listed)) {
+            if (Object.prototype.hasOwnProperty.call(next, path)) continue;
+            const reader = readerComponent.createObject(root);
+            reader.path = path;
+            next[path] = reader;
+        }
+        readers = next;
+    }
+
     function recordGone(path) {
         if (!Object.prototype.hasOwnProperty.call(records, path)) return;
         const next = Object.assign({}, records);
@@ -283,23 +310,25 @@ Scope {
         showHidden: false
     }
 
-    // One reader per record file. A record is never rewritten, so a file
-    // read once is read for good; a file that leaves the listing leaves the
-    // records.
-    Instantiator {
-        active: root.recordsWatched
-        model: recordFiles
-        delegate: FileView {
-            required property string filePath
-            path: filePath
+    Connections {
+        target: recordFiles
+        enabled: root.recordsWatched
+        function onModelReset() { root.syncReaders(); }
+        function onRowsInserted() { root.syncReaders(); }
+        function onRowsRemoved() { root.syncReaders(); }
+    }
+
+    Component {
+        id: readerComponent
+        FileView {
+            id: reader
             printErrors: false
-            onLoaded: root.recordLoaded(filePath, text())
+            onLoaded: root.recordLoaded(reader.path, text())
             onLoadFailed: error => {
                 // A record removed between the listing and the read.
-                if (error !== FileViewError.FileNotFound) console.error("tui: record=" + filePath + " unreadable: error=" + error);
+                if (error !== FileViewError.FileNotFound) console.error("tui: record=" + reader.path + " unreadable: error=" + error);
             }
         }
-        onObjectRemoved: (index, object) => root.recordGone(object.filePath)
     }
 
     // A command that fails to start emits only runningChanged, so the end

@@ -307,10 +307,10 @@ check "the running record is in place while the command runs" test "$(cat "$tmp/
 printf '%s\n' "$(cat "$tmp/during-record")" >"$tmp/during.json"
 check "the running record carries the key, the run and the window" test "$(record_of "$tmp/during.json")" == "$(want_record running null)"
 check "the ended record carries the command's code" test "$(record_of "$rdir/acme.tui@hello@1-1.ended.json")" == "$(want_record ended 0)"
-check "the run leaves its ended record, the lock and another key's record alone" test "$(LC_ALL=C ls -A "$rdir")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@1-1.ended.json acme.tui@other@0-3.running.json)"
+check "the run leaves its records, the lock and another key's record alone" test "$(LC_ALL=C ls -A "$rdir")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@1-1.ended.json acme.tui@hello@1-1.running.json acme.tui@other@0-3.running.json)"
 plain_run "$subject" present --presentation plain "${record_opts[@]/1-1/1-2}" -- exits 3
 check "a failed recorded run exits with its code" test "$plain_status" == 3
-check "the next run's ended record replaces the last one" test "$(LC_ALL=C ls -A "$rdir" | grep -c 'acme\.tui@hello@')" == 1
+check "the next run removes the last run's records and keeps its own" test "$(LC_ALL=C ls -A "$rdir" | grep 'acme\.tui@hello@')" == "$(printf '%s\n' acme.tui@hello@1-2.ended.json acme.tui@hello@1-2.running.json)"
 check "the next run's ended record carries its code" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/acme.tui@hello@1-2.ended.json")" == 3
 # A process the command leaves behind does not hold the key.
 plain_run "$subject" present --presentation plain "${record_opts[@]}" -- leaver
