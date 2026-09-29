@@ -226,6 +226,7 @@ if [[ $(grep -c -F -- "$end_line" "$tui_real") == 1 ]]; then
   never_ended() { (failures=0 behaviour_failures=0; expect_run_end "the never-ending run" acme.tui/wait >"$sandbox/run-end-control.log"; echo "$failures"); }
   expect "the run-end row fails a run that never ends, at its ceiling" 1 never_ended
   expect "the failed row names the ceiling it waited" 1 grep -c -F -- "latency_run_end_ms=over ceiling_ms=$run_end_ceiling_ms" "$sandbox/run-end-control.log"
+  expect "the failed row prints the core's view of the live run" 1 grep -c -E -- '^ +core: pending=False running=[0-9]' "$sandbox/run-end-control.log"
   cp -- "$tui_real" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
   expected_errors+=('tui: focus=none tui=acme\.tui/wait')
   expect "a request for the vanished run's key is refused busy" "refused: tui=wait reason=busy" tui run "wait|$tui_gate|0"
