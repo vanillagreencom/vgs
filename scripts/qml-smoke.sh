@@ -66,6 +66,15 @@
 # disabled widget, polled with qs ipc. The default is twice the highest
 # reading of twelve runs of this script on the same machine on 2026-09-23,
 # which read 12 to 15 ms.
+# VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS: ceiling on the time from the notify
+# call for a Slack card with six custom emoji to its body naming the
+# images on every screen, and VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS on the time
+# from the history call to forty such cards naming theirs
+# (rows/notifications.sh), each polled back to back through the probe,
+# one reading per IPC round trip of about 22 ms. The defaults are twice the
+# highest reading of two passes of that procedure on the same machine on
+# 2026-09-29, at load average 4 to 7, with 10 toast and 6 inbox readings a
+# pass: 43 to 61 ms and 101 to 114 ms.
 set -euo pipefail
 
 timeout_s=60
@@ -98,6 +107,8 @@ rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
 default_first_bar_budget_ms="${VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS:-542}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
+emoji_toast_budget_ms="${VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS:-122}"
+emoji_inbox_budget_ms="${VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS:-228}"
 
 # The measurement mode. Each run sources the harness in its own subshell,
 # so its teardown runs when the subshell exits, and the harness's output

@@ -428,6 +428,46 @@ for i in 1 2 3; do notify Slack 0 "[acme] in party $i" ":smoke-party: $i :smoke-
 expect_poll "every emoji card draws its images" "$((monitors * 4))" drawn_images "$party"
 expect "cards with custom emoji start no helper run" "$runs_before" note_status slack.runs
 expect "dismissing the emoji cards is allowed" ok notes dismiss-all
+expect_poll "no card is left before the emoji latencies" 0 note_status onScreen
+# The latencies with custom emoji, each read once: from the notify call to
+# the card's body naming its images on every screen, and from the history
+# call to forty such rows naming theirs, each polled back to back through
+# the probe, one reading per IPC round trip. The budgets and their runs are
+# in scripts/qml-smoke.sh's header.
+emoji_body="ada: :smoke-party: ship :smoke-party: it :smoke-party: now :smoke-party: team, and a tail long enough to run onto a second line :smoke-party: here"
+emoji_texts() { ipc smoke layerItems vgs.notifications QQuickText text,visible | python3 -c 'import json,sys; print(sum(1 for s, r, v in json.load(sys.stdin) if v["visible"] and "<img src=" in v["text"]))'; }
+# latency_since START WANT CMD...: the milliseconds from START until CMD
+# prints WANT or more, or -1 after 5 s.
+latency_since() {
+  local start="$1" want="$2" got
+  shift 2
+  while (( $(date +%s%3N) - start < 5000 )); do
+    got="$("$@")" || got=0
+    if (( got >= want )); then echo $(( $(date +%s%3N) - start )); return; fi
+  done
+  echo -1
+}
+notify_now() { "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Slack 0 "" "$1" "$emoji_body" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null; }
+within_budget() { python3 -c 'import sys; print(0 <= int(sys.argv[1]) <= int(sys.argv[2]))' "$1" "$2"; }
+start="$(date +%s%3N)"
+notify_now "[acme] in latency"
+emoji_toast_ms="$(latency_since "$start" "$monitors" emoji_texts)"
+printf '        latency_emoji_toast_ms=%s budget_ms=%s\n' "$emoji_toast_ms" "$emoji_toast_budget_ms"
+expect "a toast with custom emoji names its images within its budget" True within_budget "$emoji_toast_ms" "$emoji_toast_budget_ms"
+expect "dismissing the latency toast is allowed" ok notes dismiss-all
+expect "Silence turns on for the inbox latency" on notes silence on
+expect "clearing the history before the inbox latency is allowed" ok notes clear-history
+for i in $(seq 1 40); do notify_now "[acme] in inbox $i"; done
+expect_poll "the forty emoji notifications are in the history" 40 note_status history
+start="$(date +%s%3N)"
+notes history >/dev/null
+emoji_inbox_ms="$(latency_since "$start" "$((40 * monitors))" emoji_texts)"
+printf '        latency_emoji_inbox_ms=%s budget_ms=%s\n' "$emoji_inbox_ms" "$emoji_inbox_budget_ms"
+expect "an inbox of forty cards with custom emoji names their images within its budget" True within_budget "$emoji_inbox_ms" "$emoji_inbox_budget_ms"
+expect "the emoji inbox closes" ok notes close
+expect_poll "the emoji inbox closed" '""' read_notes panelMode
+expect "clearing the emoji history is allowed" ok notes clear-history
+expect "Silence turns off after the inbox latency" off notes silence off
 expect_poll "no card is left before the run-per-card copy" 0 note_status onScreen
 # The control: a copy of the service whose card lookup runs the helper.
 service_qml="$repo/shell/plugins/vgs.notifications/Service.qml"

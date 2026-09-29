@@ -386,6 +386,7 @@ card_centre() { ipc smoke layerItems vgs.notifications NotificationCard summary 
 for screen, (x, y, w, h), v in json.load(sys.stdin):
     if v["summary"] == sys.argv[1]: print(x + w // 2, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
 on_screen() { notes status | python3 -c 'import json,sys; print(json.load(sys.stdin)["onScreen"])'; }
+acme_emoji() { notes status | python3 -c 'import json,sys; print(json.load(sys.stdin)["slack"]["emoji"]["teams"].get("T0ACME", 0))'; }
 slack_badges() { ipc smoke layerItems vgs.notifications NotificationCard showsBadge,app | python3 -c 'import json,sys; print(json.dumps([v["showsBadge"] for _, _, v in json.load(sys.stdin) if v["app"] == "Slack"][:3]))'; }
 scene_notifications() { # MODE
   local ids=() at
@@ -415,10 +416,12 @@ scene_notifications() { # MODE
   expect_poll "no toast is left" 0 on_screen
   # Slack-shaped notifications, as Slack's web client titles them, from the
   # synthetic Slack under the sandbox's configuration: a direct message, a
-  # group message past three people and a channel mention, each with the
-  # workspace's icon in place of its bracketed name.
+  # group message past three people and a channel mention with the
+  # workspace's custom emoji, each with the workspace's icon in place of its
+  # bracketed name. An older revision draws the shortcode as text.
+  [[ -n $rev ]] || expect_poll "acme's custom emoji are made" 1 acme_emoji
   ids=()
-  ids+=("$(notify Slack "[acme] in eng-core" "Grace Hopper: @ada the build is green" '["default", "View"]' '{"desktop-entry": <"slack">}')")
+  ids+=("$(notify Slack "[acme] in eng-core" "Grace Hopper: @ada the build is green :smoke-party: ship it :smoke-party:" '["default", "View"]' '{"desktop-entry": <"slack">}')")
   ids+=("$(notify Slack "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '["default", "View"]' '{"desktop-entry": <"slack">}')")
   ids+=("$(notify Slack "[acme] from Ada Lovelace" "Did you see the notes?" '["default", "View"]' '{"desktop-entry": <"slack">}')")
   expect_poll "three Slack toasts are on screen" 3 on_screen
@@ -451,10 +454,14 @@ for scene in "${scenes[@]}"; do
   case $scene in
     launcher|notifications)
       # The notifications read the synthetic Slack's workspace list once,
-      # when they start.
+      # when they start, beside a stub libsecret that holds no token: the
+      # photo helper refuses any other secret-tool in the sandbox, and with
+      # the stub it builds the custom emoji from the synthetic cache alone.
       if [[ $scene == notifications ]]; then
         mkdir -p -- "$home/.config/Slack"
         cp -R -- "$checkout/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
+        printf '#!/usr/bin/env bash\nexit 1\n' >"$shim/secret-tool"
+        chmod 755 "$shim/secret-tool"
       fi
       expect "enabling vgs.$scene is allowed" ok ipc shell setPluginEnabled "vgs.$scene" true
       expect_poll "vgs.$scene is built" True record_exists "vgs.$scene" ;;
