@@ -6,16 +6,36 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const ATTRS = ["service", "vgs-notifications", "account", "slack"];
+// The libsecret item of an account: service vgs-notifications, account
+// `slack:<team id>` for one workspace's token and `slack` for the
+// single-workspace token, whose workspace team.info names.
+const SERVICE = ["service", "vgs-notifications", "account"];
+const LEGACY = "slack";
+// The most team ids one run takes, NotificationLogic.WORKSPACES_MAX.
+const TEAMS_MAX = 16;
 const DAILY_MS = 24 * 60 * 60 * 1000;
 const RETRY_MS = 15 * 60 * 1000;
 const MAX_USERS = 512;
 const MAX_IMAGE_BYTES = 512 * 1024;
 const MAX_CACHE_BYTES = 10 * 1024 * 1024;
 const API_DEFAULT = "https://slack.com/api";
+// A team's directory, <root>/<team id>/, holds these names, each the
+// helper's: team.json, the team's names, icon, the account that served it
+// and when; workspace.png; users.json, each cached user's id, names and
+// photo; and users/, one <user id>.png per photo. The team sweep deletes
+// only these names, its own temporary files and the flat <user id>.png
+// photos an older layout kept beside team.json, so another artifact of the
+// team, such as its custom emoji, can sit in the directory beside them.
+const TEAM_FILES = ["team.json", "users.json", "workspace.png"];
+const USERS_DIR = "users";
+// The root holds accounts.json, each account's resolved team and its last
+// failure, and one directory per team a stored token serves; the root sweep
+// removes anything else.
+const ACCOUNTS_FILE = "accounts.json";
+const TEMP_NAME = /^\..+\.[0-9]+\.(?:tmp|download|resized)$/;
 
-function usage() {
-    console.error("notifications-slack-photos: refused: usage");
+function usage(reason) {
+    console.error("notifications-slack-photos: refused: " + reason);
     process.exit(2);
 }
 
@@ -96,21 +116,23 @@ function assertTestSecretToolPath() {
     }
 }
 
-function lookupToken() {
-    assertTestSecretToolPath();
-    const secret = childProcess.spawnSync("secret-tool", ["lookup"].concat(ATTRS), {
+// One account's token: { state: "token", token }, { state: "none" } for no
+// stored token, { state: "no-tool" } with no secret-tool installed, or
+// { state: "failed", line } naming the failure, never the token.
+function lookupToken(account) {
+    const secret = childProcess.spawnSync("secret-tool", ["lookup"].concat(SERVICE, [account]), {
         encoding: "utf8",
         maxBuffer: 1024 * 1024
     });
-    if (secret.error && secret.error.code === "ENOENT") {
-        return "";
-    }
-    if (secret.error) {
-        fail(5, "notifications-slack-photos: secret-tool=failed");
-    }
-    if (secret.status === 1) return "";
-    if (secret.status !== 0) fail(5, "notifications-slack-photos: secret-tool=failed status=" + secret.status);
-    return String(secret.stdout || "").replace(/\r?\n$/, "");
+    if (secret.error && secret.error.code === "ENOENT") return { state: "no-tool" };
+    const failed = detail => ({ state: "failed", line: "notifications-slack-photos: account=" + account + " secret-tool=failed" + detail });
+    if (secret.error) return failed("");
+    if (secret.status === 1) return { state: "none" };
+    if (secret.status !== 0) return failed(" status=" + secret.status);
+    const token = String(secret.stdout || "").replace(/\r?\n$/, "");
+    if (token === "") return { state: "none" };
+    if (/[\r\n"]/.test(token)) return { state: "failed", line: "notifications-slack-photos: account=" + account + " token=invalid" };
+    return { state: "token", token };
 }
 
 function apiBase() {
@@ -261,14 +283,14 @@ function versionedFileUrl(file) {
     return "file://" + file + "?v=" + fileVersion(file);
 }
 
-function userRecord(user, teamDir, budget, stats) {
+function userRecord(user, usersDir, budget, stats) {
     const id = safeSegment(user && user.id);
     if (id === "") return null;
     const profile = user && user.profile && typeof user.profile === "object" ? user.profile : {};
     const names = uniqueNames([profile.display_name, profile.real_name, user.real_name, user.name]);
     if (names.length === 0) return null;
     let photo = "";
-    const wanted = path.join(teamDir, id + ".png");
+    const wanted = path.join(usersDir, id + ".png");
     if (budget.remaining > 0 && typeof profile.image_48 === "string") {
         const downloaded = downloadImage(profile.image_48, wanted);
         if (downloaded === "failed") stats.downloadFailed += 1;
@@ -286,97 +308,95 @@ function userRecord(user, teamDir, budget, stats) {
     return { id, names, photo };
 }
 
-function sweep(dir, keep) {
-    if (!fs.existsSync(dir)) return;
+function remove(file) {
+    fs.rmSync(file, { force: true, recursive: true });
+}
+
+// A team directory's own names that this run did not keep: its files and
+// photos, its temporary files and an older layout's flat photos. Any other
+// name stays.
+function sweepTeam(dir, keep, keepUsers) {
     for (const name of fs.readdirSync(dir)) {
-        if (keep.has(name)) continue;
-        fs.rmSync(path.join(dir, name), { force: true, recursive: true });
-    }
-}
-
-function loadFresh(indexFile) {
-    try {
-        const stat = fs.statSync(indexFile);
-        const cached = readJson(indexFile);
-        if (cached && cached.status === "loaded" && Array.isArray(cached.teams)) {
-            const failed = Number(cached.downloadFailed || 0);
-            const maxAge = failed > 0 ? RETRY_MS : DAILY_MS;
-            if (Date.now() - stat.mtimeMs <= maxAge) return cached;
+        if (name === USERS_DIR) {
+            const usersDir = path.join(dir, USERS_DIR);
+            for (const user of fs.readdirSync(usersDir))
+                if (!keepUsers.has(user)) remove(path.join(usersDir, user));
+        } else if (TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : (/\.png$/.test(name) || TEMP_NAME.test(name))) {
+            remove(path.join(dir, name));
         }
-    } catch (_e) {
-        return null;
     }
-    return null;
 }
 
-function loadIndex(indexFile) {
-    const cached = readJson(indexFile);
-    return cached && cached.status === "loaded" && Array.isArray(cached.teams) ? cached : null;
+// Everything under the root but accounts.json and the directories of the
+// teams in `kept`.
+function sweepRoot(root, kept) {
+    if (!fs.existsSync(root)) return;
+    for (const name of fs.readdirSync(root)) {
+        if (name === ACCOUNTS_FILE || kept.has(name)) continue;
+        remove(path.join(root, name));
+    }
 }
 
-function staleOutput(index) {
-    return Object.assign({}, index, { stale: true });
+function isNumber(value) {
+    return typeof value === "number" && isFinite(value);
 }
 
-function failureHeld(failureFile) {
-    const failure = readJson(failureFile);
-    return failure && typeof failure.at === "number" && Date.now() - failure.at < RETRY_MS;
+// A team's cached record, or null for none or one the helper did not
+// write: { id, names, icon, users, account, generatedAt, downloadFailed }.
+function readTeam(root, id) {
+    const dir = path.join(root, id);
+    const team = readJson(path.join(dir, "team.json"));
+    const users = readJson(path.join(dir, "users.json"));
+    if (!team || team.id !== id || typeof team.account !== "string" || !Array.isArray(team.names) || typeof team.icon !== "string") return null;
+    if (!isNumber(team.generatedAt) || !isNumber(team.downloadFailed) || !users || !Array.isArray(users.users)) return null;
+    return { id, names: team.names, icon: team.icon, users: users.users, account: team.account, generatedAt: team.generatedAt, downloadFailed: team.downloadFailed };
 }
 
-function refresh(root) {
-    const token = lookupToken();
-    if (token === "") {
-        output({ status: "absent" });
-        return;
-    }
-    if (/[\r\n"]/.test(token)) {
-        fail(5, "notifications-slack-photos: token=invalid");
-    }
-    const indexFile = path.join(root, "index.json");
-    const failureFile = path.join(root, "failure.json");
-    const fresh = loadFresh(indexFile);
-    if (fresh !== null) {
-        output(fresh);
-        return;
-    }
-    if (failureHeld(failureFile)) {
-        const stale = loadIndex(indexFile);
-        output(stale === null ? { status: "absent" } : staleOutput(stale));
-        return;
-    }
-    let teamInfo;
+// A record still current for `account`: written from that account's token
+// within the day, or within the retry gap when a download failed.
+function fresh(record, account) {
+    if (record === null || record.account !== account) return false;
+    return Date.now() - record.generatedAt <= (record.downloadFailed > 0 ? RETRY_MS : DAILY_MS);
+}
+
+function held(state) {
+    return !!state && isNumber(state.failedAt) && Date.now() - state.failedAt < RETRY_MS;
+}
+
+function redact(text) {
+    return String(text || "failed").replace(/xox[pboa]-[A-Za-z0-9-]+/g, "xoxp-redacted");
+}
+
+// team.info and users.list with one token: { info, members }. Throws with
+// the failure named.
+function teamInfo(base, token) {
+    return apiCall(base, token, "team.info", {}).team;
+}
+
+function teamMembers(base, token) {
     let members = [];
-    try {
-        const base = apiBase();
-        teamInfo = apiCall(base, token, "team.info", {}).team;
-        let cursor = "";
-        while (members.length < MAX_USERS) {
-            const page = apiCall(base, token, "users.list", { limit: "200", cursor });
-            if (Array.isArray(page.members)) members = members.concat(page.members);
-            cursor = page.response_metadata && typeof page.response_metadata.next_cursor === "string" ? page.response_metadata.next_cursor : "";
-            if (cursor === "") break;
-        }
-    } catch (e) {
-        const reason = String(e.message || "failed").replace(/xox[pboa]-[A-Za-z0-9-]+/g, "xoxp-redacted");
-        writeJson(failureFile, { at: Date.now(), reason });
-        const stale = loadIndex(indexFile);
-        if (stale !== null) {
-            console.error("notifications-slack-photos: " + reason);
-            output(staleOutput(stale));
-            return;
-        }
-        fail(6, "notifications-slack-photos: " + reason);
+    let cursor = "";
+    while (members.length < MAX_USERS) {
+        const page = apiCall(base, token, "users.list", { limit: "200", cursor });
+        if (Array.isArray(page.members)) members = members.concat(page.members);
+        cursor = page.response_metadata && typeof page.response_metadata.next_cursor === "string" ? page.response_metadata.next_cursor : "";
+        if (cursor === "") break;
     }
-    const teamId = safeSegment(teamInfo && teamInfo.id);
-    if (teamId === "") fail(6, "notifications-slack-photos: api=team.info team-id=invalid");
-    const teamDir = path.join(root, teamId);
-    mkdir(teamDir);
+    return members;
+}
+
+// Download and write team `id`'s directory from `info`, team.info's team,
+// and `members`, users.list's, served by `account`. Answers the record.
+function buildTeam(root, id, account, info, members) {
+    const teamDir = path.join(root, id);
+    const usersDir = path.join(teamDir, USERS_DIR);
+    mkdir(usersDir);
     const budget = { remaining: MAX_CACHE_BYTES, keep: new Set(["team.json", "users.json"]) };
+    const userBudget = { remaining: 0, keep: new Set() };
     const stats = { downloadFailed: 0 };
-    const teamNames = uniqueNames([teamInfo.domain, teamInfo.name]);
     let icon = "";
-    const iconUrl = teamInfo && teamInfo.icon && typeof teamInfo.icon === "object"
-        ? (teamInfo.icon.image_88 || teamInfo.icon.image_68 || "")
+    const iconUrl = info && info.icon && typeof info.icon === "object"
+        ? (info.icon.image_88 || info.icon.image_68 || "")
         : "";
     const iconFile = path.join(teamDir, "workspace.png");
     if (typeof iconUrl === "string" && iconUrl !== "") {
@@ -396,29 +416,171 @@ function refresh(root) {
             }
         }
     }
+    // The users' photos share the team's budget; their names are kept apart,
+    // since they live in users/.
+    userBudget.remaining = budget.remaining;
     const users = [];
     for (const member of members.slice(0, MAX_USERS)) {
         if (member && member.deleted === true) continue;
-        const user = userRecord(member, teamDir, budget, stats);
+        const user = userRecord(member, usersDir, userBudget, stats);
         if (user !== null) users.push(user);
     }
     users.sort((a, b) => a.id.localeCompare(b.id));
-    const team = { id: teamId, names: teamNames, icon, users };
-    writeJson(path.join(teamDir, "team.json"), { id: team.id, names: team.names, icon: team.icon });
-    writeJson(path.join(teamDir, "users.json"), { users: team.users });
-    sweep(teamDir, budget.keep);
-    if (stats.downloadFailed > 0) {
-        console.error("notifications-slack-photos: downloads=failed count=" + stats.downloadFailed);
-    }
-    const index = { status: "loaded", generatedAt: Date.now(), downloadFailed: stats.downloadFailed, teams: [team] };
-    writeJson(indexFile, index);
-    if (stats.downloadFailed === 0) fs.rmSync(failureFile, { force: true });
-    output(index);
+    const record = {
+        id,
+        names: uniqueNames([info.domain, info.name]),
+        icon,
+        users,
+        account,
+        generatedAt: Date.now(),
+        downloadFailed: stats.downloadFailed
+    };
+    writeJson(path.join(teamDir, "team.json"), { id, names: record.names, icon, account, generatedAt: record.generatedAt, downloadFailed: record.downloadFailed });
+    writeJson(path.join(teamDir, "users.json"), { users });
+    sweepTeam(teamDir, budget.keep, userBudget.keep);
+    return record;
 }
 
-if (process.argv.length !== 4 || process.argv[2] !== "refresh") usage();
+function refresh(root, ids) {
+    assertTestSecretToolPath();
+    const lines = [];
+    const tokens = [];
+    for (const account of ids.map(id => "slack:" + id).concat([LEGACY])) {
+        const found = lookupToken(account);
+        if (found.state === "no-tool") break;
+        if (found.state === "failed") lines.push(found.line);
+        if (found.state === "token") tokens.push({ account, token: found.token });
+    }
+    if (tokens.length === 0) {
+        sweepRoot(root, new Set());
+        remove(path.join(root, ACCOUNTS_FILE));
+        for (const line of lines) console.error(line);
+        output({ status: "absent" });
+        return;
+    }
+    const accountsFile = path.join(root, ACCOUNTS_FILE);
+    const stored = readJson(accountsFile);
+    const previous = stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    const accounts = {};
+    for (const entry of tokens) accounts[entry.account] = previous[entry.account] || {};
+    const teams = [];
+    let stale = false;
+    const refuse = (account, reason) => {
+        accounts[account] = Object.assign({}, accounts[account], { failedAt: Date.now(), reason: redact(reason) });
+        lines.push("notifications-slack-photos: account=" + account + " " + redact(reason));
+        stale = true;
+    };
+    const keepStale = record => {
+        stale = true;
+        if (record !== null) teams.push(record);
+    };
+    // A refresh the API answered clears the account's failure; the record's
+    // own downloadFailed sets when it is refreshed again.
+    const settle = (account, record) => {
+        teams.push(record);
+        delete accounts[account].failedAt;
+        delete accounts[account].reason;
+    };
+    let base = "";
+    const api = () => base !== "" ? base : (base = apiBase());
+    // Each workspace's own token first: the team it serves is the one its
+    // account names, and a token for another team is refused.
+    const served = new Set();
+    for (const entry of tokens.filter(e => e.account !== LEGACY)) {
+        const id = entry.account.slice("slack:".length);
+        const record = readTeam(root, id);
+        if (fresh(record, entry.account)) {
+            served.add(id);
+            teams.push(record);
+            continue;
+        }
+        if (held(accounts[entry.account])) {
+            // A token for another team caches nothing for this one, and
+            // leaves it to the single-workspace token.
+            if (accounts[entry.account].reason === "team=mismatch") {
+                stale = true;
+                continue;
+            }
+            served.add(id);
+            keepStale(record);
+            continue;
+        }
+        let info;
+        let members;
+        try {
+            info = teamInfo(api(), entry.token);
+            if (safeSegment(info && info.id) !== id) {
+                refuse(entry.account, "team=mismatch");
+                continue;
+            }
+            served.add(id);
+            members = teamMembers(api(), entry.token);
+        } catch (e) {
+            served.add(id);
+            refuse(entry.account, e.message);
+            keepStale(record);
+            continue;
+        }
+        settle(entry.account, buildTeam(root, id, entry.account, info, members));
+    }
+    // The single-workspace token serves the team team.info names, unless
+    // that team's own token serves it.
+    const legacy = tokens.find(e => e.account === LEGACY);
+    if (legacy !== undefined) {
+        const state = accounts[LEGACY];
+        // The team team.info last named, which a day later is asked again,
+        // since the token may since serve another team.
+        const last = safeSegment(state.team);
+        const known = last !== "" && isNumber(state.resolvedAt) && Date.now() - state.resolvedAt <= DAILY_MS ? last : "";
+        const record = last === "" ? null : readTeam(root, last);
+        const own = record !== null && record.account === LEGACY ? record : null;
+        if (known !== "" && served.has(known)) {
+            // Its own token serves it.
+        } else if (fresh(own, LEGACY)) {
+            teams.push(own);
+        } else if (held(state)) {
+            keepStale(own);
+        } else {
+            try {
+                const info = teamInfo(api(), legacy.token);
+                const id = safeSegment(info && info.id);
+                if (id === "") throw new Error("api=team.info team-id=invalid");
+                accounts[LEGACY] = Object.assign({}, accounts[LEGACY], { team: id, resolvedAt: Date.now() });
+                if (!served.has(id)) settle(LEGACY, buildTeam(root, id, LEGACY, info, teamMembers(api(), legacy.token)));
+            } catch (e) {
+                refuse(LEGACY, e.message);
+                keepStale(own);
+            }
+        }
+    }
+    const kept = new Set(teams.map(team => team.id));
+    mkdir(root);
+    sweepRoot(root, kept);
+    writeJson(accountsFile, accounts);
+    const downloadFailed = teams.reduce((sum, team) => sum + team.downloadFailed, 0);
+    if (downloadFailed > 0) lines.push("notifications-slack-photos: downloads=failed count=" + downloadFailed);
+    for (const line of lines) console.error(line);
+    output({
+        status: "loaded",
+        generatedAt: teams.length === 0 ? 0 : Math.min(...teams.map(team => team.generatedAt)),
+        downloadFailed,
+        stale,
+        teams: teams.map(team => ({ id: team.id, names: team.names, icon: team.icon, users: team.users, account: team.account }))
+    });
+}
+
+function main(argv) {
+    if (argv.length < 4 || argv[2] !== "refresh") usage("usage");
+    const ids = argv.slice(4);
+    if (ids.length > TEAMS_MAX) usage("teams count=" + ids.length + " want<=" + TEAMS_MAX);
+    for (const id of ids)
+        if (safeSegment(id) === "") usage("team-id want=[A-Za-z0-9]{1,32}");
+    return { root: argv[3], ids: Array.from(new Set(ids)) };
+}
+
+const args = main(process.argv);
 try {
-    refresh(process.argv[3]);
+    refresh(args.root, args.ids);
 } catch (e) {
     fail(4, "notifications-slack-photos: error=io");
 }

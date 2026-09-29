@@ -35,12 +35,11 @@
     }
   },
   "status": {
-    "slackToken": {
-      "type": "presence",
-      "label": "Slack token",
+    "slackTokens": {
+      "type": "presenceList",
+      "label": "Slack tokens",
       "group": "Slack",
-      "hint": "Needed for sender photos in Slack notifications",
-      "command": "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
+      "hint": "One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
     }
   },
   "appearance": "Appearance.js",

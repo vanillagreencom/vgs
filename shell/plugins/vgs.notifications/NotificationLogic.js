@@ -6,8 +6,10 @@
 // how long a toast lives, the state file's shape and its judge, the image
 // copies an entry owns, what a restart restores, what the history keeps and
 // the Inbox shows, which toast a full stack lets go, which actions a card
-// offers, the paused and running clocks of the toasts on screen, and the
-// per-application rules that read a sender's workspace and people.
+// offers, the paused and running clocks of the toasts on screen, the
+// per-application rules that read a sender's workspace and people, the
+// Slack token rows and photo lookups, and which two notifications are one
+// message sent twice.
 
 // The history keeps the newest HISTORY_MAX notifications; the Inbox and the
 // History panel show at most PANEL_ROWS_MAX of them. LIVE_MAX toasts show at
@@ -90,14 +92,42 @@ function stripImageTags(text) {
     return out;
 }
 
-// The body without image tags, and for a Chromium-family sender without the
-// leading site address those browsers put before every web notification.
+// A web notification's leading site address, as Chromium-family browsers
+// write it before its text: a link to the site, or the address alone. The
+// first group is the host.
+var ORIGIN_LINK = /^\s*<a\b[^>]*>\s*(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:\/[^<\s]*)?\s*<\/a>/i;
+var ORIGIN_ADDRESS = /^\s*(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:\/\S*)?/i;
+
+// A body's leading site address and the text after it: { host, rest },
+// host "" and rest the text as it came when there is none. A
+// Chromium-family sender's address is followed by white space. Chromium
+// as it runs on this system names no application, icon or desktop entry
+// at all, and writes the host on a line of its own and a blank line
+// after it (`app.slack.com\n\nAda: hi`, read from the owner's history on
+// 2026-09-29); for a sender that names no application the blank line is
+// required, so its first word is never read as an address.
+function splitOrigin(app, appIcon, text) {
+    var none = { host: "", rest: text };
+    var chromium = isChromiumDerived(app, appIcon);
+    if (!chromium && String(app || "") !== "") return none;
+    var link = ORIGIN_LINK.exec(text);
+    var found = link !== null ? link : ORIGIN_ADDRESS.exec(text);
+    if (found === null) return none;
+    var after = text.slice(found[0].length);
+    var gap = (chromium ? (link !== null ? /^\s*/ : /^\s+/) : /^[ \t]*\r?\n[ \t]*\r?\n\s*/).exec(after);
+    if (gap === null) return none;
+    return { host: found[1].toLowerCase(), rest: after.slice(gap[0].length) };
+}
+
+// The host of the site a web notification came from, or "".
+function webOrigin(app, appIcon, body) {
+    return splitOrigin(app, appIcon, String(body || "")).host;
+}
+
+// The body without image tags, and without the leading site address a
+// browser puts before every web notification (splitOrigin).
 function sanitizeBody(body, app, appIcon) {
-    var text = stripImageTags(String(body || ""));
-    if (!isChromiumDerived(app, appIcon)) return text;
-    return text
-        .replace(/^\s*<a\b[^>]*>\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^<\s]*)?\s*<\/a>\s*/i, "")
-        .replace(/^\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/\S*)?\s+/i, "");
+    return splitOrigin(app, appIcon, stripImageTags(String(body || ""))).rest;
 }
 
 // What the card renders, stripped once more after the newline rewrite: a
@@ -136,25 +166,37 @@ var WORKSPACES_MAX = 16;
 var WORKSPACE_RELOAD_GAP = 60000;
 // The per-application rules that read who wrote and where from a sender's
 // own text. A rule matches a notification whose desktop entry or
-// application name, case folded, is one of its `names`. `read(summary,
-// body)` answers { workspace, title, people }, or null for text in no shape
-// it knows, which the card draws as it came. `workspaces`, when set, is
-// where the sender's own client keeps its workspace list and the icons it
+// application name, case folded, is one of its `names`, the sender's own
+// client, or whose body opens with the address of one of its `origins`
+// (webOrigin), the same service in a browser. `read(summary, body)`
+// answers { workspace, title, people }, or null for text in no shape it
+// knows, which the card draws as it came. `workspaces`, when set, is where
+// the sender's own client keeps its workspace list and the icons it
 // downloaded, under XDG_CONFIG_HOME, and the reader of that list.
 var ENRICHERS = [
     {
         id: "slack",
         names: ["slack", "com.slack.slack"],
+        origins: ["app.slack.com"],
         read: readSlack,
         workspaces: { index: "Slack/storage/root-state.json", cache: "Slack/Cache/Cache_Data", read: slackWorkspaces }
     }
 ];
 
-function enricherFor(app, desktopEntry) {
+// The rule a notification matches: { rule, source, body }, `source`
+// `desktop` for the sender's own client and `browser` for a web origin,
+// and `body` the text the rule reads, without the browser's site address.
+// Null when no rule matches.
+function enricherFor(app, desktopEntry, appIcon, body) {
+    var text = String(body || "");
     var wanted = [String(desktopEntry || "").toLowerCase(), String(app || "").toLowerCase()];
     for (var r = 0; r < ENRICHERS.length; r++)
         for (var n = 0; n < ENRICHERS[r].names.length; n++)
-            if (wanted.indexOf(ENRICHERS[r].names[n]) !== -1) return ENRICHERS[r];
+            if (wanted.indexOf(ENRICHERS[r].names[n]) !== -1) return { rule: ENRICHERS[r], source: "desktop", body: text };
+    var origin = splitOrigin(app, appIcon, text);
+    if (origin.host === "") return null;
+    for (var o = 0; o < ENRICHERS.length; o++)
+        if ((ENRICHERS[o].origins || []).indexOf(origin.host) !== -1) return { rule: ENRICHERS[o], source: "browser", body: origin.rest };
     return null;
 }
 
@@ -169,17 +211,19 @@ function workspaceRuleIds() {
     return ENRICHERS.filter(function (r) { return !!r.workspaces; }).map(function (r) { return r.id; });
 }
 
-// What a card draws for a notification a rule reads: the rule, the
-// workspace the summary names or "", the summary without that workspace,
-// the first FACES_MAX people it names and how many more there are. Null
-// when no rule matches or the rule does not know the text.
-function enrich(app, desktopEntry, summary, body) {
-    var rule = enricherFor(app, desktopEntry);
-    if (rule === null) return null;
-    var read = rule.read(String(summary || ""), String(body || ""));
+// What a card draws for a notification a rule reads: the rule, which
+// client sent it (enricherFor), the workspace the summary names or "", the
+// summary without that workspace, the first FACES_MAX people it names and
+// how many more there are. Null when no rule matches or the rule does not
+// know the text.
+function enrich(app, desktopEntry, appIcon, summary, body) {
+    var matched = enricherFor(app, desktopEntry, appIcon, body);
+    if (matched === null) return null;
+    var read = matched.rule.read(String(summary || ""), matched.body);
     if (read === null) return null;
     return {
-        rule: rule.id,
+        rule: matched.rule.id,
+        source: matched.source,
         workspace: read.workspace,
         title: read.title,
         faces: read.people.slice(0, FACES_MAX),
@@ -200,12 +244,15 @@ function bodySender(body) {
 // Slack's titles, as its web client (Slack 4.52.162, read on 2026-09-28)
 // builds them: with more than one workspace signed in, "[<domain>] from
 // <name>" for a direct message and "[<domain>] in <conversation>" for
-// anything else; with one, "New message from <name>", "New message in
-// <conversation>" and "New thread message in <conversation>"; and "<name>
-// is trying to reach you" for a direct message past Do Not Disturb. A group
-// direct message's conversation is its members' names, comma separated,
-// which no channel name holds. The body of anything but a direct message
-// opens with its sender, "Name: text". Slack on Linux sends no image.
+// anything else; with one, and always in a browser, "New message from
+// <name>", "New message in <conversation>" and "New thread message in
+// <conversation>"; and "<name> is trying to reach you" for a direct message
+// past Do Not Disturb. The title the card draws is the multi-workspace
+// form, "from <name>" or "in <conversation>", whichever client sent it. A
+// group direct message's conversation is its members' names, comma
+// separated, which no channel name holds. The body of anything but a
+// direct message opens with its sender, "Name: text". Slack on Linux sends
+// no image.
 function readSlack(summary, body) {
     var workspace = "";
     var rest = summary;
@@ -214,8 +261,10 @@ function readSlack(summary, body) {
         workspace = bracket[1];
         rest = bracket[2];
     }
-    var direct = /^(?:New message )?from (.+)$/.exec(rest) || /^(.+) is trying to reach you$/.exec(rest);
-    if (direct) return { workspace: workspace, title: rest, people: [direct[1]] };
+    var from = /^(?:New message )?from (.+)$/.exec(rest);
+    if (from) return { workspace: workspace, title: "from " + from[1], people: [from[1]] };
+    var reach = /^(.+) is trying to reach you$/.exec(rest);
+    if (reach) return { workspace: workspace, title: rest, people: [reach[1]] };
     var within = /^(?:New (?:thread )?message )?in (.+)$/.exec(rest);
     if (!within) return workspace === "" ? null : { workspace: workspace, title: rest, people: [] };
     var sender = bodySender(body);
@@ -223,7 +272,7 @@ function readSlack(summary, body) {
     var people = sender === "" ? [] : [sender];
     for (var i = 0; i < members.length; i++)
         if (sender === "" || fold(members[i]) !== fold(sender)) people.push(members[i]);
-    return { workspace: workspace, title: rest, people: people };
+    return { workspace: workspace, title: "in " + within[1], people: people };
 }
 
 // The tints a face takes, the names of the Appearance face.tint group.
@@ -252,10 +301,11 @@ function initialsOf(name) {
 
 // Slack's workspace list, storage/root-state.json: `workspaces` maps a team
 // id to { domain, name, icon: { image_68, image_88 } }, each icon an https
-// URL. Answers { ok: true, workspaces: [{ id, names, urls }], skipped } in
-// team-id order, at most WORKSPACES_MAX, the larger icon first; an entry
-// with no safe id or no name is skipped and counted. { ok: false, error }
-// names why the file is not a list.
+// URL. Answers { ok: true, workspaces: [{ id, domain, name, names, urls }],
+// skipped } in team-id order, at most WORKSPACES_MAX, the larger icon
+// first, `domain` and `name` "" when the entry has none and `names` the
+// ones it has; an entry with no safe id or no name is skipped and counted.
+// { ok: false, error } names why the file is not a list.
 function slackWorkspaces(text) {
     var parsed;
     try {
@@ -276,7 +326,9 @@ function slackWorkspaces(text) {
         }
         var icon = isPlainObject(w.icon) ? w.icon : {};
         var urls = [icon.image_88, icon.image_68].filter(function (u) { return typeof u === "string" && /^https:\/\/[^\s]+$/.test(u); });
-        out.push({ id: ids[i], names: names, urls: urls });
+        var domain = names.indexOf(w.domain) !== -1 ? w.domain : "";
+        var name = names.indexOf(w.name) !== -1 ? w.name : "";
+        out.push({ id: ids[i], domain: domain, name: name, names: names, urls: urls });
     }
     return { ok: true, workspaces: out, skipped: skipped };
 }
@@ -328,16 +380,101 @@ function workspaceReload(map, workspace, loadedAt, now) {
     return now - loadedAt >= WORKSPACE_RELOAD_GAP;
 }
 
-// The states token-status.sh reports for the Slack token, each a value of
-// the core's `presence` status type.
+// The states token-status.sh reports for each Slack account, each a value
+// of the core's `presence` status type.
 var SLACK_TOKEN_STATES = ["present", "absent", "locked", "unavailable"];
+// The single-workspace account, and a workspace's own: slack:<team id>.
+var SLACK_LEGACY_ACCOUNT = "slack";
+var SLACK_ACCOUNT = /^slack(?::[A-Za-z0-9]{1,32})?$/;
 
-// The Slack token's state from token-status.sh's stdout: the word after
-// `slack-token: ` on its one line, or "" for output the probe does not
+// Each Slack account's token state from token-status.sh's stdout, one
+// `slack-token: account=<account> <state>` line per account, the
+// single-workspace account's among them: { ok: true, states } with
+// account -> state, or { ok: false, error } for output the probe does not
 // print.
-function slackTokenState(text) {
-    var match = /^slack-token: ([a-z]+)(?: [^\n]*)?\n?$/.exec(String(text));
-    return match !== null && SLACK_TOKEN_STATES.indexOf(match[1]) !== -1 ? match[1] : "";
+function slackTokenStates(text) {
+    var lines = String(text).replace(/\n$/, "").split("\n");
+    var states = {};
+    for (var i = 0; i < lines.length; i++) {
+        var match = /^slack-token: account=(\S+) ([a-z]+)(?: [^\n]*)?$/.exec(lines[i]);
+        if (match === null) return { ok: false, error: "line." + i + " unknown" };
+        if (!SLACK_ACCOUNT.test(match[1])) return { ok: false, error: "line." + i + ".account unknown" };
+        if (SLACK_TOKEN_STATES.indexOf(match[2]) === -1) return { ok: false, error: "line." + i + ".state unknown" };
+        if (hasOwn(states, match[1])) return { ok: false, error: "line." + i + ".account duplicate" };
+        states[match[1]] = match[2];
+    }
+    if (!hasOwn(states, SLACK_LEGACY_ACCOUNT)) return { ok: false, error: "account=" + SLACK_LEGACY_ACCOUNT + " missing" };
+    return { ok: true, states: states };
+}
+
+// The command that stores a Slack token in libsecret, as the Settings
+// page shows it: for workspace `id`'s own account, or with id "" the
+// single-workspace one. The id is one slackWorkspaces admitted, letters and
+// digits alone; no workspace name enters the command.
+function slackStoreCommand(id) {
+    return id === ""
+        ? "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
+        : "secret-tool store --label='VGS notifications Slack token " + id + "' service vgs-notifications account slack:" + id;
+}
+
+// A status item's label is one printable line of at most this many
+// characters (docs/architecture/status.md § Declared).
+var SLACK_LABEL_MAX = 60;
+
+// A workspace as the Settings page names it: its name, then its domain in
+// parentheses, one line, cut to SLACK_LABEL_MAX with an ellipsis; its team
+// id when neither is printable.
+function slackWorkspaceLabel(workspace) {
+    var clean = function (s) { return String(s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim(); };
+    var name = clean(workspace.name);
+    var domain = clean(workspace.domain);
+    var label = name !== "" && domain !== "" && fold(name) !== fold(domain) ? name + " (" + domain + ")" : name !== "" ? name : domain !== "" ? domain : workspace.id;
+    var chars = Array.from(label);
+    return chars.length <= SLACK_LABEL_MAX ? label : chars.slice(0, SLACK_LABEL_MAX - 1).join("") + "\u2026";
+}
+
+// The Settings page's Slack token rows, a `presenceList`: one item per
+// workspace Slack's list names, in its order, carrying that workspace's own
+// account's state and the command that stores it; a workspace whose own
+// token is absent while the photo cache says the single-workspace token
+// serves it carries that token's state and says so. Then the
+// single-workspace token's own item, when no workspace is listed or it is
+// stored. `states` is slackTokenStates'; `teams` slackPhotos'. { ok: true,
+// items }, or { ok: false, missing } naming an account the states lack,
+// while the probe has not yet answered for the list as it now stands.
+function slackTokenRows(workspaces, states, teams) {
+    if (!hasOwn(states, SLACK_LEGACY_ACCOUNT)) return { ok: false, missing: SLACK_LEGACY_ACCOUNT };
+    var legacy = states[SLACK_LEGACY_ACCOUNT];
+    var items = [];
+    for (var i = 0; i < workspaces.length; i++) {
+        var account = "slack:" + workspaces[i].id;
+        if (!hasOwn(states, account)) return { ok: false, missing: account };
+        var item = { label: slackWorkspaceLabel(workspaces[i]), value: states[account] };
+        var served = teams.some(function (t) { return t.id === workspaces[i].id && t.account === SLACK_LEGACY_ACCOUNT; });
+        if (states[account] === "absent" && served) {
+            item.value = legacy;
+            item.hint = "Served by the single-workspace token";
+        }
+        item.command = slackStoreCommand(workspaces[i].id);
+        items.push(item);
+    }
+    if (workspaces.length === 0 || legacy !== "absent")
+        items.push({ label: "Single-workspace token", value: legacy, command: slackStoreCommand("") });
+    return { ok: true, items: items };
+}
+
+// How long the photo helper waits before its next run, in milliseconds:
+// SLACK_PHOTO_RETRY while a token is missing, an account failed, a download
+// failed, or a listed workspace has no photos, so a token stored for it is
+// read within that; otherwise until the oldest team's day is over.
+var SLACK_PHOTO_RETRY = 15 * 60 * 1000;
+var SLACK_PHOTO_DAY = 24 * 60 * 60 * 1000;
+function slackPhotoDelay(read, workspaces, now) {
+    if (!read.ok || read.status !== "loaded" || read.stale || read.downloadFailed > 0) return SLACK_PHOTO_RETRY;
+    for (var i = 0; i < workspaces.length; i++)
+        if (!read.teams.some(function (t) { return t.id === workspaces[i].id; })) return SLACK_PHOTO_RETRY;
+    var due = (read.generatedAt > 0 ? read.generatedAt : now) + SLACK_PHOTO_DAY;
+    return Math.max(1000, due - now);
 }
 
 // Slack photos cache data, as slack-photos.js prints and stores it, reduced
@@ -361,6 +498,7 @@ function slackPhotos(text) {
         if (typeof team.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(team.id)) return { ok: false, error: "teams." + t + ".id want=safe" };
         if (!Array.isArray(team.names)) return { ok: false, error: "teams." + t + ".names want=list" };
         if (!Array.isArray(team.users)) return { ok: false, error: "teams." + t + ".users want=list" };
+        if (typeof team.account !== "string" || !SLACK_ACCOUNT.test(team.account)) return { ok: false, error: "teams." + t + ".account want=slack|slack:<team id>" };
         var names = uniqueNames(team.names);
         if (names.length === 0) return { ok: false, error: "teams." + t + ".names want=non-empty" };
         var users = [];
@@ -374,7 +512,7 @@ function slackPhotos(text) {
             users.push({ id: user.id, names: userNames, photo: photo });
         }
         var icon = slackPhotoFileUrl(team.icon);
-        teams.push({ id: team.id, names: names, icon: icon, users: users });
+        teams.push({ id: team.id, names: names, icon: icon, users: users, account: team.account });
     }
     return {
         ok: true,
@@ -405,9 +543,10 @@ function uniqueNames(names) {
     return out;
 }
 
+// The photo team a workspace name, case folded, names, or null.
 function slackTeamFor(teams, workspace) {
     var wanted = fold(workspace);
-    if (wanted === "") return teams.length === 1 ? teams[0] : null;
+    if (wanted === "") return null;
     for (var t = 0; t < teams.length; t++)
         for (var n = 0; n < teams[t].names.length; n++)
             if (fold(teams[t].names[n]) === wanted) return teams[t];
@@ -428,13 +567,53 @@ function slackUserPhotoMap(team) {
     return map;
 }
 
-function slackFaceImages(enrichment, teams, carriedImage) {
+// The workspace a Slack card belongs to (enrich's reading): the one its
+// summary names; else the only workspace known, from Slack's list
+// (slackWorkspaces) and the photo cache (slackPhotos) together; else the
+// one photo team whose users hold its sender's name; else "". A browser
+// names no workspace, nor does Slack with one signed in. Another rule's
+// card keeps the workspace its summary names.
+function slackWorkspaceFor(enrichment, workspaces, teams) {
+    if (enrichment === null) return "";
+    if (enrichment.rule !== "slack" || enrichment.workspace !== "") return enrichment.workspace;
+    var known = {};
+    for (var w = 0; w < workspaces.length; w++) if (!hasOwn(known, workspaces[w].id)) known[workspaces[w].id] = workspaces[w].names[0];
+    for (var t = 0; t < teams.length; t++) if (!hasOwn(known, teams[t].id)) known[teams[t].id] = teams[t].names[0];
+    var ids = Object.keys(known);
+    if (ids.length === 1) return known[ids[0]];
+    if (enrichment.faces.length === 0) return "";
+    var holders = slackTeamsHolding(teams, enrichment.faces[0]);
+    return holders.length === 1 ? holders[0].names[0] : "";
+}
+
+// The photo teams one of whose users goes by `name`, case folded.
+function slackTeamsHolding(teams, name) {
+    var key = fold(name);
+    return teams.filter(function (team) {
+        return team.users.some(function (u) { return u.names.some(function (n) { return fold(n) === key; }); });
+    });
+}
+
+// One photo per face of a Slack card in `workspace` (slackWorkspaceFor):
+// that team's photo of the name, none for a workspace the photo cache does
+// not hold; with no workspace, the photo of the one team that holds the
+// name, and none when several or none do. A face with no photo takes,
+// when it is the first, the image the notification carries, else "".
+function slackFaceImages(enrichment, teams, carriedImage, workspace) {
     var images = [];
     if (enrichment === null || enrichment.rule !== "slack") return images;
-    var map = slackUserPhotoMap(slackTeamFor(teams, enrichment.workspace));
+    var team = slackTeamFor(teams, workspace);
+    var map = slackUserPhotoMap(team);
     for (var i = 0; i < enrichment.faces.length; i++) {
         var key = fold(enrichment.faces[i]);
-        images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || "") : ""));
+        var photo = "";
+        if (fold(workspace) !== "") photo = hasOwn(map, key) ? map[key] : "";
+        else {
+            var holders = slackTeamsHolding(teams, enrichment.faces[i]);
+            var only = holders.length === 1 ? slackUserPhotoMap(holders[0]) : {};
+            photo = hasOwn(only, key) ? only[key] : "";
+        }
+        images.push(photo !== "" ? photo : (i === 0 ? String(carriedImage || "") : ""));
     }
     return images;
 }
@@ -442,6 +621,63 @@ function slackFaceImages(enrichment, teams, carriedImage) {
 function slackWorkspaceIcon(teams, workspace) {
     var team = slackTeamFor(teams, workspace);
     return team === null ? "" : team.icon;
+}
+
+// -------------------------------------------------------- duplicates
+
+// Two copies of one message, one from the sender's own client and one from
+// its web client in a browser, arrive within DUPLICATE_WINDOW milliseconds
+// of each other; the last DUPLICATES_MAX messages a rule read within the
+// window are remembered to find them.
+var DUPLICATE_WINDOW = 10000;
+var DUPLICATES_MAX = 32;
+
+// A notification a rule reads, as the message it carries: { key, rule,
+// source, conversation, sender, text, workspace, at }, the conversation
+// the title names, the first person, the body as plain text with its
+// markup and white space runs gone, and the workspace the summary names,
+// each case folded but the text. Null for a notification no rule reads.
+function messageOf(entry) {
+    var read = enrich(entry.app, entry.desktopEntry, entry.appIcon, entry.summary, entry.body);
+    if (read === null) return null;
+    return {
+        key: entry.key,
+        rule: read.rule,
+        source: read.source,
+        conversation: fold(read.title),
+        sender: read.faces.length > 0 ? fold(read.faces[0]) : "",
+        text: sanitizeBody(entry.body, entry.app, entry.appIcon).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(),
+        workspace: fold(read.workspace),
+        at: entry.timestamp
+    };
+}
+
+// The remembered message `message` is another copy of, or null: the same
+// rule from the other client, the same conversation, sender and text, the
+// same workspace or one of the two naming none, within DUPLICATE_WINDOW.
+// Two copies from the same client are two messages.
+function duplicateOf(recent, message) {
+    for (var i = recent.length - 1; i >= 0; i--) {
+        var r = recent[i];
+        if (r.rule === message.rule && r.source !== message.source && r.conversation === message.conversation
+            && r.sender === message.sender && r.text === message.text
+            && (r.workspace === message.workspace || r.workspace === "" || message.workspace === "")
+            && Math.abs(message.at - r.at) <= DUPLICATE_WINDOW) return r;
+    }
+    return null;
+}
+
+// Which copy stays when `message` repeats `prior`: `message` when it is the
+// sender's own client's, which names the workspace, and prior's card is
+// still on screen to give way; `prior`, the first recorded, otherwise.
+function duplicateKept(prior, message, priorOnScreen) {
+    return message.source === "desktop" && priorOnScreen ? "message" : "prior";
+}
+
+// The remembered messages with `message` added and `dropKey`'s gone, those
+// older than DUPLICATE_WINDOW before it let go, at most DUPLICATES_MAX.
+function rememberMessage(recent, message, dropKey) {
+    return recent.filter(function (r) { return r.key !== dropKey && message.at - r.at <= DUPLICATE_WINDOW; }).concat([message]).slice(-DUPLICATES_MAX);
 }
 
 // ----------------------------------------------------------- Silence

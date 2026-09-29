@@ -212,11 +212,14 @@ settings_close() {
   expect "the Settings window closes" ok ipc shell hide "$settings_kind" vgs.settings
   expect_poll "the Settings window is gone" 0 settings_count
 }
+# Whether every status row of the notifications' page is reported.
+notifications_reported() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))'; }
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a plugin page with many grouped settings at its top and dragged
 # down its scroll bar; a plugin with keys; the title's menu open with its
-# scroll bar under the pointer; and the list and a page on a monitor
-# narrower than the window's width token.
+# scroll bar under the pointer; the notifications' page with its Slack
+# token rows; and the list and a page on a monitor narrower than the
+# window's width token.
 scene_settings() { # MODE
   local area at tx ty title x y
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
@@ -258,6 +261,10 @@ scene_settings() { # MODE
   type_keys -k Escape || fail "sending Escape to the title's menu failed"
   expect_poll "the title's menu closes" False settings_menu_open
   park_pointer
+  expect "the window opens the notifications' page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.notifications
+  expect_poll "the notifications' page is shown" '"vgs.notifications"' settings_page
+  expect_poll "the notifications' status rows are reported" True notifications_reported
+  take "settings-$1-slack"
   settings_close
   # The monitor made narrower than the window: the nested output takes a
   # 480 by 720 mode for the shot, then its own mode again. The gear opens
@@ -411,9 +418,28 @@ for scene in "${scenes[@]}"; do
         mkdir -p "$home/.config/vgs/plugins/$fixture"
         cp -R -- "$fixtures/$fixture/." "$home/.config/vgs/plugins/$fixture/"
       done
+      # The notifications' page reads the synthetic Slack's workspace list
+      # and a stub libsecret, whose `<account> <state>` lines answer the
+      # token probe's search as libsecret's secret-tool does: acme's own
+      # token stored, globex's locked, the single-workspace one stored. A
+      # lookup finds no token, so the photo helper calls nothing.
+      mkdir -p -- "$home/.config/Slack"
+      cp -R -- "$checkout/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
+      printf '%s\n' "slack:T0ACME present" "slack:T0GLOBEX locked" "slack present" >"$shim/secret-tool.states"
+      cat >"$shim/secret-tool" <<SH
+#!/usr/bin/env bash
+[[ \${1:-} == search && \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
+account="\$5" state=absent
+while read -r name answer; do [[ \$name == "\$account" ]] && state="\$answer"; done <"$shim/secret-tool.states"
+case "\$state" in
+  present) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'attribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
+  locked) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'secret-tool: Cannot get secret of a locked object\\nattribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
+esac
+SH
+      chmod 755 "$shim/secret-tool"
       expect "the fixtures are scanned" ok ipc shell rescanPlugins
       expect_poll "the probe fixture is listed" True plugin_known acme.probe
-      for id in acme.probe vgs.launcher vgs.settings; do
+      for id in acme.probe vgs.launcher vgs.notifications vgs.settings; do
         expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
         expect_poll "$id is built" True record_exists "$id"
       done ;;

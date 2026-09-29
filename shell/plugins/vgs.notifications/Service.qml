@@ -55,6 +55,11 @@ Item {
     property var hovers: ({})
     // key -> the timer that removes a leaving row once its exit has played.
     property var exits: ({})
+    // The messages a rule read lately (NotificationLogic.messageOf), to find
+    // a second copy of one from the sender's other client; and how many
+    // such copies went, by the client whose copy stayed.
+    property var recentMessages: []
+    property var duplicates: ({ keptDesktop: 0, keptBrowser: 0 })
 
     // "", "inbox" or "history".
     property string panelMode: ""
@@ -86,19 +91,39 @@ Item {
         WorkspaceIcons {}
     }
 
-    SlackPhotos {
-        id: slackPhotos
-        onTokenStateChanged: root.publishToken()
+    // The workspace list of the Slack rule, which the photos read too.
+    readonly property var slackSource: {
+        for (const source of workspaceSources.instances)
+            if (source.ruleId === "slack") return source;
+        return null;
     }
 
-    // The Slack token row of the plugin's status: whether the token is
-    // stored, as the probe last found it. The token itself never enters
-    // status.
-    function publishToken() {
-        const state = slackPhotos.tokenState;
-        if (shell === null || state === "" || shell.status.values.slackToken === state) return;
-        const reply = shell.status.set("slackToken", state);
+    SlackPhotos {
+        id: slackPhotos
+        workspaces: root.slackSource === null ? [] : root.slackSource.known
+        listed: root.slackSource !== null && root.slackSource.listRead
+        onTokenStatesChanged: root.publishTokens()
+        onTeamsChanged: root.publishTokens()
+        onWorkspacesChanged: root.publishTokens()
+    }
+
+    // The Slack token rows of the plugin's status, a `presenceList`: each
+    // listed workspace's token state and the command that stores it, as the
+    // probe last found them (NotificationLogic.slackTokenRows). No token
+    // enters status. While the probe has not answered for the list as it
+    // now stands, the rows wait for its next answer.
+    function publishTokens() {
+        if (shell === null || slackPhotos.tokenStates === null) return;
+        const rows = Logic.slackTokenRows(slackPhotos.workspaces, slackPhotos.tokenStates, slackPhotos.teams);
+        if (!rows.ok || JSON.stringify(shell.status.values.slackTokens) === JSON.stringify(rows.items)) return;
+        const reply = shell.status.set("slackTokens", rows.items);
         if (reply !== "ok") console.error("notifications: " + reply);
+    }
+
+    // The workspace a card of `enrichment` belongs to, the one its summary
+    // names or, for Slack, the one its list and photos resolve.
+    function workspaceOf(enrichment) {
+        return Logic.slackWorkspaceFor(enrichment, slackPhotos.workspaces, slackPhotos.teams);
     }
 
     // The icon file URL of a workspace a rule's sender named, or "".
@@ -113,14 +138,14 @@ Item {
         return "";
     }
 
-    function faceImages(enrichment, carriedImage) {
-        return slackPhotos.faceImages(enrichment, carriedImage);
+    function faceImages(enrichment, carriedImage, workspace) {
+        return slackPhotos.faceImages(enrichment, carriedImage, workspace);
     }
 
     // A notification arrived or changed: a workspace its rule does not yet
     // hold an icon for sends that rule's list to be read again.
     function wantWorkspace(entry) {
-        const enrichment = Logic.enrich(entry.app, entry.desktopEntry, entry.summary, entry.body);
+        const enrichment = Logic.enrich(entry.app, entry.desktopEntry, entry.appIcon, entry.summary, entry.body);
         if (enrichment === null || enrichment.workspace === "") return;
         for (const source of workspaceSources.instances)
             if (source.ruleId === enrichment.rule) source.want(enrichment.workspace);
@@ -138,7 +163,7 @@ Item {
 
     onShellChanged: {
         start();
-        publishToken();
+        publishTokens();
     }
 
     // Registers once, when both the shell and the stored state are here, so
@@ -247,6 +272,9 @@ Item {
         const fields = fieldsOf(n);
         if (fields === null) return;
         const entry = Logic.entryOf(fields, Date.now(), k => root.taken(k));
+        // A second copy of a message that stays out is not tracked, so the
+        // server discards it at once.
+        if (!keepCopy(entry)) return;
         wantWorkspace(entry);
         if (store.dnd && !Logic.bypassesSilence(fields.appName, fields.urgency)) {
             // Not tracked, so the server discards it at once.
@@ -276,6 +304,37 @@ Item {
             leave(Logic.evictionKey(rowsOldestLast), "expire");
         }
         countShown();
+    }
+
+    // Whether a new notification shows: false for a second copy of a
+    // message another client already delivered, whose first copy stays;
+    // true otherwise, after the first copy's toast, while it is still on
+    // screen, leaves with no history entry when this copy is the one to
+    // keep (NotificationLogic.duplicateKept). Logs which client's copy
+    // stayed, with no content.
+    function keepCopy(entry) {
+        const message = Logic.messageOf(entry);
+        if (message === null) return true;
+        const prior = Logic.duplicateOf(recentMessages, message);
+        if (prior === null) {
+            recentMessages = Logic.rememberMessage(recentMessages, message, "");
+            return true;
+        }
+        const at = indexOf(prior.key);
+        const onScreen = at !== -1 && rowModel.get(at).origin === "live" && rowModel.get(at).leaving === "";
+        const kept = Logic.duplicateKept(prior, message, onScreen) === "message" ? message : prior;
+        const dropped = kept === message ? prior : message;
+        console.info("notifications: " + message.rule + " duplicate: kept=" + kept.source + " dropped=" + dropped.source);
+        const next = Object.assign({}, duplicates);
+        if (kept.source === "desktop") next.keptDesktop += 1;
+        else next.keptBrowser += 1;
+        duplicates = next;
+        if (kept === prior) return false;
+        store.dropLive(prior.key, true);
+        unlink(prior.key, "dismiss");
+        removeRow(prior.key);
+        recentMessages = Logic.rememberMessage(recentMessages, message, prior.key);
+        return true;
     }
 
     // Everything a card draws. A sender updating its notification in place
@@ -677,7 +736,8 @@ Item {
             store: { state: store.status, problem: store.problem },
             onScreen: rowKeys(r => r.origin !== "panel").length,
             history: store.history.length,
-            readBefore: store.readBefore
+            readBefore: store.readBefore,
+            duplicates: duplicates
         });
     }
 

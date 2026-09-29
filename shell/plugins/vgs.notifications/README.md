@@ -23,14 +23,14 @@ While a panel is open the toasts stay and do not expire, a press outside the sta
 | `silence` | `on`, `off`, `toggle`, or empty to read it | `on` or `off`, or `refused: silence=<arg> want=on\|off\|toggle` |
 | `dismiss-all` | none | dismisses every toast; `ok`, or `none` with none on screen |
 | `dismiss-latest`, `invoke-latest` | none | dismisses, or clicks, the newest toast; `ok` or `none` |
-| `status` | none | one JSON line: `silence`, `panel`, `store` (`state`, `problem`), `onScreen`, `history`, `readBefore` |
+| `status` | none | one JSON line: `silence`, `panel`, `store` (`state`, `problem`), `onScreen`, `history`, `readBefore`, `duplicates` (`keptDesktop`, `keptBrowser`, below) |
 
 ## Toasts
 
 - A toast shows for at least `duration` seconds at normal urgency, 8 by default, and for the shorter of 5 seconds and `duration` at low urgency, longer when the sender's timeout asks, up to 30 seconds. Set `duration` from 2 to 30 on the plugin's Settings page, or as `{ "id": "vgs.notifications", "duration": 12 }` in `plugins` in `~/.config/vgs/shell.json`. A critical toast stays until it is closed. The pointer on a toast, or an open panel, pauses its clock.
 - A sender replacing its notification updates the toast in place and starts its clock over; a sender closing it ends the toast.
 - Hovering a card reveals its actions: the sender's own while it is live, Show when it has none and one of its windows is open, and Dismiss. A click on the card runs the sender's default action, or shows its window, and a right click dismisses it.
-- The body renders the markup the server advertises, less every image tag, and a Chromium-family sender's leading site address. The summary is plain text.
+- The body renders the markup the server advertises, less every image tag and a browser's leading site address ([notification-senders.md § Browser notifications](../../../docs/architecture/notification-senders.md#browser-notifications)). The summary is plain text.
 - At most 20 toasts show at once; a newer one lets the oldest non-critical toast go into the history.
 - Silence keeps every notification off the screen and records it in the history, bar a critical one from the bare command line (`notify-send -u critical`). A notification from the bare command line that is not critical, or one marked transient, is not recorded under Silence.
 
@@ -38,40 +38,45 @@ Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-a
 
 ## Senders read by a rule
 
-A per-application rule in `NotificationLogic.js` (`ENRICHERS`) reads who wrote and where from a sender's own text. Other senders draw as above.
+A per-application rule in `NotificationLogic.js` (`ENRICHERS`) reads who wrote and where from a sender's own text. A rule matches its sender's own client by desktop entry or application name, and the same service in a browser by the site address the body opens with, its `origins`. Other senders draw as above.
 
 - **Faces.** The people a notification names show in the icon's place as round faces: the notification's own image on the first, the person's initials otherwise, on a tint the name always picks. One person fills the icon slot. A group shows at most three smaller faces overlapping, the sender first, each over the one before it, and a "+N" chip for the rest on top.
-- **Workspace icon.** A workspace the summary names gives way to that workspace's icon, a small rounded square before the rest of the summary. With no icon, the summary keeps the name as text.
+- **Workspace icon.** The workspace a card belongs to shows as that workspace's icon, a small rounded square before the rule's title. With no icon, the card keeps its summary as it came.
 
-Slack is the one rule. Slack on Linux sends no image, so the default face is initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in. The workspace icons come from Slack's own client, read-only and with no credentials: the list of workspaces in `~/.config/Slack/storage/root-state.json`, and the icon images Slack's disk cache already holds, `~/.config/Slack/Cache/Cache_Data`. `images.sh cached` copies each icon into `$XDG_CACHE_HOME/vgs/notifications/workspaces/slack/`, at most two for each of 16 workspaces, with a content version on the file URL. The service reads the list when it starts, and again when a notification names a workspace the list lacks or holds with no icon, at most once a minute. A workspace whose icon Slack has not cached keeps its name unless the optional Slack token cache has a workspace icon.
+Slack is the one rule. Slack on Linux sends no image, so the default face is initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in; with one, and always in a browser, the titles read `New message from Name`, `New message in channel` and `New thread message in channel`. The card draws every one as `from Name` or `in channel` beside the workspace's icon.
+
+- **Browser.** Slack in a browser, `app.slack.com`, is read by the same rule: its site line goes, its sender shows as a face and its title as above. It names no workspace. The card takes the only workspace known, from Slack's workspace list and the photo cache together, or else the one photo team whose users hold the sender's name; with neither, it keeps its summary and initials.
+- **One card per message.** When Slack's desktop client and a browser both deliver the same message within 10 seconds, one card shows: the desktop copy, which names the workspace. `status` counts the copies kept in `duplicates`. [notification-senders.md § One card per message](../../../docs/architecture/notification-senders.md#one-card-per-message) holds the rule.
+
+The workspace icons come from Slack's own client, read-only and with no credentials: its workspace list and the icons its disk cache already holds ([notification-senders.md § Workspace icons](../../../docs/architecture/notification-senders.md#workspace-icons)). A workspace whose icon Slack has not cached keeps its name unless the optional Slack token cache has a workspace icon.
 
 ## Slack photos
 
 Slack photos are optional. With no token, or with no `secret-tool` binary installed, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
 
-The token lives in libsecret under `service vgs-notifications` and `account slack`. Store it with:
+Each workspace takes its own token, in libsecret under `service vgs-notifications` and `account slack:<team id>`, the team id Slack's workspace list gives it. Settings lists each workspace the list names, with its token's state and the command that stores it, such as:
+
+```bash
+secret-tool store --label='VGS notifications Slack token T0123ABCD' service vgs-notifications account slack:T0123ABCD
+```
+
+Type the token at `secret-tool`'s prompt. Do not put the token on the command line. A token is a Slack app's user token (`xoxp-`): create an app at api.slack.com/apps, add the user token scopes `users:read` and `team:read` under OAuth & Permissions, and `emoji:read` if you want custom emoji, then install it to the workspace.
+
+The single-workspace token of earlier versions, `account slack`, still works. It serves the one team its `team.info` names, unless that team has its own token, and Settings says which workspace it serves. Store it with:
 
 ```bash
 secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack
 ```
 
-Type the token at `secret-tool`'s prompt. Do not put the token on the command line.
+Settings shows a Slack tokens row: a line for each listed workspace, and a line for the single-workspace token when no workspace is listed or it is stored. Each reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). The check runs at start, when the workspace list changes and after each photo refresh; it never reads a token or unlocks the keyring. A token stored for a listed workspace loads within 15 minutes.
 
-Settings shows a Slack token row with this command to copy. It reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). The check runs at start and after each photo refresh; it never reads the token or unlocks the keyring. Disable and enable the plugin to check again.
-
-Remove it with:
+Remove a token with the same attributes:
 
 ```bash
-secret-tool clear service vgs-notifications account slack
+secret-tool clear service vgs-notifications account slack:T0123ABCD
 ```
 
-The Slack token needs only `users:read` and `team:read`. The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo. It does not read or store messages, channels, presence, email, profile text or tokens.
-
-The helper writes to `$XDG_CACHE_HOME/vgs/notifications/slack-photos/<team id>/`. It keeps `team.json`, `users.json`, `workspace.png` and one `<user id>.png` per cached user. The index uses `file:///...png?v=<content hash>`, so Qt reloads an open card when refreshed bytes change. It writes files through a sibling temporary file and rename. It refreshes at most once a day. The shell starts one helper owner and runs it again after the cache reaches its daily boundary. With no token, or after a retryable failure, it tries again after 15 minutes. The helper still decides whether a network call is due, so a no-token retry stays cheap and silent. After an API failure it waits 15 minutes before another network attempt. If an older index exists, the card keeps using that stale cache while the failure is logged. The shell logs a repeated failure only when the reason changes, and logs one recovery line after photos refresh cleanly again. It keeps at most 512 users, accepts each image only up to 512 KiB and keeps one team's downloaded images within 10 MiB. Slack's `image_48` is already the card's face size; when ImageMagick is present the helper crops it to 48 by 48 pixels, otherwise it keeps Slack's 48-pixel image. Network or API failures keep initials in the card when no stale cache exists and write one `notifications-slack-photos:` log line without the token.
-
-An image URL that is missing or outside Slack's allowed image hosts is skipped as unavailable. A failed download from an allowed image URL writes one sanitized `notifications-slack-photos: downloads=failed count=<n>` line. The helper keeps any older file for that photo when it can. An index with download failures is retried after 15 minutes instead of staying fresh for the full day.
-
-Production image URLs must be HTTPS and must come from Slack's image hosts or `secure.gravatar.com`. Tests alone can set `VGS_NOTIFICATIONS_SLACK_TEST=1`, `VGS_NOTIFICATIONS_SLACK_API_BASE` at `127.0.0.1`, and `VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR` for a stub `secret-tool`. These are process environment variables for the helper. `shell.json` and notification contents do not set them.
+The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo, under `$XDG_CACHE_HOME/vgs/notifications/slack-photos/`. It does not read or store messages, channels, presence, email, profile text or tokens. Without a token, faces stay initials: no local Slack store maps a sender's name to a photo. [notification-senders.md](../../../docs/architecture/notification-senders.md) holds the cache, its refresh and its limits.
 
 ## State
 

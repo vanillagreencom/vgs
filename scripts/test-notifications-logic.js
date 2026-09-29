@@ -47,7 +47,13 @@ const BODIES = [
     ["an unterminated image tag", 'a <img src="http://h', "app", "a "],
     ["a Chromium site address", "<a href=\"https://chat.example.com\">chat.example.com</a> Hi there", "Google Chrome", "Hi there"],
     ["a bare Chromium site address", "chat.example.com Hi there", "chromium", "Hi there"],
-    ["a site address from another sender", "chat.example.com Hi there", "app", "chat.example.com Hi there"]
+    ["a site address from another sender", "chat.example.com Hi there", "app", "chat.example.com Hi there"],
+    // Chromium as it runs here names no application: its site line, then a
+    // blank line.
+    ["an unnamed sender's site line", "app.slack.com\n\nfleet: Done", "", "fleet: Done"],
+    ["an unnamed sender's calendar line", "calendar.google.com\n\n10:30am \u2013 11:30am", "", "10:30am \u2013 11:30am"],
+    ["an unnamed sender's first word without a blank line", "app.slack.com fleet: Done", "", "app.slack.com fleet: Done"],
+    ["an unnamed sender's first line without a blank line", "app.slack.com\nfleet: Done", "", "app.slack.com<br/>fleet: Done"]
 ];
 
 // State files the judge refuses: [label, text, the error].
@@ -76,20 +82,31 @@ const STATE_REFUSED = [
 
 // Senders a rule reads, in the title forms Slack's web client builds:
 // [label, app, desktop entry, summary, body, what the card draws].
+const desktop = (workspace, title, faces, more) => ({ rule: "slack", source: "desktop", workspace, title, faces, more });
+const browser = (title, faces) => ({ rule: "slack", source: "browser", workspace: "", title, faces, more: 0 });
 const ENRICHED = [
-    ["a direct message", "Slack", "slack", "[acme] from Ada Lovelace", "Lunch?", { rule: "slack", workspace: "acme", title: "from Ada Lovelace", faces: ["Ada Lovelace"], more: 0 }],
-    ["a channel message", "Slack", "slack", "[acme] in eng-core", "Grace Hopper (Navy): shipped", { rule: "slack", workspace: "acme", title: "in eng-core", faces: ["Grace Hopper (Navy)"], more: 0 }],
-    ["a channel message with no sender", "Slack", "slack", "[acme] in eng-core", "shipped", { rule: "slack", workspace: "acme", title: "in eng-core", faces: [], more: 0 }],
-    ["a group message, sender first and once", "Slack", "slack", "[acme] in ada, grace, alan, edsger, barbara", "Grace: hi all", { rule: "slack", workspace: "acme", title: "in ada, grace, alan, edsger, barbara", faces: ["Grace", "ada", "alan"], more: 2 }],
-    ["a group message of three", "Slack", "slack", "[acme] in ada, grace", "alan: hi", { rule: "slack", workspace: "acme", title: "in ada, grace", faces: ["alan", "ada", "grace"], more: 0 }],
-    ["one workspace, a direct message", "Slack", "slack", "New message from Ada", "hi", { rule: "slack", workspace: "", title: "New message from Ada", faces: ["Ada"], more: 0 }],
-    ["one workspace, a thread", "Slack", "slack", "New thread message in eng", "Ada: hi", { rule: "slack", workspace: "", title: "New thread message in eng", faces: ["Ada"], more: 0 }],
-    ["past Do Not Disturb", "Slack", "slack", "Ada is trying to reach you", "urgent", { rule: "slack", workspace: "", title: "Ada is trying to reach you", faces: ["Ada"], more: 0 }],
-    ["an unknown title under a workspace", "Slack", "slack", "[acme] Reminder: standup", "", { rule: "slack", workspace: "acme", title: "Reminder: standup", faces: [], more: 0 }],
+    ["a direct message", "Slack", "slack", "[acme] from Ada Lovelace", "Lunch?", desktop("acme", "from Ada Lovelace", ["Ada Lovelace"], 0)],
+    ["a channel message", "Slack", "slack", "[acme] in eng-core", "Grace Hopper (Navy): shipped", desktop("acme", "in eng-core", ["Grace Hopper (Navy)"], 0)],
+    ["a channel message with no sender", "Slack", "slack", "[acme] in eng-core", "shipped", desktop("acme", "in eng-core", [], 0)],
+    ["a group message, sender first and once", "Slack", "slack", "[acme] in ada, grace, alan, edsger, barbara", "Grace: hi all", desktop("acme", "in ada, grace, alan, edsger, barbara", ["Grace", "ada", "alan"], 2)],
+    ["a group message of three", "Slack", "slack", "[acme] in ada, grace", "alan: hi", desktop("acme", "in ada, grace", ["alan", "ada", "grace"], 0)],
+    ["one workspace, a direct message", "Slack", "slack", "New message from Ada", "hi", desktop("", "from Ada", ["Ada"], 0)],
+    ["one workspace, a channel", "Slack", "slack", "New message in eng", "Ada: hi", desktop("", "in eng", ["Ada"], 0)],
+    ["one workspace, a thread", "Slack", "slack", "New thread message in eng", "Ada: hi", desktop("", "in eng", ["Ada"], 0)],
+    ["past Do Not Disturb", "Slack", "slack", "Ada is trying to reach you", "urgent", desktop("", "Ada is trying to reach you", ["Ada"], 0)],
+    ["an unknown title under a workspace", "Slack", "slack", "[acme] Reminder: standup", "", desktop("acme", "Reminder: standup", [], 0)],
     ["an unknown title", "Slack", "slack", "Reminder: standup", "", null],
-    ["matched by the desktop entry alone", "Electron", "slack", "[acme] from Ada", "", { rule: "slack", workspace: "acme", title: "from Ada", faces: ["Ada"], more: 0 }],
-    ["matched by the flatpak's name", "com.slack.Slack", "", "[acme] from Ada", "", { rule: "slack", workspace: "acme", title: "from Ada", faces: ["Ada"], more: 0 }],
-    ["another sender unchanged", "Chat", "chat", "[acme] from Ada", "", null]
+    ["matched by the desktop entry alone", "Electron", "slack", "[acme] from Ada", "", desktop("acme", "from Ada", ["Ada"], 0)],
+    ["matched by the flatpak's name", "com.slack.Slack", "", "[acme] from Ada", "", desktop("acme", "from Ada", ["Ada"], 0)],
+    ["another sender unchanged", "Chat", "chat", "[acme] from Ada", "", null],
+    // Slack in a browser: Chromium here names no application.
+    ["a browser channel message", "", "", "New message in master-operator", "app.slack.com\n\nfleet: Done: settings", browser("in master-operator", ["fleet"])],
+    ["a browser direct message", "", "", "New message from Ada", "app.slack.com\n\nare you there?", browser("from Ada", ["Ada"])],
+    ["a browser thread", "", "", "New thread message in eng", "app.slack.com\n\nAda: hi", browser("in eng", ["Ada"])],
+    ["a named Chromium browser", "Google Chrome", "", "New message in eng", "<a href=\"https://app.slack.com\">app.slack.com</a> Grace: shipped", browser("in eng", ["Grace"])],
+    ["another site in a browser", "", "", "New message in eng", "chat.example.com\n\nGrace: hi", null],
+    ["a Slack address with no blank line from an unnamed sender", "", "", "New message in eng", "app.slack.com Grace: hi", null],
+    ["a Slack address from a sender that is no browser", "Chat", "chat", "New message in eng", "app.slack.com\n\nGrace: hi", null]
 ];
 
 function verify(logic) {
@@ -226,7 +243,9 @@ function verify(logic) {
 
     // Enrichment: what a card draws for a sender a rule reads.
     for (const [label, app, entry, summary, body, want] of ENRICHED)
-        same(logic.enrich(app, entry, summary, body), want, "enrich: " + label);
+        same(logic.enrich(app, entry, "", summary, body), want, "enrich: " + label);
+    for (const [app, icon, body, want] of [["", "", "app.slack.com\n\nhi", "app.slack.com"], ["Chromium", "", "Chat.Example.com hi", "chat.example.com"], ["", "chromium", "https://a.example.org/x hi", "a.example.org"], ["Chat", "", "app.slack.com\n\nhi", ""], ["", "", "hi", ""]])
+        assert.equal(logic.webOrigin(app, icon, body), want, "web origin of " + JSON.stringify([app, icon, body]));
     for (const [name, want] of [["Ada Lovelace", "AL"], ["ada", "A"], ["Ada (she/her)", "A"], ["Grace B. Hopper (Navy)", "GH"], ["@ada", "A"], ["\u{1F600} Bot", "\u{1F600}B"], ["", "?"], ["(x)", "?"]])
         assert.equal(logic.initialsOf(name), want, "initials of " + JSON.stringify(name));
     // Face tints, as Python worked them out from the stated hash.
@@ -252,9 +271,9 @@ function verify(logic) {
         T4: { domain: "initech", icon: { image_88: "http://a/plain.png", image_68: "https://a/has space.png" } }
     } };
     same(logic.slackWorkspaces(JSON.stringify(index)), { ok: true, skipped: 2, workspaces: [
-        { id: "T1", names: ["acme", "Acme Corp"], urls: ["https://a/a68.png"] },
-        { id: "T2", names: ["globex", "Globex"], urls: ["https://a/g88.png", "https://a/g68.png"] },
-        { id: "T4", names: ["initech"], urls: [] }
+        { id: "T1", domain: "acme", name: "Acme Corp", names: ["acme", "Acme Corp"], urls: ["https://a/a68.png"] },
+        { id: "T2", domain: "globex", name: "Globex", names: ["globex", "Globex"], urls: ["https://a/g88.png", "https://a/g68.png"] },
+        { id: "T4", domain: "initech", name: "", names: ["initech"], urls: [] }
     ] });
     same(logic.slackWorkspaces("{"), { ok: false, error: "not-json" });
     same(logic.slackWorkspaces("{\"workspaces\": []}"), { ok: false, error: "workspaces want=object" });
@@ -283,43 +302,149 @@ function verify(logic) {
             names: ["acme", "Acme Corp"],
             icon: "file:///cache/T1/workspace.png?v=0123456789abcdef",
             users: [
-                { id: "U1", names: ["Ada Lovelace", "ada"], photo: "file:///cache/T1/U1.png?v=abcdef0123456789" },
-                { id: "U2", names: ["Grace Hopper"], photo: "file:///cache/T1/U2.png?v=1234567890abcdef" },
+                { id: "U1", names: ["Ada Lovelace", "ada"], photo: "file:///cache/T1/users/U1.png?v=abcdef0123456789" },
+                { id: "U2", names: ["Grace Hopper"], photo: "file:///cache/T1/users/U2.png?v=1234567890abcdef" },
                 { id: "U3", names: ["No Photo"], photo: "" }
-            ]
+            ],
+            account: "slack:T1"
+        }, {
+            id: "T2",
+            names: ["globex"],
+            icon: "",
+            users: [
+                { id: "U7", names: ["Grace Hopper"], photo: "file:///cache/T2/users/U7.png?v=7777777777777777" },
+                { id: "U8", names: ["Edsger"], photo: "file:///cache/T2/users/U8.png?v=8888888888888888" }
+            ],
+            account: "slack"
         }]
     };
     same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", generatedAt: 0, downloadFailed: 0, stale: false, teams: photoCache.teams }, "a Slack photo cache is accepted");
     same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", generatedAt: 0, downloadFailed: 0, stale: false, teams: [] }, "no token leaves no cache");
     same(logic.slackPhotos("{"), { ok: false, error: "not-json" });
     same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
-    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.id want=safe" });
-    same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }] }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }] }, "a non-file photo is ignored");
-    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "file:///cache/T1/workspace.png", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }] }] })).teams, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }], "an unversioned file URL is ignored");
-    const group = logic.enrich("Slack", "slack", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
-    same(logic.slackFaceImages(group, photoCache.teams, "file:///sender.png"), ["file:///cache/T1/U1.png?v=abcdef0123456789", "file:///cache/T1/U2.png?v=1234567890abcdef", ""], "each Slack face takes its own photo");
-    same(logic.slackFaceImages(Object.assign({}, group, { workspace: "unknown" }), photoCache.teams, "file:///sender.png"), ["file:///sender.png", "", ""], "an unknown workspace has no photos");
-    const singleTeam = [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png?v=abcdef0123456789" }] }];
-    const direct = logic.enrich("Slack", "slack", "New message from Ada", "hi");
-    same(logic.slackFaceImages(direct, singleTeam, ""), ["file:///cache/T1/U1.png?v=abcdef0123456789"], "one workspace can match titles without a prefix");
-    same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png?v=1111111111111111" }, { id: "U2", names: ["ADA"], photo: "file:///second.png?v=2222222222222222" }] }], ""), ["file:///first.png?v=1111111111111111"], "the first duplicate name owns the photo");
-    assert.equal(logic.slackWorkspaceIcon(photoCache.teams, "acme"), "file:///cache/T1/workspace.png?v=0123456789abcdef");
-    // The probe's stdout: one line per state token-status.sh prints, and
-    // anything else read as no answer.
-    const TOKEN_LINES = [
-        ["slack-token: present\n", "present"],
-        ["slack-token: absent\n", "absent"],
-        ["slack-token: locked\n", "locked"],
-        ["slack-token: unavailable reason=secret-tool-missing\n", "unavailable"],
-        ["slack-token: unavailable reason=search-failed status=1\n", "unavailable"],
-        ["slack-token: present", "present"],
-        ["slack-token: unsafe\n", ""],
-        ["slack-token: presently\n", ""],
-        ["slack-token: present\nslack-token: absent\n", ""],
-        ["secret = xoxp-1\nslack-token: present\n", ""],
-        ["", ""]
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [], account: "slack" }] })), { ok: false, error: "teams.0.id want=safe" });
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" }, "a team names the account that served it");
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [], account: "slack:../x" }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" });
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }], account: "slack" }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }], account: "slack" }] }, "a non-file photo is ignored");
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "file:///cache/T1/workspace.png", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }], account: "slack" }] })).teams, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }], account: "slack" }], "an unversioned file URL is ignored");
+    const teams = photoCache.teams;
+    const group = logic.enrich("Slack", "slack", "", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
+    same(logic.slackFaceImages(group, teams, "file:///sender.png", "acme"), ["file:///cache/T1/users/U1.png?v=abcdef0123456789", "file:///cache/T1/users/U2.png?v=1234567890abcdef", ""], "each Slack face takes its own photo from its workspace");
+    same(logic.slackFaceImages(group, teams, "file:///sender.png", "unknown"), ["file:///sender.png", "", ""], "an unknown workspace has no photos");
+    same(logic.slackFaceImages(group, teams, "", ""), ["file:///cache/T1/users/U1.png?v=abcdef0123456789", "", ""], "with no workspace a face takes the photo of the one team holding the name, and none when two do");
+    const direct = logic.enrich("Slack", "slack", "", "New message from Ada", "hi");
+    same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png?v=1111111111111111" }, { id: "U2", names: ["ADA"], photo: "file:///second.png?v=2222222222222222" }], account: "slack" }], "", "acme"), ["file:///first.png?v=1111111111111111"], "the first duplicate name owns the photo");
+    assert.equal(logic.slackWorkspaceIcon(teams, "acme"), "file:///cache/T1/workspace.png?v=0123456789abcdef");
+    assert.equal(logic.slackWorkspaceIcon(teams, ""), "", "no workspace has no icon");
+
+    // The workspace of a card: [label, enrichment, Slack's list, photo teams, want].
+    const acmeOnly = [{ id: "T1", names: ["acme", "Acme Corp"] }];
+    const bothListed = [{ id: "T1", names: ["acme"] }, { id: "T2", names: ["globex"] }];
+    const browserFrom = name => logic.enrich("", "", "", "New message in eng", "app.slack.com\n\n" + name + ": hi");
+    for (const [label, enrichment, list, cached, want] of [
+        ["the workspace the summary names", group, bothListed, teams, "acme"],
+        ["the only workspace Slack lists", browserFrom("Nobody"), acmeOnly, [], "acme"],
+        ["the only workspace the photo cache holds", browserFrom("Nobody"), [], [teams[1]], "globex"],
+        ["one workspace in both", browserFrom("Nobody"), acmeOnly, [teams[0]], "acme"],
+        ["the one team holding the sender", browserFrom("Edsger"), bothListed, teams, "globex"],
+        ["two teams holding the sender", browserFrom("Grace Hopper"), bothListed, teams, ""],
+        ["no team holding the sender", browserFrom("Nobody"), bothListed, teams, ""],
+        ["no sender", logic.enrich("", "", "", "New message in eng", "app.slack.com\n\nshipped"), bothListed, teams, ""],
+        ["no rule", null, acmeOnly, teams, ""]
+    ])
+        assert.equal(logic.slackWorkspaceFor(enrichment, list, cached), want, "workspace for " + label);
+    // The probe's stdout: one line per account, the single-workspace one
+    // among them, and anything else refused.
+    const TOKEN_OUTPUTS = [
+        ["slack-token: account=slack present\n", { ok: true, states: { slack: "present" } }],
+        ["slack-token: account=slack:T1 locked\nslack-token: account=slack:T2 absent\nslack-token: account=slack unavailable reason=secret-tool-missing\n", { ok: true, states: { "slack:T1": "locked", "slack:T2": "absent", slack: "unavailable" } }],
+        ["slack-token: account=slack unavailable reason=search-failed status=1", { ok: true, states: { slack: "unavailable" } }],
+        ["slack-token: account=slack unsafe\n", { ok: false, error: "line.0.state unknown" }],
+        ["slack-token: account=slack presently\n", { ok: false, error: "line.0.state unknown" }],
+        ["slack-token: account=slack:../x present\nslack-token: account=slack present\n", { ok: false, error: "line.0.account unknown" }],
+        ["slack-token: account=discord present\n", { ok: false, error: "line.0.account unknown" }],
+        ["slack-token: account=slack present\nslack-token: account=slack absent\n", { ok: false, error: "line.1.account duplicate" }],
+        ["slack-token: account=slack:T1 present\n", { ok: false, error: "account=slack missing" }],
+        ["secret = xoxp-1\nslack-token: account=slack present\n", { ok: false, error: "line.0 unknown" }],
+        ["slack-token: present\n", { ok: false, error: "line.0 unknown" }],
+        ["slack-token: account=slack present!\n", { ok: false, error: "line.0 unknown" }],
+        ["> slack-token: account=slack present\n", { ok: false, error: "line.0 unknown" }],
+        ["", { ok: false, error: "line.0 unknown" }]
     ];
-    for (const [text, want] of TOKEN_LINES) assert.equal(logic.slackTokenState(text), want, "slackTokenState " + JSON.stringify(text));
+    for (const [text, want] of TOKEN_OUTPUTS) same(logic.slackTokenStates(text), want, "slackTokenStates " + JSON.stringify(text));
+
+    // The Settings rows: one per listed workspace, then the
+    // single-workspace token when nothing is listed or it is stored.
+    const store = id => id === "" ? "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
+        : "secret-tool store --label='VGS notifications Slack token " + id + "' service vgs-notifications account slack:" + id;
+    const listedTwo = [{ id: "T1", domain: "acme", name: "Acme Corp" }, { id: "T2", domain: "globex", name: "" }];
+    same(logic.slackTokenRows(listedTwo, { "slack:T1": "present", "slack:T2": "locked", slack: "absent" }, []), { ok: true, items: [
+        { label: "Acme Corp (acme)", value: "present", command: store("T1") },
+        { label: "globex", value: "locked", command: store("T2") }
+    ] }, "each workspace carries its own account's state and command; an absent single-workspace token shows no row");
+    same(logic.slackTokenRows(listedTwo, { "slack:T1": "absent", "slack:T2": "absent", slack: "present" }, [{ id: "T1", account: "slack" }, { id: "T2", account: "slack:T2" }]), { ok: true, items: [
+        { label: "Acme Corp (acme)", value: "present", hint: "Served by the single-workspace token", command: store("T1") },
+        { label: "globex", value: "absent", command: store("T2") },
+        { label: "Single-workspace token", value: "present", command: store("") }
+    ] }, "a workspace the single-workspace token serves says so, and a stored single-workspace token shows its row");
+    same(logic.slackTokenRows([], { slack: "absent" }, []), { ok: true, items: [{ label: "Single-workspace token", value: "absent", command: store("") }] }, "with no workspace listed the single-workspace row shows");
+    same(logic.slackTokenRows(listedTwo, { "slack:T1": "present", slack: "absent" }, []), { ok: false, missing: "slack:T2" }, "a workspace the probe has not answered for waits");
+    same(logic.slackTokenRows([], {}, []), { ok: false, missing: "slack" });
+    for (const [label, workspace, want] of [
+        ["a name equal to its domain", { id: "T1", domain: "acme", name: "ACME" }, "ACME"],
+        ["a name with a control character", { id: "T1", domain: "acme", name: "Acme\nCorp" }, "Acme Corp (acme)"],
+        ["neither printable", { id: "T1", domain: "\u0007", name: "" }, "T1"],
+        ["a label past sixty characters", { id: "T1", domain: "d", name: "x".repeat(70) }, "x".repeat(59) + "\u2026"]
+    ])
+        assert.equal(logic.slackWorkspaceLabel(workspace), want, "label of " + label);
+
+    // The photo helper's next run: [label, read, listed, want].
+    const DAY = 24 * 60 * 60 * 1000, RETRY = 15 * 60 * 1000, NOW = 10 * DAY;
+    const loaded = extra => Object.assign({ ok: true, status: "loaded", generatedAt: NOW - 1000, downloadFailed: 0, stale: false, teams: [{ id: "T1" }, { id: "T2" }] }, extra);
+    for (const [label, read, listed, want] of [
+        ["every listed workspace loaded", loaded({}), listedTwo, DAY - 1000],
+        ["a listed workspace without photos", loaded({ teams: [{ id: "T1" }] }), listedTwo, RETRY],
+        ["a team from the single-workspace token alone", loaded({ teams: [{ id: "T9" }] }), [], DAY - 1000],
+        ["a stale answer", loaded({ stale: true }), listedTwo, RETRY],
+        ["a failed download", loaded({ downloadFailed: 1 }), listedTwo, RETRY],
+        ["no token", { ok: true, status: "absent", teams: [], generatedAt: 0, downloadFailed: 0, stale: false }, [], RETRY],
+        ["a refused answer", { ok: false, error: "not-json" }, [], RETRY],
+        ["a day already over", loaded({ generatedAt: NOW - 2 * DAY }), listedTwo, 1000]
+    ])
+        assert.equal(logic.slackPhotoDelay(read, listed, NOW), want, "next photo run with " + label);
+
+    // One message from Slack's own client and from its web client: [label,
+    // the first copy, the second, whether they are one message].
+    const note = (key, app, summary, body, at) => ({ key, app, appIcon: "", desktopEntry: app === "Slack" ? "slack" : "", summary, body, timestamp: at });
+    const desk = note("d", "Slack", "[acme] in master-operator", "fleet: Done: your agent settings", 1000);
+    const web = note("w", "", "New message in master-operator", "app.slack.com\n\nfleet: Done:  your agent <b>settings</b>", 4000);
+    for (const [label, first, second, want] of [
+        ["desktop then browser", desk, web, true],
+        ["browser then desktop", web, desk, true],
+        ["both from the desktop", desk, Object.assign({}, desk, { key: "d2", timestamp: 2000 }), false],
+        ["both from a browser", web, Object.assign({}, web, { key: "w2", timestamp: 5000 }), false],
+        ["outside the window", desk, Object.assign({}, web, { timestamp: 11001 }), false],
+        ["at the window's edge", desk, Object.assign({}, web, { timestamp: 11000 }), true],
+        ["another conversation", desk, Object.assign({}, web, { summary: "New message in eng" }), false],
+        ["another sender", desk, Object.assign({}, web, { body: "app.slack.com\n\nada: Done: your agent settings" }), false],
+        ["another text", desk, Object.assign({}, web, { body: "app.slack.com\n\nfleet: Done" }), false],
+        ["two named workspaces", desk, Object.assign({}, web, { summary: "[globex] in master-operator" }), false],
+        ["the same named workspace", desk, Object.assign({}, web, { summary: "[acme] in master-operator" }), true],
+        ["no rule", note("a", "Chat", "hi", "x", 1000), note("b", "", "hi", "chat.example.com\n\nx", 2000), false]
+    ]) {
+        const a = logic.messageOf(first), b = logic.messageOf(second);
+        assert.equal(a !== null && b !== null && logic.duplicateOf(logic.rememberMessage([], a, ""), b) !== null, want, "one message: " + label);
+    }
+    same(logic.messageOf(web), { key: "w", rule: "slack", source: "browser", conversation: "in master-operator", sender: "fleet", text: "fleet: Done: your agent settings", workspace: "", at: 4000 });
+    for (const [label, prior, message, onScreen, want] of [
+        ["a desktop copy after a browser card still on screen", "browser", "desktop", true, "message"],
+        ["a desktop copy after a browser card that left", "browser", "desktop", false, "prior"],
+        ["a browser copy after a desktop card", "desktop", "browser", true, "prior"]
+    ])
+        assert.equal(logic.duplicateKept({ source: prior }, { source: message }, onScreen), want, "kept: " + label);
+    const recent = Array.from({ length: 40 }, (_, i) => ({ key: "k" + i, at: 1000 + i }));
+    same(logic.rememberMessage(recent.slice(0, 39), recent[39], "").map(m => m.key), recent.slice(8).map(m => m.key), "the remembered messages are capped");
+    same(logic.rememberMessage([{ key: "old", at: 0 }, { key: "gone", at: 5000 }, { key: "kept", at: 6000 }], { key: "new", at: 10001 }, "gone").map(m => m.key), ["kept", "new"], "messages past the window and the dropped copy are let go");
 }
 verify(load(file));
 
@@ -328,7 +453,14 @@ verify(load(file));
 const CONTROLS = [
     ["image tag", 'return !!name && name[1].toLowerCase() === "img";', "return false;"],
     ["strip after the newline rewrite", 'return stripImageTags(sanitizeBody(body, app, appIcon).replace(/\\r\\n|\\r|\\n/g, "<br/>"));', 'return sanitizeBody(body, app, appIcon).replace(/\\r\\n|\\r|\\n/g, "<br/>");'],
-    ["Chromium address", "if (!isChromiumDerived(app, appIcon)) return text;", "return text;"],
+    ["Chromium address", "if (!chromium && String(app || \"\") !== \"\") return none;", "return none;"],
+    ["a named sender that is no browser keeps its address", "if (!chromium && String(app || \"\") !== \"\") return none;", ""],
+    ["an unnamed sender's address needs a blank line", "/^[ \\t]*\\r?\\n[ \\t]*\\r?\\n\\s*/", "/^\\s+/"],
+    ["a rule by its web origin", "if ((ENRICHERS[o].origins || []).indexOf(origin.host) !== -1)", "if (false)"],
+    ["a browser rule reads the text after the address", "source: \"browser\", body: origin.rest", "source: \"browser\", body: text"],
+    ["a browser card says so", "source: \"browser\", body:", "source: \"desktop\", body:"],
+    ["a direct title is normalised", "title: \"from \" + from[1]", "title: rest"],
+    ["a conversation title is normalised", "title: \"in \" + within[1]", "title: rest"],
     ["Silence exception", 'return String(appName || "") === "notify-send" && urgency === URGENCY.critical;', 'return String(appName || "") === "notify-send";'],
     ["critical stays", "if (urgency === URGENCY.critical) return 0;", ""],
     ["lifetime ceiling", "return Math.min(MAX_LIFETIME, Math.max(floor, Math.round(asked)));", "return Math.max(floor, Math.round(asked));"],
@@ -374,9 +506,31 @@ const CONTROLS = [
     ["Slack photo file URL only", 'return typeof value === "string" && /^file:\\/\\/\\/[^\\s?#]+\\.png\\?v=[0-9a-f]{16}$/.test(value) ? value : "";', 'return typeof value === "string" ? value : "";'],
     ["Slack photo workspace match", "if (fold(teams[t].names[n]) === wanted) return teams[t];", "if (false) return teams[t];"],
     ["Slack photo first name wins", "if (!hasOwn(map, key)) map[key] = photo;", "map[key] = photo;"],
-    ["the Slack token state is one of the probe's", "return match !== null && SLACK_TOKEN_STATES.indexOf(match[1]) !== -1 ? match[1] : \"\";", "return match !== null ? match[1] : \"\";"],
-    ["the Slack token line is the whole output", "var match = /^slack-token: ([a-z]+)(?: [^\\n]*)?\\n?$/.exec(String(text));", "var match = /slack-token: ([a-z]+)/.exec(String(text));"],
-    ["Slack photo per face", "images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || \"\") : \"\"));", "images.push(i === 0 ? String(carriedImage || \"\") : \"\");"]
+    ["the Slack token state is one of the probe's", "if (SLACK_TOKEN_STATES.indexOf(match[2]) === -1) return", "if (false) return"],
+    ["the Slack token account is one of the plugin's", "if (!SLACK_ACCOUNT.test(match[1])) return", "if (false) return"],
+    ["a Slack token account answers once", "if (hasOwn(states, match[1])) return { ok: false, error: \"line.\" + i + \".account duplicate\" };", ""],
+    ["the Slack token output names the single-workspace account", "if (!hasOwn(states, SLACK_LEGACY_ACCOUNT)) return { ok: false, error:", "if (false) return { ok: false, error:"],
+    ["the Slack token line is the whole line", "var match = /^slack-token: account=(\\S+) ([a-z]+)(?: [^\\n]*)?$/.exec(lines[i]);", "var match = /slack-token: account=(\\S+) ([a-z]+)/.exec(lines[i]);"],
+    ["a Slack photo team names its account", "if (typeof team.account !== \"string\" || !SLACK_ACCOUNT.test(team.account)) return", "if (false) return"],
+    ["a workspace's row waits for its state", "if (!hasOwn(states, account)) return { ok: false, missing: account };", ""],
+    ["a workspace the single-workspace token serves", "if (states[account] === \"absent\" && served) {", "if (false) {"],
+    ["the single-workspace row shows when stored", "if (workspaces.length === 0 || legacy !== \"absent\")", "if (workspaces.length === 0)"],
+    ["the store command names the workspace's account", "service vgs-notifications account slack:\" + id;", "service vgs-notifications account slack\";"],
+    ["a workspace label is cut", "return chars.length <= SLACK_LABEL_MAX ? label :", "return true ? label :"],
+    ["a listed workspace without photos retries", "if (!read.teams.some(function (t) { return t.id === workspaces[i].id; })) return SLACK_PHOTO_RETRY;", ""],
+    ["the only known workspace", "if (ids.length === 1) return known[ids[0]];", ""],
+    ["the one team holding the sender", "return holders.length === 1 ? holders[0].names[0] : \"\";", "return holders.length > 0 ? holders[0].names[0] : \"\";"],
+    ["Slack photo per face", "if (fold(workspace) !== \"\") photo = hasOwn(map, key) ? map[key] : \"\";", "if (fold(workspace) !== \"\") photo = \"\";"],
+    ["a named workspace the cache lacks has no photos", "if (fold(workspace) !== \"\") photo =", "if (team !== null) photo ="],
+    ["a face with no workspace takes the one holder's photo", "var only = holders.length === 1 ? slackUserPhotoMap(holders[0]) : {};", "var only = holders.length > 0 ? slackUserPhotoMap(holders[0]) : {};"],
+    ["copies come from two clients", "r.rule === message.rule && r.source !== message.source &&", "r.rule === message.rule &&"],
+    ["copies arrive within the window", "&& Math.abs(message.at - r.at) <= DUPLICATE_WINDOW) return r;", ") return r;"],
+    ["copies share a workspace or name none", "(r.workspace === message.workspace || r.workspace === \"\" || message.workspace === \"\")", "true"],
+    ["copies share their text", "&& r.sender === message.sender && r.text === message.text", "&& r.sender === message.sender"],
+    ["copies share their markup-free text", ".replace(/<[^>]*>/g, \" \").replace(/\\s+/g, \" \").trim(),", ","],
+    ["the desktop copy replaces a browser card on screen", "return message.source === \"desktop\" && priorOnScreen ? \"message\" : \"prior\";", "return \"prior\";"],
+    ["the remembered messages are capped", ".concat([message]).slice(-DUPLICATES_MAX);", ".concat([message]);"],
+    ["the remembered messages keep the window", "return r.key !== dropKey && message.at - r.at <= DUPLICATE_WINDOW;", "return r.key !== dropKey;"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

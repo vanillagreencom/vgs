@@ -93,9 +93,10 @@ expect "the page draws no settings field for the status fixture" '[0, 0]' page_f
 expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
 expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
-expect_poll "the disabled notifications list the Slack token row unreported" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "unreported", None, "", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" status_of vgs.notifications
-expect_poll "the page draws the Slack token row with its hint and command" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "Not reported", "Needed for sender photos in Slack notifications", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" drawn_status
-expect "no Slack token row takes an edit" '[[]]' ipc smoke statusRowInputs window vgs.settings
+slack_tokens_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+expect_poll "the disabled notifications list the Slack tokens row unreported" '[["Slack tokens", "unreported", null, "", ""]]' status_of vgs.notifications
+expect_poll "the page draws the Slack tokens row with its hint and no line per account" "$(python3 -c 'import json,sys; print(json.dumps([["Slack tokens", "Not reported", sys.argv[1]]]))' "$slack_tokens_hint")" drawn_status
+expect "no Slack tokens row takes an edit" '[[]]' ipc smoke statusRowInputs window vgs.settings
 
 expect "the gear closes the Settings window after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the Settings window is gone after the edit rows" 0 window_count Settings

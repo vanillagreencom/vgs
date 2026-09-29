@@ -40,13 +40,16 @@ cp -R -- "$repo/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
 # The row runs after the shell process starts, so it cannot add the
 # helper's test API environment to that process without changing core. The
 # helper's own suite covers the HTTP refresh. This row seeds the same cache
-# shape and proves the loaded-photo path through QML.
-slack_photo_cache="$home/.cache/vgs/notifications/slack-photos/TSMOKE"
-mkdir -p -- "$slack_photo_cache"
-python3 - "$slack_photo_cache" <<'PY'
+# shape, fresh, so the helper serves it without a call: acme from its own
+# workspace's token, and globex from the single-workspace token, whose
+# team accounts.json records.
+slack_photos="$home/.cache/vgs/notifications/slack-photos"
+mkdir -p -- "$slack_photos"
+python3 - "$slack_photos" <<'PY'
 import hashlib, json, pathlib, struct, sys, time, zlib
 
 root = pathlib.Path(sys.argv[1])
+now = int(time.time() * 1000)
 
 def crc32(data):
     import binascii
@@ -61,47 +64,50 @@ def png(r, g, b):
     idat = zlib.compress(bytes([0, r, g, b, 255]))
     return b"\x89PNG\r\n\x1a\n" + chunk("IHDR", ihdr) + chunk("IDAT", idat) + chunk("IEND", b"")
 
-images = {
-    "workspace.png": png(20, 80, 180),
-    "UALAN.png": png(180, 40, 40),
-    "UADA.png": png(40, 160, 80),
-    "UGRACE.png": png(150, 70, 180),
-}
-for name, body in images.items():
-    (root / name).write_bytes(body)
-
-def file_url(name):
-    file = root / name
+def file_url(file):
     return "file://" + str(file) + "?v=" + hashlib.sha256(file.read_bytes()).hexdigest()[:16]
 
-team = {
-    "id": "TSMOKE",
-    "names": ["acme", "globex"],
-    "icon": file_url("workspace.png"),
-    "users": [
-        {"id": "UALAN", "names": ["alan"], "photo": file_url("UALAN.png")},
-        {"id": "UADA", "names": ["ada", "Ada Lovelace"], "photo": file_url("UADA.png")},
-        {"id": "UGRACE", "names": ["grace", "Grace Hopper"], "photo": file_url("UGRACE.png")},
-    ],
-}
-(root / "team.json").write_text(json.dumps({"id": team["id"], "names": team["names"], "icon": team["icon"]}) + "\n")
-(root / "users.json").write_text(json.dumps({"users": team["users"]}) + "\n")
-(root.parent / "index.json").write_text(json.dumps({"status": "loaded", "generatedAt": int(time.time() * 1000), "downloadFailed": 0, "teams": [team]}) + "\n")
+def team(id, names, account, colour, users):
+    folder = root / id
+    (folder / "users").mkdir(parents=True, exist_ok=True)
+    (folder / "workspace.png").write_bytes(png(*colour))
+    listed = []
+    for uid, user_names, rgb in users:
+        photo = folder / "users" / (uid + ".png")
+        photo.write_bytes(png(*rgb))
+        listed.append({"id": uid, "names": user_names, "photo": file_url(photo)})
+    (folder / "team.json").write_text(json.dumps({"id": id, "names": names, "icon": file_url(folder / "workspace.png"), "account": account, "generatedAt": now, "downloadFailed": 0}) + "\n")
+    (folder / "users.json").write_text(json.dumps({"users": listed}) + "\n")
+
+team("T0ACME", ["acme", "Acme Corp"], "slack:T0ACME", (20, 80, 180), [
+    ("UALAN", ["alan"], (180, 40, 40)),
+    ("UADA", ["ada", "Ada Lovelace"], (40, 160, 80)),
+    ("UGRACE", ["grace", "Grace Hopper"], (150, 70, 180)),
+])
+team("T0GLOBEX", ["globex", "Globex"], "slack", (200, 120, 20), [
+    ("UEDSGER", ["edsger"], (60, 60, 200)),
+])
+(root / "accounts.json").write_text(json.dumps({"slack:T0ACME": {}, "slack": {"team": "T0GLOBEX", "resolvedAt": now}}) + "\n")
 PY
-# The stub libsecret holds the token while $shim/secret-tool.state reads
-# `present`, holds none for `absent`, and holds it in a locked collection for
-# `locked`. `lookup` answers as the photo helper reads it; `search` answers
-# as libsecret's secret-tool does, the item and an unlocked secret on
-# stdout and the attributes and a lock on stderr, for the token probe.
-printf 'present\n' >"$shim/secret-tool.state"
+# The stub libsecret: $shim/secret-tool.states holds `<account> <state>`
+# lines, and an account holds its token while its state reads `present`,
+# none for `absent` or an account the file does not list, and holds it in a
+# locked collection for `locked`. `lookup` answers as the photo helper reads
+# it; `search` answers as libsecret's secret-tool does, the item and an
+# unlocked secret on stdout and the attributes and a lock on stderr, for
+# the token probe. Every token starts xoxp-smoke-.
+slack_states() { tr ';' '\n' <<<"$1" >"$shim/secret-tool.states"; }
+slack_states "slack:T0ACME present;slack:T0GLOBEX absent;slack present"
 cat >"$shim/secret-tool" <<SH
 #!/usr/bin/env bash
-state="\$(cat "$shim/secret-tool.state")"
-[[ \$* == *"service vgs-notifications account slack"* ]] || exit 1
+[[ \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
+account="\$5" state=absent
+while read -r name answer; do [[ \$name == "\$account" ]] && state="\$answer"; done <"$shim/secret-tool.states"
+token="xoxp-smoke-\$(tr : - <<<"\$account")"
 case "\${1:-}:\$state" in
-  lookup:present) printf '%s\\n' 'xoxp-smoke-token' ;;
-  search:present) printf '[/1]\\nlabel = VGS notifications Slack token\\nsecret = %s\\n' 'xoxp-smoke-token'; printf 'attribute.service = vgs-notifications\\nattribute.account = slack\\n' >&2 ;;
-  search:locked) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'secret-tool: Cannot get secret of a locked object\\nattribute.service = vgs-notifications\\nattribute.account = slack\\n' >&2 ;;
+  lookup:present) printf '%s\\n' "\$token" ;;
+  search:present) printf '[/1]\\nlabel = VGS notifications Slack token\\nsecret = %s\\n' "\$token"; printf 'attribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
+  search:locked) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'secret-tool: Cannot get secret of a locked object\\nattribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
   search:absent) ;;
   *) exit 1 ;;
 esac
@@ -329,7 +335,38 @@ expect_poll "the token cache supplies distinct Slack group photos" True token_fa
 notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 expect_poll "a workspace with no disk-cache icon uses the token-cache icon" true card_value "[globex] in eng" showsBadge
 expect "the token-cache workspace icon replaces that workspace name" '"in eng"' card_value "[globex] in eng" title
-expect "the fallback icon came from the Slack photo cache" "$(file_url_json "$home/.cache/vgs/notifications/slack-photos/TSMOKE/workspace.png")" card_value "[globex] in eng" workspaceIcon
+expect "the fallback icon came from the Slack photo cache" "$(file_url_json "$slack_photos/T0GLOBEX/workspace.png")" card_value "[globex] in eng" workspaceIcon
+
+# Slack in a browser: Chromium names no application and opens the body
+# with the site's address and a blank line. The card reads it with the
+# Slack rule; the one photo team whose users hold its sender, acme, is its
+# workspace.
+notify "" 0 "New message in standup" $'app.slack.com\n\nalan: standup at ten?' '[]' '{}' 0 >/dev/null
+expect_poll "a browser Slack message is read by the Slack rule" '{"rule": "slack", "source": "browser", "workspace": "", "title": "in standup", "faces": ["alan"], "more": 0}' card_value "New message in standup" enrichment
+expect_poll "its workspace is the one team that knows its sender" '"acme"' card_value "New message in standup" workspace
+expect_poll "it draws that workspace's icon" true card_value "New message in standup" showsBadge
+expect "it draws the Slack title" '"in standup"' card_value "New message in standup" title
+expect "its body loses the site's address" '"alan: standup at ten?"' card_value "New message in standup" sanitizedBody
+sender_photo() { card_value "$1" faceImages | python3 -c 'import json,sys; v=json.load(sys.stdin); print(isinstance(v, list) and len(v) == 1 and str(v[0]).startswith("file://" + sys.argv[1] + "/"))' "$2"; }
+expect_poll "its sender shows the photo of that workspace" True sender_photo "New message in standup" "$slack_photos/T0ACME/users"
+
+# One message from both clients: the desktop copy stays. A browser copy
+# after the desktop's never shows; a desktop copy after a browser card on
+# screen replaces it, and the browser card leaves no history entry.
+duplicate_count() { log_lines 'notifications: slack duplicate: kept=desktop dropped=browser'; }
+notify Slack 0 "[acme] in eng-core" "Grace Hopper: the build is green" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "the desktop copy shows" True has_row live "[acme] in eng-core"
+notify "" 0 "New message in eng-core" $'app.slack.com\n\nGrace Hopper: the build is green' '[]' '{}' 0 >/dev/null
+expect_poll "the browser copy after it is dropped, and the log says which stayed" 1 duplicate_count
+expect "the browser copy never shows" False has_row live "New message in eng-core"
+notify "" 0 "New message in design" $'app.slack.com\n\nada: mockups are ready' '[]' '{}' 0 >/dev/null
+expect_poll "a browser copy alone shows" True has_row live "New message in design"
+notify Slack 0 "[acme] in design" "ada: mockups are ready" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "the desktop copy after it shows" True has_row live "[acme] in design"
+expect_poll "the browser card gives way to it" False has_row live "New message in design"
+expect "the browser card left no history entry" False in_history "New message in design"
+expect "the log says the desktop copy stayed twice" 2 duplicate_count
+expect "the status counts the copies kept" '{"keptDesktop": 2, "keptBrowser": 0}' note_status duplicates
 
 # The space around a card's text, from the card's rectangle and its visible
 # text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card
@@ -569,49 +606,83 @@ expect_poll "the defaults return" vgs ipc smoke themeName
 expect "dismissing the last toast is allowed" ok notes dismiss-all
 expect_poll "the last toast's exit has played" 0 layer_count vgs:layer
 
-# The Slack token row: the service publishes whether the stub libsecret
-# holds the token, never the token, and the Settings page draws the row
-# with the command that stores it. The probe runs when the service starts,
-# so each state is read after a disable and an enable.
-store_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
-token_row() { ipc smoke readInstance window vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
+# The Slack token rows: the service publishes whether the stub libsecret
+# holds each listed workspace's token and the single-workspace one, never a
+# token, and the Settings page draws a line per account with the command
+# that stores it. The probe runs when the service starts, so each set of
+# states is read after a disable and an enable. No state here makes the
+# photo helper call Slack.
+token_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+token_row() { ipc smoke readInstance window vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["tone"], s["command"], s["value"]] for s in r]))'; }
 drawn_token_row() { ipc smoke itemTexts window vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+# want_rows rows|drawn ITEMS: the manager row, or the texts the page draws,
+# for ITEMS, `;`-separated `<account>,<state>[,served]` items, `served`
+# naming a workspace the single-workspace token serves.
+want_rows() {
+  python3 - "$1" "$2" "$token_hint" <<'PY'
+import json, sys
+what, items, hint = sys.argv[1], sys.argv[2], sys.argv[3]
+labels = {"slack:T0ACME": "Acme Corp (acme)", "slack:T0GLOBEX": "Globex (globex)", "slack": "Single-workspace token"}
+tones = {"present": "success", "absent": "warning", "locked": "info"}
+words = {"present": "Present", "absent": "Absent", "locked": "Locked"}
+def command(account):
+    if account == "slack":
+        return "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
+    team = account.split(":")[1]
+    return "secret-tool store --label='VGS notifications Slack token %s' service vgs-notifications account %s" % (team, account)
+rows, drawn = [], ["Slack tokens", hint]
+for item in items.split(";"):
+    account, state, *served = item.split(",")
+    served_hint = "Served by the single-workspace token" if served else ""
+    rows.append({"label": labels[account], "value": state, "hint": served_hint, "command": command(account), "tone": tones[state]})
+    drawn += [labels[account], words[state]] + ([served_hint] if served else []) + [command(account)]
+print(json.dumps([["Slack tokens", "reported", "", "", rows]]) if what == "rows" else json.dumps([drawn]))
+PY
+}
 restart_notes() {
-  expect "the notifications are disabled to read the token $1" ok ipc shell setPluginEnabled vgs.notifications false
-  expect_poll "the service is gone before the token $1 is read" False record_exists vgs.notifications
-  expect "the notifications are enabled to read the token $1" ok ipc shell setPluginEnabled vgs.notifications true
-  expect_poll "the service is built to read the token $1" True record_exists vgs.notifications
+  expect "the notifications are disabled to read the tokens $1" ok ipc shell setPluginEnabled vgs.notifications false
+  expect_poll "the service is gone before the tokens $1 are read" False record_exists vgs.notifications
+  expect "the notifications are enabled to read the tokens $1" ok ipc shell setPluginEnabled vgs.notifications true
+  expect_poll "the service is built to read the tokens $1" True record_exists vgs.notifications
 }
 expect "enabling the Settings plugin for the token rows is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings service is built for the token rows" True record_exists vgs.settings
 expect "the notifications' Settings page opens" ok ipc shell summon window vgs.settings '{"plugin":"vgs.notifications"}'
-expect_poll "the page reads the stored token present" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "reported", "present", "success", sys.argv[1]]]))' "$store_command")" token_row
-for flip in "absent Absent warning" "present Present success" "locked Locked info"; do
-  read -r state word tone <<<"$flip"
-  printf '%s\n' "$state" >"$shim/secret-tool.state"
-  restart_notes "$state"
-  expect_poll "the page reads the token $state" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "reported", sys.argv[1], sys.argv[2], sys.argv[3]]]))' "$state" "$tone" "$store_command")" token_row
-  expect_poll "the page draws the token $state with the command that stores it" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", sys.argv[1], "Needed for sender photos in Slack notifications", sys.argv[2]]]))' "$word" "$store_command")" drawn_token_row
+first_items="slack:T0ACME,present;slack:T0GLOBEX,present,served;slack,present"
+expect_poll "the page reads each workspace's token, globex served by the single-workspace one" "$(want_rows rows "$first_items")" token_row
+expect_poll "the page draws a line per account with the command that stores it" "$(want_rows drawn "$first_items")" drawn_token_row
+# Flips: label | the stub's states | the items the page reads.
+flips=(
+  "locked|slack:T0ACME locked;slack:T0GLOBEX locked;slack present|slack:T0ACME,locked;slack:T0GLOBEX,locked;slack,present"
+  "absent-served|slack:T0ACME absent;slack:T0GLOBEX absent;slack present|slack:T0ACME,absent;slack:T0GLOBEX,present,served;slack,present"
+  "all-absent|slack:T0ACME absent;slack:T0GLOBEX absent;slack absent|slack:T0ACME,absent;slack:T0GLOBEX,absent"
+)
+for flip in "${flips[@]}"; do
+  IFS='|' read -r label states items <<<"$flip"
+  slack_states "$states"
+  restart_notes "$label"
+  expect_poll "the page reads the tokens $label" "$(want_rows rows "$items")" token_row
+  expect_poll "the page draws the tokens $label with the commands that store them" "$(want_rows drawn "$items")" drawn_token_row
 done
 # The lending record and the manager rows, read whole, hold the plugin's
-# record and row and nowhere the token.
+# record and row and nowhere a token.
 leaks() {
   local text count status=0
   text="$(ipc shell lent)" && text+="$(ipc smoke readInstance window vgs.settings plugins)" || return
-  [[ $text == *'"vgs.notifications"'* && $text == *slackToken* ]] || { echo "unread"; return; }
-  count="$(grep -c -F -- 'xoxp-smoke-token' <<<"$text")" || status=$?
+  [[ $text == *'"vgs.notifications"'* && $text == *slackTokens* ]] || { echo "unread"; return; }
+  count="$(grep -c -F -- 'xoxp-smoke' <<<"$text")" || status=$?
   [[ $status -le 1 ]] || return 1
   printf '%s\n' "$count"
 }
-expect "no status record and no manager row holds the token" 0 leaks
+expect "no status record and no manager row holds a token" 0 leaks
 probe_failures() { log_lines 'notifications-token-status: probe=failed'; }
 expect "the probe answered every state with the stub" 0 probe_failures
-token_in_log() { log_lines 'xoxp-smoke-token'; }
+token_in_log() { log_lines 'xoxp-smoke'; }
 expect "the shell's log holds no token" 0 token_in_log
 expect "the Settings window closes after the token rows" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the token rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 expect_poll "the Settings service is gone after the token rows" False record_exists vgs.settings
-printf 'present\n' >"$shim/secret-tool.state"
+slack_states "slack:T0ACME present;slack:T0GLOBEX absent;slack present"
 
 # Disabling and enabling again, three times over, leaves nothing behind.
 for round in 1 2 3; do

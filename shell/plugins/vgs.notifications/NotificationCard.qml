@@ -8,8 +8,8 @@ import "NotificationLogic.js" as Logic
 // One notification as a glass capsule: its image or application icon, its
 // summary and its body, and the hover actions over its right end. A sender
 // a NotificationLogic rule reads shows the people it names as faces in the
-// icon's place, and the workspace its summary names as that workspace's
-// icon, when there is one, in place of the name. It draws no fill of its
+// icon's place, and the workspace it belongs to as that workspace's icon,
+// when there is one, before the rule's title in place of the summary. It draws no fill of its
 // own: the GlassSurface under it paints the glass and the slot drives its
 // size, its content fade and its lifetime. It holds no notification
 // object, only the values it draws.
@@ -23,7 +23,11 @@ Item {
     property string body: ""
     property string image: ""
     property string desktopEntry: ""
-    // The file URL of the icon of the workspace `enrichment` names, or "".
+    // The workspace the card belongs to: the one `enrichment` names, or the
+    // one the service resolved for it (NotificationLogic.slackWorkspaceFor),
+    // or "".
+    property string workspace: ""
+    // The file URL of that workspace's icon, or "".
     property string workspaceIcon: ""
     // One file URL per face, from the optional Slack token cache.
     property var faceImages: []
@@ -51,11 +55,12 @@ Item {
     readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
     readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
     // NotificationLogic.enrich's reading of this sender, or null.
-    readonly property var enrichment: Logic.enrich(app, desktopEntry, summary, body)
+    readonly property var enrichment: Logic.enrich(app, desktopEntry, appIcon, summary, body)
     readonly property bool showsFaces: enrichment !== null && enrichment.faces.length > 0
-    readonly property bool showsBadge: enrichment !== null && enrichment.workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
+    readonly property bool showsBadge: enrichment !== null && workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
     readonly property bool showsSlot: showsFaces || showsIcon
-    // The summary as drawn: without the workspace name its icon replaces.
+    // The summary as drawn: the rule's title once the workspace's icon
+    // stands in for the workspace.
     readonly property string title: showsBadge ? enrichment.title : summary
 
     // An icon value as an image source: a URL as it is, a path as a file
@@ -150,7 +155,7 @@ Item {
                     Image {
                         id: badgeImage
                         anchors.fill: parent
-                        source: card.enrichment !== null && card.enrichment.workspace.length > 0 ? card.workspaceIcon : ""
+                        source: card.enrichment !== null && card.workspace.length > 0 ? card.workspaceIcon : ""
                         // The helper rewrites the same file when it reads
                         // the workspace list again.
                         cache: false

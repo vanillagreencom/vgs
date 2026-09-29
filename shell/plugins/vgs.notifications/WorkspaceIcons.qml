@@ -12,7 +12,8 @@ import "NotificationLogic.js" as Logic
 // the cache into this rule's own directory under the cache home, which it
 // empties first, so the directory holds at most two icons for each of
 // NotificationLogic.WORKSPACES_MAX workspaces. A workspace with no icon
-// keeps its name as text on the card.
+// keeps its name as text on the card. `known` is the list as last read, for
+// the rule's other readers.
 Scope {
     id: source
 
@@ -31,6 +32,10 @@ Scope {
     property real loadedAt: Date.now()
     // The workspaces the list named, while the helper copies their icons.
     property var listed: []
+    // The workspaces the list named at its last read, as the rule's reader
+    // answers them, [] for no list; `known` holds once the first read ends.
+    property var known: []
+    property bool listRead: false
 
     function workspaces() {
         return Logic.enricherById(ruleId).workspaces;
@@ -54,10 +59,12 @@ Scope {
         Qt.callLater(() => index.reload());
     }
 
-    function finish(map) {
+    function finish(map, workspaces) {
         icons = map;
+        known = workspaces;
         listed = [];
         loading = false;
+        listRead = true;
     }
 
     FileView {
@@ -69,7 +76,7 @@ Scope {
         // No list is no sender client on this machine, and no icons.
         onLoadFailed: error => {
             if (error !== FileViewError.FileNotFound) console.warn("notifications: workspace list unreadable: file=" + path + " error=" + error);
-            source.finish({});
+            source.finish({}, []);
         }
     }
 
@@ -77,7 +84,7 @@ Scope {
         const read = workspaces().read(text);
         if (!read.ok) {
             console.warn("notifications: workspace list refused: file=" + index.path + " reason=" + read.error);
-            finish({});
+            finish({}, []);
             return;
         }
         if (read.skipped > 0) console.warn("notifications: workspace list entries skipped: file=" + index.path + " count=" + read.skipped);
@@ -109,7 +116,7 @@ Scope {
                         if (found !== null) copied.push(found[1] + "?v=" + found[2]);
                     }
             }
-            source.finish(Logic.workspaceIconMap(source.listed, source.dir, copied));
+            source.finish(Logic.workspaceIconMap(source.listed, source.dir, copied), source.listed);
         }
     }
 }
