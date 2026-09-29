@@ -323,11 +323,12 @@ type_keys() { "${shell_env[@]}" wtype "$@"; }
 # unless the reload added lines to the rolling log, which holds only the
 # lines logged before the configuration first loaded until then.
 compositor_logs_on() {
-  local before
+  local before after
   before="$(hypr rollinglog)" || return 1
   : >"$rt_dir/compositor-logs" || return 1
   [[ $(hypr reload config-only) == ok ]] || return 1
-  [[ $(hypr rollinglog) != "$before" ]]
+  after="$(hypr rollinglog)" || return 1
+  [[ $after != "$before" ]]
 }
 # rest_pointer: the pointer moved to the monitor's bottom-left corner, off
 # every surface a row maps, so a list a later row opens never finds it
