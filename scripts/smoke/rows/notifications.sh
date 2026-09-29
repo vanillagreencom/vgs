@@ -346,27 +346,24 @@ focus_other() {
   expect "a focus dispatch gives the other window the focus" ok hypr dispatch "hl.dsp.focus({ window = \"address:$other_window\" })"
   expect_poll "the other window has the focus before the click" "$other_focused" active_window
 }
-# click_card LABEL SUMMARY: the pointer onto the card SUMMARY, a check
-# that the other window kept the focus under it, then a click there.
-# click_pill LABEL SUMMARY PILL: the same on the card's pill PILL, once
-# the hover shows the sender's actions. Each waits a second first, since a
-# toast's entrance moves the card for less than that and the pointer must
-# land where the card rests.
-click_card() { # LABEL SUMMARY
-  local x y
-  sleep 1
-  read -r x y < <(card_left "$2") || { fail "$1: the card $2 is not drawn"; return; }
-  hover "$x" "$y" || fail "$1: the hover failed"
+# open_card LABEL SUMMARY: the pointer resting on the card SUMMARY, left
+# of its centre and clear of the actions its hover shows, through
+# point_item; a check that the other window kept the focus under it; then
+# a click there. act_on LABEL SUMMARY PILL: the same on the card's pill
+# PILL, once the hover shows the sender's actions.
+open_card() { # LABEL SUMMARY
+  local at x y
+  at="$(point_item vgs:layer vgs.notifications NotificationCard summary "$2" 30 -)" || { fail "$1: the pointer never rested on the card $2"; return; }
+  read -r x y <<<"$at"
   expect "$1: the pointer on the card leaves the focus where it was" "$other_focused" active_window
   click "$x" "$y" || fail "$1: the click failed"
 }
-click_pill() { # LABEL SUMMARY PILL
-  local x y
-  sleep 1
-  read -r x y < <(card_centre "$2") || { fail "$1: the card $2 is not drawn"; return; }
-  hover "$x" "$y" || fail "$1: the hover failed"
+act_on() { # LABEL SUMMARY PILL
+  local at x y
+  rest_on_card "$2" || { fail "$1: the pointer never rested on the card $2"; return; }
   expect_poll "$1: the hover reveals the sender's actions" '["Open", "Reply", "Dismiss"]' shown_pills "$2"
-  read -r x y < <(pill_centre "$3") || { fail "$1: the $3 pill is not drawn"; return; }
+  at="$(point_item vgs:layer vgs.notifications PillButton text "$3")" || { fail "$1: the pointer never rested on the $3 pill"; return; }
+  read -r x y <<<"$at"
   expect "$1: the pointer on the card leaves the focus where it was" "$other_focused" active_window
   click "$x" "$y" || fail "$1: the click failed"
 }
@@ -379,7 +376,7 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   focus_other
   toast_id="$(sender_note "Opened from its toast" 1)"
   expect_poll "the sender's toast shows" True has_row live "Opened from its toast"
-  click_card "the toast" "Opened from its toast"
+  open_card "the toast" "Opened from its toast"
   expect_poll "a click on the toast delivers the default action once" 1 delivered "$toast_id" default
   expect_poll "a click on the toast raises the sender's window" "$sender_focused" active_window
   expect_poll "the opened toast leaves" none key_of "Opened from its toast"
@@ -387,7 +384,7 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   focus_other
   reply_id="$(sender_note "Answered with Reply" 1)"
   expect_poll "the toast to answer shows" True has_row live "Answered with Reply"
-  click_pill "the Reply pill" "Answered with Reply" Reply
+  act_on "the Reply pill" "Answered with Reply" Reply
   expect_poll "the Reply pill delivers the reply action" 1 delivered "$reply_id" reply
   expect_poll "the Reply pill raises the sender's window too" "$sender_focused" active_window
   expect "a Reply delivers no default action" 0 delivered "$reply_id" default
@@ -399,7 +396,7 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   chose_before="$(log_lines "notifications: chose ")"
   dismissed_pill_id="$(sender_note "Dismissed by its pill" 1)"
   expect_poll "the toast to dismiss by its pill shows" True has_row live "Dismissed by its pill"
-  click_pill "the Dismiss pill" "Dismissed by its pill" Dismiss
+  act_on "the Dismiss pill" "Dismissed by its pill" Dismiss
   expect_poll "the Dismiss pill closes the notification on the server" 1 closed_on_server "$dismissed_pill_id"
   expect "the Dismiss pill asks for no reveal" "$chose_before" log_lines "notifications: chose "
   expect "the Dismiss pill leaves the focus on the other window" "$other_focused" active_window
@@ -408,7 +405,7 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   focus_other
   pill_id="$(sender_note "Opened from its pill" 1)"
   expect_poll "the toast to open by its pill shows" True has_row live "Opened from its pill"
-  click_pill "the Open pill" "Opened from its pill" Open
+  act_on "the Open pill" "Opened from its pill" Open
   expect_poll "the Open pill delivers the default action once" 1 delivered "$pill_id" default
   expect_poll "the Open pill raises the sender's window" "$sender_focused" active_window
   expect_poll "the toast opened by its pill leaves" none key_of "Opened from its pill"
@@ -430,19 +427,19 @@ if open_toplevel "$sandbox/toplevel-sender.log" "$sender_class" "Sender window" 
   expect_poll "the expired toast is an inbox row" True has_row panel "Held for the inbox"
 
   focus_other
-  click_card "the held inbox row" "Held for the inbox"
+  open_card "the held inbox row" "Held for the inbox"
   expect_poll "a click on the inbox row of an expired toast delivers its default action once" 1 delivered "$held_id" default
   expect_poll "a click on that inbox row raises the sender's window" "$sender_focused" active_window
   expect_poll "the opened inbox row leaves" none key_of "Held for the inbox"
 
   focus_other
-  click_card "the closed inbox row" "Closed by its sender"
+  open_card "the closed inbox row" "Closed by its sender"
   expect_poll "the inbox row of a notification its sender closed still raises the sender's window" "$sender_focused" active_window
   expect "that row delivers no action" 0 delivered "$gone_id" default
   expect_poll "the closed inbox row leaves" none key_of "Closed by its sender"
 
   focus_other
-  click_card "the dismissed inbox row" "Dismissed from its toast"
+  open_card "the dismissed inbox row" "Dismissed from its toast"
   expect_poll "the inbox row of a dismissed toast still raises the sender's window" "$sender_focused" active_window
   expect "that row delivers no action" 0 delivered "$dismissed_id" default
 

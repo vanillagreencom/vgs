@@ -59,7 +59,7 @@ print("shown" if not problems else " ".join(problems))' "$clients" "$monitors" "
 # `out` for a window in_view does not read as shown, else `shown`.
 out_of_view() { local v; v="$(in_view "$1")" || return 1; if [[ $v == shown ]]; then echo shown; else echo out; fi; }
 # Whether Hyprland draws the window: False for a background group tab.
-drawn() { hypr -j clients | python3 -c 'import json,sys; print(next(c["visible"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
+window_drawn() { hypr -j clients | python3 -c 'import json,sys; print(next(c["visible"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
 reveal_other() {
   expect "the other window takes the focus before the $1 case" ok hypr dispatch "hl.dsp.focus({ window = \"address:$reveal_other_window\" })"
   expect_poll "the other window has the focus before the $1 case" '["smoke.other", "Other window"]' active_window
@@ -158,7 +158,7 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
     expect "the second window is the group's current tab" ok hypr dispatch "hl.dsp.focus({ window = \"address:$tab_two\" })"
     reveal_other "group-tab"
     expect "a background group tab starts out of view" out out_of_view "$tab_one"
-    expect "a background group tab is not drawn" False drawn "$tab_one"
+    expect "a background group tab is not drawn" False window_drawn "$tab_one"
     expect "the reveal of a background group tab is accepted" ok probe reveal "$tab_one"
     expect_poll "the reveal makes the tab current and focuses it" shown in_view "$tab_one"
     close_toplevel "$tab_two_pid" "the second tab's helper exits 0 on SIGTERM"
