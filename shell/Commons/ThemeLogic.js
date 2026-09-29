@@ -725,26 +725,37 @@ function catalogEntry(tokens, entry, i) {
             return refusal("catalog-palette", at + ".palette." + names[j], "value=" + JSON.stringify(entry.palette[names[j]]));
         palette[names[j]] = formatColor(colour);
     }
-    var imagery = entry.imagery;
-    if (imagery !== null) {
-        if (!isPlainObject(imagery))
-            return refusal("catalog-imagery", at + ".imagery", "got=" + JSON.stringify(imagery));
-        defect = keyDefect(imagery, CATALOG_IMAGERY_KEYS);
-        if (defect !== "")
-            return refusal("catalog-imagery", at + ".imagery", defect);
-        if (typeof imagery.repo !== "string" || !CATALOG_REPO_PATTERN.test(imagery.repo))
-            return refusal("catalog-repo", at + ".imagery.repo", "got=" + JSON.stringify(imagery.repo));
-        if (!isPackageName(imagery.release))
-            return refusal("catalog-imagery", at + ".imagery.release", "got=" + JSON.stringify(imagery.release));
-        if (!isPackageName(imagery.archive))
-            return refusal("catalog-imagery", at + ".imagery.archive", "got=" + JSON.stringify(imagery.archive));
-        if (!Number.isSafeInteger(imagery.size) || imagery.size <= 0)
-            return refusal("catalog-size", at + ".imagery.size", "got=" + JSON.stringify(imagery.size));
-        if (typeof imagery.sha256 !== "string" || !SHA256_PATTERN.test(imagery.sha256))
-            return refusal("catalog-sha256", at + ".imagery.sha256", "got=" + JSON.stringify(imagery.sha256));
-        imagery = { repo: imagery.repo, release: imagery.release, archive: imagery.archive, size: imagery.size, sha256: imagery.sha256 };
+    var imagery = null;
+    if (entry.imagery !== null) {
+        var pin = catalogImagery(entry.imagery, at + ".imagery");
+        if (!pin.ok)
+            return pin;
+        imagery = pin.imagery;
     }
     return { ok: true, entry: { name: entry.name, mode: entry.mode, thumbnail: entry.thumbnail, palette: palette, imagery: imagery } };
+}
+
+// Judge IMAGERY, the pin of a wallpaper archive, at token AT: an index
+// entry's `imagery`, or the pin a catalog install's marker records for the
+// archive it unpacked. Answers { ok: true, imagery } with exactly the pin's
+// keys, or one refusal whose token is AT or AT and the key it names.
+function catalogImagery(imagery, at) {
+    if (!isPlainObject(imagery))
+        return refusal("catalog-imagery", at, "got=" + JSON.stringify(imagery));
+    var defect = keyDefect(imagery, CATALOG_IMAGERY_KEYS);
+    if (defect !== "")
+        return refusal("catalog-imagery", at, defect);
+    if (typeof imagery.repo !== "string" || !CATALOG_REPO_PATTERN.test(imagery.repo))
+        return refusal("catalog-repo", at + ".repo", "got=" + JSON.stringify(imagery.repo));
+    if (!isPackageName(imagery.release))
+        return refusal("catalog-imagery", at + ".release", "got=" + JSON.stringify(imagery.release));
+    if (!isPackageName(imagery.archive))
+        return refusal("catalog-imagery", at + ".archive", "got=" + JSON.stringify(imagery.archive));
+    if (!Number.isSafeInteger(imagery.size) || imagery.size <= 0)
+        return refusal("catalog-size", at + ".size", "got=" + JSON.stringify(imagery.size));
+    if (typeof imagery.sha256 !== "string" || !SHA256_PATTERN.test(imagery.sha256))
+        return refusal("catalog-sha256", at + ".sha256", "got=" + JSON.stringify(imagery.sha256));
+    return { ok: true, imagery: { repo: imagery.repo, release: imagery.release, archive: imagery.archive, size: imagery.size, sha256: imagery.sha256 } };
 }
 
 // Judge the text of themes/catalog/index.json. The package each entry names

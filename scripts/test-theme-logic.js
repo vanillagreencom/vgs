@@ -605,7 +605,7 @@ const CONTROLS = [
     ["catalog palette colour", "if (colour === null)\n            return refusal(\"catalog-palette\"", "if (false)\n            return refusal(\"catalog-palette\""],
     ["catalog palette resolved form", "palette[names[j]] = formatColor(colour);", "palette[names[j]] = entry.palette[names[j]];"],
     ["catalog imagery object", "if (!isPlainObject(imagery))", "if (false)"],
-    ["catalog imagery keys", "if (defect !== \"\")\n            return refusal(\"catalog-imagery\"", "if (false)\n            return refusal(\"catalog-imagery\""],
+    ["catalog imagery keys", "if (defect !== \"\")\n        return refusal(\"catalog-imagery\"", "if (false)\n        return refusal(\"catalog-imagery\""],
     ["catalog repo type", "if (typeof imagery.repo !== \"string\" || ", "if ("],
     ["catalog repo pattern", "!CATALOG_REPO_PATTERN.test(imagery.repo)", "false"],
     ["catalog release", "if (!isPackageName(imagery.release))", "if (false)"],

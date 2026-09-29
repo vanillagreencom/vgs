@@ -150,7 +150,7 @@ judge_control current 'if (packageDigest(row, key) === applied.package) return s
 tinst "the current mutant takes a changed package as current" "$cfg" "$rt_empty" 0 "$(follow_line current fern unchanged)" "" theme follow
 
 fern_changed '#232323'
-judge_control curated '        part(TARGETS + "/" + name, bytes);' ''
+judge_control curated 'for (const file of targetFiles(row, key)) part(TARGETS + "/" + file.name, file.bytes);' ''
 tinst "the curated mutant re-applies the colour change" "$cfg" "$rt_empty" 0 "$any_out" "" theme follow
 mkdir -p "$themes/fern/targets"; printf 'curated\n' >"$themes/fern/targets/foot.ini"
 tinst "the curated mutant takes a changed curated file as current" "$cfg" "$rt_empty" 0 "$(follow_line current fern unchanged)" "" theme follow

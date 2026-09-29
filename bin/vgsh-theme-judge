@@ -70,18 +70,41 @@
 //       print the name of every installed package under
 //       <config-dir>/themes, each followed by a NUL: the rows of `vgsh
 //       theme outdated`, each of which it resolves through `installed`.
+//   vgsh-theme-judge origin <config-dir> <name>
+//       print `catalog` when installed package NAME holds the catalog
+//       marker and no `.git`, else `git`: what `vgsh theme update` and
+//       `outdated` do with it.
+//   vgsh-theme-judge catalog <text|json> <config-dir>
+//       every entry of the shipped catalog's index with its install state
+//       under <config-dir>/themes: `installed`, `definitionUpdate`,
+//       `imageryInstalled` and `imageryUpdate`.
+//   vgsh-theme-judge install <config-dir> <stage> <name>
+//       under the theme lock the caller holds, copy catalog package NAME
+//       into <stage>/package with its marker, judge it as `accept` does and
+//       rename it to <config-dir>/themes/NAME; prints `ok installed=<name>
+//       path=<dir>[ shadows=<shipped dir>]`.
+//   vgsh-theme-judge catalog-update <config-dir> <stage> <name>
+//       under the theme lock the caller holds, replace catalog install
+//       NAME's definition with the catalog's when it changed; prints `ok
+//       up-to-date=<name>` or `ok updated=<name> from=<digest>
+//       to=<digest>`, the line `vgsh theme update` reads to follow.
+//   vgsh-theme-judge catalog-probe <config-dir> <name>
+//       print `<installed digest> <catalog digest> <behind>` for catalog
+//       install NAME: its `vgsh theme outdated` row.
 //
-// list, apply, follow, reload, background, installed and checkouts refuse
-// with one line on stderr, `vgsh: refused: <key>=...`, through
+// list, apply, follow, reload, background, installed, checkouts, origin,
+// catalog, install, catalog-update and catalog-probe refuse with one line
+// on stderr, `vgsh: refused: <key>=...`, through
 // bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under `json`,
 // apply prints its structured result on stdout first, refusals included,
 // and so do follow, reload and background. A partial apply, follow or
 // reload prints one such line per failed or reload-pending target and
 // exits 3. A
 // malformed invocation exits 2.
-// docs/architecture/themes.md § Runner and § Install, theme-apply.md,
+// docs/architecture/themes.md § Runner, theme-install.md, theme-apply.md,
 // theme-targets.md, theme-backgrounds.md and theme-catalog.md hold the
-// rules this file implements; the target renderer is
+// rules this file implements; the catalog marker is
+// bin/lib/theme-catalog.js, the target renderer
 // bin/lib/theme-render.js, the background state bin/lib/theme-backgrounds.js,
 // and the edit a target's `select` keeps in its application's settings file
 // bin/lib/theme-select.js.
@@ -101,6 +124,7 @@ const { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, editF
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 const backgrounds = require(path.join(__dirname, "lib", "theme-backgrounds.js"));
 const select = require(path.join(__dirname, "lib", "theme-select.js"));
+const catalog = require(path.join(__dirname, "lib", "theme-catalog.js"));
 
 const SHIPPED = path.join(repo, "themes");
 const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
@@ -528,21 +552,11 @@ function sha256(bytes) {
     return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-// The digest of package ROW's content as apply reads it: theme.json,
-// terminal.json, an absent one marked as absent, and each file directly
-// under its targets/, in name order; a symlink, which apply never reads,
-// and a symlinked targets/ contribute nothing. Each part is framed by its
-// name and length, so no two contents share a digest. Backgrounds are no
-// colours and stay out. KEY leads the refusal for a targets/ or a file in
-// it that cannot be read.
-function packageDigest(row, key) {
-    const hash = crypto.createHash("sha256");
-    const part = (name, bytes) => {
-        hash.update(name + "\0" + (bytes === undefined ? "absent" : String(bytes.length)) + "\0");
-        if (bytes !== undefined) hash.update(bytes);
-    };
-    part("theme.json", row.files.theme);
-    part("terminal.json", row.files.terminal);
+// The regular files directly under package ROW's targets/, as `{ name,
+// bytes }` in name order: the curated files apply reads. A symlink, which
+// apply never reads, and a symlinked targets/ contribute nothing. KEY leads
+// the refusal for a targets/ or a file in it that cannot be read.
+function targetFiles(row, key) {
     const dir = path.join(row.path, TARGETS);
     let names;
     try {
@@ -551,17 +565,33 @@ function packageDigest(row, key) {
         if (e.code !== "ENOENT") refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
         names = [];
     }
+    const files = [];
     for (const name of names) {
         const file = path.join(dir, name);
-        let bytes;
         try {
             if (fs.lstatSync(file, { throwIfNoEntry: false })?.isFile() !== true) continue;
-            bytes = fs.readFileSync(file);
+            files.push({ name, bytes: fs.readFileSync(file) });
         } catch (e) {
             refuse(key + "=unreadable path=" + file + " error=" + e.code, "unreadable");
         }
-        part(TARGETS + "/" + name, bytes);
     }
+    return files;
+}
+
+// The digest of package ROW's content as apply reads it: theme.json,
+// terminal.json, an absent one marked as absent, and each of its
+// targetFiles. Each part is framed by its name and length, so no two
+// contents share a digest. Backgrounds are no colours and stay out, and so
+// does the catalog marker. KEY leads targetFiles' refusal.
+function packageDigest(row, key) {
+    const hash = crypto.createHash("sha256");
+    const part = (name, bytes) => {
+        hash.update(name + "\0" + (bytes === undefined ? "absent" : String(bytes.length)) + "\0");
+        if (bytes !== undefined) hash.update(bytes);
+    };
+    part("theme.json", row.files.theme);
+    part("terminal.json", row.files.terminal);
+    for (const file of targetFiles(row, key)) part(TARGETS + "/" + file.name, file.bytes);
     return hash.digest("hex");
 }
 
@@ -1770,10 +1800,16 @@ function acceptInstall(dir, name) {
     return logic.acceptPackage(tokens, { directoryName: name, themeJson: theme, terminalJson: terminal, shipped: false });
 }
 
+// A package judge's refusal as the fields a refusal line carries:
+// `reason=<key>[ token=<path>][ <detail>]`.
+function refusalFields(verdict) {
+    return "reason=" + verdict.reason + (verdict.token === "" ? "" : " token=" + verdict.token) + (verdict.detail === "" ? "" : " " + verdict.detail);
+}
+
 function acceptCommand(dir, name) {
     const verdict = acceptInstall(dir, name);
     if (!verdict.ok) {
-        console.log("reason=" + verdict.reason + (verdict.token === "" ? "" : " token=" + verdict.token) + (verdict.detail === "" ? "" : " " + verdict.detail));
+        console.log(refusalFields(verdict));
         process.exit(1);
     }
     console.log(verdict.name);
@@ -1827,6 +1863,257 @@ function checkouts(configDir) {
     for (const name of names || []) process.stdout.write(name + "\0");
 }
 
+// --- the catalog install
+
+// The shipped catalog's index, judged: its entries in index order. PREFIX
+// leads the refusal of an index that cannot be read or that the judge
+// refuses: `PREFIX=unreadable path=<index> error=<code>` or
+// `PREFIX=refused path=<index> reason=<key> ...`.
+function catalogEntries(prefix) {
+    const file = path.join(SHIPPED, CATALOG, CATALOG_INDEX);
+    let indexText;
+    try {
+        indexText = fs.readFileSync(file, "utf8");
+    } catch (e) {
+        refuse(prefix + "=unreadable path=" + file + " error=" + e.code, "unreadable");
+    }
+    const index = logic.acceptCatalogIndex(tokens, indexText);
+    if (!index.ok) refuse(prefix + "=refused path=" + file + " " + refusalFields(index), "refused");
+    return index.entries;
+}
+
+// The directory of installed package NAME under <config-dir>/themes and the
+// key its refusals lead with; a name the package judge refuses is refused
+// as `installed` refuses it.
+function installedPath(configDir, name) {
+    if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
+    return { dir: path.join(configDir, "themes", name), key: "theme=" + name + " reason" };
+}
+
+// The index entry of NAME, refused `not-in-catalog` when the index has none.
+function catalogEntry(name, key) {
+    const entry = catalogEntries("theme=" + name + " catalog").find(e => e.name === name);
+    if (entry === undefined) refuse(key + "=not-in-catalog", "not-in-catalog");
+    return entry;
+}
+
+// Package DIR as packageDigest reads it: its path and its package files,
+// a symlinked one absent. KEY leads the refusal of a file it cannot read.
+function digestRow(dir, key) {
+    try {
+        return { path: dir, files: packageFiles(dir).files };
+    } catch (e) {
+        refuse(key + "=unreadable path=" + (e.path || dir) + " error=" + e.code, "unreadable");
+    }
+}
+
+// The catalog package ENTRY names, as digestRow reads it. catalog-check
+// refuses a catalog package with a symlink or without theme.json, so an
+// install refuses one too rather than land what the check never judged.
+function catalogPackage(entry, key) {
+    const dir = path.join(SHIPPED, CATALOG, entry.name);
+    let read;
+    try {
+        read = packageFiles(dir);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + (e.path || dir) + " error=" + e.code, "unreadable");
+    }
+    if (read.linked !== null) refuse(key + "=symlink path=" + path.join(dir, read.linked), "symlink");
+    if (read.files.theme === undefined) refuse(key + "=unreadable path=" + path.join(dir, "theme.json") + " error=ENOENT", "unreadable");
+    return { path: dir, files: read.files };
+}
+
+// Where installed package directory DIR came from: `{ origin: "git" }`
+// when it holds a `.git`, which a clone always has and an install never
+// writes, so a package whose own repository carries a marker stays a git
+// checkout; `{ origin: "catalog", marker }` with the judged marker when it
+// holds `.vgs-catalog.json` and no `.git`; `{ origin: "git" }` otherwise,
+// a directory update then refuses as no checkout. KEY leads the refusal of
+// a marker that is a symlink, cannot be read or is no marker.
+function installOrigin(dir, key) {
+    const at = path.join(dir, catalog.MARKER_FILE);
+    let file;
+    try {
+        if (fs.lstatSync(path.join(dir, ".git"), { throwIfNoEntry: false }) !== undefined) return { origin: "git", marker: null };
+        file = packageFile(dir, catalog.MARKER_FILE);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + (e.path || at) + " error=" + e.code, "unreadable");
+    }
+    if (file.state === "absent") return { origin: "git", marker: null };
+    if (file.state === "linked") refuse(key + "=symlink path=" + at, "symlink");
+    const verdict = catalog.acceptMarker(logic, text(file.bytes));
+    if (!verdict.ok) refuse(key + "=marker path=" + at + (verdict.token === "" ? "" : " token=" + verdict.token) + " " + verdict.detail, "marker");
+    return { origin: "catalog", marker: verdict.marker };
+}
+
+// Whether DIR is a directory and no symlink. KEY leads the refusal of a
+// path that cannot be examined.
+function realDirectory(dir, key) {
+    try {
+        return fs.lstatSync(dir, { throwIfNoEntry: false })?.isDirectory() === true;
+    } catch (e) {
+        refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+    }
+}
+
+// Write catalog package SOURCE, a catalogPackage row, into PKG, a
+// directory this creates, as an install lands it: theme.json,
+// terminal.json and its targetFiles, the content packageDigest reads, then
+// the marker recording that content's digest and IMAGERY. Answers the
+// digest.
+function stageCatalog(source, pkg, imagery, key) {
+    const write = (relative, bytes) => {
+        const file = path.join(pkg, relative);
+        writing(file, key, () => fs.writeFileSync(file, bytes, { flag: "wx" }));
+    };
+    writing(pkg, key, () => fs.mkdirSync(pkg));
+    write("theme.json", source.files.theme);
+    if (source.files.terminal !== undefined) write("terminal.json", source.files.terminal);
+    const targets = targetFiles(source, key);
+    if (targets.length > 0) writing(path.join(pkg, TARGETS), key, () => fs.mkdirSync(path.join(pkg, TARGETS)));
+    for (const file of targets) write(TARGETS + "/" + file.name, file.bytes);
+    const digest = packageDigest(digestRow(pkg, key), key);
+    write(catalog.MARKER_FILE, catalog.markerText(digest, imagery));
+    return digest;
+}
+
+// The staged package in PKG judged as the installed package NAME, through
+// the judge `vgsh theme add` runs; a refusal names the theme.
+function judgeStaged(pkg, name) {
+    const verdict = acceptInstall(pkg, name);
+    if (!verdict.ok) refuse("theme=" + name + " " + refusalFields(verdict), verdict.reason);
+}
+
+// `vgsh theme install NAME` under the theme lock its caller holds: land the
+// catalog package NAME at <config-dir>/themes/NAME through PKG, staged
+// beside themes/ in a directory the caller made and removes. A catalog
+// install already there is refused `installed`, anything else there
+// `exists`, so no install replaces a package or its edits.
+function install(configDir, stage, name) {
+    const { dir, key } = installedPath(configDir, name);
+    const entry = catalogEntry(name, key);
+    let there;
+    try {
+        there = fs.lstatSync(dir, { throwIfNoEntry: false });
+    } catch (e) {
+        refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+    }
+    if (there !== undefined) {
+        const reinstall = realDirectory(dir, key) && installOrigin(dir, key).origin === "catalog";
+        refuse(key + (reinstall ? "=installed" : "=exists") + " path=" + dir, reinstall ? "installed" : "exists");
+    }
+    let shipped;
+    try {
+        shipped = packageDirs(SHIPPED);
+    } catch (e) {
+        refuse(key + "=unreadable path=" + SHIPPED + " error=" + e.code, "unreadable");
+    }
+    const pkg = path.join(stage, "package");
+    stageCatalog(catalogPackage(entry, key), pkg, null, key);
+    judgeStaged(pkg, name);
+    try {
+        fs.renameSync(pkg, dir);
+    } catch (e) {
+        refuse(key + "=move path=" + dir + " error=" + e.code, "move");
+    }
+    console.log("ok installed=" + name + " path=" + dir + (shipped !== null && shipped.includes(name) ? " shadows=" + path.join(SHIPPED, name) : ""));
+}
+
+// The catalog install NAME and the catalog package it follows: refused
+// `not-catalog` when <config-dir>/themes/NAME is no catalog install,
+// `modified` when its content is not what the marker records, a hand edit
+// an update would lose, and `not-in-catalog` when the index dropped it.
+function catalogInstall(configDir, name) {
+    const { dir, key } = installedPath(configDir, name);
+    const origin = realDirectory(dir, key) ? installOrigin(dir, key) : { origin: "none", marker: null };
+    if (origin.origin !== "catalog") refuse(key + "=not-catalog path=" + dir, "not-catalog");
+    const marker = origin.marker;
+    if (packageDigest(digestRow(dir, key), key) !== marker.digest) refuse(key + "=modified path=" + dir, "modified");
+    const source = catalogPackage(catalogEntry(name, key), key);
+    return { dir, key, marker, source, digest: packageDigest(source, key) };
+}
+
+// The entries of an installed package that are no part of its definition:
+// its wallpapers and anything else the user put there, which an update
+// keeps.
+const DEFINITION = ["theme.json", "terminal.json", TARGETS, catalog.MARKER_FILE];
+
+// `vgsh theme update NAME` for a catalog install, under the theme lock its
+// caller holds: when the catalog's package is not the one installed, stage
+// it with the installed marker's imagery in STAGE, judge it, and swap it in
+// for the installed definition, keeping every other entry. The old package
+// moves into STAGE, which the caller removes. Prints `ok up-to-date=NAME`,
+// or `ok updated=NAME from=<digest> to=<digest>` with 12-digit digests.
+function catalogUpdate(configDir, stage, name) {
+    const { dir, key, marker, source, digest } = catalogInstall(configDir, name);
+    if (digest === marker.digest) {
+        console.log("ok up-to-date=" + name);
+        return;
+    }
+    const pkg = path.join(stage, "package");
+    const old = path.join(stage, "old");
+    stageCatalog(source, pkg, marker.imagery, key);
+    judgeStaged(pkg, name);
+    let kept;
+    try {
+        kept = fs.readdirSync(dir).filter(entry => !DEFINITION.includes(entry)).sort();
+    } catch (e) {
+        refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+    }
+    try {
+        fs.renameSync(dir, old);
+    } catch (e) {
+        refuse(key + "=move path=" + dir + " error=" + e.code, "move");
+    }
+    const moved = [];
+    try {
+        for (const entry of kept) {
+            fs.renameSync(path.join(old, entry), path.join(pkg, entry));
+            moved.push(entry);
+        }
+        fs.renameSync(pkg, dir);
+    } catch (e) {
+        // The installed package goes back as it was before the refusal.
+        for (const entry of moved) fs.renameSync(path.join(pkg, entry), path.join(old, entry));
+        fs.renameSync(old, dir);
+        refuse(key + "=move path=" + dir + " error=" + e.code, "move");
+    }
+    console.log("ok updated=" + name + " from=" + marker.digest.slice(0, 12) + " to=" + digest.slice(0, 12));
+}
+
+// The outdated probe of catalog install NAME: `<installed digest>
+// <catalog digest> <behind>`, behind 1 when they differ and 0 when not.
+// Refuses as catalogUpdate does for the same cause.
+function catalogProbe(configDir, name) {
+    const { marker, digest } = catalogInstall(configDir, name);
+    console.log(marker.digest + " " + digest + " " + (digest === marker.digest ? 0 : 1));
+}
+
+// `git` or `catalog`: installOrigin of installed package NAME, which
+// `vgsh theme update` and `outdated` dispatch on.
+function originCommand(configDir, name) {
+    const { dir, key } = installedPath(configDir, name);
+    console.log(realDirectory(dir, key) ? installOrigin(dir, key).origin : "git");
+}
+
+// Every catalog entry with its install state, catalog.installState's four
+// keys after the index's own.
+function catalogList(format, configDir) {
+    const rows = catalogEntries("catalog").map(entry => {
+        const { dir, key } = installedPath(configDir, entry.name);
+        const marker = realDirectory(dir, key) ? installOrigin(dir, key).marker : null;
+        const digest = marker === null ? null : packageDigest(catalogPackage(entry, key), key);
+        return Object.assign({}, entry, catalog.installState(entry, marker, digest));
+    });
+    if (format === "json") {
+        process.stdout.write(JSON.stringify({ entries: rows }) + "\n");
+        return;
+    }
+    for (const row of rows)
+        console.log("theme=" + row.name + " mode=" + row.mode + " installed=" + row.installed + " definitionUpdate=" + row.definitionUpdate +
+            " imageryInstalled=" + row.imageryInstalled + " imageryUpdate=" + row.imageryUpdate);
+}
+
 const [command, ...args] = process.argv.slice(2);
 main(() => {
     switch (command) {
@@ -1869,6 +2156,26 @@ main(() => {
     case "checkouts":
         if (args.length !== 1) usage("arguments=" + command);
         checkouts(args[0]);
+        break;
+    case "catalog":
+        if (args.length !== 2 || !FORMATS.includes(args[0])) usage("arguments=" + command);
+        catalogList(args[0], args[1]);
+        break;
+    case "install":
+        if (args.length !== 3) usage("arguments=" + command);
+        install(...args);
+        break;
+    case "catalog-update":
+        if (args.length !== 3) usage("arguments=" + command);
+        catalogUpdate(...args);
+        break;
+    case "catalog-probe":
+        if (args.length !== 2) usage("arguments=" + command);
+        catalogProbe(...args);
+        break;
+    case "origin":
+        if (args.length !== 2) usage("arguments=" + command);
+        originCommand(...args);
         break;
     default:
         usage("command=" + (command || "missing"));

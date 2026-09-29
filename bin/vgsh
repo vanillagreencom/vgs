@@ -31,6 +31,8 @@
 #   vgsh theme update [--yes] <name>
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
+#   vgsh theme catalog [--json]    every catalog theme with its install state
+#   vgsh theme install <name>      install one catalog theme package, with no network
 #   vgsh theme outdated [--json]   fetch every installed theme package and report how far it is behind its upstream
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
@@ -144,7 +146,19 @@
 # update's; remove deletes only an installed package, never a shipped one.
 # Each holds the theme lock while it changes the package, update through
 # its question too; a held lock is reason=busy.
-# docs/architecture/themes.md § Install.
+# docs/architecture/theme-install.md.
+#
+# `theme install` lands the catalog package themes/catalog/<name> the same
+# way from a staging directory, under the theme lock, with the marker
+# .vgs-catalog.json that makes it a catalog install; it refuses a catalog
+# install of that name as reason=installed and anything else there as
+# reason=exists. update of a catalog install asks nothing: it replaces the
+# definition when the catalog's package changed, keeps the package's other
+# files, and follows as a git update does. `theme outdated` reports a
+# catalog install behind 1 when the catalog's package changed.
+# `theme catalog` prints each index entry with `installed`,
+# `definitionUpdate`, `imageryInstalled` and `imageryUpdate`, `--json` as
+# `{ entries: [...] }`: docs/architecture/theme-catalog.md § Install.
 #
 # `theme browser-policy install` is the one command that asks for a
 # privilege: bin/vgsh-browser-policy installs itself root-owned with one
@@ -594,13 +608,11 @@ outdated_probe() { # DIR LABEL
   printf '%s %s %s\n' "$ff_old" "$ff_new" "$behind"
 }
 
-# RESOLVE ID prints the checkout directory of ID or refuses as update does;
-# the probe then reads that checkout. Run in a command substitution, so a
-# refusal ends only this row.
-outdated_row() { # RESOLVE ID
-  local dir
-  dir="$("$1" "$2")" || exit 1
-  outdated_probe "$dir" "$2"
+# PROBE ID prints ID's `<head> <upstream> <behind>` line or refuses as
+# update does. Run in a command substitution, so a refusal ends only this
+# row.
+outdated_row() { # PROBE ID
+  "$1" "$2"
 }
 
 # Five fields per row for outdated_print: id, behind, head, upstream and
@@ -611,12 +623,12 @@ outdated_fields=()
 # Append the row of each ID to outdated_fields. Each row runs without
 # descriptor 9, so nothing it starts holds the theme lock. Every line a row
 # prints on stderr besides its refusal passes through to stderr.
-outdated_rows() { # RESOLVE ID...
-  local resolve="$1" id out rc line key rest
+outdated_rows() { # PROBE ID...
+  local probe="$1" id out rc line key rest
   shift
   for id in "$@"; do
     rc=0
-    out="$(outdated_row "$resolve" "$id" 2>&1 9>&-)" || rc=$?
+    out="$(outdated_row "$probe" "$id" 2>&1 9>&-)" || rc=$?
     if [[ $rc == 0 ]]; then
       [[ ${out##*$'\n'} =~ ^([0-9a-f]+)\ ([0-9a-f]+)\ ([0-9]+)$ ]] ||
         refuse 1 "outdated=$id reason=probe-output" "$out"
@@ -682,8 +694,14 @@ plugin_outdated() { # FORMAT
   for entry in "${entries[@]}"; do
     if [[ -d $entry || -L $entry ]]; then ids+=("${entry##*/}"); fi
   done
-  outdated_rows installed_dir "${ids[@]}"
+  outdated_rows plugin_probe "${ids[@]}"
   outdated_print "$1"
+}
+
+plugin_probe() { # ID
+  local dir
+  dir="$(installed_dir "$1")" || exit 1
+  outdated_probe "$dir" "$1"
 }
 
 user_themes="$config_home/vgs/themes"
@@ -735,13 +753,18 @@ accept_theme() { # DIR [NAME]
   return 1
 }
 
+# A staging directory beside the themes directory, never inside it, so no
+# list sees a half-made package and the final move is a rename on one
+# filesystem; removed when this process exits. Sets `stage`.
+theme_stage() { # KIND
+  stage="$(mktemp -d "$config_home/vgs/.vgsh-theme-$1.XXXXXX")" || refuse 1 "staging=$config_home/vgs"
+  trap 'rm -rf -- "${stage:?}"' EXIT
+}
+
 theme_add() { # URL
   local url="$1" name target line
   mkdir -p -- "$user_themes"
-  # Staged beside the themes directory, never inside it, so no list sees a
-  # half-cloned package and the final move is a rename on one filesystem.
-  stage="$(mktemp -d "$config_home/vgs/.vgsh-theme-add.XXXXXX")" || refuse 1 "staging=$config_home/vgs"
-  trap 'rm -rf -- "${stage:?}"' EXIT
+  theme_stage add
   git_or_refuse "clone=$url" clone --quiet --no-recurse-submodules -- "$url" "$stage/package"
   accept_theme "$stage/package" || refuse 1 "package=$url $verdict"
   name="$verdict"
@@ -755,23 +778,47 @@ theme_add() { # URL
 }
 
 theme_update() { # NAME
-  local name="$1" dir
+  local name="$1" dir origin line
   dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
   theme_lock_hold "theme=$name"
-  fast_forward "$dir" "$name"
-  if [[ $ff_old == "$ff_new" ]]; then
-    echo "ok up-to-date=$name"
-    return 0
-  fi
-  # A refused new version is undone before the refusal, so the installed
-  # package is always one the judge accepted.
-  if ! accept_theme "$dir" "$name"; then
-    rollback "$dir" "$ff_old"
-    refuse 1 "theme=$name $verdict rolled-back=${ff_old:0:12}"
-  fi
-  echo "ok updated=$name from=${ff_old:0:12} to=${ff_new:0:12}"
+  origin="$(node "$theme_judge" origin "$config_home/vgs" "$name")" || exit $?
+  case "$origin" in
+    catalog)
+      theme_stage install
+      line="$(node "$theme_judge" catalog-update "$config_home/vgs" "$stage" "$name")" || exit $?
+      echo "$line"
+      [[ $line == "ok up-to-date=$name" ]] && return 0
+      # exec runs no EXIT trap, and the stage holds the old package.
+      rm -rf -- "${stage:?}" || refuse 1 "staging=$stage reason=remove"
+      trap - EXIT
+      ;;
+    git)
+      fast_forward "$dir" "$name"
+      if [[ $ff_old == "$ff_new" ]]; then
+        echo "ok up-to-date=$name"
+        return 0
+      fi
+      # A refused new version is undone before the refusal, so the installed
+      # package is always one the judge accepted.
+      if ! accept_theme "$dir" "$name"; then
+        rollback "$dir" "$ff_old"
+        refuse 1 "theme=$name $verdict rolled-back=${ff_old:0:12}"
+      fi
+      echo "ok updated=$name from=${ff_old:0:12} to=${ff_new:0:12}"
+      ;;
+    *) refuse 1 "theme=$name reason=origin got=$origin" ;;
+  esac
   # Still under the lock this process holds on descriptor 9.
   exec node "$theme_judge" follow text "$config_home/vgs" "$state_home/vgs" held "$name"
+}
+
+# The judge stages and judges the catalog package and moves it into place;
+# this process holds the stage and the lock.
+theme_install() { # NAME
+  mkdir -p -- "$user_themes"
+  theme_stage install
+  theme_lock_hold "theme=$1"
+  node "$theme_judge" install "$config_home/vgs" "$stage" "$1"
 }
 
 theme_remove() { # NAME
@@ -782,7 +829,18 @@ theme_remove() { # NAME
   echo "ok removed=$name"
 }
 
-installed_theme() { node "$theme_judge" installed "$config_home/vgs" "$1"; } # NAME
+# A git checkout's row is its fetch; a catalog install's compares the
+# digest its marker records with the catalog package's.
+theme_probe() { # NAME
+  local dir origin
+  dir="$(node "$theme_judge" installed "$config_home/vgs" "$1")" || exit 1
+  origin="$(node "$theme_judge" origin "$config_home/vgs" "$1")" || exit 1
+  case "$origin" in
+    git) outdated_probe "$dir" "$1" ;;
+    catalog) node "$theme_judge" catalog-probe "$config_home/vgs" "$1" ;;
+    *) refuse 1 "theme=$1 reason=origin got=$origin" ;;
+  esac
+}
 
 # Every installed package is a row, resolved as update resolves its name,
 # under a shared hold of the theme lock.
@@ -791,7 +849,7 @@ theme_outdated() { # FORMAT
   theme_lock_hold "outdated=themes" -s
   mapfile -d '' -t names < <(node "$theme_judge" checkouts "$config_home/vgs")
   wait "$!" || exit $?
-  outdated_rows installed_theme "${names[@]}"
+  outdated_rows theme_probe "${names[@]}"
   outdated_print "$1"
 }
 
@@ -1014,7 +1072,11 @@ case "$cmd" in
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         exec "$root/bin/vgsh-browser-policy" install
         ;;
-      add|update|remove)
+      catalog)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        exec node "$theme_judge" catalog "$format" "$config_home/vgs"
+        ;;
+      add|update|remove|install)
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
         if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
         arg="${1:-}"

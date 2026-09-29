@@ -64,7 +64,8 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
 - [theme-apply.md](theme-apply.md): read before touching the apply, a reload hook or `vgsh theme reload`.
 - [theme-follow.md](theme-follow.md): read before touching `applied.json`, `vgsh theme follow` or the `modified` flag.
-- [theme-catalog.md](theme-catalog.md): read before touching `themes/catalog/`, its index or `vgsh-theme-judge catalog-check`.
+- [theme-catalog.md](theme-catalog.md): read before touching `themes/catalog/`, its index, `vgsh-theme-judge catalog-check` or a catalog install.
+- [theme-install.md](theme-install.md): read before touching `vgsh theme add`, `update`, `remove` or `outdated`.
 - [theme-capability.md](theme-capability.md): read before touching `ThemeRunner` or the `theme` capability.
 - [theme-targets.md](theme-targets.md): read before touching a theme target, a template or an encoder.
 - [theme-wiring.md](theme-wiring.md): read before touching the wiring text, the profile wiring or the entry form's links.
