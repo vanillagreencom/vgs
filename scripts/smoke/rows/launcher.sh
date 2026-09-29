@@ -413,6 +413,7 @@ expect "the launcher opens its theme menu" ok ipc shell summon overlay vgs.launc
 focused
 expect_poll "the theme menu lists the vgs package" True has_row theme vgs
 expect_cursor "a launcher row shows the hand" pointer vgs:overlay "$(ipc smoke windowGeometry overlay vgs.launcher LauncherRow vgs)"
+rest_pointer || fail "moving the pointer off the launcher's rows failed"
 expect "the host hides the theme menu" ok ipc shell hide overlay vgs.launcher
 expect_poll "the theme menu closed" 0 layer_count vgs:overlay
 

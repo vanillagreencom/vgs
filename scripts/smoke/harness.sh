@@ -312,6 +312,10 @@ click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/n
 hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
 drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
+# rest_pointer: the pointer moved to the monitor's bottom-left corner, off
+# every surface a row maps, so a list a later row opens never finds it
+# resting over an entry: the launcher selects the row under the pointer.
+rest_pointer() { hover 10 "$((mon_h - 10))"; }
 click_centre() {
   local rect
   rect="$(ipc smoke instanceGeometry "$1" "$2")" || return

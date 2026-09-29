@@ -25,6 +25,7 @@ if [[ $(ipc smoke scrollTo panel vgs.gallery 0) == \[* ]] && offset="$(gallery_o
   expect_cursor "a disabled switch shows the arrow" default vgs:panel "$(gallery_box Switch Disabled)"
   expect_cursor "an enabled checkbox shows the hand" pointer vgs:panel "$(gallery_box Checkbox Unchecked)"
   expect_cursor "a disabled checkbox shows the arrow" default vgs:panel "$(gallery_box Checkbox Disabled)"
+  rest_pointer || fail "moving the pointer off the gallery failed"
 else
   fail "the gallery did not scroll its Buttons section to the top"
 fi
