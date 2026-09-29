@@ -195,6 +195,12 @@ check "set before any apply remembers nothing" doc_is "$(uat u.png)" '{}'
 mv -- "$state/theme.name.ok" "$state/theme.name"
 tinst "nord applies after the set rows" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 check "nord after the set rows leaves no state file" no_doc
+# A fresh home: set is the first command, so no state directory exists yet.
+mv -- "$state" "$tmp/state-kept"
+tinst "set with no state directory is accepted" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png")" "" theme background set "$user/u.png"
+check "set with no state directory links the image" links_at "$user/u.png"
+check "set with no state directory writes the state file" doc_is "$(uat u.png)" '{}'
+rm -r -- "${state:?}"; mv -- "$tmp/state-kept" "$state"
 
 # A state file or a backgrounds/ the judge cannot use refuses the apply
 # before anything moves, so the theme file keeps nord.
@@ -358,6 +364,11 @@ tinst "the scope mutant's list ends with the user folder's image" "$cfg" "$rt_em
 reset_dusk "user folder control"
 judge_control user-folder '.concat([{ theme: null, dir: configDir }])' '.concat([])'
 tinst "the user-folder mutant refuses a user-folder image as outside" "$cfg" "$rt_empty" 1 "" "vgsh: refused: background=set reason=outside path=$user/u.png" theme background set "$user/u.png"
+reset_dusk "state directory control"
+bg_control state-dir '    writing(stateDir, key, () => fs.mkdirSync(stateDir, { recursive: true }));' ''
+mv -- "$state" "$tmp/state-kept"
+tinst "the state-dir mutant cannot set with no state directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: background=set reason=unwritable path=$state/background error=ENOENT" theme background set "$user/u.png"
+rm -rf -- "${state:?}"; mv -- "$tmp/state-kept" "$state"
 reset_dusk "accepted control"
 judge_control accepted '.filter(row => row.state === "ok")' ''
 tinst "the accepted mutant sets a refused package's image" "$cfg" "$rt_empty" 0 "$(set_line z.png bad "$cfg/vgs/themes/bad/backgrounds/z.png")" "" theme background set "$cfg/vgs/themes/bad/backgrounds/z.png"

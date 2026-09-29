@@ -201,8 +201,10 @@ function choose(list, remembered) {
 // Make AFTER, a state as `read` answers it, the background state: the
 // `background` symlink to its `current` first, replaced by rename, then
 // backgrounds.json when it differs from BEFORE, the state `read` answered.
-// KEY leads the refusal for each write that fails.
+// The state directory is created first: `set` can be the first command a
+// fresh home runs. KEY leads the refusal for each write that fails.
 function land(stateDir, after, before, key) {
+    writing(stateDir, key, () => fs.mkdirSync(stateDir, { recursive: true }));
     const link = path.join(stateDir, LINK);
     const current = after.current === null ? null : after.current.path;
     writing(link, key, () => {
