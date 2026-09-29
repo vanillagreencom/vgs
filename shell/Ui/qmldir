@@ -25,6 +25,7 @@ ListItem 1.0 layout/ListItem.qml
 SectionHeader 1.0 layout/SectionHeader.qml
 Select 1.0 controls/Select.qml
 Toast 1.0 feedback/Toast.qml
+Dialog 1.0 feedback/Dialog.qml
 Popover 1.0 overlay/Popover.qml
 Tooltip 1.0 overlay/Tooltip.qml
 Menu 1.0 overlay/Menu.qml

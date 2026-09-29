@@ -86,6 +86,39 @@ function merge() {
     return out;
 }
 
+// Reading text draws in sans; chrome (labels, buttons, key caps, code,
+// tips and the bar) draws in mono at 11 to 13 px. The reference rule each
+// role is read from is docs/reference/design-values.md § Text roles. A
+// single-line chrome role takes line height 1, so its line box is the
+// font's own height and centring the box centres the glyphs.
+var TEXT = {
+    display: role("sans", 2.27, 700, -0.02, 1.15, false, "textHeading"),
+    h1: role("sans", 1.6, 700, -0.01, 1.2, false, "textHeading"),
+    h2: role("sans", 1.33, 600, 0, 1.25, false, "textHeading"),
+    h3: role("sans", 1.07, 600, 0, 1.3, false, "textHeading"),
+    eyebrow: role("mono", 0.73, 700, 0.18, 1, true, "accent"),
+    subheading: role("sans", 1.07, 400, 0, 1.75, false, "textMuted"),
+    body: role("sans", 1, 400, 0, 1.55, false, "text"),
+    bodyStrong: role("sans", 1, 600, 0, 1.55, false, "text"),
+    // One line of text in a control's row, a menu entry, a select's
+    // choice or a list item: body, hint and code at line height 1, so the
+    // row centres its glyphs as it centres its icon and its inline label.
+    item: role("sans", 1, 400, 0, 1, false, "text"),
+    itemHint: role("sans", 0.87, 400, 0, 1, false, "textFaint"),
+    itemCode: role("mono", 0.87, 500, 0, 1, false, "text"),
+    label: role("mono", 0.73, 500, 0.08, 1, true, "textMuted"),
+    hint: role("sans", 0.87, 400, 0, 1.55, false, "textFaint"),
+    tooltip: role("mono", 0.73, 600, 0, 1.3, false, "text"),
+    button: role("mono", 0.73, 500, 0.08, 1, true, "text"),
+    kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
+    code: role("mono", 0.87, 500, 0, 1.65, false, "text"),
+    bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
+};
+
+// The name of one role of `text`, which a theme may point at any other
+// role; the options are the roles themselves, never a second list.
+function textRole(name) { return { type: "choice", value: name, options: Object.keys(TEXT) }; }
+
 var TOKENS = {
     // Whether the theme is light or dark, stated by the theme and never
     // inferred from its colours. No shell component reads it: it chooses
@@ -214,34 +247,7 @@ var TOKENS = {
         }
     },
 
-    // Reading text draws in sans; chrome (labels, buttons, key caps, code,
-    // tips and the bar) draws in mono at 11 to 13 px. The reference rule each
-    // role is read from is docs/reference/design-values.md § Text roles. A
-    // single-line chrome role takes line height 1, so its line box is the
-    // font's own height and centring the box centres the glyphs.
-    text: {
-        display: role("sans", 2.27, 700, -0.02, 1.15, false, "textHeading"),
-        h1: role("sans", 1.6, 700, -0.01, 1.2, false, "textHeading"),
-        h2: role("sans", 1.33, 600, 0, 1.25, false, "textHeading"),
-        h3: role("sans", 1.07, 600, 0, 1.3, false, "textHeading"),
-        eyebrow: role("mono", 0.73, 700, 0.18, 1, true, "accent"),
-        subheading: role("sans", 1.07, 400, 0, 1.75, false, "textMuted"),
-        body: role("sans", 1, 400, 0, 1.55, false, "text"),
-        bodyStrong: role("sans", 1, 600, 0, 1.55, false, "text"),
-        // One line of text in a control's row, a menu entry, a select's
-        // choice or a list item: body, hint and code at line height 1, so the
-        // row centres its glyphs as it centres its icon and its inline label.
-        item: role("sans", 1, 400, 0, 1, false, "text"),
-        itemHint: role("sans", 0.87, 400, 0, 1, false, "textFaint"),
-        itemCode: role("mono", 0.87, 500, 0, 1, false, "text"),
-        label: role("mono", 0.73, 500, 0.08, 1, true, "textMuted"),
-        hint: role("sans", 0.87, 400, 0, 1.55, false, "textFaint"),
-        tooltip: role("mono", 0.73, 600, 0, 1.3, false, "text"),
-        button: role("mono", 0.73, 500, 0.08, 1, true, "text"),
-        kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
-        code: role("mono", 0.87, 500, 0, 1.65, false, "text"),
-        bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
-    },
+    text: TEXT,
 
     // The one rhythm every one-line control follows: a button, a text
     // field, a select and a segmented control are `size.control.md` tall,
@@ -531,6 +537,21 @@ var TOKENS = {
         corner: { type: "choice", value: "top-right", options: ["top-left", "top-right", "bottom-left", "bottom-right"] },
         background: color("{color.surfaceRaised}"),
         border: color("{color.borderStrong}")
+    },
+
+    // A confirmation card: `gap` separates its title, message, content and
+    // row of actions, `actionGap` the actions; `titleRole` and `bodyRole`
+    // name the roles of `text` its title and message draw in.
+    dialog: {
+        width: length("{size.panel.md}"),
+        padding: length("{space.lg}"),
+        gap: length("{space.md}"),
+        actionGap: length("{space.sm}"),
+        radius: length("{radius.md}"),
+        background: color("{color.surfaceRaised}"),
+        border: color("{color.borderStrong}"),
+        titleRole: textRole("h3"),
+        bodyRole: textRole("body")
     },
 
     // The embedded bar: `barWidth` thick, `barInset` from the area's edge,

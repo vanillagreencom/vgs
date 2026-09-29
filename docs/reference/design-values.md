@@ -54,6 +54,7 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Checkbox`, `Radio`, `Switch` | indicator 16, 16, 36 × 20 | | 7 | 0; round for `Radio` and `Switch` | `checkbox.gap`, `radio.gap`, `toggle.gap` | none | | |
 | `Slider` | 14 handle, 4 track | | | round | `slider.handle`, `slider.track` | none | | |
 | `Popover` | content + 16 | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap` | none | | |
+| `Dialog` | content + 24 | 12 | 8 between the title, the message, the content and the actions; 6 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap` | none | | 360 wide |
 | `Menu` | items + 4, at least 160 wide, scrolling past 270, nine items | 2 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth`, `menu.maxHeight` | none | | |
 | the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
 | `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |

@@ -175,6 +175,31 @@ Item {
                 }
                 Toast { title: "Update available"; message: "io.github.example.deck is 42 commits behind"; tone: "info"; iconName: "download"; width: parent.width }
 
+                SectionHeader { text: "Dialogs"; description: "Waiting, destructive, busy, and with content and a disabled action" }
+                Dialog {
+                    title: "Download wallpapers for Nord?"
+                    message: "12 wallpapers, 42 MB, from vanillagreencom/vgs-themes."
+                    actions: [{ label: "Not now", role: "cancel" }, { label: "Download", role: "accept" }]
+                }
+                Dialog {
+                    title: "Remove acme.weather?"
+                    message: "Its settings stay in shell.json."
+                    actions: [{ label: "Cancel", role: "cancel" }, { label: "Remove", role: "accept", variant: "danger" }]
+                }
+                Dialog {
+                    title: "Downloading wallpapers for Nord"
+                    message: "The theme applies again when the download ends."
+                    busy: true
+                    actions: [{ label: "Not now", role: "cancel" }, { label: "Download", role: "accept" }]
+                }
+                Dialog {
+                    title: "Install what acme.weather needs?"
+                    message: "No known package manager was found; install these by hand."
+                    actions: [{ label: "Not now", role: "cancel" }, { label: "Install", role: "accept", enabled: false }]
+                    Label { role: "itemCode"; text: "gum" }
+                    Label { role: "itemCode"; text: "xdg-terminal-exec" }
+                }
+
                 SectionHeader { text: "Titles and scrolling"; description: "A title that opens a long menu, the current choice checked; a scroll area and its bar" }
                 Flow {
                     width: parent.width
