@@ -77,7 +77,7 @@ T.AbstractButton {
     Keys.onEnterPressed: openList()
 
     contentItem: Label {
-        role: "body"
+        role: "item"
         text: root.currentText
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -156,7 +156,7 @@ T.AbstractButton {
                 onHoveredChanged: if (hovered) entries.currentIndex = index
 
                 contentItem: Label {
-                    role: "body"
+                    role: "item"
                     text: entry.text
                     color: entry.chosen ? Theme.select.selectedForeground : Theme.menu.item.foreground
                     verticalAlignment: Text.AlignVCenter

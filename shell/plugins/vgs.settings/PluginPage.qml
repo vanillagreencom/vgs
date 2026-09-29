@@ -165,7 +165,7 @@ FocusScope {
                     width: body.width
                     label: modelData[0]
                     inline: true
-                    Label { role: "body"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                    Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                 }
             }
 

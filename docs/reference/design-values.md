@@ -15,6 +15,7 @@ Each role is read from one rule of the stylesheet. A value the rule does not set
 | `text.subheading` | `.intro` | sans, 16 px, 400, line height 1.75 | |
 | `text.body` | `body` | sans, 15 px, 400, line height 1.55 | |
 | `text.bodyStrong` | `.check-list strong` | sans, 15 px, 650, line height 1.55 | 600 |
+| `text.item` | `.aside-link` | the inherited `body`: sans, 15 px, 400, line height 1.55 | line height 1, so a one-line entry centres its glyphs |
 | `text.hint` | `.check-list small` | sans, 13 px, 400, line height 1.55 | |
 | `text.eyebrow` | `.page-eyebrow` | mono, 11 px, 700, .18em, uppercase, line height 1.55 | line height 1 |
 | `text.label` | `.code-head` | mono, 11 px, 500, .08em, uppercase, line height 1.55 | line height 1 |

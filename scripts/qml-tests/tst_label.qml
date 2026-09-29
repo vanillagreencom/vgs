@@ -75,6 +75,7 @@ Item {
                 { tag: "subheading", family: sans, size: 16, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.75 },
                 { tag: "body", family: sans, size: 15, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.55 },
                 { tag: "bodyStrong", family: sans, size: 15, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.55 },
+                { tag: "item", family: sans, size: 15, weight: 400, spacing: 0, uppercase: false, lineHeight: 1 },
                 { tag: "hint", family: sans, size: 13, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.55 },
                 { tag: "eyebrow", family: mono, size: 11, weight: 700, spacing: 0.18, uppercase: true, lineHeight: 1 },
                 { tag: "label", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },

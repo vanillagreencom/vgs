@@ -36,7 +36,7 @@ T.MenuItem {
             anchors.verticalCenter: parent.verticalCenter
         }
         Label {
-            role: "body"
+            role: "item"
             text: root.text
             color: Theme.menu.item.foreground
             anchors.verticalCenter: parent.verticalCenter

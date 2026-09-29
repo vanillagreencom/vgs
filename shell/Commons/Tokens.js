@@ -228,6 +228,10 @@ var TOKENS = {
         subheading: role("sans", 1.07, 400, 0, 1.75, false, "textMuted"),
         body: role("sans", 1, 400, 0, 1.55, false, "text"),
         bodyStrong: role("sans", 1, 600, 0, 1.55, false, "text"),
+        // One line of reading text in a control's row, a menu entry or a
+        // select's choice: body at line height 1, so the row centres its
+        // glyphs as it centres its icon.
+        item: role("sans", 1, 400, 0, 1, false, "text"),
         label: role("mono", 0.73, 500, 0.08, 1, true, "textMuted"),
         hint: role("sans", 0.87, 400, 0, 1.55, false, "textFaint"),
         tooltip: role("mono", 0.73, 600, 0, 1.3, false, "text"),
