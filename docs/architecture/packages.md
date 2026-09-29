@@ -2,7 +2,7 @@
 
 Covers: shell/Core/PackageManagers.js, bin/vgsh-pkg, scripts/test-vgsh-pkg.js
 
-VGS knows a system's package managers through one table, `shell/Core/PackageManagers.js`. Every flow that installs, removes, upgrades or checks a package reads that table: [D034](../decisions/D034-one-package-manager-table.md). `bin/vgsh-pkg` loads it under node through `scripts/qml-library.js`, and `vgsh pkg` is its command. Its header states each verb's output and refusals.
+VGS knows a system's package managers through one table, `shell/Core/PackageManagers.js`. Every flow that installs, removes, upgrades or checks a package reads that table: [D034](../decisions/D034-one-package-manager-table.md). `bin/vgsh-pkg` loads it under node through `bin/lib/qml-library.js`, and `vgsh pkg` is its command. Its header states each verb's output and refusals.
 
 ## The table
 

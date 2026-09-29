@@ -19,7 +19,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 const repo = path.join(__dirname, "..");
 const TABLE = path.join(repo, "shell", "Core", "PackageManagers.js");
@@ -251,9 +251,7 @@ try {
     const tree = path.join(tmp, "tree");
     fs.mkdirSync(path.join(tree, "bin"), { recursive: true });
     fs.mkdirSync(path.join(tree, "shell", "Core"), { recursive: true });
-    fs.mkdirSync(path.join(tree, "scripts"), { recursive: true });
     fs.symlinkSync(path.join(repo, "bin", "lib"), path.join(tree, "bin", "lib"));
-    fs.symlinkSync(path.join(repo, "scripts", "qml-library.js"), path.join(tree, "scripts", "qml-library.js"));
     fs.symlinkSync(TABLE, path.join(tree, "shell", "Core", "PackageManagers.js"));
     CONTROLS.forEach(([kind, label, file, needle, replacement], index) => {
         const source = fs.readFileSync(file, "utf8");

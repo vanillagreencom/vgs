@@ -3,7 +3,7 @@
 // The package managers VGS knows, one row each, and the pure decisions made
 // over them: which managers a system has and the steps an install, a removal
 // or an upgrade takes. No QML objects and no I/O, so bin/vgsh-pkg runs this
-// file under node through scripts/qml-library.js, the one source D034 names.
+// file under node through bin/lib/qml-library.js, the one source D034 names.
 //
 // A row:
 //   id        the manager's name in every VGS file and command

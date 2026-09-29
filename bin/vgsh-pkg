@@ -36,7 +36,7 @@ const fs = require("fs");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
-const table = require(path.join(repo, "scripts", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
+const table = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
 const { refuse, main, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
