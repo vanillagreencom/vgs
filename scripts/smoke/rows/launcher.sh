@@ -107,7 +107,9 @@ categories() {
   expect_poll "the categories show for $1" True has_row menu System
 }
 # pick_tui LABEL: in the open list, move the cursor to the tui row LABEL
-# and press Return.
+# and press Return. The pointer rests over the list, which opens and
+# animates under it, so Qt delivers the rows hover with no motion; the
+# launcher must not read that as a pointer taking the cursor.
 pick_tui() {
   local index n keys=()
   index="$(row_index tui "$1")" || { fail "the launcher's rows are unreadable for $1"; return 1; }
@@ -115,12 +117,17 @@ pick_tui() {
   for ((n = 0; n < index; n++)); do keys+=(-k Down); done
   if ((index > 0)); then type_keys "${keys[@]}" || { fail "moving to $1 failed"; return 1; }; fi
   expect_poll "the cursor rests on $1" "$index" read_launcher selectedIndex
+  expect "the resting pointer took no row before $1" false read_launcher pointerArmed
   type_keys -k Return || fail "sending Return on $1 failed"
 }
 update_words() {
   words --app-id=org.vgs.tui "--title=VGS · Update" -- "$tui_self" present --presentation full --plugin acme.tui --dir "$snapshot" \
     --record acme.tui/update --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Update" -- tui/update.sh
 }
+# The pointer rests at the screen's centre, over the rows the categories
+# list, where Hyprland's warp to a focused window's centre leaves it after
+# the gallery's window rows.
+hover "$((mon_w / 2))" "$((mon_h / 2))" || fail "resting the pointer at the screen's centre failed"
 for row in "Install|install|Install packages" "Remove|remove|Remove packages"; do
   IFS='|' read -r label verb title <<<"$row"
   forget_record

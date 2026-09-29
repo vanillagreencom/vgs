@@ -453,8 +453,10 @@ compositor_logs_on() {
   [[ $after != "$before" ]]
 }
 # rest_pointer: the pointer moved to the monitor's bottom-left corner, off
-# every surface a row maps, so a list a later row opens never finds it
-# resting over an entry: the launcher selects the row under the pointer.
+# every surface a row maps, so a surface a later row opens finds the
+# pointer over none of its controls. A resting pointer the launcher's list
+# opens under takes no row: the launcher row reads that with the pointer
+# at the screen's centre.
 rest_pointer() { hover 10 "$((mon_h - 10))"; }
 click_centre() {
   local rect
@@ -466,24 +468,36 @@ click_centre() {
 # enabled control TYPE reading TEXT under an instance, at its centre or at
 # (X, Y), once the control reports the pointer over that point. The
 # compositor routes a click by where it has placed the surface, which can
-# trail the layout the probe reads after the surface resizes, so a click
-# at the probe's coordinates alone can land on a neighbour. The pointer
-# moves there every 100 ms, one pixel apart so each move is a motion, for
-# up to 5 s, and the click follows two readings in a row, so a reading
-# taken before the move reached the shell never decides it. Returns 1,
-# with no click, when the control is absent or never reports the pointer.
+# trail the layout the probe reads after the surface resizes, and a list
+# that grows after it opens can move the control, so a box read once goes
+# stale. Every 100 ms, for up to 5 s, the helper reads the control's box
+# again, moves the pointer to its point, one pixel apart each time so each
+# move is a motion, and reads whether the control reports the pointer. It
+# clicks after two such readings in a row at one box, so a reading taken
+# before the move reached the shell never decides it, and reads the box
+# once more before the press: a box that moved starts the count again.
+# Returns 1, with no click, when the control is absent at the first
+# reading or never reports the pointer; a control absent at a later
+# reading is being laid out again, and the count starts again.
 click_item() { # HOST_KEY ID TYPE TEXT [X Y]
-  local rect x y px hovered="" held=0 i
-  rect="$(ipc smoke itemGeometry "$1" "$2" "$3" "$4")" && [[ $rect != absent ]] || return 1
-  if [[ $# -ge 6 ]]; then x="$5"; y="$6"
-  else read -r x y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect") || return 1
-  fi
+  local rect seen="" x="" y="" px hovered held=0 i
   for i in $(seq 1 50); do
+    rect="$(ipc smoke itemGeometry "$1" "$2" "$3" "$4")" || return 1
+    if [[ $rect == absent ]]; then
+      [[ $i -gt 1 ]] || return 1
+      held=0; seen=""; sleep 0.1; continue
+    fi
+    if [[ $rect != "$seen" ]]; then
+      held=0; seen="$rect"
+      if [[ $# -ge 6 ]]; then x="$5"; y="$6"
+      else read -r x y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect") || return 1
+      fi
+    fi
     px=$((x + i % 2))
     hover "$px" "$y" || return 1
     hovered="$(ipc smoke itemHovered "$1" "$2" "$3" "$4")" || return 1
     if [[ $hovered == true ]]; then held=$((held + 1)); else held=0; fi
-    if [[ $held -ge 2 ]]; then click "$px" "$y"; return; fi
+    if [[ $held -ge 2 && $(ipc smoke itemGeometry "$1" "$2" "$3" "$4") == "$seen" ]]; then click "$px" "$y"; return; fi
     sleep 0.1
   done
   return 1
