@@ -883,7 +883,6 @@ unattended_git_stop() { # STATUS
   exit "$1"
 }
 
-
 # Fetch checkout DIR's upstream through unattended_git, then set ff_old to
 # its HEAD commit, ff_new to its upstream commit and outdated_behind to the
 # count of upstream commits HEAD lacks. The fetch writes the
