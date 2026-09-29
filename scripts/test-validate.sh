@@ -135,7 +135,7 @@ heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
-version_plan=$'scripts/test-vgsh.sh\n'"$repo_plan"
+version_plan=$'scripts/test-vgsh-version.sh\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
