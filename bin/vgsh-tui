@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# vgsh-tui: the floating TUI presenter, the one file that knows terminals.
+#
+#   vgsh-tui launch --title <text> [--size default|wide|tall] [--presentation full|plain]
+#                   [--plugin <id> --dir <snapshot>] -- <argv...>
+#       open a floating terminal that runs `present` with the same argv
+#   vgsh-tui present [--presentation full|plain] [--plugin <id> --dir <snapshot>] -- <argv...>
+#       run argv under the VGS presentation in this terminal
+#
+# launch execs `setsid xdg-terminal-exec --app-id=<app-id> --title="VGS ·
+# <text>" -- <this file> present ...`, with no shell between. The size
+# classes and their app-ids are shell/Core/HyprlandLayer.js's TUI_WINDOWS,
+# the table the Hyprland layer writes its window rules from, read under
+# node; a size it does not hold is a bad invocation. Everything present
+# needs travels in its argv, never in the environment: a single-instance
+# terminal opens the window from a process that was already running.
+#
+# present clears the screen, prints bin/lib/logo.txt in the theme accent,
+# runs argv as a list, never through a shell, and keeps its exit code.
+# Unless the code is 130, a Ctrl-C, it drops the terminal replies queued on
+# /dev/tty, prints `● Done! Press any key to close...` or `● Failed (exit
+# code N)! Press any key to close...` there, not on stdout, and waits for one
+# key. `plain` skips the logo and the prompt. Before the command runs it
+# exports:
+#   - each line of ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/gum.env, which
+#     is parsed and never sourced: every line must be KEY=#rrggbb, KEY
+#     matching gum_key below, or no line is exported and a warning names
+#     the first bad line;
+#   - VGS_TUI_LIB, this checkout's bin/lib/tui.sh, and VGS_TUI_LOGO, its
+#     bin/lib/logo.txt;
+#   - with --plugin, VGS_PLUGIN_ID and VGS_PLUGIN_DIR, a private copy of the
+#     snapshot's tui/ directory under $XDG_RUNTIME_DIR that present removes
+#     when it exits, so a `vgsh restart`, which removes the snapshot, cannot
+#     pull a file from under a running script. argv[0] is then a path
+#     relative to the snapshot, inside its tui/ directory, and runs from the
+#     copy. Without --plugin both are unset.
+#
+# bin/lib/logo.txt is the word VGS in the FIGlet font Delta Corps Priest 1 by
+# CoSMiC cHiLD, its V hand-adjusted to a point. Only the rendered text is in
+# the tree, not the font.
+#
+# Every refusal prints one keyed line first: `vgsh-tui: refused: <key>=<value>`.
+# launch exits 2 on a bad invocation, 69 when xdg-terminal-exec is not on
+# PATH, and 1 when the size table cannot be read (`size-table=unreadable`). present exits with the command's code, 2 on a bad invocation, and 1
+# after refusing the plugin copy or script, a refusal it reports under the
+# same Done/Failed prompt. docs/architecture/tui.md.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+root="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+lib="$root/bin/lib/tui.sh"
+logo="$root/bin/lib/logo.txt"
+rt_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+gum_env="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/theme/gum.env"
+
+# shellcheck source=lib/tui.sh
+source "$lib"
+
+# The one rule a gum.env line passes. Classes are spelled out, since a range
+# follows the user's locale.
+upper='[ABCDEFGHIJKLMNOPQRSTUVWXYZ]'
+gum_key="^(GUM_($upper|_)+|FOREGROUND|BACKGROUND|BORDER_FOREGROUND|VGS_TUI_$upper+)\$"
+gum_line="^([^=]+)=(#$_vgs_tui_hex{6})\$"
+
+# The app-id of size class SIZE, from the table the layer's window rules
+# are written from. Exits 3 for a size the table does not hold; the loader
+# exits 2 with its own refusal line for an unreadable file.
+app_id_of() { # SIZE
+  node -e '
+    "use strict";
+    const path = require("path");
+    const [root, size] = process.argv.slice(1);
+    const layer = require(path.join(root, "scripts", "qml-library.js")).load(path.join(root, "shell", "Core", "HyprlandLayer.js"));
+    if (!Object.prototype.hasOwnProperty.call(layer.TUI_WINDOWS, size)) process.exit(3);
+    process.stdout.write(layer.TUI_WINDOWS[size].appId);
+  ' "$root" "$1"
+}
+
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$self" >&2; }
+
+bad_invocation() { # FIRST_LINE
+  printf 'vgsh-tui: refused: %s\n' "$1" >&2
+  usage
+  exit 2
+}
+
+# Parses VERB's options, up to `--`, into title, size, presentation,
+# plugin_id and plugin_dir, and the command into argv. present takes no
+# title or size: the terminal window carries both.
+parse() { # VERB ARGS...
+  local verb="$1"
+  shift
+  title="" size=default presentation=full plugin_id="" plugin_dir="" argv=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title|--size|--presentation|--plugin|--dir)
+        [[ $verb == launch || ( $1 != --title && $1 != --size ) ]] || bad_invocation "argument=$1"
+        [[ $# -ge 2 ]] || bad_invocation "option=$1 value=missing"
+        case "$1" in
+          --title) title="$2" ;;
+          --size) size="$2" ;;
+          --presentation) presentation="$2" ;;
+          --plugin) plugin_id="$2" ;;
+          --dir) plugin_dir="$2" ;;
+        esac
+        shift 2
+        ;;
+      --) shift; argv=("$@"); return 0 ;;
+      *) bad_invocation "argument=$1" ;;
+    esac
+  done
+  bad_invocation "separator=missing"
+}
+
+check_common() {
+  [[ ${#argv[@]} -gt 0 && -n ${argv[0]} ]] || bad_invocation "command=missing"
+  case "$presentation" in full|plain) ;; *) bad_invocation "presentation=$presentation" ;; esac
+  if [[ -n $plugin_id && -z $plugin_dir ]]; then bad_invocation "dir=missing plugin=$plugin_id"; fi
+  if [[ -z $plugin_id && -n $plugin_dir ]]; then bad_invocation "plugin=missing dir=$plugin_dir"; fi
+}
+
+launch() {
+  local app_id status=0 pass=()
+  [[ -n $title ]] || bad_invocation "title=missing"
+  app_id="$(app_id_of "$size")" || status=$?
+  case "$status" in
+    0) ;;
+    3) bad_invocation "size=$size" ;;
+    *) printf 'vgsh-tui: refused: size-table=unreadable exit=%s\n' "$status" >&2; exit 1 ;;
+  esac
+  # present runs in the terminal's working directory, not this one.
+  [[ -z $plugin_id ]] || { [[ $plugin_dir == /* ]] || plugin_dir="$PWD/$plugin_dir"; pass=(--plugin "$plugin_id" --dir "$plugin_dir"); }
+  command -v xdg-terminal-exec >/dev/null || {
+    printf 'vgsh-tui: refused: terminal=missing\nxdg-terminal-exec is not on PATH; install it to open floating TUIs\n' >&2
+    exit 69
+  }
+  exec setsid xdg-terminal-exec --app-id="$app_id" --title="VGS · $title" -- \
+    "$self" present --presentation "$presentation" "${pass[@]}" -- "${argv[@]}"
+}
+
+# Exports gum.env's colours when every line passes, else warns and exports
+# none. An absent file exports nothing and says nothing.
+export_gum_env() {
+  local line n=0 keys=() values=() i
+  [[ -e $gum_env ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    if [[ $line =~ $gum_line ]] && [[ ${BASH_REMATCH[1]} =~ $gum_key ]]; then
+      keys+=("${line%%=*}")
+      values+=("${line#*=}")
+    else
+      printf 'vgsh-tui: gum-env=rejected line=%d path=%s\nno colour of the file is used\n' "$n" "$gum_env" >&2
+      return 0
+    fi
+  done <"$gum_env" || { printf 'vgsh-tui: gum-env=unreadable path=%s\n' "$gum_env" >&2; return 0; }
+  for i in "${!keys[@]}"; do export "${keys[i]}=${values[i]}"; done
+}
+
+# Copies the snapshot's tui/ directory into a fresh directory under the
+# runtime dir and points argv[0] at the copy of the script it names. Sets
+# copy_dir, which the EXIT trap removes, and refusal on a refusal.
+copy_plugin() {
+  local rel="${argv[0]}" script
+  copy_dir="$(mktemp -d -- "$rt_dir/vgs-tui.XXXXXX")" || { refusal="copy=$rt_dir reason=mktemp"; return 1; }
+  cp -R -- "$plugin_dir/tui" "$copy_dir/tui" || { refusal="copy=$plugin_dir/tui reason=failed"; return 1; }
+  # readlink -f resolves every link and `..`, so the prefix test is on the
+  # file that runs.
+  script="$(readlink -f -- "$copy_dir/$rel")" && [[ $script == "$copy_dir/tui/"* && -f $script ]] ||
+    { refusal="script=$rel reason=outside-tui"; return 1; }
+  [[ -x $script ]] || { refusal="script=$rel reason=not-executable"; return 1; }
+  argv[0]="$script"
+}
+
+prompt() { # CODE
+  local code="$1"
+  # The device node is there with no terminal behind it; opening it is the test.
+  : 2>/dev/null <>/dev/tty || return 0
+  # Replies to queries the command sent the terminal are still queued on
+  # the tty, and would answer the keypress for the user.
+  while read -rsn 1 -t 0.1 _ </dev/tty; do :; done
+  if [[ $code == 0 ]]; then
+    printf '\n%s● \033[0mDone! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_SUCCESS:-}" 32)" >/dev/tty
+  else
+    printf '\n%s● \033[0mFailed (exit code %d)! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code" >/dev/tty
+  fi
+  read -rsn 1 _ </dev/tty || :
+  printf '\n' >/dev/tty
+}
+
+present() {
+  local code refusal=""
+  copy_dir=""
+  trap '[[ -z $copy_dir ]] || rm -rf -- "$copy_dir"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 143' TERM
+  export_gum_env
+  export VGS_TUI_LIB="$lib" VGS_TUI_LOGO="$logo"
+  if [[ -n $plugin_id ]]; then
+    export VGS_PLUGIN_ID="$plugin_id"
+    if copy_plugin; then export VGS_PLUGIN_DIR="$copy_dir"; else unset VGS_PLUGIN_DIR; fi
+  else
+    unset VGS_PLUGIN_ID VGS_PLUGIN_DIR
+  fi
+  if [[ $presentation == full ]]; then
+    printf '\033[H\033[2J\033[3J%s' "$(vgs_tui_sgr "${VGS_TUI_ACCENT:-}" 33)"
+    cat -- "$logo" || :
+    printf '\033[0m\n'
+  fi
+  if [[ -n $refusal ]]; then
+    printf 'vgsh-tui: refused: %s\n' "$refusal" >&2
+    code=1
+  else
+    # A Ctrl-C reaches the command, which the trap resets to the default;
+    # present outlives it to report the code and remove the copy.
+    trap : INT
+    set +e
+    "${argv[@]}"
+    code=$?
+    set -e
+    trap - INT
+  fi
+  [[ $presentation == plain || $code == 130 ]] || prompt "$code"
+  exit "$code"
+}
+
+verb="${1:-}"
+[[ $# -gt 0 ]] && shift
+case "$verb" in
+  launch|present) parse "$verb" "$@"; check_common; "$verb" ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) bad_invocation "verb=${verb:-missing}" ;;
+esac

@@ -32,8 +32,9 @@ var BORDERS = [
 ];
 
 // The floating TUI's size classes, by name, in the order the layer writes
-// them. A floating TUI's terminal opens with its class's app-id, and the
-// layer writes one window rule per class, named `rule`, that floats the
+// them. A floating TUI's terminal opens with its class's app-id, which
+// bin/vgsh-tui reads from here under node, and the layer writes one window
+// rule per class, named `rule`, that floats the
 // window, centres it and gives it width by height. Only the core writes
 // window rules: no plugin sets a size or a class pattern.
 var TUI_WINDOWS = {

@@ -43,6 +43,8 @@
 #                                  print the argv of each step the action takes; runs nothing
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
+#   vgsh tui present [--title <text>] [--size default|wide|tall] -- <argv...>
+#                                  run one command in a floating terminal under the VGS presentation
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. Before
@@ -178,6 +180,10 @@
 # through bin/vgsh-pkg, which states its output and refusals. It needs no
 # running shell, and no `pkg` command elevates or changes a package:
 # docs/architecture/packages.md.
+#
+# `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
+# with the full presentation, titled by --title or else by the command's
+# file name, and needs no shell running: docs/architecture/tui.md.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
@@ -1050,6 +1056,25 @@ case "$cmd" in
     ;;
   pkg)
     exec node "$root/bin/vgsh-pkg" "$@"
+    ;;
+  tui)
+    sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    if [[ $sub != present ]]; then printf 'vgsh: refused: tui-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2; fi
+    title="" size=default
+    while [[ $# -gt 0 && $1 != -- ]]; do
+      case "$1" in
+        --title|--size)
+          if [[ $# -lt 2 ]]; then printf 'vgsh: refused: option=%s value=missing\n' "$1" >&2; usage; exit 2; fi
+          if [[ $1 == --title ]]; then title="$2"; else size="$2"; fi
+          shift 2
+          ;;
+        *) printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2 ;;
+      esac
+    done
+    if [[ $# -lt 2 ]]; then printf 'vgsh: refused: command=missing\n' >&2; usage; exit 2; fi
+    shift
+    exec "$root/bin/vgsh-tui" launch --title "${title:-${1##*/}}" --size "$size" --presentation full -- "$@"
     ;;
   -h|--help|help)
     usage; exit 0

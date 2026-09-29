@@ -21,6 +21,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Requirement: an external command a plugin or the core runs, declared with its package per manager in a manifest's `requirements` or in `config/requirements.json`. It names a command, never a plugin; the scan probes it and the manager reports its state: [requirements.md](requirements.md).
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
 - Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token, or through its own judged table when it owns its look ([appearance.md](appearance.md)).
+- Floating TUI: a core terminal window that runs one command as argv under the VGS presentation ([tui.md](tui.md)).
 - Budget: a ceiling a validation row asserts in the nested sandbox.
 - Validation row: an assertion under `scripts/smoke/rows/` that a plugin is built, shown and handed what it asked for, read back from the instance. A plugin without one does not merge.
 
@@ -35,10 +36,10 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 
 ## Invariants
 
-1. One shell process per session. The runner holds the lock, records its pid, and the shell draws and accepts state changes only when its process is the runner's; the CLI addresses that pid alone. Enforced by `scripts/test-vgsh.sh` (lock contention, argument refusal, pid selection) and `scripts/smoke/rows/instance-guard.sh`, which starts a bare `qs` beside the runner and asserts it neither draws, writes nor follows the applied theme package, with an ungated shell copy that follows as its control.
+1. One shell process per session. The runner holds the lock, records its pid, and the shell draws and accepts state changes only when its process is the runner's; the CLI addresses that pid alone. Enforced by `scripts/test-vgsh.sh` and `scripts/smoke/rows/instance-guard.sh`.
 2. Every Wayland object the shell creates is dispatched or destroyed. No check enforces it. A long sampled session with `scripts/sample-shell-memory.sh` is the instrument.
-3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/smoke/rows/bar.sh`, which read the compositor's layer list and reserved geometry. That no object of it remains is not checked.
-4. A plugin receives exactly the capabilities its own manifest names, a disabled plugin holds none of them, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/smoke/rows/plugins.sh` and `scripts/smoke/rows/capability-release.sh`, which read the fixture instances and the core's lending record back.
+3. A disabled plugin leaves the core's build records and the bar, and a disabled bar leaves no surface and reserves no space. Enforced by the disable rows in `scripts/smoke/rows/bar.sh`. That no object of it remains is not checked.
+4. A plugin receives exactly the capabilities its own manifest names, a disabled plugin holds none of them, and a running plugin holds the settings the configuration currently gives it. Enforced by the fixture rows in `scripts/smoke/rows/plugins.sh` and `scripts/smoke/rows/capability-release.sh`.
 5. The plugin manager runs no plugin code and asks for no privilege. Enforced by the install rows in `scripts/test-vgsh.sh`, which run every git call with hooks off and install from local repositories.
 6. Every decision about a manifest, the shape of `shell.json`, the merged configuration, enablement, the settings entry a kind reads and placement is made once in `shell/Core/PluginLogic.js`. Enforced by `scripts/test-plugin-logic.js` and by `bin/lib/check-manifests.js`, which loads the same file.
 7. A figure in a document names the tool and the run that produced it. Enforced by review; `docs/architecture/memory.md` names its provenance in its first paragraph.
@@ -72,6 +73,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
 - [requirements.md](requirements.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe or the `missing` lines.
+- [tui.md](tui.md): read before touching a floating TUI.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS.
