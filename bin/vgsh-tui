@@ -66,7 +66,8 @@
 # ran to its end; null only in a record reap wrote. reap ends every running
 # record whose key's lock no process holds, since the kernel drops a lock
 # with its holder, with a null code, and prints `reaped=<key> run=<run>` per
-# record. The key is two segments of [a-z0-9.-], each starting with a letter
+# record; a running record whose run already has its ended record it only
+# removes. The key is two segments of [a-z0-9.-], each starting with a letter
 # or digit, joined by one `/`, and the run [a-z0-9-] starting with one: the
 # shell judges both, and this file only keeps its file names safe.
 #
@@ -422,6 +423,12 @@ reap() {
       75) continue ;;
       *) printf 'vgsh-tui: refused: reap=%s reason=flock-failed\n' "$file" >&2; failed=1; continue ;;
     esac
+    # A presenter that died between writing its ended record and removing
+    # its running one left both: its ended record stands.
+    if [[ -e $record_dir/$stem@$run.ended.json ]]; then
+      rm -f -- "$file"
+      continue
+    fi
     if ! text="$(cat -- "$file" 2>/dev/null)"; then
       # A presenter of the key that started since removed it.
       [[ ! -e $file ]] && continue

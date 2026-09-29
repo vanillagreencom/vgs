@@ -353,6 +353,15 @@ check "reap removes the dead run's running record" test ! -e "$rdir/core@doctor@
 check "reap leaves a held key's running record" test -e "$rdir/acme.tui@hello@6-1.running.json"
 exec {held}>&-
 rm -f -- "$rdir"/*.json
+# A presenter that died between its ended record and removing its running
+# one: reap removes the running record and keeps the code.
+printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.running.json"
+printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"ended","code":2,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":"2026-09-29T07:00:01.000Z","window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.ended.json"
+plain_run "$subject" reap
+check "reap of a run that already ended exits 0 and names nothing" test "$plain_status:$(cat "$tmp/out")" == "0:"
+check "reap keeps the run's ended record and its code" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/core@doctor@8-1.ended.json")" == 2
+check "reap removes the ended run's running record" test ! -e "$rdir/core@doctor@8-1.running.json"
+rm -f -- "$rdir"/*.json
 printf '{}\n' >"$rdir/core@doctor@7-1.running.json"
 plain_run "$subject" reap
 check "reap exits 1 on a record it cannot end" test "$plain_status" == 1
@@ -634,5 +643,11 @@ flock "$held"
 plain_run "$control_bin" reap
 check "the reap-held mutant ends a live presenter's record" test -e "$rdir/acme.tui@hello@6-1.ended.json"
 exec {held}>&-
+rm -f -- "$rdir"/*.json
+control reap-ended vgsh-tui '    if [[ -e $record_dir/$stem@$run.ended.json ]]; then' '    if false; then'
+printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.running.json"
+printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"ended","code":2,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":"2026-09-29T07:00:01.000Z","window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.ended.json"
+plain_run "$control_bin" reap
+check "the reap-ended mutant replaces a run's code with null" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/core@doctor@8-1.ended.json")" == None
 rm -f -- "$rdir"/*.json
 rows_done test-vgsh-tui

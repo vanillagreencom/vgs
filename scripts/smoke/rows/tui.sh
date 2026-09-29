@@ -120,11 +120,13 @@ forget_record
 expect "running the declared script answers ok" ok tui run 'hello|a b|$(touch planted)'
 expect_poll "the terminal is handed the wide app-id, the snapshot and the arguments" \
   "$(hello_words "a b" '$(touch planted)')" recorded
+expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
 expect_poll "the core holds no launcher once the presenter wrote its record" '[]' lent tui.launching
 forget_record
 expect "running it with no argument list answers ok" ok tui run hello
 expect_poll "the terminal is handed the script alone" \
   "$(hello_words)" recorded
+expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
 
 # open: a listed TUI by key, with no arguments, over IPC and through the
 # capability.
@@ -132,10 +134,12 @@ forget_record
 expect "openTui opens the listed script" ok ipc shell openTui acme.tui/hello
 expect_poll "openTui hands the terminal the script and no argument" \
   "$(hello_words)" recorded
+expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
 forget_record
 expect "the capability opens a listed key" ok tui open acme.tui/hello
 expect_poll "the capability's open reaches the terminal" \
   "$(hello_words)" recorded
+expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
 
 # The core's own TUI: its command is the core's bin/vgsh beside the shell
 # directory, whatever the shell's PATH holds, with no plugin copy.
@@ -195,6 +199,7 @@ expect_poll "the probe that request started finds the terminal again" '"present"
 expect "a later request answers ok once the probe passed" ok tui run hello
 expect_poll "the later request reaches the terminal" \
   "$(hello_words)" recorded
+expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
 
 # Exit records: a gated run of the fixture's wait script, with a `done`.
 # The presenter writes the run's records; the core reads them into the
