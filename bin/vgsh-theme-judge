@@ -16,9 +16,9 @@
 //       and every package it names as the installed package it becomes,
 //       whose index mode and palette must be its own, with no curated file
 //       on a target under DIR/targets whose files run code, none no target
-//       writes, none apply would not take, and no symlink. One line per entry. Exit 0 when the index
-//       and every entry are accepted, 1 when any is refused, 2 when the
-//       index or a file cannot be read.
+//       writes, none apply would not take, and no symlink. One line per
+//       entry. Exit 0 when the index and every entry are accepted, 1 when
+//       any is refused, 2 when the index or a file cannot be read.
 //   vgsh-theme-judge list <text|json> <config-dir> <state-dir>
 //       every shipped package and every package under <config-dir>/themes,
 //       and the state of <config-dir>/theme.json, `modified` read against
@@ -311,10 +311,10 @@ function checkTargets(base, defaults) {
 
 // --- catalog
 
-// Every destination a target under BASE writes, mapped to its target's name,
-// `runsCode` and accepted `files` entry, and the number of targets acceptTarget refused, each
-// printed as `packages` prints it. An absent BASE holds no target. Any read
-// failure is unreadable.
+// Every destination a target under BASE writes, mapped to its target's
+// name, `runsCode` and accepted `files` entry, and the number of targets
+// acceptTarget refused, each printed as `packages` prints it. An absent
+// BASE holds no target. Any read failure is unreadable.
 function targetDestinations(base) {
     let names;
     try {
