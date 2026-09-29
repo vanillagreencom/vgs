@@ -234,6 +234,10 @@ expect_poll "the effective config has the probe motion switch on" '{"setCornerRa
 expect_poll "turning the motion switch on writes the VGS snappy curve" yes animation_curve vgsSnappy
 expect_poll "turning the motion switch on writes the windows preset" '{"bezier": "vgsSnappy", "enabled": true, "overridden": true, "speed": 1.8, "style": ""}' animation_leaf windows
 expect "the motion preset holds no configuration error" '[]' config_errors
+expect "vgs applies under the motion switch for the smooth preset" "ok theme=vgs" applied vgs
+expect_poll "the default smooth preset writes its curve" yes animation_curve vgsEaseOutQuint
+expect_poll "the default smooth preset writes the windows leaf" '{"bezier": "vgsEaseOutQuint", "enabled": true, "overridden": true, "speed": 3.79, "style": ""}' animation_leaf windows
+expect "the smooth preset holds no configuration error" '[]' config_errors
 set_theme_switches false false false
 expect "the shell reloads the probe motion switch off" ok ipc shell reloadConfig
 expect_poll "turning the motion switch off removes the windows animation line" no layer_matches '^hl\.animation\(\{ leaf = "windows"'

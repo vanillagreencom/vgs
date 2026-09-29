@@ -193,18 +193,58 @@ function verify(logic, layer, shellText) {
     assert.ok(lines(bare).includes("            rounding = 16,"), "the radius block scales group bar rounding");
     assert.throws(() => layer.render([], Object.assign({}, theme, { colours: Object.assign({}, colours, { accent: "#5a36" }) }), "vgs", 1), /colour accent must be #aarrggbb/, "a colour Theme never publishes is refused");
 
-    const switched = layer.render([section("vgs.themes", [], [], "1.0.0", {
+    const motionSection = section("vgs.themes", [], [], "1.0.0", {
         borders: { setting: "setWindowBorders", enabled: false },
         radius: { setting: "setCornerRadius", enabled: false },
         motion: { setting: "setWindowAnimations", enabled: true }
-    })], theme, "vgs", 1.5);
+    });
+    const switched = layer.render([motionSection], theme, "vgs", 1.5);
     const switchedLines = lines(switched);
     assert.ok(!switchedLines.some(line => line.indexOf("border_size = 4") !== -1), "a disabled border group writes no border size");
     assert.ok(!switchedLines.some(line => line.indexOf("rounding = 8") !== -1), "a disabled radius group writes no radius");
     assert.ok(switchedLines.includes("-- Theme appearance: borders left to the user's config; setWindowBorders is off."), "a disabled border group names its switch");
     assert.ok(!switchedLines.some(line => line.indexOf("hl.config({") !== -1 && switchedLines.indexOf(line) < switchedLines.indexOf("-- Theme appearance: window animations.")), "disabled border and radius groups write no config call");
-    assert.ok(switchedLines.includes("hl.curve(\"vgsSnappy\", { type = \"bezier\", points = { { 0.15, 0 }, { 0.1, 1 } } })"), "motion writes the preset curves");
-    assert.ok(switchedLines.includes("hl.animation({ leaf = \"windows\", enabled = true, speed = 3.6, bezier = \"vgsSnappy\" })"), "motion scales speeds by motion.scale");
+    const motionRows = [
+        {
+            name: "snappy",
+            scale: 2,
+            present: [
+                "hl.curve(\"vgsSnappy\", { type = \"bezier\", points = { { 0.15, 0 }, { 0.1, 1 } } })",
+                "hl.curve(\"vgsLinear\", { type = \"bezier\", points = { { 0, 0 }, { 1, 1 } } })",
+                "hl.animation({ leaf = \"windows\", enabled = true, speed = 3.6, bezier = \"vgsSnappy\" })"
+            ],
+            absent: []
+        },
+        {
+            name: "smooth",
+            scale: 1,
+            present: [
+                "hl.curve(\"vgsEaseOutQuint\", { type = \"bezier\", points = { { 0.23, 1 }, { 0.32, 1 } } })",
+                "hl.curve(\"vgsAlmostLinear\", { type = \"bezier\", points = { { 0.5, 0.5 }, { 0.75, 1 } } })",
+                "hl.curve(\"vgsQuick\", { type = \"bezier\", points = { { 0.15, 0 }, { 0.1, 1 } } })",
+                "hl.curve(\"vgsLinear\", { type = \"bezier\", points = { { 0, 0 }, { 1, 1 } } })",
+                "hl.animation({ leaf = \"windows\", enabled = true, speed = 3.79, bezier = \"vgsEaseOutQuint\" })",
+                "hl.animation({ leaf = \"windowsIn\", enabled = true, speed = 4.1, bezier = \"vgsEaseOutQuint\", style = \"popin 87%\" })"
+            ],
+            absent: []
+        },
+        {
+            name: "none",
+            scale: 1,
+            present: ["hl.config({ animations = { enabled = false } })"],
+            absent: ["hl.animation({ "]
+        }
+    ];
+    for (const row of motionRows) {
+        const motionTheme = JSON.parse(JSON.stringify(theme));
+        motionTheme.hyprland.motion.preset = row.name;
+        motionTheme.motionScale = row.scale;
+        const motionLines = lines(layer.render([motionSection], motionTheme, "vgs", 1));
+        for (const want of row.present)
+            assert.ok(motionLines.includes(want), `motion preset ${row.name} writes ${want}`);
+        for (const forbidden of row.absent)
+            assert.ok(!motionLines.some(line => line.indexOf(forbidden) !== -1), `motion preset ${row.name} omits ${forbidden}`);
+    }
     const switchOn = layer.render([section("vgs.themes", [], [], "1.0.0", { borders: { setting: "setWindowBorders", enabled: true }, radius: { setting: "setCornerRadius", enabled: false }, motion: { setting: "setWindowAnimations", enabled: false } })], theme, "vgs", 1);
     const switchOff = layer.render([section("vgs.themes", [], [], "1.0.0", { borders: { setting: "setWindowBorders", enabled: false }, radius: { setting: "setCornerRadius", enabled: false }, motion: { setting: "setWindowAnimations", enabled: false } })], theme, "vgs", 1);
     assert.notStrictEqual(switchOn.text, switchOff.text, "a switch change changes the rendered layer text");
@@ -378,6 +418,7 @@ const CONTROLS = [
     [layerFile, "groupbar radius scaled", "var groupbar = boundedWhole(radius * scale, 0, 20);", "var groupbar = radius;"],
     [layerFile, "motion scale zero disables", "if (scale === 0 || preset === \"none\")", "if (preset === \"none\")"],
     [layerFile, "motion speed scales", "var speed = Math.max(0.01, animation.speed * scale);", "var speed = Math.max(0.01, animation.speed);"],
+    [layerFile, "smooth motion preset", "    smooth: {\n        curves: {", "    silky: {\n        curves: {"],
     [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
     [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
     [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "lines = lines.concat([\"\"], appWindowLines());"],
