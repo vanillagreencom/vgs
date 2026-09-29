@@ -154,7 +154,10 @@
 # install of that name as reason=installed and anything else there as
 # reason=exists. update of a catalog install asks nothing: it replaces the
 # definition when the catalog's package changed, keeps the package's other
-# files, and follows as a git update does. `theme outdated` reports a
+# files, and follows as a git update does. The installed package waits in
+# a backup beside themes/ while update swaps it, and add, install, update
+# and remove first finish or undo a swap an interruption left, each with a
+# `vgsh: recovered: theme=<name> ...` line on stderr. `theme outdated` reports a
 # catalog install behind 1 when the catalog's package changed.
 # `theme catalog` prints each index entry with `installed`,
 # `definitionUpdate`, `imageryInstalled` and `imageryUpdate`, `--json` as
@@ -724,6 +727,14 @@ theme_lock_hold() { # KEY [-s]
   esac
 }
 
+# Hold the theme lock as theme_lock_hold does, then finish or undo each
+# catalog update an interruption left, so add, install, update and remove
+# start from whole packages: docs/architecture/theme-catalog.md § Install.
+theme_lock_change() { # KEY
+  theme_lock_hold "$1"
+  node "$theme_judge" recover "$config_home/vgs" || exit $?
+}
+
 # Take the theme lock on descriptor 9 for a judge that execs from here and
 # set `verdict` to held, busy or failed; the judge refuses on the last two.
 # The judge runs under this process's descriptor 9, so it holds the lock
@@ -755,7 +766,9 @@ accept_theme() { # DIR [NAME]
 
 # A staging directory beside the themes directory, never inside it, so no
 # list sees a half-made package and the final move is a rename on one
-# filesystem; removed when this process exits. Sets `stage`.
+# filesystem; removed when this process exits. It holds only what is not
+# installed yet: an update's old package waits outside it, beside themes/.
+# Sets `stage`.
 theme_stage() { # KIND
   stage="$(mktemp -d "$config_home/vgs/.vgsh-theme-$1.XXXXXX")" || refuse 1 "staging=$config_home/vgs"
   trap 'rm -rf -- "${stage:?}"' EXIT
@@ -769,7 +782,7 @@ theme_add() { # URL
   accept_theme "$stage/package" || refuse 1 "package=$url $verdict"
   name="$verdict"
   target="$user_themes/$name"
-  theme_lock_hold "theme=$name"
+  theme_lock_change "theme=$name"
   [[ -e $target || -L $target ]] && refuse 1 "theme=$name reason=exists path=$target"
   mv -T -- "$stage/package" "$target" || refuse 1 "theme=$name reason=move path=$target"
   line="ok added=$name path=$target"
@@ -779,8 +792,8 @@ theme_add() { # URL
 
 theme_update() { # NAME
   local name="$1" dir origin line
+  theme_lock_change "theme=$name"
   dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
-  theme_lock_hold "theme=$name"
   origin="$(node "$theme_judge" origin "$config_home/vgs" "$name")" || exit $?
   case "$origin" in
     catalog)
@@ -788,7 +801,7 @@ theme_update() { # NAME
       line="$(node "$theme_judge" catalog-update "$config_home/vgs" "$stage" "$name")" || exit $?
       echo "$line"
       [[ $line == "ok up-to-date=$name" ]] && return 0
-      # exec runs no EXIT trap, and the stage holds the old package.
+      # exec runs no EXIT trap.
       rm -rf -- "${stage:?}" || refuse 1 "staging=$stage reason=remove"
       trap - EXIT
       ;;
@@ -817,14 +830,14 @@ theme_update() { # NAME
 theme_install() { # NAME
   mkdir -p -- "$user_themes"
   theme_stage install
-  theme_lock_hold "theme=$1"
+  theme_lock_change "theme=$1"
   node "$theme_judge" install "$config_home/vgs" "$stage" "$1"
 }
 
 theme_remove() { # NAME
   local name="$1" dir
+  theme_lock_change "theme=$name"
   dir="$(node "$theme_judge" installed "$config_home/vgs" "$name")" || exit $?
-  theme_lock_hold "theme=$name"
   rm -rf -- "${dir:?}" || refuse 1 "theme=$name reason=remove path=$dir"
   echo "ok removed=$name"
 }

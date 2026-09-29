@@ -85,16 +85,24 @@
 //       path=<dir>[ shadows=<shipped dir>]`.
 //   vgsh-theme-judge catalog-update <config-dir> <stage> <name>
 //       under the theme lock the caller holds, replace catalog install
-//       NAME's definition with the catalog's when it changed; prints `ok
+//       NAME's definition with the catalog's when it changed, the installed
+//       package in its backup, never in <stage>, while it swaps; prints `ok
 //       up-to-date=<name>` or `ok updated=<name> from=<digest>
 //       to=<digest>`, the line `vgsh theme update` reads to follow.
+//   vgsh-theme-judge recover <config-dir>
+//       under the theme lock the caller holds, finish or undo each catalog
+//       update an interruption left: its backup <config-dir>/.vgsh-theme-
+//       backup-<name> is renamed back when themes/<name> is absent, and
+//       otherwise hands themes/<name> the entries it keeps and is removed;
+//       prints `vgsh: recovered: theme=<name> state=restored|completed
+//       path=<dir>` on stderr for each.
 //   vgsh-theme-judge catalog-probe <config-dir> <name>
 //       print `<installed digest> <catalog digest> <behind>` for catalog
 //       install NAME: its `vgsh theme outdated` row.
 //
 // list, apply, follow, reload, background, installed, checkouts, origin,
-// catalog, install, catalog-update and catalog-probe refuse with one line
-// on stderr, `vgsh: refused: <key>=...`, through
+// catalog, install, catalog-update, catalog-probe and recover refuse with
+// one line on stderr, `vgsh: refused: <key>=...`, through
 // bin/lib/judge-files.js: exit 1, or 75 for `reason=busy`. Under `json`,
 // apply prints its structured result on stdout first, refusals included,
 // and so do follow, reload and background. A partial apply, follow or
@@ -2038,12 +2046,49 @@ function catalogInstall(configDir, name) {
 // keeps.
 const DEFINITION = ["theme.json", "terminal.json", TARGETS, catalog.MARKER_FILE];
 
+// A catalog update moves the installed package to <config-dir>/BACKUP_PREFIX
+// <name>, beside themes/ and outside the stage its caller removes, for as
+// long as the swap runs. The backup's presence is the journal `recover`
+// reads, so no interruption loses the package or an entry it keeps.
+const BACKUP_PREFIX = ".vgsh-theme-backup-";
+
+// Move every entry of FROM that is no part of a definition into TO. An
+// entry TO already holds is refused `recover-conflict`, the backup kept.
+function moveKept(from, to, key) {
+    let kept;
+    try {
+        kept = fs.readdirSync(from).filter(entry => !DEFINITION.includes(entry)).sort();
+    } catch (e) {
+        refuse(key + "=unreadable path=" + from + " error=" + e.code, "unreadable");
+    }
+    for (const entry of kept) {
+        const target = path.join(to, entry);
+        if (fs.lstatSync(target, { throwIfNoEntry: false }) !== undefined) refuse(key + "=recover-conflict path=" + target, "recover-conflict");
+        try {
+            fs.renameSync(path.join(from, entry), target);
+        } catch (e) {
+            refuse(key + "=move path=" + target + " error=" + e.code, "move");
+        }
+    }
+}
+
+// Remove BACKUP once every entry it kept has moved out of it; what is left
+// is the definition the update replaced.
+function dropBackup(backup, key) {
+    try {
+        fs.rmSync(backup, { recursive: true });
+    } catch (e) {
+        refuse(key + "=remove path=" + backup + " error=" + e.code, "remove");
+    }
+}
+
 // `vgsh theme update NAME` for a catalog install, under the theme lock its
-// caller holds: when the catalog's package is not the one installed, stage
-// it with the installed marker's imagery in STAGE, judge it, and swap it in
-// for the installed definition, keeping every other entry. The old package
-// moves into STAGE, which the caller removes. Prints `ok up-to-date=NAME`,
-// or `ok updated=NAME from=<digest> to=<digest>` with 12-digit digests.
+// caller holds, after `recover`: when the catalog's package is not the one
+// installed, stage it with the installed marker's imagery in STAGE and
+// judge it. Then rename the installed package to its backup, the staged one
+// into place, and every entry the backup keeps into it, and remove the
+// backup. Prints `ok up-to-date=NAME`, or `ok updated=NAME from=<digest>
+// to=<digest>` with 12-digit digests.
 function catalogUpdate(configDir, stage, name) {
     const { dir, key, marker, source, digest } = catalogInstall(configDir, name);
     if (digest === marker.digest) {
@@ -2051,34 +2096,69 @@ function catalogUpdate(configDir, stage, name) {
         return;
     }
     const pkg = path.join(stage, "package");
-    const old = path.join(stage, "old");
     stageCatalog(source, pkg, marker.imagery, key);
     judgeStaged(pkg, name);
-    let kept;
+    const backup = path.join(configDir, BACKUP_PREFIX + name);
     try {
-        kept = fs.readdirSync(dir).filter(entry => !DEFINITION.includes(entry)).sort();
-    } catch (e) {
-        refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
-    }
-    try {
-        fs.renameSync(dir, old);
+        fs.renameSync(dir, backup);
     } catch (e) {
         refuse(key + "=move path=" + dir + " error=" + e.code, "move");
     }
-    const moved = [];
     try {
-        for (const entry of kept) {
-            fs.renameSync(path.join(old, entry), path.join(pkg, entry));
-            moved.push(entry);
-        }
         fs.renameSync(pkg, dir);
     } catch (e) {
-        // The installed package goes back as it was before the refusal.
-        for (const entry of moved) fs.renameSync(path.join(pkg, entry), path.join(old, entry));
-        fs.renameSync(old, dir);
+        // A failed restore throws, and the backup stays for `recover`.
+        fs.renameSync(backup, dir);
         refuse(key + "=move path=" + dir + " error=" + e.code, "move");
     }
+    moveKept(backup, dir, key);
+    dropBackup(backup, key);
     console.log("ok updated=" + name + " from=" + marker.digest.slice(0, 12) + " to=" + digest.slice(0, 12));
+}
+
+// Finish or undo each catalog update an interruption left, under the theme
+// lock the caller holds, before add, install, update or remove change
+// anything. A backup with no installed directory of its name is renamed
+// back: the update never landed. A backup beside one hands it every entry
+// it still keeps and is removed: the new definition landed. Each prints
+// `vgsh: recovered: theme=<name> state=restored|completed path=<dir>` on
+// stderr. A backup entry that is no directory of a package name, or an
+// installed path that is no directory, is refused `recover`.
+function recover(configDir) {
+    let entries;
+    try {
+        entries = fs.readdirSync(configDir).filter(entry => entry.startsWith(BACKUP_PREFIX)).sort();
+    } catch (e) {
+        if (e.code === "ENOENT") return;
+        refuse("recover=unreadable path=" + configDir + " error=" + e.code, "unreadable");
+    }
+    for (const entry of entries) {
+        const backup = path.join(configDir, entry);
+        const name = entry.slice(BACKUP_PREFIX.length);
+        if (!logic.isPackageName(name) || !realDirectory(backup, "recover=" + backup + " reason")) refuse("recover=" + backup + " reason=recover", "recover");
+        const { dir, key } = installedPath(configDir, name);
+        let there;
+        try {
+            there = fs.lstatSync(dir, { throwIfNoEntry: false });
+        } catch (e) {
+            refuse(key + "=unreadable path=" + dir + " error=" + e.code, "unreadable");
+        }
+        let state;
+        if (there === undefined) {
+            try {
+                fs.renameSync(backup, dir);
+            } catch (e) {
+                refuse(key + "=move path=" + dir + " error=" + e.code, "move");
+            }
+            state = "restored";
+        } else {
+            if (!there.isDirectory()) refuse(key + "=recover path=" + dir, "recover");
+            moveKept(backup, dir, key);
+            dropBackup(backup, key);
+            state = "completed";
+        }
+        process.stderr.write("vgsh: recovered: theme=" + name + " state=" + state + " path=" + dir + "\n");
+    }
 }
 
 // The outdated probe of catalog install NAME: `<installed digest>
@@ -2172,6 +2252,10 @@ main(() => {
     case "catalog-probe":
         if (args.length !== 2) usage("arguments=" + command);
         catalogProbe(...args);
+        break;
+    case "recover":
+        if (args.length !== 1) usage("arguments=" + command);
+        recover(args[0]);
         break;
     case "origin":
         if (args.length !== 2) usage("arguments=" + command);

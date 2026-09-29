@@ -131,6 +131,74 @@ check "a refused update keeps the marker" cmp -s "$tmp/marker.json" "$marker"
 check "a refused update leaves no staging directory" unstaged
 theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366fd" } }')" "$(slots_json '#202020')"
 
+# Interruption. The preload ends the judge at once, as a signal would,
+# right after the rename whose source is INTERRUPT_FROM or whose target is
+# INTERRUPT_TO; bash's EXIT trap then removes the stage. The installed
+# package waits in its backup beside themes/, and the next changing verb
+# restores it, or completes the swap, byte for byte.
+backup="$cfg/vgs/.vgsh-theme-backup-moor"
+cat >"$tmp/interrupt.js" <<'JS'
+const fs = require("fs");
+const rename = fs.renameSync;
+fs.renameSync = (from, to) => {
+    rename(from, to);
+    if (from === process.env.INTERRUPT_FROM || to === process.env.INTERRUPT_TO) process.exit(137);
+};
+JS
+printf 'notes\n' >"$themes/moor/notes.txt"
+cp -a -- "$themes/moor" "$tmp/moor-before-1"
+# update with the preload ending it after the rename VAR names.
+interrupted() { # NAME VAR
+  inst_env=(NODE_OPTIONS="--require $tmp/interrupt.js" "$2=$themes/moor")
+  tinst "$1" "$cfg" "$rt_empty" 137 "" "" theme update moor
+  inst_env=()
+}
+interrupted "an update ended once the package moved to its backup exits 137" INTERRUPT_FROM
+check "the ended update left the whole package in its backup" diff -r "$tmp/moor-before-1" "$backup"
+check "the ended update left no installed directory" test ! -e "$themes/moor"
+check "the ended update's stage is gone" unstaged
+tinst "the next install restores the package before it refuses" "$cfg" "$rt_empty" 1 "" "vgsh: recovered: theme=moor state=restored path=$themes/moor" theme install moor
+check "the restored package is the old one byte for byte" diff -r "$tmp/moor-before-1" "$themes/moor"
+check "the restore removes the backup" test ! -e "$backup"
+interrupted "an update ended once the new definition landed exits 137" INTERRUPT_TO
+check "the landed definition is the catalog's" cmp -s "$shelf/moor/theme.json" "$themes/moor/theme.json"
+check "the kept entries wait in the backup" test -f "$backup/backgrounds/a.png" -a -f "$backup/notes.txt"
+tinst "the next install completes the swap before it refuses" "$cfg" "$rt_empty" 1 "" "vgsh: recovered: theme=moor state=completed path=$themes/moor" theme install moor
+check "the completed swap keeps the backgrounds byte for byte" diff -r "$tmp/moor-before-1/backgrounds" "$themes/moor/backgrounds"
+check "the completed swap keeps the user's file byte for byte" cmp -s "$tmp/moor-before-1/notes.txt" "$themes/moor/notes.txt"
+check "the completed swap keeps the new definition" cmp -s "$shelf/moor/theme.json" "$themes/moor/theme.json"
+check "the completion removes the backup" test ! -e "$backup"
+tinst "the completed install is current" "$cfg" "$rt_empty" 0 "ok up-to-date=moor" "" theme update moor
+theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366f9" } }')" "$(slots_json '#202020')"
+interrupted "an update ended before an update exits 137" INTERRUPT_FROM
+tinst "update restores the package before it updates" "$cfg" "$rt_empty" 0 "$any_out" "vgsh: recovered: theme=moor state=restored path=$themes/moor" theme update moor
+check "the update after a restore keeps the backgrounds" diff -r "$tmp/moor-before-1/backgrounds" "$themes/moor/backgrounds"
+check "the update after a restore lands the catalog's definition" cmp -s "$shelf/moor/theme.json" "$themes/moor/theme.json"
+theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366f8" } }')" "$(slots_json '#202020')"
+interrupted "an update ended before a remove exits 137" INTERRUPT_FROM
+tinst "remove restores the package, then deletes it" "$cfg" "$rt_empty" 0 "ok removed=moor" "vgsh: recovered: theme=moor state=restored path=$themes/moor" theme remove moor
+check "remove leaves neither the package nor its backup" test ! -e "$themes/moor" -a ! -e "$backup"
+
+# The interruption controls: a copy of vgsh whose changing verbs skip the
+# recovery installs a fresh package over the one in the backup, and a judge
+# copy whose update keeps the backup in the stage loses the package.
+tinst "moor installs for the interruption controls" "$cfg" "$rt_empty" 0 "$any_out" "" theme install moor
+mkdir -p "$themes/moor/backgrounds"; printf 'image\n' >"$themes/moor/backgrounds/a.png"
+theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366f7" } }')" "$(slots_json '#202020')"
+interrupted "an update ended for the unrecovered control exits 137" INTERRUPT_FROM
+tree_control unrecovered bin/vgsh '  node "$theme_judge" recover "$config_home/vgs" || exit $?' ''
+tinst "the unrecovered mutant installs over the package in the backup" "$cfg" "$rt_empty" 0 "ok installed=moor path=$themes/moor" "" theme install moor
+check "the unrecovered mutant's install has no backgrounds" test ! -e "$themes/moor/backgrounds"
+unset THEME_BIN
+tinst "remove clears the unrecovered mutant's install" "$cfg" "$rt_empty" 0 "ok removed=moor" "vgsh: recovered: theme=moor state=completed path=$themes/moor" theme remove moor
+tinst "moor installs for the staged-backup control" "$cfg" "$rt_empty" 0 "$any_out" "" theme install moor
+theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366f6" } }')" "$(slots_json '#202020')"
+judge_control staged-backup 'const backup = path.join(configDir, BACKUP_PREFIX + name);' 'const backup = path.join(stage, "backup");'
+interrupted "the staged-backup mutant is ended mid-update" INTERRUPT_FROM
+check "the staged-backup mutant loses the package" test ! -e "$themes/moor" -a ! -e "$backup"
+unset THEME_BIN
+tinst "moor installs again after the interruption controls" "$cfg" "$rt_empty" 0 "$any_out" "" theme install moor
+
 # A marker that is no marker refuses the list and the update; remove still
 # deletes the package.
 mkdir -p "$themes/fen"; doc fen >"$themes/fen/theme.json"; printf '{}\n' >"$themes/fen/.vgs-catalog.json"
@@ -145,7 +213,7 @@ flock 7
 tinst "install while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=bad reason=busy" theme install bad
 check "a busy install leaves no staging directory" unstaged
 tinst "update of a catalog install while the lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=moor reason=busy" theme update moor
-tree_control lockless bin/vgsh '  theme_lock_hold "theme=$1"' ''
+tree_control lockless bin/vgsh '  theme_lock_change "theme=$1"' ''
 tinst "the lockless mutant installs under the held lock" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme=bad reason=terminal-slot token=terminal missing=color1' theme install bad
 unset THEME_BIN
 exec 7>&-
@@ -173,7 +241,7 @@ unset THEME_BIN
 tinst "moor installs for the update controls" "$cfg" "$rt_empty" 0 "$any_out" "" theme install moor
 mkdir -p "$themes/moor/backgrounds"; printf 'image\n' >"$themes/moor/backgrounds/a.png"
 theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366fc" } }')" "$(slots_json '#202020')"
-judge_control unkept 'kept = fs.readdirSync(dir).filter(entry => !DEFINITION.includes(entry)).sort();' 'kept = [];'
+judge_control unkept 'kept = fs.readdirSync(from).filter(entry => !DEFINITION.includes(entry)).sort();' 'kept = [];'
 tinst "the unkept mutant updates moor" "$cfg" "$rt_empty" 0 "$any_out" "" theme update moor
 check "the unkept mutant loses the backgrounds" test ! -e "$themes/moor/backgrounds/a.png"
 unset THEME_BIN
