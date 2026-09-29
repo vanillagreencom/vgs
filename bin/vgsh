@@ -53,7 +53,7 @@
 #                                  while a grant is active it revokes that grant instead
 #   vgsh sudo revoke               end the active grant now
 #   vgsh sudo install              install the grant's root half and its boot cleanup, once; sudo asks for the password
-#   vgsh sudo uninstall            revoke, then remove the root half and its boot cleanup
+#   vgsh sudo uninstall            remove every grant, then the root half and its boot cleanup
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind

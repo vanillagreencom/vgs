@@ -6,7 +6,7 @@
 #                                     absent; while a grant is active it revokes that grant instead
 #   vgsh-sudo-grant revoke            end the active grant now
 #   vgsh-sudo-grant install           install the root half and its boot cleanup, once; sudo asks
-#   vgsh-sudo-grant uninstall         revoke, then remove the root half and its boot cleanup; sudo asks
+#   vgsh-sudo-grant uninstall         remove every grant, then the root half and its boot cleanup; sudo asks
 #
 # Run as the user, from the checkout through `vgsh sudo`, the file is the
 # user half and takes those five verbs. `install` prints what it places,
@@ -14,8 +14,9 @@
 # /etc/tmpfiles.d/vgs-sudo-grant.conf, whose `r!` line removes every grant
 # at boot, and then this file to /usr/local/bin/vgs-sudo-grant, both
 # root:root, so the root half is never in place without its boot cleanup.
-# `uninstall` revokes the user's grant, then removes the two in the
-# opposite order.
+# `uninstall` revokes the user's grant, runs the boot cleanup's own line now
+# through `systemd-tmpfiles --remove --boot`, so no account's grant outlives
+# the file that ends it at boot, then removes the two in the opposite order.
 #
 # Run as root, the file is the root half: the installed copy, which the user
 # half reaches only through `sudo -N` after `sudo -k`, so every root action
@@ -443,8 +444,12 @@ user_uninstall() {
     reply="$(sudo -- "$installed" __disable "$uid" </dev/null)" || reply_status=$?
     [[ $reply_status == 0 || $reply_status == "$status_inactive" ]] ||
       refuse 1 "revoke=failed exit=$reply_status" "the root half stays until the grant is revoked"
-    sudo rm -f -- "$installed" </dev/null || refuse 1 "uninstall=root-half path=$installed"
   fi
+  if [[ -e $boot_file || -L $boot_file ]]; then
+    sudo systemd-tmpfiles --remove --boot -- "$boot_file" </dev/null ||
+      refuse 1 "uninstall=grants path=$boot_file" "the root half and the boot cleanup stay until every grant is removed"
+  fi
+  sudo rm -f -- "$installed" </dev/null || refuse 1 "uninstall=root-half path=$installed"
   sudo rm -f -- "$boot_file" </dev/null || refuse 1 "uninstall=boot-cleanup path=$boot_file"
   printf 'ok sudo-grant=uninstalled\n'
 }

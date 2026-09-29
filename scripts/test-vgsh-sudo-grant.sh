@@ -105,6 +105,18 @@ cat >"$bin/getent" <<EOF
 name=vgsuser; [ -f "$tmp/account" ] && read -r name <"$tmp/account"
 echo "\$name:x:$uid:$gid::/home/\$name:/bin/sh"
 EOF
+# systemd-tmpfiles --remove --boot -- FILE runs FILE's `r!` lines inside the
+# tree, unless $tmp/tmpfiles-exit holds a status.
+cat >"$bin/systemd-tmpfiles" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/tmpfiles.log"
+[ -f "$tmp/tmpfiles-exit" ] && { read -r st <"$tmp/tmpfiles-exit"; exit "\$st"; }
+[ "\$1 \$2 \$3" = "--remove --boot --" ] || exit 64
+awk '!/^[[:space:]]*(#|\$)/' "\$4" | while read -r type path; do
+  [ "\$type" = 'r!' ] || exit 65
+  for f in $root\$path; do rm -f -- "\$f"; done
+done
+EOF
 # gum confirm records its arguments and answers with $tmp/gum-answer.
 cat >"$bin/gum" <<EOF
 #!/bin/sh
@@ -113,7 +125,7 @@ printf '%s\n' "\$@" >"$tmp/gum.log"
 read -r st <"$tmp/gum-answer"
 exit "\$st"
 EOF
-chmod +x "$bin"/stat "$bin"/date "$bin"/sudo "$bin"/visudo "$bin"/systemd-run "$bin"/systemctl "$bin"/getent "$bin"/gum
+chmod +x "$bin"/stat "$bin"/date "$bin"/sudo "$bin"/visudo "$bin"/systemd-run "$bin"/systemctl "$bin"/getent "$bin"/gum "$bin"/systemd-tmpfiles
 
 # SOURCE's `prefix=` line, which must occur once, names the tree.
 place() { # SOURCE
@@ -127,7 +139,7 @@ fresh() {
   rm -rf -- "${root:?}/etc" "${root:?}/run" "${root:?}/usr/local"
   mkdir -p "$root/etc/sudoers.d" "$root/etc/tmpfiles.d" "$root/run" "$root/usr/local/bin"
   chmod 0755 "$root/etc" "$root/etc/tmpfiles.d" "$root/run"; chmod 0750 "$root/etc/sudoers.d"
-  rm -f -- "$tmp"/{sudo.log,systemd-run.log,systemctl.log,gum.log,checked-rule,visudo-env,timer-active,foreign,date-junk,sudo-old,sudo-exit,sudo-ignores,visudo-exit,arm-exit,account}
+  rm -f -- "$tmp"/{sudo.log,systemd-run.log,systemctl.log,gum.log,tmpfiles.log,checked-rule,visudo-env,timer-active,foreign,date-junk,sudo-old,sudo-exit,sudo-ignores,visudo-exit,arm-exit,tmpfiles-exit,account}
   printf '0\n' >"$tmp/gum-answer"
 }
 # fresh, then the placed helper installed as the root half with its boot cleanup.
@@ -380,13 +392,22 @@ unprivileged() {
 }
 check "the root half refuses a bash started without -p" unprivileged
 
-# uninstall revokes the user's grant, then removes the root half and the boot cleanup.
+# uninstall revokes the user's grant, removes every account's grant through
+# the boot cleanup's own line, then removes the root half and the boot cleanup.
+other="$root/etc/sudoers.d/99-vgs-nopasswd-4242"
 installed
 run_tty "a grant before uninstall" 0 grant
+printf 'other ALL=(ALL) NOTAFTER=29990101000000Z NOPASSWD: ALL\n' >"$other"
 run "uninstall succeeds" 0 "" uninstall
 check "uninstall reports it" test "$(tail -n 1 "$tmp/out")" == "ok sudo-grant=uninstalled"
-check "uninstall revokes the grant" no_rule
+check "uninstall revokes the grant" test ! -e "$rule"
+check "uninstall runs the boot cleanup's line now" test "$(cat "$tmp/tmpfiles.log")" == "--remove --boot -- $boot"
+check "uninstall removes another account's grant" test ! -e "$other"
 check "uninstall removes the root half and the boot cleanup" test ! -e "$installed" -a ! -e "$boot"
+installed
+printf 'other ALL=(ALL) NOTAFTER=29990101000000Z NOPASSWD: ALL\n' >"$other"; printf '1\n' >"$tmp/tmpfiles-exit"
+run "uninstall stops when the grants cannot be removed" 1 "vgs-sudo-grant: refused: uninstall=grants path=$boot" uninstall
+check "a stopped uninstall keeps the root half and the boot cleanup" test -e "$installed" -a -e "$boot"
 
 # Must-fail controls, each on a copy of the helper missing one rule, placed
 # and installed as its own root half.
@@ -456,5 +477,9 @@ run "the no-update-blind mutant reaches the root half" 0 "" status
 control warm-sudo '  sudo -k || refuse 1 "sudo=reset-failed"' '  true'
 run "the warm-sudo mutant's status" 0 "" status
 check "the warm-sudo mutant keeps the cached credential" test "$(sed -n 2p "$tmp/sudo.log")" == "-N -- $installed __status $uid"
+control grants-kept '    sudo systemd-tmpfiles --remove --boot -- "$boot_file" </dev/null ||' '    true ||'
+printf 'other ALL=(ALL) NOTAFTER=29990101000000Z NOPASSWD: ALL\n' >"$other"
+run "the grants-kept mutant uninstalls" 0 "" uninstall
+check "the grants-kept mutant leaves another account's grant without its boot cleanup" test -e "$other" -a ! -e "$boot"
 
 rows_done "$suite"
