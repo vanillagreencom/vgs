@@ -15,10 +15,38 @@ A floating TUI is a themed terminal window that floats over the session and runs
 
 - `launch` execs `setsid xdg-terminal-exec --app-id=<app-id> --title="VGS · <title>" -- vgsh-tui present ...`. xdg-terminal-exec picks the user's default terminal and maps `--app-id` onto that terminal's own flag through the `X-TerminalArgAppId` key of its desktop entry. VGS does not choose or configure the terminal.
 - The app-id names a size class. `launch` reads it from `HyprlandLayer.TUI_WINDOWS` in `shell/Core/HyprlandLayer.js`, the table the Hyprland layer writes one window rule per class from; [hyprland.md § The file](hyprland.md#the-file) lists each class's app-id, rule and size. A caller picks a class, never a geometry.
-- A terminal whose desktop entry has no `X-TerminalArgAppId` key opens the window without the app-id, so no rule for the class can match it.
+- A terminal whose desktop entry has no `X-TerminalArgAppId` key opens the window without the app-id, so no rule for the class can match it and the window tiles.
 - A floating TUI needs `xdg-terminal-exec` on the path, `gum` for the library's dialogs, and `setsid` and `script` from util-linux. Without `xdg-terminal-exec`, `launch` exits 69 with `terminal=missing`.
 - On the owner's machine, read with `xdg-terminal-exec --print-id` on 2026-09-28, the default terminal is Ghostty 1.3.1 through `com.mitchellh.ghostty.desktop`. Its entry maps `--app-id` to `--class=`, and its `Exec` line forces `--gtk-single-instance=true`.
 - Everything `present` needs reaches it in its argv. A single-instance terminal can open the window from a process that was already running, so the launcher's environment is not guaranteed to reach the command.
+
+### Terminals
+
+Whether a terminal honours the app-id depends on its desktop entry alone. The installed rows were read on the owner's machine on 2026-09-28 with `grep X-TerminalArg /usr/share/applications/*.desktop` and `xdg-terminal-exec --print-cmd --app-id=org.vgs.tui --title=T -- sleep 1` under a temporary `xdg-terminals.list` naming each entry, with xdg-terminal-exec 0.14.3.
+
+| Terminal | Entry | `X-TerminalArgAppId` | Floats | Source |
+|---|---|---|---|---|
+| Ghostty 1.3.1 | `com.mitchellh.ghostty.desktop` | `--class=` | yes, read back below | installed entry; resolved command `ghostty --gtk-single-instance=true --class=org.vgs.tui --title=T -e sleep 1` |
+| kitty 0.49.1 | `kitty.desktop` | `--class` | not run; the app-id reaches it | installed entry; resolved command `kitty --class org.vgs.tui --title T -- sleep 1` |
+| Alacritty 0.17.0 | `Alacritty.desktop` | none | no: no app-id reaches it | installed entry; resolved command `alacritty -e sleep 1`, with no app-id and no title. Omarchy ships its own entry with `--class=` (`default/alacritty/Alacritty.desktop`, basecamp/omarchy `e332dc97`). |
+| foot | `foot.desktop` | not read | not measured | not installed here. Omarchy ships its own entry with `--app-id=` (`applications/foot.desktop`, basecamp/omarchy `e332dc97`); the upstream entry was not read. |
+| wezterm | not read | none as of 2025-08-04 | no: no app-id reaches it | not installed here; [wezterm issue 7129](https://github.com/wezterm/wezterm/issues/7129), open on that date, asks for the key. |
+
+A user whose terminal lacks the key can add an entry of their own under `~/.local/share/applications/` with the key, as Omarchy does, or choose another default in `~/.config/xdg-terminals.list`.
+
+### Ghostty in the nested sandbox
+
+On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/harness.sh`, wrote `com.mitchellh.ghostty.desktop` into the sandbox's own `xdg-terminals.list`, ran `bin/vgsh-tui launch --title "probe <size>" --size <size> -- sleep 60` for each size class, and read `hyprctl -j clients` back from the nested Hyprland v0.56.2 with Ghostty 1.3.1:
+
+| Size | Class | Floating | Size | Centred on the work area |
+|---|---|---|---|---|
+| `default` | `org.vgs.tui` | true | 875 × 600 | yes |
+| `wide` | `org.vgs.tui.wide` | true | 1200 × 720 | yes |
+| `tall` | `org.vgs.tui.tall` | true | 875 × 900 | yes |
+
+- A `default` launch while a Ghostty started as `ghostty --gtk-single-instance=true --class=org.example.other` was open gave the same reading, in a process of its own; the other window stayed as it was.
+- `hyprctl -j configerrors` held no error before and after.
+- No smoke row runs Ghostty. The nested smoke reports one verdict for all its rows, so a machine without Ghostty would turn every run into not-measured, and the smoke would depend on a terminal the sandbox does not own. The window rules are proven by `scripts/smoke/rows/hyprland.sh` with its own toplevel client; this run is the evidence for Ghostty.
 
 ## The presentation
 
