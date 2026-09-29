@@ -14,10 +14,12 @@ import "ImageTextLogic.js" as Logic
 // Text with no image draws as a plain Text with Qt's own right elision.
 // Text with images elides itself: Qt's multi-line elision draws an image
 // from an earlier line over the elided line's text
-// (docs/architecture/runtime-qml.md). The cut keeps the longest run of
+// (docs/architecture/runtime-qml-text.md). The cut keeps the longest run of
 // whole words and whole images that fits `maximumLineCount` lines with one
 // ellipsis after it, measured on a hidden copy of the text, so an image is
-// never split.
+// never split. That text wraps at word boundaries, and breaks a word only
+// when the word alone is wider than a line, so it stays inside its width,
+// as the plain text's does; an image, narrower than a line, never breaks.
 //
 // Every image loads through ImagePool, which puts an asynchronous load in
 // Qt's pixmap cache before the text names the image, so no image decodes
@@ -29,7 +31,6 @@ Item {
     property font font: Qt.font({ family: Theme.text.body.family, pixelSize: Theme.text.body.size, weight: Theme.text.body.weight })
     property color color: Theme.text.body.color
     property int maximumLineCount: 1
-    property int wrapMode: Text.WordWrap
     // Whether the text drawn is cut short, and the lines it draws.
     readonly property bool truncated: imageMode ? cutShort : drawn.truncated
     readonly property int lineCount: drawn.lineCount
@@ -53,7 +54,6 @@ Item {
     onFontChanged: rebuild()
     onWidthChanged: if (imageMode) rebuild()
     onMaximumLineCountChanged: rebuild()
-    onWrapModeChanged: rebuild()
     onDeviceSizeChanged: rebuild()
     Component.onCompleted: {
         ready = true;
@@ -97,6 +97,7 @@ Item {
         const tokens = Logic.tokens(segments, imageSize, failing.concat(Logic.imageUrls(segments).filter(url => next[url] === undefined)));
         imageMode = Logic.hasImage(tokens);
         if (imageMode) {
+            drawn.wrapMode = Text.Wrap;
             drawn.elide = Text.ElideNone;
             const result = width > 0 ? Logic.elide(tokens, markup => {
                 measurer.text = markup;
@@ -107,6 +108,7 @@ Item {
             cutShort = result.cut;
         } else {
             measurer.text = "";
+            drawn.wrapMode = Text.WordWrap;
             drawn.elide = Text.ElideRight;
             drawn.text = Logic.join(tokens, tokens.length);
             cutShort = false;
@@ -131,7 +133,7 @@ Item {
         width: root.width
         textFormat: Text.StyledText
         font: root.font
-        wrapMode: root.wrapMode
+        wrapMode: Text.Wrap
         maximumLineCount: root.maximumLineCount
         elide: Text.ElideNone
     }
@@ -142,7 +144,6 @@ Item {
         textFormat: Text.StyledText
         font: root.font
         color: root.color
-        wrapMode: root.wrapMode
         maximumLineCount: root.maximumLineCount
     }
 }

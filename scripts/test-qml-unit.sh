@@ -279,6 +279,8 @@ mutations=(
   "text without images is not elided|foundation/ImageText.qml|drawn.elide = Text.ElideRight;|drawn.elide = Text.ElideNone;|tst_imagetext.qml"
   "text with images takes Qt's elision|foundation/ImageText.qml|drawn.text = result.markup;|drawn.text = Logic.join(tokens, tokens.length); drawn.elide = Text.ElideRight;|tst_imagetext.qml"
   "the cut splits a word|foundation/ImageTextLogic.js|    return join(list, count) + ELLIPSIS;|    return join(list, count).slice(0, -2) + ELLIPSIS;|tst_imagetext.qml"
+  "an unbroken word runs past the width|foundation/ImageText.qml|            drawn.wrapMode = Text.Wrap;|            drawn.wrapMode = Text.WordWrap;|tst_imagetext.qml"
+  "the measure lets an unbroken word run past the width|foundation/ImageText.qml|        wrapMode: Text.Wrap|        wrapMode: Text.WordWrap|tst_imagetext.qml"
   "a failed image stays a hole|foundation/ImageText.qml|if (held[url].status === Image.Error && failed.indexOf(url) === -1) {|if (false) {|tst_imagetext.qml"
   "the pool shares no image|foundation/ImagePool.qml|let entry = entries[key];|let entry = undefined;|tst_imagetext.qml"
   "the pool keeps an image nobody holds|foundation/ImagePool.qml|if (entry.holders > 0) return;|return;|tst_imagetext.qml"

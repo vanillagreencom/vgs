@@ -115,6 +115,26 @@ Item {
             verify(rows[rows.length - 1] < lineHeight, "the image stays on the first line, last red row " + rows[rows.length - 1] + " line height " + lineHeight);
         }
 
+        // A word wider than the body, such as a long link, breaks inside
+        // itself and stays inside the width, with the image whole on its
+        // own line, as Qt keeps a plain body inside its width.
+        function test_a_word_wider_than_the_body_stays_inside_it() {
+            const long = "x".repeat(60);
+            const item = make([{ markup: "one " }, { image: root.red, alt: ":red:" }, { markup: " " + long }], 3);
+            const text = drawn(item);
+            verify(text.text.indexOf(long) !== -1, "the word is kept: " + text.text);
+            verify(text.contentWidth <= item.width, "the text is " + text.contentWidth + " wide in " + item.width);
+            compare(item.lineCount, 3);
+            tryVerify(() => redRows(item).length > 0, 3000, "the image is drawn");
+            const cut = make([{ markup: "one " }, { image: root.red, alt: ":red:" }, { markup: " " + long + " " + long }], 2);
+            verify(drawn(cut).contentWidth <= cut.width, "the cut text is " + drawn(cut).contentWidth + " wide in " + cut.width);
+            verify(cut.truncated);
+            // The cut was measured as it draws: it ends on the ellipsis, and
+            // no line of it falls past the line count.
+            verify(drawn(cut).text.endsWith("\u2026"), "the cut ends on the ellipsis: " + drawn(cut).text);
+            verify(!drawn(cut).truncated, "the drawn cut loses no line");
+        }
+
         function test_an_image_past_the_cut_is_not_drawn() {
             const item = make([{ markup: words(80) + " " }, { image: root.red, alt: ":red:" }], 2);
             verify(drawn(item).text.indexOf("<img") === -1, "the image past the cut is not in the text");
