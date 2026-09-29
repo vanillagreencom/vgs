@@ -38,6 +38,10 @@ print(json.dumps(v))' "$1"; }
 history_summaries() { note_state_py 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["history"]]))'; }
 history_count() { note_state_py 'import json,sys; print(len(json.load(open(sys.argv[1]))["history"]))'; }
 live_summaries() { note_state_py 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["live"]]))'; }
+# Which of deadline and remaining the stored live entry KEY holds, or none.
+stored_clock() { note_state_py 'import json,sys; e=next((e for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), {}); print(" ".join(k for k in ("deadline", "remaining") if k in e) or "none")' "$1"; }
+# The image the stored live entry KEY points at, as JSON, or null.
+stored_image() { note_state_py 'import json,sys; print(json.dumps(next((e["image"] for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), None)))' "$1"; }
 # One notification on the sandbox bus: APP REPLACES SUMMARY BODY ACTIONS HINTS
 # TIMEOUT, the last three in gdbus's GVariant text; prints its id.
 notify() {
@@ -229,7 +233,6 @@ read -r hx hy < <(card_centre Held) || fail "the held toast has no card"
 hover "$hx" "$hy" || fail "the hover over the held toast failed"
 held_key="$(key_of Held)"
 expect_poll "the pointer on a toast pauses its clock" paused clock_state Held
-stored_clock() { note_state_py 'import json,sys; e=next((e for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), {}); print(" ".join(k for k in ("deadline", "remaining") if k in e) or "none")' "$1"; }
 expect_poll "the state file keeps the paused toast's time left" remaining stored_clock "$held_key"
 sleep 6
 expect "a paused toast outlives its lifetime" "$held_key" key_of Held
@@ -321,7 +324,6 @@ notify smoke-chat 0 "Pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}
 expect_poll "a toast with an image shows" True has_row live "Pictured"
 pictured_key="$(key_of Pictured)"
 expect_poll "the sender's image was copied for the stored entry" True test_file "$note_images/$pictured_key-image"
-stored_image() { note_state_py 'import json,sys; print(json.dumps(next((e["image"] for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), None)))' "$1"; }
 expect_poll "the stored entry points at its copy" "\"file://$note_images/$pictured_key-image\"" stored_image "$pictured_key"
 expected_errors+=('NotificationCard\.qml.*Cannot open: file://.*/missing\.png')
 notify smoke-chat 0 "Unpictured" "" '[]' "{\"image-path\": <\"$home/missing.png\">}" 0 >/dev/null
