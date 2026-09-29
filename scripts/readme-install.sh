@@ -28,8 +28,9 @@
 #     python, the unprivileged user `user` with passwordless sudo inside the
 #     container alone, and yay built from the AUR's yay-bin when an aur
 #     command is measured. The commands run as `user`, with HOME and the
-#     XDG_RUNTIME_DIR a login session sets: Hyprland --version, which
-#     install.sh's floor runs, aborts without it.
+#     XDG_RUNTIME_DIR a login session sets, as a user's terminal has them:
+#     `vgsh run` keeps its instance lock and runtime files in that
+#     directory.
 #   - nix commands as root in docker.io/nixos/nix:2.35.2 with flakes on and
 #     scripts/test-flake.sh's store volume, so the two share downloads.
 # A command passes on exit 0. A command whose vgsh arguments are `run`
@@ -219,7 +220,7 @@ run_block_start() { # BLOCK
   [[ ${block_image[$1]} != nix ]] || run_args+=(-v "$nix_volume:/nix" -e 'NIX_CONFIG=experimental-features = nix-command flakes')
   podman run "${run_args[@]}" "$image" sleep infinity >/dev/null 2>"$scratch/start.log" ||
     not_measured "container-start image=$image" "$(cat -- "$scratch/start.log")"
-  # A login session's runtime directory, which Hyprland --version needs.
+  # A login session's runtime directory, where `vgsh run` keeps its lock.
   [[ $user == root ]] || podman exec -- "$container" install -d -m 700 -o user -g user /run/user/1000 >/dev/null 2>"$scratch/start.log" ||
     not_measured "container-setup step=runtime-dir" "$(cat -- "$scratch/start.log")"
 }

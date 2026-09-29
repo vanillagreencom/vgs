@@ -20,8 +20,12 @@
 # rpm or dpkg database) and a ~/.local/bin/vgsh it did not make; --force
 # skips the last two. It checks the floor: Quickshell 0.3.1, Hyprland 0.56,
 # node 18, python3, git and flock, plus curl, tar, gzip and sha256sum for a
-# release. On a miss it names each tool and the command that installs it on
-# this distribution, and exits 78. It never runs sudo.
+# release. Each version probe runs under a private runtime directory, so a
+# shell with no login session reads the true floor. On a miss it names each
+# tool and the command that installs it on this distribution, and exits 78.
+# A tool it finds but whose version it cannot read is named with the
+# probe's exit status and last error lines instead of an install command.
+# It never runs sudo.
 #
 # A release is read from the GitHub API and downloaded over HTTPS into a
 # temporary directory. The archive must match its one line in SHA256SUMS;
@@ -79,9 +83,11 @@ main() {
   # probe. The rows repeat bin/vgsh's preflight_floor, whose figures
   # docs/architecture/runtime.md § Process states, and add flock, a required
   # row of config/requirements.json. Hyprland is probed through its binary,
-  # which answers with no session running; bin/vgsh asks the running
-  # compositor through hyprctl. scripts/test-install-sh.sh fails when a row
-  # drifts from those sources.
+  # which answers with no compositor running; bin/vgsh asks the running
+  # compositor through hyprctl. floor_check runs every probe under a private
+  # XDG_RUNTIME_DIR, which the binary needs even for --version, so a shell
+  # with no login session reads the true floor. scripts/test-install-sh.sh
+  # fails when a row drifts from those sources.
   floor='
 quickshell 0.3.1   ^Quickshell[[:space:]]([0-9]+(\.[0-9]+)*)                                  qs --version
 hyprland   0.56    ^Hyprland[[:space:]]([0-9]+(\.[0-9]+)*)                                    Hyprland --version
@@ -219,21 +225,45 @@ EOF
   }
 
   # Checks the floor and EXTRA tools. On a miss, prints one refusal line
-  # per tool, then what installs them on this system, and exits 78.
+  # per tool, then why each installed tool's version could not be read,
+  # then what installs the others on this system, and exits 78. A tool on
+  # PATH whose probe fails or prints no version is `have=unknown` and gets
+  # no install command: installing it again would not change the probe.
+  #
+  # Each probe runs under a private, empty XDG_RUNTIME_DIR in $tmp.
+  # Hyprland --version throws before it reads its arguments when that
+  # variable is unset, so a shell with no login session (su -, ssh without
+  # systemd-logind, a container) would otherwise read an installed Hyprland
+  # as unreadable.
   floor_check() { # EXTRA_TOOL...
-    local tool need pattern probe out have manager="" binary="" m family bins elevate args pkg
-    local -a argv misses=() names=() unpackaged=()
+    local tool need pattern probe out line have status start manager="" binary="" m family bins elevate args pkg
+    local -a argv lines misses=() names=() unread=() unpackaged=()
+    mkdir -m 700 -- "$tmp/runtime" || refuse 1 "runtime=failed path=$tmp/runtime"
     while read -r tool need pattern probe; do
       [[ -n $tool ]] || continue
       read -ra argv <<<"$probe"
       if ! command -v -- "${argv[0]}" >/dev/null; then
         misses+=("$tool none $need")
-      elif ! out="$("${argv[@]}" 2>/dev/null </dev/null)" || [[ ! $out =~ $pattern ]]; then
-        misses+=("$tool unknown $need")
-      else
+        continue
+      fi
+      status=0
+      out="$(XDG_RUNTIME_DIR="$tmp/runtime" "${argv[@]}" 2>"$tmp/probe.err" </dev/null)" || status=$?
+      if ((status == 0)) && [[ $out =~ $pattern ]]; then
         have="${BASH_REMATCH[1]}"
         [[ $need == present ]] || version_at_least "$have" "$need" || misses+=("$tool $have $need")
+        continue
       fi
+      misses+=("$tool unknown $need")
+      if ((status != 0)); then
+        unread+=("$tool is installed, but its version could not be read: $probe exited $status:")
+      else
+        unread+=("$tool is installed, but its version could not be read: $probe printed no version:")
+      fi
+      # The probe's last lines: stderr, else stdout.
+      mapfile -t lines <"$tmp/probe.err"
+      if ((${#lines[@]} == 0)) && [[ -n $out ]]; then mapfile -t lines <<<"$out"; fi
+      start=$((${#lines[@]} > 5 ? ${#lines[@]} - 5 : 0))
+      for line in "${lines[@]:start}"; do unread+=("  $line"); done
     done <<<"$floor"
     for tool in "$@"; do
       command -v -- "$tool" >/dev/null || misses+=("$tool none present")
@@ -242,8 +272,10 @@ EOF
     for tool in "${misses[@]}"; do
       read -r tool have need <<<"$tool"
       printf 'install.sh: refused: floor=%s have=%s need=%s\n' "$tool" "$have" "$need" >&2
-      names+=("$tool")
+      [[ $have == unknown ]] || names+=("$tool")
     done
+    if ((${#unread[@]} > 0)); then printf '%s\n' "${unread[@]}" >&2; fi
+    ((${#names[@]} > 0)) || exit 78
     read -r manager binary <<<"$(primary_manager)" || true
     if [[ -z $manager ]]; then
       printf 'No supported package manager found: install %s with your distribution'"'"'s package manager.\n' "${names[*]}" >&2
@@ -618,13 +650,14 @@ process.stdout.write(lines.join("\n") + "\n");
   if [[ $force != true && $(link_state) == foreign ]]; then
     refuse 1 "link=foreign path=$link" "$link is not a link install.sh made: remove it, or pass --force to replace it"
   fi
-  if [[ $mode == git ]]; then floor_check; else floor_check "${release_tools[@]}"; fi
 
   stage="" tmp=""
   trap 'rm -rf -- ${stage:+"$stage"} ${tmp:+"$tmp"}' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/vgs-install.XXXXXX")" || refuse 1 "temp=failed dir=${TMPDIR:-/tmp}"
+
+  if [[ $mode == git ]]; then floor_check; else floor_check "${release_tools[@]}"; fi
 
   if [[ $mode == git ]]; then
     install_git

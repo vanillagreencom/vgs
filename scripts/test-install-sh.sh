@@ -380,6 +380,47 @@ check "a tool below its floor names its version" err_has "install.sh: refused: f
 check "every miss is named, not the first alone" err_has "install.sh: refused: floor=git have=none need=present"
 check "the miss names the distribution's install command" err_has "Install them as root: pacman -S --needed -- quickshell hyprland git"
 check "the floor miss writes nothing" test ! -e "$h/.local"
+check "the floor miss leaves nothing in TMPDIR" scratch_empty
+
+# Hyprland's main() throws before it parses --version when XDG_RUNTIME_DIR
+# is unset: an uncaught std::runtime_error, so SIGABRT and 134.
+# $needs_rt's Hyprland answers only with XDG_RUNTIME_DIR set, $aborts'
+# never does.
+hyprland_abort() { # DIR CONDITION: a Hyprland that aborts while CONDITION holds
+  cat >"$1/Hyprland" <<SH
+#!/bin/sh
+if $2; then
+  echo "terminate called after throwing an instance of 'std::runtime_error'" >&2
+  echo "  what():  XDG_RUNTIME_DIR is not set!" >&2
+  exit 134
+fi
+echo "Hyprland 0.56 built from branch fixture"
+SH
+  chmod +x "$1/Hyprland"
+}
+needs_rt="$tmp/needs-rt"; aborts="$tmp/aborts"; mkdir -p "$needs_rt" "$aborts"
+hyprland_abort "$needs_rt" '[ -z "${XDG_RUNTIME_DIR:-}" ]'
+hyprland_abort "$aborts" true
+runtime_row() { # BIN: a Hyprland that aborts with no XDG_RUNTIME_DIR meets the floor when the caller has none
+  new_home runtime
+  RUN_WRAP=(env -u XDG_RUNTIME_DIR)
+  RUN_PATH="$needs_rt:$run_path" run "$1" --version 0.1.0
+  RUN_WRAP=()
+  [[ $status == 0 ]] && ! grep -q -e '^install\.sh: refused: floor=' -e '^Install them' "$tmp/err" && scratch_empty
+}
+unreadable_row() { # BIN: an installed Hyprland whose version cannot be read is named with its cause, not an install command
+  new_home unreadable
+  with_os "$arch_os"
+  RUN_PATH="$aborts:$stubs:$pm_all:$tools" run "$1" --version 0.1.0
+  RUN_WRAP=()
+  refused 78 "install.sh: refused: floor=hyprland have=unknown need=0.56" &&
+    err_has "hyprland is installed, but its version could not be read: Hyprland --version exited 134:" &&
+    err_has "    what():  XDG_RUNTIME_DIR is not set!" &&
+    ! grep -q -e '^Install them' -e '^No supported package manager' "$tmp/err" &&
+    [[ ! -e $h/.local ]] && scratch_empty
+}
+check "a Hyprland that needs a runtime directory meets the floor from a shell with none" runtime_row "$installer"
+check "an installed Hyprland whose version cannot be read is named with its exit and error, not an install command" unreadable_row "$installer"
 
 # The distributions: os-release text and the package managers on PATH. Each
 # row leaves git missing and compares the command install.sh names with the
@@ -612,6 +653,8 @@ rule keep-foreign-link keep_foreign_row '[[ $state != ours ]] || rm -f -- "$link
 rule keep-lock lock_kept_row '^(current|git|\.self-update-.*|[0-9]+' '^(current|git|\.self\.lock|\.self-update-.*|[0-9]+'
 rule floor-need drift_row 'quickshell 0.3.1   ^Quickshell' 'quickshell 0.3.0   ^Quickshell'
 rule requirement-package drift_row 'dnf=util-linux-core' 'dnf=util-linux'
+rule probe-runtime runtime_row 'XDG_RUNTIME_DIR="$tmp/runtime" "${argv[@]}"' 'XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" "${argv[@]}"'
+rule unknown-not-installable unreadable_row '[[ $have == unknown ]] || names+=' '[[ $have == nothing ]] || names+='
 copy_with manager-order "$installer" 'fedora        dnf5,dnf' 'fedora        dnf,dnf5'
 control "a copy that prefers dnf 4 over dnf5" distro_row "fedora with dnf5" "ID=fedora" "$pm_all"
 copy_with any-key "$signing" '[[ ${field[2]} == "$release_key" ||' '[[ -n ${field[2]} ||'
