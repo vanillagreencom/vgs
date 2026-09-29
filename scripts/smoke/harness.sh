@@ -692,26 +692,35 @@ print("idle" if key not in t["pending"] and (r is None or r["running"] is None) 
 # expect_within LABEL READING WANT CEILING_MS CMD...: as expect_poll, but
 # bounded by CEILING_MS of wall time from the call, for a state the core
 # reports at the end of a chain whose ceiling was measured. CMD is polled
-# every 0.2 s, and the time to the first WANT is printed as
+# every 0.2 s, the last wait cut to the time left, and the time from the
+# call to the end of the first read that answers WANT is printed as
 # latency_<READING>_ms, a reading that carries one poll interval and one
-# CMD. Returns 0 either way, since a row runs under set -e.
+# CMD. A WANT read after the ceiling fails like none. Returns 0 either
+# way, since a row runs under set -e.
 expect_within() { # LABEL READING WANT CEILING_MS CMD...
-  local label="$1" reading="$2" want="$3" ceiling_ms="$4" got="" start elapsed
+  local label="$1" reading="$2" want="$3" ceiling_ms="$4" got="" start elapsed matched pause
   shift 4
   start="$(now_ms)"
   while :; do
-    if got="$("$@")" && [[ $got == "$want" ]]; then
-      elapsed=$(( $(now_ms) - start ))
+    matched=false
+    if got="$("$@")" && [[ $got == "$want" ]]; then matched=true; fi
+    elapsed=$(( $(now_ms) - start ))
+    if [[ $matched == true && $elapsed -le $ceiling_ms ]]; then
       printf '  latency_%s_ms=%d ceiling_ms=%d\n' "$reading" "$elapsed" "$ceiling_ms"
       ok "$label"
       return 0
     fi
-    elapsed=$(( $(now_ms) - start ))
-    [[ $elapsed -lt $ceiling_ms ]] || break
-    sleep 0.2
+    [[ $matched == false && $elapsed -lt $ceiling_ms ]] || break
+    pause=$(( ceiling_ms - elapsed < 200 ? ceiling_ms - elapsed : 200 ))
+    sleep "$((pause / 1000)).$(printf '%03d' $((pause % 1000)))"
   done
-  printf '  latency_%s_ms=over ceiling_ms=%d\n' "$reading" "$ceiling_ms"
-  fail "$label: got $got want $want after $elapsed ms, ceiling $ceiling_ms ms"
+  if [[ $matched == true ]]; then
+    printf '  latency_%s_ms=%d ceiling_ms=%d\n' "$reading" "$elapsed" "$ceiling_ms"
+    fail "$label: got $want after $elapsed ms, past the ceiling of $ceiling_ms ms"
+  else
+    printf '  latency_%s_ms=over ceiling_ms=%d\n' "$reading" "$ceiling_ms"
+    fail "$label: got $got want $want after $elapsed ms, ceiling $ceiling_ms ms"
+  fi
 }
 # A run ends in the core through one chain: the presenter exits and moves
 # its ended record into $rt_dir/vgs/tui, the core's FolderListModel lists
@@ -722,8 +731,9 @@ expect_within() { # LABEL READING WANT CEILING_MS CMD...
 # prints what the record directory holds for the key beside the core's
 # view, so a run whose ended record is on disk while the core still reports
 # it running reads as a listing the core missed, not a slow presenter.
-# scripts/smoke/rows/tui.sh holds the control: a run that never ends fails
-# the row at the ceiling. The ceiling is twice the highest of 108 readings,
+# scripts/smoke/rows/tui.sh holds the controls: a run that never ends
+# fails the row at the ceiling, and so does an idle read that ends past it.
+# The ceiling is twice the highest of 108 readings,
 # 248 ms, from six runs of scripts/qml-smoke.sh on the owner's machine
 # (host cachy, AMD Ryzen 9 9950X) on 2026-09-29 at host load 4 to 9; the
 # median reading was 22 ms, a first poll that found the run already ended.
