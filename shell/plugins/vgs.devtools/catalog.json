@@ -1,0 +1,1156 @@
+{
+  "agents": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "icon": "bot",
+      "brand": "claude",
+      "package": "claude",
+      "command": "claude",
+      "launch": [
+        "claude",
+        "--permission-mode",
+        "auto"
+      ]
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "icon": "bot-message-square",
+      "brand": "openai",
+      "package": "codex",
+      "command": "codex",
+      "launch": [
+        "codex",
+        "--approve-for-me"
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "icon": "code",
+      "brand": "opencode",
+      "package": "opencode",
+      "command": "opencode",
+      "launch": [
+        "opencode",
+        "--auto"
+      ]
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "icon": "bot",
+      "brand": "copilot",
+      "package": "copilot",
+      "command": "copilot",
+      "launch": [
+        "copilot",
+        "--allow-all"
+      ]
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "icon": "hammer",
+      "brand": "crush",
+      "package": "crush",
+      "command": "crush",
+      "launch": [
+        "crush",
+        "--yolo"
+      ]
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "icon": "circle",
+      "brand": "pi",
+      "package": "pi",
+      "command": "pi",
+      "launch": [
+        "pi"
+      ]
+    },
+    {
+      "id": "omp",
+      "name": "Oh My Pi",
+      "icon": "sparkles",
+      "brand": "ohMyPi",
+      "package": "github:can1357/oh-my-pi",
+      "command": "omp",
+      "launch": [
+        "omp",
+        "--auto-approve"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "icon": "zodiac-gemini",
+      "brand": "google",
+      "package": "gemini",
+      "command": "gemini",
+      "launch": [
+        "gemini",
+        "--yolo"
+      ]
+    },
+    {
+      "id": "agy",
+      "name": "Antigravity",
+      "icon": "rocket",
+      "brand": "google",
+      "package": "aqua:google-antigravity/antigravity-cli",
+      "command": "agy",
+      "launch": [
+        "agy",
+        "--dangerously-skip-permissions"
+      ]
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "icon": "brain",
+      "brand": "xai",
+      "package": "npm:@xai-official/grok",
+      "command": "grok",
+      "launch": [
+        "grok",
+        "--permission-mode",
+        "bypassPermissions"
+      ]
+    },
+    {
+      "id": "ori",
+      "name": "Ori",
+      "icon": "globe",
+      "brand": "openrouter",
+      "package": "github:OpenRouterLabs/ori-releases",
+      "command": "ori",
+      "launch": [
+        "ori",
+        "code"
+      ]
+    },
+    {
+      "id": "dsh",
+      "name": "DeepSeek Harness",
+      "icon": "brain-circuit",
+      "brand": "deepseek",
+      "package": "npm:@deepseek-ai/dsh",
+      "command": "dsh",
+      "launch": [
+        "dsh",
+        "web"
+      ]
+    },
+    {
+      "id": "fx",
+      "name": "fx",
+      "icon": "sparkles",
+      "brand": "vercel",
+      "package": "github:vercel-labs/fx",
+      "command": "fx",
+      "launch": [
+        "fx"
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor Agent",
+      "icon": "mouse-pointer",
+      "brand": "cursor",
+      "package": "cursor-agent",
+      "command": "cursor-agent",
+      "exec": "dist-package/cursor-agent",
+      "launch": [
+        "cursor-agent",
+        "--force"
+      ]
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "icon": "message-circle-code",
+      "brand": "hermes",
+      "package": "pipx:hermes-agent[extras=all]",
+      "command": "hermes",
+      "buildEnv": {
+        "UV_PYTHON": "3.13"
+      },
+      "requires": [
+        "uv"
+      ],
+      "present": {
+        "mise": "hermes-agent/lib/python3.13"
+      },
+      "launch": [
+        "hermes",
+        "chat",
+        "--tui",
+        "--yolo"
+      ]
+    },
+    {
+      "id": "muse",
+      "name": "Muse",
+      "icon": "sparkles",
+      "brand": "meta",
+      "package": "http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]",
+      "command": "muse",
+      "launch": [
+        "muse",
+        "--approval-mode",
+        "never"
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "id": "herdr",
+      "name": "herdr",
+      "kind": "gui",
+      "icon": "boxes",
+      "brand": "herdr",
+      "package": "herdr",
+      "command": "herdr",
+      "channels": {
+        "default": "stable",
+        "options": {
+          "stable": "",
+          "preview": "prerelease=true"
+        }
+      },
+      "launch": [
+        "herdr"
+      ]
+    },
+    {
+      "id": "orca",
+      "name": "Orca",
+      "kind": "gui",
+      "icon": "app-window",
+      "brand": "orca",
+      "package": "github:stablyai/orca",
+      "command": "orca-ide",
+      "bin": "orca.AppImage",
+      "launch": [
+        "orca.AppImage"
+      ]
+    },
+    {
+      "id": "t3code",
+      "name": "T3 Code",
+      "kind": "gui",
+      "arch": [
+        "x86_64"
+      ],
+      "icon": "square-code",
+      "brand": "t3",
+      "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]",
+      "command": "t3code",
+      "bin": "t3code.AppImage",
+      "channels": {
+        "default": "stable",
+        "options": {
+          "stable": "",
+          "nightly": "prerelease=true"
+        }
+      },
+      "launch": [
+        "t3code.AppImage"
+      ]
+    },
+    {
+      "id": "claude-desktop",
+      "name": "Claude Desktop Extra",
+      "kind": "gui",
+      "icon": "monitor",
+      "brand": "claude",
+      "package": "github:patrickjaja/claude-desktop-extra[matching_regex=AppImage$,rename_exe=claude-desktop]",
+      "command": "claude-desktop",
+      "bin": "claude-desktop.AppImage",
+      "launch": [
+        "claude-desktop.AppImage"
+      ]
+    },
+    {
+      "id": "cmux",
+      "name": "cmux",
+      "kind": "gui",
+      "arch": [
+        "x86_64"
+      ],
+      "icon": "workflow",
+      "brand": "cmux",
+      "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly",
+      "command": "cmux",
+      "launch": [
+        "cmux"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "id": "gh",
+      "name": "GitHub CLI",
+      "package": "gh",
+      "command": "gh"
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright",
+      "package": "npm:playwright",
+      "command": "playwright"
+    },
+    {
+      "id": "ghui",
+      "name": "ghui",
+      "package": "npm:@kitlangton/ghui",
+      "command": "ghui"
+    },
+    {
+      "id": "hunk",
+      "name": "hunk",
+      "package": "aqua:modem-dev/hunk",
+      "command": "hunk"
+    },
+    {
+      "id": "gh-dash",
+      "name": "gh-dash",
+      "package": "github:dlvhdr/gh-dash",
+      "command": "gh-dash"
+    },
+    {
+      "id": "sesh",
+      "name": "sesh",
+      "package": "github:joshmedeski/sesh",
+      "command": "sesh"
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "package": "npm:vercel",
+      "command": "vercel"
+    },
+    {
+      "id": "t3",
+      "name": "T3 Code CLI",
+      "package": "npm:t3[npm_args=--legacy-peer-deps]",
+      "command": "t3"
+    },
+    {
+      "id": "daytona",
+      "name": "Daytona",
+      "package": "daytona",
+      "command": "daytona"
+    }
+  ],
+  "envs": [
+    {
+      "id": "node",
+      "name": "Node.js",
+      "icon": "hexagon",
+      "brand": "node",
+      "tools": [
+        "node"
+      ],
+      "settings": {
+        "idiomatic_version_file_enable_tools": [
+          "node"
+        ]
+      },
+      "present": {
+        "mise": "node"
+      }
+    },
+    {
+      "id": "bun",
+      "name": "Bun",
+      "icon": "rabbit",
+      "brand": "bun",
+      "tools": [
+        "bun"
+      ],
+      "present": {
+        "mise": "bun"
+      }
+    },
+    {
+      "id": "deno",
+      "name": "Deno",
+      "icon": "circle",
+      "brand": "deno",
+      "tools": [
+        "deno"
+      ],
+      "present": {
+        "mise": "deno"
+      }
+    },
+    {
+      "id": "go",
+      "name": "Go",
+      "icon": "footprints",
+      "brand": "go",
+      "tools": [
+        "go"
+      ],
+      "present": {
+        "mise": "go"
+      }
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "icon": "file-code",
+      "brand": "python",
+      "tools": [
+        "python",
+        "uv"
+      ],
+      "present": {
+        "mise": "python"
+      }
+    },
+    {
+      "id": "ruby",
+      "name": "Ruby",
+      "icon": "gem",
+      "brand": "ruby",
+      "tools": [
+        "ruby"
+      ],
+      "packages": {
+        "pacman": [
+          "libyaml"
+        ],
+        "apt": [
+          "libyaml-dev"
+        ],
+        "dnf": [
+          "libyaml-devel"
+        ]
+      },
+      "settings": {
+        "ruby.compile": "false",
+        "idiomatic_version_file_enable_tools": "ruby"
+      },
+      "present": {
+        "mise": "ruby"
+      }
+    },
+    {
+      "id": "java",
+      "name": "Java",
+      "icon": "coffee",
+      "brand": "java",
+      "tools": [
+        "java"
+      ],
+      "present": {
+        "mise": "java"
+      }
+    },
+    {
+      "id": "zig",
+      "name": "Zig",
+      "icon": "zap",
+      "brand": "zig",
+      "tools": [
+        "zig",
+        "zls"
+      ],
+      "present": {
+        "mise": "zig"
+      }
+    },
+    {
+      "id": "dotnet",
+      "name": ".NET",
+      "icon": "box",
+      "brand": "dotnet",
+      "tools": [
+        "dotnet"
+      ],
+      "present": {
+        "mise": "dotnet"
+      }
+    },
+    {
+      "id": "clojure",
+      "name": "Clojure",
+      "icon": "leaf",
+      "brand": "clojure",
+      "tools": [
+        "clojure"
+      ],
+      "packages": {
+        "pacman": [
+          "rlwrap"
+        ],
+        "apt": [
+          "rlwrap"
+        ],
+        "dnf": [
+          "rlwrap"
+        ]
+      },
+      "present": {
+        "mise": "clojure"
+      }
+    },
+    {
+      "id": "scala",
+      "name": "Scala",
+      "icon": "layers",
+      "brand": "scala",
+      "tools": [
+        "java",
+        "scala",
+        "scala-cli"
+      ],
+      "present": {
+        "mise": "scala"
+      }
+    },
+    {
+      "id": "elixir",
+      "name": "Elixir",
+      "icon": "droplet",
+      "brand": "elixir",
+      "tools": [
+        "erlang",
+        "elixir"
+      ],
+      "present": {
+        "mise": "elixir"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "mix",
+            "local.hex",
+            "--force"
+          ],
+          "via": "elixir"
+        }
+      ]
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "icon": "settings",
+      "brand": "rust",
+      "installer": "rustup",
+      "present": {
+        "home": ".rustup"
+      },
+      "managedBy": "rustup"
+    },
+    {
+      "id": "php",
+      "name": "PHP",
+      "icon": "braces",
+      "brand": "php",
+      "tools": [
+        "php"
+      ],
+      "present": {
+        "mise": "php"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "composer",
+            "global",
+            "config",
+            "bin-dir",
+            ".local/bin"
+          ],
+          "via": "php"
+        }
+      ]
+    },
+    {
+      "id": "laravel",
+      "name": "Laravel",
+      "icon": "flame",
+      "brand": "laravel",
+      "tools": [
+        "php",
+        "node"
+      ],
+      "present": {
+        "home": ".local/bin/laravel"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "composer",
+            "global",
+            "require",
+            "laravel/installer"
+          ],
+          "via": "php"
+        }
+      ]
+    },
+    {
+      "id": "symfony",
+      "name": "Symfony",
+      "icon": "component",
+      "brand": "symfony",
+      "tools": [
+        "php"
+      ],
+      "packages": {
+        "pacman": [
+          "symfony-cli"
+        ]
+      },
+      "present": {
+        "command": "symfony"
+      }
+    },
+    {
+      "id": "rails",
+      "name": "Ruby on Rails",
+      "icon": "gem",
+      "brand": "rails",
+      "tools": [
+        "ruby"
+      ],
+      "packages": {
+        "pacman": [
+          "libyaml"
+        ],
+        "apt": [
+          "libyaml-dev"
+        ],
+        "dnf": [
+          "libyaml-devel"
+        ]
+      },
+      "settings": {
+        "ruby.compile": "false",
+        "idiomatic_version_file_enable_tools": "ruby"
+      },
+      "present": {
+        "command": "rails"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "gem",
+            "install",
+            "rails",
+            "--no-document"
+          ],
+          "via": "ruby"
+        }
+      ]
+    },
+    {
+      "id": "phoenix",
+      "name": "Phoenix",
+      "icon": "flame",
+      "brand": "phoenix",
+      "tools": [
+        "erlang",
+        "elixir"
+      ],
+      "present": {
+        "home": ".mix/archives/phx_new"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "mix",
+            "local.hex",
+            "--force"
+          ],
+          "via": "elixir"
+        },
+        {
+          "exec": [
+            "mix",
+            "local.rebar",
+            "--force"
+          ],
+          "via": "elixir"
+        },
+        {
+          "exec": [
+            "mix",
+            "archive.install",
+            "hex",
+            "phx_new",
+            "--force"
+          ],
+          "via": "elixir"
+        }
+      ]
+    },
+    {
+      "id": "ocaml",
+      "name": "OCaml",
+      "icon": "package",
+      "brand": "ocaml",
+      "installer": "opam",
+      "present": {
+        "home": ".opam"
+      },
+      "postInstall": [
+        {
+          "exec": [
+            "opam",
+            "init",
+            "--yes"
+          ],
+          "via": "ocaml"
+        },
+        {
+          "exec": [
+            "opam",
+            "install",
+            "ocaml-lsp-server",
+            "odoc",
+            "ocamlformat",
+            "utop",
+            "--yes"
+          ],
+          "via": "ocaml"
+        }
+      ]
+    }
+  ],
+  "editors": [
+    {
+      "id": "vscode",
+      "name": "VSCode",
+      "kind": "gui",
+      "icon": "app-window",
+      "brand": "vscode",
+      "command": "code",
+      "packages": {
+        "aur": [
+          "visual-studio-code-bin"
+        ]
+      },
+      "present": {
+        "command": "code"
+      },
+      "launch": [
+        "code"
+      ]
+    },
+    {
+      "id": "vscodium",
+      "name": "VSCodium",
+      "kind": "gui",
+      "icon": "app-window",
+      "brand": "vscodium",
+      "command": "codium",
+      "present": {
+        "command": "codium"
+      },
+      "launch": [
+        "codium"
+      ]
+    },
+    {
+      "id": "cursor-editor",
+      "name": "Cursor",
+      "kind": "gui",
+      "icon": "mouse-pointer",
+      "brand": "cursor",
+      "command": "cursor",
+      "packages": {
+        "aur": [
+          "cursor-bin"
+        ]
+      },
+      "present": {
+        "command": "cursor"
+      },
+      "launch": [
+        "cursor"
+      ]
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "kind": "gui",
+      "icon": "file-code",
+      "brand": "zed",
+      "command": "zeditor",
+      "packages": {
+        "pacman": [
+          "zed",
+          "omazed"
+        ]
+      },
+      "present": {
+        "command": "zeditor"
+      },
+      "postInstall": {
+        "exec": [
+          "omazed",
+          "setup"
+        ],
+        "via": "zed"
+      },
+      "launch": [
+        "zeditor"
+      ]
+    },
+    {
+      "id": "sublime",
+      "name": "Sublime Text",
+      "kind": "gui",
+      "icon": "file-text",
+      "brand": "sublime",
+      "command": "subl",
+      "packages": {
+        "aur": [
+          "sublime-text-4"
+        ]
+      },
+      "present": {
+        "command": "subl"
+      },
+      "launch": [
+        "subl"
+      ]
+    },
+    {
+      "id": "helix",
+      "name": "Helix",
+      "kind": "tui",
+      "icon": "file-code",
+      "brand": "helix",
+      "command": "helix",
+      "packages": {
+        "pacman": [
+          "helix"
+        ],
+        "apt": [
+          "helix"
+        ],
+        "dnf": [
+          "helix"
+        ]
+      },
+      "present": {
+        "command": "helix"
+      },
+      "launch": [
+        "helix"
+      ]
+    },
+    {
+      "id": "neovim",
+      "name": "Neovim",
+      "kind": "tui",
+      "icon": "file-code",
+      "brand": "neovim",
+      "command": "nvim",
+      "packages": {
+        "pacman": [
+          "neovim"
+        ],
+        "apt": [
+          "neovim"
+        ],
+        "dnf": [
+          "neovim"
+        ]
+      },
+      "present": {
+        "command": "nvim"
+      },
+      "launch": [
+        "nvim"
+      ]
+    },
+    {
+      "id": "emacs",
+      "name": "Emacs",
+      "kind": "gui",
+      "icon": "notebook",
+      "brand": "emacs",
+      "command": "emacs",
+      "packages": {
+        "aur": [
+          "omarchy-emacs"
+        ]
+      },
+      "present": {
+        "command": "emacs"
+      },
+      "launch": [
+        "emacs"
+      ]
+    }
+  ],
+  "terminals": [
+    {
+      "id": "alacritty",
+      "name": "Alacritty",
+      "icon": "square-terminal",
+      "brand": "alacritty",
+      "command": "alacritty",
+      "packages": {
+        "pacman": [
+          "alacritty"
+        ],
+        "apt": [
+          "alacritty"
+        ],
+        "dnf": [
+          "alacritty"
+        ]
+      },
+      "present": {
+        "command": "alacritty"
+      },
+      "launch": [
+        "alacritty"
+      ]
+    },
+    {
+      "id": "foot",
+      "name": "Foot",
+      "icon": "terminal",
+      "brand": "foot",
+      "command": "foot",
+      "packages": {
+        "pacman": [
+          "foot"
+        ],
+        "apt": [
+          "foot"
+        ],
+        "dnf": [
+          "foot"
+        ]
+      },
+      "present": {
+        "command": "foot"
+      },
+      "launch": [
+        "foot"
+      ]
+    },
+    {
+      "id": "ghostty",
+      "name": "Ghostty",
+      "icon": "ghost",
+      "brand": "ghostty",
+      "command": "ghostty",
+      "packages": {
+        "pacman": [
+          "ghostty"
+        ]
+      },
+      "present": {
+        "command": "ghostty"
+      },
+      "launch": [
+        "ghostty"
+      ]
+    },
+    {
+      "id": "kitty",
+      "name": "Kitty",
+      "icon": "cat",
+      "brand": "kitty",
+      "command": "kitty",
+      "packages": {
+        "pacman": [
+          "kitty"
+        ],
+        "apt": [
+          "kitty"
+        ],
+        "dnf": [
+          "kitty"
+        ]
+      },
+      "present": {
+        "command": "kitty"
+      },
+      "launch": [
+        "kitty"
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "id": "mysql",
+      "name": "MySQL",
+      "icon": "database",
+      "brand": "mysql",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "mysql:8.4",
+        "name": "mysql8",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 3306,
+            "containerPort": 3306
+          }
+        ],
+        "env": {
+          "MYSQL_ROOT_PASSWORD": "",
+          "MYSQL_ALLOW_EMPTY_PASSWORD": "true"
+        }
+      },
+      "present": {
+        "command": "docker"
+      }
+    },
+    {
+      "id": "postgres",
+      "name": "PostgreSQL",
+      "icon": "database",
+      "brand": "postgres",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "postgres:18",
+        "name": "postgres18",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 5432,
+            "containerPort": 5432
+          }
+        ],
+        "env": {
+          "POSTGRES_HOST_AUTH_METHOD": "trust"
+        }
+      },
+      "present": {
+        "command": "docker"
+      }
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "icon": "database",
+      "brand": "redis",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "redis:7",
+        "name": "redis",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 6379,
+            "containerPort": 6379
+          }
+        ]
+      },
+      "present": {
+        "command": "docker"
+      }
+    },
+    {
+      "id": "mongodb",
+      "name": "MongoDB",
+      "icon": "database",
+      "brand": "mongodb",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "mongo:noble",
+        "name": "mongodb",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 27017,
+            "containerPort": 27017
+          }
+        ],
+        "env": {
+          "MONGO_INITDB_ROOT_USERNAME": "admin",
+          "MONGO_INITDB_ROOT_PASSWORD": "admin123"
+        }
+      },
+      "present": {
+        "command": "docker"
+      }
+    },
+    {
+      "id": "mariadb",
+      "name": "MariaDB",
+      "icon": "database",
+      "brand": "mariadb",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "mariadb:11.8",
+        "name": "mariadb11",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 3306,
+            "containerPort": 3306
+          }
+        ],
+        "env": {
+          "MARIADB_ROOT_PASSWORD": "",
+          "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD": "true"
+        }
+      },
+      "present": {
+        "command": "docker"
+      }
+    },
+    {
+      "id": "mssql",
+      "name": "MSSQL",
+      "icon": "database",
+      "brand": "mssql",
+      "container": {
+        "runtimes": [
+          "docker",
+          "podman"
+        ],
+        "image": "mcr.microsoft.com/mssql/server:2022-CU12-ubuntu-22.04",
+        "name": "mssql",
+        "ports": [
+          {
+            "host": "127.0.0.1",
+            "hostPort": 1433,
+            "containerPort": 1433
+          }
+        ],
+        "env": {
+          "MSSQL_PID": "Developer",
+          "ACCEPT_EULA": "Y",
+          "MSSQL_SA_PASSWORD": "@dmin123"
+        }
+      },
+      "present": {
+        "command": "docker"
+      }
+    }
+  ]
+}

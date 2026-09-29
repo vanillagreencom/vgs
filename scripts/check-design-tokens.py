@@ -192,7 +192,7 @@ class Look:
     """A plugin's appearance: the declared file and its table's paths, or
     None for a plugin that declares none."""
 
-    def __init__(self, repo, plugin):
+    def __init__(self, repo, plugin, require_manifest):
         commons = os.path.join(repo, "shell", "Commons")
         command = ["node", "-e", APPEARANCE, os.path.join(repo, "bin", "lib", "qml-library.js"), os.path.join(repo, "shell", "Core", "PluginLogic.js"),
                    os.path.join(commons, "ThemeLogic.js"), os.path.join(commons, "Tokens.js"), plugin]
@@ -206,9 +206,11 @@ class Look:
         manifest = os.path.join(plugin, "manifest.json")
         if answer["error"] is not None:
             if not os.path.exists(manifest):
+                self.plugin = require_manifest
                 self.file = None
                 return
             raise Unreadable(manifest, answer["error"])
+        self.plugin = True
         self.file = None if answer["appearance"] is None else os.path.join(plugin, answer["appearance"])
         self.refusals = answer["refusals"]
         self.paths = set(answer["paths"])
@@ -263,13 +265,23 @@ def plugin_looks(repo, root, plugins):
         return {}
     if plugins == "self":
         dirs = [root]
+        require_manifest = True
     else:
         try:
             names = sorted(os.listdir(root))
         except OSError as exc:
             raise Unreadable(root, exc.strerror) from exc
         dirs = [os.path.join(root, name) for name in names if os.path.isdir(os.path.join(root, name))]
-    return {d: Look(repo, d) for d in dirs}
+        require_manifest = False
+    return {d: Look(repo, d, require_manifest) for d in dirs}
+
+
+def manifestless_plugin_dir(looks, path):
+    """The manifestless plugin directory `path` sits in, or None."""
+    for directory, look in looks.items():
+        if not look.plugin and path.startswith(directory + os.sep):
+            return directory
+    return None
 
 
 def look_of(looks, path):
@@ -288,6 +300,8 @@ def check_tree(root, table, literal, looks, findings, notices):
             for refusal in look.refusals:
                 findings.append(f"appearance-refused {look.file}:1 {refusal}")
     for path, number, line in source_lines(root):
+        if manifestless_plugin_dir(looks, path) is not None:
+            continue
         files.add(path)
         look = look_of(looks, path)
         for m in THEME_REFERENCE.finditer(line):

@@ -100,6 +100,8 @@ rows=(
   "logic|launcher menu model|node scripts/test-launcher-model.js|shell/plugins/vgs.launcher/MenuModel.js shell/plugins/vgs.launcher/menu.json bin/lib/qml-library.js"
   "cli|launcher file search helper|scripts/test-launcher-file-search.sh|shell/plugins/vgs.launcher/file-search.sh"
   "logic|notifications logic|node scripts/test-notifications-logic.js|shell/plugins/vgs.notifications/NotificationLogic.js shell/plugins/vgs.notifications/Appearance.js bin/lib/qml-library.js"
+  "logic|devtools catalog|node scripts/check-devtools-catalog.js|shell/plugins/vgs.devtools/catalog.json shell/plugins/vgs.devtools/Appearance.js shell/plugins/vgs.devtools/CatalogLogic.js scripts/check-devtools-catalog.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
+  "logic|devtools catalog controls|node scripts/test-check-devtools-catalog.js|shell/plugins/vgs.devtools/catalog.json shell/plugins/vgs.devtools/Appearance.js shell/plugins/vgs.devtools/CatalogLogic.js scripts/check-devtools-catalog.js scripts/test-check-devtools-catalog.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "cli|notifications image helper|scripts/test-notifications-images.sh|shell/plugins/vgs.notifications/images.sh scripts/smoke/fixtures/slack/*"
   "cli|notifications Slack photos helper|node scripts/test-notifications-slack-photos.js|shell/plugins/vgs.notifications/slack-photos.js"
   "cli|notifications Slack token probe|scripts/test-notifications-token-status.sh|shell/plugins/vgs.notifications/token-status.sh"

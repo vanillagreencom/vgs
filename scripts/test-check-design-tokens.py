@@ -26,6 +26,7 @@ SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Comm
 # set and the package-manager table it imports, and the planted file.
 TREES = ("shell/Ui", "shell/Hosts", "shell/plugins/acme.widget", ".agents/skills/vgs-plugin/templates", "shell/Core", "scripts/smoke/fixtures/plugins/acme.probe")
 CLEAN = "import QtQuick\nimport qs.Commons\nItem {\n    color: Theme.color.surface\n    radius: Theme.radius.md\n    width: 2 * Theme.space.md\n}\n"
+WIDGET_MANIFEST = '{"schemaVersion": 1, "id": "acme.widget", "name": "Widget", "version": "1", "author": "a", "description": "d", "kinds": ["service"], "entryPoints": {"service": "Clean.qml"}}'
 UI = "shell/Ui/Thing.qml"
 
 # rows: name, path of the planted file, its text, expected rule key or None
@@ -142,6 +143,8 @@ def build_repo(tmp, planted=None, theme=None, tokens=None):
         os.makedirs(os.path.join(root, tree), exist_ok=True)
         with open(os.path.join(root, tree, "Clean.qml"), "w", encoding="utf-8") as fh:
             fh.write(CLEAN)
+    with open(os.path.join(root, "shell/plugins/acme.widget/manifest.json"), "w", encoding="utf-8") as fh:
+        fh.write(WIDGET_MANIFEST)
     if planted is not None:
         path, text = planted
         os.makedirs(os.path.dirname(os.path.join(root, path)), exist_ok=True)
@@ -185,6 +188,10 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         proc = run_check(build_repo(tmp, ("shell/plugins/acme.widget/Look.qml", "Rectangle { property var c: look.nope; radius: Math.min(look.card.radius, height / 2) }\n")))
         results.append(report("a plugin without an appearance takes no look rule and no look radius", proc.returncode == 1 and keys_of(proc) == {"literal-radius"}, proc))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = build_repo(tmp, ("shell/plugins/acme.notes/Appearance.js", '.pragma library\nvar c = "#ff0000";\n'))
+        proc = run_check(root)
+        results.append(report("a directory without a manifest under plugins is not checked as a plugin", proc.returncode == 0 and not keys_of(proc) and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=11"], proc))
     with tempfile.TemporaryDirectory() as tmp:
         root = build_repo(tmp, ("shell/plugins/acme.widget/manifest.json", '{"schemaVersion": 1, "id": "acme.widget"}'))
         proc = run_check(root)
