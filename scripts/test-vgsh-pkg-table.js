@@ -516,7 +516,7 @@ function main() {
         report("table", verifyTable(load(TABLE)));
         CONTROLS.forEach((control, index) => runControl(tmp, control, index));
         if (failed) process.exitCode = 1;
-        else console.log("test-vgsh-pkg-table: ok detect=" + DETECT_ROWS.length + " ids=" + ID_ROWS.length + " plans=" + PLAN_ROWS.length + " queries=" + QUERY_ROWS.length + " answers=" + ANSWER_ROWS.length + " pickers=" + PICKER_ROWS.length + " elevators=" + ELEVATOR_ROWS.length + " picks=" + PACKAGE_FOR_ROWS.length + " parses=" + PARSE_ROWS.length + " checks=" + CHECK_ROWS.length + " outcomes=" + OUTCOME_ROWS.length + " controls=" + CONTROLS.length);
+        else console.log("test-vgsh-pkg-table: ok detect=" + DETECT_ROWS.length + " ids=" + ID_ROWS.length + " plans=" + PLAN_ROWS.length + " queries=" + QUERY_ROWS.length + " answers=" + ANSWER_ROWS.length + " pickers=" + PICKER_ROWS.length + " elevators=" + ELEVATOR_ROWS.length + " picks=" + PACKAGE_FOR_ROWS.length + " groups=" + INSTALL_GROUP_ROWS.length + " parses=" + PARSE_ROWS.length + " checks=" + CHECK_ROWS.length + " outcomes=" + OUTCOME_ROWS.length + " controls=" + CONTROLS.length);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
