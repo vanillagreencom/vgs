@@ -449,14 +449,25 @@ function suite(ctx, check) {
     check("tuiWaitRuns: a launched run that already ended gets no wait", ctx.tuiWaitRuns(runs, [{ key: "acme.tui/hello", run: "1-1" }]), [{ key: "acme.tui/hello", run: "2-1" }]);
     check("tuiWaitRuns: a running record after restart gets a wait", ctx.tuiWaitRuns(runs, []), [{ key: "acme.tui/hello", run: "2-1" }]);
     const waitEnded = JSON.stringify(rec("acme.tui/hello", "2-1", "ended", 7, "03", "08"));
-    check("tuiWaitOutcome: accepts one ended record for this run", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, waitEnded + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", 7, "03", "08"), logs: [] });
-    check("tuiWaitOutcome: a vanished record is accepted", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "ended", null, "03", "08")) + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", null, "03", "08"), logs: [] });
-    check("tuiWaitOutcome: a failed wait is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 1, status: 0 }, "", "vgsh-tui: refused: wait=acme.tui/hello reason=gone\n"), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=failed exit=1 status=0 vgsh-tui: refused: wait=acme.tui/hello reason=gone"] });
-    check("tuiWaitOutcome: stdout must hold one line", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, waitEnded + "\n" + waitEnded + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=stdout-lines count=2"] });
-    check("tuiWaitOutcome: stdout must be a record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, "{ nope\n", "").logs[0].startsWith("tui: wait=acme.tui/hello run=2-1 reason=record is not JSON: "), true);
-    check("tuiWaitOutcome: stdout must be this run's ended record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-2", "ended", 0, "03", "08")) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
-    check("tuiWaitOutcome: a running record is refused", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "running", null, "03", null)) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
-    check("tuiWaitOutcome: a wait that never started is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", null, "", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=unstarted"] });
+    // The wanted waits as a wait finishes: this run's own, and for the gone
+    // rows a later run of the same key's alone, after the listing showed
+    // this run ended.
+    const waited = [{ key: "acme.tui/hello", run: "2-1" }];
+    const laterOnly = [{ key: "acme.tui/hello", run: "3-1" }];
+    const goneLine = "vgsh-tui: refused: wait=acme.tui/hello run=2-1 reason=gone\n";
+    check("tuiWaitOutcome: accepts one ended record for this run", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, waitEnded + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", 7, "03", "08"), logs: [] });
+    check("tuiWaitOutcome: a vanished record is accepted", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "ended", null, "03", "08")) + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", null, "03", "08"), logs: [] });
+    check("tuiWaitOutcome: a failed wait is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 1, status: 0 }, "", "vgsh-tui: refused: wait=acme.tui/hello run=2-1 reason=lock-unopenable\n"), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=failed exit=1 status=0 vgsh-tui: refused: wait=acme.tui/hello run=2-1 reason=lock-unopenable"] });
+    check("tuiWaitOutcome: a gone run no longer awaited is a normal end", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", laterOnly, { code: 3, status: 0 }, "", goneLine), { record: null, logs: [] });
+    check("tuiWaitOutcome: a gone run nothing awaits is a normal end", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", [], { code: 3, status: 0 }, "", goneLine), { record: null, logs: [] });
+    check("tuiWaitOutcome: a gone run still awaited is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited.concat(laterOnly), { code: 3, status: 0 }, "", goneLine), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=gone vgsh-tui: refused: wait=acme.tui/hello run=2-1 reason=gone"] });
+    check("tuiWaitOutcome: a gone run is matched by its key as well as its run", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", [{ key: "acme.tui/other", run: "2-1" }], { code: 3, status: 0 }, "", goneLine), { record: null, logs: [] });
+    check("tuiWaitOutcome: exit 3 from a crashed wait is a failure", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", laterOnly, { code: 3, status: 1 }, "", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=failed exit=3 status=1 "] });
+    check("tuiWaitOutcome: stdout must hold one line", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, waitEnded + "\n" + waitEnded + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=stdout-lines count=2"] });
+    check("tuiWaitOutcome: stdout must be a record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, "{ nope\n", "").logs[0].startsWith("tui: wait=acme.tui/hello run=2-1 reason=record is not JSON: "), true);
+    check("tuiWaitOutcome: stdout must be this run's ended record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-2", "ended", 0, "03", "08")) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
+    check("tuiWaitOutcome: a running record is refused", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "running", null, "03", null)) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
+    check("tuiWaitOutcome: a wait that never started is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", waited, null, "", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=unstarted"] });
 
     // tuiWaitRecordsKept: [name, listed, waited, the runs kept]. A1 and A2
     // are two runs of one key, A1 started first; B1 is another key's.
@@ -508,6 +519,9 @@ suite(load(LOGIC), report);
 // around it; the suite must fail on every copy. The copy sits at the
 // judge's own place in a temporary tree, beside the files it imports.
 const CONTROLS = [
+    ["a gone wait is matched to its run by key and run", "return row.key === key && row.run === run;", "return row.key === key;"],
+    ["a gone wait of a run still awaited is logged", "logs: awaited ? [prefix + \" reason=gone \"", "logs: false ? [prefix + \" reason=gone \""],
+    ["a gone wait of a run no longer awaited logs nothing", "if (completion.status === 0 && completion.code === TUI_WAIT_GONE) {", "if (false) {"],
     ["tui is an object", "if (!isPlainObject(tui))\n        return \"tui must be an object", "if (false)\n        return \"tui must be an object"],
     ["tui declares a script", "if (names.length === 0)", "if (false)"],
     ["tui needs its capability", "if (capabilities.indexOf(\"tui\") === -1)", "if (false)"],

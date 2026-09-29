@@ -147,5 +147,73 @@ Item {
             compare(records.runs.keys[key].ended.run, "2-1");
             compare(waitProcesses().length, 0);
         }
+
+        function runPath(id, state) {
+            return "/unit/tui/acme.tui@hello@" + id + "." + state + ".json";
+        }
+
+        function runRecord(id, state, code, second) {
+            return Object.assign(record(state, code), {
+                run: id,
+                startedAt: "2026-09-29T07:00:0" + second + ".000Z",
+                endedAt: state === "ended" ? "2026-09-29T07:00:0" + (second + 1) + ".000Z" : null
+            });
+        }
+
+        function listAndRead(files, signalName, path, text) {
+            model.setFiles(files, signalName);
+            verify(Object.prototype.hasOwnProperty.call(records.readers, path), "the record gets a reader: " + path);
+            records.readers[path].finishRead(text);
+        }
+
+        function waitOf(id) {
+            const waits = waitProcesses().filter(process => process.command[5] === id);
+            compare(waits.length, 1, "one wait for run " + id);
+            return waits[0];
+        }
+
+        // Back to back: run 1-1's ended record is read from the listing, run
+        // 2-1 of the same key starts, and 2-1's presenter removes 1-1's
+        // records before 1-1's wait reads them, so that wait ends with the
+        // gone code, 3. The core already delivered 1-1's done and 2-1's wait
+        // stays live. Whether the gone end logs a line is
+        // PluginLogic.tuiWaitOutcome's decision, pinned with its controls by
+        // scripts/test-tui-logic.js; this harness does not capture the log,
+        // so no edit to that decision reddens this test. It holds that the
+        // gone end changes no run, delivers no second done, starts no new
+        // wait, and leaves the later run's wait to deliver its own done.
+        function test_a_gone_wait_of_an_ended_run_leaves_the_next_run_alone() {
+            const firstEvents = [];
+            const secondEvents = [];
+            records.addWaiter("core", "1-1", result => firstEvents.push(result));
+            records.launched(key, "1-1");
+            const firstWait = waitOf("1-1");
+            listAndRead([runPath("1-1", "running")], "reset", runPath("1-1", "running"), JSON.stringify(runRecord("1-1", "running", null, 0)));
+            listAndRead([runPath("1-1", "running"), runPath("1-1", "ended")], "insert", runPath("1-1", "ended"), JSON.stringify(runRecord("1-1", "ended", 0, 0)));
+            compare(JSON.stringify(firstEvents), JSON.stringify([{ code: 0, reason: null }]));
+            verify(firstWait.running, "the first run's wait still runs after the listing ended the run");
+
+            records.addWaiter("core", "2-1", result => secondEvents.push(result));
+            records.launched(key, "2-1");
+            const secondWait = waitOf("2-1");
+            listAndRead([runPath("1-1", "ended"), runPath("2-1", "running")], "reset", runPath("2-1", "running"), JSON.stringify(runRecord("2-1", "running", null, 2)));
+            model.setFiles([runPath("2-1", "running")], "remove");
+            compare(records.runs.runs["1-1"], undefined);
+            compare(records.record().waits, [key + "|1-1", key + "|2-1"]);
+
+            firstWait.finish(3, 0, "", "vgsh-tui: refused: wait=acme.tui/hello run=1-1 reason=gone\n");
+            compare(JSON.stringify(firstEvents), JSON.stringify([{ code: 0, reason: null }]));
+            compare(records.runs.keys[key].running.run, "2-1");
+            compare(records.record().waits, [key + "|2-1"]);
+            verify(secondWait.running, "the later run's wait is still live");
+            compare(JSON.stringify(secondEvents), JSON.stringify([]));
+
+            secondWait.finish(0, 0, JSON.stringify(runRecord("2-1", "ended", 4, 2)) + "\n", "");
+            compare(JSON.stringify(secondEvents), JSON.stringify([{ code: 4, reason: null }]));
+            compare(JSON.stringify(firstEvents), JSON.stringify([{ code: 0, reason: null }]));
+            compare(records.runs.keys[key].running, null);
+            compare(records.record().waits, []);
+            compare(waitProcesses().length, 0);
+        }
     }
 }

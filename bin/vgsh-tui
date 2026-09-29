@@ -13,7 +13,7 @@
 #   vgsh-tui reap
 #       end the records of runs whose presenter is gone
 #   vgsh-tui wait --record <key> --run <run>
-#       wait for one run's presenter to release its key lock, then print the
+#       wait for one run's presenter to release its run lock, then print the
 #       run's ended record
 #
 # launch runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS ·
@@ -55,14 +55,16 @@
 # record directory, ${XDG_RUNTIME_DIR}/vgs/tui, and the app-id and title it
 # opened the window with, and after the fork waits up to start_ceiling
 # seconds for the run's record before it exits 0. Before the logo, present
-# holds <stem>.lock in that directory, <stem> being the key with its `/` as
-# `@`, for as long as it lives, removes the running records earlier runs of
-# the key left, and writes <stem>@<run>.running.json. When it exits, after
-# the prompt and on a hang-up or a termination too, it writes
-# <stem>@<run>.ended.json and removes every older ended record of the key.
-# Its own running record stays for the next run of the key or reap to
-# remove: the shell may not have read that file yet, and a file removed
-# between the shell's check and its open is logged as a failed read. A
+# holds <stem>.lock in that directory, the key lock, <stem> being the key
+# with its `/` as `@`, for as long as it lives, removes the running records
+# and run locks earlier runs of the key left, holds <stem>@<run>.lock, the
+# run lock, and writes <stem>@<run>.running.json. When it exits, after the
+# prompt and on a hang-up or a termination too, it writes
+# <stem>@<run>.ended.json, removes every older ended record of the key, and
+# removes its run lock's name; the lock itself goes with the process. Its
+# own running record stays for the next run of the key or reap to remove:
+# the shell may not have read that file yet, and a file removed between the
+# shell's check and its open is logged as a failed read. A
 # record is one JSON object written whole under a hidden name and moved into
 # place, and is never rewritten: a new state is a new file, so a watcher of
 # the directory's names sees every change, and an ended record stands over
@@ -75,14 +77,19 @@
 # running record whose key's lock no process holds, since the kernel drops a
 # lock with its holder, with a null code, and prints `reaped=<key> run=<run>`
 # per record; a running record whose run already has its ended record it only
-# removes. wait opens the key's lock, blocks in flock until the presenter
-# releases it, and then prints exactly one ended record line for the run. If
-# the run still has only a running record, wait ends it with the same null-code
-# record reap writes and prints that record. If the run has no running or ended
-# record, wait refuses with `vgsh-tui: refused: wait=<key> reason=gone`. The key
-# is two segments of [a-z0-9.-], each starting with a letter or digit, joined by
-# one `/`, and the run [a-z0-9-] starting with one: the shell judges both, and
-# this file only keeps its file names safe.
+# removes. Either way it removes the run's lock name. wait opens the run's
+# lock, blocks in flock until the presenter releases it, prints exactly one
+# ended record line for the run, and removes the lock's name. A later
+# run of the key holds only the key lock, so it never delays the wait. If the
+# run still has only a running record, wait takes the key lock, which orders
+# it against reap and a later run, and ends the run with the same null-code
+# record reap writes and prints that record. If the run has no running or
+# ended record, a later run of the key removed them after this run ended, and
+# wait refuses with `vgsh-tui: refused: wait=<key> run=<run> reason=gone`.
+# The key is two segments of [a-z0-9.-], each starting with a letter or
+# digit, joined by one `/`, and the run [a-z0-9-] starting with one: the
+# shell judges both, and this file only keeps its file names safe. A key
+# lock's name holds one `@` and a run lock's two, and neither ends in .json.
 #
 # bin/lib/logo.txt is the word VGS in the FIGlet font Delta Corps Priest 1 by
 # CoSMiC cHiLD, its V hand-adjusted to a point. Only the rendered text is in
@@ -98,10 +105,13 @@
 # starts a launcher. present exits with the command's code, 2 on a bad
 # invocation, 75 with no logo and no record while another presenter holds
 # the key's lock (`record=<key> reason=busy`), and 1 after refusing the
-# plugin copy, the script or the running record, a refusal it reports under
-# the same Done/Failed prompt. reap exits 0, or 1 on a record it could not
-# end (`reap=<file>`). wait exits 0 after printing one ended record, 1 on a
-# refused wait (`wait=<key>`), and 2 on a bad invocation. docs/architecture/tui.md.
+# plugin copy, the script, the run lock or the running record, a refusal it
+# reports under the same Done/Failed prompt. reap exits 0, or 1 on a record
+# it could not end (`reap=<file>`). wait exits 0 after printing one ended
+# record, 3 when the run is gone (`wait=<key> run=<run> reason=gone`), which
+# the shell reads as a normal end of a run it already saw end and as a
+# failure otherwise, 1 on any other refused wait (`wait=<key> run=<run>`),
+# and 2 on a bad invocation. docs/architecture/tui.md.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -129,6 +139,9 @@ record_dir="$rt_dir/vgs/tui"
 # on a terminal's start, not a measurement of one. A terminal slower than
 # this is reported silent, and its run still writes its records.
 start_ceiling=30
+# wait's exit status for a run whose records a later run of the key
+# removed: shell/Core/PluginLogic.js's TUI_WAIT_GONE.
+wait_gone=3
 
 # The app-id of size class SIZE, from the table the layer's window rules
 # are written from. Exits 3 for a size the table does not hold; the loader
@@ -332,9 +345,11 @@ record_text() { # STATE CODE ENDED_AT
 }
 
 # Holds the key's lock for the rest of present's life, exiting 75 while
-# another presenter holds it, removes the running records earlier runs of
-# the key left and writes this run's. Sets refusal when the directory or
-# the record cannot be written, and record_active once the record is there.
+# another presenter holds it, removes the running records and run locks
+# earlier runs of the key left, holds this run's lock and writes this run's
+# running record. Sets refusal when the directory, the run lock or the
+# record cannot be had, run_lock once the run lock is held, and
+# record_active once the record is there.
 record_start() {
   local status=0 stale
   stem="${record_key/\//@}"
@@ -349,9 +364,20 @@ record_start() {
       ;;
     *) refusal="record=$record_key reason=flock-failed"; return 1 ;;
   esac
-  for stale in "$window_dir/$stem@"*.running.json; do
+  # Holding the key lock proves every earlier presenter of the key is gone;
+  # a lock name one left is only a name, and a waiter that holds its inode
+  # keeps it.
+  for stale in "$window_dir/$stem@"*.running.json "$window_dir/$stem@"*.lock; do
     if [[ -e $stale ]]; then rm -f -- "$stale"; fi
   done
+  # A waiter for this run starts only once the running record below is
+  # there, so no process holds the run lock yet. flock -n makes one that
+  # does a refusal, not a deadlock: a waiter holding it may wait on the key
+  # lock this presenter holds.
+  { exec {run_fd}>>"$window_dir/$stem@$record_run.lock"; } 2>/dev/null ||
+    { refusal="record=$window_dir/$stem@$record_run.lock reason=unwritable"; run_fd=""; return 1; }
+  flock -n "$run_fd" || { refusal="record=$record_key run=$record_run reason=run-held"; return 1; }
+  run_lock="$window_dir/$stem@$record_run.lock"
   started_at="$(record_now)"
   put_record "$window_dir" "$stem@$record_run.running.json" "$(record_text running null null)" ||
     { refusal="record=$window_dir/$stem@$record_run.running.json reason=unwritable"; return 1; }
@@ -371,17 +397,22 @@ record_end() { # CODE
   done
 }
 
-# The EXIT trap: removes the plugin copy and ends the record, with the
-# command's code when it ran to its end and present's own otherwise.
+# The EXIT trap: removes the plugin copy, ends the record, with the
+# command's code when it ran to its end and present's own otherwise, and
+# then removes the run lock's name. A waiter that opened the name before
+# holds its inode and gets the lock when present exits; one that opens the
+# name after makes a new lock, gets it at once, and finds the ended record
+# already written.
 present_exit() {
   local status=$?
   [[ -z $copy_dir ]] || rm -rf -- "$copy_dir"
   if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi
+  [[ -z $run_lock ]] || rm -f -- "$run_lock"
 }
 
 present() {
   local code refusal=""
-  copy_dir="" record_fd="" record_active=0 ran_code="" stem="" started_at=""
+  copy_dir="" record_fd="" run_fd="" run_lock="" record_active=0 ran_code="" stem="" started_at=""
   trap present_exit EXIT
   trap 'exit 129' HUP
   trap 'exit 143' TERM
@@ -407,9 +438,10 @@ present() {
     # present outlives it to report the code and remove the copy.
     trap : INT
     set +e
-    # The command does not inherit the key's lock: a process it leaves
-    # behind would hold the key busy after present is gone.
-    if [[ -n $record_fd ]]; then "${argv[@]}" {record_fd}>&-; else "${argv[@]}"; fi
+    # The command inherits neither lock: a process it leaves behind would
+    # hold the key busy, or keep the run's waiter blocked, after present is
+    # gone.
+    if [[ -n $record_fd ]]; then "${argv[@]}" {record_fd}>&- {run_fd}>&-; else "${argv[@]}"; fi
     code=$?
     set -e
     trap - INT
@@ -466,49 +498,71 @@ reap() {
       *) printf 'vgsh-tui: refused: reap=%s reason=flock-failed\n' "$file" >&2; failed=1; continue ;;
     esac
     # A presenter that died between writing its ended record and removing
-    # its running one left both: its ended record stands.
+    # its running one left both: its ended record stands. Either way the
+    # run's presenter is gone, and so is any use of its run lock's name.
     if [[ -e $record_dir/$stem@$run.ended.json ]]; then
-      rm -f -- "$file"
+      rm -f -- "$file" "$record_dir/$stem@$run.lock"
       continue
     fi
     status=0
     end_running_record "$file" "$stem" "$run" "reap=$file" || status=$?
     [[ $status == 2 ]] && continue
     [[ $status == 0 ]] || { failed=1; continue; }
+    rm -f -- "$record_dir/$stem@$run.lock"
     printf 'reaped=%s run=%s\n' "${stem/@//}" "$run"
   done
   return "$failed"
 }
 
-wait_record() {
-  local stem="${record_key/\//@}" fd file ended status=0 ended_record_text
-  [[ -d $record_dir ]] || { printf 'vgsh-tui: refused: wait=%s reason=gone\n' "$record_key" >&2; return 1; }
-  if ! { exec {fd}>>"$record_dir/$stem.lock"; } 2>/dev/null; then
-    printf 'vgsh-tui: refused: wait=%s reason=lock-unopenable\n' "$record_key" >&2
-    return 1
-  fi
-  flock "$fd" || status=$?
-  if [[ $status -ne 0 ]]; then
-    exec {fd}>&-
-    printf 'vgsh-tui: refused: wait=%s reason=flock-failed\n' "$record_key" >&2
-    return 1
-  fi
+wait_refused() { # REASON
+  printf 'vgsh-tui: refused: wait=%s run=%s reason=%s\n' "$record_key" "$record_run" "$1" >&2
+}
+
+# Prints the run's ended record, or ends a run that has only its running
+# record and prints the record that ends it. Returns wait_gone when the run
+# has neither, which only a later presenter of the key leaves, after this
+# run ended, and 1 on any other refusal. The caller holds the run's lock.
+wait_read() { # STEM
+  local stem="$1" ended file key_fd status=0 ended_record_text=""
   ended="$record_dir/$stem@$record_run.ended.json"
   file="$record_dir/$stem@$record_run.running.json"
+  if [[ ! -e $ended && -e $file ]]; then
+    # The presenter is gone without its ended record, or it held no run
+    # lock. The key lock orders this end against reap and a later run of
+    # the key, and the records are read again under it.
+    { exec {key_fd}>>"$record_dir/$stem.lock"; } 2>/dev/null || { wait_refused lock-unopenable; return 1; }
+    flock "$key_fd" || { exec {key_fd}>&-; wait_refused flock-failed; return 1; }
+    if [[ ! -e $ended && -e $file ]]; then
+      end_running_record "$file" "$stem" "$record_run" "wait=$record_key run=$record_run" || status=$?
+    fi
+    exec {key_fd}>&-
+    case "$status" in
+      0) if [[ -n $ended_record_text ]]; then printf '%s\n' "$ended_record_text"; return 0; fi ;;
+      2) ;;
+      *) return 1 ;;
+    esac
+  fi
   if [[ -e $ended ]]; then
-    cat -- "$ended" || { exec {fd}>&-; printf 'vgsh-tui: refused: wait=%s reason=unreadable\n' "$record_key" >&2; return 1; }
-    exec {fd}>&-
-    return 0
+    cat -- "$ended" 2>/dev/null && return 0
+    if [[ -e $ended ]]; then wait_refused unreadable; return 1; fi
   fi
-  if [[ -e $file ]]; then
-    end_running_record "$file" "$stem" "$record_run" "wait=$record_key" || { exec {fd}>&-; return 1; }
-    printf '%s\n' "$ended_record_text"
-    exec {fd}>&-
-    return 0
-  fi
-  exec {fd}>&-
-  printf 'vgsh-tui: refused: wait=%s reason=gone\n' "$record_key" >&2
-  return 1
+  wait_refused gone
+  return "$wait_gone"
+}
+
+# Waits on the run's own lock, never the key's, so a later run of the key,
+# which holds the key lock, cannot delay it; then reads the run's records
+# and removes the run lock's name.
+wait_record() {
+  local stem="${record_key/\//@}" lock run_fd status=0
+  lock="$record_dir/$stem@$record_run.lock"
+  [[ -d $record_dir ]] || { wait_refused gone; return "$wait_gone"; }
+  { exec {run_fd}>>"$lock"; } 2>/dev/null || { wait_refused lock-unopenable; return 1; }
+  flock "$run_fd" || { exec {run_fd}>&-; wait_refused flock-failed; return 1; }
+  wait_read "$stem" || status=$?
+  rm -f -- "$lock"
+  exec {run_fd}>&-
+  return "$status"
 }
 
 verb="${1:-}"

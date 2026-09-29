@@ -901,6 +901,10 @@ var TUI_ARG_MAX = 256;
 // The exit status bin/vgsh-tui launch and check give when xdg-terminal-exec
 // is not on PATH, their `terminal=missing` refusal.
 var TUI_LAUNCHER_MISSING = 69;
+// The exit status bin/vgsh-tui wait gives for a run with neither record, its
+// `reason=gone` refusal: a later run of the key removed them after this run
+// ended.
+var TUI_WAIT_GONE = 3;
 // What the core knows of the terminal launcher: `unknown` until a probe or a
 // launch answers, `present` once one exited 0, `missing` once one exited
 // TUI_LAUNCHER_MISSING. tuiLauncherAfter moves it.
@@ -1578,10 +1582,19 @@ function tuiWaitRuns(runs, launched) {
 
 // The result of one `vgsh-tui wait --record KEY --run RUN`: either the ended
 // record it printed, or log lines that name why the result was not accepted.
-function tuiWaitOutcome(key, run, completion, stdout, stderr) {
+// WANTED is tuiWaitRuns's answer as the wait finished, before the wait's own
+// run is dropped from the launches. A gone run WANTED no longer holds, by
+// key and run, is a normal end: the core already read its ended record
+// before a later run of the key removed it, so it logs nothing. A gone run
+// WANTED still holds is one the core counts live with no record left.
+function tuiWaitOutcome(key, run, wanted, completion, stdout, stderr) {
     var prefix = "tui: wait=" + tuiLabel(key) + " run=" + tuiLabel(run);
     if (completion === null)
         return { record: null, logs: [prefix + " reason=unstarted"] };
+    if (completion.status === 0 && completion.code === TUI_WAIT_GONE) {
+        var awaited = wanted.some(function (row) { return row.key === key && row.run === run; });
+        return { record: null, logs: awaited ? [prefix + " reason=gone " + String(stderr).split("\n")[0]] : [] };
+    }
     if (completion.status !== 0 || completion.code !== 0)
         return { record: null, logs: [prefix + " reason=failed exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0]] };
     var lines = String(stdout).split("\n").filter(function (line) { return line !== ""; });

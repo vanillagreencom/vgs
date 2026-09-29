@@ -30,7 +30,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
 - [requirements.md](requirements.md) and [requirement-notice.md](requirement-notice.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe, the `missing` lines or the notice.
-- [tui.md](tui.md), [tui-capability.md](tui-capability.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability or `vgsh sudo`.
+- [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.

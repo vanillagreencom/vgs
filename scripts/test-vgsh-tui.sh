@@ -279,6 +279,8 @@ rdir="$rt/vgs/tui"
 stub during "ls -A \"\$1\" >\"$tmp/during\"; cat -- \"\$1\"/acme.tui@hello@*.running.json >\"$tmp/during-record\""
 # leaver leaves a process behind that keeps every descriptor it was handed.
 stub leaver "sleep 30 </dev/null >/dev/null 2>&1 & echo \$! >\"$tmp/leaver\""
+# fdlocks counts the lock files it holds open.
+stub fdlocks "for f in /proc/\$\$/fd/*; do readlink \"\$f\"; done | grep -c '\\.lock\$' >\"$tmp/fdlocks\""
 title_words='VGS · Hi "q" \x'
 record_opts=(--record acme.tui/hello --run 1-1 --record-dir "$rdir" --app-id org.vgs.tui --window-title "$title_words")
 # record_of FILE: the record's fields as one JSON line, timestamps replaced
@@ -304,13 +306,16 @@ mkdir -p "$rdir"
 printf '{}\n' >"$rdir/acme.tui@hello@0-1.running.json"
 printf '{}\n' >"$rdir/acme.tui@hello@0-2.ended.json"
 printf '{}\n' >"$rdir/acme.tui@other@0-3.running.json"
+: >"$rdir/acme.tui@hello@0-4.lock"
+: >"$rdir/acme.tui@other@0-3.lock"
 plain_run "$subject" present --presentation plain "${record_opts[@]}" -- during "$rdir"
 check "a recorded run exits with the command's code" test "$plain_status" == 0
-check "the running record is in place while the command runs" test "$(cat "$tmp/during")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@0-2.ended.json acme.tui@hello@1-1.running.json acme.tui@other@0-3.running.json)"
+check "the running record and the run lock are in place while the command runs" test "$(cat "$tmp/during")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@0-2.ended.json acme.tui@hello@1-1.lock acme.tui@hello@1-1.running.json acme.tui@other@0-3.lock acme.tui@other@0-3.running.json)"
 printf '%s\n' "$(cat "$tmp/during-record")" >"$tmp/during.json"
 check "the running record carries the key, the run and the window" test "$(record_of "$tmp/during.json")" == "$(want_record running null)"
 check "the ended record carries the command's code" test "$(record_of "$rdir/acme.tui@hello@1-1.ended.json")" == "$(want_record ended 0)"
-check "the run leaves its records, the lock and another key's record alone" test "$(LC_ALL=C ls -A "$rdir")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@1-1.ended.json acme.tui@hello@1-1.running.json acme.tui@other@0-3.running.json)"
+check "the run removes its run lock and leaves its records, the key lock and another key's files alone" test "$(LC_ALL=C ls -A "$rdir")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@1-1.ended.json acme.tui@hello@1-1.running.json acme.tui@other@0-3.lock acme.tui@other@0-3.running.json)"
+rm -f -- "$rdir/acme.tui@other@0-3.lock"
 plain_run "$subject" present --presentation plain "${record_opts[@]/1-1/1-2}" -- exits 3
 check "a failed recorded run exits with its code" test "$plain_status" == 3
 check "the next run removes the last run's records and keeps its own" test "$(LC_ALL=C ls -A "$rdir" | grep 'acme\.tui@hello@')" == "$(printf '%s\n' acme.tui@hello@1-2.ended.json acme.tui@hello@1-2.running.json)"
@@ -320,6 +325,9 @@ plain_run "$subject" present --presentation plain "${record_opts[@]}" -- leaver
 key_free() { flock -n "$rdir/acme.tui@hello.lock" true; }
 check "a process the command left behind does not hold the key" key_free
 [[ -s $tmp/leaver ]] && kill "$(cat "$tmp/leaver")" 2>/dev/null
+# The command holds neither the key lock nor the run lock open.
+plain_run "$subject" present --presentation plain "${record_opts[@]}" -- fdlocks
+check "the command inherits no lock" test "$(cat "$tmp/fdlocks")" == 0
 # Another presenter of the key is refused before the logo, with no record.
 exec {held}>>"$rdir/acme.tui@hello.lock"
 flock "$held"
@@ -348,22 +356,27 @@ printf '%s\n' '{"key":"core/doctor","run":"5-1","state":"running","code":null,"s
 printf '%s\n' '{"key":"acme.tui/hello","run":"6-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/acme.tui@hello@6-1.running.json"
 exec {held}>>"$rdir/acme.tui@hello.lock"
 flock "$held"
+: >"$rdir/core@doctor@5-1.lock"
+: >"$rdir/acme.tui@hello@6-1.lock"
 plain_run "$subject" reap
 check "reap exits 0" test "$plain_status" == 0
 check "reap names the run it ended" test "$(cat "$tmp/out")" == "reaped=core/doctor run=5-1"
 check "reap ends the dead run with a null code" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["state"], r["code"], r["endedAt"] is not None, r["startedAt"])' "$rdir/core@doctor@5-1.ended.json")" == "ended None True 2026-09-29T07:00:00.000Z"
 check "reap removes the dead run's running record" test ! -e "$rdir/core@doctor@5-1.running.json"
-check "reap leaves a held key's running record" test -e "$rdir/acme.tui@hello@6-1.running.json"
+check "reap removes the dead run's run lock" test ! -e "$rdir/core@doctor@5-1.lock"
+check "reap leaves a held key's running record and run lock" test -e "$rdir/acme.tui@hello@6-1.running.json" -a -e "$rdir/acme.tui@hello@6-1.lock"
 exec {held}>&-
-rm -f -- "$rdir"/*.json
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
 # A presenter that died between its ended record and removing its running
 # one: reap removes the running record and keeps the code.
 printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.running.json"
 printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"ended","code":2,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":"2026-09-29T07:00:01.000Z","window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.ended.json"
+: >"$rdir/core@doctor@8-1.lock"
 plain_run "$subject" reap
 check "reap of a run that already ended exits 0 and names nothing" test "$plain_status:$(cat "$tmp/out")" == "0:"
 check "reap keeps the run's ended record and its code" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/core@doctor@8-1.ended.json")" == 2
 check "reap removes the ended run's running record" test ! -e "$rdir/core@doctor@8-1.running.json"
+check "reap removes the ended run's run lock" test ! -e "$rdir/core@doctor@8-1.lock"
 rm -f -- "$rdir"/*.json
 printf '{}\n' >"$rdir/core@doctor@7-1.running.json"
 plain_run "$subject" reap
@@ -387,7 +400,7 @@ for _ in $(seq 1 100); do [[ -e $rdir/acme.tui@hello@2-1.ended.json ]] && break;
 check "the launched run ends its record with the command's code" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["code"], r["window"]["appId"])' "$rdir/acme.tui@hello@2-1.ended.json")" == "4 org.vgs.tui.wide"
 rm -f -- "$rdir"/*.json
 
-# wait: one process blocks on the key lock and exits as soon as the
+# wait: one process blocks on the run lock and exits as soon as the
 # presenter releases it. Ceiling: 1000 ms from presenter's exit to wait's
 # exit. scripts/test-vgsh-tui.sh measured 0 ms on cachy x86_64 on
 # 2026-09-29, from the shell's reap of the presenter to its reap of wait; 0
@@ -412,17 +425,146 @@ echo "test-vgsh-tui: wait-latency-ms=$wait_ms"
 check "wait exits after the presenter exits" test "$present_status:$wait_status" == "0:0"
 check "wait prints the ended record once" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["key"], r["run"], r["state"], r["code"])' "$tmp/wait-out")" == "acme.tui/hello 10-1 ended 0"
 check "wait exits within the lock-release ceiling" test "$wait_ms" -le 1000
+check "no run lock is left once the run and its wait end" test ! -e "$rdir/acme.tui@hello@10-1.lock"
 rm -f -- "$rdir"/*.json "$tmp/wait-out" "$tmp/wait-err"
 
 printf '%s\n' '{"key":"core/doctor","run":"11-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@11-1.running.json"
+: >"$rdir/core@doctor@11-1.lock"
 plain_run "$subject" wait --record core/doctor --run 11-1
 check "wait ends a dead presenter's run" test "$plain_status" == 0
 check "wait prints the dead run's ended record" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["state"], r["code"], r["endedAt"] is not None, r["startedAt"])' "$tmp/out")" == "ended None True 2026-09-29T07:00:00.000Z"
 check "wait removes the dead run's running record" test ! -e "$rdir/core@doctor@11-1.running.json"
+check "wait removes the dead run's run lock" test ! -e "$rdir/core@doctor@11-1.lock"
 rm -f -- "$rdir"/*.json
 plain_run "$subject" wait --record core/doctor --run 12-1
-check "wait refuses a gone run" test "$plain_status" == 1
-check "wait names a gone run" test "$(err_first)" == "vgsh-tui: refused: wait=core/doctor reason=gone"
+check "wait refuses a gone run with its own code" test "$plain_status" == 3
+check "wait names a gone run" test "$(err_first)" == "vgsh-tui: refused: wait=core/doctor run=12-1 reason=gone"
+check "a gone run's wait leaves no run lock" test ! -e "$rdir/core@doctor@12-1.lock"
+
+# A wait that finds only the running record reads the records again under
+# the key lock: reap may end the run, or a later run of the key remove its
+# records, while the wait waits for that lock. The test holds the key lock,
+# waits until the wait's flock is blocked on it, polling every 0.01 s for at
+# most 5 s, changes the records as each of those would, and releases the
+# lock.
+# recheck_under_key BIN RUN CHANGE...: sets recheck_blocked and
+# recheck_status, and leaves stdout in $tmp/out.
+flock_blocked() { [[ $(ps -o comm= --ppid "$1" 2>/dev/null) == flock ]]; }
+recheck_under_key() {
+  local bin="$1" run="$2" pid n
+  shift 2
+  printf '%s\n' '{"key":"core/doctor","run":"'"$run"'","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@$run.running.json"
+  exec {held}>>"$rdir/core@doctor.lock"
+  flock "$held"
+  # The wait does not inherit the test's hold on the key lock.
+  "${tui_env[@]}" "$bin" wait --record core/doctor --run "$run" >"$tmp/out" 2>"$tmp/err" {held}>&- &
+  pid=$!
+  for ((n = 0; n < 500; n++)); do flock_blocked "$pid" && break; sleep 0.01; done
+  recheck_blocked=0
+  flock_blocked "$pid" && recheck_blocked=1
+  "$@"
+  exec {held}>&-
+  recheck_status=0
+  wait "$pid" || recheck_status=$?
+}
+# reap_ends RUN: reap has written the run's ended record and not yet
+# removed its running one.
+reap_ends() {
+  sed -e 's/"state":"running"/"state":"ended"/' -e 's/"endedAt":null/"endedAt":"2026-09-29T07:00:01.000Z"/' "$rdir/core@doctor@$1.running.json" >"$rdir/core@doctor@$1.ended.json"
+}
+later_run_removes() { rm -f -- "$rdir/core@doctor@$1.running.json"; }
+recheck_under_key "$subject" 17-1 reap_ends 17-1
+check "a wait blocks on the key lock for a run with only its running record" test "$recheck_blocked" == 1
+check "a wait prints the record reap wrote while it waited for the key lock" test "$recheck_status:$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["run"], r["endedAt"])' "$tmp/out")" == "0:17-1 2026-09-29T07:00:01.000Z"
+recheck_under_key "$subject" 17-2 later_run_removes 17-2
+check "a wait whose run a later run removed while it waited for the key lock is gone" test "$recheck_status:$(err_first)" == "3:vgsh-tui: refused: wait=core/doctor run=17-2 reason=gone"
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
+
+# Back to back: run A of a key ends and run B of the same key starts at
+# once, with a wait for A that the shell started while A was live. hold
+# FIFO runs until the test opens FIFO for writing, so A and B end when the
+# test says. The wait is stopped with SIGSTOP and continued by hand, so the
+# order is fixed, not raced:
+#   - gone: B runs to its end, which removes A's ended record, before A's
+#     wait reads. The wait exits 3, the gone code, never 1.
+#   - live: B's command still runs, and holds the key lock, when A's wait
+#     reads. The wait prints A's ended record within the 1000 ms ceiling
+#     above.
+# The shape repeats 50 times; every repetition must pass.
+hold="$tmp/hold"
+mkfifo -- "$hold"
+stub hold 'exec cat -- "$1" >/dev/null'
+b2b_opts=(--record acme.tui/b2b --record-dir "$rdir" --app-id org.vgs.tui --window-title t)
+# b2b_held RUN: a presenter of acme.tui/b2b whose command holds; returns
+# once the run's record is there, the point after which the shell starts a
+# wait. Polls every 0.01 s for at most 5 s, a ceiling on a presenter's
+# start. Sets held_pid.
+b2b_held() {
+  "${tui_env[@]}" "$subject" present --presentation plain "${b2b_opts[@]}" --run "$1" -- hold "$hold" </dev/null >/dev/null 2>&1 &
+  held_pid=$!
+  for _ in $(seq 1 500); do [[ -e $rdir/acme.tui@b2b@$1.running.json ]] && return 0; sleep 0.01; done
+  return 1
+}
+# b2b_release: ends the held command and waits for its presenter. The
+# write end opens once the command has opened the FIFO; the timeout ends a
+# release no command ever reads.
+b2b_release() { timeout 10 "$BASH" -c ': >"$1"' _ "$hold" || :; wait "$held_pid" || :; }
+# b2b_waiter BIN RUN: a stopped `BIN wait` for RUN. Sets waiter_pid.
+b2b_waiter() {
+  "${tui_env[@]}" "$1" wait --record acme.tui/b2b --run "$2" >"$tmp/b2b-out" 2>"$tmp/b2b-err" &
+  waiter_pid=$!
+  kill -STOP "$waiter_pid"
+}
+# b2b_gone BIN A B: the gone shape. Sets b2b_result to the wait's exit
+# status and first stderr line.
+b2b_gone() {
+  local status=0 line=""
+  b2b_held "$2" || { b2b_result="presenter $2 never started"; return 0; }
+  b2b_waiter "$1" "$2"
+  b2b_release
+  "${tui_env[@]}" "$subject" present --presentation plain "${b2b_opts[@]}" --run "$3" -- true </dev/null >/dev/null 2>&1 || :
+  kill -CONT "$waiter_pid"
+  wait "$waiter_pid" || status=$?
+  [[ -s $tmp/b2b-err ]] && IFS= read -r line <"$tmp/b2b-err"
+  b2b_result="$status|$line|$(cat "$tmp/b2b-out")"
+}
+# b2b_live BIN A B: the live shape. Sets b2b_result to the wait's exit
+# status and the run and state of the record it printed, or `blocked` when
+# the wait had not exited within the ceiling while B ran.
+b2b_live() {
+  local status=0 n
+  b2b_held "$2" || { b2b_result="presenter $2 never started"; return 0; }
+  b2b_waiter "$1" "$2"
+  b2b_release
+  b2b_held "$3" || { kill -CONT "$waiter_pid"; b2b_result="presenter $3 never started"; return 0; }
+  kill -CONT "$waiter_pid"
+  for ((n = 0; n < 100; n++)); do kill -0 "$waiter_pid" 2>/dev/null || break; sleep 0.01; done
+  if kill -0 "$waiter_pid" 2>/dev/null; then
+    b2b_result=blocked
+    b2b_release
+    wait "$waiter_pid" || :
+    return 0
+  fi
+  wait "$waiter_pid" || status=$?
+  b2b_result="$status|$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["run"], r["state"])' "$tmp/b2b-out" 2>/dev/null)"
+  b2b_release
+}
+b2b_passes=0 b2b_first=""
+for ((i = 100; i < 150; i++)); do
+  b2b_gone "$subject" "$i-1" "$i-2"
+  gone="$b2b_result"
+  b2b_live "$subject" "$i-3" "$i-4"
+  live="$b2b_result"
+  if [[ $gone == "3|vgsh-tui: refused: wait=acme.tui/b2b run=$i-1 reason=gone|" && $live == "0|$i-3 ended" ]]; then
+    b2b_passes=$((b2b_passes + 1))
+  elif [[ -z $b2b_first ]]; then
+    b2b_first="run $i: gone=[$gone] live=[$live]"
+  fi
+done
+echo "test-vgsh-tui: back-to-back=$b2b_passes/50${b2b_first:+ first-failure=$b2b_first}"
+check "the back-to-back wait passes 50 times in a row" test "$b2b_passes" == 50
+check "back-to-back runs leave no run lock" test -z "$(ls "$rdir" | grep '^acme\.tui@b2b@.*\.lock$')"
+rm -f -- "$rdir"/acme.tui@b2b*
 
 # Refusals before any terminal opens.
 # Rows: exit | first stderr line | the command's words, space-delimited
@@ -681,11 +823,19 @@ control unended-record vgsh-tui '  if [[ $record_active == 1 ]]; then record_end
 plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
 check "the unended-record mutant leaves no ended record" test ! -e "$rdir/acme.tui@hello@1-1.ended.json"
 rm -f -- "$rdir"/*.json
-control inherited-lock vgsh-tui 'then "${argv[@]}" {record_fd}>&-; else' 'then "${argv[@]}"; else'
+control inherited-lock vgsh-tui 'then "${argv[@]}" {record_fd}>&- {run_fd}>&-; else' 'then "${argv[@]}" {run_fd}>&-; else'
 plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- leaver
 check "the inherited-lock mutant leaves the key held by the process left behind" test "$(key_free && echo free || echo held)" == held
 [[ -s $tmp/leaver ]] && kill "$(cat "$tmp/leaver")" 2>/dev/null
 rm -f -- "$rdir"/*.json
+control inherited-run-lock vgsh-tui 'then "${argv[@]}" {record_fd}>&- {run_fd}>&-; else' 'then "${argv[@]}" {record_fd}>&-; else'
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- fdlocks
+check "the inherited-run-lock mutant hands the command the run lock" test "$(cat "$tmp/fdlocks")" == 1
+rm -f -- "$rdir"/*.json
+control kept-run-lock vgsh-tui '  [[ -z $run_lock ]] || rm -f -- "$run_lock"' '  :'
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
+check "the kept-run-lock mutant leaves the run lock's name" test -e "$rdir/acme.tui@hello@1-1.lock"
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
 control unlocked vgsh-tui 'flock -n -E 75 "$record_fd" || status=$?' ':'
 exec {held}>>"$rdir/acme.tui@hello.lock"
 flock "$held"
@@ -695,9 +845,11 @@ exec {held}>&-
 rm -f -- "$rdir"/*.json
 control stale-kept vgsh-tui '    if [[ -e $stale ]]; then rm -f -- "$stale"; fi' '    :'
 printf '{}\n' >"$rdir/acme.tui@hello@0-1.running.json"
+: >"$rdir/acme.tui@hello@0-4.lock"
 plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
 check "the stale-kept mutant keeps a dead presenter's running record" test -e "$rdir/acme.tui@hello@0-1.running.json"
-rm -f -- "$rdir"/*.json
+check "the stale-kept mutant keeps an earlier run's lock" test -e "$rdir/acme.tui@hello@0-4.lock"
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
 control reap-held vgsh-tui '      75) continue ;;' '      75) ;;'
 printf '%s\n' '{"key":"acme.tui/hello","run":"6-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/acme.tui@hello@6-1.running.json"
 exec {held}>>"$rdir/acme.tui@hello.lock"
@@ -712,19 +864,45 @@ printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"ended","code":2,"starte
 plain_run "$control_bin" reap
 check "the reap-ended mutant replaces a run's code with null" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/core@doctor@8-1.ended.json")" == None
 rm -f -- "$rdir"/*.json
-control wait-unlocked vgsh-tui '  flock "$fd" || status=$?' '  :'
+control wait-unlocked vgsh-tui '  flock "$run_fd" || {' '  : || {'
 printf '%s\n' '{"key":"core/doctor","run":"13-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@13-1.running.json"
-exec {held}>>"$rdir/core@doctor.lock"
+exec {held}>>"$rdir/core@doctor@13-1.lock"
 flock "$held"
 plain_run "$control_bin" wait --record core/doctor --run 13-1
-check "the wait-unlocked mutant returns before the presenter releases the lock" test "$plain_status" == 0
+check "the wait-unlocked mutant returns before the presenter releases the run lock" test "$plain_status" == 0
 check "the wait-unlocked mutant ends a live presenter's record" test -e "$rdir/core@doctor@13-1.ended.json"
 exec {held}>&-
-rm -f -- "$rdir"/*.json
-control wait-dead-run vgsh-tui '    end_running_record "$file" "$stem" "$record_run" "wait=$record_key" || { exec {fd}>&-; return 1; }' '    return 1'
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
+control wait-dead-run vgsh-tui '      end_running_record "$file" "$stem" "$record_run" "wait=$record_key run=$record_run" || status=$?' '      return 1'
 printf '%s\n' '{"key":"core/doctor","run":"14-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@14-1.running.json"
 plain_run "$control_bin" wait --record core/doctor --run 14-1
 check "the wait-dead-run mutant does not end a dead presenter" test "$plain_status" == 1
 check "the wait-dead-run mutant writes no ended record" test ! -e "$rdir/core@doctor@14-1.ended.json"
-rm -f -- "$rdir"/*.json
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
+control wait-no-recheck vgsh-tui $'    if [[ ! -e $ended && -e $file ]]; then\n      end_running_record' $'    if true; then\n      end_running_record'
+recheck_under_key "$control_bin" 18-1 reap_ends 18-1
+check "the wait-no-recheck mutant writes over the ended record reap wrote" test "$recheck_status:$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["endedAt"])' "$tmp/out")" != "0:2026-09-29T07:00:01.000Z"
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
+control wait-kept-lock vgsh-tui $'  rm -f -- "$lock"\n' $'  :\n'
+plain_run "$control_bin" wait --record core/doctor --run 15-1
+check "the wait-kept-lock mutant leaves the run lock's name" test -e "$rdir/core@doctor@15-1.lock"
+rm -f -- "$rdir"/*@*@*.lock
+control reap-kept-lock vgsh-tui $'    rm -f -- "$record_dir/$stem@$run.lock"\n    printf \'reaped=' $'    :\n    printf \'reaped='
+printf '%s\n' '{"key":"core/doctor","run":"16-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@16-1.running.json"
+: >"$rdir/core@doctor@16-1.lock"
+plain_run "$control_bin" reap
+check "the reap-kept-lock mutant leaves a reaped run's lock" test -e "$rdir/core@doctor@16-1.lock"
+rm -f -- "$rdir"/*.json "$rdir"/*@*@*.lock
+# Key-only matching: a wait that blocks on the key lock, as before run
+# locks, stays blocked while a later run of the key holds it.
+control wait-key-lock vgsh-tui '  lock="$record_dir/$stem@$record_run.lock"' '  lock="$record_dir/$stem.lock"'
+b2b_live "$control_bin" 200-1 200-2
+check "the wait-key-lock mutant stays blocked past the ceiling while a later run holds the key" test "$b2b_result" == blocked
+rm -f -- "$rdir"/acme.tui@b2b*
+# A gone run that exits 1, the code of every other refusal, is the failure
+# the shell logged before.
+control wait-gone-failed vgsh-tui 'wait_gone=3' 'wait_gone=1'
+b2b_gone "$control_bin" 201-1 201-2
+check "the wait-gone-failed mutant exits 1 for a run a later run removed" test "${b2b_result%%|*}" == 1
+rm -f -- "$rdir"/acme.tui@b2b*
 rows_done test-vgsh-tui

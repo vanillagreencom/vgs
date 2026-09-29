@@ -205,9 +205,9 @@ expect_poll "the rebuilt instance reads the run the destroyed one started" '[fal
 expect "the rebuilt instance received no done" '[]' tui_done
 
 # Control: a presenter copy that writes no ended record exits and leaves
-# only its running record. The run's `vgsh-tui wait` then finds the key's
-# lock free and no ended record, ends the run with no code, and the `done`
-# answers it vanished, with no request for the key.
+# only its running record. The run's `vgsh-tui wait` then finds the run's
+# lock free and no ended record, ends the run with no code under the key's
+# lock, and the `done` answers it vanished, with no request for the key.
 tui_real="$sandbox/vgsh-tui.real"
 cp -- "$repo/bin/vgsh-tui" "$tui_real"
 end_line='  if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi'

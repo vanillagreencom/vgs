@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-29
 
-**Status**: Active
+**Status**: Active (wait lock → [D045](D045-tui-wait-holds-a-per-run-lock.md))
 
 **Research**: VGS-576: offscreen qml6 FolderListModel lost-change probe
 

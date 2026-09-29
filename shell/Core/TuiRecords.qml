@@ -8,8 +8,12 @@ import "PluginLogic.js" as Logic
 // listing, the per-file readers, the reaper, one `bin/vgsh-tui wait`
 // process per live run, the accepted records and runs, and the `done`
 // callbacks with their delivery. The listing is the fast path. The wait is
-// the guarantee when FolderListModel drops a directory change. No timer runs,
-// and no wait process exists while no run is live.
+// the guarantee when FolderListModel drops a directory change. A wait can
+// outlive its need: once the listing shows the run ended, a later run of
+// the key may remove the run's records before the wait reads them, and the
+// wait then ends `gone`, which PluginLogic.tuiWaitOutcome logs only for a
+// run still awaited. No timer runs, and no wait process starts while no run
+// is live.
 Scope {
     id: root
 
@@ -144,7 +148,8 @@ Scope {
 
     function finishWait(process, stdout, stderr) {
         const id = waitId(process.key, process.run);
-        const outcome = Logic.tuiWaitOutcome(process.key, process.run, process.completion, stdout, stderr);
+        const wanted = Logic.tuiWaitRuns(runs, launchedRuns);
+        const outcome = Logic.tuiWaitOutcome(process.key, process.run, wanted, process.completion, stdout, stderr);
         for (const line of outcome.logs) console.error(line);
         const nextWaits = Object.assign({}, waits);
         delete nextWaits[id];
