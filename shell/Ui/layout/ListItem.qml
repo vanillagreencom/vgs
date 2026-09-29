@@ -17,7 +17,7 @@ T.ItemDelegate {
     property string secondary: ""
     property alias trailing: trailingRow.data
 
-    implicitWidth: leftPadding + rightPadding + (iconName !== "" ? Theme.icon.size.md + spacing : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + spacing : 0)
+    implicitWidth: leftPadding + rightPadding + (iconName !== "" ? Theme.icon.size.md + Theme.listItem.iconGap : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + Theme.listItem.gap : 0)
     implicitHeight: Math.max(secondary !== "" ? Theme.listItem.twoLineHeight : Theme.listItem.height, implicitContentHeight + topPadding + bottomPadding)
     leftPadding: Theme.listItem.paddingX
     rightPadding: Theme.listItem.paddingX
@@ -27,9 +27,12 @@ T.ItemDelegate {
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
 
-    contentItem: Row {
-        spacing: root.spacing
+    contentItem: Item {
+        implicitWidth: (icon.visible ? icon.width + Theme.listItem.iconGap : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + Theme.listItem.gap : 0)
+        implicitHeight: Math.max(icon.implicitHeight, lines.implicitHeight, trailingRow.implicitHeight)
+
         Icon {
+            id: icon
             visible: root.iconName !== ""
             name: root.iconName
             size: Theme.icon.size.md
@@ -37,7 +40,9 @@ T.ItemDelegate {
             anchors.verticalCenter: parent.verticalCenter
         }
         Column {
-            width: parent.width - (parent.children[0].visible ? parent.children[0].width + parent.spacing : 0) - (trailingRow.width > 0 ? trailingRow.width + parent.spacing : 0)
+            id: lines
+            x: icon.visible ? icon.width + Theme.listItem.iconGap : 0
+            width: Math.max(0, parent.width - x - (trailingRow.width > 0 ? trailingRow.width + Theme.listItem.gap : 0))
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.row.lineGap
             Label {
@@ -60,6 +65,7 @@ T.ItemDelegate {
         Row {
             id: trailingRow
             spacing: Theme.listItem.gap
+            x: parent.width - width
             anchors.verticalCenter: parent.verticalCenter
         }
     }

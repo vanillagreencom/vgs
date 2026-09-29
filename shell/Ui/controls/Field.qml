@@ -15,14 +15,15 @@ Column {
     property string hint: ""
     property string error: ""
     property bool inline: Theme.field.inline
+    property real contentPaddingX: Theme.field.paddingX
     default property alias control: slot.data
     // The width the label, the control's row and the hint share: the
     // column's own, less its padding, since a positioner does not narrow
     // its children.
     readonly property real bodyWidth: width - leftPadding - rightPadding
 
-    leftPadding: Theme.field.paddingX
-    rightPadding: Theme.field.paddingX
+    leftPadding: contentPaddingX
+    rightPadding: contentPaddingX
     spacing: Theme.field.gap
 
     Label {

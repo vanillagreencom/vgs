@@ -20,6 +20,7 @@ Item {
     ScrollArea { id: area; width: 100; height: 100; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: short; x: 120; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 40; color: "transparent" } } }
     ScrollArea { id: tall; x: 240; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 100000; color: "transparent" } } }
+    ScrollArea { id: inset; y: 140; width: 120; height: 100; rightInset: Theme.inset.window; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     Select { id: long; y: 300; model: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"] }
 
     TestCase {
@@ -42,6 +43,13 @@ Item {
             compare(short.overflowing, false);
             compare(short.contentWidth, short.width - Theme.scrollArea.gutter, "the gutter stays free without an overflow, so the layout does not move when one starts");
             compare(short.bar.visible, false);
+        }
+
+        function test_the_bar_can_sit_inside_a_container_inset() {
+            compare(inset.contentWidth, inset.width - Theme.inset.window);
+            verify(Theme.scrollArea.gutter <= Theme.inset.window, "the default gutter fits in the window inset");
+            verify(inset.bar.x >= inset.contentWidth, "bar starts at " + inset.bar.x + ", content ends at " + inset.contentWidth);
+            verify(inset.bar.x + inset.bar.width <= inset.width, "bar ends inside the scroll area");
         }
 
         function test_the_thumb_is_the_view_share_and_never_below_the_minimum() {

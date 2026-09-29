@@ -41,6 +41,7 @@ Singleton {
     readonly property var text: published.text
     readonly property var control: published.control
     readonly property var row: published.row
+    readonly property var inset: published.inset
     readonly property var surface: published.surface
     readonly property var divider: published.divider
     readonly property var focusRing: published.focusRing
@@ -71,6 +72,7 @@ Singleton {
     readonly property var dialog: published.dialog
     readonly property var angledCard: published.angledCard
     readonly property var carousel: published.carousel
+    readonly property var pane: published.pane
     readonly property var bar: published.bar
 
     // The accepted values converted once, as one frozen tree. It follows

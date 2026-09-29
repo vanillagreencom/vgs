@@ -25,6 +25,7 @@ Item {
         function init() { UnitTheme.reset(); plain.clear(); iconed.clear(); numeric.clear(); field.error = ""; field.inline = Qt.binding(() => Theme.field.inline); plain.focus = false; }
 
         function placeholder() { return plain.background.children[1]; }
+        function centreY(item, ancestor) { return item.mapToItem(ancestor, 0, item.height / 2).y; }
 
         function test_typing_reaches_text() {
             plain.forceActiveFocus();
@@ -35,6 +36,17 @@ Item {
             plain.clear();
             compare(placeholder().visible, true);
             compare(placeholder().text, "Search plugins");
+        }
+
+        function test_text_and_placeholder_are_vertically_centred() {
+            const mark = placeholder();
+            compare(mark.role, "item");
+            verify(Math.abs(centreY(mark, plain) - plain.height / 2) <= 1, "placeholder centre " + centreY(mark, plain) + ", field centre " + plain.height / 2);
+            plain.text = "abc";
+            wait(0);
+            const cursorCentre = plain.cursorRectangle.y + plain.cursorRectangle.height / 2;
+            verify(Math.abs(cursorCentre - plain.height / 2) <= 1, "text centre " + cursorCentre + ", field centre " + plain.height / 2);
+            verify(Math.abs(centreY(iconed.background.children[0], iconed) - iconed.height / 2) <= 1, "leading icon centre " + centreY(iconed.background.children[0], iconed) + ", field centre " + iconed.height / 2);
         }
 
         function test_outline_follows_focus_and_error() {

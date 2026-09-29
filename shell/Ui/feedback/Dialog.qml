@@ -28,9 +28,11 @@ FocusScope {
     property string message: ""
     property var actions: []
     property bool busy: false
+    property real availableHeight: 0
     default property alias content: body.data
     readonly property var entries: actions.map(entryOf)
     readonly property int acceptIndex: entries.findIndex(entry => entry.role === "accept")
+    readonly property real maximumHeight: availableHeight > 0 ? availableHeight * Theme.dialog.maxHeightShare : Theme.size.panel.maxHeight
     signal accepted()
     signal rejected()
 
@@ -86,7 +88,7 @@ FocusScope {
     }
 
     implicitWidth: Theme.dialog.width
-    implicitHeight: column.implicitHeight + 2 * Theme.dialog.padding
+    implicitHeight: pane.implicitHeight
     Accessible.role: Accessible.Dialog
     Accessible.name: title
     Accessible.description: message
@@ -109,68 +111,83 @@ FocusScope {
         border.color: Theme.dialog.border
     }
 
-    Column {
-        id: column
-        x: Theme.dialog.padding
-        y: Theme.dialog.padding
-        width: parent.width - 2 * Theme.dialog.padding
-        spacing: Theme.dialog.gap
+    Pane {
+        id: pane
+        anchors.fill: parent
+        container: "dialog"
+        fitToContent: true
+        maximumHeight: root.maximumHeight
+        gap: Theme.dialog.gap
+        bodySpacing: Theme.dialog.gap
 
-        Label {
-            role: Theme.dialog.titleRole
-            text: root.title
-            visible: text !== ""
-            width: parent.width
-            wrapMode: Text.Wrap
-        }
-        Label {
-            role: Theme.dialog.bodyRole
-            text: root.message
-            visible: text !== ""
-            width: parent.width
-            wrapMode: Text.Wrap
-        }
+        header: [
+            Column {
+                width: parent.width
+                spacing: Theme.dialog.gap
+
+                Label {
+                    id: titleLabel
+                    role: Theme.dialog.titleRole
+                    text: root.title
+                    visible: text !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    id: messageLabel
+                    role: Theme.dialog.bodyRole
+                    text: root.message
+                    visible: text !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                }
+            }
+        ]
+
         Column {
             id: body
             width: parent.width
             spacing: Theme.dialog.gap
             visible: children.length > 0
         }
-        Item {
-            id: footer
-            width: parent.width
-            height: Math.max(row.implicitHeight, spinner.implicitHeight)
-            visible: root.entries.length > 0 || root.busy
 
-            Spinner {
-                id: spinner
-                visible: root.busy
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Row {
-                id: row
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.dialog.actionGap
+        footer: [
+            Item {
+                id: footer
+                width: parent.width
+                height: Math.max(row.implicitHeight, spinner.implicitHeight)
+                visible: root.entries.length > 0 || root.busy
 
-                Repeater {
-                    id: repeater
-                    model: root.entries
-                    Button {
-                        required property var modelData
-                        required property int index
-                        text: modelData.label
-                        variant: modelData.variant
-                        enabled: modelData.enabled && !root.busy
-                        onClicked: root.trigger(index)
-                        // Qt moves the focus along its chain at the
-                        // focused item, before the key reaches the dialog.
-                        Keys.onTabPressed: root.cycle(1)
-                        Keys.onBacktabPressed: root.cycle(-1)
+                Spinner {
+                    id: spinner
+                    visible: root.busy
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Row {
+                    id: row
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.dialog.actionGap
+
+                    Repeater {
+                        id: repeater
+                        model: root.entries
+                        Button {
+                            required property var modelData
+                            required property int index
+                            text: modelData.label
+                            variant: modelData.variant
+                            enabled: modelData.enabled && !root.busy
+                            onClicked: root.trigger(index)
+                            // Qt moves the focus along its chain at the
+                            // focused item, before the key reaches the dialog.
+                            Keys.onTabPressed: root.cycle(1)
+                            Keys.onBacktabPressed: root.cycle(-1)
+                        }
                     }
                 }
             }
-        }
+        ]
     }
 }

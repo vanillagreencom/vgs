@@ -56,10 +56,12 @@ Item {
         }
 
         function card(of) { return of.children[0]; }
-        function column(of) { return of.children[1]; }
-        function titleLabel(of) { return column(of).children[0]; }
-        function messageLabel(of) { return column(of).children[1]; }
-        function spinner(of) { return column(of).children[3].children[0]; }
+        function pane(of) { return of.children[1]; }
+        function headerColumn(of) { return pane(of).children[0].children[0]; }
+        function titleLabel(of) { return headerColumn(of).children[0]; }
+        function messageLabel(of) { return headerColumn(of).children[1]; }
+        function footer(of) { return pane(of).children[2].children[0]; }
+        function spinner(of) { return footer(of).children[0]; }
         function ring(button) { return button.background.children[button.background.children.length - 1]; }
 
         function test_draws_its_tokens() {
@@ -67,12 +69,13 @@ Item {
             compare(String(card(dialog).color), String(Qt.color(Theme.dialog.background)));
             compare(String(card(dialog).border.color), String(Qt.color(Theme.dialog.border)));
             compare(card(dialog).radius, Theme.dialog.radius);
-            compare(column(dialog).x, Theme.dialog.padding);
-            compare(column(dialog).spacing, Theme.dialog.gap);
+            compare(pane(dialog).contentInset, Theme.dialog.padding);
+            compare(headerColumn(dialog).spacing, Theme.dialog.gap);
             compare(titleLabel(dialog).role, Theme.dialog.titleRole);
             compare(titleLabel(dialog).text, "Download wallpapers?");
             compare(messageLabel(dialog).role, Theme.dialog.bodyRole);
-            compare(dialog.height, column(dialog).implicitHeight + 2 * Theme.dialog.padding);
+            compare(dialog.height, pane(dialog).implicitHeight);
+            compare(pane(dialog).scrollArea.rightInset, pane(dialog).contentInset);
         }
 
         function test_accept_action_takes_the_focus_without_a_ring() {
@@ -216,7 +219,15 @@ Item {
             verify(top >= message.y + message.height, "the content starts under the message");
             const actions = dialog.buttons()[0].mapToItem(dialog, 0, 0).y;
             verify(top + extra.height <= actions, "the content ends above the actions");
-            compare(column(three).children[2].visible, false);
+            compare(pane(three).scrollArea.contentItem.children[0].children[0].visible, false);
+        }
+
+        function test_tall_content_scrolls_under_the_maximum_height() {
+            const tall = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nDialog { width: 360; availableHeight: 200; title: \"Tall\"; Rectangle { width: parent.width; height: 400; color: \"transparent\" } }", root);
+            tryCompare(tall, "implicitHeight", 160);
+            const p = pane(tall);
+            verify(p.scrollArea.overflowing, "the body scrolls when the fitted height is capped");
+            tall.destroy();
         }
 
         function test_theme_change_reaches_the_card_and_the_roles() {

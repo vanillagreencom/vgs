@@ -273,6 +273,18 @@ Item {
             }
 
             SectionHeader { text: "Titles and scrolling"; description: "A title that opens a long menu, the current choice checked; a scroll area and its bar" }
+            Pane {
+                id: demoPane
+                width: parent.width
+                height: Theme.size.panel.sm / 2
+                container: "panel"
+                header: [ Label { role: "h3"; text: "Pane"; width: parent.width } ]
+                Repeater {
+                    model: 5
+                    ListItem { required property int index; text: "Pane row " + (index + 1); iconName: "layout-panel-left"; width: demoPane.contentWidth }
+                }
+                footer: [ Button { text: "Pane action"; variant: "secondary"; size: "sm" } ]
+            }
             Flow {
                 width: parent.width
                 spacing: Theme.space.xl

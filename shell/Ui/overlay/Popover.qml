@@ -15,6 +15,7 @@ Item {
     default property alias content: body.data
     readonly property bool opened: window.visible
     readonly property Item anchorItem: parent
+    readonly property real availableHeight: screenHeight()
 
     visible: false
 
@@ -34,6 +35,12 @@ Item {
     }
     function close() { window.visible = false; }
     function toggle() { if (opened) close(); else open(); }
+    function screenHeight() {
+        if (anchorItem === null || anchorItem === undefined) return 0;
+        const window = anchorItem.Window.window;
+        if (window === null || window === undefined || window.screen === null || window.screen === undefined) return 0;
+        return window.screen.height;
+    }
 
     PopupWindow {
         id: window
@@ -46,8 +53,8 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(1, root.width > 0 ? root.width : body.childrenRect.width + 2 * Theme.popover.padding)
-        implicitHeight: Math.max(1, body.childrenRect.height + 2 * Theme.popover.padding)
+        implicitWidth: Math.max(1, root.width > 0 ? root.width : pane.implicitWidth)
+        implicitHeight: Math.max(1, pane.implicitHeight)
         onVisibleChanged: root.share(visible)
 
         FocusScope {
@@ -64,10 +71,20 @@ Item {
                 border.color: Theme.popover.border
             }
 
-            Item {
-                id: body
+            Pane {
+                id: pane
                 anchors.fill: parent
-                anchors.margins: Theme.popover.padding
+                container: "popover"
+                fitToContent: true
+                maximumHeight: root.availableHeight > 0 ? root.availableHeight * Theme.popover.maxHeightShare : Theme.size.panel.maxHeight
+                gap: Theme.popover.gap
+                bodySpacing: Theme.popover.gap
+
+                Column {
+                    id: body
+                    width: parent.width
+                    spacing: Theme.popover.gap
+                }
             }
         }
     }

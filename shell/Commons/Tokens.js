@@ -293,10 +293,17 @@ var TOKENS = {
         lineGap: length("{space.xs}")
     },
 
+    inset: {
+        window: length("{space.lg}"),
+        dialog: length("{space.lg}"),
+        popover: length("{space.md}"),
+        panel: length("{space.lg}")
+    },
+
     surface: {
         radius: length("{radius.md}"),
         border: length("{border.thin}"),
-        padding: length("{space.lg}"),
+        padding: length("{inset.panel}"),
         level: {
             base: { background: color("{color.surface}"), border: color("{color.border}") },
             raised: { background: color("{color.surfaceRaised}"), border: color("{color.borderStrong}") },
@@ -517,6 +524,7 @@ var TOKENS = {
         twoLineHeight: length("mul({listItem.height}, 1.5)"),
         paddingX: length("{row.paddingX}"),
         gap: length("{control.gap}"),
+        iconGap: length("{space.lg}"),
         radius: length("{radius.sm}"),
         hover: color("{color.surfaceHover}"),
         selected: color("{color.accentSubtle}"),
@@ -531,8 +539,9 @@ var TOKENS = {
 
     popover: {
         radius: length("{radius.md}"),
-        padding: length("{space.md}"),
+        padding: length("{inset.popover}"),
         gap: length("{space.xs}"),
+        maxHeightShare: share(0.8),
         background: color("{color.surfaceRaised}"),
         border: color("{color.borderStrong}")
     },
@@ -602,14 +611,19 @@ var TOKENS = {
     dialog: {
         width: length("{size.panel.md}"),
         margin: length("{space.lg}"),
-        padding: length("{space.lg}"),
+        padding: length("{inset.dialog}"),
         gap: length("{space.md}"),
         actionGap: length("{space.sm}"),
+        maxHeightShare: share(0.8),
         radius: length("{radius.md}"),
         background: color("{color.surfaceRaised}"),
         border: color("{color.borderStrong}"),
         titleRole: textRole("h3"),
         bodyRole: textRole("body")
+    },
+
+    pane: {
+        gap: length("{space.md}")
     },
 
     // A card whose content is clipped to a parallelogram, its top edge

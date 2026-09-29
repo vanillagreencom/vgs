@@ -21,7 +21,7 @@ Each layer reads only the layer above it.
 | Palette | `palette` | `background`, `foreground`, `accent`, `success`, `warning`, `danger`, `info` |
 | Scale | `space`, `radius`, `border`, `opacity`, `motion`, `hyprland`, `size`, `icon`, `font` | the spacing unit and its steps, radius steps, border widths, the disabled opacity, `motion.scale` with the durations and easings, Hyprland border thickness, window radius, rounding power, motion preset and shadow colour, control, panel and window sizes, icon sizes and stroke, font families and the base size |
 | Semantic | `color`, `text` | colour roles derived from the palette; one typography role per kind of text, each with `family`, `size`, `weight`, `letterSpacing` in em, `lineHeight` and `uppercase` |
-| Rhythm | `control`, `row` | the horizontal padding and icon-and-text gap every one-line control shares; a row's horizontal padding, its inline label's width and gap, and the gap between a label and the line it names |
+| Rhythm | `control`, `row`, `inset` | the horizontal padding and icon-and-text gap every one-line control shares; a row's horizontal padding, its inline label's width and gap, the gap between a label and the line it names; the content inset of a window, dialog, popover and panel |
 | Component | one group per component | every value a component draws with, derived from its own component first, so a theme that sets one fill keeps the text on it readable |
 
 The token list is `Tokens.js`; no document copies it. A theme that sets the seven palette colours restyles every surface. `motion.scale` of 0 sets every duration to 0, a theme's own timing included; a wait that is not an animation is a `number` token in milliseconds. The `hyprland` group reaches only the generated Hyprland layer and only for the groups whose switches are on: [hyprland.md](hyprland.md).
@@ -53,6 +53,12 @@ What each component of `qs.Ui` guarantees is in [components.md](components.md).
 ## Text stack
 
 Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `font.family.mono`, the bundled JetBrains Mono, at 11 to 13 px. The base `font.size` is the reference's body size, and every role's size is a factor of it. A single-line chrome role takes line height 1, so its line box is the font's own height. `text.item`, `text.itemHint` and `text.itemCode` are `body`, `hint` and `code` at line height 1, for one line of text in a control's row: a menu entry, a list item's two lines, a value beside its label. `scripts/qml-tests/tst_label.qml` restates every role's family and metrics and reads them back from a drawn `Label`; it fails when the table gains a role it does not restate. The reference rule each role is read from is [design-values.md § Text roles](../reference/design-values.md#text-roles).
+
+## Layout contract
+
+A container owns one inset box, [D045](../decisions/D045-container-layout-contract.md). A boxed child, such as a field, button, list-row highlight or card, puts its outer box on that inset edge. Unboxed container content, such as a heading, notice, hint or description, puts its text on that edge. A child then uses its own component padding for its internal text, icon or control. A scroll area in a container extends into the right inset strip: its content ends on the inset box, and its bar sits to the right of that content. A theme whose rounded container radius is larger than the inset raises the effective inset to the radius, so content clears the corner.
+
+Dialogs and popovers use the same container. They fit their content until their max-height share is reached; after that, only the body scrolls. The Settings window's outer size is outside this contract and is owned by the window host.
 
 ## Component spacing
 
@@ -93,3 +99,4 @@ A notification's media sits in one square slot whose size is a tier, not a prope
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
+- Containers use one inset box, an inner scroll gutter and fitted popup height: [D045](../decisions/D045-container-layout-contract.md).

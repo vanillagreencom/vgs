@@ -25,6 +25,7 @@ Kbd 1.0 feedback/Kbd.qml
 CodeLine 1.0 feedback/CodeLine.qml
 AvatarGroup 1.0 feedback/AvatarGroup.qml
 ScrollArea 1.0 layout/ScrollArea.qml
+Pane 1.0 layout/Pane.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
 Disclosure 1.0 layout/Disclosure.qml

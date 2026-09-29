@@ -14,9 +14,9 @@ import qs.Ui
 // settings section per schema group (entries without a group first, under
 // `Settings`) and the Keys section. A disabled plugin's fields are
 // read-only and say to enable it; its status rows say it has not reported.
-// The body leaves the scroll bar's gutter free whether it overflows or not,
-// so every page's fields end on one right edge, and each inline value draws
-// at line height 1, centred on its label.
+// The header and body share one content edge, the scroll bar sits in the
+// window's right inset, and each inline value draws at line height 1,
+// centred on its label.
 FocusScope {
     id: page
 
@@ -29,7 +29,7 @@ FocusScope {
     // Whether a requirement of the plugin was missing at the last scan.
     readonly property bool requirementMissing: row !== null && row.requirements.some(r => r.state === "missing")
     readonly property bool isSelf: row !== null && panel.shell !== null && row.id === panel.shell.manifest.id
-    readonly property alias scrollArea: scroll
+    readonly property alias scrollArea: layout.scrollArea
     readonly property alias titleMenu: menu
     readonly property alias title: title
 
@@ -75,73 +75,69 @@ FocusScope {
 
     function focusBack() { back.forceActiveFocus(); }
 
-    Item {
-        id: header
-        x: Theme.surface.padding
-        y: Theme.surface.padding
-        width: parent.width - 2 * Theme.surface.padding
-        height: Math.max(back.height, title.height)
+    Pane {
+        id: layout
+        anchors.fill: parent
+        container: "window"
+        bodySpacing: 0
 
-        IconButton {
-            id: back
-            iconName: "chevron-left"
-            label: "Back to the plugin list"
-            anchors.verticalCenter: parent.verticalCenter
-            onClicked: page.panel.back()
-        }
+        header: [
+            Item {
+                width: parent.width
+                height: Theme.size.control.md
 
-        TitleButton {
-            id: title
-            x: back.width + Theme.space.sm
-            width: Math.min(implicitWidth, parent.width - x)
-            anchors.verticalCenter: parent.verticalCenter
-            role: "h2"
-            text: page.row === null ? "" : page.row.name
-            menu: menu
+                IconButton {
+                    id: back
+                    iconName: "chevron-left"
+                    label: "Back to the plugin list"
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: page.panel.back()
+                }
 
-            Menu {
-                id: menu
-                Repeater {
-                    model: ScriptModel {
-                        values: page.panel.plugins
-                        objectProp: "id"
-                    }
-                    MenuItem {
-                        required property var modelData
-                        text: modelData.name
-                        iconName: modelData.icon
-                        checked: page.row !== null && modelData.id === page.row.id
-                        onTriggered: page.panel.openPlugin(modelData.id)
+                TitleButton {
+                    id: title
+                    x: back.width + Theme.space.sm
+                    width: Math.min(implicitWidth, parent.width - x)
+                    anchors.verticalCenter: parent.verticalCenter
+                    role: "h2"
+                    text: page.row === null ? "" : page.row.name
+                    menu: menu
+
+                    Menu {
+                        id: menu
+                        Repeater {
+                            model: ScriptModel {
+                                values: page.panel.plugins
+                                objectProp: "id"
+                            }
+                            MenuItem {
+                                required property var modelData
+                                text: modelData.name
+                                iconName: modelData.icon
+                                checked: page.row !== null && modelData.id === page.row.id
+                                onTriggered: page.panel.openPlugin(modelData.id)
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
-
-    ScrollArea {
-        id: scroll
-        x: Theme.surface.padding
-        y: header.y + header.height + Theme.space.md
-        width: parent.width - 2 * Theme.surface.padding
-        height: parent.height - y - Theme.surface.padding
+        ]
 
         Column {
             id: body
-            width: scroll.width - Theme.scrollArea.gutter
+            width: parent.width
             spacing: Theme.space.md
             visible: page.row !== null
 
             Label {
-                role: "body"
+                role: "item"
                 text: page.row === null ? "" : page.row.description
-                x: Theme.row.paddingX
-                width: parent.width - 2 * Theme.row.paddingX
+                width: parent.width
                 wrapMode: Text.Wrap
             }
 
             Flow {
-                x: Theme.row.paddingX
-                width: parent.width - 2 * Theme.row.paddingX
+                width: parent.width
                 spacing: Theme.space.xs
                 visible: page.row !== null && page.row.capabilities.length > 0
                 Repeater {
@@ -157,8 +153,7 @@ FocusScope {
                     role: "hint"
                     text: modelData
                     color: Theme.color.danger
-                    x: Theme.row.paddingX
-                    width: body.width - 2 * Theme.row.paddingX
+                    width: body.width
                     wrapMode: Text.Wrap
                 }
             }
@@ -168,8 +163,7 @@ FocusScope {
                 text: page.row === null ? "" : page.panel.replies[page.row.id] || ""
                 visible: text !== ""
                 color: Theme.color.danger
-                x: Theme.row.paddingX
-                width: parent.width - 2 * Theme.row.paddingX
+                width: parent.width
                 wrapMode: Text.Wrap
             }
 
@@ -177,6 +171,7 @@ FocusScope {
                 width: parent.width
                 label: "Enabled"
                 inline: true
+                contentPaddingX: 0
                 hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
                 Switch {
                     checked: page.row !== null && page.row.enabled
@@ -195,6 +190,7 @@ FocusScope {
                     width: body.width
                     label: modelData[0]
                     inline: true
+                    contentPaddingX: 0
                     Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                 }
             }
@@ -204,6 +200,7 @@ FocusScope {
                 width: parent.width
                 label: "Manage"
                 inline: true
+                contentPaddingX: 0
                 visible: page.row !== null && page.row.source === "installed"
                 hint: "Each opens a terminal that asks before it changes anything."
                 Row {
@@ -239,8 +236,8 @@ FocusScope {
 
                     SectionHeader {
                         text: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
-                        leftPadding: Theme.row.paddingX
-                        rightPadding: Theme.row.paddingX
+                        leftPadding: 0
+                        rightPadding: 0
                     }
 
                     Repeater {
@@ -264,8 +261,8 @@ FocusScope {
                 SectionHeader {
                     text: "Requirements"
                     description: "Commands the plugin runs, looked up on PATH at the last scan"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
+                    leftPadding: 0
+                    rightPadding: 0
                 }
 
                 Repeater {
@@ -284,6 +281,7 @@ FocusScope {
                     width: parent.width
                     label: "Missing"
                     inline: true
+                    contentPaddingX: 0
                     visible: page.requirementMissing
                     hint: "Opens a terminal that names each package and asks before it installs them."
                     Button {
@@ -312,8 +310,8 @@ FocusScope {
 
                     SectionHeader {
                         text: section.modelData.group === "" ? "Settings" : section.modelData.group
-                        leftPadding: Theme.row.paddingX
-                        rightPadding: Theme.row.paddingX
+                        leftPadding: 0
+                        rightPadding: 0
                     }
 
                     Repeater {
@@ -345,8 +343,8 @@ FocusScope {
                 SectionHeader {
                     text: "Keys"
                     description: "Written to shell.json; an empty key unbinds it"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
+                    leftPadding: 0
+                    rightPadding: 0
                 }
 
                 Repeater {

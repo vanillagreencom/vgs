@@ -111,6 +111,7 @@ f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/CardCarousel.qml
 f share/vgs/shell/Ui/layout/Disclosure.qml
 f share/vgs/shell/Ui/layout/ListItem.qml
+f share/vgs/shell/Ui/layout/Pane.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
 f share/vgs/shell/Ui/layout/ScrollBar.qml
 f share/vgs/shell/Ui/layout/SectionHeader.qml

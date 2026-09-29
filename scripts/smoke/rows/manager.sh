@@ -136,13 +136,13 @@ expect_poll "the cleared search lists every plugin again" True list_complete
 # that left edge; and each row's lines centre on its icon, which centres on
 # the row, all within one pixel. `[]` is the pass.
 list_alignment() {
-  local rows pad gutter
+  local rows pad inset
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   pad="$(ipc smoke themeValue row.paddingX)" || return
-  gutter="$(ipc smoke themeValue scrollArea.gutter)" || return
-  python3 - "$rows" "$pad" "$gutter" <<'PY'
+  inset="$(ipc smoke themeValue inset.window)" || return
+  python3 - "$rows" "$pad" "$inset" <<'PY'
 import json, sys
-rows, pad, gutter = (json.loads(a) for a in sys.argv[1:])
+rows, pad, inset = (json.loads(a) for a in sys.argv[1:])
 out = []
 def inside(j, i):
     while j != -1:
@@ -161,8 +161,8 @@ heading = [i for i in under("Label") if rows[i].get("role") == "h2"]
 if len(search) != 1 or len(areas) != 1 or len(heading) != 1 or len(items) < 3:
     print(json.dumps(["search=%d areas=%d heading=%d items=%d" % (len(search), len(areas), len(heading), len(items))])); sys.exit()
 edge_l, edge_r = rows[search[0]]["box"][0], right(rows[search[0]])
-check("search.right", edge_r, right(rows[areas[0]]) - gutter)
-check("heading.x", rows[heading[0]]["box"][0], edge_l + pad)
+check("search.right", edge_r, right(rows[areas[0]]) - inset)
+check("heading.x", rows[heading[0]]["box"][0], edge_l)
 for n, i in enumerate(items):
     item = rows[i]
     check("item%d.left" % n, item["box"][0], edge_l)
@@ -238,19 +238,19 @@ expect "the two bounded numbers draw sliders" 2 sliders
 # commands included, starts its label `row.paddingX` in from the page's
 # column and its control `field.labelWidth` plus `field.labelGap` past that,
 # ends its control `row.paddingX` in from the column's right, which leaves
-# the scroll bar's gutter free on every page, and centres its label on its
-# control or value, each within one pixel, a text value at line height 1
-# so its box is its glyphs; else the misfits.
+# the scroll bar inside the right inset on every page, and centres its label
+# on its control or value, each within one pixel, a text value at line
+# height 1 so its box is its glyphs; else the misfits.
 page_alignment() {
-  local rows pad label_w label_gap gutter
+  local rows pad label_w label_gap inset
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   pad="$(ipc smoke themeValue row.paddingX)" || return
   label_w="$(ipc smoke themeValue field.labelWidth)" || return
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
-  gutter="$(ipc smoke themeValue scrollArea.gutter)" || return
-  python3 - "$rows" "$pad" "$label_w" "$label_gap" "$gutter" "$1" "$2" <<'PY'
+  inset="$(ipc smoke themeValue inset.window)" || return
+  python3 - "$rows" "$pad" "$label_w" "$label_gap" "$inset" "$1" "$2" <<'PY'
 import json, sys
-rows, pad, label_w, label_gap, gutter, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
+rows, pad, label_w, label_gap, inset, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
 out = []
 def inside(j, i):
     while j != -1:
@@ -266,7 +266,7 @@ areas = [i for i, r in enumerate(rows) if r["type"] == "ScrollArea" and page and
 if len(page) != 1 or len(areas) != 1:
     print(json.dumps(["pages=%d areas=%d" % (len(page), len(areas))])); sys.exit()
 area = rows[areas[0]]
-column_right = right(area) - gutter
+column_right = right(area) - inset
 fields = [i for i, r in enumerate(rows) if r["type"] in ("SettingField", "KeyField", "Field") and inside(i, page[0])]
 counts = [sum(1 for i in fields if rows[i]["type"] == kind) for kind in ("SettingField", "KeyField")]
 if counts != [want_settings, want_keys]: out.append("settings,keys=%s want=%s" % (counts, [want_settings, want_keys]))

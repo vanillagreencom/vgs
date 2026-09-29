@@ -41,7 +41,7 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Select` | 30 | 9; 30 on the right, past the chevron | 7 | 0 | `textField.height`, `textField.paddingX`, `textField.gap` | `.sort-control select` | padding 0 34 0 12 | 9 and 30 |
 | `SegmentedControl` | 30 | 2 inset | 2 | 0 | `segmented.height`, `segmented.padding`, `segmented.gap` | `.catalog-view-mode` | gap 4 | inset 2, gap 2 |
 | a segment | 26 | 9 | | 0 | `segmented.paddingX` | `.catalog-view-mode button` | min-height 29, padding 0 9 | 26 tall: 30 less the inset |
-| `ListItem` | 36; 54 with a secondary line | 12 | 7; 4 between its lines | 0 | `listItem.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 tall one line, 54 two |
+| `ListItem` | 36; 54 with a secondary line | 12 | 12 between icon and text; 7 before trailing controls; 4 between its lines | 0 | `listItem.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.iconGap`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 tall one line, 54 two; icon gap follows the larger row step |
 | `MenuItem` | 30 | 12 | 7 | 0 | `menu.item.height`, `menu.item.paddingX`, `menu.item.gap` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
 | a `Select` list entry | 30 | 12 | | 0 | `menu.item.height`, `menu.item.paddingX` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
 | `Field`, inline | the control's | 12 | 12 after a 130 label; 4 between lines | | `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; the 4 px line gap has no rule |
@@ -54,10 +54,11 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Toast` | content + 16 | 8 | 7 between icon, text and close; 6 between toasts | 0 | `toast.padding`, `toast.contentGap`, `toast.gap` | `.toast` | padding 9 12 | padding 8 |
 | `Checkbox`, `Radio`, `Switch` | indicator 16, 16, 36 × 20 | | 7 | 0; round for `Radio` and `Switch` | `checkbox.gap`, `radio.gap`, `toggle.gap` | none | | |
 | `Slider` | 14 handle, 4 track | | | round | `slider.handle`, `slider.track` | none | | |
-| `Popover` | content + 16 | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap` | none | | |
-| `Dialog` | content + 24 | 12 | 8 between the title, the message, the content and the actions; 6 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap` | none | | 360 wide |
+| `Pane` | content + 2 × effective inset, capped when fitted | `inset.*`, raised to the radius | 8 between header, body and footer | container radius | `inset.window`, `inset.dialog`, `inset.popover`, `inset.panel`, `pane.gap` | none | | scroll bar sits in the right inset strip |
+| `Popover` | content + 16, capped at its max-height share | 8 | 4 from the anchor | 0 | `popover.padding`, `popover.gap`, `popover.maxHeightShare` | none | | composes `Pane` |
+| `Dialog` | content + 24, capped at its max-height share | 12 | 8 between the title, the message, the content and the actions; 6 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap`, `dialog.maxHeightShare` | none | | 360 wide; composes `Pane` |
 | `Menu` | items + 4, at least 160 wide, scrolling past 270, nine items | 2 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth`, `menu.maxHeight` | none | | |
-| the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
+| the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter or a container's right inset | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
 | `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |
 | a window-like panel | half the monitor | 12 from a narrower monitor's sides | | | `size.window.width`, `size.window.heightShare`, `size.window.gutter` | none | | 600 wide |
 | bar item, a workspace pill | line + 4 | 6 | 4 between items | 0 | `bar.item.paddingX`, `bar.item.gap` | `.market-nav a` | height 32, padding 0 10 | sized to the bar |

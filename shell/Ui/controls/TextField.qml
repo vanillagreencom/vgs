@@ -53,7 +53,7 @@ T.TextField {
         }
 
         Label {
-            role: "body"
+            role: "item"
             text: root.placeholderText
             color: Theme.textField.placeholder
             visible: root.text === "" && root.preeditText === ""
@@ -63,7 +63,7 @@ T.TextField {
             elide: Text.ElideRight
         }
 
-        FocusRing { target: root }
+        FocusRing { target: root; offset: 0 }
     }
 
     // A child of the field, not of the background: the control puts its

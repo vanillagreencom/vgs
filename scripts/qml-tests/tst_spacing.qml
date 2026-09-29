@@ -7,9 +7,9 @@ import qs.Unit
 // The spacing rhythm, read from drawn components: Button, TextField,
 // Select and SegmentedControl stand `size.control.md` tall with their text
 // `control.paddingX` from the edge; ListItem, MenuItem and Field start
-// their content `row.paddingX` in; every icon-and-text pair stands
-// `control.gap` apart. A theme that moves the shared token moves every
-// component that follows it.
+// their content `row.paddingX` in; controls share `control.gap`, and
+// ListItem owns its larger icon gap. A theme that moves the shared token
+// moves every component that follows it.
 Item {
     id: root
     width: 400
@@ -83,7 +83,7 @@ Item {
             const gap = Theme.control.gap;
             same(() => gapOf(button.contentItem), gap, "button icon gap");
             same(() => iconed.leftPadding, pad + Theme.icon.size.sm + gap, "text field icon gap");
-            same(() => gapOf(item.contentItem), gap, "list item icon gap");
+            same(() => gapOf(item.contentItem), Theme.listItem.iconGap, "list item icon gap");
             same(() => gapOf(entry.contentItem), gap, "menu item icon gap");
             same(() => gapOf(badge.children[0]), gap, "badge icon gap");
             same(() => gapOf(toast.children[0]), gap, "toast icon gap");
@@ -94,15 +94,17 @@ Item {
             compare(Theme.control.paddingX, 9);
             compare(Theme.control.gap, 7);
             compare(Theme.row.paddingX, 12);
+            compare(Theme.listItem.iconGap, 12);
             checkRhythm();
             same(() => toast.children[0].x, Theme.toast.padding, "toast default inset");
             same(() => toast.children[0].width, toast.width - 2 * Theme.toast.padding, "toast default width");
         }
 
         function test_one_token_moves_every_component() {
-            compare(UnitTheme.override({ size: { control: { md: 34 } }, control: { paddingX: 13, gap: 3 }, row: { paddingX: 20 } }), "ok");
+            compare(UnitTheme.override({ size: { control: { md: 34 } }, control: { paddingX: 13, gap: 3 }, row: { paddingX: 20 }, listItem: { iconGap: 16 } }), "ok");
             compare(Theme.control.paddingX, 13);
             compare(Theme.row.paddingX, 20);
+            compare(Theme.listItem.iconGap, 16);
             checkRhythm();
         }
 

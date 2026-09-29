@@ -25,6 +25,7 @@ Field {
     label: String(bind.shortcut)
     hint: (bind.description ? String(bind.description) + ". " : "") + (bind.key === bind["default"] ? "The manifest's key." : "The manifest's key is " + bind["default"] + ".")
     inline: true
+    contentPaddingX: 0
 
     TextField {
         id: input
