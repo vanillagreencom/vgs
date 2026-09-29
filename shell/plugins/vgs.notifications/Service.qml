@@ -369,10 +369,31 @@ Item {
             links.push([name, fn]);
         };
         connect("closed", () => root.senderClosed(key, n));
-        for (const name of updateSignals) connect(name, () => root.refresh(key));
+        for (const name of updateSignals) connect(name, () => root.noteChange(key));
         const next = Object.assign({}, held);
         next[key] = { notification: n, links: links };
         held = next;
+    }
+
+    // key -> true for a held notification its sender changed in this turn
+    // of the event loop. The server sets an update's properties together
+    // and each signals on its own, so the service takes the update once,
+    // after the last signal: one replacement is one update, and it never
+    // reads a notification half updated.
+    property var changed: ({})
+
+    function noteChange(key) {
+        if (Logic.hasOwn(changed, key)) return;
+        const next = Object.assign({}, changed);
+        next[key] = true;
+        changed = next;
+        Qt.callLater(root.refreshChanged);
+    }
+
+    function refreshChanged() {
+        const keys = Object.keys(changed);
+        changed = ({});
+        for (const key of keys) refresh(key);
     }
 
     // Let go of a held notification: disconnect everything, then close it

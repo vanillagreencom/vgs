@@ -1099,6 +1099,23 @@ expect_poll "Silence is stored" true state_at dnd
 notify smoke-app 0 "Quiet" "" '[]' '{}' 0 >/dev/null
 expect_poll "a silenced notification goes into the history" '"Quiet"' state_at history.0.summary
 expect "a silenced notification shows no toast" none key_of Quiet
+# A sender that replaces a silenced notification, held for the history,
+# changes its summary and its body in one update: one new history entry
+# records it, and the service holds one reference for it in place of the
+# old. The notification carries no image file, so its copies are made at
+# once and each property signal would find it held again under its new
+# key; handling each signal would record the replacement twice.
+quiet_id="$(notify smoke-app 0 "Quiet original" "The first body" '[]' '{}' 0)"
+expect_poll "the notification to replace goes into the history" '"Quiet original"' state_at history.0.summary
+held_before="$(note_status held)"
+count_before="$(history_count)"
+notify smoke-app "$quiet_id" "Quiet replaced" "The second body" '[]' '{}' 0 >/dev/null
+entries_of() { note_state_py 'import json,sys; print(sum(1 for e in json.load(open(sys.argv[1]))["history"] if e["summary"] == sys.argv[2]))' "$1"; }
+expect_poll "the replacement is recorded" '"Quiet replaced"' state_at history.0.summary
+expect "one history entry records the replacement, not one per changed property" 1 entries_of "Quiet replaced"
+expect "the history grew by that one entry" "$((count_before + 1))" history_count
+expect "the replacement's body is the new one" '"The second body"' state_at history.0.body
+expect "one reference is held for it in place of the old" "$held_before" note_status held
 expect "the inbox opens under Silence" ok notes inbox
 notify smoke-app 0 "Quiet while open" "" '[]' '{}' 0 >/dev/null
 expect_poll "a silenced notification joins the open inbox" True has_row panel "Quiet while open"
