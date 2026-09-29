@@ -28,4 +28,5 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D030](../decisions/D030-managed-copies-for-watched-theme-directories.md): managed copies serve watched theme directories.
 - [D031](../decisions/D031-installed-themes-render-code-targets.md): an installed theme's curated file is dropped on a target whose files run code.
 - [D035](../decisions/D035-manifest-requirements.md): a manifest declares the external commands a plugin runs and their packages; the scan probes them and the manager reports each one's state; a requirement never names a plugin.
+- [D038](../decisions/D038-judged-theme-catalog.md): first-party themes are a judged catalog in `themes/catalog/`, installed as ordinary packages; it carries no curated file on a target whose files run code.
 - [D039](../decisions/D039-per-screen-wallpaper-map.md): wallpaper is per screen through an additive `screens` map in `backgrounds.json`; a theme apply clears it.
