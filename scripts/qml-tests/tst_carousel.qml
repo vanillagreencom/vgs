@@ -10,8 +10,10 @@ import qs.Unit
 // and after a step; the decode size each card's content is handed; the
 // click that selects, the click that activates and the parallelogram each
 // click lands in; the keys and the wheel; the rail held hidden until it
-// settles; and the motion, over the duration and stilled at motion.scale
-// 0. Expected values are worked by hand from the defaults in Tokens.js:
+// settles; the motion, over the duration and stilled at motion.scale 0; a
+// glide that keeps the cards it leaves and builds the ones it reaches, a
+// wrap that lands at once, and the clip at the carousel's edge; and a
+// delegate that cannot build, named and left empty. Expected values are worked by hand from the defaults in Tokens.js:
 // a 768 by 475 expanded card, 108 by 432 slices overlapping by 30, so a
 // slice step of 78, and a reference rail of 768 + 13 * 78 + 2 * 20 = 1822.
 Item {
@@ -30,9 +32,33 @@ Item {
             color: "white"
         }
     }
+    // Delegates that cannot build a card: one without decodeSize, and one
+    // that declares a required property the carousel does not hand over.
+    Component {
+        id: missingSize
+        Rectangle {
+            objectName: "broken"
+            required property var modelData
+        }
+    }
+    Component {
+        id: extraRequired
+        Rectangle {
+            objectName: "broken"
+            required property var modelData
+            required property size decodeSize
+            required property int extra
+        }
+    }
+    Component {
+        id: small
+        CardCarousel { width: 600; height: 200; model: 3 }
+    }
 
+    Rectangle { anchors.fill: parent; color: "black" }
     CardCarousel {
         id: carousel
+        x: 100
         model: root.entries
         delegate: content
     }
@@ -240,10 +266,10 @@ Item {
         function test_the_rail_shows_settled() {
             compare(UnitTheme.override({ carousel: { duration: 2000 } }), "ok");
             const made = Qt.createQmlObject("import qs.Ui\nCardCarousel { width: 1822; height: 475; model: 60 }", root, "made");
-            made.currentIndex = 30;
+            made.currentIndex = 3;
             verify(!rail(made).visible, "the rail is hidden before it settles");
             tryVerify(() => rail(made).visible, 1000, "the rail settles");
-            const current = slots(made).find(s => s.index === 30);
+            const current = slots(made).find(s => s.index === 3);
             compare(current.x, 527);
             made.visible = false;
             made.visible = true;
@@ -260,6 +286,81 @@ Item {
             const x = slot(21).x;
             verify(x < 1265 && x > 527, "card 21 is on its way at " + x);
             tryCompare(slot(21), "x", 527, 5000);
+        }
+
+        // A carousel declared at index 30 is built around it.
+        function test_a_declared_index_builds_around_itself() {
+            const made = Qt.createQmlObject("import qs.Ui\nCardCarousel { width: 1822; height: 475; model: 60; currentIndex: 30 }", root, "declared");
+            compare(slots(made).filter(s => s.children[0].item !== null).map(s => s.index), indices(22, 38));
+            tryVerify(() => rail(made).visible, 1000, "the rail settles");
+            compare(slots(made).find(s => s.index === 30).x, 527);
+            made.destroy();
+        }
+
+        // A move past the shown slices lands in the same turn: End from 20,
+        // then Right from 59 wrapping to 0; the cards around the new index
+        // are shown and built and the one left behind is not.
+        function test_a_far_move_lands_at_once() {
+            compare(UnitTheme.override({ carousel: { duration: 2000 } }), "ok");
+            keyClick(Qt.Key_End);
+            compare(box(59), [527, 0, 768, 475]);
+            compare(shown(), indices(53, 59));
+            keyClick(Qt.Key_Right);
+            compare(box(0), [527, 0, 768, 475]);
+            compare(box(1), [1265, 21.5, 108, 432]);
+            compare(shown(), indices(0, 6));
+            compare(builtNames().slice(0, 9), range(0, 8));
+            verify(!slot(59).visible, "the card left behind is hidden");
+        }
+
+        // 300 ms into a 2000 ms outCubic glide from 20 to 21 the rail is
+        // drawn at 20 + 1 - 0.85^3 = 20.39: card 14 is 6.39 from it and
+        // still shown, card 12 8.39 and still built, though each is past
+        // the shown slices and the band of 21.
+        function test_a_near_move_glides_and_keeps_its_cards() {
+            compare(UnitTheme.override({ carousel: { duration: 2000 } }), "ok");
+            keyClick(Qt.Key_Right);
+            wait(300);
+            verify(slot(21).x > 527 && slot(21).x < 1265, "card 21 is between its places at " + slot(21).x);
+            verify(slot(20).x > 449 && slot(20).x < 527, "card 20 is between its places at " + slot(20).x);
+            verify(slot(20).visible && slot(21).visible, "the outgoing and incoming cards are drawn");
+            verify(slot(14).visible, "the edge card the rail leaves is drawn");
+            const names = builtNames();
+            for (const name of ["e12", "e20", "e21", "e29"])
+                verify(names.indexOf(name) !== -1, name + " is built mid-glide");
+        }
+
+        // Card 27 comes in from 1265 + 6 * 78 = 1733, past the carousel's
+        // 1822 right edge by 19 at the start of a glide, 100 to 1922 in the
+        // window. Its outline draws there without the clip.
+        function test_the_rail_clips_to_the_carousel() {
+            compare(UnitTheme.override({ carousel: { duration: 10000 } }), "ok");
+            keyClick(Qt.Key_Right);
+            wait(50);
+            verify(slot(27).visible && slot(27).x + slot(27).width > 1822, "card 27 reaches past the edge at " + slot(27).x);
+            const img = grabImage(root);
+            let lit = 0;
+            for (let x = carousel.x + carousel.width + 1; x < carousel.x + carousel.width + 16; x++)
+                for (let y = 0; y < carousel.height; y++)
+                    if (img.red(x, y) + img.green(x, y) + img.blue(x, y) > 0) lit++;
+            compare(lit, 0);
+        }
+
+        // Each broken card is named once and left empty, and the carousel
+        // still steps.
+        function test_a_delegate_that_cannot_build_leaves_its_card_empty() {
+            for (const broken of [missingSize, extraRequired]) {
+                for (let i = 0; i < 3; i++)
+                    ignoreWarning(new RegExp("^CardCarousel: no content index=" + i + ";"));
+                const made = small.createObject(root, { delegate: broken });
+                tryVerify(() => rail(made).visible, 1000, "the rail settles");
+                compare(slots(made).filter(s => s.children[0].item !== null).length, 3);
+                tryVerify(() => slots(made).every(s => find(s, item => item.objectName === "broken") === null), 1000, "no broken content is left");
+                made.forceActiveFocus();
+                keyClick(Qt.Key_Right);
+                compare(made.currentIndex, 1);
+                made.destroy();
+            }
         }
 
         function test_motion_scale_zero_moves_at_once() {

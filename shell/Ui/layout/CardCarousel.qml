@@ -28,9 +28,15 @@ import qs.Ui
 // at 15 degrees a notch, and parts of a notch add up.
 //
 // The rail shows one event-loop turn after the carousel is visible with a
-// size, so its first frame is the settled layout. From then on a change of
-// `currentIndex` moves the rail over `carousel.duration`; before then, and
-// while the duration is 0, as under `motion.scale` 0, it moves at once.
+// size, so its first frame is the settled layout. From then on a new
+// `currentIndex` within the shown slices of the index the rail is drawn at
+// glides there over `carousel.duration`; a farther one, a wrap or Home and
+// End across the model included, lands at once, as every move does before
+// the rail settles and while the duration is 0, as under `motion.scale` 0.
+// A card is shown while within the shown slices of the drawn index or of
+// `currentIndex`, and built while within the band of either, so a glide
+// keeps the cards it leaves and builds the ones it reaches; the rail clips
+// to the carousel, so a card on its way in or out draws inside it.
 Item {
     id: root
 
@@ -41,6 +47,8 @@ Item {
     property real devicePixelRatio: Screen.devicePixelRatio
 
     signal activated(int index)
+
+    onCurrentIndexChanged: internal.follow()
 
     // Move `delta` cards from the current one, wrapping at either end.
     function step(delta) {
@@ -99,13 +107,22 @@ Item {
         readonly property real fullScale: root.devicePixelRatio * Math.min(1, tokens.decodeCap / (Math.max(expandedWidth, expandedHeight) * root.devicePixelRatio))
         readonly property size fullDecode: Qt.size(Math.round(expandedWidth * fullScale), Math.round(expandedHeight * fullScale))
 
-        // The index the rail is drawn at: `currentIndex`, reached over the
-        // duration once the rail has settled. An animation of duration 0
-        // lands at once, so motion.scale 0 needs no branch of its own.
-        property real position: root.currentIndex
-        Behavior on position {
-            enabled: internal.settled
-            NumberAnimation { duration: Theme.carousel.duration; easing.type: Theme.motion.easing.standard }
+        // The index the rail is drawn at. Only follow() moves it, once per
+        // change of `currentIndex`, a declared one included: a glide to a
+        // target within the shown slices, otherwise straight there. A glide
+        // of duration 0 lands at once, so motion.scale 0 needs no branch.
+        property real position: 0
+        function follow() {
+            const target = root.currentIndex;
+            glide.stop();
+            const glides = settled && Math.abs(target - position) <= slicesPerSide;
+            if (glides) {
+                glide.from = position;
+                glide.to = target;
+                glide.start();
+            } else {
+                position = target;
+            }
         }
 
         readonly property bool ready: root.visible && root.width > 0 && root.height > 0
@@ -147,6 +164,14 @@ Item {
         }
     }
 
+    NumberAnimation {
+        id: glide
+        target: internal
+        property: "position"
+        duration: Theme.carousel.duration
+        easing.type: Theme.motion.easing.standard
+    }
+
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.NoButton
@@ -162,6 +187,7 @@ Item {
         id: rail
         anchors.fill: parent
         visible: internal.settled
+        clip: true
 
         Repeater {
             id: cards
@@ -173,8 +199,17 @@ Item {
                 required property int index
                 required property var modelData
                 readonly property int offset: index - root.currentIndex
-                readonly property bool shown: Math.abs(offset) <= internal.slicesPerSide
-                readonly property bool retained: Math.abs(offset) <= internal.reach
+                // The card's distance from the target or from the drawn
+                // index, whichever is nearer. A glide never starts farther
+                // than the shown slices from its target, so a card farther
+                // than the band and the shown slices from the target is as
+                // far from the drawn index too, and reads the target alone:
+                // only the cards near the rail follow a glide frame by frame.
+                readonly property real distance: Math.abs(offset) > internal.reach + internal.slicesPerSide ? Math.abs(offset) : Math.min(Math.abs(offset), Math.abs(index - internal.position))
+                // Within n cards means short of card n + 1, so a card between
+                // two whole places stays while any of it can be in the rail.
+                readonly property bool shown: distance < internal.slicesPerSide + 1
+                readonly property bool retained: distance < internal.reach + 1
                 readonly property size decodeSize: Math.abs(offset) <= 1 ? internal.fullDecode : internal.sliceDecode
                 // Only a built card follows the rail, so a step places the
                 // band and not the whole model.
@@ -203,9 +238,18 @@ Item {
                                     anchors.fill: parent
                                     // A Loader sets no required property of the item it
                                     // loads, so the content is built here with its two.
+                                    // A delegate that declares another required property
+                                    // builds nothing, and one without decodeSize could not
+                                    // follow the card; either leaves the card empty.
                                     Component.onCompleted: {
                                         if (root.delegate === null) return;
                                         const content = root.delegate.createObject(holder, { modelData: slot.modelData, decodeSize: slot.decodeSize });
+                                        const built = content !== null && "decodeSize" in content;
+                                        if (!built) {
+                                            if (content !== null) content.destroy();
+                                            console.warn("CardCarousel: no content index=" + slot.index + "; the delegate's root must build with required modelData and decodeSize");
+                                            return;
+                                        }
                                         content.decodeSize = Qt.binding(() => slot.decodeSize);
                                     }
                                 }
