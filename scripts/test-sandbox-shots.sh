@@ -270,6 +270,47 @@ for spec in "${export_cases[@]}"; do
   IFS='|' read -r label rev want <<<"$spec"
   if export_case "$repo/scripts/smoke/tree.sh" "$rev" "$want"; then ok "$label"; else fail "$label"; fi
 done
+
+# The harness copy accepts a tree_export that contains only shell, bin,
+# config, themes and any legacy runtime helper. Installer-only files come
+# from this checkout. This is the real copy helper scripts/smoke/harness.sh
+# calls before it mutates the sandbox copy.
+harness_copy_case() { # LIB
+  local lib="$1" dir target out status=0
+  dir="$tmp/harness-export"; target="$tmp/harness-copy"
+  rm -rf -- "$dir" "$target"
+  mkdir -p -- "$dir" "$target"
+  out="$({
+    source "$lib"
+    tree_export "$helper_repo" "$before_rev" "$dir" || { echo "tree_export failed"; exit 1; }
+    tree_harness_copy "$repo" "$target" "$dir"
+    [[ -e "$target/packaging/install-system.sh" ]] || { echo "packaging missing"; exit 1; }
+    [[ -e "$target/scripts/qml-smoke.sh" ]] || { echo "scripts missing"; exit 1; }
+    cmp -s -- "$repo/VERSION" "$target/VERSION" || { echo "VERSION fallback missing"; exit 1; }
+    cmp -s -- "$repo/LICENSE" "$target/LICENSE" || { echo "LICENSE fallback missing"; exit 1; }
+    cmp -s -- "$repo/README.md" "$target/README.md" || { echo "README fallback missing"; exit 1; }
+    echo ok
+  } 2>&1)" || status=$?
+  [[ $status -eq 0 && $out == ok ]] && return 0
+  echo "exit=$status out=$(head -n 1 <<<"$out")"
+  return 1
+}
+if harness_copy_case "$repo/scripts/smoke/tree.sh"; then ok "the harness copy accepts a tree_export without installer files"; else fail "the harness copy accepts a tree_export without installer files"; fi
+copy_mutant="$tmp/tree-copy-mutant.sh"
+if python3 - "$repo/scripts/smoke/tree.sh" "$copy_mutant" <<'PY'
+import sys
+src, dst = sys.argv[1:]
+text = open(src).read()
+needle = 'shutil.copytree(source / "packaging", target / "packaging")'
+assert text.count(needle) == 1, "the harness copy packaging fallback must match once"
+open(dst, "w").write(text.replace(needle, 'shutil.copytree(tree / "packaging", target / "packaging")'))
+PY
+then
+  if harness_copy_case "$copy_mutant" >/dev/null; then fail "control: the old unconditional harness copy stayed green"; else ok "control: the old unconditional harness copy fails on a tree_export"; fi
+else
+  fail "control: the old unconditional harness copy could not be planted"
+fi
+
 # Controls, one per rule: a copy of tree.sh that exports no helper, and one
 # that overlays nothing, each leave the older revision without its helper.
 tree_controls=(

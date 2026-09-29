@@ -53,10 +53,49 @@ check "an existing non-link command path is refused" test "$status" = 1
 check "the command path refusal is keyed" grep_out "install-system: refused: link=unexpected path=$link_dest/usr/bin/vgsh" "$tmp/link-target.err"
 
 enum_dest="$tmp/enumerator"
-run_capture "$tmp/enumerator.out" "$tmp/enumerator.err" status env DESTDIR="$enum_dest" PREFIX=/usr VGS_INSTALL_ENUMERATOR=false "$repo/packaging/install-system.sh"
-check "a failing enumerator is refused" test "$status" = 1
-check "the enumerator refusal is keyed" grep_out "install-system: refused: enumerate=failed path=$repo" "$tmp/enumerator.err"
-check "a failing enumerator prints no success line" test ! -s "$tmp/enumerator.out"
+git_stub="$tmp/git-stub"; mkdir -p -- "$git_stub"
+real_git="$(command -v git)"
+cat >"$git_stub/git" <<SH
+#!/usr/bin/env bash
+root=""
+if [[ \${1:-} == -C ]]; then root="\$2"; shift 2; fi
+if [[ \${1:-} == rev-parse && \${2:-} == --show-toplevel ]]; then
+  printf '%s\n' "\$root"
+  exit 0
+fi
+if [[ \${1:-} == ls-files ]]; then
+  echo 'git-stub=ls-files-failed' >&2
+  exit 23
+fi
+exec "$real_git" "\$@"
+SH
+chmod 755 "$git_stub/git"
+run_capture "$tmp/enumerator.out" "$tmp/enumerator.err" status env PATH="$git_stub:$PATH" DESTDIR="$enum_dest" PREFIX=/usr "$repo/packaging/install-system.sh"
+check "a failing git enumerator is refused" test "$status" = 1
+check "the git enumerator refusal is keyed" grep_out "install-system: refused: enumerate=failed path=$repo" "$tmp/enumerator.err"
+check "a failing git enumerator prints no success line" test ! -s "$tmp/enumerator.out"
+
+archive_source="$tmp/archive-source"
+mkdir -p -- "$archive_source"
+cp -R -- "$repo/bin" "$repo/shell" "$repo/config" "$repo/themes" "$repo/packaging" "$archive_source/"
+cp -- "$repo/VERSION" "$repo/LICENSE" "$repo/README.md" "$archive_source/"
+mkdir -p -- "$archive_source/shell/unreadable"
+chmod 000 -- "$archive_source/shell/unreadable"
+run_capture "$tmp/archive-enumerator.out" "$tmp/archive-enumerator.err" status env DESTDIR="$tmp/archive-enumerator" PREFIX=/usr "$archive_source/packaging/install-system.sh"
+chmod 755 -- "$archive_source/shell/unreadable"
+check "a failing archive enumerator is refused" test "$status" = 1
+check "the archive enumerator refusal is keyed" grep_out "install-system: refused: enumerate=failed path=$archive_source" "$tmp/archive-enumerator.err"
+check "a failing archive enumerator prints no success line" test ! -s "$tmp/archive-enumerator.out"
+
+readonly_source="$tmp/readonly-source"
+mkdir -p -- "$readonly_source"
+cp -R -- "$repo/bin" "$repo/shell" "$repo/config" "$repo/themes" "$repo/packaging" "$readonly_source/"
+cp -- "$repo/VERSION" "$repo/LICENSE" "$repo/README.md" "$readonly_source/"
+chmod -R a-w -- "$readonly_source"
+run_capture "$tmp/readonly-source.out" "$tmp/readonly-source.err" status env DESTDIR="$tmp/readonly-source-install" PREFIX=/usr "$readonly_source/packaging/install-system.sh"
+check "installing from a read-only source succeeds" test "$status" = 0
+check "the read-only source install reports success" grep_out "install-system: ok prefix=/usr root=$tmp/readonly-source-install/usr" "$tmp/readonly-source.out"
+chmod -R u+w -- "$readonly_source"
 
 case_dest="$tmp/missing"
 cp -a -- "$dest" "$case_dest"
@@ -114,26 +153,26 @@ check "the mutant's shell AGENTS.md is reported as extra" grep_out "install-tree
 READ_ONLY_PREFIX_SOURCE_ONLY=true source "$repo/scripts/smoke/rows/read-only-prefix.sh"
 signal_dest="$tmp/signal-install"
 run_capture "$tmp/signal-install.out" "$tmp/signal-install.err" status env DESTDIR="$signal_dest" PREFIX=/usr "$repo/packaging/install-system.sh"
-check "the signal control install succeeds" test "$status" = 0
-hostile_target="$signal_dest/usr/share/vgs/themes/targets/hostile"
-mkdir -p -- "$hostile_target"
-cat >"$hostile_target/target.json" <<'JSON'
-{ "app": "hostile", "runsCode": false, "encoder": "hex8", "files": [{ "template": "hostile.conf", "destination": "hostile.conf" }], "detect": [], "wiring": null, "reload": { "command": ["pkill", "-USR1", "kitty"], "timeoutMs": 5000 } }
-JSON
-printf 'accent=@{palette.accent}\n' >"$hostile_target/hostile.conf"
+check "the target guard control install succeeds" test "$status" = 0
+installed_targets="$signal_dest/usr/share/vgs/themes/targets"
+check "the pristine install carries production targets" test -e "$installed_targets/kitty/target.json"
+fixture_tree="$tmp/fixture-target-tree"
+mkdir -p -- "$fixture_tree/themes/targets/fixture-only"
+printf '{"app":"fixture-only","runsCode":false,"encoder":"hex8","files":[],"detect":[],"wiring":null,"reload":null}\n' >"$fixture_tree/themes/targets/fixture-only/target.json"
+printf 'fixture\n' >"$fixture_tree/themes/targets/fixture-only/fixture.conf"
 signal_shim="$tmp/signal-shim"
-signal_log="$tmp/signal.log"
-read_only_prefix_signal_path "$signal_shim"
-rm -f -- "$signal_log"
-env -i PATH="$signal_shim:$(dirname -- "$(node -e 'process.stdout.write(process.execPath)')"):$PATH" HOME="$tmp/signal-home" XDG_CONFIG_HOME="$tmp/signal-home/.config" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$signal_dest/usr/bin/vgsh" theme apply vgs >/dev/null || true
-check "the planted hostile target reaches the signalling shim without the guard" test -s "$signal_log"
-empty_tree="$tmp/empty-tree"
-mkdir -p -- "$empty_tree/themes/targets"
-rm -f -- "$signal_log"
-read_only_prefix_prepare_tree "$signal_dest/usr" "$empty_tree" "$signal_shim"
-env -i PATH="$signal_shim:$(dirname -- "$(node -e 'process.stdout.write(process.execPath)')"):$PATH" HOME="$tmp/signal-home" XDG_CONFIG_HOME="$tmp/signal-home/.config" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$signal_dest/usr/bin/vgsh" theme apply vgs >/dev/null || true
-check "the read-only prefix guard removes installed reload targets" test ! -e "$hostile_target/target.json"
-check "the guarded apply calls no process-signalling shim" test ! -s "$signal_log"
+read_only_prefix_prepare_tree "$signal_dest/usr" "$fixture_tree" "$signal_shim"
+check "the read-only prefix guard removes production targets" test ! -e "$installed_targets/kitty/target.json"
+check "the read-only prefix guard installs exactly the fixture targets" diff -r -- "$fixture_tree/themes/targets" "$installed_targets"
+mutant_dest="$tmp/target-mutant"
+run_capture "$tmp/target-mutant.out" "$tmp/target-mutant.err" status env DESTDIR="$mutant_dest" PREFIX=/usr "$repo/packaging/install-system.sh"
+check "the target mutant install succeeds" test "$status" = 0
+read_only_prefix_signal_path "$tmp/mutant-signal-shim"
+if diff -r -- "$fixture_tree/themes/targets" "$mutant_dest/usr/share/vgs/themes/targets" >/dev/null 2>&1; then
+  fail "the guardless target mutant matched the fixture targets"
+else
+  ok "the guardless target mutant fails the fixture-target comparison"
+fi
 
 log_failures=0
 check_unexpected_log() { # LABEL LOG

@@ -78,7 +78,7 @@ directory_nonempty() { # DIR
 enumerate_tree() {
   local top
   if top="$(git -C "$source_root" rev-parse --show-toplevel 2>/dev/null)" && [[ $top == "$source_root" ]]; then
-    "${VGS_INSTALL_ENUMERATOR:-git}" -C "$source_root" ls-files -- bin shell config themes VERSION
+    git -C "$source_root" ls-files -- bin shell config themes VERSION
   else
     python3 - "$source_root" <<'PY'
 import os
@@ -118,10 +118,10 @@ if [[ -e $bin_link || -L $bin_link ]]; then
   fi
 fi
 
-enumerate_errors="$source_root/tmp/install-system-enumerate-errors.$$"
+mkdir -p -- "$install_root"
+enumerate_errors="$install_root/.install-system-enumerate-errors.$$"
 cleanup() { rm -f -- "$enumerate_errors"; }
 trap cleanup EXIT
-mkdir -p -- "$source_root/tmp"
 if ! entries_text="$(enumerate_tree 2>"$enumerate_errors")"; then
   printf 'install-system: refused: enumerate=failed path=%s\n' "$source_root" >&2
   cat -- "$enumerate_errors" >&2

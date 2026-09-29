@@ -109,18 +109,10 @@ home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 # and themes, such as scripts/sandbox-shots.sh --rev; the scripts, the probe
 # and the fixtures come from this checkout, except the runtime helpers an
 # older revision's export carries under scripts/, which its bin/ loads.
-python3 - "$repo" "$sandbox/repo" "${source_tree:-$repo}" <<'PY'
+tree_harness_copy "$repo" "$sandbox/repo" "${source_tree:-$repo}"
+python3 - "$repo" "$sandbox/repo" <<'PY'
 import pathlib, shutil, sys
-source, target, tree = map(pathlib.Path, sys.argv[1:])
-for directory in ("shell", "bin", "config", "themes"):
-    shutil.copytree(tree / directory, target / directory)
-shutil.copytree(source / "packaging", target / "packaging")
-shutil.copytree(source / "scripts", target / "scripts")
-for file_name in ("VERSION", "LICENSE", "README.md"):
-    origin = tree / file_name
-    if not origin.exists():
-        origin = source / file_name
-    shutil.copyfile(origin, target / file_name)
+source, target = map(pathlib.Path, sys.argv[1:])
 # The copy ships no target: each would detect the host's own application on
 # PATH, and its reload hook would signal that application in the live
 # session. The rows add the fixture targets they read. A tree older than the
@@ -176,7 +168,7 @@ fi
 sandbox_env=(env -i
   HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
   XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
-  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache" VGS_TEST_RUN=1)
+  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache" TMUX_TMPDIR="$rt_dir" VGS_TEST_RUN=1)
 
 # The shell alone resolves hyprctl through this directory, so a row can
 # stand a command in for it without touching what the rows themselves run.

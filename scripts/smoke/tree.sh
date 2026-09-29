@@ -27,3 +27,24 @@ tree_overlay_helpers() {
   [[ -d $tree/scripts ]] || return 0
   cp -R -- "$tree/scripts/." "$target/scripts/"
 }
+
+# tree_harness_copy CHECKOUT TARGET TREE: make the sandbox copy the smoke
+# harness runs. TREE is the product tree under test. CHECKOUT supplies the
+# installer-only files and the smoke scripts. A revision export from before
+# packaging, VERSION, LICENSE or README.md existed still runs: the fallback
+# files come from CHECKOUT.
+tree_harness_copy() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import pathlib, shutil, sys
+source, target, tree = map(pathlib.Path, sys.argv[1:])
+for directory in ("shell", "bin", "config", "themes"):
+    shutil.copytree(tree / directory, target / directory)
+shutil.copytree(source / "packaging", target / "packaging")
+shutil.copytree(source / "scripts", target / "scripts")
+for file_name in ("VERSION", "LICENSE", "README.md"):
+    origin = tree / file_name
+    if not origin.exists():
+        origin = source / file_name
+    shutil.copyfile(origin, target / file_name)
+PY
+}
