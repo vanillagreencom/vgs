@@ -470,13 +470,6 @@ function applySucceeded(result) {
     return isPlainObject(result) && (result.state === "applied" || result.state === "unchanged");
 }
 
-// Whether shell.tui.open's answer leaves the TUI's window on screen: `ok`,
-// or `busy`, whose live window the core focused. Any other refusal is one
-// the launcher shows.
-function tuiShown(reply) {
-    return reply === "ok" || /^refused: tui=\S+ reason=busy$/.test(reply);
-}
-
 // --- the summon payload
 
 var PAYLOAD_KEYS = ["menu", "query", "mode", "prompt", "options", "selectionFile", "doneFile", "width", "maxHeight"];

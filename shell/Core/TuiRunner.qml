@@ -89,9 +89,11 @@ Scope {
     }
 
     // open: any listed TUI by key, with no arguments; the `openTui` IPC
-    // function answers with this.
+    // function answers `ok` when the request starts the TUI or focuses its
+    // live window.
     function open(key) {
-        return start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, coreBin, runner(), Logic.CORE_TUIS, key), null, undefined);
+        const answer = start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, coreBin, runner(), Logic.CORE_TUIS, key), null, undefined);
+        return Logic.tuiShownAnswer(key, answer);
     }
 
     // openCore: the core's own TUI NAME, listed or not, with ARGS after its

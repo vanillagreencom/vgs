@@ -120,7 +120,7 @@ Singleton {
             update: id => root.managerTui("update", id),
             remove: id => root.managerTui("remove", id),
             installRequirements: id => Notices.requested(id),
-            add: () => Logic.managerTuiAnswer("plugin-add", tuis.openCore("plugin-add", []))
+            add: () => root.managerCoreTui("plugin-add", [])
         }),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
@@ -148,15 +148,18 @@ Singleton {
         })
     })
 
-    // Every `manager` TUI member: opens the core TUI
-    // PluginLogic.managerTui picks for ACTION and plugin ID in a floating
-    // terminal, so a question such as update's review of the
-    // incoming diff stays a question (D007); answers as
-    // PluginLogic.managerTuiAnswer does.
+    // Every `manager` TUI member opens a core TUI in a floating terminal,
+    // so a question such as update's diff review stays a question (D007).
+    // A focused live window is the same shown answer as a started launch.
     function managerTui(action, id) {
         const source = typeof id === "string" && Registry.has(id) ? Registry.sourceOf(Registry.manifests[id]) : null;
         const request = Logic.managerTui(action, id, source);
-        return request.ok ? Logic.managerTuiAnswer(request.name, tuis.openCore(request.name, request.args)) : request.answer;
+        return request.ok ? root.managerCoreTui(request.name, request.args) : request.answer;
+    }
+
+    function managerCoreTui(name, args) {
+        const key = "core/" + name;
+        return Logic.tuiShownAnswer(key, tuis.openCore(name, args));
     }
 
     // The compositor places anchored surfaces relative to the item's own

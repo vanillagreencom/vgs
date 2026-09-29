@@ -150,11 +150,6 @@ function verify(model) {
     same(model.searchRows(disabled, alone.itemOrder, "root", "update", []).map(r => r.label), [], "an unresolved row is hidden from search");
     same(model.menuRows(model.resolveTuiRows(alone.items, alone.itemOrder, []), alone.itemOrder, "root", []).filter(r => r.kind === "tui"), [], "an empty list hides every tui row");
 
-    // What the launcher does with shell.tui.open's answer.
-    for (const [reply, want] of [["ok", true], ["refused: tui=core/pkg-install reason=busy", true], ["refused: tui=core/pkg-install reason=launcher-missing", false],
-        ["refused: tui=acme.updates/pipeline reason=disabled", false], ["refused: shell=none", false], ["refused: tui=core/pkg-install reason=busy-ish", false]])
-        assert.equal(model.tuiShown(reply), want, "tui answer " + reply);
-
     // Routes: an id, an alias, a link's id, and an app's keyword that must
     // not shadow a menu.
     const items = model.resolveTuiRows(merged.items, merged.itemOrder, CORE_ENTRIES);
@@ -293,8 +288,6 @@ const CONTROLS = [
     ["first in list", "for (var i = 0; i < entries.length; i++) {\n        if (entry.tui", "for (var i = entries.length - 1; i >= 0; i--) {\n        if (entry.tui"],
     ["resolution is fresh", "Object.assign({}, entry, { tuiKey: tuiKeyFor(entry, entries) })", "(entry.tuiKey = tuiKeyFor(entry, entries), entry)"],
     ["unresolved hidden", 'if (entry.kind === "tui") return entry.tuiKey !== "";', 'if (entry.kind === "tui") return true;'],
-    ["busy is shown", 'return reply === "ok" || /^refused: tui=\\S+ reason=busy$/.test(reply);', 'return reply === "ok";'],
-    ["only busy is shown", 'return reply === "ok" || /^refused: tui=\\S+ reason=busy$/.test(reply);', 'return reply === "ok" || /^refused: tui=\\S+ reason=/.test(reply);'],
     ["exact id first", "if (hasOwn(items, raw)) return raw;", ""],
     ["apps are no route", 'if (entry.kind === "app") continue;\n        for', "for"],
     ["handed maps unwritten", "var row = Object.assign({}, rows[j], { providerMenu: menuId, order: nextOrder.length });", "var row = rows[j]; row.providerMenu = menuId; row.order = nextOrder.length; items[row.id] = row;"],

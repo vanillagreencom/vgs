@@ -3,10 +3,10 @@
 // shell/Core/PluginLogic.js: the manifest's `tui` key and its normalized
 // shape, the core's own TUI table, the arguments a plugin's script takes,
 // the launch of a plugin's own script, of a listed TUI by key and of the
-// core's own TUI with arguments, the busy
-// key and the launcher state among the refusals, the listed rows, the log
-// lines of a launcher's, a probe's and a reap's end, the exit records and
-// the runs, state and `done` answers they make, and a run's window. The
+// core's own TUI with arguments, the core answer for a TUI shown on screen,
+// the busy key and the launcher state among the refusals, the listed rows,
+// the log lines of a launcher's, a probe's and a reap's end, the exit records
+// and the runs, state and `done` answers they make, and a run's window. The
 // file loads under node through bin/lib/qml-library.js,
 // as the shell loads it. The controls at the end edit a copy of the judge,
 // one rule at a time, and the suite must fail on every copy. Exit 1 when a
@@ -305,16 +305,19 @@ function suite(ctx, check) {
     const managerThrown = (action, source) => { try { ctx.managerTui(action, "acme.tui", source); return "answered"; } catch (e) { return e.message; } };
     check("managerTui throws on an action no row covers", managerThrown("add", "installed"), "manager: no TUI action \"add\", want one of update, remove");
     check("managerTui throws on a source no rule covers", managerThrown("update", "linked"), "manager: plugin source \"linked\" is not one of bundled, installed");
-    // managerTuiAnswer: [name, core name, answer, the manager's answer].
+    // tuiShownAnswer: [name, key, answer, the shared shown answer].
     const answerRows = [
-        ["a launch the runner started", "plugin-update", "ok", "ok"],
-        ["the live window of the same TUI the runner focused", "plugin-update", "refused: tui=core/plugin-update reason=busy", "ok"],
-        ["a busy key of another TUI", "plugin-update", "refused: tui=core/plugin-remove reason=busy", "refused: tui=core/plugin-remove reason=busy"],
-        ["no terminal", "plugin-add", "refused: tui=core/plugin-add reason=launcher-missing", "refused: tui=core/plugin-add reason=launcher-missing"],
-        ["refused arguments", "plugin-remove", "refused: tui=core/plugin-remove reason=args", "refused: tui=core/plugin-remove reason=args"],
+        ["a launch the runner started", "core/plugin-update", "ok", "ok"],
+        ["the live window of the same core TUI the runner focused", "core/plugin-update", "refused: tui=core/plugin-update reason=busy", "ok"],
+        ["the live window of the same plugin TUI the runner focused", "acme.tui/update", "refused: tui=acme.tui/update reason=busy", "ok"],
+        ["a busy key of another TUI", "core/plugin-update", "refused: tui=core/plugin-remove reason=busy", "refused: tui=core/plugin-remove reason=busy"],
+        ["no terminal", "core/plugin-add", "refused: tui=core/plugin-add reason=launcher-missing", "refused: tui=core/plugin-add reason=launcher-missing"],
+        ["refused arguments", "core/plugin-remove", "refused: tui=core/plugin-remove reason=args", "refused: tui=core/plugin-remove reason=args"],
+        ["a disabled plugin", "acme.tui/update", "refused: tui=acme.tui/update reason=disabled", "refused: tui=acme.tui/update reason=disabled"],
+        ["an undeclared key", "acme.tui/missing", "refused: tui=acme.tui/missing reason=undeclared", "refused: tui=acme.tui/missing reason=undeclared"],
     ];
-    for (const [name, tuiName, answer, want] of answerRows)
-        check("managerTuiAnswer: " + name, ctx.managerTuiAnswer(tuiName, answer), want);
+    for (const [name, key, answer, want] of answerRows)
+        check("tuiShownAnswer: " + name, ctx.tuiShownAnswer(key, answer), want);
     check("every manager TUI opens an unlisted core row", Object.keys(ctx.MANAGER_TUIS).filter(a => {
         const row = ctx.CORE_TUIS[ctx.MANAGER_TUIS[a]];
         return row === undefined || row.entry !== null;
@@ -509,8 +512,8 @@ const CONTROLS = [
     ["the manager refuses an unknown id", "if (typeof id !== \"string\" || source === null)", "if (false)"],
     ["the plugin update asks before it fast-forwards", "argv: [\"vgsh\", \"plugin\", \"update\"],", "argv: [\"vgsh\", \"plugin\", \"update\", \"--yes\"],"],
     ["the plugin remove asks before it deletes", "argv: [\"vgsh\", \"plugin\", \"remove\"],", "argv: [\"vgsh\", \"plugin\", \"remove\", \"--yes\"],"],
-    ["the manager answers ok for a focused live window", "return answer === tuiRefusal(\"core/\" + name, \"busy\").answer ? \"ok\" : answer;", "return answer;"],
-    ["the manager's busy answer is its own TUI's", "return answer === tuiRefusal(\"core/\" + name, \"busy\").answer ? \"ok\" : answer;", "return /reason=busy$/.test(answer) ? \"ok\" : answer;"],
+    ["the shared answer maps a focused live window", "return answer === \"ok\" || answer === tuiRefusal(key, \"busy\").answer ? \"ok\" : answer;", "return answer;"],
+    ["the shared answer maps only its own busy key", "return answer === \"ok\" || answer === tuiRefusal(key, \"busy\").answer ? \"ok\" : answer;", "return answer === \"ok\" || /reason=busy$/.test(answer) ? \"ok\" : answer;"],
     ["the plugin update opens wide", "title: \"Update a plugin\",\n        size: \"wide\",", "title: \"Update a plugin\",\n        size: \"default\","],
     ["the manager's sources are known", "    throw new Error(\"manager: plugin source \" + JSON.stringify(source)", "    return { ok: false, answer: \"refused: bundled=\" + id };\n    throw new Error(\"manager: plugin source \" + JSON.stringify(source)"],
     ["the manager refuses a bundled plugin", "    case \"bundled\":\n        return { ok: false, answer: \"refused: bundled=\" + id };", "    case \"bundled\":"],

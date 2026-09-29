@@ -96,6 +96,8 @@ expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
 # open the core's package pickers; Update opens the first listed entry of
 # the Update group, the fixture acme.tui's while it is enabled, and hides
 # while it is disabled, as tui.sh left it and as this block leaves it.
+hold_core() { : >"$sandbox/core-hold"; }
+release_core() { rm -f -- "$sandbox/core-hold"; }
 # The index of the launcher's row of kind $1 and label $2, or none.
 row_index() { launcher_rows | python3 -c 'import json,sys; r=[i for i, x in enumerate(json.load(sys.stdin)) if x[0] == sys.argv[1] and x[1] == sys.argv[2]]; print(r[0] if r else "none")' "$1" "$2"; }
 # categories LABEL: summon the launcher and show its categories.
@@ -129,6 +131,25 @@ for row in "Install|install|Install packages" "Remove|remove|Remove packages"; d
   expect_poll "$label closes the launcher" 0 layer_count vgs:overlay
   expect_run_end "the $verb picker's run ends" "core/pkg-$verb"
 done
+
+# A held core picker leaves its key busy. The second launcher pick follows
+# shell.tui.open's shared shown answer, so it closes without a notice, and
+# IPC sees the same answer while the runner focuses the live window.
+forget_record
+hold_core
+categories "held Install"
+pick_tui Install
+expect_poll "held Install hands the terminal the core's vgsh pkg install" "$(core_words core/pkg-install "Install packages" org.vgs.tui pkg install)" recorded
+expect_poll "the held install picker stays live" busy key_idle core/pkg-install
+expect_poll "held Install closes the launcher" 0 layer_count vgs:overlay
+categories "busy Install"
+pick_tui Install
+expect_poll "busy Install closes the launcher" 0 layer_count vgs:overlay
+expect "busy Install is not logged as a launcher refusal" 0 log_lines 'launcher: tui core/pkg-install refused: tui=core/pkg-install reason=busy'
+expect "IPC openTui answers ok for the busy install picker" ok ipc shell openTui core/pkg-install
+release_core
+expect_poll "the held install picker run ends" idle key_idle core/pkg-install
+
 expect "the Update fixture starts disabled, as tui.sh left it" False plugin_enabled acme.tui
 categories Update
 expect "Update is hidden while its fixture is disabled" False has_row tui Update

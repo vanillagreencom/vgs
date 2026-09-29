@@ -460,11 +460,11 @@ Item {
         return reply;
     }
 
-    // A listed TUI by key. The launcher closes once its window is on screen;
+    // A listed TUI by key. The launcher closes on the core's shown answer;
     // any other answer is logged and stays in the list as a notice.
     function openTui(key) {
         const reply = shell === null ? "refused: shell=none" : shell.tui.open(key);
-        if (MenuModel.tuiShown(reply)) {
+        if (reply === "ok") {
             dismiss();
             return;
         }

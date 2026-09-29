@@ -297,6 +297,8 @@ fi
 # the argv and runs none of it, so the plugin stays installed.
 terminal_stand_in
 terminal_ready "Settings' TUIs"
+hold_core() { : >"$sandbox/core-hold"; }
+release_core() { rm -f -- "$sandbox/core-hold"; }
 # settings_button TEXT: whether the window draws a shown Button TEXT.
 settings_button() { ipc smoke windowGeometry panel vgs.settings Button "$1" | python3 -c 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
 # settings_reopen PAGE: the gear opens the window again on its bar's
@@ -410,11 +412,19 @@ settings_keys_row '{}'
 expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 
 # Add plugin: the list's button opens the core's plugin add, which asks for
-# the git URL on the terminal.
+# the git URL on the terminal. A held run leaves the key busy, and the
+# second click hides the window through the shared shown answer.
 forget_record
+hold_core
 settings_click Button "Add plugin" || fail "the click on Add plugin failed"
 expect_poll "Add plugin opens vgsh plugin add in the floating TUI" "$(core_words core/plugin-add "Add a plugin" org.vgs.tui plugin add)" recorded
 expect_poll "Add plugin hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the add's run is live under the hold" busy key_idle core/plugin-add
+settings_reopen ""
+settings_click Button "Add plugin" || fail "the second click on Add plugin failed"
+expect_poll "busy Add plugin hides the window over the live terminal" 0 layer_count vgs:panel
+expect_poll "the add's run stays live until release" busy key_idle core/plugin-add
+release_core
 expect_run_end "the add's run ends" core/plugin-add
 
 # Requirements: one row per requirement with its state from the scan and

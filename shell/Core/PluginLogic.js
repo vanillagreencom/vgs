@@ -997,13 +997,13 @@ function managerTui(action, id, source) {
     throw new Error("manager: plugin source " + JSON.stringify(source) + " is not one of bundled, installed");
 }
 
-// The `manager` capability's answer for ANSWER, what opening the core TUI
-// NAME answered: `ok` when the launcher started, and when the key was busy,
-// since the runner then asks the compositor to focus the live run's window
-// and the caller hands the user to that terminal either way, as the
-// launcher's TUI rows do; any other refusal as it is.
-function managerTuiAnswer(name, answer) {
-    return answer === tuiRefusal("core/" + name, "busy").answer ? "ok" : answer;
+// The one judgement of whether TUI KEY is on screen for ANSWER: `ok` when
+// the launcher started, and when that key was busy, since the runner then
+// asks the compositor to focus the live run's window. TuiRunner.open and
+// the manager capability's TUI members use this; any other refusal passes
+// through unchanged.
+function tuiShownAnswer(key, answer) {
+    return answer === "ok" || answer === tuiRefusal(key, "busy").answer ? "ok" : answer;
 }
 
 // One printable line of 1 to TUI_TEXT_MAX characters.
