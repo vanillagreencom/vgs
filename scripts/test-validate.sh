@@ -172,27 +172,34 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
 installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
-curl_installer_plan=$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
+# The README check reads VERSION, bin/vgsh, install.sh, the Arch recipes,
+# the plugins, README.md and docs/architecture/runtime.md.
+readme_rows=$'node scripts/check-readme.js\nnode scripts/test-check-readme.js\nscripts/test-readme-install.sh\n'
+readme_plan="$readme_rows$repo_plan"
+curl_installer_plan="$readme_rows"$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
 fedora_plan=$'scripts/test-fedora-srpm.sh\n'
-version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
+version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 # A recipe change runs the recipe check and its controls, never the product
 # smoke; the container build runs only where the area admits it, never
 # offline.
 recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-publish-aur.sh\n'"$repo_plan"
+# An Arch recipe is also the README's source for the AUR commands.
+arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-publish-aur.sh\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
+  "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"
   "version|VERSION|offline|$version_plan"
   "licence|LICENSE|all|$install_plan"$'\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
   "flake|flake.nix|all|$repo_plan"$'\nscripts/test-flake.sh'
   "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$installer_plan"
   "curl-installer|install.sh|offline|$curl_installer_plan"
-  "recipe|packaging/arch/vgs/PKGBUILD|offline|$recipe_plan"
-  "recipe-all|packaging/arch/vgs-git/.SRCINFO|all|$recipe_plan"$'\nscripts/arch-packages.sh'
+  "recipe|packaging/arch/vgs/PKGBUILD|offline|$arch_recipe_plan"
+  "recipe-all|packaging/arch/vgs-git/.SRCINFO|all|$arch_recipe_plan"$'\nscripts/arch-packages.sh'
   "recipe-package|packaging/arch/vgs/PKGBUILD|package|scripts/arch-packages.sh"
   "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-install-sh.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
   "install-manifest|packaging/install-tree.manifest|offline|scripts/test-install-tree.sh"$'\nscripts/test-release.sh\n'"$repo_plan"
@@ -241,7 +248,10 @@ printf 'source\n' >"$d/shell/Core/Dispatch.js"
 "${base_env[@]}" git -C "$d" add shell/Core/Dispatch.js
 "${base_env[@]}" git -C "$d" commit -q -m source
 "${base_env[@]}" git -C "$d" mv shell/Core/Dispatch.js README.md
-if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$dispatch_plan" ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
+# The removed path's consumers, and README.md's: the install tree and the
+# README check.
+rename_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\n'"$readme_rows"$'python3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
+if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$rename_plan" ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
 
 d="$tmp/plan-shared"; fresh "$d"
 mkdir -p "$d/bin/lib"; printf 'changed\n' >"$d/bin/lib/qml-library.js"
@@ -251,11 +261,12 @@ for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.
 done
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
 
-# bin/vgsh holds the preflight floors the recipe check reads.
+# bin/vgsh holds the preflight floors the recipe check and the README check
+# read.
 d="$tmp/plan-floors"; fresh "$d"
 mkdir -p "$d/bin"; printf 'changed\n' >"$d/bin/vgsh"
 out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")"
-for consumer in 'node scripts/check-packaging.js' 'node scripts/test-check-packaging.js'; do
+for consumer in 'node scripts/check-packaging.js' 'node scripts/test-check-packaging.js' 'node scripts/check-readme.js' 'node scripts/test-check-readme.js' 'scripts/test-readme-install.sh'; do
   if grep -qxF "$consumer" <<<"$out"; then ok "a bin/vgsh change selects $consumer"; else fail "a bin/vgsh change omitted $consumer"; fi
 done
 
