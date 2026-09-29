@@ -2,7 +2,7 @@ import QtQuick
 // The tui capability's consumer for scripts/smoke/rows/tui.sh. Each IPC
 // function hands its argument to one member and answers what it returned:
 // `run` takes `<name>|<arg>|<arg>...`, a name alone passing no argument
-// list, since qs ipc reads a bracketed argument as a list; `runDone` takes
+// list, since qs ipc reads a bracketed argument as a list; `run-done` takes
 // the same and passes a `done` that keeps each result this instance
 // received, which `dones` answers as JSON [name, code, reason] rows;
 // `open` takes a key; `entries` and `state` answer the published list and
@@ -23,7 +23,7 @@ Item {
         if (shell === null || registered) return;
         registered = true;
         shell.ipc.handle("run", arg => root.request(arg, undefined));
-        shell.ipc.handle("runDone", arg => {
+        shell.ipc.handle("run-done", arg => {
             const name = arg.split("|")[0];
             return root.request(arg, result => { root.dones = root.dones.concat([[name, result.code, result.reason]]); });
         });

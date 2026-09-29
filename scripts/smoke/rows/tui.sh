@@ -201,16 +201,16 @@ expect_poll "the later request reaches the terminal" \
 # fixture's state and its `done`, answers a second run of the live key
 # busy and focuses its window.
 tui_gate="$sandbox/tui-gate"
-tui_done() { ipc acme.tui invoke dones; }
+tui_done() { tui dones; }
 # The fixture's state of its wait script as [running, code, ended].
-wait_state() { ipc acme.tui invoke state | python3 -c 'import json,sys; s=json.load(sys.stdin)["wait"]; print(json.dumps([s["running"], s["code"], s["endedAt"] is not None]))'; }
+wait_state() { tui state | python3 -c 'import json,sys; s=json.load(sys.stdin)["wait"]; print(json.dumps([s["running"], s["code"], s["endedAt"] is not None]))'; }
 wait_window() { hypr -j clients | python3 -c 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"]=="org.vgs.tui" and c["title"]=="VGS · Wait"))'; }
 # The last ended code of the wait script's key the lending record holds.
 wait_ended_code() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["tui"]["runs"]["acme.tui/wait"]["ended"]["code"]))'; }
 active_class() { hypr -j activewindow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("class")))'; }
 rm -f -- "$tui_gate"
 expect "the wait script's state before any run" '[false, null, false]' wait_state
-expect "a gated run with a done answers ok" ok tui runDone "wait|$tui_gate|3"
+expect "a gated run with a done answers ok" ok tui run-done "wait|$tui_gate|3"
 expect_poll "the run's record reaches the fixture's state" '[true, null, false]' wait_state
 expect_poll "the launcher ends once the presenter holds the key" '[]' lent tui.launching
 expect "no done fires while the run is open" '[]' tui_done
@@ -218,21 +218,21 @@ expect_poll "the stand-in terminal maps the run's window" 1 wait_window
 spawn "$sandbox/toplevel-other.log" "${shell_env[@]}" "$sandbox/toplevel" org.example.other Other
 other_pid="$spawn_pid"
 expect_poll "another window takes the focus" '"org.example.other"' active_class
-expect "a second run of the live key is refused busy" "refused: tui=wait reason=busy" tui runDone "wait|$tui_gate|3"
+expect "a second run of the live key is refused busy" "refused: tui=wait reason=busy" tui run-done "wait|$tui_gate|3"
 expect_poll "the busy answer focuses the live run's window" '"org.vgs.tui"' active_class
 expect "a busy answer registers no done" '["acme.tui"]' lent tui.waiters
 touch -- "$tui_gate"
-expect_poll "the run's done fires with the command's code" '[["wait", 3, null]]' tui_done
+expect_poll "the run's done fires with the command's code" '[["wait",3,null]]' tui_done
 expect_poll "the fixture's state moves to the ended run" '[false, 3, true]' wait_state
 expect "the core holds no done once it fired" '[]' lent tui.waiters
 expect_poll "the run's window closes with the presenter" 0 wait_window
-expect "the run's done fired once" '[["wait", 3, null]]' tui_done
+expect "the run's done fired once" '[["wait",3,null]]' tui_done
 kill -TERM -- "$other_pid" 2>/dev/null || true
 
 # A destroyed instance's done is dropped and its run still ends; the
 # instance built after it reads the run from the state.
 rm -f -- "$tui_gate"
-expect "a gated run of the instance about to go answers ok" ok tui runDone "wait|$tui_gate|5"
+expect "a gated run of the instance about to go answers ok" ok tui run-done "wait|$tui_gate|5"
 expect_poll "the run is live" '[true, 3, true]' wait_state
 expect "the core holds the instance's done" '["acme.tui"]' lent tui.waiters
 expect "disabling the tui fixture during the run is allowed" ok ipc shell setPluginEnabled acme.tui false
@@ -252,11 +252,11 @@ tui_real="$sandbox/vgsh-tui.real"
 cp -- "$repo/bin/vgsh-tui" "$tui_real"
 end_line='  if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi'
 if [[ $(grep -c -F -- "$end_line" "$tui_real") == 1 ]]; then
-  python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "  :"))' "$tui_real" "$sandbox/vgsh-tui.unended"
+  python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "  :"))' "$tui_real" "$sandbox/vgsh-tui.unended" "$end_line"
   chmod 755 "$sandbox/vgsh-tui.unended"
   cp -- "$sandbox/vgsh-tui.unended" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
   rm -f -- "$tui_gate"
-  expect "a gated run under the unended control answers ok" ok tui runDone "wait|$tui_gate|6"
+  expect "a gated run under the unended control answers ok" ok tui run-done "wait|$tui_gate|6"
   expect_poll "the control's run is live" '[true, 5, true]' wait_state
   expect_poll "the control's window maps" 1 wait_window
   touch -- "$tui_gate"
@@ -268,7 +268,7 @@ if [[ $(grep -c -F -- "$end_line" "$tui_real") == 1 ]]; then
   expect "a request for the vanished run's key is refused busy" "refused: tui=wait reason=busy" tui run "wait|$tui_gate|0"
   expect_log "the busy answer finds no window for the vanished run" 1 'tui: focus=none tui=acme\.tui/wait'
   expect_poll "the reap it started ends the vanished run" '[false, null, true]' wait_state
-  expect_poll "the vanished run's done fires with no code" '[["wait", null, "vanished"]]' tui_done
+  expect_poll "the vanished run's done fires with no code" '[["wait",null,"vanished"]]' tui_done
   expect_poll "no reap is left running" false lent tui.reaping
 else
   fail "the unended control's line occurs once in bin/vgsh-tui"
