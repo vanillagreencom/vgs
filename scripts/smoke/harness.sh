@@ -373,20 +373,22 @@ theme_jobs() { # [IPC_FN]
   "${1:-ipc}" shell lent | python3 -c 'import json,sys; print(json.dumps([[j["verb"], j["name"], j["waiters"]] for j in json.load(sys.stdin)["theme"]["jobs"]]))'
 }
 # Whether the shell holds the theme lock, read once: `idle` when its first
-# plugin scan has ended and its theme runner then holds no job;
-# `scan=pending` before that scan ends; else the runner's jobs.
-# Registry.qml marks a scan done and emits scanFinished in one handler, and
-# shell.qml queues the follow on that signal, so no reply lands between
-# the two; the runner is the shell's one theme-lock holder, so `idle` means
-# no follow runs or waits. The scan is read first; a scan ending between the two reads
-# shows its follow as a job. A later scan in flight shows no job, so a row
-# that rescans reads the rescan's own effect before it asks.
+# plugin scan has ended and its theme runner then holds no job in its
+# queue or its download lane; `scan=pending` before that scan ends; else
+# those jobs as theme_jobs rows, the download last. Registry.qml marks a
+# scan done and emits scanFinished in one handler, and shell.qml queues
+# the follow on that signal, so no reply lands between the two; the
+# runner is the shell's one theme-lock holder, so `idle` means no follow,
+# apply or download runs or waits. The scan is read first; a scan ending
+# between the two reads shows its follow as a job. A later scan in flight
+# shows no job, so a row that rescans reads the rescan's own effect before
+# it asks.
 theme_state() { # [IPC_FN]
-  local via="${1:-ipc}" scanned jobs
+  local via="${1:-ipc}" scanned held
   scanned="$("$via" shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanned"])')" || return
   if [[ $scanned != True ]]; then echo "scan=pending"; return; fi
-  jobs="$(theme_jobs "$via")" || return
-  if [[ $jobs == '[]' ]]; then echo idle; else printf '%s\n' "$jobs"; fi
+  held="$("$via" shell lent | python3 -c 'import json,sys; t=json.load(sys.stdin)["theme"]; print(json.dumps([[j["verb"], j["name"], j["waiters"]] for j in t["jobs"] + ([] if t["download"] is None else [t["download"]])]))')" || return
+  if [[ $held == '[]' ]]; then echo idle; else printf '%s\n' "$held"; fi
 }
 # theme_state polled every 200 ms until `idle`, for up to 20 s, since an
 # apply lasts past expect_poll's 5 s when a target's hook runs; the last

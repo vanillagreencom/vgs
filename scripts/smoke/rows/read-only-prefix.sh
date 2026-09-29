@@ -118,25 +118,27 @@ installed_apply_vgs() {
 # it runs, and ping answers before that scan ends. An apply started under
 # the follow is refused busy, the product's answer, so the row waits for
 # the installed shell to go idle and never retries the apply.
-# Controls for the wait's two reads, against stand-in shell replies: a
-# shell that answers before its first scan ends holds no job yet and is
-# not idle, and a follow queued at the scan's end keeps it busy.
-stand_in_scanned="" stand_in_jobs=""
+# Controls for the wait's reads, against stand-in shell replies: a shell
+# that answers before its first scan ends holds no job yet and is not
+# idle, and a follow queued at the scan's end or a running download keeps
+# it busy.
+stand_in_scanned="" stand_in_jobs="" stand_in_download=""
 stand_in_shell() { # the IPC replies of a shell in the stand-in state
   case "$1 $2" in
     "shell listPlugins") printf '{"scanned": %s}\n' "$stand_in_scanned" ;;
-    "shell lent") printf '{"theme": {"jobs": %s}}\n' "$stand_in_jobs" ;;
+    "shell lent") printf '{"theme": {"jobs": %s, "download": %s}}\n' "$stand_in_jobs" "$stand_in_download" ;;
     *) return 1 ;;
   esac
 }
-# LABEL | scanned | jobs | theme_state's answer
+# LABEL | scanned | jobs | download | theme_state's answer
 wait_rows=(
-  "a shell whose first scan runs|false|[]|scan=pending"
-  "a shell whose follow runs|true|[{\"verb\": \"follow\", \"name\": null, \"started\": true, \"waiters\": 0}]|[[\"follow\", null, 0]]"
-  "a shell with its scan ended and no job|true|[]|idle"
+  "a shell whose first scan runs|false|[]|null|scan=pending"
+  "a shell whose follow runs|true|[{\"verb\": \"follow\", \"name\": null, \"started\": true, \"waiters\": 0}]|null|[[\"follow\", null, 0]]"
+  "a shell whose download runs|true|[]|{\"verb\": \"wallpapers\", \"name\": \"nord\", \"started\": true, \"waiters\": 1}|[[\"wallpapers\", \"nord\", 1]]"
+  "a shell with its scan ended and no job|true|[]|null|idle"
 )
 for row in "${wait_rows[@]}"; do
-  IFS='|' read -r label stand_in_scanned stand_in_jobs want <<<"$row"
+  IFS='|' read -r label stand_in_scanned stand_in_jobs stand_in_download want <<<"$row"
   expect "the wait reads $label" "$want" theme_state stand_in_shell
 done
 expect "the installed shell's startup follow ends" idle theme_idle
