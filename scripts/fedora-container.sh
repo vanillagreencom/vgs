@@ -15,7 +15,8 @@
 # v<VERSION>, packs the release tarball as scripts/release does and writes
 # the vgs source RPM from it; installs each source RPM's build dependencies
 # and rebuilds it as an unprivileged user, failing on any RPM warning;
-# installs vgs, then checks
+# installs vgs, checks that each floor's epoch is its installed provider's,
+# then checks
 # `vgsh --version`, the /usr/bin/vgsh link and the preflight; proves vgs-git
 # refuses to install beside vgs, replaces it with --allowerasing, provides
 # vgs at its own version, and passes the same checks; and proves vgs then
@@ -34,7 +35,7 @@ set -euo pipefail
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 
 inside() {
-  local version srpm srpm_git srpm_rel git_version rpms hypr_version out status line key value
+  local version srpm srpm_git srpm_rel git_version rpms hypr_version out status line key value want have floor_re
   fail() { printf 'fedora-container: fail: %s\n' "$*" >&2; exit 1; }
   step() { printf 'fedora-container: %s\n' "$*"; }
   # Runs COMMAND with its output in /work/logs/NAME.log, printed only when
@@ -126,6 +127,16 @@ EOF
 
   logged install-vgs dnf -y install "$rpms/vgs-$version-"*.noarch.rpm
   step "installed $(rpm -q vgs) with $(rpm -q quickshell hyprland | tr '\n' ' ')"
+  # Each floor's epoch is the one its installed provider carries, so no
+  # floor reads as epoch 0 against an epoch-1 package.
+  floor_re='^([^ ]+) >= (([0-9]+):)?[^ ]+$'
+  while read -r key value; do
+    [[ $key == Requires: && $value =~ $floor_re ]] || continue
+    want="${BASH_REMATCH[3]:-0}"
+    have="$(rpm -q --whatprovides "${BASH_REMATCH[1]}" --qf '%{EPOCHNUM}\n' | head -n 1)"
+    [[ $have == "$want" ]] || fail "Requires: $value names epoch $want; the installed ${BASH_REMATCH[1]} has epoch $have"
+    step "floor ${BASH_REMATCH[1]} epoch $want matches the installed package"
+  done < <(sed -n '/^# begin runtime dependencies$/,/^# end runtime dependencies$/p' packaging/fedora/vgs.spec)
   checks vgs
 
   refused_as_conflict refuse-vgs-git "$(echo "$rpms"/vgs-git-*.noarch.rpm)" ||
@@ -151,7 +162,7 @@ fi
 image=registry.fedoraproject.org/fedora:44
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help) sed -n '2,31{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
+    -h|--help) sed -n '2,32{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
     --image)
       [[ $# -ge 2 && -n $2 ]] || { echo 'fedora-container: refused: argument=--image value=missing' >&2; exit 2; }
       image="$2"; shift 2 ;;

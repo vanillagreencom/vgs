@@ -11,7 +11,8 @@ DIR, the repository by default, and checks:
   are exactly these, in any order:
   - one Requires per row of the preflight floor in bin/vgsh, named by the
     `dnf` package config/requirements.json gives the row's probe command, else
-    by the row's tool, with `>= [EPOCH:]FLOOR` when the row has a version;
+    by the row's tool, with `>= [EPOCH:]FLOOR` when the row has a version,
+    EPOCH being the package's Fedora epoch from FEDORA_EPOCHS, else 0;
   - one Requires per other non-optional requirement of config/requirements.json
     and of every shipped plugin's manifest, by its `dnf` package;
   - one Recommends per optional requirement whose package no Requires names.
@@ -39,7 +40,13 @@ END = "# end runtime dependencies"
 INSTALL = "DESTDIR=%{buildroot} PREFIX=%{_prefix} packaging/install-system.sh"
 CHECK = "scripts/check-install-tree.sh %{buildroot} %{_prefix}"
 SHARED_SECTIONS = ("%build", "%install", "%check", "%files")
-DEP_LINE = re.compile(r"^(Requires|Recommends|Conflicts):\s+(\S+)(?:\s+>=\s+(?:\d+:)?(\S+))?\s*$")
+DEP_LINE = re.compile(r"^(Requires|Recommends|Conflicts):\s+(\S+)(?:\s+>=\s+(?:(\d+):)?(\S+))?\s*$")
+# The epoch Fedora's packages carry, where it is not 0. A floor written
+# without it reads as epoch 0, which every epoch-1 build passes whatever its
+# version. nodejs22 is 1:22.23.1 on Fedora 44 (read 2026-09-28);
+# scripts/fedora-container.sh checks each floor's epoch against the
+# installed package's.
+FEDORA_EPOCHS = {"nodejs": "1"}
 SECTION = re.compile(r"^%(description|prep|build|install|check|files|changelog)\b")
 
 problems = []
@@ -151,15 +158,16 @@ def sections(lines):
 
 
 def check_block(entries, requires, recommends):
-    have_requires, have_recommends = {}, set()
+    have_requires, have_epochs, have_recommends = {}, {}, set()
     for line in entries:
         found = DEP_LINE.match(line)
         if not found:
             problem(f"line=unreadable text={line}")
             continue
-        kind, name, floor = found.groups()
+        kind, name, epoch, floor = found.groups()
         if kind == "Requires":
             have_requires[name] = floor
+            have_epochs[name] = epoch or "0"
         elif kind == "Recommends":
             have_recommends.add(name)
     for name, floor in requires.items():
@@ -167,6 +175,8 @@ def check_block(entries, requires, recommends):
             problem(f"requires=missing name={name}" + (f" want=>={floor}" if floor else ""))
         elif have_requires[name] != floor:
             problem(f"floor=mismatch name={name} have={have_requires[name] or 'none'} want={floor or 'none'}")
+        elif floor and have_epochs[name] != FEDORA_EPOCHS.get(name, "0"):
+            problem(f"epoch=mismatch name={name} have={have_epochs[name]} want={FEDORA_EPOCHS.get(name, '0')}")
     for name in sorted(set(have_requires) - set(requires)):
         problem(f"requires=extra name={name}")
     for name in sorted(recommends - have_recommends):
