@@ -788,6 +788,10 @@ plugin_remove() { # ID
 # The seconds one outdated fetch may take.
 outdated_fetch_timeout=10
 
+# The seconds between the TERM that ends a fetch, at its timeout or on a
+# stop, and the SIGKILL that ends it if the TERM did not.
+outdated_kill_grace=5
+
 # The environment of every outdated fetch, which runs unattended and must
 # ask nobody: an authentication it cannot complete from an agent, a key
 # without a passphrase or a stored credential fails the fetch instead.
@@ -799,15 +803,52 @@ outdated_fetch_env=(
   GCM_INTERACTIVE=false # Git Credential Manager fails where it would prompt
 )
 
+# Trap TERM, INT and HUP with HANDLER, which is handed 128 plus the
+# signal's number: the status a command stopped by that signal exits with.
+trap_stops() { # HANDLER
+  trap "$1 143" TERM
+  trap "$1 130" INT
+  trap "$1 129" HUP
+}
+
+# The stdout of the latest unattended_git call.
+git_out=""
+# The pid of the running unattended_git call, which leads the call's
+# session and its process group; empty outside a call. unattended_stopping
+# is set once unattended_git_stop runs.
+unattended_pid=""
+unattended_stopping=""
+
 # One unattended git call that talks to a remote: under outdated_fetch_env,
 # in a session of its own, so ssh has no terminal to read a passphrase or a
-# host key answer from, and ended at the outdated timeout. Stdout passes
-# through. Refuses with KEY, and a call the timeout ended as KEY
+# host key answer from, and ended at the outdated timeout. git_out holds its
+# stdout. Refuses with KEY, and a call the timeout ended as KEY
 # timeout=<seconds>s, git's own words following the line.
+#
+# A stop signal sent to the verb's process group misses the call's
+# session, so this shell traps it while the call runs and
+# unattended_git_stop ends the call before the shell exits. Run it in
+# step_run's step itself, never in a substitution of its own: a shell in
+# between has no trap and ends at once, and the verb's wait for the step
+# then rests on the call's shell still holding the step's output.
 unattended_git() { # KEY GIT_ARGS...
-  local key="$1" err rc=0
+  local key="$1" scratch out_fd err_fd err rc=0
   shift
-  { err="$(env "${outdated_fetch_env[@]}" setsid --wait timeout "$outdated_fetch_timeout" git "${git_flags[@]}" "$@" 2>&1 1>&3 3>&-)"; } 3>&1 || rc=$?
+  # The call runs in the background so `wait` returns when a trapped
+  # signal arrives, which a substitution's read does not; its output goes
+  # to files removed once opened, so no path outlives the call.
+  # /dev/fd/<n> reopens each from its start.
+  scratch="$(mktemp -d)" || refuse 1 "scratch=${TMPDIR:-/tmp}"
+  exec {out_fd}>"$scratch/out" {err_fd}>"$scratch/err" && rm -rf -- "$scratch" || refuse 1 "scratch=$scratch"
+  trap_stops unattended_git_stop
+  env "${outdated_fetch_env[@]}" setsid --wait timeout --kill-after="$outdated_kill_grace" "$outdated_fetch_timeout" git "${git_flags[@]}" "$@" >&"$out_fd" 2>&"$err_fd" {out_fd}>&- {err_fd}>&- &
+  unattended_pid=$!
+  wait "$unattended_pid" || rc=$?
+  trap - TERM INT HUP
+  unattended_pid=""
+  git_out="$(<"/dev/fd/$out_fd")"
+  err="$(<"/dev/fd/$err_fd")"
+  exec {out_fd}>&- {err_fd}>&-
   case "$rc" in
     0) [[ -z $err ]] || printf '%s\n' "$err" >&2 ;;
     124) refuse 1 "$key timeout=${outdated_fetch_timeout}s" ${err:+"$err"} ;;
@@ -815,19 +856,49 @@ unattended_git() { # KEY GIT_ARGS...
   esac
 }
 
-# Print checkout DIR's HEAD commit, its upstream commit and the count of
-# upstream commits HEAD lacks, space-separated, after fetching the upstream
-# through unattended_git. The fetch writes the remote-tracking refs and
-# their objects, and no FETCH_HEAD, maintenance or submodule. Refuses as
-# fast_forward does for the same cause, and a fetch the timeout ended as
-# fetch=LABEL timeout=<seconds>s.
-outdated_probe() { # DIR LABEL
-  local dir="$1" label="$2" behind
+# unattended_git's trap: TERM the call's process group, which holds timeout,
+# git and every process git started, wait until timeout has ended, after
+# git, and exit STATUS. The shell runs no job control, so the call started
+# in its process group, not leading one, and setsid made it its session's
+# leader in place: its pid names the group. A second signal while it waits
+# changes nothing.
+unattended_git_stop() { # STATUS
+  local rc
+  [[ -z $unattended_stopping ]] || return 0
+  unattended_stopping=1
+  if [[ -n $unattended_pid ]]; then
+    kill -TERM -- "-$unattended_pid" 2>/dev/null || true
+    while true; do
+      rc=0
+      wait "$unattended_pid" 2>/dev/null || rc=$?
+      # Above 128 is a wait another signal cut short or a call a signal
+      # ended; only the first leaves the pid alive.
+      if [[ $rc -le 128 || ! -d /proc/$unattended_pid ]]; then break; fi
+    done
+  fi
+  exit "$1"
+}
+
+
+# Fetch checkout DIR's upstream through unattended_git, then set ff_old to
+# its HEAD commit, ff_new to its upstream commit and outdated_behind to the
+# count of upstream commits HEAD lacks. The fetch writes the
+# remote-tracking refs and their objects, and no FETCH_HEAD, maintenance or
+# submodule. Refuses as fast_forward does for the same cause, and a fetch
+# the timeout ended as fetch=LABEL timeout=<seconds>s. It runs the fetch in
+# the calling shell, as unattended_git requires.
+outdated_read() { # DIR LABEL
+  local dir="$1" label="$2"
   own_checkout "$dir"
   unattended_git "fetch=$label" -C "$dir" fetch --quiet --no-recurse-submodules --no-write-fetch-head --no-auto-maintenance
   checkout_commits "$dir"
-  behind="$(git_or_refuse "git=rev-list path=$dir" -C "$dir" rev-list --count "$ff_old..$ff_new")" || exit 1
-  printf '%s %s %s\n' "$ff_old" "$ff_new" "$behind"
+  outdated_behind="$(git_or_refuse "git=rev-list path=$dir" -C "$dir" rev-list --count "$ff_old..$ff_new")" || exit 1
+}
+
+# Print outdated_read's three values for DIR, space-separated.
+outdated_probe() { # DIR LABEL
+  outdated_read "$1" "$2"
+  printf '%s %s %s\n' "$ff_old" "$ff_new" "$outdated_behind"
 }
 
 # PROBE ID prints ID's `<head> <upstream> <behind>` line or refuses as
@@ -844,6 +915,10 @@ outdated_fields=()
 
 # The last line and the refusal of the latest step_run.
 step_out="" step_error=""
+# 128 plus the number of the first stop signal a step_run step received;
+# empty while none has.
+step_stopped=""
+step_stop() { [[ -n $step_stopped ]] || step_stopped="$1"; } # STATUS
 
 # Run CMD in a command substitution, stdout and stderr together, without
 # descriptor 9, so nothing it starts holds the theme lock. On success
@@ -852,9 +927,17 @@ step_out="" step_error=""
 # `vgsh: refused: `, else `step=failed exit=<status>`, every other line
 # passes to stderr, and the status is 1: git's warnings from an earlier
 # step print before the refusal, and its cause after it.
+#
+# A stop signal sent to the verb's process group reaches the step's shell
+# too, which ends what it started before it exits: unattended_git. This
+# shell notes the signal, reads the step to its end and only then exits
+# 128 plus the signal, so the verb returns after the step's fetch ended.
 step_run() { # CMD...
   local out rc=0 line rest=""
+  trap_stops step_stop
   out="$("$@" 2>&1 9>&-)" || rc=$?
+  trap - TERM INT HUP
+  [[ -z $step_stopped ]] || exit "$step_stopped"
   if [[ $rc == 0 ]]; then
     step_out="${out##*$'\n'}"
     if [[ $out == *$'\n'* ]]; then printf '%s\n' "${out%$'\n'*}" >&2; fi
@@ -1204,23 +1287,22 @@ self_judge="$root/bin/lib/self.js"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 self_lock="$data_home/vgs/.self.lock"
 
-# Prints the upstream's describe form after a fetch through outdated_probe,
+# Prints the upstream's describe form after a fetch through outdated_read,
 # then the count of upstream commits this checkout lacks.
 self_checkout_probe() { # VERSION_TEXT
-  local probe upstream count latest
-  probe="$(outdated_probe "$root" vgs)" || exit 1
-  read -r _ upstream count <<<"$probe"
-  latest="$(describe_of "$1" "$upstream")" || exit 1
-  printf '%s %s\n' "$latest" "$count"
+  local latest
+  outdated_read "$root" vgs
+  latest="$(describe_of "$1" "$ff_new")" || exit 1
+  printf '%s %s\n' "$latest" "$outdated_behind"
 }
 
 # Prints the commit the release repository's main branch points at, read
 # through unattended_git.
 self_main_commit() {
-  local url="https://github.com/$self_repository.git" out
-  out="$(unattended_git "remote=main url=$url" ls-remote "$url" refs/heads/main)" || exit 1
-  [[ $out =~ ^([0-9a-f]{40}|[0-9a-f]{64})[[:space:]]refs/heads/main$ ]] ||
-    refuse 1 "remote=unreadable url=$url" "ls-remote printed: $out"
+  local url="https://github.com/$self_repository.git"
+  unattended_git "remote=main url=$url" ls-remote "$url" refs/heads/main
+  [[ $git_out =~ ^([0-9a-f]{40}|[0-9a-f]{64})[[:space:]]refs/heads/main$ ]] ||
+    refuse 1 "remote=unreadable url=$url" "ls-remote printed: $git_out"
   printf '%s\n' "${BASH_REMATCH[1]}"
 }
 

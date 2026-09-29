@@ -29,7 +29,7 @@ for tool in timeout python3 realpath env setsid; do
 done
 
 source_repo probe "$(manifest acme.probe 0.1.0)"
-for name in gone loose plain slow prompt http; do source_repo "$name" "$(manifest "acme.$name" 0.1.0)"; done
+for name in gone loose plain slow prompt http stop; do source_repo "$name" "$(manifest "acme.$name" 0.1.0)"; done
 theme_source moss "$(doc moss)"
 
 # Git hooks are live for every git call from here on: the fixture home's
@@ -152,8 +152,47 @@ g -C "$cfg/vgs/plugins/acme.slow" remote set-url origin ssh://slow.invalid/slow.
 started=$SECONDS
 INST_PATH="$stub:$base_path" inst "a fetch the timeout ends is an error row" "$cfg" "$rt_empty" 0 "acme.slow error=fetch=acme.slow timeout=10s" "$any_out" plugin outdated
 check "the timeout ends the fetch before the remote answers" test $((SECONDS - started)) -lt 12
-tree_control untimed bin/vgsh 'timeout "$outdated_fetch_timeout" ' ''
+tree_control untimed bin/vgsh 'timeout --kill-after="$outdated_kill_grace" "$outdated_fetch_timeout" ' ''
 INST_PATH="$stub:$base_path" INST_BIN="$THEME_BIN" inst "the untimed mutant waits for the remote's failure" "$cfg" "$rt_empty" 0 "acme.slow error=fetch=acme.slow" "$any_out" plugin outdated
+unset THEME_BIN
+
+# Stops: the Updates check stops a probe by signalling its process group,
+# which the fetch's own session is not in. The verb ends the fetch, returns
+# only once it ended and exits 128 plus the signal, printing no report.
+# The stand-in fetch takes 2 s to end on TERM, so a verb that did not wait
+# returns before its end.
+cfg="$tmp/cfg-stop"
+inst "add installs acme.stop" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/stop.git"
+stop_git slow
+for row in "TERM 143" "INT 130" "HUP 129"; do
+  read -r sig want <<<"$row"
+  stop_run "$sig" plugin outdated --json
+  check "$sig ends plugin outdated with exit $want" test "$stop_status" == "$want"
+  check "plugin outdated stopped by $sig prints no report" test ! -s "$tmp/out"
+  check "plugin outdated returns after the fetch $sig stopped has ended" test "$stop_ended" == yes
+  check "no fetch process outlives plugin outdated stopped by $sig" test "$stop_alive" == no
+done
+# The must-fail control of the fetch's trap: without it the fetch's session
+# never hears the stop and outlives the verb.
+tree_control trapless bin/vgsh 'trap_stops unattended_git_stop' ':'
+INST_BIN="$THEME_BIN" stop_run TERM plugin outdated --json
+check "the trapless mutant's fetch outlives plugin outdated" test "$stop_alive" == yes
+unset THEME_BIN
+# The must-fail control of the verb's wait: without step_run's trap the
+# verb returns while the fetch still ends.
+tree_control stepless bin/vgsh 'trap_stops step_stop' ':'
+INST_BIN="$THEME_BIN" stop_run TERM plugin outdated --json
+check "the stepless mutant's plugin outdated returns before its fetch ended" test "$stop_ended" == no
+unset THEME_BIN
+# The bound: a fetch that ignores TERM gets SIGKILL 5 s later, well before
+# its own 12 s end; the control without the grace waits that end out.
+stop_git deaf
+stop_run TERM plugin outdated --json
+check "TERM ends plugin outdated with exit 143 when the fetch ignores TERM" test "$stop_status" == 143
+check "the kill grace ends a fetch that ignores TERM before its own end" test "$stop_ended/$stop_alive" == no/no
+tree_control graceless bin/vgsh '--kill-after="$outdated_kill_grace" ' ''
+INST_BIN="$THEME_BIN" stop_run TERM plugin outdated --json
+check "the graceless mutant waits out a fetch that ignores TERM" test "$stop_ended" == yes
 unset THEME_BIN
 cfg="$tmp/cfg-prompt"
 inst "add installs acme.prompt" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/prompt.git"

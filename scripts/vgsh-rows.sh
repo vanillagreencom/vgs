@@ -1,7 +1,8 @@
 # The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
 # the scratch directory, the child environment, the row helpers, the theme
 # tree fixture, the install source tree, the plugin and theme git source
-# fixtures, the must-fail copy and the working-tree repository. It sets
+# fixtures, the stop rows' stand-in git and runner, the must-fail copy and
+# the working-tree repository. It sets
 # `set -euo pipefail`, `repo`, `tmp` (removed on exit), `rt_empty`,
 # `node_bin`, `base_path`, `base_env`, `git_env` and `failures`.
 set -euo pipefail
@@ -83,6 +84,76 @@ on_terminal() {
   [[ -z ${INST_PATH:-} ]] || path=(PATH="$INST_PATH")
   term_status=0
   "${base_env[@]}" "${path[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" script -qec "$(printf '%q ' "${INST_BIN:-$repo/bin/vgsh}" "$@")" /dev/null <<<"$answer" >"$tmp/out" 2>&1 || term_status=$?
+}
+
+# The stop rows: a stand-in git first on PATH at $stop_git_dir/git. Every
+# call but a fetch or an ls-remote, the remote calls, execs the real git. A
+# remote call writes its pid to remote.pid and then, as stop_git MODE chose, `slow` sleeps and on TERM takes 2 s to
+# end before it writes `ended`, or `deaf` ignores TERM and writes `ended`
+# only once its 12 s sleep completes.
+stop_git_dir="$tmp/stop-git"
+stop_git() { # MODE
+  local real_git sleep_bin
+  real_git="$(command -v git)" && sleep_bin="$(command -v sleep)" && stop_setsid="$(command -v setsid)" ||
+    { echo "$(basename -- "$0" .sh): status=not-measured missing=git-sleep-or-setsid"; exit 77; }
+  mkdir -p "$stop_git_dir"
+  printf '%s\n' "$1" >"$stop_git_dir/mode"
+  printf '%s\n' '#!/bin/sh' \
+    "d='$stop_git_dir'" \
+    "case \" \$* \" in *' fetch '*|*' ls-remote '*) ;; *) exec '$real_git' \"\$@\" ;; esac" \
+    'printf "%s\n" "$$" >"$d/remote.pid"' \
+    'read -r mode <"$d/mode"' \
+    'case $mode in' \
+    "  slow) trap \"'$sleep_bin' 2; : >'\$d/ended'; exit 1\" TERM; '$sleep_bin' 30 & wait \$! ;;" \
+    "  deaf) trap '' TERM; '$sleep_bin' 12; : >\"\$d/ended\" ;;" \
+    'esac' \
+    'exit 1' >"$stop_git_dir/git"
+  chmod +x "$stop_git_dir/git"
+}
+# Whether process PID runs, a zombie counting as ended.
+proc_live() { # PID
+  local state
+  state="$(ps -o stat= -p "$1")" || return 1
+  [[ $state != Z* ]]
+}
+# stop_run SIGNAL ARGS...: vgsh (INST_BIN) against $cfg with the stand-in
+# git first on PATH, in a session of its own as the Updates check starts
+# each probe. Once the stand-in's remote call runs, SIGNAL goes to the verb's
+# process group. Sets stop_status to the verb's exit status, and
+# stop_ended and stop_alive to yes or no: whether the stand-in had written
+# its end, and whether it still ran, when the verb returned. Stdout lands
+# in $tmp/out. It then kills whatever of the remote call is left.
+stop_run() {
+  local sig="$1" pid pgid remote=""
+  shift
+  rm -f -- "$stop_git_dir/remote.pid" "$stop_git_dir/ended"
+  # A background job of this shell starts with SIGINT ignored, which a
+  # shell cannot trap; --default-signal gives the verb the SIGINT a
+  # terminal's foreground job has.
+  "${base_env[@]:0:2}" --default-signal=INT "${base_env[@]:2}" PATH="$stop_git_dir:${INST_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" "${inst_env[@]}" \
+    "$stop_setsid" "${INST_BIN:-$repo/bin/vgsh}" "$@" </dev/null >"$tmp/out" 2>"$tmp/err" &
+  pid=$!
+  # A real wait: the verb reaches its remote call after its own startup.
+  for _ in $(seq 1 100); do
+    [[ -s $stop_git_dir/remote.pid ]] && break
+    sleep 0.1
+  done
+  [[ -s $stop_git_dir/remote.pid ]] && remote="$(<"$stop_git_dir/remote.pid")"
+  kill -s "$sig" -- "-$pid"
+  stop_status=0
+  wait "$pid" || stop_status=$?
+  stop_ended=no stop_alive=no
+  [[ -e $stop_git_dir/ended ]] && stop_ended=yes
+  if [[ -z $remote ]]; then
+    fail "stop_run: the stand-in's remote call never started under $*"
+    return 0
+  fi
+  proc_live "$remote" && stop_alive=yes
+  if pgid="$(ps -o pgid= -p "$remote")"; then kill -KILL -- "-${pgid// /}" 2>/dev/null || true; fi
+  for _ in $(seq 1 50); do
+    proc_live "$remote" || break
+    sleep 0.1
+  done
 }
 
 # The theme commands read the shipped packages and targets beside bin/, so

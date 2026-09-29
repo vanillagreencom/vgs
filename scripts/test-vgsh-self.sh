@@ -124,6 +124,14 @@ check "update runs no git hook" test ! -e "$marker"
 INST_BIN="$co/bin/vgsh" inst "a current checkout is up to date" "$cfg" "$rt_empty" 0 "ok up-to-date=vgs" "" self update
 g -C "$co" remote set-url origin "$tmp/gone.git"
 INST_BIN="$co/bin/vgsh" inst "an unreachable upstream is the report's error, exit 0" "$cfg" "$rt_empty" 0 "$(status_json "$version_text" checkout null "$there" null null "fetch=vgs")" "$any_out" self status --json
+# A stop during the checkout's fetch: status ends the fetch, returns once
+# it ended and exits 128 plus the signal, printing no report. The stop
+# controls are test-vgsh-outdated.sh's.
+stop_git slow
+INST_BIN="$co/bin/vgsh" stop_run TERM self status --json
+check "TERM during a checkout's fetch ends self status with exit 143" test "$stop_status" == 143
+check "self status stopped during a checkout's fetch prints no report" test ! -s "$tmp/out"
+check "self status returns after the checkout's fetch TERM stopped has ended" test "$stop_ended/$stop_alive" == yes/no
 
 # Curl: a versioned directory with a `current` link, an older version to
 # prune, and the command through the link as ~/.local/bin/vgsh reaches it.
@@ -221,6 +229,11 @@ INST_BIN="$tmp/bound-vgsh" inst "a vgs-git package built from main's commit is n
 g -C "$seed" commit -q --allow-empty -m three; g -C "$seed" push -q "$upstream" main
 main_commit="$(g -C "$upstream" rev-parse main)"
 INST_BIN="$tmp/bound-vgsh" inst "a vgs-git package is behind once main moves" "$cfg" "$rt_empty" 0 "$(status_json "$version_text" package vgs-git "$built" "$main_commit" true null)" "" self status --json
+# A stop during the ls-remote of main, as during a checkout's fetch.
+INST_BIN="$tmp/bound-vgsh" stop_run TERM self status --json
+check "TERM during main's ls-remote ends self status with exit 143" test "$stop_status" == 143
+check "self status stopped during main's ls-remote prints no report" test ! -s "$tmp/out"
+check "self status returns after the ls-remote TERM stopped has ended" test "$stop_ended/$stop_alive" == yes/no
 INST_BIN="$tmp/bound-vgsh" inst "update refuses a package and names its manager" "$cfg" "$rt_empty" 1 "" "vgsh: refused: method=package package=vgs-git manager=pacman" self update
 inst_env+=(STUB_PACKAGE=vgs STUB_PKGVER="$version_text")
 INST_BIN="$tmp/bound-vgsh" inst "a vgs package compares its version with the newest release" "$cfg" "$rt_empty" 0 "$(status_json "$version_text" package vgs "$version_text" "$release" true null)" "" self status --json
