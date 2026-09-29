@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active
+**Status**: Active (value types, Slack token row → [D046](D046-slack-tokens-per-workspace-and-one-card-per-message.md))
 
 **Research**: [VGS-525](../plans/v2-platform-roadmap.md)
 

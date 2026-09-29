@@ -1,0 +1,62 @@
+# Notification senders
+
+Covers: shell/plugins/vgs.notifications/slack-photos.js, shell/plugins/vgs.notifications/SlackPhotos.qml, shell/plugins/vgs.notifications/WorkspaceIcons.qml, scripts/test-notifications-slack-photos.js
+
+How `vgs.notifications` reads the senders a rule in `NotificationLogic.js` (`ENRICHERS`) knows: which notifications a rule matches, which workspace a card belongs to, which of two copies of one message stays, and the optional Slack photo cache. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees and how to store a token. [D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md) records the choices.
+
+## Browser notifications
+
+- A Chromium-family browser opens a web notification's body with the site it came from: a link to it, or its address alone, then white space. `NotificationLogic.splitOrigin` reads the host and the text after it; the card draws the text alone.
+- Chromium as it runs on the owner's machine names no application, desktop entry or icon, and puts the host on a line of its own with a blank line after it: `app.slack.com\n\nfleet: Done: ...`, read from the owner's notification history on 2026-09-29. For a sender that names no application the blank line is required, so an unnamed sender's first word is never read as an address. A sender that names an application that is not a browser keeps its body whole.
+- A rule's `origins` name the hosts of the same service's web client. A notification whose desktop entry or application name is one of the rule's `names` is its `desktop` source; one whose origin is one of its `origins` is its `browser` source, and the rule reads the text after the address. Slack's origin is `app.slack.com`.
+- A rule draws one title shape for both sources. Slack's is its multi-workspace form, `from <name>` or `in <conversation>`.
+
+## Workspace icons
+
+The workspace icons come from Slack's own client, read-only and with no credentials: the list of workspaces in `~/.config/Slack/storage/root-state.json`, and the icon images Slack's disk cache already holds, `~/.config/Slack/Cache/Cache_Data`. `images.sh cached` copies each icon into `$XDG_CACHE_HOME/vgs/notifications/workspaces/slack/`, at most two for each of 16 workspaces, with a content version on the file URL. The service reads the list when it starts, and again when a notification names a workspace the list lacks or holds with no icon, at most once a minute. `WorkspaceIcons.qml` owns that read; the photo helper and the token probe take their team ids from it, so the list has one reader.
+
+## The workspace of a card
+
+`NotificationLogic.slackWorkspaceFor` answers the workspace a Slack card belongs to:
+
+1. the workspace its summary names, `[domain]`;
+2. else the only workspace known, from Slack's list and the photo cache together;
+3. else the one photo team whose users hold the sender's name;
+4. else none, and the card keeps its summary.
+
+A browser names no workspace, nor does Slack with one workspace signed in. A face takes its workspace's photo of the name; with no workspace, the photo of the one team that holds the name, and none when two do (`slackFaceImages`).
+
+## One card per message
+
+- `NotificationLogic.messageOf` reads a notification a rule knows as a message: its rule, its source, the conversation its title names, its first person, its body as plain text with markup and white space runs gone, and the workspace its summary names.
+- Two messages are one when the rule is the same, the sources differ, the conversation, sender and text match, the workspaces match or one names none, and they arrived within `DUPLICATE_WINDOW`, 10 seconds (`duplicateOf`). Two copies from one client are two messages, however alike.
+- The desktop copy stays, since it names the workspace (`duplicateKept`). A browser copy after it is not shown and not recorded: the service leaves it untracked, so the server discards it. A desktop copy after a browser card still on screen shows, and the browser card leaves with no history entry and its notification dismissed, as a sender's replaced notification does. Under Silence, or once the browser card has left, the first copy recorded stays and the later one goes, and the history is not changed.
+- Each drop logs one line with no content, `notifications: <rule> duplicate: kept=<source> dropped=<source>`, and `status` counts the copies kept by source in `duplicates`.
+- The service remembers at most `DUPLICATES_MAX`, 32, messages, none older than the window.
+
+## Slack photo cache
+
+- Each workspace's token lives in libsecret under `service vgs-notifications` and `account slack:<team id>`; the single-workspace token under `account slack`. `slack-photos.js refresh <root> [<team id>...]` looks up each listed workspace's account, then the single-workspace one. A team id is 1 to 32 letters and digits, at most 16 of them, or the helper refuses the run with exit 2. A missing token is normal and quiet; a `secret-tool` failure is one line naming the account, never the token.
+- A workspace's own token serves the team its account names. A token whose `team.info` names another team is refused for that team, `notifications-slack-photos: account=slack:<team id> team=mismatch`, and caches nothing for it. The single-workspace token serves the team its `team.info` names, unless that team's own token serves it; it asks `team.info` again once a day, since the token may since serve another team.
+- The root holds `accounts.json`, each account's last failure and the team the single-workspace token last served, and one directory per team a token serves. A team directory holds `team.json` (names, icon, the account that served it, when, and how many downloads failed), `workspace.png`, `users.json` and `users/<user id>.png`. The team sweep deletes only those names, its own temporary files and the flat `<user id>.png` photos an older layout kept beside `team.json`; any other name in a team directory stays, so a later artifact of the team, such as its custom emoji, sits beside them. The root sweep removes everything else, so a team whose token is gone is dropped at the next run.
+- Every file is written through a sibling temporary file and rename. The output uses `file:///...png?v=<content hash>`, so Qt reloads an open card when refreshed bytes change.
+- Each team keeps its own day. A team's record is fresh for a day from the account that wrote it, or 15 minutes after a download failed. After an API failure the account waits 15 minutes before another network attempt, and its team keeps its older record, if any, with the output marked `stale`; the other teams are not held. The helper prints one JSON line, `{ status, generatedAt, downloadFailed, stale, teams }`, `status` `absent` when no account has a token, `generatedAt` the oldest team's and each team naming the account that served it; failures go to stderr as `notifications-slack-photos:` lines without the token.
+- `SlackPhotos.qml` runs the helper and the token probe once the workspace list is read, again when the list names other workspaces, the probe after each helper run, and the helper at `NotificationLogic.slackPhotoDelay`: 15 minutes while a token is missing, a download or an account failed, or a listed workspace has no photos, so a token stored for it loads within that; otherwise at the oldest team's day. The shell logs a repeated failure once, and one recovery line after photos refresh cleanly again.
+- Limits: 512 users a team, 512 KiB an image, and 10 MiB of images a team. The cache holds at most 170 MiB of images: 16 listed workspaces and a 17th the single-workspace token serves. Slack's `image_48` is already the card's face size; with ImageMagick the helper crops it to 48 by 48 pixels.
+- An image URL that is missing or outside Slack's image hosts is skipped. Production image URLs must be HTTPS and come from Slack's image hosts or `secure.gravatar.com`. A failed download writes one `notifications-slack-photos: downloads=failed count=<n>` line, and the helper keeps any older file for that photo when it can.
+- Tests alone set `VGS_NOTIFICATIONS_SLACK_TEST=1`, `VGS_NOTIFICATIONS_SLACK_API_BASE` at `127.0.0.1`, and `VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR` for a stub `secret-tool`. `shell.json` and notification contents do not set them.
+
+## Photos without a token
+
+Slack's desktop client caches the photos it shows in its disk cache, keyed by URL, `https://ca.slack-edge.com/<team id>-<user id>-<hash>-<size>`, sizes 24 to 512: by team and user id, never by name. No readable local store maps a sender's name, the only thing a notification carries, to a user id. `Local Storage/leveldb`, `Session Storage` and the IndexedDB key-value store hold no `real_name` or `display_name`. The one place that holds a few names is the IndexedDB blob store, `IndexedDB/https_app.slack.com_0.indexeddb.blob/`, a cache of messages and bot profiles in Chromium's serialized V8 format. Reading it reads messages, which the helper must not do, and its format changes with Chromium. So there is no token-free photo route: without a token, faces stay initials. The same disk cache holds custom emoji images keyed by `https://emoji.slack-edge.com/<team id>/<emoji name>/<hash>.<ext>`, a name-to-image map with no token, which D046 names as a later option.
+
+## Invariants
+
+1. A rule reads a browser notification only by an origin it names, and an unnamed sender's body loses its first line only when a blank line follows it. Enforced by `scripts/test-notifications-logic.js`, each rule with a control.
+2. Two copies of one message show one card, the desktop copy, and two copies from one client both show. Enforced by `scripts/test-notifications-logic.js` and by `scripts/smoke/rows/notifications.sh`, which sends both orders and reads the rows, the history, the log line and `status`.
+3. Each workspace's token fills only its own team; a missing token keeps initials for that workspace alone; the single-workspace token still serves its team and is not fetched twice beside the team's own; no token reaches argv, a file or a log line. Enforced by `scripts/test-notifications-slack-photos.js`, each rule with a control.
+4. The team sweep leaves a name it does not own. Enforced by `scripts/test-notifications-slack-photos.js`, with a control that deletes every name.
+
+## Decisions
+
+[D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md), [D037](../decisions/D037-plugin-status.md).

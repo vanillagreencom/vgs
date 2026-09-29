@@ -9,6 +9,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
+- [notification-senders.md](notification-senders.md): read before touching a notification rule's senders, a browser's site address, the copies of one message, or the Slack photo cache and its tokens.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the Settings window.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
