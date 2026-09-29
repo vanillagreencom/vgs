@@ -144,7 +144,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Toast` | `Rectangle` | `title`, `message`, `tone`, `iconName`, `dismissed`; the core's toast host draws it, a plugin shows one through `shell.toasts` |
 | `Dialog` | `FocusScope` | `title`, `message`, `actions` (each `{ label, role, variant, enabled }`, `role` `accept` or `cancel`), `busy`, `accepted`, `rejected`; content as children, under the message; a card its host places and hides |
 | `AngledCard` | `Item` | content as children, clipped to a parallelogram; `skew` (negative leans left), `selected`, `dimmed` (by default while not selected); `corners`, the parallelogram in the card's coordinates; the caller sizes and places it |
-| `Scrim` | `Rectangle` | fills its parent with `color.scrim`, takes the presses on it and emits `clicked`; declare the modal surface after it |
+| `Scrim` | `Rectangle` | fills its parent with `color.scrim`, takes the presses, hover and wheel on it and emits `clicked`; declare the modal surface after it |
 
 A name a component does not know is logged and drawn as the default. A control's `background`, `contentItem`, `indicator` or `handle` may be replaced on one instance to restyle it.
 

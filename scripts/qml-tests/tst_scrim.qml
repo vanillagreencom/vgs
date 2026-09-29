@@ -6,7 +6,9 @@ import qs.Unit
 
 // Scrim: it fills its parent, draws `color.scrim` under the default theme
 // and under a light theme, emits `clicked` for a click on it, and takes the
-// press, so the button under it answers nothing. Expected colours are
+// press, the hover and the wheel, so the button and the scroll area under it
+// answer nothing. Each of the last two first shows that the same pointer
+// reaches the control once the scrim is hidden. Expected colours are
 // worked by hand from the defaults in Tokens.js, never read from Theme.
 Item {
     id: root
@@ -18,6 +20,11 @@ Item {
         x: 20; y: 30; width: 240; height: 150
 
         Button { id: under; text: "Under"; x: 10; y: 10 }
+        ScrollArea {
+            id: scroller
+            x: 130; y: 10; width: 100; height: 100
+            Rectangle { width: 100; height: 400; color: "gray" }
+        }
         Scrim { id: scrim }
     }
     SignalSpy { id: clicks; target: scrim; signalName: "clicked" }
@@ -31,6 +38,9 @@ Item {
             UnitTheme.reset();
             clicks.clear();
             underClicks.clear();
+            scrim.visible = true;
+            scroller.contentY = 0;
+            mouseMove(root, root.width - 1, root.height - 1);
         }
 
         function test_fills_its_parent() {
@@ -55,6 +65,32 @@ Item {
             mouseClick(scrim, under.x + under.width / 2, under.y + under.height / 2);
             compare(clicks.count, 2);
             compare(underClicks.count, 0);
+        }
+
+        function test_hover_reaches_nothing_under_it() {
+            scrim.visible = false;
+            mouseMove(frame, under.x + under.width / 2, under.y + under.height / 2);
+            tryCompare(under, "hovered", true);
+            mouseMove(root, root.width - 1, root.height - 1);
+            tryCompare(under, "hovered", false);
+            scrim.visible = true;
+            mouseMove(scrim, under.x + under.width / 2, under.y + under.height / 2);
+            wait(50);
+            verify(!under.hovered, "the button under the scrim is hovered");
+        }
+
+        function test_the_wheel_reaches_nothing_under_it() {
+            const x = scroller.x + scroller.width / 2;
+            const y = scroller.y + scroller.height / 2;
+            scrim.visible = false;
+            mouseWheel(frame, x, y, 0, -120);
+            tryVerify(() => scroller.contentY > 0, 1000, "the wheel scrolls the area with no scrim");
+            scroller.cancelFlick();
+            scroller.contentY = 0;
+            scrim.visible = true;
+            mouseWheel(scrim, x, y, 0, -120);
+            wait(50);
+            compare(scroller.contentY, 0);
         }
     }
 }

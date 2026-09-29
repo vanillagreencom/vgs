@@ -131,6 +131,8 @@ mutations=(
   "the scrim does not fill its parent|foundation/Scrim.qml|anchors.fill: parent|anchors.centerIn: parent|tst_scrim.qml"
   "the scrim draws another colour|foundation/Scrim.qml|color: Theme.color.scrim|color: Theme.color.background|tst_scrim.qml"
   "a click on the scrim is not reported|foundation/Scrim.qml|onClicked: root.clicked()|onClicked: {}|tst_scrim.qml"
+  "hover over the scrim reaches the control under it|foundation/Scrim.qml|hoverEnabled: true|hoverEnabled: false|tst_scrim.qml"
+  "the wheel over the scrim scrolls the area under it|foundation/Scrim.qml|onWheel: wheel => { wheel.accepted = true; }|onWheel: wheel => { wheel.accepted = false; }|tst_scrim.qml"
   "a destroyed overlay keeps its count|overlay/Popover.qml|Component.onDestruction: share(false)|Component.onDestruction: {}|tst_overlays.qml"
   "the menu keys reach a disabled entry|overlay/Menu.qml|function reachable(item) { return item.enabled && item.visible; }|function reachable(item) { return true; }|tst_overlays.qml"
   "the menu triggers a disabled entry|overlay/Menu.qml|if (currentIndex >= 0 && currentIndex < all.length && reachable(all[currentIndex])) all[currentIndex].triggered();|if (currentIndex >= 0 && currentIndex < all.length) all[currentIndex].triggered();|tst_overlays.qml"
