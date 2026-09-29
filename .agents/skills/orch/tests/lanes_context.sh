@@ -29,7 +29,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LANES="${LANES_UNDER_TEST:-$SCRIPTS_DIR/lanes}"
 
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lanes_context: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lanes_context: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lanes_context: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
@@ -294,10 +296,10 @@ echo "=== the context mark is the setting, and defaults to ninety percent ==="
 # account at 10 percent headroom above the mark leaves nothing required.
 # A reading whose window the adapter could not name is judged neither way, and
 # its row says so rather than reading ok beside a blank handoff cell.
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 "" claude-sonnet-5
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 "" claude-sonnet-4-6
 lanes_table "$(run_ctx --json)" \
   "a reading with no window is window-unread, never ok|ken-103|status=window-unread context_tokens=399999 context_window=null context_handoff_due=null handoff_required=false"
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 400000 "" claude-sonnet-5
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 400000 "" claude-sonnet-4-6
 lanes_table "$(run_ctx --json)" \
   "the absolute cap is due without capacity|ken-103|status=ok context_tokens=400000 context_window=null context_handoff_due=true handoff_required=true"
 record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 1000000 claude-opus-5-5

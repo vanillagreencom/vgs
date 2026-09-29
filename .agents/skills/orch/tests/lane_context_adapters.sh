@@ -17,7 +17,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LIB="${LIB_UNDER_TEST:-$SCRIPTS_DIR/lib/lane-context.sh}"
 
-TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "lane_context_adapters: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane_context_adapters: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane_context_adapters: scratch=resolve-failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=lib/assertions.sh
@@ -74,6 +76,8 @@ T="$TMP_ROOT/t"; mkdir -p "$T"
 { claude_line claude-fable-5-1 700000
   jq -nc '{type:"assistant",message:{model:"<synthetic>",usage:{input_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0}}}'; } > "$T/claude-synthetic"
 claude_line claude-sonnet-5 400000 > "$T/claude-sonnet"
+claude_line claude-haiku-4-5-20251001 150000 > "$T/claude-haiku"
+claude_line claude-sonnet-4-6 150000 > "$T/claude-unknown"
 jq -nc '{type:"assistant",message:{model:"claude-opus-5-5",usage:{prompt_tokens:5}}}' > "$T/claude-unread"
 jq -nc '{type:"user",message:{content:"hi"}}' > "$T/none"
 { codex_context gpt-6-astra; codex_count 1000 258400; codex_count 232560 258400; } > "$T/codex-last"
@@ -94,7 +98,9 @@ done <<'ROWS'
 claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
-claude-sonnet|claude||rc=0 400000||claude-sonnet-5
+claude-sonnet|claude||rc=0 400000|1000000|claude-sonnet-5
+claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
+claude-unknown|claude||rc=0 150000||claude-sonnet-4-6
 claude-unread|claude||rc=0 unread
 none|claude||rc=0
 codex-last|codex||rc=0 232560|258400|gpt-6-astra
@@ -106,6 +112,32 @@ pi-last|pi||rc=0 1000||m
 pi-provider|pi|200000|rc=0 1000|200000|pi-claude/claude-opus-5-5
 pi-claude-spelled|pi|200000|rc=0 unread
 claude-last|opencode||rc=3
+ROWS
+
+echo "=== the claude window table names a model only where its window is established ==="
+# `model|window|id`: a model, its window, and the id a launch writes for it.
+# claude-sonnet-4-6 runs 200K or, as its [1m] variant, 1M under one id,
+# claude-sonnet-5-5 is a model no row has evidence for, and a bare sonnet or
+# haiku is whatever a pin makes it; all stay unnamed.
+while IFS='|' read -r model want id; do
+  assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"; lane_adapter_claude_model_id "$2"' _ "$LIB" "$model" | tr '\n' '|')" \
+    "${want:+$want|}${id:-$model}|" "claude window of $model: ${want:-none}, written as ${id:-$model}"
+done <<'ROWS'
+fable|1000000
+opus[1m]|1000000
+claude-opus-5-5|1000000
+sonnet||claude-sonnet-5
+Sonnet||claude-sonnet-5
+claude-sonnet-5|1000000
+haiku||claude-haiku-4-5
+claude-haiku-4-5|200000
+claude-haiku-4-5-20251001|200000
+claude-sonnet-4-6|
+claude-sonnet-4-5|
+claude-sonnet-5-5|
+sonnet[1m]|
+haiku[1m]|
+|
 ROWS
 
 echo "=== effective compaction settings preserve unresolved token use ==="
@@ -220,7 +252,7 @@ echo "=== the reading a turn end records, and the report's judgement of it ==="
 BOX="$TMP_ROOT/box"; mkdir -p "$BOX"
 bash -c 'source "$1"; lane_context_record "$2" codex 232560 258400 gpt-6-astra s1 "7000 %9"' _ "$LIB" "$BOX"
 assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
-  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9"}' \
+  '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
   "the record names the reading, the share used, and the session and pane it belongs to"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '.handoff_due')" \
   "false" "the report judges a recorded reading by the same judge"
@@ -228,6 +260,27 @@ bash -c 'source "$1"; lane_context_record "$2" pi 1000 "" m' _ "$LIB" "$BOX"
 assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '[.window, .used_pct, .handoff_due]')" \
   "[null,null,null]" "a reading with no window is recorded unmeasured and judged neither due nor room"
 assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leaving no staged file beside it"
+# A turn end that took no reading writes the reason as the gap, with no token
+# count, and the one parser of a record reads it back as a gap and not as a
+# reading, which the report's judge refuses to judge.
+bash -c 'source "$1"; lane_context_record "$2" claude null "" "" s1 "7000 %9" home-unnamed' _ "$LIB" "$BOX"
+assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
+  '{"harness":"claude","model":null,"tokens":null,"window":null,"used_pct":null,"session_id":"s1","pane_key":"7000 %9","gap":"home-unnamed"}' \
+  "a gap record names the reason and the session and pane, with no reading"
+# shellcheck disable=SC2016  # expanded by the child shell.
+fields() { bash -c 'source "$1"; if lane_context_record_fields "$2"; then
+    printf "rc=0 harness=%s tokens=%s pane=%s session=%s gap=%s at=%s\n" "$LANE_CTX_HARNESS" "${LANE_CTX_TOKENS:-none}" "$LANE_CTX_PANE_KEY" "${LANE_CTX_SESSION:-none}" "${LANE_CTX_GAP:-none}" "${LANE_CTX_AT:+set}"
+  else echo "rc=$?"; fi' _ "$LIB" "$1"; }
+while IFS='|' read -r record expected what; do
+  assert_eq "$(fields "$record")" "$expected" "$what"
+done <<ROWS
+$(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 session=s1 gap=home-unnamed at=set|a gap record parses with its gap, its session and no tokens
+{"harness":"claude","tokens":5,"gap":null,"pane_key":"k","at":"t"}|rc=0 harness=claude tokens=5 pane=k session=none gap=none at=set|a reading parses with no gap
+{"harness":"claude","tokens":null,"gap":null,"pane_key":"k"}|rc=1|a record with neither a reading nor a gap is no record
+{"harness":"claude","tokens":5,"gap":"home-unnamed","pane_key":"k"}|rc=1|a record carrying both a reading and a gap is no record
+ROWS
+assert_eq "$(bash -c 'source "$1"; if lane_context_record_judged "$(cat "$2")" 90; then echo rc=0; else echo "rc=$?"; fi' _ "$LIB" "$BOX/context.json")" \
+  "rc=1" "the report's judge refuses a gap record as no reading"
 
 echo "=== the ownership gate binds a reading to its own session's file ==="
 # lane_context_transcript_owned holds a transcript to the session id and launch
@@ -301,6 +354,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex reads codex-last as'
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
+  control claude-model-id adapters/claude.sh '    sonnet) printf' '    sonnetx) printf' \
+    'claude window of sonnet: none, written as claude-sonnet-5'
+  control claude-window-substring adapters/claude.sh '      ${pair%=*}) printf' '      *${pair%=*}*) printf' \
+    'claude window of claude-sonnet-5-5: none'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
@@ -321,6 +378,12 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'codex rollout-2026-09-27T00-00-00-s2.jsonl for s1 under codex-home: 1 session-mismatch'
   control owned-codex-home adapters/codex.sh '*) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;' '*) ;;' \
     'codex rollout-2026-09-27T00-00-00-s1.jsonl for s1 under other-codex-home: 1 home-mismatch'
+  control gap-written lane-context.sh 'gap: ($gap | nul), at: $at}' 'at: $at}' \
+    'a gap record names the reason and the session and pane, with no reading'
+  control gap-parsed lane-context.sh 'or (.tokens == null and (.gap | type)' 'or (false and (.gap | type)' \
+    'a gap record parses with its gap, its session and no tokens'
+  control gap-judged lane-context.sh '[ -z "$LANE_CTX_GAP" ] || return 1' ':' \
+    "the report's judge refuses a gap record as no reading"
   control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \
     'claude none for s1 under claude-home: 1 binding-missing'
   control owned-home-unnamed lane-context.sh 'if [ -z "${4:-}" ]; then' 'if false; then' \

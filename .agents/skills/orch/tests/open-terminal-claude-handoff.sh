@@ -48,11 +48,13 @@ source "$TEST_DIR/lib/assertions.sh"
 # mutant_scripts and mutate_file, the two halves of the control below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-claude-handoff: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "open-terminal-claude-handoff: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "open-terminal-claude-handoff: scratch=resolve-failed" >&2; exit 1; }
 # The fleet home every launch here runs under; see run() below.
 FLEET_HOME="$TMP_ROOT/fleet-home"
 mkdir -p "$FLEET_HOME"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # The composer's prompt marker is `❯` followed by a NON-BREAKING space; a
 # SUBMITTED message is echoed into the transcript as `❯` followed by an
@@ -370,7 +372,7 @@ echo "=== open-terminal claude handoff: per-task launch flags ==="
 launch_table \
   "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt=false" \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
-  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
+  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model claude-sonnet-4-6 --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'claude-sonnet-4-6'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
   "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'--disallowedTools=AskUserQuestion,EnterPlanMode'+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
   "an unflagged codex launch warns for the same unattended prompt|gui-codex|-|-|-|rc=0 stderr~open-terminal:+permission-prompt+flags==true" \
   "codex's unattended permission word suppresses the warning|gui-codex|-|--dangerously-bypass-approvals-and-sandbox|-|rc=0 cmd~--dangerously-bypass-approvals-and-sandbox=true stderr~open-terminal:+permission-prompt=false" \

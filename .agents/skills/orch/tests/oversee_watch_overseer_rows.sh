@@ -62,7 +62,6 @@ rows_case() { # NAME PANE_STATE ROW...
   mkdir -p "$CASE_REPO_ROOT/tmp/lane-mail/overseer"
   for row in "$@"; do printf '%s\n' "$row" >> "$(ROWS_FILE)"; done
 }
-captured() { [[ -s "$STUB_DIR/pane-$PANE.calls" ]] && echo yes || echo no; }
 # A rows wall stands unless the account judgement measures room: the stub's
 # default below-mark line is room, so a case that means the wall to stand
 # gives it a mark reached above zero, which is no room and no zero wall.
@@ -71,9 +70,10 @@ ZERO_MARK="oversee-succeed: mark-reached kind=headroom value=0 mark=10 successio
 no_room() { printf '%s\n' "$FIVE_MARK" > "$STUB_DIR/succeed.check"; }
 
 # One table: the rows a file holds and the pane beside it, and what two passes
-# make of them. `captured` says whether the watch read the pane's screen at
-# all: never wherever the rows judged.
-while IFS='|' read -r name pane rows expected_event expected_launch expected_captured expected_note; do
+# make of them. The adapter's `inspect` snapshots the screen on every read;
+# the note says whether the watch judged by it, the fallback, and every row
+# whose rows judge says none.
+while IFS='|' read -r name pane rows expected_event expected_launch expected_note; do
   set -f
   # shellcheck disable=SC2086  # the row names split into the row list.
   set -- $rows
@@ -100,19 +100,19 @@ while IFS='|' read -r name pane rows expected_event expected_launch expected_cap
   if grep -q '^oversee-watch: overseer-fallback ' "$ERR"; then
     note="$(grep '^oversee-watch: overseer-fallback ' "$ERR" | head -n 1 | sed 's/^oversee-watch: //')"
   fi
-  assert_eq "event=${event:-none} launched=$(head -n 1 "$STUB_DIR/succeed.launched" 2>/dev/null | cut -d' ' -f1 || true) captured=$(captured) note=$note" \
-    "event=$expected_event launched=$expected_launch captured=$expected_captured note=$expected_note" \
+  assert_eq "event=${event:-none} launched=$(head -n 1 "$STUB_DIR/succeed.launched" 2>/dev/null | cut -d' ' -f1 || true) note=$note" \
+    "event=$expected_event launched=$expected_launch note=$expected_note" \
     "$name" "$ERR"
 done <<ROWS
-dead_rows|exited|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|no|none
-end_over_live|blank|start end|none||no|none
-wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|no|none
-clear_is_live|blank|start clear|none||no|none
-lifted_wall|blank|start wall stop|none||no|none
-other_failure|blank|start overloaded|none||no|none
-killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|no|none
-no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=none
-codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|yes|overseer-fallback pane=$PANE cause=unsupported
+dead_rows|exited|start end|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=rows|--dead-pane|none
+end_over_live|blank|start end|none||none
+wall_rows|blank|start wall|EVENT overseer-walled $PANE window=$WINDOW passes=1 succession=on source=rows|--walled-pane|none
+clear_is_live|blank|start clear|none||none
+lifted_wall|blank|start wall stop|none||none
+other_failure|blank|start overloaded|none||none
+killed_process|exited|start|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process|--dead-pane|none
+no_rows_fallback|exited|-|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=none
+codex_fallback|exited|codex|EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=pane|--dead-pane|overseer-fallback pane=$PANE cause=unsupported
 ROWS
 
 # A rows wall carries the harness's own words, the limit and its reset, under
@@ -206,6 +206,97 @@ run TMUX_PANE="$PANE" -- --max-loops 2
 assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE cause=unrecorded" \
   "another session's rows file is no reading of this pane" "$ERR"
 
+# --- the overseer's context record, judged each long pass ------------------
+# The turn-end hook writes context.json in the overseer mailbox at each turn
+# end, a reading or a gap record naming why none was taken, and a Stop row
+# beside it. A long pass over a working overseer reports a gap as
+# overseer-context-unmeasured, and a record more than an hour old as
+# overseer-context-stale where a Stop row came after it. A fresh record, a
+# stale one with no Stop after it, one a StopFailure alone followed, since no
+# turn-end hook runs on that turn, a turn in flight on the screen, and a
+# record naming another pane print neither.
+CTX_FILE() { printf '%s/tmp/lane-mail/overseer/context.json' "$CASE_REPO_ROOT"; }
+# The rows above are stamped ROW_AT, so a record is placed before or after
+# that turn by its offset from it.
+ROW_AT=1788364000
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
+# context_case NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW... — a rows
+# sandbox whose context record was written RECORD_OFFSET seconds after ROW_AT,
+# naming the pane key CTX_KEY, with GAP as its gap or `-` for a reading, and a
+# clock NOW_OFFSET seconds after ROW_AT; then one long pass. CONTEXT_EVENT is
+# the context event it printed, or none. CTX_FLEET_HARNESS, where set, is the
+# harness the fleet record names for this pane.
+CTX_KEY="7000 $PANE"
+CTX_FLEET_HARNESS=""
+# A start in the same pane naming a new session, as a session opened there by
+# hand, or a /clear, writes.
+RESTART="$(row SessionStart claude source=startup model=claude-fable-5-1 session_id=9a1b)"
+context_case() { # NAME PANE_STATE RECORD_OFFSET NOW_OFFSET GAP ROW...
+  local name="$1" pane_state="$2" at now="$((ROW_AT + $4))" gap="$5"
+  at="$(iso "$((ROW_AT + $3))")"
+  shift 5
+  rows_case "$name" "$pane_state" "$@"
+  if [[ -n "$CTX_FLEET_HARNESS" ]]; then
+    jq --arg h "$CTX_FLEET_HARNESS" '.overseer.harness = $h' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp" \
+      && mv -- "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+  fi
+  printf '%s\n' "$now" > "$STUB_DIR/now.epoch"
+  if [[ "$gap" == - ]]; then
+    jq -cn --arg at "$at" --arg key "$CTX_KEY" '{harness: "claude", model: "claude-fable-5-1", tokens: 300000, window: 1000000,
+      used_pct: 30, session_id: "5f0c", pane_key: $key, gap: null, at: $at}' > "$(CTX_FILE)"
+  else
+    jq -cn --arg at "$at" --arg gap "$gap" --arg key "$CTX_KEY" '{harness: "claude", model: null, tokens: null, window: null,
+      used_pct: null, session_id: "5f0c", pane_key: $key, gap: $gap, at: $at}' > "$(CTX_FILE)"
+  fi
+  run TMUX_PANE="$PANE" -- --max-loops 1
+  CONTEXT_EVENT="$(grep '^EVENT overseer-context-' <<<"$OUT" || echo none)"
+}
+while IFS='|' read -r name key fleet pane record_offset now_offset gap rows expected; do
+  set -f
+  # shellcheck disable=SC2086  # the row names split into the row list.
+  set -- $rows
+  set +f
+  row_args=()
+  for r in "$@"; do
+    case "$r" in
+      start) row_args+=("$START") ;;
+      restart) row_args+=("$RESTART") ;;
+      overloaded) row_args+=("$OVERLOADED") ;;
+      wall) row_args+=("$FAILURE") ;;
+      stop) row_args+=("$STOP") ;;
+      -) ;;
+      *) echo "unknown row $r" >&2; exit 1 ;;
+    esac
+  done
+  CTX_KEY="7000 $key" CTX_FLEET_HARNESS="${fleet#-}" context_case "$name" "$pane" "$record_offset" "$now_offset" "$gap" ${row_args[@]+"${row_args[@]}"}
+  assert_eq "$CONTEXT_EVENT" "$expected" "$name" "$ERR"
+done <<ROWS
+context_gap|$PANE|-|blank|-60|0|home-unnamed|start|EVENT overseer-context-unmeasured $PANE gap=home-unnamed
+context_gap_same_harness|$PANE|claude|blank|-60|0|home-unnamed|start|EVENT overseer-context-unmeasured $PANE gap=home-unnamed
+context_gap_unrecorded|$PANE|-|blank|-60|0|pane-unrecorded|start|EVENT overseer-context-unmeasured $PANE gap=pane-unrecorded
+context_gap_other_pane|%4|-|blank|-60|0|home-unnamed|start|none
+context_gap_copilot|$PANE|copilot|idle|-60|0|home-unnamed|-|none
+context_gap_new_session|$PANE|-|blank|-60|0|home-unnamed|start restart|none
+context_stale_stop|$PANE|-|blank|-600|7200|-|start stop|EVENT overseer-context-stale $PANE age=7800
+context_stale_lifted|$PANE|-|blank|-600|7200|-|start wall stop|EVENT overseer-context-stale $PANE age=7800
+context_stale_new_session|$PANE|-|blank|-600|7200|-|start restart stop|none
+context_stale_failure|$PANE|-|blank|-600|7200|-|start overloaded|none
+context_stale_screen|$PANE|-|limit_text|-600|7200|-|-|none
+context_stale_no_turn|$PANE|-|blank|-600|7200|-|start|none
+context_turn_before|$PANE|-|blank|60|7200|-|start stop|none
+context_fresh|$PANE|-|blank|-10|60|-|start stop|none
+ROWS
+# No record is a session that has not ended a turn under the hook: nothing to
+# report. A record the hook does not write is noted and settles nothing.
+rows_case context_absent blank "$START"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "$(grep -c '^EVENT overseer-context-' <<<"$OUT" || true)" "0" "no context record prints neither event" "$ERR"
+rows_case context_unread blank "$START"
+printf '{"tokens":"many"}\n' > "$(CTX_FILE)"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "events=$(grep -c '^EVENT overseer-context-' <<<"$OUT" || true) note=$(grep -c "^oversee-watch: overseer-context-unread path=$(CTX_FILE)" "$ERR" || true)" \
+  "events=0 note=1" "a record the hook does not write is noted and judged on nothing" "$ERR"
+
 # --- control ----------------------------------------------------------------
 # The rows verdict ignored: the SessionEnd row then settles nothing, and the
 # death is the pane fallback's.
@@ -221,7 +312,7 @@ assert_eq "$(grep '^EVENT overseer-dead' <<<"$OUT" || echo none)" \
 # pane succeeds the working overseer.
 END_CTL="$(mutant_scripts end-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/end-ctl/github"
-mutate_file "$END_CTL/oversee-watch" '    cause=live' '    :'
+mutate_file "$END_CTL/oversee-watch" '|| (( bare )) || cause=live' '|| (( bare )) || :'
 rows_case end_over_live_mutant blank "$START" "$END_EXIT"
 WATCH_BIN="$END_CTL/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "launched=$(succeed_calls --dead-pane)" "launched=1" \
@@ -230,15 +321,15 @@ assert_eq "launched=$(succeed_calls --dead-pane)" "launched=1" \
 # The recorded exit ignored: the bare shell reads dead from its process.
 EXIT_CTL="$(mutant_scripts exit-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/exit-ctl/github"
-mutate_file "$EXIT_CTL/oversee-watch" '      1) OV_STATE=exited; OV_SOURCE=record; return 0 ;;' '      1) ;;'
+mutate_file "$EXIT_CTL/oversee-watch" '&& (( bare )); then OV_STATE=exited; OV_SOURCE=record; return 0; fi' '&& (( bare )); then :; fi'
 WATCH_BIN="$EXIT_CTL/oversee-watch" exit_case record_exit_mutant exited 137
 assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=process launched=1" \
   "control: without the recorded exit the death is the process rung's, not the record's" "$ERR"
 # The status taken whatever the pane runs: a harness started again reads dead.
 RESUME_CTL="$(mutant_scripts resume-ctl/orch oversee-watch)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/resume-ctl/github"
-mutate_file "$RESUME_CTL/oversee-watch" '  if [[ -n "$exit_status" ]] && is_bare_shell "$cmd"; then' \
-  '  if [[ -n "$exit_status" ]] && { OV_STATE=exited; OV_SOURCE=record; return 0; }; then'
+mutate_file "$RESUME_CTL/oversee-watch" '[[ -n "$exit_status" ]] && (( bare )); then' \
+  '[[ -n "$exit_status" ]]; then'
 WATCH_BIN="$RESUME_CTL/oversee-watch" exit_case record_resumed_mutant blank 137
 assert_eq "$EXIT_CASE" "event=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on source=record launched=1" \
   "control: a status taken over a live harness succeeds the session started again in the pane" "$ERR"
@@ -268,6 +359,33 @@ mutate_file "$MARK_CTL/oversee-watch" '    OV_VERDICT=walled OV_SOURCE=account' 
 WATCH_BIN="$MARK_CTL/oversee-watch" one_pass zero_mark_mutant "$ZERO_MARK" "$START"
 assert_eq "$ONE_PASS" "rc=0 walled=0 marks=1 launched=0" \
   "control: without the zero-mark wall the pass only reports the mark and succeeds nothing" "$ERR"
+
+# The context record's controls, one per rule: the gap read, the age bound,
+# the Stop-since test, the pane test, the harness test and the session test
+# each removed in turn.
+context_control() { # NAME OLD NEW CASE_NAME PANE RECORD_OFFSET NOW_OFFSET GAP EXPECTED ROW...
+  local ctl name="$1" old="$2" new="$3" case_name="$4" pane="$5" record_offset="$6" now_offset="$7" gap="$8" expected="$9"
+  shift 9
+  ctl="$(mutant_scripts "$name/orch" oversee-watch)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/$name/github"
+  mutate_file "$ctl/oversee-watch" "$old" "$new"
+  WATCH_BIN="$ctl/oversee-watch" context_case "$case_name" "$pane" "$record_offset" "$now_offset" "$gap" "$@"
+  assert_eq "$CONTEXT_EVENT" "$expected" "control: $name turns $case_name into $expected" "$ERR"
+}
+context_control gap-ctl '  if [[ -n "$LANE_CTX_GAP" ]]; then' '  if false; then' \
+  context_gap_mutant blank -60 0 home-unnamed none "$START"
+context_control age-ctl '  (( age > OVERSEER_CONTEXT_STALE_SECS )) || return 0' '  :' \
+  context_fresh_mutant blank -10 60 - "EVENT overseer-context-stale $PANE age=70" "$START" "$STOP"
+context_control turn-ctl '  (( row_at > at )) || return 0' '  :' \
+  context_no_turn_mutant blank -600 7200 - "EVENT overseer-context-stale $PANE age=7800" "$START"
+CTX_KEY="7000 %4" context_control pane-ctl '  [[ "$LANE_CTX_PANE_KEY" == "$identity" ]] || return 0' '  :' \
+  context_other_pane_mutant blank -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed" "$START"
+CTX_FLEET_HARNESS=copilot context_control harness-ctl \
+  '  [[ -z "$OVERSEER_RECORD_HARNESS" || "$LANE_CTX_HARNESS" == "$OVERSEER_RECORD_HARNESS" ]] || return 0' '  :' \
+  context_copilot_mutant idle -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed"
+context_control session-ctl \
+  '  [[ -z "$started" || -z "$LANE_CTX_SESSION" || "$started" == "$LANE_CTX_SESSION" ]] || return 0' '  :' \
+  context_new_session_mutant blank -60 0 home-unnamed "EVENT overseer-context-unmeasured $PANE gap=home-unnamed" "$START" "$RESTART"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

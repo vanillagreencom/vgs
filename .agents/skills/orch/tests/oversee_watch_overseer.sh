@@ -506,6 +506,39 @@ assert_eq "runtime=$(recorded runtime) generation=$(recorded generation) account
 assert_eq "harness=$(recorded harness) home=$(recorded home) model=$(recorded model) effort=$(recorded effort) cwd=$(recorded cwd) pending=$(recorded pending)" \
   "harness=claude home=/home/me/.claude model=fable effort=high cwd=/home/me/kendex pending=none" \
   "and keeps its launch identity, dropping a pending successor as it replaces the line" "$ERR"
+# The record `oversee register` wrote before it recorded a launch identity
+# (2568a672^:skills/orch/scripts/oversee): runtime, server, window, generation,
+# account and pane, with no harness and no home. It takes the account as its
+# home, as a claude record does: the turn-end hook binds the overseer's
+# transcript to that home and reads no context without one. A codex home is
+# its own directory and is never read off the account.
+home_backfill() { # NAME HARNESS [WATCH_BIN]
+  overseer_case "$1" idle
+  jq -n --arg pane "$PANE" --arg window "$WINDOW" --arg harness "$2" \
+    '{triaged: [], overseer: ({runtime: "tmux", server: "7000", window: $window, generation: 10, account: "/home/me/.claude", pane: $pane}
+      + (if $harness == "" then {} else {harness: $harness} end))}' > "$STUB_DIR/oversee-state.json"
+  printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+  WATCH_BIN="${3:-}" run TMUX_PANE="$PANE" -- --max-loops 1 -- --model fable
+}
+home_backfill record_home_backfill ""
+assert_eq "home=$(recorded home) account=$(recorded account)" "home=/home/me/.claude account=/home/me/.claude" \
+  "a start over the record an older register wrote binds it to its account" "$ERR"
+home_backfill record_home_claude claude
+assert_eq "home=$(recorded home)" "home=/home/me/.claude" "a home-less claude record binds to its account too" "$ERR"
+home_backfill record_home_codex codex
+assert_eq "home=$(recorded home)" "home=none" "a home-less codex record keeps no home, its account not being one" "$ERR"
+HOME_MUTANT="$TMP_ROOT/home-mutant"
+mkdir -p "$HOME_MUTANT/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$HOME_MUTANT/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$HOME_MUTANT/github"
+FROM='then .home = .account else . end'
+assert_eq "$(grep -cF -- "$FROM" "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh")" "1" \
+  "control: the home binding is one site of the record library"
+FROM="$FROM" perl -pe 's/\Q$ENV{FROM}\E/then . else . end/' \
+  "$REPO_ROOT/skills/orch/scripts/lib/watch-overseer-record.sh" > "$HOME_MUTANT/orch/scripts/lib/watch-overseer-record.sh"
+home_backfill record_home_backfill_mutant "" "$HOME_MUTANT/orch/scripts/oversee-watch"
+assert_eq "home=$(recorded home)" "home=none" "control: a start that binds no home leaves the hook reading no context" "$ERR"
+
 # A record naming another pane is another session's: its generation is not
 # this one's, so the start records only what it observes.
 # Both halves of that test, one row each: a record naming another pane on this
@@ -795,8 +828,77 @@ touch "$STUB_DIR/window-id-fail-$PANE"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
   "an unreadable overseer pane launches nothing" "$ERR"
-assert_eq "$(grep -c "oversee-watch: overseer-unreadable pane=$PANE field=window_id" "$ERR")" "1" \
+assert_eq "$(grep -c "oversee-watch: overseer-unreadable pane=$PANE field=inspect" "$ERR")" "1" \
   "and the reason is named once" "$ERR"
+
+# A child probe the adapter's `inspect` could not run is named with the
+# status the adapter reported, never one this watch's own lane probes left.
+probe_case() { # WATCH_BIN
+  overseer_case probe_unusable exited
+  state_with "$LINE"
+  printf '3\n' > "$STUB_DIR/probe-fail-9009"
+  WATCH_BIN="${1:-}" run TMUX_PANE="$PANE" -- --max-loops 1
+  PROBE_NOTE="$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=3\$" "$ERR" || true)"
+  PROBE_NOTE="$PROBE_NOTE|$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=0\$" "$ERR" || true)"
+}
+probe_case
+assert_eq "$PROBE_NOTE" "1|0" "an overseer child probe that cannot run is named with the adapter's status" "$ERR"
+PROBE_MUTANT="$(mutant_scripts probe-mutant/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/probe-mutant/github"
+mutate_file "$PROBE_MUTANT/oversee-watch" 'note_probe_unusable "$pane" "$OL_INSPECT_PROBE"' 'note_probe_unusable "$pane"'
+probe_case "$PROBE_MUTANT/oversee-watch"
+assert_eq "$PROBE_NOTE" "0|1" "control: a note taking the watch's own probe status misnames the overseer's" "$ERR"
+
+# A pane the adapter answers gone settles nothing either, the reason named:
+# the stub's pane listing leaves out a pane with no foreground command.
+overseer_case gone_pane exited
+state_with "$LINE"
+rm -f -- "${STUB_DIR:?}/cmd-$PANE.txt"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "rc=$RC launched=$(succeed_calls --dead-pane) noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE field=session state=gone\$" "$ERR" || true)" \
+  "rc=0 launched=0 noted=1" \
+  "an overseer pane the adapter answers gone launches nothing and names why once" "$ERR"
+
+# A usage-limit scan the adapter could not run leaves the fallback reading
+# unread: a provider behind a grep that fails on the limit pattern alone.
+LIMIT_BIN="$TMP_ROOT/limit-scan-bin"
+mkdir -p "$LIMIT_BIN"
+# shellcheck source=../scripts/lib/lane-state.sh
+LIMIT_RE="$(source "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && printf '%s' "$USAGE_LIMIT_RE")"
+cat > "$LIMIT_BIN/grep" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do [[ "\$arg" != $(printf '%q' "$LIMIT_RE") ]] || exit 2; done
+exec $(command -v grep) "\$@"
+STUB
+cat > "$LIMIT_BIN/provider" <<STUB
+#!/bin/sh
+PATH="$LIMIT_BIN:\$PATH" exec "$REPO_ROOT/.agents/skills/orch/scripts/overseer-host-tmux" "\$@"
+STUB
+chmod +x "$LIMIT_BIN/grep" "$LIMIT_BIN/provider"
+overseer_case limit_scan idle
+state_with "$LINE"
+run ORCH_OVERSEER_HOST="$LIMIT_BIN/provider" TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC noted=$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE scan=usage-limit\$" "$ERR" || true)" \
+  "rc=0 noted=1" \
+  "an overseer screen whose usage-limit scan could not run is named unreadable, never judged" "$ERR"
+# Both scans failing on one read: the probe named with its status, and the
+# screen unreadable.
+both_case() { # [WATCH_BIN]
+  overseer_case both_scans exited
+  state_with "$LINE"
+  printf '3\n' > "$STUB_DIR/probe-fail-9009"
+  WATCH_BIN="${1:-}" run ORCH_OVERSEER_HOST="$LIMIT_BIN/provider" TMUX_PANE="$PANE" -- --max-loops 1
+  BOTH_NOTES="$(grep -c "^oversee-watch: child-probe-failed lane=$PANE exit=3\$" "$ERR" || true)"
+  BOTH_NOTES="$BOTH_NOTES|$(grep -c "^oversee-watch: overseer-unreadable pane=$PANE scan=usage-limit\$" "$ERR" || true)"
+}
+both_case
+assert_eq "$BOTH_NOTES" "1|1" "an overseer read where both scans fail notes the probe and the unreadable screen" "$ERR"
+BOTH_MUTANT="$(mutant_scripts both-mutant/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/both-mutant/github"
+mutate_file "$BOTH_MUTANT/oversee-watch" '[[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]]' \
+  '[[ "$OL_INSPECT_CAUSE" != process-probe ]]'
+both_case "$BOTH_MUTANT/oversee-watch"
+assert_eq "$BOTH_NOTES" "0|1" "control: a cause matched whole drops the probe note beside the limit scan" "$ERR"
 
 # --- the settings this check reads ----------------------------------------
 overseer_case dead_passes_one exited

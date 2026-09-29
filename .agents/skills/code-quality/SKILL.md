@@ -27,7 +27,7 @@ VGS delivery policy overrides the shared workflow's mandatory review, CI-wait, b
 
 Quickshell rules for this shell. They add to the rules above.
 
-- Compare every design against how the latest Omarchy (`basecamp/omarchy`, `main`) solves the same problem. Adopt its approach where it is simpler or more robust; where VGS does differently, state why in the issue or decision record. Omarchy is a reference, not a constraint.
+- Compare every design against how the latest Omarchy (`basecamp/omarchy`, its default branch) solves the same problem. Adopt its approach where it is simpler or more robust; where VGS does differently, state why in the issue or decision record. Omarchy is a reference, not a constraint.
 - The runtime facts the code rests on are in `docs/architecture/runtime-qml.md` for FolderListModel, Process, createObject, FileView and property-handler order, and in `docs/architecture/runtime.md`: § Hyprland for the reply judge and the two dispatcher syntaxes; § Memory and § Performance for owners, caches and sleeps. Read the section before touching code it covers; never re-derive a fact from memory.
 - Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
 - A figure in a docstring, comment or document names the tool and the run that produced it, as `docs/architecture/overview.md` invariant 7 states. A budget without its measurement is a blocker.
@@ -70,6 +70,8 @@ Build only what was asked. No speculative abstractions, no extension point for a
 
 One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. When real consumers would each make the same decision, one shared owner makes it; caller count neither justifies nor removes that owner. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree.
 
+Integrate through the system's own interface. Before building on another system (a service, an API, a CLI, an agent harness), read its current documentation and use the interface it provides for the purpose: its API, SDK, events, hooks, settings or connector. Deriving its state indirectly (parsing text meant for people, reading its internal files, or re-implementing a feature it already offers) is a last resort: the code names it as the fallback, the interface it stands in for, and why that interface cannot serve.
+
 ## Prove Your Guards
 
 A new or modified production gate or guard ships with one must-fail control per independent rule it enforces: plant one defect that reaches that rule, and the control passes when the guard turns red once. Rows that exercise the same rule share its control; independent rules in one guard each take their own, and a defect planted for one rule never stands in for another. A script's mutant control edits a copy of the script, never the tracked file. A control keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
@@ -102,7 +104,17 @@ A new or modified production gate or guard ships with one must-fail control per 
 ## Language Discipline
 
 - **Rust**: exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
-- **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. A test suite resolves its `mktemp -d` root at creation, `TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"`, before any path derived from it is compared or printed: macOS answers `mktemp -d` under `/var`, a symlink to `/private/var`, so a path the code under test resolved never equals one built on the raw root.
+- **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. A test suite makes its `mktemp -d` root with these lines, `NAME` the suite's own name, and resolves it before any path derived from it is compared or printed: macOS answers `mktemp -d` under `/var`, a symlink to `/private/var`, so a path the code under test resolved never equals one built on the raw root.
+
+  ```bash
+  TMP_ROOT="$(mktemp -d)" || { echo "NAME: scratch=mktemp-failed" >&2; exit 1; }
+  [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "NAME: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+  TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "NAME: scratch=resolve-failed" >&2; exit 1; }
+  trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+  ```
+
+  `mktemp -d` is assigned and checked alone, never nested inside the `cd`: there its failure hands `cd` an empty argument, which bash before 5.3 accepts as the current directory, so the root names the caller's directory and the EXIT trap removes it.
+
 - In any `pipefail` script, never pipe a shell writer into an early-closing reader (`head`, `grep -q`, `grep -m N`), which stops reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position reads as a plain false that drops the result with no error. Capture whole and window in-shell, or give the reader a here-string.
 - **TypeScript/JS**: discriminated unions switched with a `never` default over strings and booleans-with-meaning; distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
 
