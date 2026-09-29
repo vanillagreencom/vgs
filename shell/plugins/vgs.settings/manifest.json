@@ -8,12 +8,12 @@
   "license": "MIT",
   "icon": "settings",
   "kinds": [
-    "panel",
+    "window",
     "bar-widget",
     "service"
   ],
   "entryPoints": {
-    "panel": "Panel.qml",
+    "window": "Window.qml",
     "bar-widget": "Widget.qml",
     "service": "Service.qml"
   },

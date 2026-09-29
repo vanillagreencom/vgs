@@ -57,6 +57,7 @@ f share/vgs/shell/Core/Toasts.qml
 f share/vgs/shell/Core/TuiRecords.qml
 f share/vgs/shell/Core/TuiRunner.qml
 f share/vgs/shell/Core/qmldir
+f share/vgs/shell/Hosts/AppWindow.qml
 f share/vgs/shell/Hosts/BackgroundHost.qml
 f share/vgs/shell/Hosts/BarHost.qml
 f share/vgs/shell/Hosts/LayerHost.qml
@@ -192,7 +193,6 @@ f share/vgs/shell/plugins/vgs.notifications/slack-photos.js
 f share/vgs/shell/plugins/vgs.notifications/token-status.sh
 f share/vgs/shell/plugins/vgs.settings/KeyField.qml
 f share/vgs/shell/plugins/vgs.settings/ListPage.qml
-f share/vgs/shell/plugins/vgs.settings/Panel.qml
 f share/vgs/shell/plugins/vgs.settings/PluginPage.qml
 f share/vgs/shell/plugins/vgs.settings/Reply.js
 f share/vgs/shell/plugins/vgs.settings/RequirementRow.qml
@@ -200,6 +200,7 @@ f share/vgs/shell/plugins/vgs.settings/Service.qml
 f share/vgs/shell/plugins/vgs.settings/SettingField.qml
 f share/vgs/shell/plugins/vgs.settings/StatusRow.qml
 f share/vgs/shell/plugins/vgs.settings/Widget.qml
+f share/vgs/shell/plugins/vgs.settings/Window.qml
 f share/vgs/shell/plugins/vgs.settings/manifest.json
 f share/vgs/shell/plugins/vgs.themes/Background.qml
 f share/vgs/shell/plugins/vgs.themes/Browser.qml

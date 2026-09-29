@@ -4,21 +4,23 @@ import qs.Ui
 import "Reply.js" as Reply
 
 // The Settings window: every plugin the manager lists, and one page per
-// plugin, drawn from its manager row alone. The panel host builds it as a
-// layer surface centred on its monitor; it is `size.window.width` wide, or
-// the monitor's width less `size.window.gutter` a side when that is less,
-// and `size.window.heightShare` of the monitor's height tall, read from the
-// screen its `screens` capability gives. The list page and the plugin page
+// plugin, drawn from its manager row alone. The window host builds it as a
+// Hyprland window titled Settings, which Hyprland floats, centres, frames
+// and focuses like any other window. It asks to be `size.window.width`
+// wide, or the monitor's width less `size.window.gutter` a side when that
+// is less, and `size.window.heightShare` of the monitor's height tall, read
+// from the screen its `screens` capability gives; the pages fill whatever
+// size the window has after that. The list page and the plugin page
 // sit side by side and slide on `motion.duration.normal`, so a
 // `motion.scale` of 0 makes a push or a pop instant; the page not shown is
 // hidden once the slide ends, so the keyboard reaches the shown page alone.
-// Escape pops a page, then hides the window. Enabling, disabling, a
+// Escape pops a page, then closes the window. Enabling, disabling, a
 // setting and a key go through the manager capability; the rows come back
 // from the core, so the window shows what the configuration holds. Adding,
 // updating and removing a plugin open the manager's core TUIs, a floating
 // terminal where each question stays a question, and Install shows the
-// core's requirement notice; the window hides once the manager answers
-// `ok`, and the rows change once the command there ends.
+// core's requirement notice; the window stays open behind them, and its
+// rows change once the command there ends.
 //
 // The payload is a JSON object: `{}` opens the list, `{"plugin":"<id>"}`
 // that plugin's page, and an id no plugin has opens the list with a notice
@@ -100,14 +102,14 @@ FocusScope {
         return "ok";
     }
 
-    // Pop the plugin page, or hide the window from the list; answers `ok`
-    // or the panel host's reply.
+    // Pop the plugin page, or close the window from the list; answers `ok`
+    // or the window host's reply.
     function back() {
         if (page !== "") {
             showList();
             return "ok";
         }
-        return shell.surfaces.hide("panel");
+        return shell.surfaces.hide("window");
     }
 
     // Enable or disable plugin `id`, the opposite of its state now; answers
@@ -126,10 +128,13 @@ FocusScope {
 
     // Open the update of installed plugin `id` or its removal in a floating
     // terminal, or the requirement notice for its missing commands, through
-    // the manager; each answers the manager's reply.
-    function updatePlugin(id) { return handOff(keep(id, shell.manager.update(id))); }
-    function removePlugin(id) { return handOff(keep(id, shell.manager.remove(id))); }
-    function installRequirements(id) { return handOff(keep(id, shell.manager.installRequirements(id))); }
+    // the manager; each answers the manager's reply. The terminal is a newer
+    // window, which Hyprland focuses and stacks over this one, and the
+    // notice sits on a layer over every window, so this window stays open
+    // behind them and its rows show the command's result once it ends.
+    function updatePlugin(id) { return keep(id, shell.manager.update(id)); }
+    function removePlugin(id) { return keep(id, shell.manager.remove(id)); }
+    function installRequirements(id) { return keep(id, shell.manager.installRequirements(id)); }
 
     // Open the add of a plugin from a git URL in a floating terminal through
     // the manager; a refusal stays over the list until a later add opens.
@@ -137,16 +142,6 @@ FocusScope {
         const reply = shell.manager.add();
         notice = Reply.isOk(reply) ? "" : reply;
         if (notice !== "") console.warn("settings: add " + reply);
-        return handOff(reply);
-    }
-
-    // The window sits on the top layer, over the floating terminal a manager
-    // TUI opened and the terminal the requirement notice's Install opens, so
-    // once the manager answers `ok` the window hides and the user answers
-    // the terminal or the notice; a refusal keeps the window open with the
-    // refusal on it. Answers REPLY.
-    function handOff(reply) {
-        if (Reply.isOk(reply)) shell.surfaces.hide("panel");
         return reply;
     }
 
@@ -159,9 +154,8 @@ FocusScope {
 
     Keys.onEscapePressed: back()
 
-    Surface {
+    Item {
         anchors.fill: parent
-        level: "raised"
         clip: true
 
         Item {

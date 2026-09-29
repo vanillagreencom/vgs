@@ -8,7 +8,7 @@ import QtQuick
 //                                            `hyprland` binds
 //   vgsh ipc call vgs.settings invoke toggle '<payload>'
 //   vgsh ipc call vgs.settings invoke open '<payload>'
-// A payload is the panel's, `{}` or `{"plugin":"<id>"}`; an empty argument
+// A payload is the window's, `{}` or `{"plugin":"<id>"}`; an empty argument
 // is `{}`.
 Item {
     id: root
@@ -27,9 +27,9 @@ Item {
         shell.ipc.handle("open", arg => root.route("summon", arg));
     }
 
-    // The panel host's reply: `ok`, or its refusal.
+    // The window host's reply: `ok`, or its refusal.
     function route(verb, payload) {
-        const reply = shell.surfaces[verb]("panel", payload || "{}");
+        const reply = shell.surfaces[verb]("window", payload || "{}");
         if (reply !== "ok") console.warn("settings: " + verb + " " + reply);
         return reply;
     }
