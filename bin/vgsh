@@ -414,6 +414,24 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
   exit "$status"
 }
 
+# Opens COUNT write descriptors into the array scratch_fds, each on its own
+# file in a new scratch directory, then removes the directory, so no path
+# outlives the caller however it ends. /dev/fd/<n> reopens each file from
+# its start; the caller closes every descriptor.
+scratch_fds=()
+scratch_open() { # COUNT
+  local scratch i fd
+  scratch_fds=()
+  # mktemp prints nothing on stderr when it succeeds, so the substitution
+  # holds the path, or on failure mktemp's own reason.
+  scratch="$(mktemp -d 2>&1)" || refuse 1 "scratch=${TMPDIR:-/tmp}" "$scratch"
+  for ((i = 0; i < $1; i++)); do
+    exec {fd}>"$scratch/$i" || { rm -rf -- "$scratch"; refuse 1 "scratch=$scratch"; }
+    scratch_fds+=("$fd")
+  done
+  rm -rf -- "$scratch" || refuse 1 "scratch=$scratch"
+}
+
 # The floor `run` checks before it changes anything, one row per tool: the
 # name a refusal carries, the version it needs, the extended regex whose
 # first group reads the version from the probe's output, and the probe.
@@ -445,30 +463,58 @@ version_at_least() { # HAVE NEED: dotted decimal integers
   return 0
 }
 
-# Refuses with exit 78 on the first tool that is absent (have=none), whose
-# probe fails or prints no version the regex reads (have=unknown), or whose
-# version is below its floor. Hyprland answers through its socket, so no
-# running Hyprland is have=unknown too. Only the probe's stdout is read, so
-# a warning a tool prints on stderr ahead of its version never hides it;
-# hyprctl prints its connection error on stdout.
+# Refuses with exit 78 on the first row, in table order, whose tool is
+# absent (have=none), whose probe fails or prints no version the regex
+# reads (have=unknown), or whose version is below its floor. Hyprland
+# answers through its socket, so no running Hyprland is have=unknown too.
+# Only the probe's stdout is read, so a warning a tool prints on stderr
+# ahead of its version never hides it; hyprctl prints its connection error
+# on stdout. Every probe on PATH starts at once, each writing to its own
+# scratch file, because the shell starts only after the preflight: on host
+# cachy, `vgsh run` up to its exec of a stub qs took 30 to 38 ms with the
+# probes one after another and 20 to 31 ms with them together, twelve
+# runs each.
 preflight() {
-  local tool need pattern probe out have status
-  local -a argv
+  local tool need pattern probe i fd have
+  local -a tools=() needs=() patterns=() probes=() pids=() statuses=() outs=() argv
   while read -r tool need pattern probe; do
     [[ -n $tool ]] || continue
+    tools+=("$tool") needs+=("$need") patterns+=("$pattern") probes+=("$probe")
+  done <<<"$preflight_floor"
+  scratch_open "${#tools[@]}"
+  for i in "${!tools[@]}"; do
+    read -ra argv <<<"${probes[i]}"
+    pids[i]=""
+    command -v -- "${argv[0]}" >/dev/null || continue
+    "${argv[@]}" >&"${scratch_fds[i]}" 2>/dev/null </dev/null &
+    pids[i]=$!
+  done
+  for i in "${!tools[@]}"; do
+    if [[ -n ${pids[i]} ]]; then
+      statuses[i]=0
+      wait "${pids[i]}" || statuses[i]=$?
+    fi
+  done
+  for i in "${!tools[@]}"; do
+    fd="${scratch_fds[i]}"
+    if [[ -n ${pids[i]} ]]; then
+      outs[i]="$(<"/dev/fd/$fd")" || refuse 1 "scratch=/dev/fd/$fd" "the ${tools[i]} probe's output could not be read back"
+    fi
+    exec {fd}>&-
+  done
+  for i in "${!tools[@]}"; do
+    tool="${tools[i]}" need="${needs[i]}" pattern="${patterns[i]}" probe="${probes[i]}"
     read -ra argv <<<"$probe"
-    command -v -- "${argv[0]}" >/dev/null ||
+    [[ -n ${pids[i]} ]] ||
       refuse 78 "preflight=$tool have=none need=$need" "${argv[0]} is not on PATH"
-    out="$("${argv[@]}" 2>/dev/null </dev/null)" || {
-      status=$?
-      refuse 78 "preflight=$tool have=unknown need=$need" "$probe exited $status:" "$out"
-    }
-    [[ $out =~ $pattern ]] ||
-      refuse 78 "preflight=$tool have=unknown need=$need" "$probe printed no version:" "$out"
+    [[ ${statuses[i]} == 0 ]] ||
+      refuse 78 "preflight=$tool have=unknown need=$need" "$probe exited ${statuses[i]}:" "${outs[i]}"
+    [[ ${outs[i]} =~ $pattern ]] ||
+      refuse 78 "preflight=$tool have=unknown need=$need" "$probe printed no version:" "${outs[i]}"
     have="${BASH_REMATCH[1]}"
     [[ $need == present ]] || version_at_least "$have" "$need" ||
       refuse 78 "preflight=$tool have=$have need=$need"
-  done <<<"$preflight_floor"
+  done
 }
 
 # Every git call: no pager, no hook, no filesystem monitor. The plugin's
@@ -844,14 +890,13 @@ unattended_stopping=""
 # between has no trap and ends at once, and the verb's wait for the step
 # then rests on the call's shell still holding the step's output.
 unattended_git() { # KEY GIT_ARGS...
-  local key="$1" scratch out_fd err_fd err rc=0 started=$SECONDS
+  local key="$1" out_fd err_fd err rc=0 started=$SECONDS
   shift
   # The call runs in the background so `wait` returns when a trapped
   # signal arrives, which a substitution's read does not; its output goes
-  # to files removed once opened, so no path outlives the call.
-  # /dev/fd/<n> reopens each from its start.
-  scratch="$(mktemp -d)" || refuse 1 "scratch=${TMPDIR:-/tmp}"
-  exec {out_fd}>"$scratch/out" {err_fd}>"$scratch/err" && rm -rf -- "$scratch" || refuse 1 "scratch=$scratch"
+  # to scratch files.
+  scratch_open 2
+  out_fd="${scratch_fds[0]}" err_fd="${scratch_fds[1]}"
   trap_stops unattended_git_stop
   env "${outdated_fetch_env[@]}" setsid --wait timeout --kill-after="$outdated_kill_grace" "$outdated_fetch_timeout" git "${git_flags[@]}" "$@" >&"$out_fd" 2>&"$err_fd" {out_fd}>&- {err_fd}>&- &
   unattended_pid=$!

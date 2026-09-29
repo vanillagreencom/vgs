@@ -286,13 +286,13 @@ if [[ -e $rt_held/vgsh-sources-2/x ]]; then ok "a refused run leaves the holder'
 # The preflight. A stub node answers --version with STUB_NODE_VERSION, the
 # floor unless a row sets it, and hands every other call to the real node.
 # A `no-<tool>` PATH holds only what a refused run reaches, bash, readlink,
-# dirname and the probed tools, less <tool>.
+# dirname, mktemp, rm and the probed tools, less <tool>.
 mkdir -p "$tmp/pre-node"
 printf '#!/usr/bin/env bash\nif [[ ${1:-} == --version ]]; then printf "%%s\\n" "${STUB_NODE_VERSION:-v18.0.0}"; exit 0; fi\nexec %q "$@"\n' "$node_bin" >"$tmp/pre-node/node"
 chmod +x "$tmp/pre-node/node"
 for missing in qs hyprctl node python3 git; do
   mkdir -p "$tmp/pre-no-$missing"
-  for tool in bash readlink dirname qs hyprctl node python3 git; do
+  for tool in bash readlink dirname mktemp rm qs hyprctl node python3 git; do
     [[ $tool == "$missing" ]] && continue
     case "$tool" in
       qs|hyprctl) tool_bin="$tmp/$tool" ;;
@@ -306,32 +306,35 @@ pre_path() { # KIND: full, or no-<tool>
   if [[ $1 == full ]]; then printf '%s\n' "$tmp/pre-node:$base_path"; else printf '%s\n' "$tmp/pre-$1"; fi
 }
 
-# One `vgsh run` from BIN in a fresh runtime, configuration and state
-# directory, the runtime one holding a snapshot root, with ASSIGNMENT (one
-# VAR=value, or empty) added to the environment.
+# One `vgsh run` from BIN in a fresh runtime, configuration, state and
+# scratch directory, the runtime one holding a snapshot root, with
+# ASSIGNMENT (one VAR=value, or empty) added to the environment.
 pre_case=0
 pre_run() { # BIN KIND ASSIGNMENT
   local dir
   local -a extra=()
   pre_case=$((pre_case + 1))
   dir="$tmp/pre-case-$pre_case"
-  pre_rt="$dir/rt"; pre_cfg="$dir/cfg"; pre_state="$dir/state"; pre_record="$dir/record"
-  mkdir -p -- "$pre_rt/vgsh-sources-1"; : >"$pre_rt/vgsh-sources-1/x"
+  pre_rt="$dir/rt"; pre_cfg="$dir/cfg"; pre_state="$dir/state"; pre_record="$dir/record"; pre_tmp="$dir/tmp"
+  mkdir -p -- "$pre_rt/vgsh-sources-1" "$pre_tmp"; : >"$pre_rt/vgsh-sources-1/x"
   [[ -n $3 ]] && extra=("$3")
   set +e
-  "${base_env[@]}" PATH="$(pre_path "$2")" XDG_RUNTIME_DIR="$pre_rt" XDG_CONFIG_HOME="$pre_cfg" XDG_STATE_HOME="$pre_state" STUB_RECORD="$pre_record" "${extra[@]}" "$1" run 2>"$tmp/err" </dev/null
+  "${base_env[@]}" PATH="$(pre_path "$2")" TMPDIR="$pre_tmp" XDG_RUNTIME_DIR="$pre_rt" XDG_CONFIG_HOME="$pre_cfg" XDG_STATE_HOME="$pre_state" STUB_RECORD="$pre_record" "${extra[@]}" "$1" run 2>"$tmp/err" </dev/null
   pre_status=$?
   set -e
   pre_err=""
   [[ -s $tmp/err ]] && IFS= read -r pre_err <"$tmp/err"
   return 0
 }
-# True when the last pre_run exited WANT_EXIT with WANT_ERR first on stderr
-# and left what that outcome promises: a start ran the shell; a refusal
-# started nothing, took no lock file, created no directory and left the
-# snapshot root.
+# True when the last pre_run exited WANT_EXIT with WANT_ERR first on stderr,
+# left its scratch directory empty, and left what that outcome promises: a
+# start ran the shell; a refusal started nothing, took no lock file,
+# created no directory and left the snapshot root.
 pre_held() { # WANT_EXIT WANT_ERR
+  local left
   [[ $pre_status == "$1" && $pre_err == "$2" ]] || return 1
+  left="$(find "$pre_tmp" -mindepth 1 -print -quit)" || return 1
+  [[ -z $left ]] || return 1
   if [[ $1 == 0 ]]; then
     [[ -f $pre_record ]]
   else
@@ -360,7 +363,14 @@ node 17.9.1 is below the floor|full|STUB_NODE_VERSION=v17.9.1|78|vgsh: refused: 
 no node on PATH is none|no-node||78|vgsh: refused: preflight=node have=none need=18
 no python3 on PATH is none|no-python3||78|vgsh: refused: preflight=python3 have=none need=present
 no git on PATH is none|no-git||78|vgsh: refused: preflight=git have=none need=present
+with Quickshell below its floor and no node, the refusal names the earlier row|no-node|STUB_QS_VERSION=Quickshell 0.3.0|78|vgsh: refused: preflight=quickshell have=0.3.0 need=0.3.1
+with Hyprland below its floor and no git, the refusal names the earlier row|no-git|STUB_HYPR_VERSION=0.55.9|78|vgsh: refused: preflight=hyprland have=0.55.9 need=0.56
 ROWS
+
+# A scratch root mktemp cannot write in refuses before any probe starts.
+pre_no_tmp="$tmp/pre-no-tmpdir"
+pre_run "$repo/bin/vgsh" full "TMPDIR=$pre_no_tmp"
+if pre_held 1 "vgsh: refused: scratch=$pre_no_tmp"; then ok "a scratch root mktemp cannot write in refuses the run"; else fail "absent scratch root: exit=$pre_status stderr=[$pre_err]"; fi
 
 # Must-fail controls, one per rule of the preflight, each on a copy of
 # bin/vgsh with each NEEDLE replaced once by its REPLACEMENT: the row the
@@ -394,22 +404,28 @@ pre_control() { # NAME KIND ASSIGNMENT WANT_EXIT WANT_ERR NEEDLE REPLACEMENT [NE
   pre_run "$copy" "$kind" "$assignment"
   if pre_held "$want_exit" "$want_err"; then fail "the $name control still holds: exit=$pre_status stderr=[$pre_err]"; else ok "the $name control fails its row"; fi
 }
-probe_line='out="$("${argv[@]}" 2>/dev/null </dev/null)"'
+probe_line='"${argv[@]}" >&"${scratch_fds[i]}" 2>/dev/null </dev/null &'
 pre_control "floor row" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   'hyprland   0.56    "version"' 'hyprland   present "version"'
 pre_control "numeric compare" full "STUB_QS_VERSION=Quickshell 0.10.0" 0 "" \
   $'    ((h > w)) && return 0\n' ''
 pre_control "failed probe" full STUB_HYPR_VERSION_EXIT=4 78 "vgsh: refused: preflight=hyprland have=unknown need=0.56" \
-  "$probe_line || {" "$probe_line || true || {"
+  '[[ ${statuses[i]} == 0 ]] ||' '[[ ${statuses[i]} == 0 ]] || true ||'
 pre_control "stdout only" full "STUB_QS_STDERR=qt.qpa: warning" 0 "" \
-  "$probe_line" 'out="$("${argv[@]}" 2>&1 </dev/null)"'
+  "$probe_line" '"${argv[@]}" >&"${scratch_fds[i]}" 2>&1 </dev/null &'
 pre_control "unread version" full "STUB_QS_VERSION=Quickshell git" 78 "vgsh: refused: preflight=quickshell have=unknown need=0.3.1" \
-  '[[ $out =~ $pattern ]] ||' '[[ $out =~ $pattern ]] || true ||'
+  '[[ ${outs[i]} =~ $pattern ]] ||' '[[ ${outs[i]} =~ $pattern ]] || true ||'
 pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none need=present" \
-  'command -v -- "${argv[0]}" >/dev/null ||' 'command -v -- "${argv[0]}" >/dev/null || true ||'
+  '[[ -n ${pids[i]} ]] ||' '[[ -n ${pids[i]} ]] || true ||'
 pre_control "preflight first" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   $'    preflight\n    # The shell watches' '    # The shell watches' \
   '    VGSH_RUNNER_PID=$$ QS_DISABLE' $'    preflight\n    VGSH_RUNNER_PID=$$ QS_DISABLE'
+pre_control "table order" no-node "STUB_QS_VERSION=Quickshell 0.3.0" 78 "vgsh: refused: preflight=quickshell have=0.3.0 need=0.3.1" \
+  $'  for i in "${!tools[@]}"; do\n    tool=' $'  for ((i = ${#tools[@]} - 1; i >= 0; i--)); do\n    tool='
+pre_control "scratch refused" full "TMPDIR=$pre_no_tmp" 1 "vgsh: refused: scratch=$pre_no_tmp" \
+  'scratch="$(mktemp -d 2>&1)" || refuse 1 "scratch=${TMPDIR:-/tmp}" "$scratch"' 'scratch="$(mktemp -d 2>&1)" || true'
+pre_control "scratch removed" full "" 0 "" \
+  $'  rm -rf -- "$scratch" || refuse 1 "scratch=$scratch"\n' ''
 
 # Restart stops only the recorded pid, waits for the lock to free and asks
 # Hyprland to launch the new runner so it inherits the session environment.
