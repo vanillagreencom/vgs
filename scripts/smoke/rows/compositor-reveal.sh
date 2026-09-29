@@ -1,21 +1,23 @@
 # Bringing a window into view: the compositor capability's `reveal`
 # (shell/Core/Compositor.qml, shell/Core/Dispatch.js), driven through the
 # fixture's `reveal` handle on windows of the toplevel helper: one on
-# another workspace, one in a hidden special workspace, one under another
-# window's fullscreen, one in a background group tab, one on a second
-# monitor, one of several windows of one application, and an application
-# that raises its own window while the reveal waits for it. Each case
-# starts from the other window focused on workspace 1 and first reads its
-# target out of view, so `in view` cannot pass on the state before the
-# reveal. Hyprland v0.56.2's focus dispatcher already shows the workspace,
-# the special workspace, the group tab and the monitor of the window it
-# focuses, and ends a fullscreen over it (docs/architecture/runtime.md
-# § Hyprland), so the old path, that dispatcher alone on the first window
-# of the application, fails only where the reveal decides something: which
-# of several windows, and whether to move at all when the application
-# moved first. Those two cases carry the old path as their control. The
-# row ends with its windows closed, its monitor removed and workspace 1
-# focused.
+# another workspace, the one focused last seen from an empty workspace,
+# one in a hidden special workspace, one under another window's
+# fullscreen, one in a background group tab, one on a second monitor, one
+# of several windows of one application, and an application that raises
+# its own window while the reveal waits for it. Each case starts from the
+# other window focused on workspace 1, or from the empty workspace, and
+# first reads its target out of view, so `in view` cannot pass on the
+# state before the reveal. Hyprland v0.56.2's focus dispatcher already
+# shows the workspace, the special workspace, the group tab and the
+# monitor of the window it focuses, and ends a fullscreen over it
+# (docs/architecture/runtime.md § Hyprland), so the old path, that
+# dispatcher alone on the first window of the application, fails only
+# where the reveal decides something: whether the window already shows,
+# which of several windows, and whether to move at all when the
+# application moved first. Those three cases carry the old path or the old
+# rule as their control. The row ends with its windows closed, its monitor
+# removed and workspace 1 focused.
 set -euo pipefail
 reveal_events="$sandbox/reveal-events.log"
 # Every line of Hyprland's event socket, as it arrives.
@@ -86,6 +88,26 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
     close_toplevel "$reveal_pid" "the other-workspace window's helper exits 0 on SIGTERM"
   else
     fail "the other-workspace window maps"
+  fi
+
+  # The window focused last, from an empty workspace: no window has the
+  # focus there, yet Hyprland's focus history still ranks that window first
+  # (focusHistoryID 0). The control reads the old rule, which took position
+  # 0 for the focus and moved nothing, off the same clients list.
+  if open_reveal last; then
+    expect "the window is focused" ok hypr dispatch "hl.dsp.focus({ window = \"address:$reveal_window\" })"
+    expect_poll "the window has the focus" '["smoke.reveal", "last"]' active_window
+    expect "the compositor switches to an empty workspace" ok hypr dispatch 'hl.dsp.focus({ workspace = "6" })'
+    expect_poll "no window has the focus on the empty workspace" '[]' active_window
+    expect "the window focused last starts out of view" out out_of_view "$reveal_window"
+    history_first() { hypr -j clients | python3 -c 'import json,sys; print(next(c["focusHistoryID"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
+    expect "control: the old rule would have read the window as focused and moved nothing" 0 history_first "$reveal_window"
+    expect "the reveal of the window focused last is accepted" ok probe reveal "$reveal_window"
+    expect_poll "the reveal shows its workspace and focuses it" shown in_view "$reveal_window"
+    expect_log "the reveal focused it rather than reading it as shown" 1 "compositor: reveal=shell address=$reveal_window"
+    close_toplevel "$reveal_pid" "the last-focused window's helper exits 0 on SIGTERM"
+  else
+    fail "the last-focused window maps"
   fi
 
   # A hidden special workspace.

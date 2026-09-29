@@ -96,20 +96,58 @@ function revealEvent(addresses, name, data) {
     return { by: name === "activewindowv2" ? "sender" : "named", address: address };
 }
 
-// Which window a reveal brings into view, from `hyprctl -j clients`:
+// The state a reveal judges, from one `hyprctl --batch
+// "j/clients;j/activewindow;j/monitors"` reply: Hyprland answers the three
+// in one pass and joins them with a blank line pair, "\n\n\n", which its
+// JSON never holds. { ok: true, clients, active, monitors }, `active` {}
+// when no window has the focus, or { ok: false, error } with a keyed line.
+var REVEAL_STATE_REQUEST = "j/clients;j/activewindow;j/monitors";
+function revealState(text) {
+    var parts = String(text || "").split("\n\n\n").map(function (p) { return p.trim(); }).filter(function (p) { return p !== ""; });
+    if (parts.length !== 3) return { ok: false, error: "refused: reveal state=parts count=" + parts.length + " want=3" };
+    var read = [];
+    for (var i = 0; i < 3; i++) {
+        try {
+            read.push(JSON.parse(parts[i]));
+        } catch (e) {
+            return { ok: false, error: "refused: reveal state=unparsed part=" + i };
+        }
+    }
+    if (!Array.isArray(read[0]) || read[1] === null || typeof read[1] !== "object" || Array.isArray(read[1]) || !Array.isArray(read[2]))
+        return { ok: false, error: "refused: reveal state=shape want=clients,activewindow,monitors" };
+    return { ok: true, clients: read[0], active: read[1], monitors: read[2] };
+}
+
+// Whether a client is on the screen: drawn (a background group tab is
+// not), on a special workspace some monitor shows, or on the regular
+// workspace its own monitor shows with no special workspace over it.
+function onScreen(client, monitors) {
+    if (client.visible === false) return false;
+    var ws = client.workspace || {};
+    if (String(ws.name || "").indexOf("special:") === 0)
+        return monitors.some(function (m) { return m.specialWorkspace && m.specialWorkspace.name === ws.name; });
+    return monitors.some(function (m) {
+        return m.id === client.monitor && m.activeWorkspace && m.activeWorkspace.id === ws.id && (!m.specialWorkspace || m.specialWorkspace.id === 0);
+    });
+}
+
+// Which window a reveal brings into view, from revealState's reading:
 // { state: "reveal", address } for the window to focus, which is `named`
 // when it is one of `addresses`, else the one the user focused last
 // (lowest `focusHistoryID`, -1 never); { state: "shown", address } when
-// that window has the focus already, so nothing moves; { state: "none" }
-// when no window of `addresses` is mapped any more.
-function revealTarget(clients, addresses, named) {
-    var mapped = clients.filter(function (c) { return c.mapped && addresses.indexOf(String(c.address).toLowerCase()) !== -1; });
+// that window is the active window and on the screen, so nothing moves;
+// { state: "none" } when no window of `addresses` is mapped any more.
+// `focusHistoryID` only ranks: the window focused last keeps 0 after the
+// focus moves to an empty workspace, where no window has it.
+function revealTarget(state, addresses, named) {
+    var mapped = state.clients.filter(function (c) { return c.mapped && addresses.indexOf(String(c.address).toLowerCase()) !== -1; });
     if (mapped.length === 0) return { state: "none" };
     var rank = function (c) { return c.focusHistoryID < 0 ? Infinity : c.focusHistoryID; };
     var target = mapped.find(function (c) { return String(c.address).toLowerCase() === named; });
     if (target === undefined) target = mapped.reduce(function (a, b) { return rank(b) < rank(a) ? b : a; });
     var address = String(target.address).toLowerCase();
-    return { state: target.focusHistoryID === 0 ? "shown" : "reveal", address: address };
+    var focused = String(state.active.address || "").toLowerCase() === address;
+    return { state: focused && onScreen(target, state.monitors) ? "shown" : "reveal", address: address };
 }
 
 // Build one request. Returns { ok: true, request } or { ok: false, error }

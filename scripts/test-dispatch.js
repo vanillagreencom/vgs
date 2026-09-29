@@ -82,17 +82,41 @@ function verifyReveal(lib, report) {
         ["another event naming the window", "closewindow", "abc", { by: "" }]
     ];
     for (const [name, event, data, want] of events) row("reveal event: " + name, lib.revealEvent(["0xabc", "0xdef"], event, data), want);
-    const client = (address, focusHistoryID, mapped) => ({ address: address, mapped: mapped !== false, focusHistoryID: focusHistoryID });
-    // rows: [name, clients, named, want]
+    // A client on workspace 1 of monitor 0 unless told otherwise; a
+    // monitor showing workspace `ws` and special workspace `special` ("" for
+    // none).
+    const client = (address, focusHistoryID, extra) => Object.assign({ address: address, mapped: true, visible: true, monitor: 0, workspace: { id: 1, name: "1" }, focusHistoryID: focusHistoryID }, extra || {});
+    const monitor = (id, ws, special) => ({ id: id, activeWorkspace: { id: ws, name: String(ws) }, specialWorkspace: special ? { id: -98, name: "special:" + special } : { id: 0, name: "" } });
+    const shows1 = [monitor(0, 1, "")];
+    const state = (clients, active, monitors) => ({ clients: clients, active: active, monitors: monitors || shows1 });
+    // rows: [name, state, named, want]
     const targets = [
-        ["the window focused last", [client("0xabc", 3), client("0xdef", 1), client("0x999", 2)], "", { state: "reveal", address: "0xdef" }],
-        ["a window never focused comes last", [client("0xabc", -1), client("0xdef", 4)], "", { state: "reveal", address: "0xdef" }],
-        ["the window the application asked for", [client("0xabc", 3), client("0xdef", 1)], "0xabc", { state: "reveal", address: "0xabc" }],
-        ["the focused window moves nothing", [client("0xABC", 0), client("0xdef", 1)], "", { state: "shown", address: "0xabc" }],
-        ["an unmapped window is none", [client("0xabc", 1, false)], "", { state: "none" }],
-        ["no window of the application", [client("0x999", 0)], "", { state: "none" }]
+        ["the window focused last", state([client("0xabc", 3), client("0xdef", 1), client("0x999", 2)], {}), "", { state: "reveal", address: "0xdef" }],
+        ["a window never focused comes last", state([client("0xabc", -1), client("0xdef", 4)], {}), "", { state: "reveal", address: "0xdef" }],
+        ["the window the application asked for", state([client("0xabc", 3), client("0xdef", 1)], {}), "0xabc", { state: "reveal", address: "0xabc" }],
+        ["the active window on the screen moves nothing", state([client("0xABC", 0), client("0xdef", 1)], { address: "0xabc" }), "", { state: "shown", address: "0xabc" }],
+        ["the window focused last with no window active, as on an empty workspace", state([client("0xabc", 0), client("0xdef", 1)], {}, [monitor(0, 5, "")]), "", { state: "reveal", address: "0xabc" }],
+        ["the window focused last while another window is active", state([client("0xabc", 0), client("0x999", 1)], { address: "0x999" }), "", { state: "reveal", address: "0xabc" }],
+        ["the active window whose workspace its monitor does not show", state([client("0xabc", 0)], { address: "0xabc" }, [monitor(0, 5, "")]), "", { state: "reveal", address: "0xabc" }],
+        ["the active window under a special workspace", state([client("0xabc", 0)], { address: "0xabc" }, [monitor(0, 1, "scratch")]), "", { state: "reveal", address: "0xabc" }],
+        ["the active window on a special workspace a monitor shows", state([client("0xabc", 0, { workspace: { id: -98, name: "special:scratch" } })], { address: "0xabc" }, [monitor(1, 1, "scratch")]), "", { state: "shown", address: "0xabc" }],
+        ["the active window on a hidden special workspace", state([client("0xabc", 0, { workspace: { id: -98, name: "special:scratch" } })], { address: "0xabc" }), "", { state: "reveal", address: "0xabc" }],
+        ["the active window its own monitor does not show", state([client("0xabc", 0, { monitor: 1 })], { address: "0xabc" }, [monitor(0, 1, ""), monitor(1, 7, "")]), "", { state: "reveal", address: "0xabc" }],
+        ["an active background group tab", state([client("0xabc", 0, { visible: false })], { address: "0xabc" }), "", { state: "reveal", address: "0xabc" }],
+        ["an unmapped window is none", state([client("0xabc", 1, { mapped: false })], {}), "", { state: "none" }],
+        ["no window of the application", state([client("0x999", 0)], { address: "0x999" }), "", { state: "none" }]
     ];
-    for (const [name, clients, named, want] of targets) row("reveal target: " + name, lib.revealTarget(clients, ["0xabc", "0xdef"], named), want);
+    for (const [name, st, named, want] of targets) row("reveal target: " + name, lib.revealTarget(st, ["0xabc", "0xdef"], named), want);
+    // rows: [name, reply text, want]; the reply is hyprctl --batch's.
+    const replies = [
+        ["three replies", '[{"address": "0xabc"}]\n\n\n{"address": "0xabc"}\n\n\n[{"id": 0}]\n', { ok: true, clients: [{ address: "0xabc" }], active: { address: "0xabc" }, monitors: [{ id: 0 }] }],
+        ["no active window", '[]\n\n\n{}\n\n\n[]', { ok: true, clients: [], active: {}, monitors: [] }],
+        ["a reply missing", '[]\n\n\n{}', { ok: false, error: "refused: reveal state=parts count=2 want=3" }],
+        ["a reply that is no JSON", '[]\n\n\nok\n\n\n[]', { ok: false, error: "refused: reveal state=unparsed part=1" }],
+        ["replies in another order", '{}\n\n\n[]\n\n\n[]', { ok: false, error: "refused: reveal state=shape want=clients,activewindow,monitors" }]
+    ];
+    for (const [name, text, want] of replies) row("reveal state: " + name, lib.revealState(text), want);
+    row("reveal state request asks for the three in that order", lib.REVEAL_STATE_REQUEST, "j/clients;j/activewindow;j/monitors");
     return bad;
 }
 failures += verifyReveal(ctx, true);
@@ -110,7 +134,16 @@ const revealControls = [
     ["the window focused last", "return rank(b) < rank(a) ? b : a;", "return a;"],
     ["a window never focused comes last", "return c.focusHistoryID < 0 ? Infinity : c.focusHistoryID;", "return c.focusHistoryID;"],
     ["the named window first", "if (target === undefined) target =", "target ="],
-    ["the focused window moves nothing", "state: target.focusHistoryID === 0 ? \"shown\" : \"reveal\"", "state: \"reveal\""],
+    ["the active window on the screen moves nothing", "state: focused && onScreen(target, state.monitors) ? \"shown\" : \"reveal\"", "state: \"reveal\""],
+    ["the old rule: the window focused last is shown", "state: focused && onScreen(target, state.monitors) ? \"shown\" : \"reveal\"", "state: target.focusHistoryID === 0 ? \"shown\" : \"reveal\""],
+    ["the active window alone is shown", "state: focused && onScreen(target, state.monitors) ? \"shown\" : \"reveal\"", "state: onScreen(target, state.monitors) ? \"shown\" : \"reveal\""],
+    ["only a window on the screen is shown", "state: focused && onScreen(target, state.monitors) ? \"shown\" : \"reveal\"", "state: focused ? \"shown\" : \"reveal\""],
+    ["a background group tab is not on the screen", "if (client.visible === false) return false;", ""],
+    ["a special workspace shows on some monitor", "return monitors.some(function (m) { return m.specialWorkspace && m.specialWorkspace.name === ws.name; });", "return false;"],
+    ["a regular workspace shows on its own monitor", "return m.id === client.monitor && m.activeWorkspace", "return m.activeWorkspace"],
+    ["no special workspace over it", "&& (!m.specialWorkspace || m.specialWorkspace.id === 0);", ";"],
+    ["the state has three replies", "if (parts.length !== 3) return", "if (false) return"],
+    ["the state replies are in order", "if (!Array.isArray(read[0]) || read[1] === null || typeof read[1] !== \"object\" || Array.isArray(read[1]) || !Array.isArray(read[2]))", "if (false)"],
     ["only mapped windows", "return c.mapped && addresses", "return addresses"]
 ];
 const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");

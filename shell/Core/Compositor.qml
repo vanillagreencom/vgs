@@ -61,19 +61,21 @@ Singleton {
     // ------------------------------------------------------------ reveal
 
     // The reveal in progress: { addresses, named, reading }, or null;
-    // `reading` once it waits for the clients read. A newer reveal replaces
+    // `reading` once it waits for the state read. A newer reveal replaces
     // it, since the user asked for the newer place.
     property var revealing: null
-    // A clients read was asked for while one ran, so the answer follows
+    // A state read was asked for while one ran, so the answer follows
     // the state after the newer request.
-    property bool rereadClients: false
+    property bool rereadState: false
 
     // Bring one of `addresses`, one application's windows, into view: the
     // workspace, a hidden special workspace, a background group tab or
     // another monitor, as Hyprland's focus dispatcher does for the window
     // it focuses. The window is the one the application asked for, else
-    // the one the user focused last (Dispatch.revealTarget). With
-    // `awaitSender`, after the caller delivered an action to the
+    // the one the user focused last, and nothing moves when it is already
+    // the active window on the screen (Dispatch.revealTarget, from one
+    // batched read of the clients, the active window and the monitors).
+    // With `awaitSender`, after the caller delivered an action to the
     // application, the shell first waits up to Dispatch.SENDER_WAIT_MS for
     // Hyprland to report that the application focused one of those windows
     // itself, and then moves nothing, so the view never switches twice.
@@ -88,7 +90,7 @@ Singleton {
         if (revealing !== null) endReveal("superseded", "");
         revealing = { addresses: judged.addresses, named: "", reading: false };
         if (awaitSender === true) revealWait.restart();
-        else readClients();
+        else readState();
         return "ok";
     }
 
@@ -101,7 +103,7 @@ Singleton {
     Timer {
         id: revealWait
         interval: Dispatch.SENDER_WAIT_MS
-        onTriggered: root.readClients()
+        onTriggered: root.readState()
     }
 
     Connections {
@@ -114,45 +116,43 @@ Singleton {
             } else if (seen.by === "named") {
                 revealWait.stop();
                 root.revealing.named = seen.address;
-                root.readClients();
+                root.readState();
             }
         }
     }
 
-    function readClients() {
+    function readState() {
         revealing.reading = true;
-        if (clients.running) {
-            rereadClients = true;
+        if (stateProc.running) {
+            rereadState = true;
             return;
         }
-        clients.completion = null;
-        clients.running = true;
+        stateProc.completion = null;
+        stateProc.running = true;
     }
 
-    function clientsRead(completion, text) {
-        if (rereadClients) {
-            rereadClients = false;
+    function stateRead(completion, text) {
+        if (rereadState) {
+            rereadState = false;
             if (revealing !== null && revealing.reading) {
-                clients.completion = null;
-                clients.running = true;
+                stateProc.completion = null;
+                stateProc.running = true;
             }
             return;
         }
         if (revealing === null || !revealing.reading) return;
         if (completion === null || completion.code !== 0) {
-            console.error("compositor: reveal clients=unread exit=" + (completion === null ? "start-failed" : completion.code));
+            console.error("compositor: reveal state=unread exit=" + (completion === null ? "start-failed" : completion.code));
             endReveal("none", "");
             return;
         }
-        let list;
-        try {
-            list = JSON.parse(text);
-        } catch (e) {
-            console.error("compositor: reveal clients=unparsed error=" + e.message);
+        const state = Dispatch.revealState(text);
+        if (!state.ok) {
+            console.error("compositor: " + state.error);
             endReveal("none", "");
             return;
         }
-        const target = Dispatch.revealTarget(list, revealing.addresses, revealing.named);
+        const target = Dispatch.revealTarget(state, revealing.addresses, revealing.named);
         switch (target.state) {
         case "reveal":
             send("focusWindow", [target.address]);
@@ -170,14 +170,14 @@ Singleton {
     }
 
     Process {
-        id: clients
+        id: stateProc
         property var completion: null
-        command: ["hyprctl", "-j", "clients"]
-        stdout: StdioCollector { id: clientsOut }
+        command: ["hyprctl", "--batch", Dispatch.REVEAL_STATE_REQUEST]
+        stdout: StdioCollector { id: stateOut }
         onExited: (code, status) => { completion = { code: code, status: status }; }
         onRunningChanged: {
             if (running) return;
-            root.clientsRead(completion, clientsOut.text);
+            root.stateRead(completion, stateOut.text);
         }
     }
 
