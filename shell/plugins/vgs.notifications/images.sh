@@ -15,7 +15,11 @@
 #                                               empty <out dir>, then copy
 #                                               each URL's body out of a
 #                                               Chromium disk cache to <to>,
-#                                               one line each, as copy does
+#                                               one line each, as copy does,
+#                                               but a copy line reads
+#                                               copied <to> version=<hex>,
+#                                               the first 16 hex digits of
+#                                               the file's SHA-256
 #
 # A sender's image file is read with a bound: a regular file only, at most
 # 5 MiB, within 5 seconds, into a temporary file beside the copy that is
