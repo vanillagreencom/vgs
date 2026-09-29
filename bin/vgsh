@@ -42,7 +42,11 @@
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #
 # `run` takes no arguments: the shell always runs in the foreground under
-# this process, which is the identity the shell's guard checks. The lock file
+# this process, which is the identity the shell's guard checks. Before
+# anything else it checks Quickshell, a running Hyprland, node, python3 and
+# git against the floor its preflight table holds, and refuses with
+# `vgsh: refused: preflight=<tool> have=<version|none|unknown> need=<version|present>`
+# and exit 78 on the first tool below it. The lock file
 # $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
 # command that contacts the shell addresses that instance alone, so a shell
 # started any other way is never reached. `plugin validate`, `plugin add`,
@@ -162,8 +166,8 @@
 # each prints `vgsh: refused: target=<name> reason=<key>`), 4 when restart
 # refuses because the session is locked, 75 when another shell holds the
 # lock or another theme command holds the theme lock, 69 when the shell is
-# not running. The usage text is this header; `vgsh --help` prints it and
-# exits 0.
+# not running, 78 when `run` finds a tool below the runtime floor. The usage
+# text is this header; `vgsh --help` prints it and exits 0.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -229,6 +233,57 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
   shift 2
   [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2
   exit "$status"
+}
+
+# The floor `run` checks before it changes anything, one row per tool: the
+# name a refusal carries, the version it needs, the extended regex whose
+# first group reads the version from the probe's output, and the probe.
+# `present` needs only a version the regex reads. The floor and where each
+# figure was measured: docs/architecture/runtime.md § Process.
+preflight_floor='
+quickshell 0.3.1   ^Quickshell[[:space:]]([0-9]+(\.[0-9]+)*)                 qs --version
+hyprland   0.56    "version":[[:space:]]*"([0-9]+(\.[0-9]+)*)                 hyprctl -j version
+node       18      ^v([0-9]+(\.[0-9]+)*)                                      node --version
+python3    present ^Python[[:space:]]([0-9]+(\.[0-9]+)*)                      python3 --version
+git        present ^git[[:space:]]version[[:space:]]([0-9]+(\.[0-9]+)*)        git --version
+'
+
+# True when HAVE >= NEED, compared as numbers component by component; a
+# missing component is 0, so 0.56 equals 0.56.0 and 0.10 exceeds 0.3.1.
+version_at_least() { # HAVE NEED: dotted decimal integers
+  local -a have need
+  local i h w
+  IFS=. read -ra have <<<"$1"
+  IFS=. read -ra need <<<"$2"
+  for ((i = 0; i < ${#have[@]} || i < ${#need[@]}; i++)); do
+    h=$((10#${have[i]:-0}))
+    w=$((10#${need[i]:-0}))
+    ((h > w)) && return 0
+    ((h < w)) && return 1
+  done
+  return 0
+}
+
+# Refuses with exit 78 on the first tool that is absent (have=none), whose
+# probe fails or prints no version the regex reads (have=unknown), or whose
+# version is below its floor. Hyprland answers through its socket, so no
+# running Hyprland is have=unknown too.
+preflight() {
+  local tool need pattern probe out have
+  local -a argv
+  while read -r tool need pattern probe; do
+    [[ -n $tool ]] || continue
+    read -ra argv <<<"$probe"
+    command -v -- "${argv[0]}" >/dev/null ||
+      refuse 78 "preflight=$tool have=none need=$need" "${argv[0]} is not on PATH"
+    out="$("${argv[@]}" 2>&1 </dev/null)" ||
+      refuse 78 "preflight=$tool have=unknown need=$need" "$probe failed:" "$out"
+    [[ $out =~ $pattern ]] ||
+      refuse 78 "preflight=$tool have=unknown need=$need" "$probe printed no version:" "$out"
+    have="${BASH_REMATCH[1]}"
+    [[ $need == present ]] || version_at_least "$have" "$need" ||
+      refuse 78 "preflight=$tool have=$have need=$need"
+  done <<<"$preflight_floor"
 }
 
 # Every git call: no pager, no hook, no filesystem monitor. The plugin's
@@ -610,6 +665,9 @@ case "$cmd" in
       printf 'vgsh: refused: argument=%s\nrun takes no arguments; the shell runs in the foreground under the runner\n' "$1" >&2
       exit 2
     fi
+    # First, so a refused run takes no lock, creates no directory and
+    # removes no snapshot root.
+    preflight
     # The shell watches files in both directories from its start, and a
     # watch on a file whose directory is absent never fires once the
     # directory appears: docs/architecture/runtime-qml.md.

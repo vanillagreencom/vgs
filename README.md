@@ -6,6 +6,14 @@ A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the
 
 There is no install command. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
 
+It needs Quickshell 0.3.1 or later, Hyprland 0.56 or later with a Lua configuration, node 18 or later, python3 and git. `bin/vgsh run` checks them before it starts and names the first one that is missing or too old.
+
+With `bin/vgsh` on your PATH as `vgsh`, this line in `~/.config/hypr/hyprland.lua` starts the shell with Hyprland:
+
+```lua
+hl.on("hyprland.start", function () hl.exec_cmd("vgsh run") end)
+```
+
 ## Features
 
 - Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
