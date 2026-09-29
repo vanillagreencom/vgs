@@ -314,7 +314,7 @@ try {
     row("accent override controls", dir => {
         freshRoot(dir);
         copyFixtureArchives(dir);
-        const noAccent = converterCopy(path.join(dir, "no-accent"), "const COLOR_OVERRIDE_ORDER = [\"accent\", \"textMuted\", \"textFaint\", \"success\", \"warning\", \"danger\", \"info\"];", "const COLOR_OVERRIDE_ORDER = [\"textMuted\", \"textFaint\", \"success\", \"warning\", \"danger\", \"info\"];");
+        const noAccent = converterCopy(path.join(dir, "no-accent"), "const PALETTE_OVERRIDE_ROLES = [\"accent\"];", "const PALETTE_OVERRIDE_ROLES = [];");
         const noAccentDir = path.join(dir, "no-accent-run");
         freshRoot(noAccentDir);
         copyFixtureArchives(noAccentDir);

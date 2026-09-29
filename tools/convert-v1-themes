@@ -45,8 +45,9 @@ const PALETTE_FROM_COLORS = [
     ["danger", "color1"],
     ["info", "color4"]
 ];
-const COLOR_OVERRIDE_ORDER = ["accent", "textMuted", "textFaint", "success", "warning", "danger", "info"];
-const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.map(role => `color.${role}`));
+const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "danger", "info"];
+const PALETTE_OVERRIDE_ROLES = ["accent"];
+const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(PALETTE_OVERRIDE_ROLES).map(role => `color.${role}`));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
 const REPO_HOST = "https://github.com/";
@@ -350,7 +351,6 @@ function addReadabilityOverrides(theme, shell) {
     if (fixed.tokens.color !== undefined) {
         const ordered = {};
         for (const role of COLOR_OVERRIDE_ORDER) {
-            if (role === "accent") continue;
             if (Object.hasOwn(fixed.tokens.color, role)) {
                 ordered[role] = fixed.tokens.color[role];
                 overrides.push(`color.${role}`);
