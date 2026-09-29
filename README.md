@@ -88,6 +88,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 | [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click, and the applied theme's wallpaper on every screen, with Previous and Next in the panel. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
 | [Launcher](shell/plugins/vgs.launcher/README.md) | A search field over the screen that finds applications, menu entries and files. `SUPER+SPACE` opens it. |
 | [Notifications](shell/plugins/vgs.notifications/README.md) | The desktop notification daemon: notifications at the top of every screen, an Inbox and History panel, and Silence. `SUPER+N` opens the panel. |
+| [Updates](shell/plugins/vgs.updates/README.md) | A service that counts waiting updates for the system packages, AUR, Flatpak, mise tools, VGS itself, plugins and themes, every six hours, on demand and after each update run, without root. Its Settings page shows the count, the last check and any source that failed. |
 | [Gallery](shell/plugins/vgs.gallery/) | Every component of the design system in every variant and state, to preview a theme. `bin/vgsh ipc call shell summon panel vgs.gallery '{}'` opens it. |
 
 ## How it works
