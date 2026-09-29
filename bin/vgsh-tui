@@ -2,21 +2,25 @@
 # vgsh-tui: the floating TUI presenter, the one file that knows terminals.
 #
 #   vgsh-tui launch --title <text> [--size default|wide|tall] [--presentation full|plain]
-#                   [--plugin <id> --dir <snapshot>] -- <argv...>
+#                   [--plugin <id> --dir <snapshot>] [--record <key> --run <run>] -- <argv...>
 #       open a floating terminal that runs `present` with the same argv
-#   vgsh-tui present [--presentation full|plain] [--plugin <id> --dir <snapshot>] -- <argv...>
+#   vgsh-tui present [--presentation full|plain] [--plugin <id> --dir <snapshot>]
+#                    [--record <key> --run <run> --record-dir <dir> --app-id <id> --window-title <text>]
+#                    -- <argv...>
 #       run argv under the VGS presentation in this terminal
 #   vgsh-tui check
 #       exit 0 when launch would find xdg-terminal-exec, else refuse as launch does
+#   vgsh-tui reap
+#       end the records of runs whose presenter is gone
 #
 # launch runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS ·
-# <text>" -- <this file> present ...`, with no shell between, and exits 0
-# once setsid has forked it into a session of its own, so the terminal
-# outlives the process that asked for it: a shell restart kills the
-# launchers it started, never their terminals. The terminal does not
-# inherit VGSH_RUNNER_PID, the variable that marks the shell's own
-# processes: `vgsh pkg run` refuses a caller that carries it, and a
-# single-instance terminal hands its environment to every later window. The size
+# <text>" -- <this file> present ...`, with no shell between, so the
+# terminal outlives the process that asked for it: a shell restart kills the
+# launchers it started, never their terminals. Without --record it exits 0
+# once setsid has forked. The terminal does not inherit VGSH_RUNNER_PID, the
+# variable that marks the shell's own processes: `vgsh pkg run` refuses a
+# caller that carries it, and a single-instance terminal hands its
+# environment to every later window. The size
 # classes and their app-ids are shell/Core/HyprlandLayer.js's TUI_WINDOWS,
 # the table the Hyprland layer writes its window rules from, read under
 # node; a size it does not hold is a bad invocation. Everything present
@@ -43,19 +47,46 @@
 #     relative to the snapshot, inside its tui/ directory, and runs from the
 #     copy. Without --plugin both are unset.
 #
+# The exit record. With --record <key> --run <run>, launch hands present the
+# record directory, ${XDG_RUNTIME_DIR}/vgs/tui, and the app-id and title it
+# opened the window with, and after the fork waits up to start_ceiling
+# seconds for the run's record before it exits 0. Before the logo, present
+# holds <stem>.lock in that directory, <stem> being the key with its `/` as
+# `@`, for as long as it lives, removes the running records a dead presenter
+# of the key left, and writes <stem>@<run>.running.json. When it exits, after
+# the prompt and on a hang-up or a termination too, it writes
+# <stem>@<run>.ended.json and removes its running record and every older
+# ended record of the key. A record is one JSON object written whole under a
+# hidden name and moved into place, and is never rewritten: a new state is a
+# new file, so a watcher of the directory's names sees every change.
+#   { "key", "run", "state": "running" | "ended", "code": <int> | null,
+#     "startedAt": <ISO 8601 UTC>, "endedAt": <ISO 8601 UTC> | null,
+#     "window": { "appId", "title" } }
+# code is the command's exit code, or present's own when the command never
+# ran to its end; null only in a record reap wrote. reap ends every running
+# record whose key's lock no process holds, since the kernel drops a lock
+# with its holder, with a null code, and prints `reaped=<key> run=<run>` per
+# record. The key is two segments of [a-z0-9.-], each starting with a letter
+# or digit, joined by one `/`, and the run [a-z0-9-] starting with one: the
+# shell judges both, and this file only keeps its file names safe.
+#
 # bin/lib/logo.txt is the word VGS in the FIGlet font Delta Corps Priest 1 by
 # CoSMiC cHiLD, its V hand-adjusted to a point. Only the rendered text is in
 # the tree, not the font.
 #
 # Every refusal prints one keyed line first: `vgsh-tui: refused: <key>=<value>`.
 # launch exits 2 on a bad invocation, 69 when xdg-terminal-exec is not on
-# PATH (`terminal=missing`), and 1 when the size table cannot be read
-# (`size-table=unreadable`). check runs launch's own terminal test and exits
-# 0, or 69 with the same refusal, or 2 on a bad invocation; the shell runs it
-# to answer `launcher-missing` before it starts a launcher. present exits
-# with the command's code, 2 on a bad invocation, and 1
-# after refusing the plugin copy or script, a refusal it reports under the
-# same Done/Failed prompt. docs/architecture/tui.md.
+# PATH (`terminal=missing`), 1 when the size table cannot be read
+# (`size-table=unreadable`), and 1 when no record of the run appeared
+# within start_ceiling seconds (`terminal=silent`). check runs launch's own
+# terminal test and exits 0, or 69 with the same refusal, or 2 on a bad
+# invocation; the shell runs it to answer `launcher-missing` before it
+# starts a launcher. present exits with the command's code, 2 on a bad
+# invocation, 75 with no logo and no record while another presenter holds
+# the key's lock (`record=<key> reason=busy`), and 1 after refusing the
+# plugin copy, the script or the running record, a refusal it reports under
+# the same Done/Failed prompt. reap exits 0, or 1 on a record it could not
+# end (`reap=<file>`). docs/architecture/tui.md.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -73,6 +104,16 @@ source "$lib"
 upper='[ABCDEFGHIJKLMNOPQRSTUVWXYZ]'
 gum_key="^(GUM_($upper|_)+|FOREGROUND|BACKGROUND|BORDER_FOREGROUND|VGS_TUI_$upper+)\$"
 gum_line="^([^=]+)=(#$_vgs_tui_hex{6})\$"
+# The names an exit record's file is made from, and the app-id and title it
+# carries: the header states each rule.
+record_key_rule="^$_vgs_tui_lower($_vgs_tui_lower|[.-])*/$_vgs_tui_lower($_vgs_tui_lower|[.-])*\$"
+record_run_rule="^$_vgs_tui_lower($_vgs_tui_lower|-)*\$"
+record_app_id_rule="^($_vgs_tui_lower|$upper|[._-])+\$"
+record_dir="$rt_dir/vgs/tui"
+# How long launch waits for the presenter to write its record: a ceiling
+# on a terminal's start, not a measurement of one. A terminal slower than
+# this is reported silent, and its run still writes its records.
+start_ceiling=30
 
 # The app-id of size class SIZE, from the table the layer's window rules
 # are written from. Exits 3 for a size the table does not hold; the loader
@@ -106,16 +147,21 @@ bad_invocation() { # FIRST_LINE
 }
 
 # Parses VERB's options, up to `--`, into title, size, presentation,
-# plugin_id and plugin_dir, and the command into argv. present takes no
-# title or size: the terminal window carries both.
+# plugin_id, plugin_dir, record_key, record_run, window_dir, window_app_id
+# and window_title, and the command into argv. present takes no title or
+# size: the terminal window carries both. The record directory, app-id and
+# window title are launch's to hand present, never a caller's to choose.
 parse() { # VERB ARGS...
   local verb="$1"
   shift
   title="" size=default presentation=full plugin_id="" plugin_dir="" argv=()
+  record_key="" record_run="" window_dir="" window_app_id="" window_title=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --title|--size|--presentation|--plugin|--dir)
-        [[ $verb == launch || ( $1 != --title && $1 != --size ) ]] || bad_invocation "argument=$1"
+      --title|--size|--presentation|--plugin|--dir|--record|--run|--record-dir|--app-id|--window-title)
+        case "$verb:$1" in
+          present:--title|present:--size|launch:--record-dir|launch:--app-id|launch:--window-title) bad_invocation "argument=$1" ;;
+        esac
         [[ $# -ge 2 ]] || bad_invocation "option=$1 value=missing"
         case "$1" in
           --title) title="$2" ;;
@@ -123,6 +169,11 @@ parse() { # VERB ARGS...
           --presentation) presentation="$2" ;;
           --plugin) plugin_id="$2" ;;
           --dir) plugin_dir="$2" ;;
+          --record) record_key="$2" ;;
+          --run) record_run="$2" ;;
+          --record-dir) window_dir="$2" ;;
+          --app-id) window_app_id="$2" ;;
+          --window-title) window_title="$2" ;;
         esac
         shift 2
         ;;
@@ -138,6 +189,23 @@ check_common() {
   case "$presentation" in full|plain) ;; *) bad_invocation "presentation=$presentation" ;; esac
   if [[ -n $plugin_id && -z $plugin_dir ]]; then bad_invocation "dir=missing plugin=$plugin_id"; fi
   if [[ -z $plugin_id && -n $plugin_dir ]]; then bad_invocation "plugin=missing dir=$plugin_dir"; fi
+  if [[ -n $record_key && -z $record_run ]]; then bad_invocation "run=missing record=$record_key"; fi
+  if [[ -z $record_key && -n $record_run ]]; then bad_invocation "record=missing run=$record_run"; fi
+  if [[ -n $record_key ]]; then
+    [[ $record_key =~ $record_key_rule ]] || bad_invocation "record=$record_key"
+    [[ $record_run =~ $record_run_rule ]] || bad_invocation "run=$record_run"
+  fi
+}
+
+# present's window options: all three with --record, none without it.
+check_window() {
+  if [[ -z $record_key ]]; then
+    [[ -z $window_dir && -z $window_app_id && -z $window_title ]] || bad_invocation "record=missing"
+    return 0
+  fi
+  [[ $window_dir == /* ]] || bad_invocation "record-dir=${window_dir:-missing}"
+  [[ $window_app_id =~ $record_app_id_rule ]] || bad_invocation "app-id=${window_app_id:-missing}"
+  [[ -n $window_title && $window_title != *[[:cntrl:]]* ]] || bad_invocation "window-title=missing-or-control"
 }
 
 launch() {
@@ -151,10 +219,24 @@ launch() {
   esac
   # present runs in the terminal's working directory, not this one.
   [[ -z $plugin_id ]] || { [[ $plugin_dir == /* ]] || plugin_dir="$PWD/$plugin_dir"; pass=(--plugin "$plugin_id" --dir "$plugin_dir"); }
+  [[ -z $record_key ]] || pass+=(--record "$record_key" --run "$record_run" --record-dir "$record_dir" --app-id "$app_id" --window-title "VGS · $title")
   require_terminal
   unset VGSH_RUNNER_PID
   setsid -f xdg-terminal-exec --app-id="$app_id" --title="VGS · $title" -- \
     "$self" present --presentation "$presentation" "${pass[@]}" -- "${argv[@]}"
+  [[ -z $record_key ]] || await_record
+}
+
+# Waits for the run's record, running or already ended, so the shell holds
+# the key busy until the presenter holds it.
+await_record() {
+  local stem="${record_key/\//@}" n
+  for ((n = 0; n < start_ceiling * 20; n++)); do
+    [[ -e $record_dir/$stem@$record_run.running.json || -e $record_dir/$stem@$record_run.ended.json ]] && return 0
+    sleep 0.05
+  done
+  printf 'vgsh-tui: refused: terminal=silent run=%s\nno presenter wrote a record of the run within %d s\n' "$record_run" "$start_ceiling" >&2
+  exit 1
 }
 
 # Exports gum.env's colours when every line passes, else warns and exports
@@ -190,6 +272,78 @@ copy_plugin() {
   argv[0]="$script"
 }
 
+# The time now as a record carries it.
+record_now() { date -u +%Y-%m-%dT%H:%M:%S.%3NZ; }
+
+# TEXT as a JSON string. check_window refused every control character, so
+# the backslash and the quote are all JSON asks to escape.
+json_text() { # TEXT
+  local text="${1//\\/\\\\}"
+  printf '"%s"' "${text//\"/\\\"}"
+}
+
+# Writes TEXT as the record NAME in DIR whole: under a hidden name the
+# shell's watcher skips, then moved into place.
+put_record() { # DIR NAME TEXT
+  local hidden="$1/.$2.tmp"
+  { printf '%s\n' "$3" >"$hidden" && mv -f -- "$hidden" "$1/$2"; } 2>/dev/null
+}
+
+# This run's record in STATE, with CODE and ENDED_AT as JSON values.
+record_text() { # STATE CODE ENDED_AT
+  printf '{"key":"%s","run":"%s","state":"%s","code":%s,"startedAt":"%s","endedAt":%s,"window":{"appId":"%s","title":%s}}' \
+    "$record_key" "$record_run" "$1" "$2" "$started_at" "$3" "$window_app_id" "$(json_text "$window_title")"
+}
+
+# Holds the key's lock for the rest of present's life, exiting 75 while
+# another presenter holds it, removes the running records a dead presenter
+# of the key left and writes this run's. Sets refusal when the directory or
+# the record cannot be written, and record_active once the record is there.
+record_start() {
+  local status=0 stale
+  stem="${record_key/\//@}"
+  { mkdir -p -- "$window_dir" && exec {record_fd}>>"$window_dir/$stem.lock"; } 2>/dev/null ||
+    { refusal="record=$window_dir reason=unwritable"; record_fd=""; return 1; }
+  flock -n -E 75 "$record_fd" || status=$?
+  case "$status" in
+    0) ;;
+    75)
+      printf 'vgsh-tui: refused: record=%s reason=busy\nanother presenter of the key is running\n' "$record_key" >&2
+      exit 75
+      ;;
+    *) refusal="record=$record_key reason=flock-failed"; return 1 ;;
+  esac
+  for stale in "$window_dir/$stem@"*.running.json; do
+    if [[ -e $stale ]]; then rm -f -- "$stale"; fi
+  done
+  started_at="$(record_now)"
+  put_record "$window_dir" "$stem@$record_run.running.json" "$(record_text running null null)" ||
+    { refusal="record=$window_dir/$stem@$record_run.running.json reason=unwritable"; return 1; }
+  record_active=1
+}
+
+# Writes this run's ended record with CODE, then removes its running record
+# and every older ended record of the key.
+record_end() { # CODE
+  local own="$stem@$record_run.ended.json" old
+  if ! put_record "$window_dir" "$own" "$(record_text ended "$1" "\"$(record_now)\"")"; then
+    printf 'vgsh-tui: refused: record=%s reason=unwritable\nthe shell does not learn that this run ended\n' "$window_dir/$own" >&2
+    return 0
+  fi
+  rm -f -- "$window_dir/$stem@$record_run.running.json"
+  for old in "$window_dir/$stem@"*.ended.json; do
+    if [[ $old != "$window_dir/$own" ]]; then rm -f -- "$old"; fi
+  done
+}
+
+# The EXIT trap: removes the plugin copy and ends the record, with the
+# command's code when it ran to its end and present's own otherwise.
+present_exit() {
+  local status=$?
+  [[ -z $copy_dir ]] || rm -rf -- "$copy_dir"
+  if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi
+}
+
 prompt() { # CODE
   local code="$1"
   # The device node is there with no terminal behind it; opening it is the test.
@@ -208,10 +362,11 @@ prompt() { # CODE
 
 present() {
   local code refusal=""
-  copy_dir=""
-  trap '[[ -z $copy_dir ]] || rm -rf -- "$copy_dir"' EXIT
+  copy_dir="" record_fd="" record_active=0 ran_code="" stem="" started_at=""
+  trap present_exit EXIT
   trap 'exit 129' HUP
   trap 'exit 143' TERM
+  [[ -z $record_key ]] || record_start || :
   export_gum_env
   export VGS_TUI_LIB="$lib" VGS_TUI_LOGO="$logo"
   if [[ -n $plugin_id ]]; then
@@ -233,20 +388,72 @@ present() {
     # present outlives it to report the code and remove the copy.
     trap : INT
     set +e
-    "${argv[@]}"
+    # The command does not inherit the key's lock: a process it leaves
+    # behind would hold the key busy after present is gone.
+    if [[ -n $record_fd ]]; then "${argv[@]}" {record_fd}>&-; else "${argv[@]}"; fi
     code=$?
     set -e
     trap - INT
   fi
+  ran_code="$code"
   [[ $presentation == plain || $code == 130 ]] || prompt "$code"
   exit "$code"
+}
+
+# Ends every running record whose key's lock no process holds, as a record
+# with a null code and the time it was found.
+reap() {
+  local file name stem run fd status text ended failed=0
+  for file in "$record_dir"/*.running.json; do
+    [[ -e $file ]] || continue
+    name="${file##*/}"
+    name="${name%.running.json}"
+    stem="${name%@*}" run="${name##*@}"
+    if ! { exec {fd}>>"$record_dir/$stem.lock"; } 2>/dev/null; then
+      printf 'vgsh-tui: refused: reap=%s reason=lock-unopenable\n' "$file" >&2
+      failed=1
+      continue
+    fi
+    status=0
+    flock -n -E 75 "$fd" || status=$?
+    exec {fd}>&-
+    case "$status" in
+      0) ;;
+      75) continue ;;
+      *) printf 'vgsh-tui: refused: reap=%s reason=flock-failed\n' "$file" >&2; failed=1; continue ;;
+    esac
+    if ! text="$(cat -- "$file" 2>/dev/null)"; then
+      # A presenter of the key that started since removed it.
+      [[ ! -e $file ]] && continue
+      printf 'vgsh-tui: refused: reap=%s reason=unreadable\n' "$file" >&2
+      failed=1
+      continue
+    fi
+    ended="${text/\"state\":\"running\"/\"state\":\"ended\"}"
+    ended="${ended/\"endedAt\":null/\"endedAt\":\"$(record_now)\"}"
+    if [[ $ended != *'"state":"ended"'* || $ended == *'"endedAt":null'* || $ended == *'"state":"running"'* ]]; then
+      printf 'vgsh-tui: refused: reap=%s reason=malformed\n' "$file" >&2
+      failed=1
+      continue
+    fi
+    if ! put_record "$record_dir" "$stem@$run.ended.json" "$ended"; then
+      printf 'vgsh-tui: refused: reap=%s reason=unwritable\n' "$file" >&2
+      failed=1
+      continue
+    fi
+    rm -f -- "$file"
+    printf 'reaped=%s run=%s\n' "${stem/@//}" "$run"
+  done
+  return "$failed"
 }
 
 verb="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$verb" in
-  launch|present) parse "$verb" "$@"; check_common; "$verb" ;;
+  launch) parse "$verb" "$@"; check_common; launch ;;
+  present) parse "$verb" "$@"; check_common; check_window; present ;;
   check) [[ $# -eq 0 ]] || bad_invocation "argument=$1"; require_terminal ;;
+  reap) [[ $# -eq 0 ]] || bad_invocation "argument=$1"; reap ;;
   -h|--help|help) usage; exit 0 ;;
   *) bad_invocation "verb=${verb:-missing}" ;;
 esac

@@ -728,6 +728,16 @@ var TUI_LAUNCHER_STATES = ["unknown", "present", "missing"];
 // need not hold the core's commands.
 var CORE_TUI_KEYS = ["argv", "title", "size", "presentation", "entry"];
 var CORE_TUI_COMMAND = /^vgsh(-[a-z]+)*$/;
+// What a refused request asks the runner to do next: nothing, one probe of
+// the launcher, or focus the window of the key's live run.
+var TUI_ACTIONS = ["none", "probe", "focus"];
+// The states of an exit record bin/vgsh-tui writes: `running` from the
+// presenter's start, `ended` once it exited or `vgsh-tui reap` found it
+// gone.
+var TUI_RECORD_STATES = ["running", "ended"];
+// A run id the core hands bin/vgsh-tui with --run, and the key a record
+// carries: `core/<name>` or `<plugin id>/<name>`.
+var TUI_RUN_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // The core's own floating TUIs, by name, listed in shell.tui.entries as
 // `core/<name>` and opened by that key: each { argv, title, size,
 // presentation, entry }, `argv` the core command the terminal runs and the
@@ -904,22 +914,36 @@ function tuiLabel(name) {
     return typeof name === "string" && /^[\x21-\x7e]+$/.test(name) ? name : JSON.stringify(name);
 }
 
+// A refusal: ANSWER's text, and ACTION, one of TUI_ACTIONS, for KEY.
 function tuiRefusal(name, reason) {
-    return { ok: false, answer: "refused: tui=" + tuiLabel(name) + " reason=" + reason, probe: false };
+    return { ok: false, answer: "refused: tui=" + tuiLabel(name) + " reason=" + reason, action: "none", key: null };
 }
 
-// The refusal of a request the judge accepted while LAUNCHER, one of
-// TUI_LAUNCHER_STATES, is `missing`, or null. It asks for one probe, so a
-// terminal installed since the last one is found by a later request without
-// a restart. Any other state starts the launch: an `unknown` launcher that
-// finds no terminal is logged by tuiLaunchOutcome and moves the state.
-function tuiLauncherRefusal(launcher, name) {
-    if (TUI_LAUNCHER_STATES.indexOf(launcher) === -1)
-        throw new Error("tui: launcher state " + JSON.stringify(launcher) + " is not one of " + TUI_LAUNCHER_STATES.join(", "));
-    if (launcher !== "missing")
+// The refusal of a request the judge accepted, for launch KEY, from the
+// runner's state RUNNER, { launcher, busy, run }, or null to start it.
+// `reason=busy` while KEY is in `busy`, the keys whose launcher is still
+// waiting for its presenter or whose record says running: it asks the
+// runner to focus that run's window, so a second click raises the open
+// TUI instead of starting another. Then `reason=launcher-missing` while
+// `launcher`, one of TUI_LAUNCHER_STATES, is `missing`: it asks for one
+// probe, so a terminal installed since the last one is found by a later
+// request without a restart. Any other state starts the launch: an
+// `unknown` launcher that finds no terminal is logged by tuiLaunchOutcome
+// and moves the state.
+function tuiRunnerRefusal(runner, name, key) {
+    if (TUI_LAUNCHER_STATES.indexOf(runner.launcher) === -1)
+        throw new Error("tui: launcher state " + JSON.stringify(runner.launcher) + " is not one of " + TUI_LAUNCHER_STATES.join(", "));
+    var refusal;
+    if (runner.busy.indexOf(key) !== -1) {
+        refusal = tuiRefusal(name, "busy");
+        refusal.action = "focus";
+    } else if (runner.launcher === "missing") {
+        refusal = tuiRefusal(name, "launcher-missing");
+        refusal.action = "probe";
+    } else {
         return null;
-    var refusal = tuiRefusal(name, "launcher-missing");
-    refusal.probe = true;
+    }
+    refusal.key = key;
     return refusal;
 }
 
@@ -937,36 +961,41 @@ function tuiArgsValid(args) {
 }
 
 // The arguments after bin/vgsh-tui that open ROW, a normalized `tui` entry
-// or a CORE_TUIS row, running COMMAND; PLUGIN, { id, dir }, names the
+// or a CORE_TUIS row, running COMMAND as launch KEY's run RUN, so the
+// presenter writes the run's exit record; PLUGIN, { id, dir }, names the
 // plugin and its published snapshot, null for a core TUI.
-function tuiArgv(row, plugin, command) {
+function tuiArgv(row, plugin, key, run, command) {
     var argv = ["launch", "--title", row.title, "--size", row.size, "--presentation", row.presentation];
     if (plugin !== null)
         argv.push("--plugin", plugin.id, "--dir", plugin.dir);
+    argv.push("--record", key, "--run", run);
     return argv.concat(["--"], command);
 }
 
 // Plugin MANIFEST's own TUI NAME with ARGS, from its published snapshot
-// under SOURCE_DIR (D014), while the launcher is LAUNCHER: { ok: true, key,
-// argv }, `key` `<id>/<name>` and `argv` what follows bin/vgsh-tui, or
-// { ok: false, answer, probe } with answer `refused: tui=<name>` and, in this
+// under SOURCE_DIR (D014), from the runner's state RUNNER, { launcher, busy,
+// run }, `run` the id the launch gets: { ok: true, key, run, argv }, `key`
+// `<id>/<name>` and `argv` what follows bin/vgsh-tui, or { ok: false,
+// answer, action, key } with answer `refused: tui=<name>` and, in this
 // order, `reason=undeclared` for a name the manifest does not declare,
 // `reason=disabled` while the plugin is not ENABLED, `reason=args` for
-// arguments tuiArgsValid refuses and `reason=launcher-missing` as
-// tuiLauncherRefusal decides; `probe` is true for the last alone.
-function tuiRun(manifest, enabled, sourceDir, launcher, name, args) {
+// arguments tuiArgsValid refuses, then `reason=busy` or
+// `reason=launcher-missing` as tuiRunnerRefusal decides; `action` is
+// `none` for the first three.
+function tuiRun(manifest, enabled, sourceDir, runner, name, args) {
     if (typeof name !== "string" || !hasOwn(manifest.tui, name))
         return tuiRefusal(name, "undeclared");
     if (!enabled)
         return tuiRefusal(name, "disabled");
     if (!tuiArgsValid(args))
         return tuiRefusal(name, "args");
-    var missing = tuiLauncherRefusal(launcher, name);
-    if (missing !== null)
-        return missing;
+    var key = manifest.id + "/" + name;
+    var refusal = tuiRunnerRefusal(runner, name, key);
+    if (refusal !== null)
+        return refusal;
     var row = manifest.tui[name];
     var plugin = { id: manifest.id, dir: sourceDir + "/" + manifest.__revision };
-    return { ok: true, key: manifest.id + "/" + name, argv: tuiArgv(row, plugin, [row.script].concat(args === undefined ? [] : args)) };
+    return { ok: true, key: key, run: runner.run, argv: tuiArgv(row, plugin, key, runner.run, [row.script].concat(args === undefined ? [] : args)) };
 }
 
 // The listed TUI KEY, with no arguments: `core/<name>` from CORE, the
@@ -975,8 +1004,9 @@ function tuiRun(manifest, enabled, sourceDir, launcher, name, args) {
 // MANIFESTS gives it an `entry`, from the plugin's snapshot under
 // SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key nothing
 // lists, `reason=disabled` for a plugin not in ENABLED_IDS, then
-// `reason=launcher-missing` as tuiLauncherRefusal decides for LAUNCHER.
-function tuiOpen(manifests, enabledIds, sourceDir, coreBin, launcher, core, key) {
+// `reason=busy` or `reason=launcher-missing` as tuiRunnerRefusal decides
+// for RUNNER.
+function tuiOpen(manifests, enabledIds, sourceDir, coreBin, runner, core, key) {
     var slash = typeof key === "string" ? key.indexOf("/") : -1;
     if (slash === -1)
         return tuiRefusal(key, "undeclared");
@@ -985,21 +1015,21 @@ function tuiOpen(manifests, enabledIds, sourceDir, coreBin, launcher, core, key)
     if (owner === "core") {
         if (!hasOwn(core, name))
             return tuiRefusal(key, "undeclared");
-        var coreMissing = tuiLauncherRefusal(launcher, key);
-        if (coreMissing !== null)
-            return coreMissing;
+        var coreRefusal = tuiRunnerRefusal(runner, key, key);
+        if (coreRefusal !== null)
+            return coreRefusal;
         var row = core[name];
-        return { ok: true, key: key, argv: tuiArgv(row, null, [coreBin + "/" + row.argv[0]].concat(row.argv.slice(1))) };
+        return { ok: true, key: key, run: runner.run, argv: tuiArgv(row, null, key, runner.run, [coreBin + "/" + row.argv[0]].concat(row.argv.slice(1))) };
     }
     if (!hasOwn(manifests, owner) || !hasOwn(manifests[owner].tui, name) || manifests[owner].tui[name].entry === null)
         return tuiRefusal(key, "undeclared");
     if (enabledIds.indexOf(owner) === -1)
         return tuiRefusal(key, "disabled");
-    var pluginMissing = tuiLauncherRefusal(launcher, key);
-    if (pluginMissing !== null)
-        return pluginMissing;
-    var launch = tuiRun(manifests[owner], true, sourceDir, launcher, name, []);
-    return { ok: true, key: key, argv: launch.argv };
+    var pluginRefusal = tuiRunnerRefusal(runner, key, key);
+    if (pluginRefusal !== null)
+        return pluginRefusal;
+    var launch = tuiRun(manifests[owner], true, sourceDir, runner, name, []);
+    return { ok: true, key: key, run: launch.run, argv: launch.argv };
 }
 
 // Every listed TUI, sorted by key: each CORE row with an `entry` as
@@ -1066,6 +1096,168 @@ function tuiLaunchOutcome(key, completion, stderr) {
     if (completion.status === 0 && completion.code === TUI_LAUNCHER_MISSING)
         return "tui: refused: tui=" + tuiLabel(key) + " reason=launcher-missing";
     return "tui: launcher=failed tui=" + tuiLabel(key) + " exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0];
+}
+
+// The log lines of a `bin/vgsh-tui reap` that ended with COMPLETION, STDOUT
+// and STDERR, each { level: "info" | "error", text }: one info line
+// `tui: reaped=<key> run=<run>` per record it ended, an error line for any
+// other line it printed, and `tui: reap=failed exit=<code> status=<status>`
+// with its first stderr line, or `tui: reap=unstarted`, for a reap that did
+// not exit 0.
+function tuiReapOutcome(completion, stdout, stderr) {
+    var lines = [];
+    String(stdout).split("\n").forEach(function (line) {
+        if (line === "")
+            return;
+        if (/^reaped=[a-z0-9.-]+\/[a-z0-9-]+ run=[a-z0-9-]+$/.test(line))
+            lines.push({ level: "info", text: "tui: " + line });
+        else
+            lines.push({ level: "error", text: "tui: reap=unparsed line=" + JSON.stringify(line) });
+    });
+    if (completion === null)
+        lines.push({ level: "error", text: "tui: reap=unstarted" });
+    else if (completion.status !== 0 || completion.code !== 0)
+        lines.push({ level: "error", text: "tui: reap=failed exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0] });
+    return lines;
+}
+
+// What a launch's `done` receives when its launcher ended with COMPLETION,
+// or null for a launcher that saw the run's record: its `done` waits for
+// the ended record. `{ code: null, reason: "launcher-missing" }` when no
+// terminal was found, `{ code: null, reason: "launcher-failed" }` for every
+// other end, the silent terminal included.
+function tuiLaunchDone(completion) {
+    if (completion !== null && completion.status === 0 && completion.code === 0)
+        return null;
+    if (completion !== null && completion.status === 0 && completion.code === TUI_LAUNCHER_MISSING)
+        return { code: null, reason: "launcher-missing" };
+    return { code: null, reason: "launcher-failed" };
+}
+
+// Whether KEY is a launch key: `core/<name>` or `<plugin id>/<name>`.
+function tuiKeyValid(key) {
+    if (typeof key !== "string")
+        return false;
+    var slash = key.indexOf("/");
+    if (slash === -1)
+        return false;
+    var owner = key.slice(0, slash);
+    return (owner === "core" || ID_PATTERN.test(owner)) && NAME_PATTERN.test(key.slice(slash + 1));
+}
+
+// One exit record's TEXT, as bin/vgsh-tui writes it: { ok: true, record }
+// or { ok: false, error } naming the first defect. A running record has a
+// null code and endedAt; an ended one an integer code, or null when
+// `vgsh-tui reap` wrote it, and an endedAt.
+function tuiRecord(text) {
+    var value;
+    try {
+        value = JSON.parse(text);
+    } catch (e) {
+        return { ok: false, error: "record is not JSON: " + e.message };
+    }
+    if (!isPlainObject(value))
+        return { ok: false, error: "record is not an object" };
+    if (!tuiKeyValid(value.key))
+        return { ok: false, error: "record key " + JSON.stringify(value.key) + " is not a launch key" };
+    if (typeof value.run !== "string" || !TUI_RUN_PATTERN.test(value.run))
+        return { ok: false, error: "record run " + JSON.stringify(value.run) + " is malformed" };
+    if (TUI_RECORD_STATES.indexOf(value.state) === -1)
+        return { ok: false, error: "record state " + JSON.stringify(value.state) + " is not one of " + TUI_RECORD_STATES.join(", ") };
+    var ended = value.state === "ended";
+    if (!(value.code === null || (ended && Number.isInteger(value.code))))
+        return { ok: false, error: "record code " + JSON.stringify(value.code) + " does not fit state " + value.state };
+    if (typeof value.startedAt !== "string" || value.startedAt.length === 0)
+        return { ok: false, error: "record startedAt must be a string" };
+    if (ended ? typeof value.endedAt !== "string" || value.endedAt.length === 0 : value.endedAt !== null)
+        return { ok: false, error: "record endedAt " + JSON.stringify(value.endedAt) + " does not fit state " + value.state };
+    if (!isPlainObject(value.window) || typeof value.window.appId !== "string" || typeof value.window.title !== "string")
+        return { ok: false, error: "record window must be { appId, title }" };
+    return { ok: true, record: { key: value.key, run: value.run, state: value.state, code: value.code, startedAt: value.startedAt, endedAt: value.endedAt, window: { appId: value.window.appId, title: value.window.title } } };
+}
+
+// The runs RECORDS, a list of tuiRecord records, describe: { runs, keys },
+// `runs` each run's record by run id, an ended record over the running
+// one of the same run, and `keys` per key { running, ended }: the running
+// run with the latest startedAt, or null, and the ended run with the latest
+// endedAt, or null. A running record whose run also ended is not running.
+function tuiRuns(records) {
+    var runs = {};
+    records.forEach(function (record) {
+        if (!hasOwn(runs, record.run) || record.state === "ended")
+            runs[record.run] = record;
+    });
+    var keys = {};
+    Object.keys(runs).forEach(function (id) {
+        var record = runs[id];
+        if (!hasOwn(keys, record.key))
+            keys[record.key] = { running: null, ended: null };
+        var slot = keys[record.key];
+        if (record.state === "running") {
+            if (slot.running === null || record.startedAt > slot.running.startedAt)
+                slot.running = record;
+        } else if (slot.ended === null || record.endedAt > slot.ended.endedAt) {
+            slot.ended = record;
+        }
+    });
+    return { runs: runs, keys: keys };
+}
+
+// The keys a new run may not start under: every key in LAUNCHING, whose
+// launcher still waits for its presenter, and every key of RUNS, a tuiRuns
+// result, with a running run.
+function tuiBusyKeys(runs, launching) {
+    var busy = launching.slice();
+    Object.keys(runs.keys).forEach(function (key) {
+        if (runs.keys[key].running !== null && busy.indexOf(key) === -1)
+            busy.push(key);
+    });
+    return busy.sort();
+}
+
+// shell.tui.state for the plugin ID's own TUIs NAMES, from RUNS, a tuiRuns
+// result: per name { running, code, endedAt }, the last two from the key's
+// latest ended run, null before any ended.
+function tuiState(runs, id, names) {
+    var out = {};
+    names.forEach(function (name) {
+        var slot = hasOwn(runs.keys, id + "/" + name) ? runs.keys[id + "/" + name] : { running: null, ended: null };
+        out[name] = {
+            running: slot.running !== null,
+            code: slot.ended === null ? null : slot.ended.code,
+            endedAt: slot.ended === null ? null : slot.ended.endedAt
+        };
+    });
+    return out;
+}
+
+// What the `done` of RUN receives, from RUNS, a tuiRuns result: null while
+// the run has no ended record, else { code, reason }, `reason` null for a
+// run that ended with its code and `vanished` for one `vgsh-tui reap`
+// ended, whose code is null.
+function tuiRunDone(runs, run) {
+    if (!hasOwn(runs.runs, run) || runs.runs[run].state !== "ended")
+        return null;
+    var code = runs.runs[run].code;
+    return { code: code, reason: code === null ? "vanished" : null };
+}
+
+// The window of a run whose record carries WINDOW, { appId, title }, among
+// WINDOWS, each { address, appId, title } as the compositor reports it:
+// { state: "found", address } with a `0x` address for exactly one match,
+// { state: "none" } for none, { state: "ambiguous", count } for more. The
+// presenter records the app-id and the title the terminal was opened with,
+// and a terminal that honours `--title` keeps it.
+function tuiWindow(windows, window) {
+    var matches = windows.filter(function (w) {
+        return w.appId === window.appId && w.title === window.title && typeof w.address === "string" && w.address !== "";
+    });
+    if (matches.length === 0)
+        return { state: "none" };
+    if (matches.length > 1)
+        return { state: "ambiguous", count: matches.length };
+    var address = matches[0].address;
+    return { state: "found", address: address.indexOf("0x") === 0 ? address : "0x" + address };
 }
 
 // Validate one manifest object. Returns { ok: true, manifest } with the

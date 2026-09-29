@@ -234,6 +234,7 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
   if [[ ! -e $rt_run/vgsh-sources-1 ]]; then ok "run removes the source snapshot roots dead shells left"; else fail "run left $rt_run/vgsh-sources-1"; fi
   if [[ -d $run_state ]]; then ok "run creates the state directory the shell watches"; else fail "run left no $run_state"; fi
+  if [[ -d $rt_run/vgs/tui ]]; then ok "run creates the TUI record directory the shell lists"; else fail "run left no $rt_run/vgs/tui"; fi
 else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
 fi

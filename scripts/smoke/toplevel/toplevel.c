@@ -3,9 +3,10 @@
  * compositor maps a window of that class: the helper connects to the
  * socket it is given and to nothing else.
  *
- *   toplevel APP_ID
+ *   toplevel APP_ID [TITLE]
  *
- * Maps a toplevel whose app-id and title are APP_ID and answers every
+ * Maps a toplevel whose app-id is APP_ID and whose title is TITLE, APP_ID
+ * when it is absent, and answers every
  * configure with a new wl_shm buffer of the configured size, 320 by 240
  * when the compositor leaves the size to the client, so the window takes
  * whatever size the compositor asks. It answers the compositor's ping,
@@ -37,6 +38,7 @@ static struct wl_shm *shm = NULL;
 static struct xdg_wm_base *wm_base = NULL;
 static struct wl_surface *surface = NULL;
 static const char *app_id = NULL;
+static const char *title = NULL;
 /* The size the last toplevel configure asked, 0 for the client's choice. */
 static int32_t asked_width = 0, asked_height = 0;
 static int closed = 0, mapped = 0, buffer_failed = 0;
@@ -165,11 +167,12 @@ static int broken(struct wl_display *display) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2 || argv[1][0] == '\0') {
-        fprintf(stderr, "toplevel: refused: usage=APP_ID\n");
+    if (argc < 2 || argc > 3 || argv[1][0] == '\0' || (argc == 3 && argv[2][0] == '\0')) {
+        fprintf(stderr, "toplevel: refused: usage=APP_ID [TITLE]\n");
         return 2;
     }
     app_id = argv[1];
+    title = argc == 3 ? argv[2] : argv[1];
     /* The signals arrive on a descriptor the event loop polls beside the
      * display's, so a signal never interrupts a Wayland call half done. */
     sigset_t stops;
@@ -202,7 +205,7 @@ int main(int argc, char **argv) {
     struct xdg_toplevel *toplevel = xdg_surface_get_toplevel(xdg_surface);
     xdg_toplevel_add_listener(toplevel, &toplevel_listener, NULL);
     xdg_toplevel_set_app_id(toplevel, app_id);
-    xdg_toplevel_set_title(toplevel, app_id);
+    xdg_toplevel_set_title(toplevel, title);
     /* The first commit carries no buffer: it asks for the first configure. */
     wl_surface_commit(surface);
 

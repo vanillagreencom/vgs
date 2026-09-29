@@ -5,7 +5,9 @@
 # Done and Failed prompts, the skip on 130, a typed Ctrl-C, the exit code,
 # the plain
 # presentation, the gum.env parse, the argv list, the exported paths and
-# the plugin copy. launch and `vgsh tui present` run against a stub
+# the plugin copy, and the exit record: its running and ended files, the
+# key's lock, a busy key, a termination and reap. launch and `vgsh tui
+# present` run against a stub
 # xdg-terminal-exec that records its argv, behind a stub setsid that
 # records its first argument and runs the rest in the foreground. `vgsh tui
 # list` and `vgsh tui open` run against a stub qs that answers the shell's
@@ -267,6 +269,112 @@ launch_row "vgsh tui present" "$(lines --app-id=org.vgs.tui "--title=VGS · exit
 launch_row "vgsh tui present with a title and a size" "$(lines --app-id=org.vgs.tui.tall "--title=VGS · Up" -- "$subject" present --presentation full -- "$stubs/exits" 1)" \
   "$repo/bin/vgsh" tui present --title Up --size tall -- "$stubs/exits" 1
 
+# The exit record: present writes the running record before the command
+# runs and the ended record, with the command's code, after it, and holds
+# the key's lock meanwhile.
+rdir="$rt/vgs/tui"
+stub during "ls -A \"\$1\" >\"$tmp/during\"; cat -- \"\$1\"/acme.tui@hello@*.running.json >\"$tmp/during-record\""
+# leaver leaves a process behind that keeps every descriptor it was handed.
+stub leaver "sleep 30 </dev/null >/dev/null 2>&1 & echo \$! >\"$tmp/leaver\""
+title_words='VGS · Hi "q" \x'
+record_opts=(--record acme.tui/hello --run 1-1 --record-dir "$rdir" --app-id org.vgs.tui --window-title "$title_words")
+# record_of FILE: the record's fields as one JSON line, timestamps replaced
+# by whether each has the shape present writes, or `absent`.
+record_of() {
+  python3 - "$1" <<'PY'
+import json, os, re, sys
+path = sys.argv[1]
+if not os.path.exists(path):
+    print("absent"); sys.exit()
+r = json.load(open(path))
+stamp = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$")
+for k in ("startedAt", "endedAt"):
+    if isinstance(r.get(k), str):
+        r[k] = "stamp" if stamp.match(r[k]) else "malformed:" + r[k]
+print(json.dumps(r, sort_keys=True))
+PY
+}
+want_record() { # STATE CODE
+  python3 -c 'import json,sys; s, c, t = sys.argv[1:]; print(json.dumps({"key": "acme.tui/hello", "run": "1-1", "state": s, "code": None if c == "null" else int(c), "startedAt": "stamp", "endedAt": None if s == "running" else "stamp", "window": {"appId": "org.vgs.tui", "title": t}}, sort_keys=True))' "$1" "$2" "$title_words"
+}
+mkdir -p "$rdir"
+printf '{}\n' >"$rdir/acme.tui@hello@0-1.running.json"
+printf '{}\n' >"$rdir/acme.tui@hello@0-2.ended.json"
+printf '{}\n' >"$rdir/acme.tui@other@0-3.running.json"
+plain_run "$subject" present --presentation plain "${record_opts[@]}" -- during "$rdir"
+check "a recorded run exits with the command's code" test "$plain_status" == 0
+check "the running record is in place while the command runs" test "$(cat "$tmp/during")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@0-2.ended.json acme.tui@hello@1-1.running.json acme.tui@other@0-3.running.json)"
+printf '%s\n' "$(cat "$tmp/during-record")" >"$tmp/during.json"
+check "the running record carries the key, the run and the window" test "$(record_of "$tmp/during.json")" == "$(want_record running null)"
+check "the ended record carries the command's code" test "$(record_of "$rdir/acme.tui@hello@1-1.ended.json")" == "$(want_record ended 0)"
+check "the run leaves its ended record, the lock and another key's record alone" test "$(LC_ALL=C ls -A "$rdir")" == "$(printf '%s\n' acme.tui@hello.lock acme.tui@hello@1-1.ended.json acme.tui@other@0-3.running.json)"
+plain_run "$subject" present --presentation plain "${record_opts[@]/1-1/1-2}" -- exits 3
+check "a failed recorded run exits with its code" test "$plain_status" == 3
+check "the next run's ended record replaces the last one" test "$(LC_ALL=C ls -A "$rdir" | grep -c 'acme\.tui@hello@')" == 1
+check "the next run's ended record carries its code" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/acme.tui@hello@1-2.ended.json")" == 3
+# A process the command leaves behind does not hold the key.
+plain_run "$subject" present --presentation plain "${record_opts[@]}" -- leaver
+key_free() { flock -n "$rdir/acme.tui@hello.lock" true; }
+check "a process the command left behind does not hold the key" key_free
+[[ -s $tmp/leaver ]] && kill "$(cat "$tmp/leaver")" 2>/dev/null
+# Another presenter of the key is refused before the logo, with no record.
+exec {held}>>"$rdir/acme.tui@hello.lock"
+flock "$held"
+rm -f -- "$rdir"/*.json
+plain_run "$subject" present "${record_opts[@]}" -- exits 0
+check "a presenter of a held key exits 75" test "$plain_status" == 75
+check "a presenter of a held key names it" test "$(err_first)" == "vgsh-tui: refused: record=acme.tui/hello reason=busy"
+check "a presenter of a held key runs nothing and draws no logo" test "$(grep -c -e 'ran 0' -e "$logo_line" "$tmp/out")" == 0
+check "a presenter of a held key writes no record" test -z "$(ls "$rdir" | grep '\.json$')"
+exec {held}>&-
+# A termination while the command runs ends the record with present's code.
+rm -f -- "$tmp/child"
+"${tui_env[@]}" "$subject" present --presentation plain "${record_opts[@]}" -- waitint 2 </dev/null >/dev/null 2>&1 &
+present_pid=$!
+for _ in $(seq 1 100); do [[ -s $tmp/child ]] && break; sleep 0.05; done
+kill -TERM "$present_pid"
+term_status=0
+wait "$present_pid" || term_status=$?
+check "a terminated presenter exits 143" test "$term_status" == 143
+check "a terminated presenter ends its record with 143" test "$(record_of "$rdir/acme.tui@hello@1-1.ended.json")" == "$(want_record ended 143)"
+rm -f -- "$rdir"/*.json
+
+# reap: a running record whose key no presenter holds is ended with a null
+# code; a held key's record stays; a record reap cannot read is refused.
+printf '%s\n' '{"key":"core/doctor","run":"5-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@5-1.running.json"
+printf '%s\n' '{"key":"acme.tui/hello","run":"6-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/acme.tui@hello@6-1.running.json"
+exec {held}>>"$rdir/acme.tui@hello.lock"
+flock "$held"
+plain_run "$subject" reap
+check "reap exits 0" test "$plain_status" == 0
+check "reap names the run it ended" test "$(cat "$tmp/out")" == "reaped=core/doctor run=5-1"
+check "reap ends the dead run with a null code" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["state"], r["code"], r["endedAt"] is not None, r["startedAt"])' "$rdir/core@doctor@5-1.ended.json")" == "ended None True 2026-09-29T07:00:00.000Z"
+check "reap removes the dead run's running record" test ! -e "$rdir/core@doctor@5-1.running.json"
+check "reap leaves a held key's running record" test -e "$rdir/acme.tui@hello@6-1.running.json"
+exec {held}>&-
+rm -f -- "$rdir"/*.json
+printf '{}\n' >"$rdir/core@doctor@7-1.running.json"
+plain_run "$subject" reap
+check "reap exits 1 on a record it cannot end" test "$plain_status" == 1
+check "reap names the record it cannot end" test "$(err_first)" == "vgsh-tui: refused: reap=$rdir/core@doctor@7-1.running.json reason=malformed"
+rm -f -- "$rdir"/*.json
+plain_run env XDG_RUNTIME_DIR="$tmp/rt-none" "$subject" reap
+check "reap with no record directory ends nothing" test "$plain_status:$(cat "$tmp/out")" == "0:"
+
+# launch --record: present learns the record directory, the app-id and the
+# window title, and launch returns once the run's record is there, behind a
+# stub terminal that records its argv and starts the command.
+stubs_run="$tmp/stubs-run"; mkdir -p "$stubs_run"
+printf '#!/bin/sh\n: >"%s"; for a; do printf "%%s\\n" "$a" >>"%s"; done\nwhile [ "$1" != -- ]; do shift; done; shift\n"$@" </dev/null >/dev/null 2>&1 &\n' "$tmp/term" "$tmp/term" >"$stubs_run/xdg-terminal-exec"
+chmod +x "$stubs_run/xdg-terminal-exec"
+rm -f -- "$tmp/term"
+plain_run env PATH="$stubs_run:$stubs:$base_path" "$subject" launch --title Hello --size wide --record acme.tui/hello --run 2-1 -- exits 4
+check "a recorded launch exits 0 once the record is there" test "$plain_status" == 0
+check "a recorded launch hands present the record, the directory and the window" test "$(cat "$tmp/term")" == "$(lines --app-id=org.vgs.tui.wide "--title=VGS · Hello" -- "$subject" present --presentation full --record acme.tui/hello --run 2-1 --record-dir "$rdir" --app-id org.vgs.tui.wide --window-title "VGS · Hello" -- exits 4)"
+for _ in $(seq 1 100); do [[ -e $rdir/acme.tui@hello@2-1.ended.json ]] && break; sleep 0.05; done
+check "the launched run ends its record with the command's code" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["code"], r["window"]["appId"])' "$rdir/acme.tui@hello@2-1.ended.json")" == "4 org.vgs.tui.wide"
+rm -f -- "$rdir"/*.json
+
 # Refusals before any terminal opens.
 # Rows: exit | first stderr line | the command's words, space-delimited
 rows=(
@@ -282,6 +390,22 @@ rows=(
   "2|vgsh-tui: refused: plugin=missing dir=/x|$subject launch --title t --dir /x -- exits 0"
   "2|vgsh-tui: refused: argument=--title|$subject present --title t -- exits 0"
   "2|vgsh-tui: refused: argument=--size|$subject present --size wide -- exits 0"
+  "2|vgsh-tui: refused: run=missing record=acme.tui/hello|$subject launch --title t --record acme.tui/hello -- exits 0"
+  "2|vgsh-tui: refused: record=missing run=1-1|$subject launch --title t --run 1-1 -- exits 0"
+  "2|vgsh-tui: refused: record=Acme.tui/x|$subject launch --title t --record Acme.tui/x --run 1 -- exits 0"
+  "2|vgsh-tui: refused: record=acme.tui/a/b|$subject launch --title t --record acme.tui/a/b --run 1 -- exits 0"
+  "2|vgsh-tui: refused: record=acme.tui|$subject launch --title t --record acme.tui --run 1 -- exits 0"
+  "2|vgsh-tui: refused: run=1_1|$subject launch --title t --record a/b --run 1_1 -- exits 0"
+  "2|vgsh-tui: refused: argument=--record-dir|$subject launch --title t --record-dir /x -- exits 0"
+  "2|vgsh-tui: refused: argument=--app-id|$subject launch --title t --app-id org.vgs.tui -- exits 0"
+  "2|vgsh-tui: refused: argument=--window-title|$subject launch --title t --window-title t -- exits 0"
+  "2|vgsh-tui: refused: record=missing|$subject present --app-id org.vgs.tui -- exits 0"
+  "2|vgsh-tui: refused: record-dir=missing|$subject present --record a/b --run 1 -- exits 0"
+  "2|vgsh-tui: refused: record-dir=rel|$subject present --record a/b --run 1 --record-dir rel -- exits 0"
+  "2|vgsh-tui: refused: app-id=missing|$subject present --record a/b --run 1 --record-dir /x -- exits 0"
+  "2|vgsh-tui: refused: app-id=org/vgs|$subject present --record a/b --run 1 --record-dir /x --app-id org/vgs -- exits 0"
+  "2|vgsh-tui: refused: window-title=missing-or-control|$subject present --record a/b --run 1 --record-dir /x --app-id org.vgs.tui -- exits 0"
+  "2|vgsh-tui: refused: argument=x|$subject reap x"
   "2|vgsh-tui: refused: verb=frob|$subject frob"
   "2|vgsh-tui: refused: argument=x|$subject check x"
   "2|vgsh-tui: refused: verb=missing|$subject"
@@ -414,7 +538,7 @@ prompt_on_tty "$control_bin"
 check "the stdout-prompt mutant keeps the prompt off the terminal" test "$(grep -c 'Failed (' "$tmp/out")" == 0
 check "the stdout-prompt mutant writes the prompt to stdout" grep -q 'Failed (exit code 1)' "$tmp/stdout"
 
-control shell-string vgsh-tui $'\n    "${argv[@]}"\n' $'\n    bash -c "${argv[*]}"\n'
+control shell-string vgsh-tui 'else "${argv[@]}"; fi' 'else bash -c "${argv[*]}"; fi'
 rm -f -- "$tmp/argv"
 plain_run "$control_bin" present --presentation plain -- record 'a b' "\$(touch $tmp/planted)"
 check "the shell-string mutant runs an argument as shell code" test -e "$tmp/planted"
@@ -472,4 +596,43 @@ control unchecked-terminal vgsh-tui 'bad_invocation "argument=$1"; require_termi
 plain_run env PATH="$bare" "$control_bin" check
 check "the unchecked-terminal mutant answers check without a terminal launcher" test "$plain_status" == 0
 
+# A launcher whose terminal never starts the presenter reports it silent,
+# on a copy with a one-second ceiling behind the stub terminal that starts
+# nothing; the no-wait mutant returns at once with no record.
+control short-ceiling vgsh-tui 'start_ceiling=30' 'start_ceiling=1'
+plain_run "$control_bin" launch --title t --record acme.tui/hello --run 3-1 -- exits 0
+check "a launch whose presenter never writes exits 1" test "$plain_status" == 1
+check "a launch whose presenter never writes names the terminal silent" test "$(err_first)" == "vgsh-tui: refused: terminal=silent run=3-1"
+control no-wait vgsh-tui '  [[ -z $record_key ]] || await_record' '  :'
+plain_run "$control_bin" launch --title t --record acme.tui/hello --run 3-1 -- exits 0
+check "the no-wait mutant returns 0 with no record" test "$plain_status:$(ls "$rdir" | grep -c '3-1')" == "0:0"
+control unended-record vgsh-tui '  if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi' '  :'
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
+check "the unended-record mutant leaves no ended record" test ! -e "$rdir/acme.tui@hello@1-1.ended.json"
+rm -f -- "$rdir"/*.json
+control inherited-lock vgsh-tui 'then "${argv[@]}" {record_fd}>&-; else' 'then "${argv[@]}"; else'
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- leaver
+check "the inherited-lock mutant leaves the key held by the process left behind" test "$(key_free && echo free || echo held)" == held
+[[ -s $tmp/leaver ]] && kill "$(cat "$tmp/leaver")" 2>/dev/null
+rm -f -- "$rdir"/*.json
+control unlocked vgsh-tui 'flock -n -E 75 "$record_fd" || status=$?' ':'
+exec {held}>>"$rdir/acme.tui@hello.lock"
+flock "$held"
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
+check "the unlocked mutant runs a second presenter of a held key" test "$plain_status" == 0
+exec {held}>&-
+rm -f -- "$rdir"/*.json
+control stale-kept vgsh-tui '    if [[ -e $stale ]]; then rm -f -- "$stale"; fi' '    :'
+printf '{}\n' >"$rdir/acme.tui@hello@0-1.running.json"
+plain_run "$control_bin" present --presentation plain "${record_opts[@]}" -- exits 0
+check "the stale-kept mutant keeps a dead presenter's running record" test -e "$rdir/acme.tui@hello@0-1.running.json"
+rm -f -- "$rdir"/*.json
+control reap-held vgsh-tui '      75) continue ;;' '      75) ;;'
+printf '%s\n' '{"key":"acme.tui/hello","run":"6-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/acme.tui@hello@6-1.running.json"
+exec {held}>>"$rdir/acme.tui@hello.lock"
+flock "$held"
+plain_run "$control_bin" reap
+check "the reap-held mutant ends a live presenter's record" test -e "$rdir/acme.tui@hello@6-1.ended.json"
+exec {held}>&-
+rm -f -- "$rdir"/*.json
 rows_done test-vgsh-tui

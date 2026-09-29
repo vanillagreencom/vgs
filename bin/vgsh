@@ -1211,10 +1211,12 @@ case "$cmd" in
     # First, so a refused run takes no lock, creates no directory and
     # removes no snapshot root.
     preflight
-    # The shell watches files in both directories from its start, and a
-    # watch on a file whose directory is absent never fires once the
-    # directory appears: docs/architecture/runtime-qml.md.
-    mkdir -p -- "$config_home/vgs" "$state_home/vgs"
+    # The shell watches files in both directories and the floating TUIs'
+    # exit records in the third from its start. A watch on a file whose
+    # directory is absent never fires once the directory appears, and a
+    # folder listing of an absent directory lists the working directory:
+    # docs/architecture/runtime-qml.md.
+    mkdir -p -- "$config_home/vgs" "$state_home/vgs" "$rt_dir/vgs/tui"
     # Opened for append so a runner that loses the race never truncates the
     # holder's pid; only the holder rewrites the file.
     exec 9>>"$lock"
