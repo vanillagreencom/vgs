@@ -1,17 +1,19 @@
 # The Hyprland layer, shell/Core/HyprlandLayer.qml: the Lua file the shell
-# writes from the theme's border colours and every enabled plugin's
-# `hyprland` manifest data, the line `vgsh hypr wire` keeps first in
-# hyprland.lua, and the `hyprctl reload` after each write. The harness's
-# hyprland.lua existed when the shell first started, so the first write
-# wired it. Every row reads the nested instance back through hyprctl. The
-# launcher's and the notifications' own rows ran before this one, so it
-# enables both, types their keys on the nested seat, and leaves both
-# disabled, shell.json as it found it and hyprland.lua as the first run left
-# it.
+# writes from the theme's border colours, the floating TUIs' window rules
+# and every enabled plugin's `hyprland` manifest data, the line `vgsh hypr
+# wire` keeps first in hyprland.lua, and the `hyprctl reload` after each
+# write. The harness's hyprland.lua existed when the shell first started,
+# so the first write wired it. Every row reads the nested instance back
+# through hyprctl. The launcher's and the notifications' own rows ran
+# before this one, so it enables both, types their keys on the nested
+# seat, and leaves both disabled, shell.json as it found it and
+# hyprland.lua as the first run left it. The window rules are read back on
+# windows the harness's toplevel helper maps, each stopped by the pid the
+# row started.
 #
 # Hyprland v0.56.2 reads no layer rule back (docs/architecture/runtime.md
-# § Hyprland), so the rows hold the rules through the written file and an
-# empty configerrors, where Hyprland lists a field it refuses.
+# § Hyprland), so the rows hold the layer rules through the written file
+# and an empty configerrors, where Hyprland lists a field it refuses.
 set -euo pipefail
 hypr_lua="$home/.config/hypr/hyprland.lua"
 hypr_layer="$home/.local/state/vgs/hypr/vgs.lua"
@@ -36,6 +38,67 @@ section_of() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); prin
 # How many plugin sections the layer holds. grep -c exits 1 on a count of
 # 0, which is an answer, and 2 on a file it cannot read, which is not.
 section_count() { local status=0; grep -c -- ': binds and layer rules from its manifest$' "$hypr_layer" || status=$?; [[ $status -le 1 ]]; }
+# Put hyprland.lua back as the shell's first run left it: the loading line,
+# then the harness's own text.
+restore_hypr_lua() { { printf '%s\n' "$wire_line"; cat -- "$sandbox/hyprland-harness.lua"; } >"$hypr_lua.next" && mv -T -- "$hypr_lua.next" "$hypr_lua"; }
+# The toplevel helper, for the floating TUIs' window rules. open_tui APP_ID
+# starts it on the nested socket, leaves its pid in tui_pid and returns once
+# it prints that its first buffer is committed. close_tui LABEL stops that
+# pid alone and passes LABEL when the helper exits 0 on the signal.
+tui_pid=""
+open_tui() {
+  local log="$sandbox/toplevel-$1.log"
+  spawn "$log" "${shell_env[@]}" "$sandbox/toplevel" "$1"
+  tui_pid="$spawn_pid"
+  for _ in $(seq 1 25); do
+    grep -qxF -- "mapped $1" "$log" && return 0
+    kill -0 -- "$tui_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  cat -- "$log" >&2
+  return 1
+}
+close_tui() {
+  local status=0
+  kill -TERM -- "$tui_pid" 2>/dev/null || true
+  for _ in $(seq 1 25); do kill -0 -- "$tui_pid" 2>/dev/null || break; sleep 0.2; done
+  if kill -0 -- "$tui_pid" 2>/dev/null; then kill -KILL -- "$tui_pid" 2>/dev/null || true; fi
+  wait "$tui_pid" || status=$?
+  if [[ $status -eq 0 ]]; then ok "$1"; else fail "$1: exit=$status"; fi
+}
+# The nested instance's client of pid PID as `<class> floating=<bool>`, its
+# size as `<w>x<h>`, or clients=<n> when that pid has not one client.
+tui_client() { hypr -j clients | python3 -c '
+import json, sys
+cs = [c for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[2])]
+if len(cs) != 1: print("clients=%d" % len(cs))
+elif sys.argv[1] == "floating": print("%s floating=%s" % (cs[0]["class"], str(cs[0]["floating"]).lower()))
+else: print("%dx%d" % tuple(cs[0]["size"]))' "$1" "$2"; }
+tui_floating() { tui_client floating "$1"; }
+tui_size() { tui_client size "$1"; }
+# `centred` when the centre of the client of pid PID lies within 1 px of
+# the centre of its monitor's work area, else both centres. Hyprland
+# v0.56.2 centres a floating window on that work area: the monitor's
+# logical box less its reserved space, [left, top, right, bottom], and less
+# general:float_gaps, CSS order (docs/architecture/runtime.md § Hyprland).
+# hyprctl prints the window's place in whole pixels, hence the 1 px.
+tui_centred() {
+  local clients monitors gaps
+  clients="$(hypr -j clients)" && monitors="$(hypr -j monitors)" && gaps="$(hypr -j getoption general:float_gaps)" || return 1
+  python3 -c '
+import json, sys
+clients, monitors, gaps, pid = (json.loads(a) for a in sys.argv[1:])
+cs = [c for c in clients if c["pid"] == pid]
+if len(cs) != 1: print("clients=%d" % len(cs)); sys.exit()
+c = cs[0]
+m = next(m for m in monitors if m["id"] == c["monitor"])
+top, right, bottom, left = (int(v) for v in gaps["css"].split())
+rl, rt, rr, rb = m["reserved"]
+area_x = (m["x"] + rl + left + m["x"] + m["width"] / m["scale"] - rr - right) / 2
+area_y = (m["y"] + rt + top + m["y"] + m["height"] / m["scale"] - rb - bottom) / 2
+at_x, at_y = c["at"][0] + c["size"][0] / 2, c["at"][1] + c["size"][1] / 2
+print("centred" if abs(at_x - area_x) <= 1 and abs(at_y - area_y) <= 1 else "centre=%g,%g work-area-centre=%g,%g" % (at_x, at_y, area_x, area_y))' "$clients" "$monitors" "$gaps" "$1"
+}
 # listPlugins' Hyprland problems, sorted.
 hypr_problems() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps(sorted(e["error"] for e in json.load(sys.stdin)["errors"] if e["error"].startswith("hyprland: "))))'; }
 inbox_mode() { ipc smoke readInstance service vgs.notifications panelMode; }
@@ -67,7 +130,37 @@ expect "the first run changed nothing else in hyprland.lua" same bash -c 'tail -
 expect "the layer's header names the command that writes it again" yes bash -c 'grep -qF -- "\`vgsh hypr render\`" "$1" && echo yes' _ "$hypr_layer"
 expect "no plugin declaring Hyprland data is enabled, so no section is written" 0 section_count
 expect_poll "the nested instance holds no vgs bind" '[]' vgs_binds
-expect "the nested configuration holds no error" '[]' config_errors
+expect "the nested configuration, the floating TUIs' window rules included, holds no error" '[]' config_errors
+
+# The floating TUIs' window rules: a window of each class floats, at its
+# class's size, centred on the work area.
+for tui in "org.vgs.tui 875x600" "org.vgs.tui.wide 1200x720" "org.vgs.tui.tall 875x900"; do
+  read -r tui_class tui_want <<<"$tui"
+  if open_tui "$tui_class"; then
+    expect_poll "a $tui_class window floats" "$tui_class floating=true" tui_floating "$tui_pid"
+    geometry expect_poll "a $tui_class window is $tui_want" "$tui_want" tui_size "$tui_pid"
+    geometry expect_poll "a $tui_class window is centred on the work area" centred tui_centred "$tui_pid"
+    close_tui "the $tui_class helper exits 0 on SIGTERM"
+    expect_poll "the $tui_class window is gone" clients=0 tui_floating "$tui_pid"
+  else
+    fail "the toplevel helper maps a $tui_class window"
+  fi
+done
+# A rule disabled by name after the line stops floating its class alone.
+printf '%s\n' 'hl.window_rule({ name = "vgs:tui", enabled = false })' >>"$hypr_lua"
+expect "the nested instance reloads with vgs:tui disabled" ok hypr reload config-only
+expect "disabling a window rule by name holds no configuration error" '[]' config_errors
+for tui in "org.vgs.tui false" "org.vgs.tui.wide true"; do
+  read -r tui_class tui_want <<<"$tui"
+  if open_tui "$tui_class"; then
+    expect_poll "with vgs:tui disabled a $tui_class window has floating=$tui_want" "$tui_class floating=$tui_want" tui_floating "$tui_pid"
+    close_tui "the $tui_class helper exits 0 on SIGTERM with vgs:tui disabled"
+  else
+    fail "the toplevel helper maps a $tui_class window with vgs:tui disabled"
+  fi
+done
+restore_hypr_lua || fail "hyprland.lua is put back after the floating TUI rows"
+expect "the nested instance reloads the first run's hyprland.lua after the floating TUI rows" ok hypr reload config-only
 expect "the vgs package applies for the Hyprland rows" "ok theme=vgs" applied vgs
 if vgs_accent="$(resolved_token vgs palette.accent)"; then
   expect_poll "the nested active border takes the vgs accent" "$(gradient_of "$vgs_accent")" hypr_gradient general:col.active_border
@@ -151,7 +244,7 @@ expect_poll "with the line the launcher's bind is back" "$rebound" vgs_binds
 cp -- "$sandbox/shell-before-hyprland.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
 expect_poll "the launcher is disabled again" False plugin_enabled vgs.launcher
 expect_poll "the notifications are disabled again" False plugin_enabled vgs.notifications
-{ printf '%s\n' "$wire_line"; cat -- "$sandbox/hyprland-harness.lua"; } >"$hypr_lua.next" && mv -T -- "$hypr_lua.next" "$hypr_lua"
+restore_hypr_lua || fail "hyprland.lua is put back after the Hyprland rows"
 expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
 expect_poll "the nested instance holds no vgs bind after the Hyprland rows" '[]' vgs_binds
 expect "the configuration after the Hyprland rows holds no error" '[]' config_errors

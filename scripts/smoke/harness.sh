@@ -160,17 +160,28 @@ cp -- "$shim/hyprctl.real" "$shim/hyprctl"
 # Rows swap the stand-in whole, so the shell never sees a half-written file.
 shim_hyprctl() { cp -- "$shim/hyprctl.$1" "$shim/hyprctl.next" && mv -T -- "$shim/hyprctl.next" "$shim/hyprctl"; }
 
-# The pointer helper, built from the repository into the sandbox: one
-# click through the nested compositor's virtual pointer protocol. It is
-# only ever run with the nested socket in its environment.
-if ! (cd "$sandbox" \
-      && wayland-scanner client-header "$repo/scripts/smoke/pointer/wlr-virtual-pointer-unstable-v1.xml" wlr-virtual-pointer-unstable-v1-client-protocol.h \
-      && wayland-scanner private-code "$repo/scripts/smoke/pointer/wlr-virtual-pointer-unstable-v1.xml" wlr-virtual-pointer-protocol.c \
-      && cc -o click "$repo/scripts/smoke/pointer/click.c" wlr-virtual-pointer-protocol.c -I. $(pkg-config --cflags --libs wayland-client)) >"$sandbox/click-build.log" 2>&1; then
-  printf 'qml-smoke: status=not-measured missing=pointer-helper-build\n'
-  cat "$sandbox/click-build.log"
-  exit 77
-fi
+# The test helpers, built from the repository into the sandbox, each with
+# the client code wayland-scanner generates from the one protocol file
+# vendored beside it. Each is only ever run with the nested socket in its
+# environment. click: one click through the nested compositor's virtual
+# pointer protocol. toplevel: one xdg toplevel with a given app-id, so a
+# row reads back how the nested compositor places a window of that class.
+# build_helper NAME KEY SOURCE PROTOCOL_XML; a failed build exits 77 as
+# missing=KEY-helper-build.
+build_helper() {
+  local protocol
+  protocol="$(basename -- "$4" .xml)"
+  if ! (cd "$sandbox" \
+        && wayland-scanner client-header "$4" "$protocol-client-protocol.h" \
+        && wayland-scanner private-code "$4" "$protocol-protocol.c" \
+        && cc -o "$1" "$3" "$protocol-protocol.c" -I. $(pkg-config --cflags --libs wayland-client)) >"$sandbox/$1-build.log" 2>&1; then
+    printf 'qml-smoke: status=not-measured missing=%s-helper-build\n' "$2"
+    cat "$sandbox/$1-build.log"
+    exit 77
+  fi
+}
+build_helper click pointer "$repo/scripts/smoke/pointer/click.c" "$repo/scripts/smoke/pointer/wlr-virtual-pointer-unstable-v1.xml"
+build_helper toplevel toplevel "$repo/scripts/smoke/toplevel/toplevel.c" "$repo/scripts/smoke/toplevel/xdg-shell.xml"
 
 # Start a command in its own session and process group; the pid doubles as
 # the pgid for teardown and is left in spawn_pid. Not a command substitution,

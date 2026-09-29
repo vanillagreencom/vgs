@@ -6,9 +6,10 @@ import "PluginLogic.js" as Logic
 import "HyprlandLayer.js" as Layer
 
 // The one writer of the Hyprland layer: HyprlandLayer.js renders the theme's
-// border colours and every enabled plugin's `hyprland` manifest data, and
-// this writes the text to `<stateDir>/hypr/vgs.lua`, only when its bytes
-// change, then runs `hyprctl reload config-only`. It renders again whenever
+// border colours, the floating TUIs' window rules and every enabled
+// plugin's `hyprland` manifest data, and this writes the text to
+// `<stateDir>/hypr/vgs.lua`, only when its bytes change, then runs
+// `hyprctl reload config-only`. It renders again whenever
 // the plugin set, the configuration or the theme changes, which covers
 // enable, disable, rescan, a shell.json edit and a theme apply. When the
 // first read finds no file, the first write also runs `vgsh hypr wire`

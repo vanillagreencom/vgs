@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active
+**Status**: Revisited
 
 **Research**: VGS-489
 
@@ -56,3 +56,12 @@ Checked against basecamp/omarchy main at `b18ab49`: `config/hypr/hyprland.lua` a
 **Verification**: `scripts/test-hyprland-layer.js` covers the manifest key, the key grammar, `keys`, the effective binds and the rendered text, with a control per rule. `scripts/test-vgsh-hypr.sh` covers `wire` and `unwire`, with judge copies as controls. `scripts/smoke/rows/hyprland.sh` reads the nested instance back: first-run wiring, binds, key presses reaching both plugins, a rebind, an unbind, a conflict, a disabled plugin's section, the border following a theme apply, `render`, `unwire`, and an empty `configerrors`.
 
 **References**: [D021](D021-theme-apply-writes-beside-each-destination.md), [D007](D007-install-runs-no-plugin-code.md), [D010](D010-facade-scope-not-sandbox.md), [D012](D012-core-owns-lent-objects.md), [hyprland.md](../architecture/hyprland.md)
+
+## Revisit Outcome (2026-09-28, VGS-513)
+
+The decision holds. The layer gains one constant core section, the floating TUIs' window rules, after the border colours and before the plugin sections: one `hl.window_rule` each for the app-ids `org.vgs.tui`, `org.vgs.tui.wide` and `org.vgs.tui.tall`, which floats the window, centres it and gives it 875 × 600, 1200 × 720 or 875 × 900 ([hyprland.md § The file](../architecture/hyprland.md#the-file)). Plugins still declare only binds and layer rules, and no plugin text reaches a window rule: the core alone holds the app-ids, the class patterns and the sizes, in `HyprlandLayer.TUI_WINDOWS`. A user disables one by name after the line, `hl.window_rule({ name = "vgs:tui", enabled = false })`, as for a layer rule. Hyprland v0.56.2 accepts the fields with an empty `configerrors`, floats, centres and sizes a window of each class, and honours the disable: `scripts/smoke/rows/hyprland.sh` reads each back on the nested instance.
+
+Omarchy (basecamp/omarchy `main` at `e332dc9`) gives windows tagged `floating-window` the same float, centre and 875 × 600 in `default/hypr/apps/system.lua`, and tags a list of classes with it through `o.window` in `default/hypr/helpers.lua`, which sets `match.class` and calls `hl.window_rule`. VGS takes the float, the centre and the default size. It differs in two ways:
+
+- **Exact classes, no tag.** Three sizes would need three tags, and a tag is a name any other rule, a user's included, can add to an unrelated window. Each rule matches its app-id anchored, with its dots escaped, so the default rule never matches `org.vgs.tui.wide`.
+- **In the generated layer.** Omarchy's rules live in the configuration it ships and owns. VGS owns one line of the user's `hyprland.lua`, so its rules live in the layer that line loads, and a user's rule after the line wins.

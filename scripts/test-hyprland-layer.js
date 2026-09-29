@@ -27,6 +27,15 @@ const overlayRule = { namespace: "^vgs:overlay$", blur: true, ignoreAlpha: 0.6 }
 const toggle = { shortcut: "toggle", key: "SUPER+SPACE" };
 // The border colours as Theme publishes them, `#aarrggbb`.
 const colours = { accent: "#ff5a3659", border: "#80112233", borderSubtle: "#ff222222", warning: "#ffffaa00", surfaceRaised: "#ff333333", onAccent: "#ff000000", text: "#ffeeeeee", onWarning: "#ff010101" };
+// The floating TUIs' window rules as the layer writes them, byte for byte:
+// in the Lua literal `\\.` is the regex `\.`, a literal dot. Hyprland
+// v0.56.2 reads these fields back in scripts/smoke/rows/hyprland.sh.
+const TUI_SECTION = [
+    "-- Floating TUIs: each size class's app-id floats, centred, at its size.",
+    "hl.window_rule({ name = \"vgs:tui\", match = { class = \"^org\\\\.vgs\\\\.tui$\" }, float = true, center = true, size = { 875, 600 } })",
+    "hl.window_rule({ name = \"vgs:tui-wide\", match = { class = \"^org\\\\.vgs\\\\.tui\\\\.wide$\" }, float = true, center = true, size = { 1200, 720 } })",
+    "hl.window_rule({ name = \"vgs:tui-tall\", match = { class = \"^org\\\\.vgs\\\\.tui\\\\.tall$\" }, float = true, center = true, size = { 875, 900 } })"
+];
 
 // hyprlandKey rows: [text, want key or the start of the error].
 const KEYS = [
@@ -129,7 +138,7 @@ function verify(logic, layer) {
     const section = (id, binds, layerRules, version) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, unknownKeys: [] });
     const lines = out => out.text.split("\n");
     const bare = layer.render([], colours, "vgs");
-    assert.ok(bare.text.endsWith("})\n"), "a layer with no plugin section ends with the border colours");
+    same(lines(bare).slice(lines(bare).indexOf("})") + 1), ["", ...TUI_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, right after the border colours");
     assert.ok(lines(bare).some(line => line.includes("`" + layer.REGENERATE + "`")), "the header names the regenerate command");
     assert.strictEqual(layer.REGENERATE, "vgsh hypr render", "the regenerate command is the runner's verb");
     assert.ok(lines(bare).includes("-- Theme vgs: window, group and group bar borders."), "the border block names its theme");
@@ -147,6 +156,8 @@ function verify(logic, layer) {
     const tail = text.slice(text.indexOf("})") + 1);
     same(tail, [
         "",
+        ...TUI_SECTION,
+        "",
         "-- acme.keys 2?os.exit(): binds and layer rules from its manifest",
         "hl.layer_rule({ name = \"acme.keys:overlay\", match = { namespace = \"^vgs:overlay$\" }, blur = true, ignore_alpha = 0.6 })",
         "hl.layer_rule({ name = \"acme.keys:layer\", match = { namespace = \"^vgs:layer$\" }, blur = false })",
@@ -159,7 +170,7 @@ function verify(logic, layer) {
         "hl.bind(\"SUPER + N\", hl.dsp.global(\"vgs.notes:inbox\"), { description = \"vgs.notes:inbox\" })",
         "-- skipped SUPER+SPACE: already bound by acme.keys",
         ""
-    ], "sections by id, rules then binds, a key to the first id, an identical rule once, a differing one twice");
+    ], "the floating TUIs' rules, then sections by id, rules then binds, a key to the first id, an identical rule once, a differing one twice");
     assert.ok(text.includes("-- Theme night?os.exit(): window, group and group bar borders."), "a theme name cannot leave its comment");
     same(out.conflicts, [{ id: "vgs.notes", shortcut: "open", key: "SUPER+SPACE", heldBy: "acme.keys" }], "the skipped bind is the one conflict");
 
@@ -282,6 +293,10 @@ const CONTROLS = [
     [layerFile, "colour order", "return \"rgba(\" + value.slice(3, 9) + value.slice(1, 3) + \")\";", "return \"rgba(\" + value.slice(1, 9) + \")\";"],
     [layerFile, "colour judged", "if (typeof value !== \"string\" || !/^#[0-9a-fA-F]{8}$/.test(value))", "if (false)"],
     [layerFile, "bind keys spaced", "return key.split(\"+\").join(\" + \");", "return key;"],
+    [layerFile, "floating TUI rules written", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines());", ".concat(borderLines(colours, themeName));"],
+    [layerFile, "floating TUI rules after the borders", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines());", ".concat(tuiWindowLines(), [\"\"], borderLines(colours, themeName));"],
+    [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
+    [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
     [layerFile, "a stale view is read first", "if (state.queuedForce || state.stale)", "if (state.queuedForce)"],
     [layerFile, "a queued render reads first", "if (state.queuedForce || state.stale)", "if (state.stale)"],
     [layerFile, "a queued render forces its cycle", "forcing: state.forcing || state.queuedForce,", "forcing: state.forcing,"],
