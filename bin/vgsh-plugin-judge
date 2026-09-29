@@ -1,7 +1,18 @@
 #!/usr/bin/env node
-// The decisions `vgsh plugin add`, `update` and `remove` need, made by the
-// shell's own judge, shell/Core/PluginLogic.js, loaded here under node.
+// The decisions `vgsh plugin list`, `add`, `update` and `remove` need, made
+// by the shell's own judge, shell/Core/PluginLogic.js, loaded here under
+// node.
 //
+//   vgsh-plugin-judge list
+//       read the shell's `listPlugins` reply on stdin and print it as
+//       `vgsh plugin list` lines: one per plugin, then `error`, `hidden`,
+//       `unknown` and `missing` lines, then `scan-error`. A missing
+//       requirement prints `missing <id> <command> (<package>)`, the
+//       package PackageManagers.packageFor picks for this system from
+//       `vgsh pkg detect`, or `missing <id> <command>` when its `packages`
+//       names no manager present here; an optional one ends ` optional`.
+//       Detection runs once, and only when a missing requirement names a
+//       package.
 //   vgsh-plugin-judge id <plugin-dir>
 //       print the `id` the manifest names; the manifest need not validate
 //   vgsh-plugin-judge owners <id>
@@ -19,12 +30,50 @@
 // refusal and the file helpers are bin/lib/judge-files.js, shared with
 // bin/vgsh-theme-judge.
 "use strict";
+const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const logic = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
 const { refuse, main, readJson, readConfig, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+
+// The system's managers, `vgsh pkg detect --json`'s answer, from the
+// command that owns detection. Its refusal, when it printed one, follows
+// the exit status on the refusal line.
+function detected() {
+    const r = childProcess.spawnSync(process.execPath, [path.join(__dirname, "vgsh-pkg"), "detect", "--json"], { encoding: "utf8" });
+    if (r.error !== undefined || r.status !== 0) {
+        const first = (r.stderr || "").split("\n")[0];
+        refuse("detect=failed exit=" + r.status + (first.startsWith("vgsh: refused: ") ? " " + first.slice("vgsh: refused: ".length) : ""));
+    }
+    try {
+        return JSON.parse(r.stdout);
+    } catch (e) {
+        refuse("detect=unparseable");
+    }
+}
+
+// `vgsh plugin list`'s lines for REPLY, the parsed `listPlugins` reply.
+function listLines(reply) {
+    const lines = [];
+    for (const p of reply.plugins)
+        lines.push(p.id.padEnd(28) + " " + p.version.padEnd(8) + " " + (p.enabled ? "enabled" : "disabled").padEnd(9) + " kinds=" + p.kinds.join(","));
+    for (const e of reply.errors) lines.push("error   " + e.dir + ": " + e.error);
+    for (const c of reply.collisions) lines.push("hidden  " + c);
+    for (const u of reply.unknown) lines.push("unknown " + u.id + " in " + u.key);
+    const missing = [];
+    for (const p of reply.plugins)
+        for (const r of p.requirements)
+            if (r.state === "missing") missing.push({ id: p.id, requirement: r });
+    const found = missing.some(m => Object.keys(m.requirement.packages).length > 0) ? detected() : null;
+    for (const m of missing) {
+        const pick = found === null ? null : logic.PackageManagers.packageFor(m.requirement.packages, found);
+        lines.push("missing " + m.id + " " + m.requirement.command + (pick === null ? "" : " (" + pick.name + ")") + (m.requirement.optional ? " optional" : ""));
+    }
+    if (reply.scanError) lines.push("scan-error " + reply.scanError);
+    return lines;
+}
 
 function manifestOf(dir) {
     return readJson(path.join(dir, "manifest.json"), "manifest");
@@ -39,6 +88,17 @@ function validated(dir) {
 const [command, ...args] = process.argv.slice(2);
 main(() => {
     switch (command) {
+    case "list": {
+        let reply;
+        try {
+            reply = JSON.parse(fs.readFileSync(0, "utf8"));
+        } catch (e) {
+            refuse("reply=unparseable");
+        }
+        const lines = listLines(reply);
+        if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
+        break;
+    }
     case "id": {
         const raw = manifestOf(args[0]);
         if (!logic.isPlainObject(raw) || typeof raw.id !== "string") refuse("manifest-id=missing path=" + args[0]);

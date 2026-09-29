@@ -8,6 +8,7 @@
 //   the databases without upgrading (`-Sy` alone).
 // - Detection runs over os-release texts and sets of commands on PATH.
 // - Plans pin each manager's argv for install, remove and upgrade.
+// - packageFor picks a requirement's package for a detected system.
 // - The CLI runs with a PATH of stub commands; `detect` reads a fixture
 //   os-release bound over /etc/os-release under `unshare -rm`. Without user
 //   namespaces those rows cannot run and the suite exits 77.
@@ -145,6 +146,20 @@ const PLAN_ROWS = [
     ["a name past 256 characters", "pacman", "install", ["a".repeat(257)], ["pacman"], "name=\"" + "a".repeat(257) + "\" reason=grammar"]
 ];
 
+// packageFor rows: name, a requirement's packages, detect's answer, the pick.
+const PACMAN = { id: "pacman", binary: "pacman" };
+const PARU = { id: "aur", binary: "paru" };
+const MISE = { id: "mise", binary: "mise" };
+const PACKAGE_FOR_ROWS = [
+    ["the primary's package wins over an overlay's", { aur: "gum-bin", pacman: "gum" }, { primary: PACMAN, overlays: [PARU], sources: [] }, { manager: "pacman", name: "gum" }],
+    ["an overlay serves what the primary does not map", { aur: "vsys" }, { primary: PACMAN, overlays: [PARU], sources: [] }, { manager: "aur", name: "vsys" }],
+    ["an overlay wins over a source", { mise: "node", aur: "nodejs-bin" }, { primary: PACMAN, overlays: [PARU], sources: [MISE] }, { manager: "aur", name: "nodejs-bin" }],
+    ["a source serves last", { mise: "node" }, { primary: PACMAN, overlays: [], sources: [MISE] }, { manager: "mise", name: "node" }],
+    ["an overlay serves a system with no primary", { flatpak: "org.gnome.Loupe" }, { primary: null, overlays: [{ id: "flatpak", binary: "flatpak" }], sources: [] }, { manager: "flatpak", name: "org.gnome.Loupe" }],
+    ["no present manager is mapped", { apt: "gum", dnf: "gum" }, { primary: PACMAN, overlays: [PARU], sources: [] }, null],
+    ["no package is mapped at all", {}, { primary: PACMAN, overlays: [], sources: [] }, null]
+];
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function verifyTable(t) {
@@ -167,6 +182,10 @@ function verifyTable(t) {
     }
     for (const row of t.MANAGERS) for (const action of t.ACTIONS)
         if (!covered.has(row.id + " " + action)) failures.push("plan: no row for " + row.id + " " + action);
+    for (const [name, packages, found, want] of PACKAGE_FOR_ROWS) {
+        const got = t.packageFor(packages, found);
+        if (!same(got, want)) failures.push("packageFor: " + name + ": got " + JSON.stringify(got));
+    }
     return failures;
 }
 
@@ -245,6 +264,8 @@ try {
         ["table", "an overlay ignores the primary it requires", TABLE, "if (other.requires !== null && (primary === null || primary.id !== other.requires)) continue;", ""],
         ["table", "a name may start with a dash", TABLE, " && name.charAt(0) !== \"-\"", ""],
         ["table", "the first binary wins even when absent", TABLE, "if (onPath(row.binaries[i])) return row.binaries[i];", "return row.binaries[i];"],
+        ["table", "a requirement's package ignores the primary's rank", TABLE, "var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "var order = found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
+        ["table", "a requirement's package is picked for an unmapped manager", TABLE, "if (Object.prototype.hasOwnProperty.call(packages, order[i].id))", "if (true)"],
         ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],
         ["cli", "vgsh pkg drops its arguments", VGSH, "exec node \"$root/bin/vgsh-pkg\" \"$@\"", "exec node \"$root/bin/vgsh-pkg\""]
     ];
@@ -276,7 +297,7 @@ try {
     else if (missing !== null) {
         console.log("test-vgsh-pkg: status=not-measured missing=" + missing);
         process.exitCode = 77;
-    } else console.log("test-vgsh-pkg: ok detect=" + DETECT_ROWS.length + " plans=" + PLAN_ROWS.length + " controls=" + CONTROLS.length);
+    } else console.log("test-vgsh-pkg: ok detect=" + DETECT_ROWS.length + " plans=" + PLAN_ROWS.length + " picks=" + PACKAGE_FOR_ROWS.length + " controls=" + CONTROLS.length);
 } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
 }

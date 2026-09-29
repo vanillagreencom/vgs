@@ -26,6 +26,11 @@ Singleton {
     // every scan whose result differs, so bindings re-evaluate once. Each
     // carries `__revision` and `__loadUrl` from the scan.
     property var manifests: Object.create(null)
+    // id -> the commands of its `requirements` the last scan did not find
+    // on PATH, for every plugin in `manifests`; replaced whole when a scan
+    // finds a different set, apart from the manifests, so a command
+    // installed or removed rebuilds nothing.
+    property var missingCommands: Object.create(null)
     // { dir, error } for every directory whose manifest was refused.
     property var errors: []
     // ids seen in a lower-precedence directory after a higher one claimed them.
@@ -78,6 +83,7 @@ Singleton {
             return;
         }
         const next = Object.create(null);
+        const nextMissing = Object.create(null);
         const errs = [];
         const cols = [];
         for (const entry of entries) {
@@ -92,9 +98,14 @@ Singleton {
             const r = Logic.validateManifest(raw, entry.dir);
             if (!r.ok) { errs.push({ dir: entry.dir, error: r.error }); continue; }
             if (Logic.hasOwn(next, r.manifest.id)) { cols.push(r.manifest.id + " at " + entry.dir); continue; }
+            if (!Array.isArray(entry.missing)) {
+                scanError = "scan output does not parse: " + entry.dir + " carries no missing list";
+                return;
+            }
             r.manifest.__revision = entry.revision;
             r.manifest.__loadUrl = entry.loadUrl;
             next[r.manifest.id] = r.manifest;
+            nextMissing[r.manifest.id] = entry.missing;
         }
         for (const e of errs) console.error("plugins: " + e.dir + ": " + e.error);
         const isChanged = JSON.stringify(next) !== JSON.stringify(root.manifests);
@@ -103,6 +114,9 @@ Singleton {
         root.errors = errs;
         root.collisions = cols;
         root.scanError = "";
+        // Before the map, so no row reads a new plugin's requirements against
+        // the last scan's probe.
+        if (JSON.stringify(nextMissing) !== JSON.stringify(root.missingCommands)) root.missingCommands = nextMissing;
         if (isChanged) root.manifests = next;
         // `scanned` gates every slot key, so it moves after the map.
         root.scanned = true;
@@ -210,6 +224,12 @@ Singleton {
         return has(id) ? Logic.settingsFor(Config.effective, manifests[id], Logic.settingTargetOf(kind), null) : {};
     }
 
+    // Plugin `id`'s requirement rows, each with its state from the last
+    // scan: PluginLogic.requirementRows.
+    function requirementsOf(id) {
+        return Logic.requirementRows(manifests[id], Logic.hasOwn(missingCommands, id) ? missingCommands[id] : []);
+    }
+
     // Where a plugin was found: `bundled` under the shell's own plugins
     // directory, `installed` under the user's.
     function sourceOf(manifest) {
@@ -219,7 +239,8 @@ Singleton {
     // Every discovered plugin as the plugin manager shows it: listing
     // metadata, its icon, capabilities and source, whether it is enabled,
     // its settings schema, the settings it currently receives (a bar
-    // widget's from its first layout entry), its Keys rows and its errors:
+    // widget's from its first layout entry), its Keys rows, its requirements
+    // with their state and its errors:
     // each failed build of one of its kinds, once per cause, then each
     // problem the Hyprland layer reports for it.
     readonly property var managerRows: {
@@ -252,6 +273,7 @@ Singleton {
                 schema: m.schema,
                 settings: Logic.managerSettings(config, m),
                 binds: Logic.bindRows(config, m, descriptions),
+                requirements: requirementsOf(id),
                 errors: errors
             };
         });
@@ -264,7 +286,8 @@ Singleton {
             kinds: manifests[id].kinds,
             enabled: isEnabled(id),
             dir: manifests[id].__sourceDir,
-            revision: manifests[id].__revision
+            revision: manifests[id].__revision,
+            requirements: requirementsOf(id)
         }));
         // Before the first scan no id is known, so none is reported unknown.
         const unknown = scanned ? Logic.unknownIds(Config.effective, manifests) : [];

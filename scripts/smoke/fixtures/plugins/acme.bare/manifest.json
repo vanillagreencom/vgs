@@ -1,2 +1,6 @@
 { "schemaVersion": 1, "id": "acme.bare", "name": "Bare", "version": "0.1.0", "author": "acme", "description": "smoke fixture without capabilities",
-  "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" },
+  "requirements": [
+    { "command": "sh", "packages": { "pacman": "bash" }, "purpose": "A command every sandbox has" },
+    { "command": "vgs-smoke-absent", "purpose": "A command no sandbox has" }
+  ] }

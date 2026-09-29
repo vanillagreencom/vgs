@@ -6,7 +6,8 @@
 #   vgsh pid                       print the running shell's pid from the instance lock
 #   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
 #   vgsh log <qs log args...>      read the running shell's log
-#   vgsh plugin list               every discovered plugin with its enabled state, and each configured id no plugin has
+#   vgsh plugin list               every discovered plugin with its enabled state, each configured id no plugin has,
+#                                  and each requirement the last scan did not find as `missing <id> <command> (<package>)`
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
@@ -726,21 +727,7 @@ case "$cmd" in
         # Captured first so the not-running exit code is the command's, not
         # the formatter's.
         reply="$(ipc shell listPlugins)" || exit $?
-        python3 - "$reply" <<'PY'
-import json, sys
-data = json.loads(sys.argv[1])
-for p in data["plugins"]:
-    state = "enabled" if p["enabled"] else "disabled"
-    print(f"{p['id']:<28} {p['version']:<8} {state:<9} kinds={','.join(p['kinds'])}")
-for e in data["errors"]:
-    print(f"error   {e['dir']}: {e['error']}")
-for c in data["collisions"]:
-    print(f"hidden  {c}")
-for u in data["unknown"]:
-    print(f"unknown {u['id']} in {u['key']}")
-if data.get("scanError"):
-    print(f"scan-error {data['scanError']}")
-PY
+        node "$judge" list <<<"$reply"
         ;;
       enable|disable)
         id="${1:-}"

@@ -12,6 +12,7 @@ One row per manager: `pacman`, `aur`, `apt`, `dnf`, `xbps`, `emerge`, `nix`, `fl
 - An overlay or a source is present when its binary is on PATH. `aur` is present only beside the `pacman` primary. Its binary is `paru`, else `yay`; `dnf`'s is `dnf5`, else `dnf`.
 - The table names no elevation command. A row's `elevate` says whether its steps need root. `aur` does not: the helper asks for root itself. The command that supplies root is chosen where the steps run, never in the table.
 - `nix` has no steps and no check: a NixOS system changes through its own configuration.
+- `packageFor` picks the package that provides a requirement on the detected system: the primary's entry, then an overlay's, then a source's, else none. `PluginLogic.js` imports the table's manager ids and package-name grammar to judge a manifest's `requirements`: [requirements.md](requirements.md).
 
 ## Steps
 

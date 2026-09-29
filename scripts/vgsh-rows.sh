@@ -89,7 +89,7 @@ theme_tree() { # SHIPPED_TARGET...
   done
   for target in "$@"; do cp -R -- "$repo/themes/targets/$target" "$tree/themes/targets/"; done
   cp -- "$repo/config/shell.json" "$tree/config/"
-  cp -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/"
+  cp -- "$repo/shell/Core/PluginLogic.js" "$repo/shell/Core/PackageManagers.js" "$tree/shell/Core/"
   cp -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/"
   cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
   theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"

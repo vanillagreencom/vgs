@@ -26,3 +26,7 @@
 ## Revisit Outcome (2026-09-25)
 
 The decision holds. The kind list gained `background` when its host landed; the list is `PluginLogic.KINDS`, and the overview's vocabulary entry is the one prose list of it; the per-kind tables in `docs/architecture/plugins.md` § Kinds and the plugin skill's API reference describe each kind's host. A built-in widget a plugin draws itself is not a kind: [D013](D013-built-in-widgets-are-the-bar-plugins.md).
+
+## Revisit Outcome (2026-09-28)
+
+The decision holds. [D035](D035-manifest-requirements.md) adds a manifest `requirements` key for the external commands a plugin runs; a requirement names a command and the packages that provide it, never a plugin. A plugin still names no plugin: `requires` is refused by name, and a requirement whose command is spelt as a plugin id is refused. `scripts/test-plugin-logic.js` pins both refusals.

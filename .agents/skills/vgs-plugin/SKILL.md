@@ -37,7 +37,7 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 ## Rules
 
 - One directory, one `manifest.json` at its root, one QML entry point per kind. Copy the templates. The field table is [`docs/architecture/plugins.md` § Manifest](../../../docs/architecture/plugins.md#manifest); an unknown key is refused.
-- Declare surfaces, never dependencies.
+- Declare surfaces, never dependencies. Every external command the plugin runs goes in the manifest's `requirements`, with its package per manager, `optional` when the plugin works without it, and a one-line `purpose`; a requirement names a command, never another plugin: [`docs/architecture/requirements.md`](../../../docs/architecture/requirements.md).
 - Imports and names: the allowed table in [`references/api.md`](references/api.md) § Allowed imports, and nothing else. `scripts/check-plugin-boundary.py` refuses the rest.
 - Every entry point declares `property var shell: null` or inherits it from `BarWidget`. Capabilities come from `shell.<name>` after naming them in `capabilities`; a widget never reads them from `bar`.
 - Settings default in the manifest's `settings` and arrive as `shell.settings` for every kind; a bar widget also reads them with `setting(name, fallback)`. A change reaches the running instance as a new `shell`; hold no copy.

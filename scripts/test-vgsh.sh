@@ -172,8 +172,6 @@ run_restart_capture() { # RUNTIME_DIR RECORD DISPATCH REPLY [ENV...]
   return 0
 }
 
-list_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[],"scanError":"","scanned":true}'
-unknown_json='{"plugins":[{"id":"vgs.bar","version":"0.1.0","kinds":["bar"],"enabled":true,"dir":"/x"}],"errors":[],"collisions":[],"unknown":[{"id":"vgs.background","key":"disabledPlugins"}],"scanError":"","scanned":true}'
 dead_pid="$(( $(cat /proc/sys/kernel/pid_max) + 1 ))"
 
 run_row "enable prints ok" "$rt_live" "STUB_REPLY=ok" "plugin enable vgs.clock" "ok" 0 ""
@@ -188,8 +186,6 @@ run_row "no lock file exits 69 without calling qs" "$rt_empty" "STUB_REPLY=ok" "
 run_row "no lock file exits 69 on ipc" "$rt_empty" "STUB_REPLY=ok" "ipc call shell ping" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
 run_row "pid prints the pid the lock file records" "$rt_live" "" "pid" "$$" 0 ""
 run_row "pid with no lock file exits 69" "$rt_empty" "" "pid" "" 69 "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock"
-run_row "list formats one row per plugin" "$rt_live" "STUB_REPLY=$list_json" "plugin list" "vgs.bar                      0.1.0    enabled   kinds=bar" 0 ""
-run_row "list names a configured id no plugin has and its key" "$rt_live" "STUB_REPLY=$unknown_json" "plugin list" "unknown vgs.background in disabledPlugins" 0 ""
 run_row "missing id is exit 2" "$rt_live" "" "plugin enable" "" 2 "vgsh: refused: id=missing"
 run_row "unknown subcommand is exit 2" "$rt_live" "" "plugin frobnicate" "" 2 "vgsh: refused: plugin-subcommand=frobnicate"
 run_row "unknown command is exit 2" "$rt_live" "" "frobnicate" "" 2 "vgsh: refused: command=frobnicate"

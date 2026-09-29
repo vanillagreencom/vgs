@@ -21,7 +21,7 @@ Where the shell's memory sits, how to measure it and the growth invariants are i
 ## Performance
 
 - One owner per watcher, poller and subprocess. Two components polling one source is a defect.
-- A lookup that costs a process runs once per set, never once per item. `bin/vgsh-scan` reads every manifest in one process and the registry replaces its map whole.
+- A lookup that costs a process runs once per set, never once per item. `bin/vgsh-scan` reads every manifest and probes every declared command in one process, and the registry replaces its map whole.
 - No disk walk per keystroke. A search keeps one long-lived index and cancels a stale query.
 - No unconditional sleep on an apply path. Read the current value and skip the write and the wait when nothing changes.
 

@@ -3,7 +3,8 @@
 // The package managers VGS knows, one row each, and the pure decisions made
 // over them: which managers a system has and the steps an install, a removal
 // or an upgrade takes. No QML objects and no I/O, so bin/vgsh-pkg runs this
-// file under node through bin/lib/qml-library.js, the one source D034 names.
+// file under node through bin/lib/qml-library.js, the one source D034 names,
+// and PluginLogic.js imports it to judge a manifest's `requirements` (D035).
 //
 // A row:
 //   id        the manager's name in every VGS file and command
@@ -197,6 +198,19 @@ function detect(osIds, onPath) {
         (other.role === "overlay" ? overlays : sources).push({ id: other.id, binary: found });
     }
     return { primary: primary, overlays: overlays, sources: sources };
+}
+
+// The package that provides one requirement on this system, as `{ manager,
+// name }`: the first manager of FOUND, detect's answer, taken primary, then
+// each overlay, then each source, that PACKAGES maps to a name; null when
+// it maps none of them. PACKAGES is a requirement's `packages`, manager ids
+// to package names, as PluginLogic.requirementsError accepts it.
+function packageFor(packages, found) {
+    var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
+    for (var i = 0; i < order.length; i++)
+        if (Object.prototype.hasOwnProperty.call(packages, order[i].id))
+            return { manager: order[i].id, name: packages[order[i].id] };
+    return null;
 }
 
 // The steps ACTION takes for manager ID over NAMES, with the binary ON_PATH

@@ -4,16 +4,24 @@
 Prints one JSON array. Each element names a plugin directory and carries
 either the manifest text with the source revision, or the read error.
 Validation is not done here: the shell's PluginLogic.js is the one judge of
-a manifest, and this script only reads bytes.
+a manifest, and this script only reads bytes and probes PATH for the
+commands a manifest declares.
 
   vgsh-scan [--require-base] [--snapshot-dir ROOT [--retain REVISION]...] BASE...
 
-A plugin element is `{"dir", "text", "revision"}`, plus `"loadUrl"` under
---snapshot-dir. The revision is a SHA-256 over every regular file under the
-plugin directory except `.git`: its relative path, its executable bit and
-its bytes, so an edit to any QML, JS or asset file, and nothing else, gives
-a new revision. Symbolic links are followed; a directory cycle or an entry
+A plugin element is `{"dir", "text", "revision", "missing"}`, plus
+`"loadUrl"` under --snapshot-dir. The revision is a SHA-256 over every
+regular file under the plugin directory except `.git`: its relative path,
+its executable bit and its bytes, so an edit to any QML, JS or asset file,
+and nothing else, gives a new revision. Symbolic links are followed; a directory cycle or an entry
 that is neither a regular file nor a directory is an error.
+
+`missing` lists, in declaration order and each once, every `command` of the
+manifest's `requirements` entries that is not on PATH, as shutil.which finds
+it, and is empty when the text is not a JSON object with a `requirements`
+list. The scan probes each command once, however many plugins declare it,
+and judges nothing: PluginLogic.js decides whether an entry is well formed,
+and a refused manifest's list is never read (D035).
 
 --snapshot-dir publishes each plugin's files under ROOT/<revision>/, written
 once and never changed, and `loadUrl` is that directory's file:// URL. The
@@ -102,7 +110,33 @@ def publish_source(root, revision, files):
     return pathlib.Path(destination).absolute().as_uri()
 
 
-def scan_base(base, out, require_base, snapshot_dir):
+def declared_commands(text):
+    """Each string `command` of the requirements entries the manifest text
+    declares, in order; none when the text is no object with a
+    `requirements` list."""
+    try:
+        manifest = json.loads(text)
+    except ValueError:
+        return []
+    requirements = manifest.get("requirements") if isinstance(manifest, dict) else None
+    if not isinstance(requirements, list):
+        return []
+    return [entry["command"] for entry in requirements if isinstance(entry, dict) and isinstance(entry.get("command"), str)]
+
+
+def missing_commands(text, probed):
+    """The declared commands not on PATH, each once. `probed` caches each
+    command's answer for the whole scan."""
+    missing = []
+    for command in declared_commands(text):
+        if command not in probed:
+            probed[command] = shutil.which(command) is not None
+        if not probed[command] and command not in missing:
+            missing.append(command)
+    return missing
+
+
+def scan_base(base, out, require_base, snapshot_dir, probed):
     try:
         names = sorted(os.listdir(base))
     except OSError as exc:
@@ -146,7 +180,7 @@ def scan_base(base, out, require_base, snapshot_dir):
         except UnicodeDecodeError as exc:
             out.append({"dir": plugin_dir, "path": manifest, "error": f"manifest is not UTF-8: {exc.reason} at byte {exc.start}"})
             continue
-        entry = {"dir": plugin_dir, "text": text, "revision": source_revision(files)}
+        entry = {"dir": plugin_dir, "text": text, "revision": source_revision(files), "missing": missing_commands(text, probed)}
         if snapshot_dir:
             try:
                 entry["loadUrl"] = publish_source(snapshot_dir, entry["revision"], files)
@@ -186,8 +220,9 @@ def main(argv):
     if args.retain and not args.snapshot_dir:
         parser.error("--retain needs --snapshot-dir")
     out = []
+    probed = {}
     for base in args.bases:
-        scan_base(base, out, args.require_base, args.snapshot_dir)
+        scan_base(base, out, args.require_base, args.snapshot_dir, probed)
     if args.snapshot_dir and not any("error" in entry for entry in out):
         prune_snapshots(args.snapshot_dir, set(args.retain) | {entry["revision"] for entry in out}, out)
     json.dump(out, sys.stdout)

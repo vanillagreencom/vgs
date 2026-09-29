@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-21
 
-**Status**: Active
+**Status**: Active (system-package declaration → D035)
 
 **Research**: —
 
@@ -22,3 +22,7 @@
 **Verification**: The add, update and remove rows in `scripts/test-vgsh.sh`, which install from local bare repositories.
 
 **References**: [D003](D003-everything-is-a-plugin.md)
+
+## Revisit Outcome (2026-09-28)
+
+The first revisit condition is met: plugins need system packages, and [D035](D035-manifest-requirements.md) lets a manifest declare them as `requirements`, which replaces "the manifest has no key for it". The rest holds. Install still runs no plugin code, lands the plugin disabled and asks for no privilege; the manager reads `requirements` as data and reports each command's state. Installing a missing package is a core TUI the user starts, where the package manager asks for root in the user's terminal ([D034](D034-one-package-manager-table.md)).

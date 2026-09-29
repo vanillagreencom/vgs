@@ -1,10 +1,13 @@
 .pragma library
 .import "../Ui/icons/Lucide.js" as Lucide
+.import "PackageManagers.js" as PackageManagers
 
 // Pure decisions about plugins and configuration. No QML objects, no I/O, so
 // scripts/test-plugin-logic.js runs every function under node. The icon set
-// a manifest's `icon` names is the one Icon draws from, imported here so the
-// shell and every offline reader judge against one list.
+// a manifest's `icon` names is the one Icon draws from, and the manager ids
+// a requirement's `packages` names are the package-manager table's (D034),
+// each imported here so the shell and every offline reader judge against one
+// list.
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
@@ -54,7 +57,18 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements"];
+
+// What one entry of a manifest's `requirements`, and of the core's own
+// config/requirements.json, may carry: an external command the plugin runs,
+// the package that provides it per manager id of PackageManagers.js, whether
+// the plugin works without it, and one line saying what it is for. The
+// states a probed requirement is reported in.
+var REQUIREMENT_KEYS = ["command", "packages", "optional", "purpose"];
+var REQUIREMENT_PURPOSE_MAX = 120;
+var REQUIREMENT_STATES = ["present", "missing"];
+// A purpose is one printable line: no C0 or C1 control character.
+var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, and the name a manifest's Hyprland bind gives its shortcut.
@@ -362,16 +376,89 @@ function hyprlandError(hyprland, capabilities) {
     return "";
 }
 
+// The first defect of a `requirements` list, or "": a manifest's key and
+// the core's own config/requirements.json both pass through here. Each
+// entry is an object of REQUIREMENT_KEYS: `command`, a bare command name
+// PackageManagers.validCommand accepts, declared once, and never a plugin
+// id, since a plugin names no other plugin (D005); `packages`, when
+// present, an object whose keys are manager ids of PackageManagers.MANAGERS
+// and whose values are package names PackageManagers.validName accepts;
+// `optional`, when present, a boolean; `purpose`, one printable line of 1
+// to REQUIREMENT_PURPOSE_MAX characters. A lower-case dotted command such as
+// `acme.clock` has a plugin id's spelling and is refused whichever it names.
+function requirementsError(requirements) {
+    if (!Array.isArray(requirements))
+        return "requirements must be a list";
+    var commands = [];
+    for (var i = 0; i < requirements.length; i++) {
+        var requirement = requirements[i];
+        var at = "requirements." + i;
+        if (!isPlainObject(requirement))
+            return at + " must be an object";
+        var keys = Object.keys(requirement);
+        for (var k = 0; k < keys.length; k++) {
+            if (REQUIREMENT_KEYS.indexOf(keys[k]) === -1)
+                return at + " has unknown key " + JSON.stringify(keys[k]);
+        }
+        if (!PackageManagers.validCommand(requirement.command))
+            return at + ".command must be a bare command name looked up on PATH, got " + JSON.stringify(requirement.command);
+        if (ID_PATTERN.test(requirement.command))
+            return at + ".command " + JSON.stringify(requirement.command) + " is spelt as a plugin id: a requirement names a command, never a plugin (D005)";
+        if (commands.indexOf(requirement.command) !== -1)
+            return at + ".command " + JSON.stringify(requirement.command) + " is declared twice";
+        commands.push(requirement.command);
+        if (requirement.packages !== undefined) {
+            if (!isPlainObject(requirement.packages))
+                return at + ".packages must be an object of manager ids to package names";
+            var managers = Object.keys(requirement.packages);
+            for (var m = 0; m < managers.length; m++) {
+                if (PackageManagers.managerRow(managers[m]) === null)
+                    return at + ".packages names the unknown manager " + JSON.stringify(managers[m]) + ", want one of " + PackageManagers.MANAGERS.map(function (row) { return row.id; }).join(", ");
+                if (!PackageManagers.validName(requirement.packages[managers[m]]))
+                    return at + ".packages." + managers[m] + " must be a package name: printable ASCII without a space, not starting with -, got " + JSON.stringify(requirement.packages[managers[m]]);
+            }
+        }
+        if (requirement.optional !== undefined && typeof requirement.optional !== "boolean")
+            return at + ".optional must be a boolean when present";
+        if (typeof requirement.purpose !== "string" || requirement.purpose.trim().length === 0 || Array.from(requirement.purpose).length > REQUIREMENT_PURPOSE_MAX || CONTROL_CHARACTER.test(requirement.purpose))
+            return at + ".purpose must be one printable line of 1 to " + REQUIREMENT_PURPOSE_MAX + " characters";
+    }
+    return "";
+}
+
+// A `requirements` list requirementsError accepted, each entry with every
+// key: `packages` {} and `optional` false when absent.
+function normalRequirements(requirements) {
+    return requirements.map(function (entry) {
+        return { command: entry.command, packages: entry.packages === undefined ? {} : clone(entry.packages), optional: entry.optional === true, purpose: entry.purpose };
+    });
+}
+
+// The rows a plugin's requirements are reported as: each normalized entry
+// of MANIFEST's `requirements`, in order, with `state` from
+// REQUIREMENT_STATES: "missing" when MISSING, the commands the last scan
+// did not find on PATH, names its command, else "present".
+function requirementRows(manifest, missing) {
+    return manifest.requirements.map(function (entry) {
+        var row = clone(entry);
+        row.state = missing.indexOf(entry.command) === -1 ? "present" : "missing";
+        return row;
+    });
+}
+
 // Validate one manifest object. Returns { ok: true, manifest } with the
 // normalized manifest, or { ok: false, error } naming the first defect.
 // `sourceDir` is recorded on the manifest so entry points resolve later.
-// A normalized manifest always carries `capabilities` (array), `settings`
-// and `schema` (objects), `defaultSection` only when declared, and
+// A normalized manifest always carries `capabilities` and `requirements`
+// (arrays, the latter's entries normalRequirements' shape), `settings` and
+// `schema` (objects), `defaultSection` only when declared, and
 // `hyprland` only when declared, as { binds, layerRules } with every bind's
 // key normalised by hyprlandKey.
 function validateManifest(raw, sourceDir) {
     if (!isPlainObject(raw))
         return { ok: false, error: "manifest is not a JSON object" };
+    if (hasOwn(raw, "requires"))
+        return { ok: false, error: "requires is refused: a plugin names no other plugin (D005); declare the external commands it runs under requirements" };
     var keys = Object.keys(raw);
     for (var u = 0; u < keys.length; u++) {
         if (MANIFEST_KEYS.indexOf(keys[u]) === -1)
@@ -455,8 +542,13 @@ function validateManifest(raw, sourceDir) {
         if (badHyprland !== "")
             return { ok: false, error: badHyprland };
     }
+    var requirements = raw.requirements === undefined ? [] : raw.requirements;
+    var badRequirements = requirementsError(requirements);
+    if (badRequirements !== "")
+        return { ok: false, error: badRequirements };
     var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();
+    manifest.requirements = normalRequirements(requirements);
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
     if (raw.hyprland !== undefined) {

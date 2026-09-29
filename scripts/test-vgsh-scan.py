@@ -5,7 +5,9 @@ runs the scanner on the named base with the row's options, and asserts the
 JSON elements it prints (the dir, either a text entry or the start of the
 error, and the failing path where the row names one) plus the exit status.
 The revision rows then read the scanner twice over one tree and compare
-revisions, snapshots and pruning. Permission rows need a uid that
+revisions, snapshots and pruning. The probe rows run the scanner with a PATH
+of one stub directory and read each plugin's `missing` list; their control
+runs them against a copy of the scanner that finds every command. Permission rows need a uid that
 permissions bind; under euid 0 the script reports status=not-measured and
 exits 77 instead of passing vacuously."""
 import json
@@ -79,8 +81,8 @@ def plant(tmp, files, links=None):
         os.symlink(target, path)
 
 
-def scan(*args):
-    return subprocess.run([sys.executable, SCAN, *args], capture_output=True, text=True, check=False, env=ENV)
+def scan(*args, script=SCAN, env=ENV):
+    return subprocess.run([sys.executable, script, *args], capture_output=True, text=True, check=False, env=env)
 
 
 def run_row(name, files, modes, base, want, options=(), links=None):
@@ -179,12 +181,69 @@ def revision_rows():
     return results
 
 
+def requirement(command):
+    return {"command": command, "purpose": "p"}
+
+
+# probe rows: name, {plugin dir: manifest text}, {plugin dir: missing list}.
+# The stub PATH holds `here` (executable) and `inert` (not executable).
+PROBE_ROWS = [
+    ("a declared command on PATH is not missing", {"a": {"id": "acme.a", "requirements": [requirement("here")]}}, {"a": []}),
+    ("a declared command absent from PATH is missing", {"a": {"id": "acme.a", "requirements": [requirement("gone")]}}, {"a": ["gone"]}),
+    ("a file without its executable bit is missing", {"a": {"id": "acme.a", "requirements": [requirement("inert")]}}, {"a": ["inert"]}),
+    ("missing keeps declaration order and names a command once", {"a": {"id": "acme.a", "requirements": [requirement("zeta"), requirement("here"), requirement("alpha"), requirement("zeta")]}}, {"a": ["zeta", "alpha"]}),
+    ("two plugins declaring one command both report it", {"a": {"id": "acme.a", "requirements": [requirement("gone")]}, "b": {"id": "acme.b", "requirements": [requirement("gone"), requirement("here")]}}, {"a": ["gone"], "b": ["gone"]}),
+    ("a manifest without requirements misses nothing", {"a": {"id": "acme.a"}}, {"a": []}),
+    ("requirements that are not a list miss nothing", {"a": {"id": "acme.a", "requirements": {"command": "gone"}}}, {"a": []}),
+    ("an entry without a string command is not probed", {"a": {"id": "acme.a", "requirements": ["gone", {"command": 3}, {"purpose": "p"}]}}, {"a": []}),
+    ("a manifest that is not JSON misses nothing", {"a": "{not json"}, {"a": []}),
+]
+
+
+def probe_rows(script=SCAN, quiet=False):
+    """Each probe row's verdict, run against SCRIPT."""
+    results = []
+    for name, manifests, want in PROBE_ROWS:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = {os.path.join("plugins", d, "manifest.json"): (m if isinstance(m, str) else json.dumps(m)) for d, m in manifests.items()}
+            files["stubs/here"] = "#!/bin/sh\n"
+            files["stubs/inert"] = "#!/bin/sh\n"
+            plant(tmp, files)
+            os.chmod(os.path.join(tmp, "stubs", "here"), 0o755)
+            os.chmod(os.path.join(tmp, "stubs", "inert"), 0o644)
+            proc = scan(os.path.join(tmp, "plugins"), script=script, env={"PATH": os.path.join(tmp, "stubs"), "LC_ALL": "C"})
+            try:
+                got = {os.path.basename(e["dir"]): e.get("missing") for e in json.loads(proc.stdout)}
+            except (ValueError, KeyError):
+                got = None
+            good = proc.returncode == 0 and got == want
+            results.append(good if quiet else report(name, good, f" (exit={proc.returncode} got={got})\n{proc.stderr}"))
+    return results
+
+
+def probe_control():
+    """The probe rows must fail on a copy of the scanner that answers every
+    command present."""
+    with open(SCAN, encoding="utf-8") as fh:
+        source = fh.read()
+    needle = "probed[command] = shutil.which(command) is not None"
+    if source.count(needle) != 1:
+        return report("control: the probe's text occurs once", False, f" (count={source.count(needle)})")
+    with tempfile.TemporaryDirectory() as tmp:
+        mutant = os.path.join(tmp, "vgsh-scan")
+        with open(mutant, "w", encoding="utf-8") as fh:
+            fh.write(source.replace(needle, "probed[command] = True"))
+        return report("control: the probe rows fail on a scanner that finds every command", not all(probe_rows(mutant, quiet=True)))
+
+
 def main():
     if os.geteuid() == 0:
         print("status=not-measured reason=euid-0")
         return 77
     results = [run_row(*row) for row in ROWS]
     results += revision_rows()
+    results += probe_rows()
+    results.append(probe_control())
     if all(results):
         print("test-vgsh-scan: ok")
         return 0

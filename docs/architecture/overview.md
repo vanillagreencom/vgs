@@ -18,6 +18,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the Settings plugin, `vgs.settings`, through the `manager` capability; its mechanism is core.
+- Requirement: an external command a plugin or the core runs, declared with its package per manager in a manifest's `requirements` or in `config/requirements.json`. It names a command, never a plugin; the scan probes it and the manager reports its state: [requirements.md](requirements.md).
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
 - Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token, or through its own judged table when it owns its look ([appearance.md](appearance.md)).
 - Budget: a ceiling a validation row asserts in the nested sandbox.
@@ -69,6 +70,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-browsers.md](theme-browsers.md): read before touching the Zen or pywalfox target, or a target's `profiles` wiring.
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
+- [requirements.md](requirements.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe or the `missing` lines.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS.

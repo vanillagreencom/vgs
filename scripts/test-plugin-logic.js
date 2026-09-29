@@ -11,6 +11,9 @@ const { load } = require("../bin/lib/qml-library.js");
 
 const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
+const MANAGERS = path.join(__dirname, "..", "shell", "Core", "PackageManagers.js");
+// The core's own requirements, judged by the function a manifest's are.
+const CORE_REQUIREMENTS = path.join(__dirname, "..", "config", "requirements.json");
 
 let failures = 0;
 function report(name, got, want) {
@@ -45,7 +48,26 @@ function suite(ctx, check) {
         ["entry point for an undeclared kind", { entryPoints: { bar: "Bar.qml", service: "S.qml" } }, "entryPoints.service names a kind"],
         ["entry point escapes directory", { entryPoints: { bar: "../x.qml" } }, "entryPoints.bar must stay inside"],
         ["entry point absolute", { entryPoints: { bar: "/etc/x.qml" } }, "entryPoints.bar must stay inside"],
-        ["requires is refused as an unknown key", { requires: ["vgs.bar"] }, "unknown key"],
+        ["requires is refused by name", { requires: ["vgs.bar"] }, "requires is refused: a plugin names no other plugin (D005)"],
+        ["requirements declaring a command", { requirements: [{ command: "gum", packages: { pacman: "gum", aur: "gum-bin", emerge: "app-misc/gum" }, optional: true, purpose: "Draws the update dialogs" }] }, null],
+        ["requirements with only a command and a purpose", { requirements: [{ command: "notify-send", purpose: "Sends notices" }] }, null],
+        ["requirements not a list", { requirements: { command: "gum" } }, "requirements must be a list"],
+        ["a requirement that is a plugin id string", { requirements: ["vgs.settings"] }, "requirements.0 must be an object"],
+        ["a requirement with an unknown key", { requirements: [{ command: "gum", purpose: "p", plugin: "vgs.settings" }] }, "requirements.0 has unknown key \"plugin\""],
+        ["a requirement command that is a path", { requirements: [{ command: "/usr/bin/gum", purpose: "p" }] }, "requirements.0.command must be a bare command name looked up on PATH, got \"/usr/bin/gum\""],
+        ["a requirement without a command", { requirements: [{ purpose: "p" }] }, "requirements.0.command must be a bare command name looked up on PATH, got undefined"],
+        ["a requirement command spelt as a plugin id", { requirements: [{ command: "vgs.settings", purpose: "p" }] }, "requirements.0.command \"vgs.settings\" is spelt as a plugin id: a requirement names a command, never a plugin (D005)"],
+        ["a requirement command declared twice", { requirements: [{ command: "gum", purpose: "p" }, { command: "gum", purpose: "q" }] }, "requirements.1.command \"gum\" is declared twice"],
+        ["requirement packages not an object", { requirements: [{ command: "gum", packages: ["gum"], purpose: "p" }] }, "requirements.0.packages must be an object of manager ids to package names"],
+        ["requirement packages naming an unknown manager", { requirements: [{ command: "gum", packages: { zypper: "gum" }, purpose: "p" }] }, "requirements.0.packages names the unknown manager \"zypper\""],
+        ["a requirement package starting with a dash", { requirements: [{ command: "gum", packages: { pacman: "-Sy" }, purpose: "p" }] }, "requirements.0.packages.pacman must be a package name"],
+        ["a requirement package with a space", { requirements: [{ command: "gum", packages: { apt: "gum fzf" }, purpose: "p" }] }, "requirements.0.packages.apt must be a package name"],
+        ["requirement optional not a boolean", { requirements: [{ command: "gum", optional: "yes", purpose: "p" }] }, "requirements.0.optional must be a boolean when present"],
+        ["a requirement without a purpose", { requirements: [{ command: "gum" }] }, "requirements.0.purpose must be one printable line of 1 to 120 characters"],
+        ["a blank requirement purpose", { requirements: [{ command: "gum", purpose: "  " }] }, "requirements.0.purpose must be one printable line"],
+        ["a requirement purpose with a newline", { requirements: [{ command: "gum", purpose: "one\ntwo" }] }, "requirements.0.purpose must be one printable line"],
+        ["a requirement purpose of 121 characters", { requirements: [{ command: "gum", purpose: "p".repeat(121) }] }, "requirements.0.purpose must be one printable line"],
+        ["a requirement purpose of 120 characters", { requirements: [{ command: "gum", purpose: "p".repeat(120) }] }, null],
         ["appearance naming a .js file", { appearance: "Appearance.js" }, null],
         ["appearance naming a nested .js file", { appearance: "look/Appearance.js" }, null],
         ["appearance not a string", { appearance: { tokens: {} } }, "appearance must name a .js file"],
@@ -107,6 +129,14 @@ function suite(ctx, check) {
     check("validateManifest normalizes capabilities and settings", (() => { const m = ctx.validateManifest(bar, "/p").manifest; return [m.capabilities, m.settings, m.defaultSection]; })(), [[], {}, undefined]);
     check("validateManifest normalizes an absent schema to an object", ctx.validateManifest(bar, "/p").manifest.schema, {});
     check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").manifest.__sourceDir, "/p");
+    check("validateManifest normalizes absent requirements to a list", ctx.validateManifest(bar, "/p").manifest.requirements, []);
+    const required = ctx.validateManifest(Object.assign({}, bar, { requirements: [{ command: "gum", purpose: "Dialogs" }, { command: "checkupdates", packages: { pacman: "pacman-contrib" }, optional: true, purpose: "Counts updates" }] }), "/p").manifest;
+    check("validateManifest gives every requirement its packages and optional", required.requirements,
+        [{ command: "gum", packages: {}, optional: false, purpose: "Dialogs" }, { command: "checkupdates", packages: { pacman: "pacman-contrib" }, optional: true, purpose: "Counts updates" }]);
+    check("requirementRows: a command the scan did not find is missing, every other present", ctx.requirementRows(required, ["checkupdates", "vsys"]).map(r => [r.command, r.state]), [["gum", "present"], ["checkupdates", "missing"]]);
+    check("requirementRows: every command is present when the scan missed none", ctx.requirementRows(required, []).map(r => r.state), ["present", "present"]);
+    check("requirementRows does not alias the manifest", (() => { ctx.requirementRows(required, [])[1].packages.apt = "x"; return required.requirements[1].packages; })(), { pacman: "pacman-contrib" });
+    check("the core's config/requirements.json passes the requirements judge", ctx.requirementsError(JSON.parse(fs.readFileSync(CORE_REQUIREMENTS, "utf8"))), "");
 
     // configError rows: [name, config, want]. A refusal row pins the start of
     // the error text.
@@ -468,7 +498,8 @@ suite(load(LOGIC), report);
 
 // Each control removes one rule from a copy of the judge and keeps the text
 // around it; the suite must fail on every copy. The copy sits at the
-// judge's own place in a temporary tree, beside the icon set it imports.
+// judge's own place in a temporary tree, beside the icon set and the
+// package-manager table it imports.
 const CONTROLS = [
     ["icon is a manifest key", "\"license\", \"icon\", \"kinds\"", "\"license\", \"kinds\""],
     ["icon names a shipped icon", "!hasOwn(Lucide.ICONS, raw.icon)", "false"],
@@ -492,6 +523,26 @@ const CONTROLS = [
     ["a bind row carries the manifest's key", "\"default\": defaults[i].key", "\"default\": bind.key"],
     ["a plugin without an icon is listed with the default", ": DEFAULT_ICON;", ": \"\";"],
     ["a centred surface ignores reserved space", "exclusion: placement === \"center\" ? \"ignore\" : \"normal\"", "exclusion: \"normal\""],
+    ["requires is refused by name", "if (hasOwn(raw, \"requires\"))", "if (false)"],
+    ["requirements is a manifest key", "\"hyprland\", \"requirements\"];", "\"hyprland\"];"],
+    ["requirements is a list", "if (!Array.isArray(requirements))\n        return \"requirements must be a list\";", "if (false)\n        return \"requirements must be a list\";"],
+    ["a requirement is an object", "if (!isPlainObject(requirement))", "if (false)"],
+    ["a requirement carries known keys", "if (REQUIREMENT_KEYS.indexOf(keys[k]) === -1)", "if (false)"],
+    ["a requirement command is a bare command name", "if (!PackageManagers.validCommand(requirement.command))", "if (false)"],
+    ["a requirement command is never a plugin id", "if (ID_PATTERN.test(requirement.command))", "if (false)"],
+    ["a requirement command is declared once", "if (commands.indexOf(requirement.command) !== -1)", "if (false)"],
+    ["requirement packages is an object", "if (!isPlainObject(requirement.packages))", "if (false)"],
+    ["requirement packages name known managers", "if (PackageManagers.managerRow(managers[m]) === null)", "if (false)"],
+    ["a requirement package name is judged", "if (!PackageManagers.validName(requirement.packages[managers[m]]))", "if (false)"],
+    ["requirement optional is a boolean", "typeof requirement.optional !== \"boolean\"", "false"],
+    ["a requirement purpose is a string", "typeof requirement.purpose !== \"string\" || ", ""],
+    ["a requirement purpose is not blank", "requirement.purpose.trim().length === 0 || ", ""],
+    ["a requirement purpose is at most 120 characters", "Array.from(requirement.purpose).length > REQUIREMENT_PURPOSE_MAX || ", ""],
+    ["a requirement purpose holds no control character", " || CONTROL_CHARACTER.test(requirement.purpose))", ")"],
+    ["an absent requirement packages is normalized", "packages: entry.packages === undefined ? {} : clone(entry.packages)", "packages: clone(entry.packages)"],
+    ["an absent requirement optional is normalized", "optional: entry.optional === true", "optional: entry.optional"],
+    ["a manifest carries its requirements normalized", "manifest.requirements = normalRequirements(requirements);", ""],
+    ["a requirement the scan missed is reported missing", "missing.indexOf(entry.command) === -1 ? \"present\" : \"missing\"", "\"present\""],
 ];
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));
@@ -499,6 +550,7 @@ try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
+    fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
     const source = fs.readFileSync(LOGIC, "utf8");
     for (const [label, needle, replacement] of CONTROLS) {
         const count = source.split(needle).length - 1;

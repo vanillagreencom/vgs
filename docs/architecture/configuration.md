@@ -26,7 +26,7 @@ Both layers share one shape, judged by `PluginLogic.configError` after every par
 
 ## Unknown ids
 
-An id `disabledPlugins` or `plugins` lists that no discovered plugin has, as a removed plugin leaves behind, enables and disables nothing, and the shell keeps it in the file. `PluginLogic.unknownIds` names each one with the key that lists it, once per key. `listPlugins` carries the rows as `unknown` once the first scan has completed, and `vgsh plugin list` prints one `unknown <id> in <key>` line per row. `scripts/test-plugin-logic.js` pins the rule, `scripts/test-vgsh.sh` the line, and `scripts/smoke/rows/configuration.sh` the shell's report of a stale `disabledPlugins` entry.
+An id `disabledPlugins` or `plugins` lists that no discovered plugin has, as a removed plugin leaves behind, enables and disables nothing, and the shell keeps it in the file. `PluginLogic.unknownIds` names each one with the key that lists it, once per key. `listPlugins` carries the rows as `unknown` once the first scan has completed, and `vgsh plugin list` prints one `unknown <id> in <key>` line per row. `scripts/test-plugin-logic.js` pins the rule, `scripts/test-vgsh-plugin-list.sh` the line, and `scripts/smoke/rows/configuration.sh` the shell's report of a stale `disabledPlugins` entry.
 
 ## States
 

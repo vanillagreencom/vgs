@@ -28,6 +28,13 @@ fi
 expect_poll "user-directory plugin discovered and disabled until enabled" False plugin_enabled acme.probe
 expect "enabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme.bare true
+# The scan probes each declared command on the shell's PATH: `sh` is on
+# every sandbox's, `vgs-smoke-absent` on none. listPlugins carries the
+# states and `vgsh plugin list` names the missing one.
+bare_requirements() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([[r["command"], r["state"]] for p in json.load(sys.stdin)["plugins"] if p["id"] == "acme.bare" for r in p["requirements"]]))'; }
+expect_poll "listPlugins reports each declared command's state" '[["sh", "present"], ["vgs-smoke-absent", "missing"]]' bare_requirements
+bare_missing_line() { "${shell_env[@]}" "$repo/bin/vgsh" plugin list | grep -F 'missing acme.' || true; }
+expect "vgsh plugin list names the missing command" "missing acme.bare vgs-smoke-absent" bare_missing_line
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
 read_widget() { ipc smoke readInstance "$(bar_key)" acme.probe "$1"; }
 read_service() { ipc smoke readInstance service acme.probe "$1"; }
