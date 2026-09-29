@@ -420,8 +420,8 @@ expect_poll "the wallpaper focus control's view read its lists" true wall_value 
 click_in vgs:overlay overlay vgs.themes QQuickButton Theme || fail "the click on the focus control's Theme segment failed"
 type_keys -k Right || fail "sending Right to the wallpaper focus control failed"
 expect_poll "the wallpaper focus control's Right switches the source" '"all"' wall_value source
-type_keys -k Escape || fail "sending Escape to the wallpaper focus control failed"
-expect_poll "Escape closes the wallpaper focus control's browser" 0 layer_count vgs:overlay
+press_wallpapers || fail "typing SUPER+W to close the wallpaper focus control failed"
+expect_poll "SUPER+W closes the wallpaper focus control's browser, whose keys the control holds" 0 layer_count vgs:overlay
 plugin_restore WallpaperView.qml "wallpaper focus"
 plugin_control ThemeView.qml "theme focus" $'\n        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)' ''
 press_themes || fail "typing SUPER+T for the theme focus control failed"
