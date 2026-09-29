@@ -32,6 +32,7 @@ A browser names no workspace, nor does Slack with one workspace signed in. A fac
 - Two messages are one when the rule is the same, the sources differ, the conversation, sender and text match, the workspaces match or one names none, and they arrived within `DUPLICATE_WINDOW`, 10 seconds (`duplicateOf`). Two copies from one client are two messages, however alike.
 - The desktop copy stays, since it names the workspace (`duplicateKept`). A browser copy after it is not shown and not recorded: the service leaves it untracked, so the server discards it. A desktop copy after a browser card still on screen shows, and the browser card leaves with no history entry and its notification dismissed, as a sender's replaced notification does. Under Silence, or once the browser card has left, the first copy recorded stays and the later one goes, and the history is not changed.
 - Each drop logs one line with no content, `notifications: <rule> duplicate: kept=<source> dropped=<source>`, and `status` counts the copies kept by source in `duplicates`.
+- A matched pair is settled (`receiveMessage`): the prior copy leaves the remembered messages and the new one is not remembered, so a later message as alike as either copy shows.
 - The service remembers at most `DUPLICATES_MAX`, 32, messages, none older than the window.
 
 ## Slack photo cache
@@ -53,7 +54,7 @@ Slack's desktop client caches the photos it shows in its disk cache, keyed by UR
 ## Invariants
 
 1. A rule reads a browser notification only by an origin it names, and an unnamed sender's body loses its first line only when a blank line follows it. Enforced by `scripts/test-notifications-logic.js`, each rule with a control.
-2. Two copies of one message show one card, the desktop copy, and two copies from one client both show. Enforced by `scripts/test-notifications-logic.js` and by `scripts/smoke/rows/notifications.sh`, which sends both orders and reads the rows, the history, the log line and `status`.
+2. Two copies of one message show one card, the desktop copy; two copies from one client both show, and so does a later message after a pair matched. Enforced by `scripts/test-notifications-logic.js` and by `scripts/smoke/rows/notifications.sh`, which sends both orders and reads the rows, the history, the log line and `status`.
 3. Each workspace's token fills only its own team; a missing token keeps initials for that workspace alone; the single-workspace token still serves its team and is not fetched twice beside the team's own; no token reaches argv, a file or a log line. Enforced by `scripts/test-notifications-slack-photos.js`, each rule with a control.
 4. The team sweep leaves a name it does not own. Enforced by `scripts/test-notifications-slack-photos.js`, with a control that deletes every name.
 

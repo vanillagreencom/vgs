@@ -19,6 +19,9 @@ const { load } = require("../bin/lib/qml-library.js");
 const file = path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "NotificationLogic.js");
 // The plugin's look, whose face tints the logic names.
 const appearance = load(path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "Appearance.js"));
+// The core's status judge, which the Slack token rows the service publishes
+// must pass.
+const pluginLogic = load(path.join(__dirname, "..", "shell", "Core", "PluginLogic.js"));
 const IMAGES = "/state/vgs/notifications/images";
 // The logic runs in its own context, whose arrays and objects are not this
 // one's; values are compared as JSON.
@@ -394,9 +397,20 @@ function verify(logic) {
         ["a name equal to its domain", { id: "T1", domain: "acme", name: "ACME" }, "ACME"],
         ["a name with a control character", { id: "T1", domain: "acme", name: "Acme\nCorp" }, "Acme Corp (acme)"],
         ["neither printable", { id: "T1", domain: "\u0007", name: "" }, "T1"],
-        ["a label past sixty characters", { id: "T1", domain: "d", name: "x".repeat(70) }, "x".repeat(59) + "\u2026"]
+        ["a label past sixty characters", { id: "T1", domain: "d", name: "x".repeat(70) }, "x".repeat(59) + "\u2026"],
+        // Sixty UTF-16 code units, as the core's judge counts: thirty emoji
+        // are sixty units in thirty code points.
+        ["a label of sixty code units in emoji", { id: "T1", domain: "", name: "\u{1F680}".repeat(30) }, "\u{1F680}".repeat(30)],
+        ["a label past sixty code units in emoji", { id: "T1", domain: "", name: "\u{1F680}".repeat(31) }, "\u{1F680}".repeat(29) + "\u2026"],
+        ["a cut that would split a surrogate pair", { id: "T1", domain: "", name: "x" + "\u{1F680}".repeat(40) }, "x" + "\u{1F680}".repeat(29) + "\u2026"]
     ])
         assert.equal(logic.slackWorkspaceLabel(workspace), want, "label of " + label);
+    // A workspace with a long emoji name still yields token rows the core's
+    // status judge takes.
+    const emojiRows = logic.slackTokenRows([{ id: "T1", domain: "rocket", name: "\u{1F680} launch ".repeat(12) }, { id: "T2", domain: "", name: "\u{1F680}".repeat(45) }], { "slack:T1": "present", "slack:T2": "absent", slack: "absent" }, []);
+    assert.equal(emojiRows.ok, true);
+    assert.equal(emojiRows.items.every(item => item.label.length <= 60), true, "every label fits sixty code units");
+    assert.equal(pluginLogic.statusValueFits("presenceList", JSON.parse(JSON.stringify(emojiRows.items))), true, "the core's judge takes the rows of long emoji names");
 
     // The photo helper's next run: [label, read, listed, want].
     const DAY = 24 * 60 * 60 * 1000, RETRY = 15 * 60 * 1000, NOW = 10 * DAY;
@@ -433,7 +447,7 @@ function verify(logic) {
         ["no rule", note("a", "Chat", "hi", "x", 1000), note("b", "", "hi", "chat.example.com\n\nx", 2000), false]
     ]) {
         const a = logic.messageOf(first), b = logic.messageOf(second);
-        assert.equal(a !== null && b !== null && logic.duplicateOf(logic.rememberMessage([], a, ""), b) !== null, want, "one message: " + label);
+        assert.equal(a !== null && b !== null && logic.duplicateOf(logic.rememberMessage([], a), b) !== null, want, "one message: " + label);
     }
     same(logic.messageOf(web), { key: "w", rule: "slack", source: "browser", conversation: "in master-operator", sender: "fleet", text: "fleet: Done: your agent settings", workspace: "", at: 4000 });
     for (const [label, prior, message, onScreen, want] of [
@@ -443,8 +457,30 @@ function verify(logic) {
     ])
         assert.equal(logic.duplicateKept({ source: prior }, { source: message }, onScreen), want, "kept: " + label);
     const recent = Array.from({ length: 40 }, (_, i) => ({ key: "k" + i, at: 1000 + i }));
-    same(logic.rememberMessage(recent.slice(0, 39), recent[39], "").map(m => m.key), recent.slice(8).map(m => m.key), "the remembered messages are capped");
-    same(logic.rememberMessage([{ key: "old", at: 0 }, { key: "gone", at: 5000 }, { key: "kept", at: 6000 }], { key: "new", at: 10001 }, "gone").map(m => m.key), ["kept", "new"], "messages past the window and the dropped copy are let go");
+    same(logic.rememberMessage(recent.slice(0, 39), recent[39]).map(m => m.key), recent.slice(8).map(m => m.key), "the remembered messages are capped");
+    same(logic.rememberMessage([{ key: "old", at: 0 }, { key: "kept", at: 6000 }], { key: "new", at: 10001 }).map(m => m.key), ["kept", "new"], "messages past the window are let go");
+    same(logic.forgetMessage([{ key: "a", at: 0 }, { key: "b", at: 1 }], "a").map(m => m.key), ["b"]);
+    // Messages in arrival order, as the service receives them: [label, the
+    // notifications, each one's card still on screen for the one before it,
+    // what each does: "shown" (no copy), "kept-prior" or "kept-message"].
+    // A matched pair is settled, so a later message as alike as either
+    // copy shows.
+    const copyAt = (entry, key, at) => Object.assign({}, entry, { key, timestamp: at });
+    for (const [label, entries, want] of [
+        ["desktop, its browser copy, then another browser message", [desk, copyAt(web, "w", 2000), copyAt(web, "w2", 3000)], ["shown", "kept-prior", "shown"]],
+        ["desktop, its browser copy, then another desktop message", [desk, copyAt(web, "w", 2000), copyAt(desk, "d2", 3000)], ["shown", "kept-prior", "shown"]],
+        ["browser, its desktop copy, then another browser message", [copyAt(web, "w", 1000), copyAt(desk, "d", 2000), copyAt(web, "w2", 3000)], ["shown", "kept-message", "shown"]],
+        ["browser, its desktop copy, then another desktop message", [copyAt(web, "w", 1000), copyAt(desk, "d", 2000), copyAt(desk, "d2", 3000)], ["shown", "kept-message", "shown"]],
+        ["an unmatched message stays remembered", [desk, copyAt(desk, "d2", 2000), copyAt(web, "w", 3000)], ["shown", "shown", "kept-prior"]]
+    ]) {
+        let remembered = [];
+        const got = entries.map(entry => {
+            const read = logic.receiveMessage(remembered, logic.messageOf(entry), () => true);
+            remembered = read.recent;
+            return read.prior === null ? "shown" : "kept-" + read.kept;
+        });
+        same(got, want, "in sequence: " + label);
+    }
 }
 verify(load(file));
 
@@ -516,7 +552,11 @@ const CONTROLS = [
     ["a workspace the single-workspace token serves", "if (states[account] === \"absent\" && served) {", "if (false) {"],
     ["the single-workspace row shows when stored", "if (workspaces.length === 0 || legacy !== \"absent\")", "if (workspaces.length === 0)"],
     ["the store command names the workspace's account", "service vgs-notifications account slack:\" + id;", "service vgs-notifications account slack\";"],
-    ["a workspace label is cut", "return chars.length <= SLACK_LABEL_MAX ? label :", "return true ? label :"],
+    ["a workspace label is cut", "if (label.length <= SLACK_LABEL_MAX) return label;", "if (true) return label;"],
+    ["a workspace label is cut by code units", "if (label.length <= SLACK_LABEL_MAX) return label;", "if (Array.from(label).length <= SLACK_LABEL_MAX) return label;"],
+    ["a workspace label cut keeps a surrogate pair whole", "if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);", ""],
+    ["a matched pair forgets the prior copy", "return { recent: forgetMessage(recent, prior.key), prior: prior,", "return { recent: recent, prior: prior,"],
+    ["a matched pair remembers neither copy", "return { recent: forgetMessage(recent, prior.key), prior: prior,", "return { recent: rememberMessage(forgetMessage(recent, prior.key), message), prior: prior,"],
     ["a listed workspace without photos retries", "if (!read.teams.some(function (t) { return t.id === workspaces[i].id; })) return SLACK_PHOTO_RETRY;", ""],
     ["the only known workspace", "if (ids.length === 1) return known[ids[0]];", ""],
     ["the one team holding the sender", "return holders.length === 1 ? holders[0].names[0] : \"\";", "return holders.length > 0 ? holders[0].names[0] : \"\";"],
@@ -530,7 +570,7 @@ const CONTROLS = [
     ["copies share their markup-free text", ".replace(/<[^>]*>/g, \" \").replace(/\\s+/g, \" \").trim(),", ","],
     ["the desktop copy replaces a browser card on screen", "return message.source === \"desktop\" && priorOnScreen ? \"message\" : \"prior\";", "return \"prior\";"],
     ["the remembered messages are capped", ".concat([message]).slice(-DUPLICATES_MAX);", ".concat([message]);"],
-    ["the remembered messages keep the window", "return r.key !== dropKey && message.at - r.at <= DUPLICATE_WINDOW;", "return r.key !== dropKey;"]
+    ["the remembered messages keep the window", "return message.at - r.at <= DUPLICATE_WINDOW; }).concat(", "return true; }).concat("]
 ];
 
 const source = fs.readFileSync(file, "utf8");

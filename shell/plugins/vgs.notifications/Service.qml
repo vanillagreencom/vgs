@@ -310,30 +310,29 @@ Item {
     // message another client already delivered, whose first copy stays;
     // true otherwise, after the first copy's toast, while it is still on
     // screen, leaves with no history entry when this copy is the one to
-    // keep (NotificationLogic.duplicateKept). Logs which client's copy
-    // stayed, with no content.
+    // keep. A matched pair is settled and matches no later message
+    // (NotificationLogic.receiveMessage). Logs which client's copy stayed,
+    // with no content.
     function keepCopy(entry) {
         const message = Logic.messageOf(entry);
         if (message === null) return true;
-        const prior = Logic.duplicateOf(recentMessages, message);
-        if (prior === null) {
-            recentMessages = Logic.rememberMessage(recentMessages, message, "");
-            return true;
-        }
-        const at = indexOf(prior.key);
-        const onScreen = at !== -1 && rowModel.get(at).origin === "live" && rowModel.get(at).leaving === "";
-        const kept = Logic.duplicateKept(prior, message, onScreen) === "message" ? message : prior;
-        const dropped = kept === message ? prior : message;
+        const read = Logic.receiveMessage(recentMessages, message, key => {
+            const at = root.indexOf(key);
+            return at !== -1 && rowModel.get(at).origin === "live" && rowModel.get(at).leaving === "";
+        });
+        recentMessages = read.recent;
+        if (read.prior === null) return true;
+        const kept = read.kept === "message" ? message : read.prior;
+        const dropped = kept === message ? read.prior : message;
         console.info("notifications: " + message.rule + " duplicate: kept=" + kept.source + " dropped=" + dropped.source);
         const next = Object.assign({}, duplicates);
         if (kept.source === "desktop") next.keptDesktop += 1;
         else next.keptBrowser += 1;
         duplicates = next;
-        if (kept === prior) return false;
-        store.dropLive(prior.key, true);
-        unlink(prior.key, "dismiss");
-        removeRow(prior.key);
-        recentMessages = Logic.rememberMessage(recentMessages, message, prior.key);
+        if (kept !== message) return false;
+        store.dropLive(read.prior.key, true);
+        unlink(read.prior.key, "dismiss");
+        removeRow(read.prior.key);
         return true;
     }
 

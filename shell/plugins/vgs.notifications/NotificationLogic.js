@@ -418,19 +418,24 @@ function slackStoreCommand(id) {
 }
 
 // A status item's label is one printable line of at most this many
-// characters (docs/architecture/status.md § Declared).
+// characters (docs/architecture/status.md § Declared), counted as the
+// judge counts them, in UTF-16 code units.
 var SLACK_LABEL_MAX = 60;
 
 // A workspace as the Settings page names it: its name, then its domain in
-// parentheses, one line, cut to SLACK_LABEL_MAX with an ellipsis; its team
+// parentheses, one line, cut to SLACK_LABEL_MAX UTF-16 code units with an
+// ellipsis and never between the two halves of a surrogate pair; its team
 // id when neither is printable.
 function slackWorkspaceLabel(workspace) {
     var clean = function (s) { return String(s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim(); };
     var name = clean(workspace.name);
     var domain = clean(workspace.domain);
     var label = name !== "" && domain !== "" && fold(name) !== fold(domain) ? name + " (" + domain + ")" : name !== "" ? name : domain !== "" ? domain : workspace.id;
-    var chars = Array.from(label);
-    return chars.length <= SLACK_LABEL_MAX ? label : chars.slice(0, SLACK_LABEL_MAX - 1).join("") + "\u2026";
+    if (label.length <= SLACK_LABEL_MAX) return label;
+    var cut = label.slice(0, SLACK_LABEL_MAX - 1);
+    var last = cut.charCodeAt(cut.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+    return cut + "\u2026";
 }
 
 // The Settings page's Slack token rows, a `presenceList`: one item per
@@ -674,10 +679,27 @@ function duplicateKept(prior, message, priorOnScreen) {
     return message.source === "desktop" && priorOnScreen ? "message" : "prior";
 }
 
-// The remembered messages with `message` added and `dropKey`'s gone, those
-// older than DUPLICATE_WINDOW before it let go, at most DUPLICATES_MAX.
-function rememberMessage(recent, message, dropKey) {
-    return recent.filter(function (r) { return r.key !== dropKey && message.at - r.at <= DUPLICATE_WINDOW; }).concat([message]).slice(-DUPLICATES_MAX);
+// The remembered messages with `message` added, those older than
+// DUPLICATE_WINDOW before it let go, at most DUPLICATES_MAX.
+function rememberMessage(recent, message) {
+    return recent.filter(function (r) { return message.at - r.at <= DUPLICATE_WINDOW; }).concat([message]).slice(-DUPLICATES_MAX);
+}
+
+// The remembered messages without `key`'s.
+function forgetMessage(recent, key) {
+    return recent.filter(function (r) { return r.key !== key; });
+}
+
+// What a new `message` does to the remembered messages `recent`: { recent,
+// prior, kept }. With no copy remembered, `message` is remembered and
+// `prior` is null. With a copy, the pair is settled: `prior` leaves the
+// remembered messages and `message` is not remembered, so neither copy
+// matches a later message, however alike; `kept` is duplicateKept's answer,
+// `onScreen(key)` whether the prior copy's card is still on screen.
+function receiveMessage(recent, message, onScreen) {
+    var prior = duplicateOf(recent, message);
+    if (prior === null) return { recent: rememberMessage(recent, message), prior: null, kept: "message" };
+    return { recent: forgetMessage(recent, prior.key), prior: prior, kept: duplicateKept(prior, message, onScreen(prior.key)) };
 }
 
 // ----------------------------------------------------------- Silence
