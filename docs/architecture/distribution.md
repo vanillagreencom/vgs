@@ -1,6 +1,6 @@
 # Distribution
 
-Covers: LICENSE, VERSION, README.md, packaging/, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh
+Covers: LICENSE, VERSION, README.md, packaging/, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh, flake.nix, flake.lock, scripts/test-flake.sh
 
 This file holds how VGS is licensed and versioned. How it is packaged and installed is added here as those parts land.
 
@@ -33,9 +33,19 @@ This file holds how VGS is licensed and versioned. How it is packaged and instal
 - `scripts/test-install-tree.sh` proves the installer, the manifest checker, the `vgsh` symlink, the markdown drop, target freshness and the `--write` path. Its controls plant missing, extra, wrong-link, stale-target, enumerator-failure and shell-markdown defects.
 - The nested smoke's `read-only-prefix` row installs into its sandbox, verifies the pristine tree against the manifest, replaces installed `themes/targets` with the sandbox's fixture targets, runs `chmod -R a-w` on the staged prefix, restarts the shell from `$PREFIX/bin/vgsh`, runs `vgsh theme apply vgs` from the installed command, checks the installed shell log, and compares the installed tree before and after. A root-owned prefix is not available in the test, so a user-owned non-writable tree is the stand-in. Any attempted write either fails on mode bits or changes the snapshot.
 
+## Nix
+
+- `flake.nix` exposes `packages.<system>.default` and `apps.<system>.default` for `x86_64-linux` and `aarch64-linux`. The app runs `vgsh`. Users run `nix run github:vanillagreencom/vgs/v<VERSION>`, or add the package to their configuration. There is no Home Manager module until autostart is settled.
+- nixpkgs carries Quickshell 0.3.1 and Hyprland 0.56.2, which meet the runtime floor. `flake.lock` pins the `nixos-unstable` nixpkgs revision the package builds against.
+- The package is a `stdenvNoCC` derivation. Its install phase calls `packaging/install-system.sh` once with `PREFIX=$out` and an empty `DESTDIR`, then runs `scripts/check-install-tree.sh` on `$out`. A tree that differs from `packaging/install-tree.manifest` fails the build.
+- `wrapProgram` wraps the `$out/bin/vgsh` link, not the runtime tree, so `$out/share/vgs` stays the tree every channel ships. The wrapper puts Quickshell and one package per row of `config/requirements.json` first on `PATH`: each row's `packages.nix` names a nixpkgs attribute. A required row without one fails evaluation, and an optional row without one is not wrapped. Hyprland is not wrapped, because the session supplies `hyprctl`.
+- The fixup phase rewrites the runtime tree's `#!/usr/bin/env` and `#!/bin/bash` lines to the store's bash, node and python3.
+- `scripts/test-flake.sh` runs `nix flake check`, `nix build` and `nix run .# -- --version` in the `nixos/nix` container, on a read-only copy of the tracked and untracked files. It checks that the wrapper's `PATH` alone resolves `qs` and every requirement command, and does not resolve `hyprctl`. Its controls cut the requirements from the wrapped `PATH` and plant a manifest entry the installer never writes. The container's nix store is a named podman or docker volume, so later runs reuse the downloads. No container runtime, no image and no route to `cache.nixos.org` each exit 77.
+
 ## Omarchy comparison
 
 - Omarchy's user Hyprland file loads `(os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua"`. Its command layer and docs assume `/usr/share/omarchy`, with development overrides through `OMARCHY_PATH`.
 - Omarchy installs as a whole distribution. It owns defaults, system package flows, migrations, theme templates and many helper commands under one `/usr/share/omarchy` tree.
 - VGS installs one shell tree beside a user's own Hyprland configuration. It writes user state to XDG configuration and state directories, not beside the install tree.
+- Omarchy ships no Nix package: at `main` `e332dc9` it has no `flake.nix` and no reference to nixpkgs. The VGS flake follows the nixpkgs conventions for a script package instead.
 - VGS uses `/usr/share/vgs` rather than `/usr/lib/vgs` because the shipped payload is architecture-independent scripts, QML, JSON, themes and fonts. It does not use `/etc/xdg/quickshell` because `vgsh` must own the instance lock, version read and install-method root.

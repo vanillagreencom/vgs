@@ -179,7 +179,9 @@ version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$re
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
-  "licence|LICENSE|all|$install_plan"$'\nscripts/qml-smoke.sh'
+  "licence|LICENSE|all|$install_plan"$'\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
+  "flake|flake.nix|all|$repo_plan"$'\nscripts/test-flake.sh'
+  "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$install_plan"
   "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
