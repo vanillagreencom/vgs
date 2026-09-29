@@ -129,6 +129,16 @@ hold_core() { : >"$sandbox/core-hold"; }
 release_core() { rm -f -- "$sandbox/core-hold"; }
 notice_waiting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
 notice_front() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
+# `settled` once no install is in flight: the notice in front is not
+# installing, or none shows. After a run ends, Notices.qml starts one scan,
+# and that scan's end clears the install and settles the queue in one
+# callback, so the rows read right after it need no poll. The chain from
+# the run's end being read to that callback, one scan, is bounded by
+# install_settle_ceiling_ms, read as latency_install_settle_ms: twice the
+# highest of 12 readings, 245 ms, from the six runs that measured
+# run_end_ceiling_ms in harness.sh.
+install_settle_ceiling_ms=500
+install_settled() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print("settled" if s is None or not s["installing"] else "installing")'; }
 needs_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"]][0]))'; }
 expect "enabling the enabled fixture raises the notice again" ok ipc shell setPluginEnabled acme.needs true
 expect_poll "the notice is back" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
@@ -142,8 +152,9 @@ expect_poll "the notice records its install running" "[\"acme.needs\", $all_need
 expect_poll "a live install leaves the notice no surface" 0 layer_count vgs:notice
 expect "the install's run is live while the notice is gone" busy key_idle core/requirements-install
 release_core
-expect_poll "the install run ends" idle key_idle core/requirements-install
-expect_poll "the rescan after an install that left the command missing keeps the notice" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
+expect_run_end "the install run ends" core/requirements-install
+expect_within "the scan after the install run settles the notice" install_settle settled "$install_settle_ceiling_ms" install_settled
+expect "the rescan after an install that left the command missing keeps the notice" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect_poll "the kept notice maps its surface again" 1 layer_count vgs:notice
 expect_poll "the kept notice holds the keyboard after the install" true ipc smoke noticeFocused
 expect "the notice still offers Install" '["Install", "Not now"]' drawn actions
@@ -183,7 +194,9 @@ expect "the installing notice stays after a scan that finds its command" "[\"acm
 expect "the waiting notice stays behind the live install" '["acme.other"]' notice_waiting
 expect "no notice surface maps while the install runs" 0 layer_count vgs:notice
 release_core
-expect_poll "the scan after the run closes the satisfied notice and brings the waiting one forward" '"acme.other"' notice_front
+expect_run_end "the second install run ends" core/requirements-install
+expect_within "the scan after the second install run settles the notice" install_settle settled "$install_settle_ceiling_ms" install_settled
+expect "the scan after the run closes the satisfied notice and brings the waiting one forward" '"acme.other"' notice_front
 expect_poll "the waiting notice maps its surface" 1 layer_count vgs:notice
 expect_poll "the waiting notice holds the keyboard" true ipc smoke noticeFocused
 type_keys -k Escape || fail "sending Escape failed"

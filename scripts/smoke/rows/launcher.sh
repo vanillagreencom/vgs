@@ -92,7 +92,7 @@ expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
 # TUI rows open their TUI through the tui capability. The argv reaches the
 # stand-in xdg-terminal-exec harness.sh's terminal_stand_in wrote, read
 # with the harness's `words`, `core_words`, `recorded`, `forget_record` and
-# `key_idle`. Install and Remove
+# `expect_run_end`. Install and Remove
 # open the core's package pickers; Update opens the first listed entry of
 # the Update group, the fixture acme.tui's while it is enabled, and hides
 # while it is disabled, as tui.sh left it and as this block leaves it.
@@ -127,7 +127,7 @@ for row in "Install|install|Install packages" "Remove|remove|Remove packages"; d
   pick_tui "$label"
   expect_poll "$label hands the terminal the core's vgsh pkg $verb" "$(core_words "core/pkg-$verb" "$title" org.vgs.tui pkg "$verb")" recorded
   expect_poll "$label closes the launcher" 0 layer_count vgs:overlay
-  expect_poll "the $verb picker's run ends" idle key_idle "core/pkg-$verb"
+  expect_run_end "the $verb picker's run ends" "core/pkg-$verb"
 done
 expect "the Update fixture starts disabled, as tui.sh left it" False plugin_enabled acme.tui
 categories Update
@@ -138,7 +138,7 @@ forget_record
 pick_tui Update
 expect_poll "Update hands the terminal the fixture's Update script" "$(update_words)" recorded
 expect_poll "Update closes the launcher" 0 layer_count vgs:overlay
-expect_poll "the Update run ends" idle key_idle acme.tui/update
+expect_run_end "the Update run ends" acme.tui/update
 categories Update
 expect "Update shows while its fixture is enabled" True has_row tui Update
 expect "disabling the Update fixture while the launcher is open is allowed" ok ipc shell setPluginEnabled acme.tui false

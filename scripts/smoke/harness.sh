@@ -689,6 +689,71 @@ t, key = json.load(sys.stdin)["tui"], sys.argv[1]
 r = t["runs"].get(key)
 print("idle" if key not in t["pending"] and (r is None or r["running"] is None) else "busy")' "$1"; }
 
+# expect_within LABEL READING WANT CEILING_MS CMD...: as expect_poll, but
+# bounded by CEILING_MS of wall time from the call, for a state the core
+# reports at the end of a chain whose ceiling was measured. CMD is polled
+# every 0.2 s, and the time to the first WANT is printed as
+# latency_<READING>_ms, a reading that carries one poll interval and one
+# CMD. Returns 0 either way, since a row runs under set -e.
+expect_within() { # LABEL READING WANT CEILING_MS CMD...
+  local label="$1" reading="$2" want="$3" ceiling_ms="$4" got="" start elapsed
+  shift 4
+  start="$(now_ms)"
+  while :; do
+    if got="$("$@")" && [[ $got == "$want" ]]; then
+      elapsed=$(( $(now_ms) - start ))
+      printf '  latency_%s_ms=%d ceiling_ms=%d\n' "$reading" "$elapsed" "$ceiling_ms"
+      ok "$label"
+      return 0
+    fi
+    elapsed=$(( $(now_ms) - start ))
+    [[ $elapsed -lt $ceiling_ms ]] || break
+    sleep 0.2
+  done
+  printf '  latency_%s_ms=over ceiling_ms=%d\n' "$reading" "$ceiling_ms"
+  fail "$label: got $got want $want after $elapsed ms, ceiling $ceiling_ms ms"
+}
+# A run ends in the core through one chain: the presenter exits and moves
+# its ended record into $rt_dir/vgs/tui, the core's FolderListModel lists
+# the new name, a FileView reads the file, and TuiRunner's runs move, which
+# key_idle reads. expect_run_end LABEL KEY waits for KEY to read `idle`
+# within run_end_ceiling_ms and prints each reading as
+# latency_run_end_ms. A key still busy at the ceiling fails, and the row
+# prints what the record directory holds for the key beside the core's
+# view, so a run whose ended record is on disk while the core still reports
+# it running reads as a listing the core missed, not a slow presenter.
+# scripts/smoke/rows/tui.sh holds the control: a run that never ends fails
+# the row at the ceiling. The ceiling is twice the highest of 108 readings,
+# 248 ms, from six runs of scripts/qml-smoke.sh on the owner's machine
+# (host cachy, AMD Ryzen 9 9950X) on 2026-09-29 at host load 4 to 9; the
+# median reading was 22 ms, a first poll that found the run already ended.
+run_end_ceiling_ms=500
+expect_run_end() { # LABEL KEY
+  local failed_before="$failures"
+  expect_within "$1" run_end idle "$run_end_ceiling_ms" key_idle "$2"
+  [[ $failures -eq $failed_before ]] || run_end_records "$2"
+}
+run_end_records() { # KEY
+  local core
+  if ! core="$(ipc shell lent)"; then
+    printf '        the lending record is unreadable\n'
+    return 0
+  fi
+  python3 -c '
+import json, os, sys
+key, folder, tui = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])["tui"]
+stem = key.replace("/", "@")
+files = sorted(n for n in os.listdir(folder) if n.startswith(stem + "@"))
+slot = tui["runs"].get(key)
+running = None if slot is None else slot["running"]
+ended = None if slot is None or slot["ended"] is None else slot["ended"]["run"]
+print("        records on disk: %s" % (", ".join(files) or "none"))
+print("        core: pending=%s running=%s ended=%s" % (key in tui["pending"], running, ended))
+if running is not None and "%s@%s.ended.json" % (stem, running) in files:
+    print("        run %s has its ended record on disk while the core reports it running: the listing missed it" % running)
+' "$1" "$rt_dir/vgs/tui" "$core" || printf '        the record directory is unreadable: %s\n' "$rt_dir/vgs/tui"
+}
+
 smoke_finish() {
 if [[ $failures -gt 0 ]]; then
   echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true

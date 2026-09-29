@@ -322,14 +322,14 @@ settings_click Button Update || fail "the click on Update failed"
 expect_poll "Update opens vgsh plugin update for the plugin in the wide floating TUI" \
   "$(core_words core/plugin-update "Update a plugin" org.vgs.tui.wide plugin update acme.probe)" recorded
 expect_poll "Update hides the window over the terminal" 0 layer_count vgs:panel
-expect_poll "the update's run ends" idle key_idle core/plugin-update
+expect_run_end "the update's run ends" core/plugin-update
 settings_reopen acme.probe
 forget_record
 settings_click Button Remove || fail "the click on Remove failed"
 expect_poll "Remove opens vgsh plugin remove for the plugin in the floating TUI" \
   "$(core_words core/plugin-remove "Remove a plugin" org.vgs.tui plugin remove acme.probe)" recorded
 expect_poll "Remove hides the window over the terminal" 0 layer_count vgs:panel
-expect_poll "the remove's run ends" idle key_idle core/plugin-remove
+expect_run_end "the remove's run ends" core/plugin-remove
 expect "the stand-in's run left the plugin installed" True plugin_known acme.probe
 settings_reopen acme.probe
 
@@ -415,7 +415,7 @@ forget_record
 settings_click Button "Add plugin" || fail "the click on Add plugin failed"
 expect_poll "Add plugin opens vgsh plugin add in the floating TUI" "$(core_words core/plugin-add "Add a plugin" org.vgs.tui plugin add)" recorded
 expect_poll "Add plugin hides the window over the terminal" 0 layer_count vgs:panel
-expect_poll "the add's run ends" idle key_idle core/plugin-add
+expect_run_end "the add's run ends" core/plugin-add
 
 # Requirements: one row per requirement with its state from the scan and
 # its purpose, and Install, while one is missing, shows the core's

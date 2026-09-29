@@ -15,8 +15,8 @@
 # holds, a run's `done` and state from its exit records, a second run of a
 # live key refused busy with its window focused, a destroyed instance's
 # `done` dropped while its run ends, a presenter copy that writes no ended
-# record and the reap that ends its run, and a disabled plugin's list and
-# hold gone.
+# record, whose run fails harness.sh's expect_run_end at its ceiling, and
+# the reap that ends its run, and a disabled plugin's list and hold gone.
 set -euo pipefail
 tui_dir="$home/.config/vgs/plugins/acme.tui"
 mkdir -p "$tui_dir"
@@ -69,13 +69,13 @@ forget_record
 expect "running the declared script answers ok" ok tui run 'hello|a b|$(touch planted)'
 expect_poll "the terminal is handed the wide app-id, the snapshot and the arguments" \
   "$(hello_words "a b" '$(touch planted)')" recorded
-expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
+expect_run_end "the hello run ends before the next request" acme.tui/hello
 expect_poll "the core holds no launcher once the presenter wrote its record" '[]' lent tui.launching
 forget_record
 expect "running it with no argument list answers ok" ok tui run hello
 expect_poll "the terminal is handed the script alone" \
   "$(hello_words)" recorded
-expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
+expect_run_end "the hello run ends before the next request" acme.tui/hello
 
 # open: a listed TUI by key, with no arguments, over IPC and through the
 # capability.
@@ -83,12 +83,12 @@ forget_record
 expect "openTui opens the listed script" ok ipc shell openTui acme.tui/hello
 expect_poll "openTui hands the terminal the script and no argument" \
   "$(hello_words)" recorded
-expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
+expect_run_end "the hello run ends before the next request" acme.tui/hello
 forget_record
 expect "the capability opens a listed key" ok tui open acme.tui/hello
 expect_poll "the capability's open reaches the terminal" \
   "$(hello_words)" recorded
-expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
+expect_run_end "the hello run ends before the next request" acme.tui/hello
 
 # The core's own TUI: its command is the core's bin/vgsh beside the shell
 # directory, whatever the shell's PATH holds, with no plugin copy.
@@ -97,13 +97,13 @@ expect "openTui opens the core's sudo grant" ok ipc shell openTui core/sudo-gran
 expect_poll "the terminal is handed the core's vgsh sudo grant" \
   "$(words --app-id=org.vgs.tui "--title=VGS · Passwordless sudo" -- "$tui_self" present --presentation full \
     --record core/sudo-grant --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Passwordless sudo" -- "$core_vgsh" sudo grant)" recorded
-expect_poll "the core's run ends before the refusals" idle key_idle core/sudo-grant
+expect_run_end "the core's run ends before the refusals" core/sudo-grant
 forget_record
 expect "openTui opens the core's package install picker" ok ipc shell openTui core/pkg-install
 expect_poll "the terminal is handed the core's vgsh pkg install" \
   "$(words --app-id=org.vgs.tui "--title=VGS · Install packages" -- "$tui_self" present --presentation full \
     --record core/pkg-install --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Install packages" -- "$core_vgsh" pkg install)" recorded
-expect_poll "the core's picker run ends before the refusals" idle key_idle core/pkg-install
+expect_run_end "the core's picker run ends before the refusals" core/pkg-install
 
 # Refusals, each before any launcher starts.
 forget_record
@@ -148,7 +148,7 @@ expect_poll "the probe that request started finds the terminal again" '"present"
 expect "a later request answers ok once the probe passed" ok tui run hello
 expect_poll "the later request reaches the terminal" \
   "$(hello_words)" recorded
-expect_poll "the hello run ends before the next request" idle key_idle acme.tui/hello
+expect_run_end "the hello run ends before the next request" acme.tui/hello
 
 # Exit records: a gated run of the fixture's wait script, with a `done`.
 # The presenter writes the run's records; the core reads them into the
@@ -176,8 +176,9 @@ expect "a second run of the live key is refused busy" "refused: tui=wait reason=
 expect_poll "the busy answer focuses the live run's window" '"org.vgs.tui"' active_class
 expect "a busy answer registers no done" '["acme.tui"]' lent tui.waiters
 touch -- "$tui_gate"
-expect_poll "the run's done fires with the command's code" '[["wait",3,null]]' tui_done
-expect_poll "the fixture's state moves to the ended run" '[false, 3, true]' wait_state
+expect_run_end "the gated run ends once its gate exists" acme.tui/wait
+expect "the run's done fires with the command's code" '[["wait",3,null]]' tui_done
+expect "the fixture's state moves to the ended run" '[false, 3, true]' wait_state
 expect "the core holds no done once it fired" '[]' lent tui.waiters
 expect_poll "the run's window closes with the presenter" 0 wait_window
 expect "the run's done fired once" '[["wait",3,null]]' tui_done
@@ -192,7 +193,8 @@ expect "the core holds the instance's done" '["acme.tui"]' lent tui.waiters
 expect "disabling the tui fixture during the run is allowed" ok ipc shell setPluginEnabled acme.tui false
 expect_poll "the destroyed instance's done is dropped" '[]' lent tui.waiters
 touch -- "$tui_gate"
-expect_poll "the run ends without its instance" 5 wait_ended_code
+expect_run_end "the run ends without its instance" acme.tui/wait
+expect "the ended run keeps its code without its instance" 5 wait_ended_code
 expect "re-enabling the tui fixture is allowed" ok ipc shell setPluginEnabled acme.tui true
 expect_poll "the tui fixture's service is built again" True record_exists acme.tui
 expect_poll "the rebuilt instance reads the run the destroyed one started" '[false, 5, true]' wait_state
@@ -217,12 +219,20 @@ if [[ $(grep -c -F -- "$end_line" "$tui_real") == 1 ]]; then
   expect_poll "the control's presenter exits and its window closes" 0 wait_window
   expect "the unended control fires no done" '[]' tui_done
   expect "the unended control leaves the run live" '[true, 5, true]' wait_state
+  # Control for expect_run_end: the run this presenter copy leaves live
+  # never ends, so the row fails once the ceiling has passed. The row runs
+  # in a subshell whose failure count is its answer, and its lines are
+  # kept aside.
+  never_ended() { (failures=0 behaviour_failures=0; expect_run_end "the never-ending run" acme.tui/wait >"$sandbox/run-end-control.log"; echo "$failures"); }
+  expect "the run-end row fails a run that never ends, at its ceiling" 1 never_ended
+  expect "the failed row names the ceiling it waited" 1 grep -c -F -- "latency_run_end_ms=over ceiling_ms=$run_end_ceiling_ms" "$sandbox/run-end-control.log"
   cp -- "$tui_real" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
   expected_errors+=('tui: focus=none tui=acme\.tui/wait')
   expect "a request for the vanished run's key is refused busy" "refused: tui=wait reason=busy" tui run "wait|$tui_gate|0"
   expect_log "the busy answer finds no window for the vanished run" 1 'tui: focus=none tui=acme\.tui/wait'
-  expect_poll "the reap it started ends the vanished run" '[false, null, true]' wait_state
-  expect_poll "the vanished run's done fires with no code" '[["wait",null,"vanished"]]' tui_done
+  expect_run_end "the reap it started ends the vanished run" acme.tui/wait
+  expect "the vanished run's state has no code" '[false, null, true]' wait_state
+  expect "the vanished run's done fires with no code" '[["wait",null,"vanished"]]' tui_done
   expect_poll "no reap is left running" false lent tui.reaping
 else
   fail "the unended control's line occurs once in bin/vgsh-tui"
