@@ -2,8 +2,9 @@
 # Enabled here, it places its gear in every bar and binds SUPER+M; the gear
 # opens a Hyprland window centred on its monitor's work area, half the
 # monitor tall and `size.window.width` wide or clamped on a narrower
-# monitor, which takes the keyboard. The window lists every plugin, itself
-# included, and opens a page
+# monitor, which takes the keyboard. The pointer shows the hand over the
+# list's controls, the I-beam over its search field and the arrow over its
+# heading. The window lists every plugin, itself included, and opens a page
 # per plugin whose settings, keys and enablement it writes through the
 # manager capability; the title's menu jumps between pages, the back button
 # and Escape return, a deep link opens one page, and the page's scroll bar
@@ -200,6 +201,22 @@ expect "the Settings plugin lists itself, bundled, with its icon, capabilities a
 expect "an installed fixture is listed as installed with its manifest icon" '["Probe", "flask-conical", "installed", "acme"]' row_of acme.probe name icon source author
 expect "a plugin without a manifest icon is listed with the package icon" '["package"]' row_of acme.bare icon
 expect "a manager row carries each requirement with its state" '[[{"command": "sh", "packages": {"pacman": "bash"}, "optional": false, "purpose": "A command every sandbox has", "state": "present"}, {"command": "vgs-smoke-absent", "packages": {}, "optional": true, "purpose": "A command no sandbox has", "state": "missing"}]]' row_of acme.bare requirements
+
+# The cursor over the list: the hand over each control that takes a click,
+# the Add plugin button, a row, the switch in it and its chevron, which
+# the row's click owns; the I-beam over the search field and the arrow over
+# the heading, the controls that read no hand. Each shape differs from the
+# reading before it, so each is a request the shell sent.
+settings_box() { ipc smoke windowGeometry window vgs.settings "$1" "$2"; }
+probe_row_box() { ipc smoke scopedWindowGeometry window vgs.settings ListItem Probe "$1" "$2"; }
+expect_cursor "the search field shows the I-beam" text window:Settings "$(settings_box TextField "")"
+expect_cursor "Add plugin shows the hand" pointer window:Settings "$(settings_box Button "Add plugin")"
+expect_cursor "the list's heading shows the arrow" default window:Settings "$(settings_box Label Settings)"
+expect_cursor "a plugin's row shows the hand" pointer window:Settings "$(settings_box ListItem Probe)"
+expect_cursor "the search field shows the I-beam again" text window:Settings "$(settings_box TextField "")"
+expect_cursor "the row's switch shows the hand" pointer window:Settings "$(probe_row_box Switch "")"
+expect_cursor "the heading shows the arrow again" default window:Settings "$(settings_box Label Settings)"
+expect_cursor "the row's chevron shows the hand" pointer window:Settings "$(probe_row_box Icon chevron-right)"
 
 # A page: a click on a row opens it, drawn from the manifest alone; its
 # schema's groups are its sections, in manifest order after the entries

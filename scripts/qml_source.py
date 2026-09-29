@@ -1,9 +1,9 @@
 """The QML and JavaScript source lines a static check reads.
 
-`check-plugin-boundary.py` and `check-design-tokens.py` walk the same files the
-way the shell lists them, through `bin/vgsh-scan`, and read code only: line
-comments, block comments and trailing comments are blanked before matching,
-with line numbers kept. String literals stay, so a name inside a string handed
+`check-plugin-boundary.py`, `check-design-tokens.py` and
+`check-pointer-cursor.py` walk the same files the way the shell lists them,
+through `bin/vgsh-scan`, and read code only: line comments, block comments
+and trailing comments are blanked before matching, with line numbers kept. String literals stay, so a name inside a string handed
 to `Qt.createQmlObject` is still a finding.
 
 A directory or file the walk cannot read raises `Unreadable`, and the caller
@@ -32,13 +32,15 @@ class Unreadable(Exception):
         self.strerror = strerror
 
 
-def blank_comments(text):
+def blank_comments(text, literals=True):
     """Return `text` with every comment replaced by spaces, newlines kept.
 
     Strings, template literals and regular expression literals are copied as
     they are, so a `//` inside `"file://"` or `/\\/\\//` opens no comment. A
     single- or double-quoted string ends at its line's end even unterminated,
-    so a misread quote cannot hide more than the rest of one line."""
+    so a misread quote cannot hide more than the rest of one line. With
+    `literals` false, a literal keeps its delimiters and newlines and its
+    content turns to spaces too, so a brace inside a string opens no block."""
     out = []
     i, n = 0, len(text)
     last = ""
@@ -70,17 +72,19 @@ def blank_comments(text):
                 ch = text[i]
                 if ch == "\n" and close != "`":
                     break
-                out.append(ch)
                 i += 1
                 if ch == "\\" and i < n and text[i] != "\n":
-                    out.append(text[i])
+                    out.append(text[i - 1:i + 1] if literals else "  ")
                     i += 1
-                elif close == "/" and ch == "[":
+                    continue
+                if close == "/" and ch == "[":
                     in_class = True
                 elif close == "/" and ch == "]":
                     in_class = False
                 elif ch == close and not in_class:
+                    out.append(ch)
                     break
+                out.append(ch if literals or ch == "\n" else " ")
             last = close
             continue
         out.append(c)
@@ -90,20 +94,26 @@ def blank_comments(text):
     return "".join(out)
 
 
-def source_lines(root):
-    """Yield (path, line number, code) for every non-blank code line of every
-    `.qml` and `.js` file under `root`, comments blanked."""
+def source_texts(root):
+    """Yield (path, text) for every `.qml` and `.js` file under `root`, as
+    written, comments included."""
     try:
         for relative, _executable, data in scan_sources(root):
             if not relative.endswith((".qml", ".js")):
                 continue
             path = os.path.join(root, relative)
             try:
-                text = data.decode("utf-8-sig")
+                yield path, data.decode("utf-8-sig")
             except UnicodeError as exc:
                 raise Unreadable(path, str(exc)) from exc
-            for number, line in enumerate(blank_comments(text).split("\n"), 1):
-                if line.strip():
-                    yield path, number, line
     except OSError as exc:
         raise Unreadable(exc.filename, exc.strerror) from exc
+
+
+def source_lines(root):
+    """Yield (path, line number, code) for every non-blank code line of every
+    `.qml` and `.js` file under `root`, comments blanked."""
+    for path, text in source_texts(root):
+        for number, line in enumerate(blank_comments(text).split("\n"), 1):
+            if line.strip():
+                yield path, number, line

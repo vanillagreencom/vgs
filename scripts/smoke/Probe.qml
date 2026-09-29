@@ -107,18 +107,28 @@ Scope {
         return found === undefined ? null : found;
     }
 
-    // The first visible, enabled item named `type` whose `text` is `text`
-    // inside the first visible item named `scopeType` that draws
-    // `scopeText`, under an instance, or null: one row's button among rows
-    // that each draw a button with the same text.
+    // The first visible, enabled item named `type` whose `text`, or `name`
+    // for an icon, is `text` inside the first visible item named
+    // `scopeType` that draws `scopeText`, under an instance, or null: one
+    // row's button among rows that each draw a button with the same text.
     function scopedItem(hostKey, id, scopeType, scopeText, type, text) {
         const item = root.instance(hostKey, id);
         if (item === null) return null;
         const draws = node => root.descendants(node).some(child => child instanceof Text && child.visible && child.text === scopeText);
         const scope = root.descendants(item).find(child => root.typeName(child) === scopeType && child.visible && draws(child));
         if (scope === undefined) return null;
-        const found = root.descendants(scope).find(child => root.typeName(child) === type && child.text === text && child.visible && child.enabled);
+        const found = root.descendants(scope).find(child => root.typeName(child) === type && (child.text === text || child.name === text) && child.visible && child.enabled);
         return found === undefined ? null : found;
+    }
+
+    // The window box of the first visible item named `type` under an
+    // instance whose `text`, or `label` for an icon button, is `text`, and
+    // enabled when `enabledOnly` holds, or "absent".
+    function labelledBox(hostKey, id, type, text, enabledOnly) {
+        const item = root.instance(hostKey, id);
+        if (item === null) return "absent";
+        const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && (child.enabled || !enabledOnly));
+        return found === undefined ? "absent" : JSON.stringify(root.windowBox(found));
     }
 
     function fieldOf(panel, id, key) {
@@ -317,14 +327,16 @@ Scope {
         }
         // The components of qs.Ui, read from its qmldir, that the gallery
         // draws no instance of; an empty list is the pass. A QML-defined
-        // type prints as `<Name>_QMLTYPE_<n>(...)`.
+        // type prints as `<Name>_QMLTYPE_<n>(...)`. PointerCursor is a
+        // pointer handler, which no item list holds; every gallery control
+        // declares one.
         function galleryMissing(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.examples === undefined) return "absent";
             const names = [];
             for (const line of uiModule.text().split("\n")) {
                 const m = /^(\w+) 1\.0 \S+$/.exec(line);
-                if (m !== null && m[1] !== "BarWidget") names.push(m[1]);
+                if (m !== null && m[1] !== "BarWidget" && m[1] !== "PointerCursor") names.push(m[1]);
             }
             if (names.length < 20) return "qmldir-read-broken=" + names.length;
             const seen = {};
@@ -551,10 +563,12 @@ Scope {
             return found === null ? "absent" : JSON.stringify(root.windowBox(found));
         }
         function windowGeometry(hostKey: string, id: string, type: string, text: string): string {
-            const item = root.instance(hostKey, id);
-            if (item === null) return "absent";
-            const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && child.enabled);
-            return found === undefined ? "absent" : JSON.stringify(root.windowBox(found));
+            return root.labelledBox(hostKey, id, type, text, true);
+        }
+        // windowGeometry for a shown item enabled or not, so a row reaches
+        // a disabled control.
+        function shownWindowGeometry(hostKey: string, id: string, type: string, text: string): string {
+            return root.labelledBox(hostKey, id, type, text, false);
         }
         // The keyboard's focus chain from the focused item under an
         // instance: the page, `ListPage` or `PluginPage`, owning that item

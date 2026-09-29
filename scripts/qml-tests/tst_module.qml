@@ -42,7 +42,8 @@ Item {
                     fail(entry.name + " does not instantiate: " + e.qmlErrors.map(err => err.fileName + ":" + err.lineNumber + " " + err.message).join("; "));
                 }
                 verify(item !== null, entry.name);
-                verify(item.implicitWidth >= 0 && item.implicitHeight >= 0, entry.name + " has a size");
+                // PointerCursor is a pointer handler, which draws nothing.
+                if (item instanceof Item) verify(item.implicitWidth >= 0 && item.implicitHeight >= 0, entry.name + " has a size");
                 item.destroy();
             }
         }

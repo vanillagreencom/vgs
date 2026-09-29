@@ -2,7 +2,8 @@
 # tooltip, a menu and a select, and a fixture panel with a select nested in
 # a summoned surface. Each overlay is a Qt window popup: it leaves the bar,
 # takes keys through the nested seat, follows its anchor and closes on a
-# press outside, on Escape and when its anchor hides. Popup rectangles are
+# press outside, on Escape and when its anchor hides; a select's list shows
+# the hand over its entries. Popup rectangles are
 # read through the popup's content item in the bar window's coordinates,
 # the same coordinates a click takes, since the bar sits at the origin.
 # The press outside closes each one through its focus grab: a copy of each
@@ -84,6 +85,8 @@ expect "the select starts on the first entry" 0 ovr selected
 expect "the widget opens its select" ok ovw openSelect
 expect_poll "the select list is open" true ovr selectOpen
 read -r lx ly lw lh < <(rect "$(ovw selectListGeometry)")
+# The list is its own popup surface; its entries show the hand too.
+expect_cursor_at "an entry of the select's popup list shows the hand" pointer "$((lx + lw / 2))" "$((ly + lh / 2))"
 click "$((lx + lw / 2))" "$((ly + lh / 2))" || fail "the click on the middle entry failed"
 expect_poll "a click on the middle entry chooses it" 1 ovr selected
 expect_poll "a choice closes the list" false ovr selectOpen

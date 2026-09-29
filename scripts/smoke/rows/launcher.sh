@@ -2,7 +2,8 @@
 # The harness starts it disabled; this row enables it, drives every path
 # that opens it (the shortcut, the service's IPC, the host's summon and the
 # bar entry), types into it on the nested seat and reads what it drew back
-# through the probe: its rows, its look and its shader. A picker answers
+# through the probe: its rows, its look and its shader, and the hand over a
+# row. A picker answers
 # through two files under the sandbox's runtime directory, read here. The
 # Install, Remove and Update rows open floating TUIs, read back from the
 # stand-in terminal scripts/smoke/rows/tui.sh left. The row ends with the
@@ -411,6 +412,7 @@ expect_poll "a click outside the card closed it" 0 layer_count vgs:overlay
 expect "the launcher opens its theme menu" ok ipc shell summon overlay vgs.launcher '{"menu":"style.theme"}'
 focused
 expect_poll "the theme menu lists the vgs package" True has_row theme vgs
+expect_cursor "a launcher row shows the hand" pointer vgs:overlay "$(ipc smoke windowGeometry overlay vgs.launcher LauncherRow vgs)"
 expect "the host hides the theme menu" ok ipc shell hide overlay vgs.launcher
 expect_poll "the theme menu closed" 0 layer_count vgs:overlay
 

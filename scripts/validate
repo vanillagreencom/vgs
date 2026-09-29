@@ -185,6 +185,8 @@ rows=(
   "boundary|plugin boundary controls|python3 scripts/test-check-plugin-boundary.py|scripts/check-plugin-boundary.py bin/vgsh-scan scripts/qml_source.py"
   "boundary|design tokens|python3 scripts/check-design-tokens.py|shell/* .agents/skills/vgs-plugin/templates/* scripts/smoke/fixtures/* bin/vgsh-scan scripts/qml_source.py bin/lib/qml-library.js"
   "boundary|design token controls|python3 scripts/test-check-design-tokens.py|scripts/check-design-tokens.py bin/vgsh-scan scripts/qml_source.py bin/lib/qml-library.js shell/Commons/Tokens.js shell/Commons/ThemeLogic.js shell/Commons/Theme.qml shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js"
+  "boundary|pointer cursor|python3 scripts/check-pointer-cursor.py|shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
+  "boundary|pointer cursor controls|python3 scripts/test-check-pointer-cursor.py|scripts/check-pointer-cursor.py shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
   "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"

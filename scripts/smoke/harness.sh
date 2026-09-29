@@ -116,9 +116,12 @@ repo="$sandbox/repo"
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 hl.monitor({ output = "SMOKE-HIDPI", mode = "1280x720", position = "auto", scale = 2 })
+-- Logs on: the cursor rows read each cursor shape the compositor takes
+-- from the shell through `hyprctl rollinglog`, which is empty without them.
 hl.config({
     misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_autoreload = true },
     animations = { enabled = false },
+    debug = { disable_logs = false },
 })
 -- Empty workspaces the compositor keeps alive, so the bar draws more than
 -- one workspace pill and one whose label is wider than the pill's floor.
@@ -340,6 +343,42 @@ click_item() { # HOST_KEY ID TYPE TEXT [X Y]
     sleep 0.1
   done
   return 1
+}
+
+# expect_cursor_at LABEL SHAPE X Y: the pointer moved to the layout
+# position (X, Y), the nested compositor's cursor is SHAPE: `pointer` for
+# the hand, `default` for the arrow, `text` for the I-beam. The reading is the last
+# shape Hyprland took from the client under the pointer through
+# wp_cursor_shape, which it logs as `cursorImage request: shape <n> ->
+# <name>` (CInputManager in src/managers/input/InputManager.cpp, v0.56.2),
+# read through `hyprctl rollinglog`. Qt sends a shape only when it changes,
+# so a last line that already names SHAPE before the move proves nothing:
+# the helper fails then, and a row expects another shape between two
+# readings of one. The pointer moves every 100 ms, one pixel apart so each
+# move is a motion, for up to 5 s. expect_cursor LABEL SHAPE SURFACE
+# RECT_JSON does the same at the centre of RECT_JSON, a box in the
+# coordinates of SURFACE's window, a surface_box name.
+cursor_shape() { hypr rollinglog | sed -n 's/.*cursorImage request: shape [0-9]* -> //p' | tail -n 1; }
+expect_cursor() { # LABEL SHAPE SURFACE RECT_JSON
+  local x y
+  [[ $4 == \[* ]] || { fail "$1: no box: $4"; return; }
+  read -r x y < <(at_centre "$3" "$4") || { fail "$1: no surface $3"; return; }
+  expect_cursor_at "$1" "$2" "$x" "$y"
+}
+expect_cursor_at() { # LABEL SHAPE X Y
+  local label="$1" want="$2" x="$3" y="$4" got="" seen="" i
+  got="$(cursor_shape)" || { fail "$label: the compositor's log is unreadable"; return; }
+  if [[ $got == "$want" ]]; then fail "$label: the compositor already shows $want before the move; expect another shape first"; return; fi
+  for i in $(seq 1 50); do
+    hover "$((x + i % 2))" "$y" || { fail "$label: moving the pointer failed"; return; }
+    got="$(cursor_shape)" || { fail "$label: the compositor's log is unreadable"; return; }
+    if [[ $got == "$want" ]]; then ok "$label"; return; fi
+    # The rolling log drops old lines as the moves add new ones, so the
+    # last shape read is the one the failure names.
+    [[ -z $got ]] || seen="$got"
+    sleep 0.1
+  done
+  fail "$label: got ${seen:-no shape} want $want"
 }
 
 # Latency from the runner's exec to the first bar surface with a client,
@@ -838,7 +877,9 @@ if running is not None and "%s@%s.ended.json" % (stem, running) in files:
 smoke_finish() {
 if [[ $failures -gt 0 ]]; then
   echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true
-  echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null || true
+  # Hyprland ends its log without a newline; sed adds the one the verdict
+  # line after it needs.
+  echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null | sed '$a\' || true
 fi
 local status=0
 smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$mode_resets" "$rt_dir"/hypr/*/hyprland.log || status=$?
