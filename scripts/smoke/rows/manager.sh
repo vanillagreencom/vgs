@@ -230,6 +230,33 @@ expect "the page shows the key's refusal" '{"vgs.settings":"refused: key=toggle 
 expect "the refused key left shell.json alone" absent user_key
 expect "a reset after the refusal is applied" applied ipc smoke invokeInstance panel vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
 expect "the accepted key clears the page's refusal" '{}' ipc smoke readInstance panel vgs.settings replies
+# A problem the Hyprland layer reports for a plugin, a `keys` name its
+# manifest binds nothing under, is among that plugin's errors on its row,
+# as in listPlugins, and the list's badge counts it.
+settings_keys_row() { # JSON object: the Settings row's keys, replaced whole
+  python3 - "$user_file" "$1" <<'PY'
+import json, os, sys
+path, keys = sys.argv[1], json.loads(sys.argv[2])
+doc = json.load(open(path))
+rows = doc.setdefault("plugins", [])
+row = [r for r in rows if r["id"] == "vgs.settings"]
+if not row:
+    rows.append({"id": "vgs.settings"})
+    row = rows[-1:]
+if keys: row[0]["keys"] = keys
+else: row[0].pop("keys", None)
+json.dump(doc, open(path + ".tmp", "w"), indent=2)
+os.replace(path + ".tmp", path)
+PY
+}
+listed_problem() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([e["error"] for e in json.load(sys.stdin)["errors"] if "vgs.settings" in e["error"]]))'; }
+settings_badge() { ipc smoke itemTexts panel vgs.settings ListItem | python3 -c 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin) if t[0] == "Settings"]))'; }
+settings_keys_row '{"nope": "SUPER+F9"}'
+expect_poll "a keys name no bind declares is among the plugin's errors" '[["hyprland: shell.json keys.nope names no bind of vgs.settings"]]' row_of vgs.settings errors
+expect "listPlugins reads the same problem" '["hyprland: shell.json keys.nope names no bind of vgs.settings"]' listed_problem
+expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Bundled", "1"]]' settings_badge
+settings_keys_row '{}'
+expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 
 # Back: the back button and Escape pop the page; Escape on the list hides
 # the window.
