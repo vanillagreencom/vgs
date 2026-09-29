@@ -443,6 +443,31 @@ Scope {
             const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && child.enabled);
             return found === undefined ? "absent" : JSON.stringify(root.windowBox(found));
         }
+        // The keyboard's focus chain from the focused item under an
+        // instance: the page, `ListPage` or `PluginPage`, owning that item
+        // and each of the next STEPS items Tab reaches, or Shift+Tab for a
+        // negative count, "none" for one outside both, as a list. Nothing
+        // is focused by the walk.
+        function focusChain(hostKey: string, id: string, steps: int): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const focused = root.descendants(item).filter(child => child.activeFocus);
+            if (focused.length === 0) return "no-focus";
+            const pageOf = node => {
+                for (let at = node; at !== null && at !== undefined; at = at.parent) {
+                    const type = root.typeName(at);
+                    if (type === "ListPage" || type === "PluginPage") return type;
+                }
+                return "none";
+            };
+            let at = focused[focused.length - 1];
+            const out = [pageOf(at)];
+            for (let i = 0; i < Math.abs(steps) && at; i++) {
+                at = at.nextItemInFocusChain(steps > 0);
+                out.push(at ? pageOf(at) : "end");
+            }
+            return JSON.stringify(out);
+        }
         // Every Menu under an instance, in tree order, as it stands: open or
         // not, its entries' texts, the checked ones, the highlighted one and
         // whether its entries scroll.

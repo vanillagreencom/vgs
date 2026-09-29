@@ -156,6 +156,12 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the list's heading, search field and rows share its edges, each row's lines on its icon" '[]' list_alignment
+# The keyboard reaches the shown page alone: twelve steps of Tab and of
+# Shift+Tab from the focused item stay on it, and a real Tab moves focus on
+# it; the page slid out is hidden, not merely offscreen.
+focus_pages() { ipc smoke focusChain panel vgs.settings "$1" | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.dumps(sorted(set(json.loads(t)))) if t.startswith("[") else t.strip())'; }
+expect_poll "Tab from the search field stays on the list" '["ListPage"]' focus_pages 12
+expect_poll "Shift+Tab from the search field stays on the list" '["ListPage"]' focus_pages -12
 
 # The list: one row per discovered plugin, the Settings plugin itself
 # included, with its icon, source, capabilities, keys and errors.
@@ -176,6 +182,10 @@ expect "a plugin without a manifest icon is listed with the package icon" '["pac
 # without one, and a bounded number is a slider.
 settings_click ListItem Probe || fail "the click on the fixture's row failed"
 expect_poll "a click on a row opens that plugin's page" '"acme.probe"' settings_page
+expect_poll "Tab from the pushed page stays on it" '["PluginPage"]' focus_pages 12
+expect_poll "Shift+Tab from the pushed page stays on it" '["PluginPage"]' focus_pages -12
+type_keys -k Tab || fail "sending Tab to the page failed"
+expect_poll "a real Tab keeps the focus on the page" '["PluginPage"]' focus_pages 0
 section_names() { ipc smoke itemTexts panel vgs.settings SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin) if t]))'; }
 expect_poll "the page draws one section per schema group, ungrouped first" '["Settings", "Layout", "Behaviour", "Look"]' section_names
 page_fields() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
@@ -331,14 +341,15 @@ settings_badge() { ipc smoke itemTexts panel vgs.settings ListItem | python3 -c 
 settings_keys_row '{"nope": "SUPER+F9"}'
 expect_poll "a keys name no bind declares is among the plugin's errors" '[["hyprland: shell.json keys.nope names no bind of vgs.settings"]]' row_of vgs.settings errors
 expect "listPlugins reads the same problem" '["hyprland: shell.json keys.nope names no bind of vgs.settings"]' listed_problem
-expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Bundled", "1"]]' settings_badge
-settings_keys_row '{}'
-expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 
 # Back: the back button and Escape pop the page; Escape on the list hides
 # the window.
 settings_click IconButton "Back to the plugin list" || fail "the click on the back button failed"
 expect_poll "the back button returns to the list" '""' settings_page
+expect_poll "Tab after the pop stays on the list" '["ListPage"]' focus_pages 12
+expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Bundled", "1"]]' settings_badge
+settings_keys_row '{}'
+expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 expect "a row opens its page by name" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
 expect_poll "the page is open again" '"acme.probe"' settings_page
 type_keys -k Escape || fail "sending Escape to the page failed"

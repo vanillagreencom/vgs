@@ -10,10 +10,11 @@ import "Reply.js" as Reply
 // and `size.window.heightShare` of the monitor's height tall, read from the
 // screen its `screens` capability gives. The list page and the plugin page
 // sit side by side and slide on `motion.duration.normal`, so a
-// `motion.scale` of 0 makes a push or a pop instant. Escape pops a page,
-// then hides the window. Enabling, disabling, a setting and a key go
-// through the manager capability; the rows come back from the core, so
-// the window shows what the configuration holds.
+// `motion.scale` of 0 makes a push or a pop instant; the page not shown is
+// hidden once the slide ends, so the keyboard reaches the shown page alone.
+// Escape pops a page, then hides the window. Enabling, disabling, a
+// setting and a key go through the manager capability; the rows come back
+// from the core, so the window shows what the configuration holds.
 //
 // The payload is a JSON object: `{}` opens the list, `{"plugin":"<id>"}`
 // that plugin's page, and an id no plugin has opens the list with a notice
@@ -140,14 +141,18 @@ FocusScope {
             x: root.page === "" ? 0 : -root.width
             Behavior on x {
                 enabled: root.sliding
-                NumberAnimation { duration: Theme.motion.duration.normal; easing.type: Theme.motion.easing.standard }
+                NumberAnimation { id: slide; duration: Theme.motion.duration.normal; easing.type: Theme.motion.easing.standard }
             }
 
+            // The page not shown is hidden once the slide ends, so Tab,
+            // Shift+Tab and the pointer reach the shown page alone; both
+            // draw while they slide.
             ListPage {
                 id: list
                 panel: root
                 width: root.width
                 height: root.height
+                visible: root.page === "" || slide.running
                 focus: root.page === ""
             }
 
@@ -158,6 +163,7 @@ FocusScope {
                 x: root.width
                 width: root.width
                 height: root.height
+                visible: root.page !== "" || slide.running
                 focus: root.page !== ""
             }
         }
