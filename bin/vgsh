@@ -43,6 +43,8 @@
 #   vgsh pkg present <command>...  which commands are on PATH, as JSON; exit 1 when one is missing
 #   vgsh pkg plan install|remove|upgrade <manager> [names...]
 #                                  print the argv of each step the action takes; runs nothing
+#   vgsh pkg check [--json] [--source <manager>]
+#                                  count each manager's pending updates without root
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh tui present [--title <text>] [--size default|wide|tall] -- <argv...>

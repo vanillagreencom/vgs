@@ -1,0 +1,8 @@
+
+bash.x86_64                              5.2.26-3.fc40          updates         
+python3-sphinxcontrib-applehelp-doc-extra.noarch
+                                         2.0.0-1.fc40           updates         
+dnf-plugins-core.noarch                  4.9.0-1.fc40           updates         
+Obsoleting Packages
+dnf-plugins-core.noarch                  4.9.0-1.fc40           updates         
+    dnf-plugins-extra.noarch             4.8.0-2.fc40           @updates        

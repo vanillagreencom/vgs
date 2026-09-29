@@ -3,6 +3,8 @@
 .claude/** -whitespace
 .codex/** -whitespace
 .pi/** -whitespace
+# Canned package-manager output: the bytes each tool prints, padding included.
+scripts/fixtures/pkg/** -whitespace
 # Binary assets: declared binary so git keeps them out of textual diffs and
 # doc-limits does not read their NUL bytes as a text file gone binary.
 *.png binary

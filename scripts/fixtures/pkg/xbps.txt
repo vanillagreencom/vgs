@@ -1,0 +1,4 @@
+bash-5.2.037_1 update x86_64 https://repo-default.voidlinux.org/current 8699858 1964864
+libfoo-2.1_1 install x86_64 https://repo-default.voidlinux.org/current 120000 40000
+xbps-0.60.4_1 update x86_64 https://repo-default.voidlinux.org/current 1703936 530432
+linux6.12-6.12.9_1 hold x86_64 https://repo-default.voidlinux.org/current 0 0

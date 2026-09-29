@@ -9,9 +9,13 @@
 // - Detection runs over os-release texts and sets of commands on PATH.
 // - Plans pin each manager's argv for install, remove and upgrade.
 // - packageFor picks a requirement's package for a detected system.
-// - The CLI runs with a PATH of stub commands; `detect` reads a fixture
-//   os-release bound over /etc/os-release under `unshare -rm`. Without user
-//   namespaces those rows cannot run and the suite exits 77.
+// - Each update parser reads the canned outputs under scripts/fixtures/pkg/
+//   and inline odd lines; each manager's update query and the meaning of
+//   its exit statuses are pinned. No row touches the network.
+// - The CLI runs with a PATH of stub commands; `detect` and a `check`
+//   without --source read a fixture os-release bound over /etc/os-release
+//   under `unshare -rm`. Without user namespaces those rows cannot run and
+//   the suite exits 77.
 //
 // The controls at the end edit a copy of the table, bin/vgsh-pkg or
 // bin/vgsh, one rule at a time, and require this suite to fail on each copy.
@@ -29,6 +33,7 @@ const VGSH = path.join(repo, "bin", "vgsh");
 const ELEVATORS = ["sudo", "doas", "run0", "pkexec", "su"];
 const PLACEHOLDERS = ["{bin}", "{names}", "{path}"];
 const EXIT_MEANINGS = ["updates", "none", "rows"];
+const FIXTURES = path.join(repo, "scripts", "fixtures", "pkg");
 
 // The table's own defects, one string each; empty for a sound table.
 function tableErrors(t) {
@@ -46,11 +51,18 @@ function tableErrors(t) {
         const templates = [];
         for (const action of t.ACTIONS) if (row[action] !== null) for (const step of row[action]) templates.push([action, step]);
         if (row.owner !== null) templates.push(["owner", row.owner]);
-        if (row.check !== null) {
-            templates.push(["check", row.check.argv]);
-            for (const [code, meaning] of Object.entries(row.check.exits))
-                if (!/^[0-9]+$/.test(code) || !EXIT_MEANINGS.includes(meaning)) errors.push(where + ": check exit " + code + "=" + meaning);
-        }
+        if (row.check !== null && (!Array.isArray(row.check) || row.check.length === 0)) errors.push(where + ": check is neither null nor a list of queries");
+        else if (row.check !== null) row.check.forEach((c, i) => {
+            const at = where + " check " + i;
+            templates.push(["check", c.argv]);
+            if (c.binary !== null && !row.binaries.includes(c.binary)) errors.push(at + ": binary " + c.binary + " is not one of the row's");
+            if (!Object.prototype.hasOwnProperty.call(t.PARSERS, c.parser)) errors.push(at + ": parser " + c.parser);
+            if (!Number.isInteger(c.timeout) || c.timeout <= 0) errors.push(at + ": timeout " + c.timeout);
+            if (typeof c.onDemand !== "boolean") errors.push(at + ": onDemand " + c.onDemand);
+            if (Object.keys(c.exits).length === 0) errors.push(at + ": no exit status");
+            for (const [code, meaning] of Object.entries(c.exits))
+                if (!/^[0-9]+$/.test(code) || !EXIT_MEANINGS.includes(meaning)) errors.push(at + ": exit " + code + "=" + meaning);
+        });
         for (const [action, step] of templates) {
             if (step.length === 0) errors.push(where + " " + action + ": empty step");
             for (const token of step) {
@@ -160,7 +172,101 @@ const PACKAGE_FOR_ROWS = [
     ["no package is mapped at all", {}, { primary: PACMAN, overlays: [], sources: [] }, null]
 ];
 
+// Parser rows: name, parser, the text (a string, or { fixture } under
+// scripts/fixtures/pkg/), and the packages as [name, old, new] or the
+// parser's error. Fixture origins: checkupdates, paru and mise were captured
+// from the real commands on CachyOS on 2026-09-28; the others are written
+// from the format each tool's own source prints: yay print.go
+// printUpdateList and text FormatAgeTag, apt apt-private private-list.cc and
+// private-output.cc ListSingleVersion, dnf 4 dnf/cli/output.py fmtColumns
+// and cli.py check_updates, dnf5 libdnf5-cli package_list_sections.cpp
+// print_json, xbps bin/xbps-install/transaction.c show_dry_run_actions,
+// emerge lib/_emerge/resolver/output.py _set_no_columns, flatpak
+// app/flatpak-table-printer.c.
+const fixture = name => ({ fixture: name });
+const PARSE_ROWS = [
+    ["checkupdates", "arrow", fixture("checkupdates.txt"), [["bpf", "7.2.7-1", "7.2.8-1"], ["coreutils", "9.11-2.1", "9.12-2.1"],
+        ["python-cattrs", "26.2.0-1", "26.2.1-1"], ["python-dbus", "1.4.0-2", "1.5.0-1"], ["shellcheck", "0.11.0-140", "0.11.0-142"],
+        ["sunshine", "2026.922.203725-1", "2026.928.163558-1"]]],
+    ["paru's devel update", "arrow", fixture("paru.txt"), [["kendex-git", "1:r1621.bf9bed514-1", "latest-commit"]]],
+    ["yay's age tags", "arrow", fixture("yay.txt"), [["yay", "12.4.2-1", "12.5.0-1"], ["go-task-bin", "3.40.0-1", "3.41.0-1"], ["zen-browser-bin", "1.7b-1", "1.8b-1"]]],
+    ["arrow: no output", "arrow", "", []],
+    ["arrow: an ignored package is not counted", "arrow", "linux 6.9-1 -> 6.10-1 [ignored]\nbash 5.2-1 -> 5.3-1\n", [["bash", "5.2-1", "5.3-1"]]],
+    ["arrow: an unknown tag", "arrow", "bash 5.2-1 -> 5.3-1 [soon]\n", "unparseable line=1"],
+    ["arrow: an error line", "arrow", "bash 5.2-1 -> 5.3-1\nerror: failed to synchronize all databases\n", "unparseable line=2"],
+    ["arrow: a coloured line", "arrow", "\u001b[1mbash\u001b[0m 5.2-1 -> 5.3-1\n", "unparseable line=1"],
+    ["arrow: no arrow", "arrow", "bash 5.2-1 5.3-1\n", "unparseable line=1"],
+    ["apt", "apt", fixture("apt.txt"), [["bash", "5.2.21-2ubuntu4", "5.2.21-2ubuntu4.1"], ["libssl3t64", "3.0.13-0ubuntu3.4", "3.0.13-0ubuntu3.5"]]],
+    ["apt: the progress line alone", "apt", "Listing... Done\n", []],
+    ["apt: its CLI warning on stdout", "apt", "Listing...\nWARNING: apt does not have a stable CLI interface. Use with caution in scripts.\n", "unparseable line=2"],
+    ["apt: an installed package", "apt", "Listing...\nbash/now 5.2 amd64 [installed,local]\n", "unparseable line=2"],
+    ["dnf 4, a long name wrapped and the obsoletes left out", "dnf", fixture("dnf.txt"), [["bash", null, "5.2.26-3.fc40"],
+        ["python3-sphinxcontrib-applehelp-doc-extra", null, "2.0.0-1.fc40"], ["dnf-plugins-core", null, "4.9.0-1.fc40"]]],
+    ["dnf 4: no output", "dnf", "", []],
+    ["dnf 4: the blank line alone", "dnf", "\n", []],
+    ["dnf 4: the metadata notice -q removes", "dnf", "Last metadata expiration check: 0:01:02 ago on Mon 28 Sep 2026.\n\nbash.x86_64 5.2-1.fc40 updates\n", "unparseable line=1"],
+    ["dnf 4: a row cut short", "dnf", "\nbash.x86_64 5.2-1.fc40\n", "unparseable line=2"],
+    ["dnf5 JSON, the obsoletes left out", "dnf5", fixture("dnf5.json"), [["bash", null, "5.3.0-2.fc44"], ["dnf5", null, "5.4.6.0-1.fc44"]]],
+    ["dnf5: no section", "dnf5", "{}\n", []],
+    ["dnf5: text before the JSON", "dnf5", "Updating and loading repositories:\n{}\n", "unparseable json"],
+    ["dnf5: an unknown section", "dnf5", "{\"upgradeable_packages\":[]}\n", "unparseable key=upgradeable_packages"],
+    ["dnf5: an entry without a version", "dnf5", "{\"upgrades\":[{\"name\":\"bash\",\"arch\":\"x86_64\"}]}\n", "unparseable entry=0"],
+    ["xbps, updates alone counted", "xbps", fixture("xbps.txt"), [["bash", null, "5.2.037_1"], ["xbps", null, "0.60.4_1"]]],
+    ["xbps: no output", "xbps", "", []],
+    ["xbps: a field missing", "xbps", "bash-5.2_1 update x86_64 https://repo 1\n", "unparseable line=1"],
+    ["xbps: a pkgver without a revision", "xbps", "bash update x86_64 https://repo 1 2\n", "unparseable line=1"],
+    ["emerge, updates and downgrades counted", "emerge", fixture("emerge.txt"), [["sys-apps/portage", "3.0.65", "3.0.66-r1"],
+        ["app-editors/vim", "9.1.0707", "9.1.0794"], ["dev-lang/python", "3.12.5", "3.12.7"], ["sys-libs/zlib", "1.3.1-r2", "1.3.1-r1"]]],
+    ["emerge: narration alone", "emerge", "Calculating dependencies  ... done!\n", []],
+    ["emerge: a merge without a version", "emerge", "[ebuild     U  ] sys-apps/portage [3.0.65]\n", "unparseable line=1"],
+    ["emerge: a binary whose version is one number", "emerge", "[binary     U  ] app-misc/foo-5 [4]\n", [["app-misc/foo", "4", "5"]]],
+    ["flatpak", "flatpak", fixture("flatpak.txt"), [["org.gnome.Loupe", null, "stable"], ["org.gnome.Platform", null, "47"], ["org.freedesktop.Platform.GL.default", null, "24.08"]]],
+    ["flatpak: no output", "flatpak", "", []],
+    ["flatpak: a title row", "flatpak", "Application ID\tBranch\n", "unparseable line=1"],
+    ["flatpak: a third column", "flatpak", "org.gnome.Loupe\tstable\tflathub\n", "unparseable line=1"],
+    ["mise", "mise", fixture("mise.json"), [["aqua:google-antigravity/antigravity-cli", "1.2.11", "1.2.12"], ["claude", "2.1.283", "2.1.284"], ["npm:vercel", "60.1.1", "60.1.3"]]],
+    ["mise: nothing outdated", "mise", "{}\n", []],
+    ["mise: a tool not yet installed", "mise", "{\"node\":{\"current\":null,\"latest\":\"22.1.0\"}}\n", [["node", null, "22.1.0"]]],
+    ["mise: a tool without a latest version", "mise", "{\"node\":{\"current\":\"22.0.0\"}}\n", "unparseable tool=node"],
+    ["mise: an array", "mise", "[]\n", "unparseable json"]
+];
+
+// Query rows: name, manager, binary, whether it was asked for by name, and
+// the query or why it is skipped.
+const q = (argv, exits, parser, timeout) => ({ check: { argv, exits, parser, timeout } });
+const ROWS = { "0": "rows" };
+const CHECK_ROWS = [
+    ["pacman runs checkupdates", "pacman", "pacman", false, q(["checkupdates"], { "0": "updates", "2": "none" }, "arrow", 120)],
+    ["aur runs its helper", "aur", "yay", false, q(["yay", "-Qua"], { "0": "updates", "1": "none" }, "arrow", 120)],
+    ["apt lists the upgradable packages", "apt", "apt-get", false, q(["apt", "list", "--upgradable"], ROWS, "apt", 120)],
+    ["dnf5 answers in JSON", "dnf", "dnf5", false, q(["dnf5", "check-upgrade", "--json"], ROWS, "dnf5", 120)],
+    ["dnf 4 answers in columns", "dnf", "dnf", false, q(["dnf", "-q", "check-update"], { "0": "none", "100": "updates" }, "dnf", 120)],
+    ["xbps syncs in memory and changes nothing", "xbps", "xbps-install", false, q(["xbps-install", "-Mun"], ROWS, "xbps", 120)],
+    ["emerge waits to be named", "emerge", "emerge", false, { skipped: "on-demand" }],
+    ["emerge named", "emerge", "emerge", true, q(["emerge", "--pretend", "--update", "--deep", "--newuse", "--color=n", "--ask=n", "@world"], ROWS, "emerge", 900)],
+    ["nix has no query", "nix", "nix", true, { skipped: "no-check" }],
+    ["flatpak lists its updates", "flatpak", "flatpak", false, q(["flatpak", "remote-ls", "--updates", "--columns=application,branch"], ROWS, "flatpak", 120)],
+    ["mise waives the release-age cooldown", "mise", "mise", false, q(["env", "MISE_MINIMUM_RELEASE_AGE=0", "mise", "outdated", "--json"], ROWS, "mise", 120)]
+];
+
+// Outcome rows: name, manager, binary, exit status, stdout, and the
+// packages as [name, old, new] or the check's error.
+const OUTCOME_ROWS = [
+    ["checkupdates 2 is none", "pacman", "pacman", 2, "", []],
+    ["checkupdates 1 is a failure", "pacman", "pacman", 1, "", "exit=1"],
+    ["checkupdates 0 reads the rows", "pacman", "pacman", 0, "bpf 7.2.7-1 -> 7.2.8-1\n", [["bpf", "7.2.7-1", "7.2.8-1"]]],
+    ["yay 1 is none", "aur", "yay", 1, "", []],
+    ["dnf 100 reads the rows", "dnf", "dnf", 100, "\nbash.x86_64 5.2-1.fc40 updates\n", [["bash", null, "5.2-1.fc40"]]],
+    ["dnf 0 is none", "dnf", "dnf", 0, "", []],
+    ["dnf 1 is a failure", "dnf", "dnf", 1, "", "exit=1"],
+    ["dnf5's JSON query never exits 100", "dnf", "dnf5", 100, "{}\n", "exit=100"],
+    ["dnf5 before 5.4.0 refuses --json with 2", "dnf", "dnf5", 2, "", "exit=2"],
+    ["an unreadable line fails the check", "flatpak", "flatpak", 0, "Application ID\tBranch\n", "unparseable line=1"],
+    ["flatpak 1 is a failure", "flatpak", "flatpak", 1, "", "exit=1"]
+];
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const triples = packages => packages.map(p => [p.name, p.old, p.new]);
 
 function verifyTable(t) {
     const failures = tableErrors(t);
@@ -186,12 +292,63 @@ function verifyTable(t) {
         const got = t.packageFor(packages, found);
         if (!same(got, want)) failures.push("packageFor: " + name + ": got " + JSON.stringify(got));
     }
+
+    const parsed = new Set();
+    for (const [name, parser, input, want] of PARSE_ROWS) {
+        const text = typeof input === "string" ? input : fs.readFileSync(path.join(FIXTURES, input.fixture), "utf8");
+        const r = t.PARSERS[parser](text);
+        const got = r.ok ? triples(r.packages) : r.error;
+        if (!same(got, want)) failures.push("parse: " + name + ": got " + JSON.stringify(got));
+        parsed.add(parser);
+    }
+    const parsers = Object.keys(t.PARSERS);
+    if (parsers.length < 8) failures.push("parse: fewer than eight parsers; the loader read no PARSERS");
+    for (const parser of parsers) if (!parsed.has(parser)) failures.push("parse: no row for parser " + parser);
+
+    const checked = new Set();
+    for (const [name, manager, binary, named, want] of CHECK_ROWS) {
+        const got = t.checkFor(manager, binary, named);
+        if (!same(got, want)) failures.push("check: " + name + ": got " + JSON.stringify(got));
+        checked.add(manager);
+    }
+    for (const row of t.MANAGERS) if (!checked.has(row.id)) failures.push("check: no row for " + row.id);
+
+    for (const [name, manager, binary, status, stdout, want] of OUTCOME_ROWS) {
+        const found = t.checkFor(manager, binary, true);
+        const r = found.check === undefined ? { error: "no query" } : t.checkOutcome(found.check, status, stdout);
+        const got = r.error === undefined ? triples(r.packages) : r.error;
+        if (!same(got, want)) failures.push("outcome: " + name + ": got " + JSON.stringify(got));
+    }
     return failures;
 }
 
-// The CLI rows run SCRIPTS' bin/vgsh-pkg and bin/vgsh with a PATH of stubs.
-// Each returns a failure string or null.
-function verifyCli(scripts, tmp) {
+// A tree at DIR holding bin/vgsh-pkg, bin/vgsh and the table as the texts
+// given, and the repository's own bin/lib, which holds the loader: `{ pkg,
+// vgsh }`.
+function makeTree(dir, texts) {
+    for (const sub of ["bin", path.join("shell", "Core")]) fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    fs.symlinkSync(path.join(repo, "bin", "lib"), path.join(dir, "bin", "lib"));
+    fs.writeFileSync(path.join(dir, "shell", "Core", "PackageManagers.js"), texts.table);
+    fs.writeFileSync(path.join(dir, "bin", "vgsh-pkg"), texts.pkg, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, "bin", "vgsh"), texts.vgsh, { mode: 0o755 });
+    return { pkg: path.join(dir, "bin", "vgsh-pkg"), vgsh: path.join(dir, "bin", "vgsh") };
+}
+
+// The table with the aur query's timeout cut to one second, for the row
+// that proves a query is killed at its timeout without waiting two minutes.
+const AUR_QUERY = "\"-Qua\"], exits: { \"0\": \"updates\", \"1\": \"none\" }, parser: \"arrow\", timeout: ";
+function quickTable(text) {
+    const count = text.split(AUR_QUERY + "120,").length - 1;
+    if (count !== 1) throw new Error("quick table: the aur query occurs " + count + " times, not once");
+    return text.replace(AUR_QUERY + "120,", () => AUR_QUERY + "1,");
+}
+
+// The CLI rows run TEXTS' bin/vgsh-pkg and bin/vgsh from trees under TMP
+// with a PATH of stubs. Answers the failures and the tool a row could not
+// run without, or null.
+function verifyCli(texts, tmp) {
+    const scripts = makeTree(path.join(tmp, "tree"), texts);
+    const quick = makeTree(path.join(tmp, "quick"), Object.assign({}, texts, { table: quickTable(texts.table) }));
     const failures = [];
     const stubs = path.join(tmp, "stubs");
     const tools = path.join(tmp, "tools");
@@ -199,8 +356,10 @@ function verifyCli(scripts, tmp) {
     fs.mkdirSync(tools, { recursive: true });
     for (const command of ["pacman", "yay", "gum", "xbps-install"]) fs.writeFileSync(path.join(stubs, command), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
     // bin/vgsh runs under bash and resolves itself with readlink and
-    // dirname; node runs bin/vgsh-pkg. None of them is a manager.
-    for (const tool of ["bash", "readlink", "dirname"]) {
+    // dirname; node runs bin/vgsh-pkg, which takes its lock through flock
+    // and runs mise's query through env; the stubs use cat and sleep. None
+    // of them is a manager.
+    for (const tool of ["bash", "readlink", "dirname", "flock", "env", "cat", "sleep"]) {
         const found = childProcess.spawnSync("sh", ["-c", "command -v \"$1\"", "sh", tool], { encoding: "utf8" });
         if (found.status !== 0) return { failures: [], missing: tool };
         const target = path.join(tools, tool);
@@ -228,14 +387,300 @@ function verifyCli(scripts, tmp) {
     // detect reads /etc/os-release, so a fixture is bound over it in a
     // private mount namespace. It names Void, so a run that read the
     // machine's own file instead passes only on a Void machine.
-    const fixture = path.join(tmp, "os-release");
-    fs.writeFileSync(fixture, "NAME=\"Void\"\nID=\"void\"\n");
-    const bound = args => childProcess.spawnSync("unshare", ["-rm", "sh", "-c", "mount --bind \"$1\" /etc/os-release && PATH=\"$2\" exec \"$3\" \"$4\" detect $5", "sh", fixture, env.PATH, process.execPath, scripts.pkg, args], { encoding: "utf8", env: { PATH: process.env.PATH, LC_ALL: "C" } });
+    checkRows(scripts, quick, tools, tmp, expect, failures);
+
+    const osRelease = (name, text) => {
+        const file = path.join(tmp, name);
+        fs.writeFileSync(file, text);
+        return file;
+    };
+    const bound = (file, pathValue, args) => childProcess.spawnSync("unshare", ["-rm", "sh", "-c", "mount --bind \"$1\" /etc/os-release && shift && exec \"$@\"", "sh", file,
+        "env", "PATH=" + pathValue, "LC_ALL=C", "XDG_RUNTIME_DIR=" + tmp, "HOME=" + tmp, process.execPath, scripts.pkg, ...args], { encoding: "utf8", env: { PATH: process.env.PATH, LC_ALL: "C" } });
     const probe = childProcess.spawnSync("unshare", ["-rm", "true"], { encoding: "utf8" });
     if (probe.status !== 0) return { failures, missing: "user-namespaces" };
-    expect("detect --json reads os-release and PATH", bound("--json"), 0, "{\"primary\":{\"id\":\"xbps\",\"binary\":\"xbps-install\"},\"overlays\":[],\"sources\":[]}\n", "");
-    expect("detect prints one line per manager", bound(""), 0, "primary=xbps binary=xbps-install\n", "");
+    // Each fixture names a system the machine running the suite is unlikely
+    // to be, so a run that read the machine's own file instead fails.
+    const voidLinux = osRelease("os-release-void", "NAME=\"Void\"\nID=\"void\"\n");
+    expect("detect --json reads os-release and PATH", bound(voidLinux, env.PATH, ["detect", "--json"]), 0, "{\"primary\":{\"id\":\"xbps\",\"binary\":\"xbps-install\"},\"overlays\":[],\"sources\":[]}\n", "");
+    expect("detect prints one line per manager", bound(voidLinux, env.PATH, ["detect"]), 0, "primary=xbps binary=xbps-install\n", "");
+    const gentoo = osRelease("os-release-gentoo", "NAME=Gentoo\nID=gentoo\n");
+    const gentooPath = stubPath(tmp, "gentoo", { emerge: "exit 99", flatpak: "cat \"" + path.join(FIXTURES, "flatpak.txt") + "\"" }, tools);
+    expectCheck(expect, "check without --source checks every detected source, emerge only on demand", bound(gentoo, gentooPath, ["check", "--json"]), [
+        { source: "emerge", count: null, packages: [], checkedAt: null, error: "skipped=on-demand" },
+        { source: "flatpak", count: 3, packages: [{ name: "org.gnome.Loupe", old: null, new: "stable" }, { name: "org.gnome.Platform", old: null, new: "47" },
+            { name: "org.freedesktop.Platform.GL.default", old: null, new: "24.08" }], checkedAt: "<time>", error: null }]);
     return { failures, missing: null };
+}
+
+// A PATH of stub commands under TMP/stubs-NAME, each STUBS body a sh
+// script, ahead of TOOLS.
+function stubPath(tmp, name, stubs, tools) {
+    const dir = path.join(tmp, "stubs-" + name);
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [command, body] of Object.entries(stubs)) fs.writeFileSync(path.join(dir, command), "#!/bin/sh\n" + body + "\n", { mode: 0o755 });
+    return dir + path.delimiter + tools;
+}
+
+// A check's JSON, each checkedAt that is an ISO time read as "<time>",
+// against WANT, through EXPECT.
+function expectCheck(expect, name, r, want) {
+    let got = r.stdout;
+    try {
+        const rows = JSON.parse(r.stdout);
+        for (const row of rows)
+            if (typeof row.checkedAt === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(row.checkedAt)) row.checkedAt = "<time>";
+        got = JSON.stringify(rows) + "\n";
+    } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+    }
+    expect(name, Object.assign({}, r, { stdout: got }), 0, JSON.stringify(want) + "\n", "");
+}
+
+// The `check` rows, through EXPECT or straight into FAILURES. Each runs
+// with its own stubs and runtime directory unless it shares one on purpose.
+function checkRows(scripts, quick, tools, tmp, expect, failures) {
+    const fixtureOf = name => path.join(FIXTURES, name);
+    const home = path.join(tmp, "home");
+    fs.mkdirSync(home, { recursive: true });
+    const runIn = (runtime, file, pathValue, args, extra) => childProcess.spawnSync(file, args, {
+        encoding: "utf8", env: Object.assign({ PATH: pathValue, LC_ALL: "POSIX", XDG_RUNTIME_DIR: runtime, HOME: home }, extra) });
+    let rows = 0;
+    const fresh = () => {
+        const dir = path.join(tmp, "run-" + rows++);
+        fs.mkdirSync(dir, { recursive: true });
+        return dir;
+    };
+    const bpf = { name: "bpf", old: "7.2.7-1", new: "7.2.8-1" };
+    const pacmanRows = [bpf, { name: "coreutils", old: "9.11-2.1", new: "9.12-2.1" }, { name: "python-cattrs", old: "26.2.0-1", new: "26.2.1-1" },
+        { name: "python-dbus", old: "1.4.0-2", new: "1.5.0-1" }, { name: "shellcheck", old: "0.11.0-140", new: "0.11.0-142" },
+        { name: "sunshine", old: "2026.922.203725-1", new: "2026.928.163558-1" }];
+    const checkupdates = "cat \"" + fixtureOf("checkupdates.txt") + "\"";
+
+    expectCheck(expect, "check --source pacman reads checkupdates", runIn(fresh(), scripts.pkg, stubPath(tmp, "pacman", { pacman: "exit 99", checkupdates }, tools), ["check", "--json", "--source", "pacman"]),
+        [{ source: "pacman", count: 6, packages: pacmanRows, checkedAt: "<time>", error: null }]);
+    expect("check without --json prints a line per source and package", runIn(fresh(), scripts.pkg, stubPath(tmp, "flatpak-text", { flatpak: "cat \"" + fixtureOf("flatpak.txt") + "\"" }, tools), ["check", "--source", "flatpak"]), 0,
+        "source=flatpak count=3\n  org.gnome.Loupe ? -> stable\n  org.gnome.Platform ? -> 47\n  org.freedesktop.Platform.GL.default ? -> 24.08\n", "");
+    expectCheck(expect, "yay's exit 1 is no update", runIn(fresh(), scripts.pkg, stubPath(tmp, "yay-none", { yay: "exit 1" }, tools), ["check", "--json", "--source", "aur"]),
+        [{ source: "aur", count: 0, packages: [], checkedAt: "<time>", error: null }]);
+    expect("a failed query is the source's error", runIn(fresh(), scripts.pkg, stubPath(tmp, "flatpak-fails", { flatpak: "echo partial\ttrue; exit 1" }, tools), ["check", "--source", "flatpak"]), 0,
+        "source=flatpak error=exit=1\n", "");
+    expectCheck(expect, "an absent checkupdates is the source's error", runIn(fresh(), scripts.pkg, stubPath(tmp, "no-checkupdates", { pacman: "exit 99" }, tools), ["check", "--json", "--source", "pacman"]),
+        [{ source: "pacman", count: null, packages: [], checkedAt: "<time>", error: "absent=checkupdates" }]);
+    const mise = "[ \"$MISE_MINIMUM_RELEASE_AGE\" = 0 ] && [ \"$*\" = \"outdated --json\" ] && [ \"$PWD\" = \"" + home + "\" ] && [ \"$LC_ALL\" = C ] || exit 7\ncat \"" + fixtureOf("mise.json") + "\"";
+    expectCheck(expect, "mise's query runs from $HOME with LC_ALL=C and the cooldown waived", runIn(fresh(), scripts.pkg, stubPath(tmp, "mise", { mise }, tools), ["check", "--json", "--source", "mise"]),
+        [{ source: "mise", count: 3, packages: [{ name: "aqua:google-antigravity/antigravity-cli", old: "1.2.11", new: "1.2.12" },
+            { name: "claude", old: "2.1.283", new: "2.1.284" }, { name: "npm:vercel", old: "60.1.1", new: "60.1.3" }], checkedAt: "<time>", error: null }]);
+
+    // KILL_GRACE_MS in bin/vgsh-pkg is 5 s, the wait between a group's
+    // SIGTERM and its SIGKILL. A stub below that ignores SIGTERM sleeps 15 s,
+    // so a run ends near 6 s with the SIGKILL and past 15 s without it; the
+    // bound between leaves room for the suite's concurrent controls.
+    const SLOW_BOUND_MS = 11000;
+    const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const alive = group => {
+        try {
+            process.kill(-group, 0);
+            return true;
+        } catch (e) {
+            if (e.code !== "ESRCH") throw e;
+            return false;
+        }
+    };
+
+    // The query ignores SIGTERM and sleeps in a child that keeps stdout
+    // open, so the check ends soon after its one-second timeout only if the
+    // whole process group gets SIGKILL a grace later; the sleep outlasts
+    // both. It runs in the background beside the stop row below, so the two
+    // graces overlap, and a shell records its output and status in files.
+    const slowDir = fresh();
+    const slowOut = path.join(slowDir, "out");
+    const slowStatus = path.join(slowDir, "status");
+    const started = Date.now();
+    childProcess.spawn("/bin/sh", ["-c", "\"$1\" \"$2\" check --json --source aur > \"$3\"; echo $? > \"$4\"", "sh", process.execPath, quick.pkg, slowOut, slowStatus], {
+        stdio: "ignore", env: { PATH: stubPath(tmp, "yay-slow", { yay: "trap '' TERM\nsleep 15" }, tools), LC_ALL: "POSIX", XDG_RUNTIME_DIR: slowDir, HOME: home } }).unref();
+
+    // A check stopped by SIGTERM ends every query before it exits. Two
+    // sources are detected by PATH alone, as the stubs hold no primary's
+    // binary: flatpak's query exits on SIGTERM, mise's ignores it. Each
+    // writes its group's id, then sleeps in a child. The shell below sends
+    // SIGTERM once both ids are written, finds the lock still held a second
+    // later, while mise's group waits for its SIGKILL, and reports the
+    // check's status. The real waits are those writes, that second, the
+    // grace, and the groups' end, polled every 20 ms.
+    const flatpakGroup = path.join(tmp, "stopped-flatpak");
+    const miseGroup = path.join(tmp, "stopped-mise");
+    const stopRuntime = fresh();
+    const stopScript = "\"$1\" \"$2\" check --json & p=$!\ni=0\n" +
+        "while { [ ! -s \"$3\" ] || [ ! -s \"$4\" ]; } && [ $i -lt 250 ]; do sleep 0.02; i=$((i + 1)); done\n" +
+        "kill -TERM \"$p\"\nsleep 1\nflock -n -E 75 \"$5\" /bin/sh -c :\nprobe=$?\ncase $probe in 0) echo lock=free ;; 75) echo lock=held ;; *) echo lock=probe-failed-$probe ;; esac\nwait \"$p\"\necho \"status=$?\"";
+    const stopStarted = Date.now();
+    const stopped = childProcess.spawnSync("/bin/sh", ["-c", stopScript, "sh", process.execPath, scripts.pkg, flatpakGroup, miseGroup, path.join(stopRuntime, "vgs", "pkg-check.lock")], {
+        encoding: "utf8", env: { PATH: stubPath(tmp, "stopped", { flatpak: "echo $$ > \"" + flatpakGroup + "\"\nsleep 15", mise: "trap '' TERM\necho $$ > \"" + miseGroup + "\"\nsleep 15" }, tools),
+            LC_ALL: "POSIX", XDG_RUNTIME_DIR: stopRuntime, HOME: home } });
+    const stopElapsed = Date.now() - stopStarted;
+    expect("a stopped check holds the lock until its last query ends, then exits 143", stopped, 0, "lock=held\nstatus=143\n", "");
+    if (stopped.stderr !== "") failures.push("cli: the stopped check or its lock probe wrote stderr: " + JSON.stringify(stopped.stderr));
+    if (stopElapsed >= SLOW_BOUND_MS) failures.push("cli: a stopped check waited past the grace for a query ignoring SIGTERM: elapsed=" + stopElapsed + "ms");
+    // The timed-out check started above; the real wait is its timeout and
+    // grace, polled every 20 ms up to the sleep it must cut short.
+    const slowDeadline = started + 18000;
+    const slowDone = () => fs.existsSync(slowStatus) && /^\d+\n$/.test(fs.readFileSync(slowStatus, "utf8"));
+    while (!slowDone() && Date.now() < slowDeadline) pause(20);
+    const elapsed = Date.now() - started;
+    const slow = slowDone() ? { status: Number(fs.readFileSync(slowStatus, "utf8")), stdout: fs.readFileSync(slowOut, "utf8"), stderr: "" } : { status: null, stdout: "", stderr: "" };
+    expectCheck(expect, "a query past its timeout is killed", slow, [{ source: "aur", count: null, packages: [], checkedAt: "<time>", error: "timeout=1" }]);
+    if (elapsed >= SLOW_BOUND_MS) failures.push("cli: the timed-out query's process group outlived its timeout and grace: elapsed=" + elapsed + "ms");
+
+    for (const file of [flatpakGroup, miseGroup]) {
+        const group = fs.existsSync(file) ? Number(fs.readFileSync(file, "utf8")) : 0;
+        if (group <= 0) {
+            failures.push("cli: a stopped check's query never wrote its group to " + file);
+            continue;
+        }
+        const until = Date.now() + 2000;
+        while (alive(group) && Date.now() < until) pause(20);
+        if (alive(group)) {
+            failures.push("cli: a check stopped by SIGTERM left its query's group " + group + " running");
+            process.kill(-group, "SIGKILL");
+        }
+    }
+
+    // checkupdates skips its sync only after a successful synced run and
+    // while its copy of the databases holds one; the stub names the
+    // argument it was given as the package.
+    const stamped = stubPath(tmp, "stamp", { pacman: "exit 99", checkupdates: "echo \"run${1:-sync} 1-1 -> 2-1\"" }, tools);
+    const db = path.join(tmp, "checkup-db");
+    fs.mkdirSync(path.join(db, "sync"), { recursive: true });
+    fs.writeFileSync(path.join(db, "sync", "core.db"), "");
+    const runtime = fresh();
+    const synced = name => [{ source: "pacman", count: 1, packages: [{ name, old: "1-1", new: "2-1" }], checkedAt: "<time>", error: null }];
+    expectCheck(expect, "the first check syncs", runIn(runtime, scripts.pkg, stamped, ["check", "--json", "--source", "pacman"], { CHECKUPDATES_DB: db }), synced("runsync"));
+    expectCheck(expect, "a check right after a synced one skips the sync", runIn(runtime, scripts.pkg, stamped, ["check", "--json", "--source", "pacman"], { CHECKUPDATES_DB: db }), synced("run-n"));
+    expectCheck(expect, "a recent sync with no database copy left syncs again", runIn(runtime, scripts.pkg, stamped, ["check", "--json", "--source", "pacman"], { CHECKUPDATES_DB: path.join(tmp, "no-db") }), synced("runsync"));
+
+    // A second check waits for the lock: a holder takes it, and the stub
+    // fails unless the holder has let go before the query runs. The real
+    // wait is the holder's one second.
+    const locked = fresh();
+    const held = path.join(locked, "held");
+    const released = path.join(locked, "released");
+    fs.mkdirSync(path.join(locked, "vgs"));
+    const holder = childProcess.spawn("flock", [path.join(locked, "vgs", "pkg-check.lock"), "sh", "-c", "touch \"$1\"; sleep 1; touch \"$2\"", "sh", held, released], { stdio: "ignore" });
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(held) && Date.now() < deadline) pause(20);
+    expectCheck(expect, "a check waits for the one running", runIn(locked, scripts.pkg, stubPath(tmp, "locked", { pacman: "exit 99", checkupdates: "[ -e \"" + released + "\" ] || exit 9\n" + checkupdates }, tools), ["check", "--json", "--source", "pacman"]),
+        [{ source: "pacman", count: 6, packages: pacmanRows, checkedAt: "<time>", error: null }]);
+    holder.unref();
+
+    const plain = stubPath(tmp, "plain", { pacman: "exit 99" }, tools);
+    expect("check refuses an unknown manager", runIn(fresh(), scripts.pkg, plain, ["check", "--source", "zypper"]), 1, "", "vgsh: refused: manager=zypper reason=unknown\n");
+    expect("check refuses a manager whose binary is absent", runIn(fresh(), scripts.pkg, plain, ["check", "--source", "apt"]), 1, "", "vgsh: refused: manager=apt reason=absent binaries=apt-get\n");
+    expect("check refuses an unknown argument", runIn(fresh(), scripts.pkg, plain, ["check", "--all"]), 2, "", "vgsh: refused: argument=--all\n");
+    expect("check refuses without a runtime directory", runIn("", scripts.pkg, plain, ["check", "--source", "pacman"]), 1, "", "vgsh: refused: runtime-dir=unset\n");
+}
+
+// Each control removes one rule's behaviour from a copy. A `rule:` copy
+// plants a defect in the table and must meet that rule of tableErrors,
+// since its plan rows would fail on any edited argv; a `table` copy is
+// judged by the whole table suite; a `cli` copy runs the CLI rows from a
+// tree whose other files are the repository's own. A sixth column names
+// text one of the copy's failures must hold, for a control that proves one
+// particular assertion can fail.
+const CONTROLS = [
+    ["rule:partial upgrade", "a pacman upgrade refreshes without upgrading", TABLE, "upgrade: [[\"{bin}\", \"-Syu\"]],", "upgrade: [[\"{bin}\", \"-Sy\"]],"],
+    ["rule:elevation command", "a step elevates", TABLE, "[\"{bin}\", \"full-upgrade\"]", "[\"sudo\", \"{bin}\", \"full-upgrade\"]"],
+    ["table", "ID_LIKE is ignored", TABLE, "    if (like !== null) {", "    if (false) {"],
+    ["table", "an overlay ignores the primary it requires", TABLE, "if (other.requires !== null && (primary === null || primary.id !== other.requires)) continue;", ""],
+    ["table", "a name may start with a dash", TABLE, " && name.charAt(0) !== \"-\"", ""],
+    ["table", "the first binary wins even when absent", TABLE, "if (onPath(row.binaries[i])) return row.binaries[i];", "return row.binaries[i];"],
+    ["table", "a requirement's package ignores the primary's rank", TABLE, "var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "var order = found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
+    ["table", "a requirement's package is picked for an unmapped manager", TABLE, "if (Object.prototype.hasOwnProperty.call(packages, order[i].id))", "if (true)"],
+    ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],
+    ["cli", "vgsh pkg drops its arguments", VGSH, "exec node \"$root/bin/vgsh-pkg\" \"$@\"", "exec node \"$root/bin/vgsh-pkg\""],
+    ["table", "an unlisted exit status is read as output", TABLE, "if (meaning === undefined) return { error: \"exit=\" + status };", "if (meaning === undefined) meaning = \"rows\";"],
+    ["table", "a query runs for a binary it does not name", TABLE, "if (c.binary !== null && c.binary !== binary) continue;", ""],
+    ["table", "an on-demand query runs unnamed", TABLE, "if (c.onDemand && !named) return { skipped: \"on-demand\" };", ""],
+    ["table", "paru's ignored package is counted", TABLE, "if (f[4] === \"[ignored]\") continue;", "if (f[4] === \"[ignored]\") { packages.push({ name: f[0], old: f[1], new: f[3] }); continue; }"],
+    ["table", "apt skips a line it cannot read", TABLE, "if (m === null) return unreadable(i);\n        packages.push({ name: m[1], old: m[3], new: m[2] });", "if (m === null) continue;\n        packages.push({ name: m[1], old: m[3], new: m[2] });"],
+    ["table", "dnf 4 counts the obsoleting section", TABLE, "if (rows[i] === \"Obsoleting Packages\") break;", ""],
+    ["table", "dnf5 accepts an unknown section", TABLE, "if (key !== \"upgrades\" && key !== \"obsoleting_packages\") return { ok: false, error: \"unparseable key=\" + key };", ""],
+    ["table", "xbps counts every transaction entry", TABLE, "if (f[1] === \"update\") packages.push", "packages.push"],
+    ["table", "emerge counts every merge", TABLE, "if (m[2].indexOf(\"U\") < 0) continue;", ""],
+    ["table", "flatpak reads a title row", TABLE, " || /\\s/.test(f[0] + f[1])", ""],
+    ["table", "mise accepts a tool without a latest version", TABLE, "typeof t.latest !== \"string\" || ", ""],
+    ["cli", "a timed-out query's process group lives on", PKG, "process.kill(-child.pid, signal);", "process.kill(child.pid, signal);"],
+    ["cli", "check runs without the lock", PKG, "        holdCheckLock(dir);\n", ""],
+    ["cli", "checkupdates always syncs", PKG, "if (Date.now() - fs.statSync(stamp).mtimeMs > FRESH_MS) return false;", "return false;"],
+    ["cli", "checkupdates skips its sync with no database copy", PKG, "return fs.readdirSync(path.join(db, \"sync\")).some(name => name.endsWith(\".db\"));", "return true;"],
+    ["cli", "a query runs from the caller's directory", PKG, "cwd: process.env.HOME || \"/\",", ""],
+    ["cli", "a signalled check exits and leaves its queries running", PKG, "for (const signal of [\"SIGINT\", \"SIGTERM\", \"SIGHUP\"]) process.on(signal, () => stopQueries(signal));", ""],
+    ["cli", "a timed-out query that ignores SIGTERM is never killed", PKG, "grace = setTimeout(() => signalGroup(\"SIGKILL\"), KILL_GRACE_MS);", ""],
+    ["cli", "a stopped check never kills a query that ignores SIGTERM", PKG, "for (const signalGroup of liveGroups.values()) signalGroup(\"SIGKILL\");", ""],
+    ["cli", "a stopped check exits when its first query ends", PKG, "if (stopStatus !== null) {\n                if (liveGroups.size === 0) process.exit(stopStatus);", "if (stopStatus !== null) {\n                process.exit(stopStatus);", "lock=free"],
+    ["cli", "a query reads the caller's locale", PKG, "env: Object.assign({}, process.env, { LC_ALL: \"C\" }),", "env: process.env,"]
+];
+
+// The texts the CLI rows run: the repository's own, or CONTROLS[INDEX]'s
+// copy. `{ texts }`, or `{ error }` when the control's text to replace does
+// not occur exactly once.
+function cliTexts(index) {
+    const texts = { pkg: fs.readFileSync(PKG, "utf8"), vgsh: fs.readFileSync(VGSH, "utf8"), table: fs.readFileSync(TABLE, "utf8") };
+    if (index === null) return { texts };
+    const [, label, file, needle, replacement] = CONTROLS[index];
+    const key = file === PKG ? "pkg" : "vgsh";
+    const count = texts[key].split(needle).length - 1;
+    if (count !== 1) return { error: label + ": the text to replace occurs " + count + " times, not once" };
+    return { texts: Object.assign({}, texts, { [key]: texts[key].replace(needle, () => replacement) }) };
+}
+
+// The CLI rows wait on real timeouts and graces, so each CLI run is a child
+// process of this suite, started together so the waits overlap:
+// `--cli-run real|<control index> <dir>` prints one JSON line
+// `{ failures, missing, textError }` for the run, textError null unless the
+// control's text to replace does not occur exactly once.
+if (process.argv[2] === "--cli-run") {
+    const index = process.argv[3] === "real" ? null : Number(process.argv[3]);
+    const chosen = cliTexts(index);
+    const result = chosen.error !== undefined ? { failures: [], missing: null, textError: chosen.error } : Object.assign(verifyCli(chosen.texts, process.argv[4]), { textError: null });
+    process.stdout.write(JSON.stringify(result) + "\n");
+    process.exit(0);
+}
+
+// Run one CLI run as a child in DIR: resolves to `{ failures, missing,
+// textError }`, a failure naming the child when it does not print that line.
+function cliRun(which, dir) {
+    return new Promise(resolve => {
+        const child = childProcess.spawn(process.execPath, [__filename, "--cli-run", String(which), dir], { stdio: ["ignore", "pipe", "inherit"] });
+        const chunks = [];
+        child.stdout.on("data", chunk => chunks.push(chunk));
+        child.on("close", (status, signal) => {
+            const out = Buffer.concat(chunks).toString("utf8");
+            try {
+                const result = JSON.parse(out);
+                if (status === 0 && Array.isArray(result.failures)) {
+                    resolve(result);
+                    return;
+                }
+            } catch (e) {
+                if (!(e instanceof SyntaxError)) throw e;
+            }
+            resolve({ failures: ["cli run " + which + " ended status=" + status + " signal=" + signal + " stdout=" + JSON.stringify(out)], missing: null, textError: null });
+        });
+    });
+}
+
+// Resolve every task in TASKS, at most LIMIT at once, in order.
+async function limited(tasks, limit) {
+    const results = new Array(tasks.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < tasks.length) {
+            const i = next++;
+            results[i] = await tasks[i]();
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+    return results;
 }
 
 let failed = false;
@@ -244,60 +689,43 @@ const report = (label, failures) => {
     if (failures.length > 0) failed = true;
 };
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "vgsh-pkg-")));
-let missing = null;
-try {
-    report("table", verifyTable(load(TABLE)));
-    const cli = verifyCli({ pkg: PKG, vgsh: VGSH }, path.join(tmp, "real"));
-    report("cli", cli.failures);
-    missing = cli.missing;
-
-    // Each control removes one rule's behaviour from a copy. A `rule:` copy
-    // plants a defect in the table and must meet that rule of tableErrors,
-    // since its plan rows would fail on any edited argv; a `table` copy is
-    // judged by the whole table suite; a `cli` copy runs from a tree whose
-    // other files are the repository's own.
-    const CONTROLS = [
-        ["rule:partial upgrade", "a pacman upgrade refreshes without upgrading", TABLE, "upgrade: [[\"{bin}\", \"-Syu\"]],", "upgrade: [[\"{bin}\", \"-Sy\"]],"],
-        ["rule:elevation command", "a step elevates", TABLE, "[\"{bin}\", \"full-upgrade\"]", "[\"sudo\", \"{bin}\", \"full-upgrade\"]"],
-        ["table", "ID_LIKE is ignored", TABLE, "    if (like !== null) {", "    if (false) {"],
-        ["table", "an overlay ignores the primary it requires", TABLE, "if (other.requires !== null && (primary === null || primary.id !== other.requires)) continue;", ""],
-        ["table", "a name may start with a dash", TABLE, " && name.charAt(0) !== \"-\"", ""],
-        ["table", "the first binary wins even when absent", TABLE, "if (onPath(row.binaries[i])) return row.binaries[i];", "return row.binaries[i];"],
-        ["table", "a requirement's package ignores the primary's rank", TABLE, "var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "var order = found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
-        ["table", "a requirement's package is picked for an unmapped manager", TABLE, "if (Object.prototype.hasOwnProperty.call(packages, order[i].id))", "if (true)"],
-        ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],
-        ["cli", "vgsh pkg drops its arguments", VGSH, "exec node \"$root/bin/vgsh-pkg\" \"$@\"", "exec node \"$root/bin/vgsh-pkg\""]
-    ];
-    const tree = path.join(tmp, "tree");
-    fs.mkdirSync(path.join(tree, "bin"), { recursive: true });
-    fs.mkdirSync(path.join(tree, "shell", "Core"), { recursive: true });
-    fs.symlinkSync(path.join(repo, "bin", "lib"), path.join(tree, "bin", "lib"));
-    fs.symlinkSync(TABLE, path.join(tree, "shell", "Core", "PackageManagers.js"));
-    CONTROLS.forEach(([kind, label, file, needle, replacement], index) => {
-        const source = fs.readFileSync(file, "utf8");
-        const count = source.split(needle).length - 1;
-        if (count !== 1) { report("control", [label + ": the text to replace occurs " + count + " times, not once"]); return; }
-        const mutated = source.replace(needle, () => replacement);
-        let failures;
-        if (kind !== "cli") {
-            const mutant = path.join(tmp, index + "-PackageManagers.js");
-            fs.writeFileSync(mutant, mutated);
-            failures = kind === "table" ? verifyTable(load(mutant)) : tableErrors(load(mutant)).filter(f => f.includes(kind.slice("rule:".length)));
-        } else {
-            for (const [name, real] of [["vgsh-pkg", PKG], ["vgsh", VGSH]]) {
-                fs.rmSync(path.join(tree, "bin", name), { force: true });
-                fs.writeFileSync(path.join(tree, "bin", name), real === file ? mutated : fs.readFileSync(real, "utf8"), { mode: 0o755 });
+async function main() {
+    const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "vgsh-pkg-")));
+    try {
+        report("table", verifyTable(load(TABLE)));
+        const cliControls = [];
+        CONTROLS.forEach(([kind, label, file, needle, replacement], index) => {
+            if (kind === "cli") {
+                cliControls.push(index);
+                return;
             }
-            failures = verifyCli({ pkg: path.join(tree, "bin", "vgsh-pkg"), vgsh: path.join(tree, "bin", "vgsh") }, path.join(tmp, "control-" + index)).failures;
-        }
-        if (failures.length === 0) report("control", [label + ": the suite passed on a copy without that rule"]);
-    });
-    if (failed) process.exitCode = 1;
-    else if (missing !== null) {
-        console.log("test-vgsh-pkg: status=not-measured missing=" + missing);
-        process.exitCode = 77;
-    } else console.log("test-vgsh-pkg: ok detect=" + DETECT_ROWS.length + " plans=" + PLAN_ROWS.length + " picks=" + PACKAGE_FOR_ROWS.length + " controls=" + CONTROLS.length);
-} finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+            const source = fs.readFileSync(file, "utf8");
+            const count = source.split(needle).length - 1;
+            if (count !== 1) { report("control", [label + ": the text to replace occurs " + count + " times, not once"]); return; }
+            const mutant = path.join(tmp, index + "-PackageManagers.js");
+            fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+            const failures = kind === "table" ? verifyTable(load(mutant)) : tableErrors(load(mutant)).filter(f => f.includes(kind.slice("rule:".length)));
+            if (failures.length === 0) report("control", [label + ": the suite passed on a copy without that rule"]);
+        });
+        const runs = ["real"].concat(cliControls);
+        const results = await limited(runs.map(which => () => cliRun(which, path.join(tmp, "cli-" + which))), Math.max(4, os.availableParallelism()));
+        report("cli", results[0].failures);
+        const missing = results[0].missing;
+        cliControls.forEach((index, i) => {
+            const result = results[i + 1];
+            const mustHold = CONTROLS[index][5];
+            if (result.textError !== null) report("control", [result.textError]);
+            else if (result.failures.length === 0) report("control", [CONTROLS[index][1] + ": the suite passed on a copy without that rule"]);
+            else if (mustHold !== undefined && !result.failures.some(f => f.includes(mustHold))) report("control", [CONTROLS[index][1] + ": no failure on the copy holds " + JSON.stringify(mustHold)]);
+        });
+        if (failed) process.exitCode = 1;
+        else if (missing !== null) {
+            console.log("test-vgsh-pkg: status=not-measured missing=" + missing);
+            process.exitCode = 77;
+        } else console.log("test-vgsh-pkg: ok detect=" + DETECT_ROWS.length + " plans=" + PLAN_ROWS.length + " picks=" + PACKAGE_FOR_ROWS.length + " parses=" + PARSE_ROWS.length + " outcomes=" + OUTCOME_ROWS.length + " controls=" + CONTROLS.length);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
 }
+
+main();

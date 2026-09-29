@@ -17,6 +17,36 @@
 //       argv of each step the action takes, in order, and whether it needs
 //       root. Runs nothing. install and remove take one name or more,
 //       upgrade none.
+//   vgsh-pkg check [--json] [--source <manager>]
+//       counts the updates each detected manager offers, through the
+//       unprivileged query its table row names, or manager <manager> alone.
+//       With --json one line, an array of `{ source, count, packages,
+//       checkedAt, error }`, each package `{ name, old, new }` (old null
+//       where the manager prints no installed version); without it a
+//       `source=<id> count=<n>` or `source=<id> error=<error>` line per
+//       source, each package after it as `  <name> <old|?> -> <new>`.
+//       A source that could not be read has count null, no packages and an
+//       error: `exit=<n>` (a status its row does not list), `timeout=<s>`,
+//       `signal=<name>`, `absent=<command>`, `spawn=<code>`, the parser's
+//       `unparseable ...`, or `skipped=on-demand` (a query that runs only
+//       when named by --source) and `skipped=no-check` (no read-only query
+//       exists), where checkedAt is null too. Exit 0 once the result is
+//       printed, whatever each source answered. A check stopped by SIGINT,
+//       SIGTERM or SIGHUP prints nothing and exits 128 plus the signal's
+//       number once every query has ended.
+//
+// A check holds flock on $XDG_RUNTIME_DIR/vgs/pkg-check.lock until it
+// exits, so a second one waits for the first. Each query runs in its own
+// process group, which gets SIGTERM and, KILL_GRACE_MS later, SIGKILL when
+// the query passes its row's timeout or the check itself is stopped by a
+// signal; a stopped check exits only after every group has ended, so it
+// releases the lock with no query left running. The queries run at once,
+// from $HOME with LC_ALL=C, so every format reads in English. checkupdates
+// syncs its own copy of the databases unless VGS's last successful synced
+// check is under FRESH_MS old and that copy still holds a database, when it
+// runs with -n: a check right after a short upgrade does not download the
+// databases again. $XDG_RUNTIME_DIR/vgs/pkg-check.synced records that
+// sync's time.
 //
 // The system's identity is /etc/os-release, else /usr/lib/os-release, as
 // os-release(5) orders them; with neither, no primary is detected. A
@@ -27,12 +57,15 @@
 // reason=unknown`, `manager=<id> action=<action> reason=unsupported` (the
 // table plans nothing for it), `manager=<id> reason=absent
 // binaries=<list>`, `name=<json> reason=grammar` and
-// `os-release=unreadable path=<file> error=<code>`. Exit 2 for a bad
+// `os-release=unreadable path=<file> error=<code>`, `runtime-dir=unset`
+// and `lock=failed path=<file> error=<code>`. Exit 2 for a bad
 // invocation, a command that is not a bare file name among them:
 // `command=<json>`. `present` alone also exits 1 with no refusal line, for
 // a missing command.
 "use strict";
+const childProcess = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const repo = path.join(__dirname, "..");
@@ -40,9 +73,11 @@ const table = require(path.join(__dirname, "lib", "qml-library.js")).load(path.j
 const { refuse, main, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
+const KILL_GRACE_MS = 5000;
+const FRESH_MS = 10 * 60 * 1000;
 
 function usage(first) {
-    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...]\n");
+    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...] | check [--json] [--source <manager>]\n");
     process.exit(2);
 }
 
@@ -56,6 +91,127 @@ function osRelease() {
         }
     }
     return "";
+}
+
+// Take the check lock on a descriptor this process keeps open: flock(1)
+// locks the open file it inherits, and the lock stays while this process
+// holds that file, so it outlives the flock process. The queries do not
+// inherit the descriptor, since node opens every file close-on-exec.
+function holdCheckLock(dir) {
+    const file = path.join(dir, "pkg-check.lock");
+    let fd;
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fd = fs.openSync(file, "a");
+    } catch (e) {
+        refuse("lock=failed path=" + file + " error=" + e.code);
+    }
+    const r = childProcess.spawnSync("flock", ["3"], { stdio: ["ignore", "ignore", "ignore", fd] });
+    if (r.error !== undefined) refuse("lock=failed path=" + file + " error=" + r.error.code);
+    if (r.status !== 0) refuse("lock=failed path=" + file + " error=exit-" + r.status);
+}
+
+// Whether checkupdates may skip its sync: VGS synced its copy of the
+// databases within FRESH_MS, and that copy, where checkupdates keeps it,
+// still holds a database. Without one, `-n` would compare against nothing
+// and report no updates.
+function pacmanFresh(stamp) {
+    try {
+        if (Date.now() - fs.statSync(stamp).mtimeMs > FRESH_MS) return false;
+    } catch (e) {
+        if (e.code === "ENOENT") return false;
+        throw e;
+    }
+    const db = process.env.CHECKUPDATES_DB || path.join(process.env.TMPDIR || "/tmp", "checkup-db-" + process.getuid());
+    try {
+        return fs.readdirSync(path.join(db, "sync")).some(name => name.endsWith(".db"));
+    } catch (e) {
+        if (e.code === "ENOENT" || e.code === "ENOTDIR") return false;
+        throw e;
+    }
+}
+
+// Every running query's process group: its leader's pid mapped to the
+// function that signals the whole group.
+const liveGroups = new Map();
+// The exit status of a check a signal stopped, or null while none has.
+let stopStatus = null;
+
+// End every running query group, as a timeout does, then exit with 128
+// plus SIGNAL's number once the last one has closed. A second signal while
+// stopping changes nothing.
+function stopQueries(signal) {
+    if (stopStatus !== null) return;
+    stopStatus = 128 + os.constants.signals[signal];
+    if (liveGroups.size === 0) process.exit(stopStatus);
+    for (const signalGroup of liveGroups.values()) signalGroup("SIGTERM");
+    setTimeout(() => {
+        for (const signalGroup of liveGroups.values()) signalGroup("SIGKILL");
+    }, KILL_GRACE_MS).unref();
+}
+
+// Run CHECK's argv and resolve to what it printed means: `{ packages }` or
+// `{ error }`, judged by the table's checkOutcome.
+function runCheck(check) {
+    return new Promise(resolve => {
+        if (!onPath(check.argv[0])) {
+            resolve({ error: "absent=" + check.argv[0] });
+            return;
+        }
+        const child = childProcess.spawn(check.argv[0], check.argv.slice(1), {
+            cwd: process.env.HOME || "/",
+            env: Object.assign({}, process.env, { LC_ALL: "C" }),
+            stdio: ["ignore", "pipe", "ignore"],
+            detached: true
+        });
+        const chunks = [];
+        let timedOut = false;
+        let failed = null;
+        const signalGroup = signal => {
+            try {
+                process.kill(-child.pid, signal);
+            } catch (e) {
+                if (e.code !== "ESRCH") throw e;
+            }
+        };
+        let grace = null;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            signalGroup("SIGTERM");
+            grace = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
+        }, check.timeout * 1000);
+        if (child.pid !== undefined) liveGroups.set(child.pid, signalGroup);
+        child.stdout.on("data", chunk => chunks.push(chunk));
+        child.on("error", e => { failed = e.code; });
+        child.on("close", (status, signal) => {
+            clearTimeout(timer);
+            if (grace !== null) clearTimeout(grace);
+            liveGroups.delete(child.pid);
+            if (stopStatus !== null) {
+                if (liveGroups.size === 0) process.exit(stopStatus);
+                return;
+            }
+            if (timedOut) resolve({ error: "timeout=" + check.timeout });
+            else if (failed !== null) resolve({ error: "spawn=" + failed });
+            else if (signal !== null) resolve({ error: "signal=" + signal });
+            else resolve(table.checkOutcome(check, status, Buffer.concat(chunks).toString("utf8")));
+        });
+    });
+}
+
+// One source's result row.
+async function checkSource(entry, named, stamp) {
+    const row = (count, packages, checkedAt, error) => ({ source: entry.id, count, packages, checkedAt, error });
+    const found = table.checkFor(entry.id, entry.binary, named);
+    if (found.skipped !== undefined) return row(null, [], null, "skipped=" + found.skipped);
+    const check = found.check;
+    const syncs = entry.id === "pacman" && !pacmanFresh(stamp);
+    if (entry.id === "pacman" && !syncs) check.argv.push("-n");
+    const outcome = await runCheck(check);
+    const checkedAt = new Date().toISOString();
+    if (outcome.error !== undefined) return row(null, [], checkedAt, outcome.error);
+    if (syncs) fs.writeFileSync(stamp, checkedAt + "\n");
+    return row(outcome.packages.length, outcome.packages, checkedAt, null);
 }
 
 const [verb, ...args] = process.argv.slice(2);
@@ -94,6 +250,42 @@ main(() => {
         const r = table.plan(manager, action, names, onPath);
         if (!r.ok) refuse(r.error);
         process.stdout.write(JSON.stringify(r.plan) + "\n");
+        break;
+    }
+    case "check": {
+        let json = false;
+        let source = null;
+        for (let i = 0; i < args.length; i++) {
+            if (args[i] === "--json" && !json) json = true;
+            else if (args[i] === "--source" && source === null && i + 1 < args.length) source = args[++i];
+            else usage("argument=" + args[i]);
+        }
+        let entries;
+        if (source !== null) {
+            const found = table.presentManager(source, onPath);
+            if (!found.ok) refuse(found.error);
+            entries = [{ id: source, binary: found.binary }];
+        } else {
+            const found = table.detect(table.osReleaseIds(osRelease()), onPath);
+            entries = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
+        }
+        if (!process.env.XDG_RUNTIME_DIR) refuse("runtime-dir=unset");
+        const dir = path.join(process.env.XDG_RUNTIME_DIR, "vgs");
+        holdCheckLock(dir);
+        for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => stopQueries(signal));
+        const stamp = path.join(dir, "pkg-check.synced");
+        Promise.all(entries.map(entry => checkSource(entry, source !== null, stamp))).then(rows => {
+            if (json) {
+                process.stdout.write(JSON.stringify(rows) + "\n");
+                return;
+            }
+            const lines = [];
+            for (const r of rows) {
+                lines.push("source=" + r.source + (r.error === null ? " count=" + r.count : " error=" + r.error));
+                for (const p of r.packages) lines.push("  " + p.name + " " + (p.old === null ? "?" : p.old) + " -> " + p.new);
+            }
+            if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
+        });
         break;
     }
     default:

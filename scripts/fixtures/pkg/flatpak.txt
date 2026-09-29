@@ -1,0 +1,3 @@
+org.gnome.Loupe	stable
+org.gnome.Platform	47
+org.freedesktop.Platform.GL.default	24.08

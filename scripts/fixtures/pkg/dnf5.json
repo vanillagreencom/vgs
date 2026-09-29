@@ -1,0 +1,32 @@
+{
+  "upgrades":[
+    {
+      "name":"bash",
+      "arch":"x86_64",
+      "evr":"5.3.0-2.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"dnf5",
+      "arch":"x86_64",
+      "evr":"5.4.6.0-1.fc44",
+      "repository":"updates"
+    }
+  ],
+  "obsoleting_packages":[
+    {
+      "name":"dnf5",
+      "arch":"x86_64",
+      "evr":"5.4.6.0-1.fc44",
+      "repository":"updates",
+      "obsoletes":[
+        {
+          "name":"dnf5-plugin-old",
+          "arch":"x86_64",
+          "evr":"5.2.0.0-1.fc44",
+          "repository":"@System"
+        }
+      ]
+    }
+  ]
+}
