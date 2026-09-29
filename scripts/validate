@@ -81,7 +81,8 @@ run() { # LABEL CMD...
 }
 
 # Rows: area | label | command | additional input globs, space-delimited.
-# Command paths are also inputs.
+# The command's words that hold a slash are also inputs. Every input glob
+# counts, a root file such as VERSION included.
 rows=(
   "logic|plugin logic table|node scripts/test-plugin-logic.js|shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
   "logic|Hyprland layer logic|node scripts/test-hyprland-layer.js|shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js scripts/qml-library.js"
@@ -101,7 +102,7 @@ rows=(
   "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
   "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
-  "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/check-manifests.js scripts/qml-library.js config/shell.json shell/plugins/*"
+  "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/check-manifests.js scripts/qml-library.js config/shell.json shell/plugins/* VERSION"
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
   "cli|theme target controls|scripts/test-vgsh-targets.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
   "cli|theme package symlink controls|scripts/test-vgsh-package-links.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
@@ -274,15 +275,19 @@ if [[ -n $change_base ]]; then
       for i in "${!rows[@]}"; do
         IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
         [[ $row_area == repo ]] && continue
-        read -r -a patterns <<<"$command $inputs"
+        # Command words without a slash, such as node, are not inputs.
+        read -r -a patterns <<<"$inputs"
+        read -r -a words <<<"$command"
+        for word in "${words[@]}"; do
+          if [[ $word == */* ]]; then patterns+=("$word"); fi
+        done
         for pattern in "${patterns[@]}"; do
-          [[ $pattern == */* ]] || continue
           if [[ $path == $pattern ]]; then affected[i]=true; known=true; break; fi
         done
       done
       if [[ $known == false ]]; then
         case "$path" in
-          *.md|*.markdown|docs/*|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
+          *.md|*.markdown|LICENSE|docs/*|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
           .agents/skills/vgs-plugin/*)
             printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
           .agents/*|.bot-instructions/*) ;;
