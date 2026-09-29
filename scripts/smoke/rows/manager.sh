@@ -22,25 +22,31 @@ user_file="$home/.config/vgs/shell.json"
 user_key() { python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"] == "vgs.settings"]; k=rows[0].get("keys", {}) if rows else {}; print(json.dumps(k["toggle"]) if "toggle" in k else "absent")' "$user_file"; }
 # The binds Hyprland holds for the Settings shortcut, as [modmask, key].
 settings_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle")))'; }
-# window_fits MONITOR: [] when the Settings layer on MONITOR is
+# window_fits MONITOR [MODE]: [] when the Settings layer on MONITOR is
 # min(size.window.width, width - 2 * size.window.gutter) wide,
 # size.window.heightShare of the height tall and centred on the whole
-# monitor, bar included, within one pixel; else the misfits.
+# monitor, bar included, within one pixel; else the misfits. The monitor and
+# the layers come from one batched request, which the compositor answers
+# from one state. Given MODE, the mode a row holds, a monitor at another
+# mode reads ["mode=<WxH> want=<MODE>"] and no window is measured against it.
 window_fits() {
   local width share gutter
   width="$(ipc smoke themeValue size.window.width)" || return
   share="$(ipc smoke themeValue size.window.heightShare)" || return
   gutter="$(ipc smoke themeValue size.window.gutter)" || return
-  { hypr -j monitors; hypr -j layers; } | python3 -c '
+  hypr --batch 'j/monitors; j/layers' | python3 -c '
 import json, math, sys
 text = sys.stdin.read()
 monitors, at = json.JSONDecoder().raw_decode(text)
 layers = json.loads(text[at:])
-name, width, share, gutter = sys.argv[1], *(json.loads(a) for a in sys.argv[2:])
+name, held, (width, share, gutter) = sys.argv[1], sys.argv[2], (json.loads(a) for a in sys.argv[3:])
 mon = [m for m in monitors if m["name"] == name]
 if len(mon) != 1:
     print(json.dumps(["monitor=%s absent" % name])); sys.exit()
 m = mon[0]
+mode = "%dx%d" % (m["width"], m["height"])
+if held and mode != held:
+    print(json.dumps(["mode=%s want=%s" % (mode, held)])); sys.exit()
 mw, mh = m["width"] / m["scale"], m["height"] / m["scale"]
 boxes = [[l["x"], l["y"], l["w"], l["h"]] for lv in layers.get(name, {"levels": {}})["levels"].values() for l in lv if l["namespace"] == "vgs:panel" and l["pid"] != -1]
 if len(boxes) != 1:
@@ -50,7 +56,7 @@ want_w, want_h = math.floor(min(width, mw - 2 * gutter)), math.floor(share * mh)
 out = []
 for key, got, want in (("w", w, want_w), ("h", h, want_h), ("x", x, m["x"] + (mw - want_w) / 2), ("y", y, m["y"] + (mh - want_h) / 2)):
     if abs(got - want) > 1: out.append("%s=%s want=%s" % (key, got, want))
-print(json.dumps(out))' "$1" "$width" "$share" "$gutter"
+print(json.dumps(out))' "$1" "${2:-}" "$width" "$share" "$gutter"
 }
 first_monitor() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])'; }
 
@@ -381,24 +387,34 @@ expect "the shortcut toggles it closed again" ok hypr dispatch 'hl.dsp.global("v
 expect_poll "the window is gone after the shortcut" 0 layer_count vgs:panel
 
 # A monitor narrower than the window's width token: the nested output
-# takes a 480 by 720 mode, and the window keeps `size.window.gutter` a side
+# holds a 480 by 720 mode, and the window keeps `size.window.gutter` a side
 # and half the monitor's height, centred on it; the mode it had is then
-# restored, so later rows meet the monitor they read at the start.
+# restored, so later rows meet the monitor they read at the start. The host
+# can reset a held mode under the rows (held_mode_state in harness.sh): the
+# window check reads the mode with the window and names a reset rather than
+# measuring the window against it.
 narrow_mode=480x720
 main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
-expect "the nested compositor makes its monitor narrower than the window" ok output_mode "$main_monitor" "$narrow_mode"
+hold_mode "the nested compositor makes its monitor narrower than the window" "$main_monitor" "$narrow_mode"
 expect_poll "the monitor is 480 logical pixels wide" 480 first_width
 bar_width() { one_layer vgs:bar | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
 expect_poll "the bar follows the narrow monitor" 480 bar_width
 expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the window maps on the narrow monitor" 1 layer_count vgs:panel
-geometry expect_poll "a monitor narrower than the width token keeps the gutters, half its height, centred" '[]' window_fits "$main_monitor"
+geometry expect_poll "a monitor narrower than the width token keeps the gutters, half its height, centred" '[]' window_fits "$main_monitor" "$narrow_mode"
 clamped_width() { settings_layer | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
 gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
 geometry expect "the clamped window is the monitor's width less two gutters" "$((480 - 2 * gutter))" clamped_width
-expect "the gear closes the clamped window" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
-expect_poll "the clamped window is gone" 0 layer_count vgs:panel
-expect "the nested compositor restores its monitor's mode" ok output_mode "$main_monitor" "$main_mode"
+# Control: the monitor's own mode comes back under the held row, as a host
+# configure brings it. The window check names the reset instead of
+# measuring the window against the monitor it now reads, and the hold reads
+# reset, the state that excuses a failing row as not measured.
+expect "the monitor's own mode comes back under the held row" ok output_mode "$main_monitor" "$main_mode"
+expect_poll "the window check names the mode reset under the held row" "[\"mode=$main_mode want=$narrow_mode\"]" window_fits "$main_monitor" "$narrow_mode"
+expect "the hold reads the reset" reset held_mode_state
+release_mode "the nested compositor restores its monitor's mode" "$main_monitor" "$main_mode"
+expect "the gear closes the window" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
+expect_poll "the window is gone" 0 layer_count vgs:panel
 expect_poll "the monitor has its width back" "$mon_w" first_width
 expect_poll "the bar follows the restored monitor" "$mon_w" bar_width
 

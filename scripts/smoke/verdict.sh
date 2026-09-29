@@ -16,18 +16,27 @@ nested_output_unallocated() {
   grep -q -s -E 'Output WAYLAND-[0-9]+: pending state rejected: swapchain failed reconfiguring' -- "$@"
 }
 
-# smoke_verdict FAILURES BEHAVIOUR_FAILURES STALLED_RENDER LOG...: prints
-# the run's closing line and returns its exit status. A run whose failures
-# are all geometry or render rows met a sandbox fault when a render row drew
-# no frame, or when the nested window's output could not allocate its
-# buffers; it reports not-measured, which is never a pass, and names the
-# cause. Any behaviour failure is a failure.
+# smoke_verdict FAILURES BEHAVIOUR_FAILURES STALLED_RENDER MODE_RESETS LOG...:
+# prints the run's closing line and returns its exit status. MODE_RESETS
+# counts the failures of rows that ran after the nested output left a mode
+# they held (hold_mode in harness.sh); a run whose every failure is one of
+# them measured an output the sandbox reset, not the shell, and reports
+# not-measured. A run whose failures are all geometry, render or mode-reset
+# rows met a sandbox fault when a render row drew no frame, or when the
+# nested window's output could not allocate its buffers; it reports
+# not-measured, which is never a pass, and names the cause. Any behaviour
+# failure is a failure.
 smoke_verdict() {
-  local failures="$1" behaviour_failures="$2" stalled_render="$3"
-  shift 3
+  local failures="$1" behaviour_failures="$2" stalled_render="$3" mode_resets="$4"
+  shift 4
   if [[ $failures -eq 0 ]]; then
     echo "qml-smoke: ok"
     return 0
+  fi
+  if [[ $mode_resets -eq $failures ]]; then
+    printf 'qml-smoke: status=not-measured nested-output=mode-reset failed=%s\n' "$failures"
+    echo "the nested output left a mode a row held: the host resized or refocused the nested window, or a configuration reload dropped the row's monitor rule; leave the nested window alone during the run, then run the smoke again"
+    return 77
   fi
   if [[ $behaviour_failures -eq 0 && $stalled_render == true ]]; then
     printf 'qml-smoke: status=not-measured nested-window=not-drawn failed=%s\n' "$failures"

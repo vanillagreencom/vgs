@@ -35,8 +35,20 @@ failures=0
 behaviour_failures=0
 stalled_render=false
 row_class=behaviour
+# A mode a row holds on a nested output, as (OUTPUT MODE), empty when no row
+# holds one; hold_mode and release_mode alone write it. A row that fails
+# after the output left the held mode counts in mode_resets and never as
+# behaviour: it measured an output the sandbox reset (held_mode_state).
+mode_hold=()
+mode_resets=0
 fail() {
   failures=$((failures + 1))
+  if [[ ${#mode_hold[@]} -gt 0 && $(held_mode_state) == reset ]]; then
+    mode_resets=$((mode_resets + 1))
+    printf '  FAIL  %s\n' "$*"
+    printf '        %s left the held mode %s: not measured\n' "${mode_hold[0]}" "${mode_hold[1]}"
+    return
+  fi
   [[ $row_class == geometry || $row_class == render ]] || behaviour_failures=$((behaviour_failures + 1))
   printf '  FAIL  %s\n' "$*"
 }
@@ -497,6 +509,43 @@ layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.loa
 # output the rows could add instead stays 0x0 in the sandbox, its buffers
 # failing to allocate. A row restores the mode it read first.
 output_mode() { hypr eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"0x0\", scale = 1 })"; }
+# mode_of NAME: output NAME's mode as WxH; returns 1 when no monitor has
+# that name.
+mode_of() { hypr -j monitors | python3 -c 'import json,sys; m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]]; print("%dx%d" % (m[0]["width"], m[0]["height"])) if len(m)==1 else sys.exit(1)' "$1"; }
+# hold_mode LABEL NAME MODE: output NAME takes MODE and the rows after it
+# hold that mode until release_mode. The hold begins once the monitor reads
+# MODE; a mode never taken is a failure and holds nothing.
+hold_mode() {
+  local label="$1" output="$2" mode="$3" failed_before="$failures"
+  [[ ${#mode_hold[@]} -eq 0 ]] || { fail "$label: ${mode_hold[0]} already holds ${mode_hold[1]}; hold_mode does not nest"; return; }
+  expect "$label" ok output_mode "$output" "$mode"
+  expect_poll "$output reads the mode $mode" "$mode" mode_of "$output"
+  [[ $failures -eq $failed_before ]] && mode_hold=("$output" "$mode")
+  return 0
+}
+# held_mode_state: what became of the held mode, as one word. `held`: the
+# output reads it. `reset`: the output reads another mode. Once the hold
+# began, two writers move a nested output off it, and neither is what a
+# held row measures. Hyprland gives a Wayland-backend output the size of
+# every configure the host sends the nested window that differs from its
+# rule's mode (src/output/Monitor.cpp, the output's state listener,
+# Hyprland v0.56.2), and the host sends one whenever it resizes the window
+# or changes its state, focus included. A configuration reload, which the
+# shell runs when its Hyprland layer changes, drops the monitor rule
+# output_mode added through `hyprctl eval` (src/config/lua/ConfigManager.cpp,
+# CConfigManager::reload). The shell writes no monitor rule of its own.
+# `unreadable`: the monitor cannot be read, which excuses nothing.
+held_mode_state() {
+  local mode
+  mode="$(mode_of "${mode_hold[0]}")" || { echo unreadable; return; }
+  if [[ $mode == "${mode_hold[1]}" ]]; then echo held; else echo reset; fi
+}
+# release_mode LABEL NAME MODE: any hold ends and output NAME takes MODE
+# again, whether or not hold_mode's mode was taken.
+release_mode() {
+  mode_hold=()
+  expect "$1" ok output_mode "$2" "$3"
+}
 # The first monitor's mode as WxH, and its logical width.
 first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print("%dx%d" % (m["width"], m["height"]))'; }
 first_width() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]))'; }
@@ -575,6 +624,6 @@ if [[ $failures -gt 0 ]]; then
   echo "--- nested compositor log tail"; tail -n 40 "$rt_dir"/hypr/*/hyprland.log 2>/dev/null || true
 fi
 local status=0
-smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$rt_dir"/hypr/*/hyprland.log || status=$?
+smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$mode_resets" "$rt_dir"/hypr/*/hyprland.log || status=$?
 [[ $status -eq 0 ]] || exit "$status"
 }

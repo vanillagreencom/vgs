@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Drive scripts/smoke/verdict.sh, the nested smoke's closing verdict, with
-# the counters smoke_finish hands it and fixture compositor logs. No case
+# the counters smoke_finish hands it, mode resets among them, and fixture
+# compositor logs. No case
 # needs a sandbox. Each case pins the exit status and the first line the
 # verdict prints. The controls at the end plant one defect per rule in a
 # copy of the file and require the case that rule owns to go red.
@@ -53,28 +54,32 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 # run_case FILE ROW: true when the verdict FILE defines gives the row's
 # status and first line. The caller's shell options are the harness's.
 run_case() {
-  local file="$1" label failures_n behaviour stalled logs want_status want_line out status=0 names=() paths=() name
-  IFS='|' read -r label failures_n behaviour stalled logs want_status want_line <<<"$2"
+  local file="$1" label failures_n behaviour stalled resets logs want_status want_line out status=0 names=() paths=() name
+  IFS='|' read -r label failures_n behaviour stalled resets logs want_status want_line <<<"$2"
   read -r -a names <<<"$logs"
   for name in "${names[@]}"; do paths+=("$tmp/$name.log"); done
   out="$(env -i PATH="$PATH" bash -c 'set -euo pipefail; source "$1"; shift; smoke_verdict "$@"' _ \
-    "$file" "$failures_n" "$behaviour" "$stalled" "${paths[@]}")" || status=$?
+    "$file" "$failures_n" "$behaviour" "$stalled" "$resets" "${paths[@]}")" || status=$?
   [[ $status -eq $want_status && ${out%%$'\n'*} == "$want_line" ]] && return 0
   printf '        %s: status=%s want=%s first line: %s\n' "$label" "$status" "$want_status" "${out%%$'\n'*}"
   return 1
 }
 
-# Rows: label | failures | behaviour failures | stalled render | fixture
-# logs, space-delimited, `missing` naming none written | status | first line.
+# Rows: label | failures | behaviour failures | stalled render | mode
+# resets | fixture logs, space-delimited, `missing` naming none written |
+# status | first line.
 cases=(
-  "a clean run passes|0|0|false|passing|0|qml-smoke: ok"
-  "all-geometry failure with a passing log fails|3|0|false|passing|1|qml-smoke: failed=3"
-  "all-geometry failure with the nested output's fault is not measured|3|0|false|fault|77|qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=3"
-  "the fault in a second log is read|3|0|false|passing fault|77|qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=3"
-  "a behaviour failure with the fault fails|3|1|false|fault|1|qml-smoke: failed=3"
-  "all-geometry failure with no readable log fails|3|0|false|missing|1|qml-smoke: failed=3"
-  "all-geometry failure with an undrawn render row is not measured|3|0|true|passing|77|qml-smoke: status=not-measured nested-window=not-drawn failed=3"
-  "a behaviour failure with an undrawn render row fails|3|1|true|passing|1|qml-smoke: failed=3"
+  "a clean run passes|0|0|false|0|passing|0|qml-smoke: ok"
+  "all-geometry failure with a passing log fails|3|0|false|0|passing|1|qml-smoke: failed=3"
+  "all-geometry failure with the nested output's fault is not measured|3|0|false|0|fault|77|qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=3"
+  "the fault in a second log is read|3|0|false|0|passing fault|77|qml-smoke: status=not-measured nested-compositor=buffer-allocation-failed failed=3"
+  "a behaviour failure with the fault fails|3|1|false|0|fault|1|qml-smoke: failed=3"
+  "all-geometry failure with no readable log fails|3|0|false|0|missing|1|qml-smoke: failed=3"
+  "all-geometry failure with an undrawn render row is not measured|3|0|true|0|passing|77|qml-smoke: status=not-measured nested-window=not-drawn failed=3"
+  "a behaviour failure with an undrawn render row fails|3|1|true|0|passing|1|qml-smoke: failed=3"
+  "every failure after a held mode's reset is not measured|2|0|false|2|passing|77|qml-smoke: status=not-measured nested-output=mode-reset failed=2"
+  "a geometry failure beside mode-reset rows fails|3|0|false|2|passing|1|qml-smoke: failed=3"
+  "a behaviour failure beside mode-reset rows fails|3|1|false|2|passing|1|qml-smoke: failed=3"
 )
 for row in "${cases[@]}"; do
   if run_case "$verdict" "$row"; then ok "${row%%|*}"; else fail "${row%%|*}"; fi
@@ -99,6 +104,8 @@ mutate() {
 # Rows: label | text | replacement | the case label that must go red. A
 # field holds no `|`, the separator.
 controls=(
+  "a mode reset is not read|if [[ \$mode_resets -eq \$failures ]]; then|if [[ \$mode_resets -eq -1 ]]; then|every failure after a held mode's reset is not measured"
+  "a mode reset excuses other failures|\$mode_resets -eq \$failures|\$mode_resets -gt 0|a geometry failure beside mode-reset rows fails"
   "the excuse reads any GBM allocation failure|'Output WAYLAND-[0-9]+: pending state rejected: swapchain failed reconfiguring'|'Failed to allocate a GBM buffer'|all-geometry failure with a passing log fails"
   "the nested output's fault is not read|nested_output_unallocated \"\$@\"; then|false; then|all-geometry failure with the nested output's fault is not measured"
   "a behaviour failure is excused by the fault|if [[ \$behaviour_failures -eq 0 ]] && nested_output_unallocated|if nested_output_unallocated|a behaviour failure with the fault fails"

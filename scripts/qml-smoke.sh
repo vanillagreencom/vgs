@@ -18,7 +18,9 @@
 # `Output WAYLAND-<n>: pending state rejected: swapchain failed
 # reconfiguring` (a bare GBM allocation failure, which passing runs log for
 # the headless output, is not that fault), or the host withheld frame
-# callbacks so the shell never drew again; that is not a pass.
+# callbacks so the shell never drew again; that is not a pass. A run whose
+# every failure came after the nested output left a mode a row held,
+# nested-output=mode-reset, is not a pass either.
 # scripts/smoke/verdict.sh holds the verdict. Exit 1 when a check failed.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
