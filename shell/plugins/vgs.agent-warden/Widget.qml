@@ -61,7 +61,7 @@ BarWidget {
 
     MouseArea {
         anchors.fill: parent
-        cursorShape: Qt.PointingHandCursor
+        PointerCursor {}
         onClicked: root.toggle()
     }
 
