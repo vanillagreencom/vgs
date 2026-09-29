@@ -62,5 +62,43 @@ if [[ $status -eq 143 ]]; then ok "TERM exits as 128 plus the signal"; else fail
 left=0
 while read -r pid; do [[ -n $pid && -d /proc/$pid ]] && left=$((left + 1)); done <"$root/state/vgs/updates-test/grandchildren"
 if [[ $left -eq 0 ]]; then ok "TERM kills probe grandchildren"; else fail "TERM kills probe grandchildren: left=$left"; fi
+mutant="$root/check-no-rewait"
+python3 - "$check" "$mutant" <<'PY'
+import pathlib, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+old = '''while true; do
+    wait "${pids[$i]}" || status=$?
+    if [[ -z $stop_status || ! -d /proc/${pids[$i]} ]]; then break; fi
+    status=0
+  done'''
+new = '''if [[ -n $stop_status ]]; then break; fi
+  wait "${pids[$i]}" || status=$?'''
+assert source.count(old) == 1
+pathlib.Path(sys.argv[2]).write_text(source.replace(old, new))
+PY
+chmod 755 "$mutant"
+cat >"$root/bin/vgsh" <<'VGSH'
+#!/usr/bin/env bash
+record="$XDG_STATE_HOME/vgs/updates-test"
+mkdir -p -- "$record"
+echo "$$" >>"$record/slow-children"
+trap 'sleep 3; exit 143' TERM
+sleep 60
+VGSH
+chmod 755 "$root/bin/vgsh"
+set +e
+"${run_env[@]}" "$mutant" --vgsh "$root/bin/vgsh" >/dev/null 2>"$root/mutant.err" &
+mutant_pid=$!
+for _ in $(seq 1 50); do [[ -s "$root/state/vgs/updates-test/slow-children" ]] && break; sleep 0.1; done
+started="$(tail -n 1 "$root/state/vgs/updates-test/slow-children")"
+kill -TERM "$mutant_pid"
+wait "$mutant_pid"
+set -e
+if [[ -d /proc/$started ]]; then
+  ok "control: without the re-wait loop a probe can outlive bin/check"
+  kill -TERM "$started" 2>/dev/null || true
+else
+  fail "control: without the re-wait loop a probe can outlive bin/check"
+fi
 if [[ $failures -gt 0 ]]; then echo "test-updates-check: failed=$failures"; exit 1; fi
 echo "test-updates-check: ok"

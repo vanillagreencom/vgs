@@ -45,6 +45,14 @@ Each row is `{ source, label, count, packages, checkedAt, error }`.
 
 A failed source stays visible with `count: null` and its reason in `error`.
 
+The shared status value bounds `packages` to twelve rows per source.
+
+A shared source row adds `more` with the number of package rows omitted.
+
+Package `name`, `old` and `new` text is cut to eighty characters in shared status.
+
+The full package list stays in `status.json`.
+
 `error` is for a whole snapshot error that still produced JSON.
 
 A process failure before JSON leaves the last good file unchanged.

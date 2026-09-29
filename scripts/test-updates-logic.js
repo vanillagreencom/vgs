@@ -59,6 +59,19 @@ function verify(logic) {
   assert.equal(logic.nextCheckDelay(snapshot, false, now + 1000, 99999999, now), logic.RETRY_AFTER_FAILURE_MS - 1000);
   assert.equal(logic.nextCheckDelay(snapshot, false, now + logic.RETRY_AFTER_FAILURE_MS, 6, now), 0);
   assert.equal(logic.nextTimerDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6, null), 0);
+  const many = logic.normalizeSnapshot({
+    pkg: probe([{ source: "pacman", count: 3000, packages: Array.from({ length: 3000 }, (_, i) => ({ name: "pkg-" + i + "-".repeat(120), old: "1".repeat(120), new: "2".repeat(120) })), checkedAt: now, error: null }]),
+    self: probe({ behind: false, error: null }),
+    plugins: probe([]),
+    themes: probe([])
+  }, now);
+  const bounded = logic.publishValues(many, false, now, 6 * 60 * 60 * 1000, "");
+  assert.equal(bounded.pending, 3000);
+  assert.equal(bounded.sources[0].packages.length, logic.PUBLISHED_PACKAGES_PER_SOURCE_MAX);
+  assert.equal(bounded.sources[0].more, 3000 - logic.PUBLISHED_PACKAGES_PER_SOURCE_MAX);
+  assert.equal(bounded.sources[0].packages[0].name.length, logic.PUBLISHED_PACKAGE_TEXT_MAX);
+  assert.equal(logic.statusRecordBytes(bounded) < logic.STATUS_MAX_BYTES, true);
+  assert.equal(logic.statusRecordBytes(Object.assign({}, bounded, { sources: many.sources })) > logic.STATUS_MAX_BYTES, true);
 
   same(logic.parseSnapshotText(JSON.stringify(snapshot)), { ok: true, snapshot });
   same(logic.parseSnapshotText("{"), { ok: false, error: "not-json" });
@@ -89,6 +102,9 @@ const controls = [
   ["status writes skip unchanged", "if (!hasOwn(before, key) || !sameJson(before[key], next[key])) out.push({ key: key, value: clone(next[key]) });", "out.push({ key: key, value: clone(next[key]) });"],
   ["failure retry uses short delay", "failedAt + RETRY_AFTER_FAILURE_MS - now", "failedAt + interval - now"],
   ["no package manager omits the package row", "if (!parsed.ok) return parsed.error.indexOf(\"manager=none\") !== -1 ? [] : [sourceRow(\"packages\", null, [], null, parsed.error)];", "if (!parsed.ok) return [sourceRow(\"packages\", null, [], null, parsed.error)];"],
+  ["published packages are bounded", "var limit = Math.min(row.packages.length, PUBLISHED_PACKAGES_PER_SOURCE_MAX);", "var limit = row.packages.length;"],
+  ["published rows carry the omitted package count", "made.more = Math.max(0, row.packages.length - packages.length);", "made.more = 0;"],
+  ["published package text is bounded", "return text.length > PUBLISHED_PACKAGE_TEXT_MAX ? text.slice(0, PUBLISHED_PACKAGE_TEXT_MAX) : text;", "return text;"],
   ["source errors set warning", "if (source !== null) return { tone: \"warning\", text: (source.label || source.source) + \": \" + String(source.error).slice(0, 180) };", "if (false) return { tone: \"warning\", text: \"\" };"] ,
   ["stale after twice the interval", "now - snapshot.checkedAt >= 2 * intervalMs", "now - snapshot.checkedAt > 3 * intervalMs"],
   ["TUI endedAt advances", "if (Number(next.endedAt) > Number(prior.endedAt)) return true;", "if (false) return true;"],

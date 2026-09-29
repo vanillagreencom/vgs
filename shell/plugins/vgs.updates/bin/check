@@ -71,7 +71,11 @@ start_probe themes "$vgsh" theme outdated --json
 
 for i in "${!pids[@]}"; do
   status=0
-  wait "${pids[$i]}" || status=$?
+  while true; do
+    wait "${pids[$i]}" || status=$?
+    if [[ -z $stop_status || ! -d /proc/${pids[$i]} ]]; then break; fi
+    status=0
+  done
   write_status "${probe_names[$i]}" "$status"
 done
 if [[ -n $stop_status ]]; then exit "$stop_status"; fi

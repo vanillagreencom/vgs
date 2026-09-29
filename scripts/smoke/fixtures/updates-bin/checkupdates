@@ -4,6 +4,10 @@ root="${XDG_STATE_HOME:?}/vgs/updates-smoke"
 mkdir -p -- "$root"
 printf 'checkupdates\n' >>"$root/calls.log"
 if [[ -f $root/fail-checkupdates ]]; then echo 'network down' >&2; exit 1; fi
+if [[ -f $root/many-checkupdates ]]; then
+  for i in $(seq 1 1400); do printf 'pkg-%04d 1.0 -> 2.0\n' "$i"; done
+  exit 0
+fi
 cat <<'OUT'
 coreutils 9.11-2 -> 9.12-1
 linux 6.1 -> 6.2

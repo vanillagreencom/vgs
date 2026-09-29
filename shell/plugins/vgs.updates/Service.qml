@@ -37,7 +37,7 @@ Item {
         if (shell === null || registered) return;
         registered = true;
         shell.ipc.handle("check", () => root.requestCheck("ipc"));
-        shell.ipc.handle("status", () => JSON.stringify(Logic.publishValues(snapshot, checking, Date.now(), currentIntervalMs, checkFailure)));
+        shell.ipc.handle("status", () => JSON.stringify(shell.status.values));
         cacheReader.path = statusPath;
         cacheReader.reload();
         lastTuiState = currentTuiState;

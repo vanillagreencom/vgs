@@ -19,6 +19,9 @@ var SOURCE_LABELS = {
     packages: "Packages"
 };
 var RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
+var STATUS_MAX_BYTES = 65536;
+var PUBLISHED_PACKAGES_PER_SOURCE_MAX = 12;
+var PUBLISHED_PACKAGE_TEXT_MAX = 80;
 
 function hasOwn(object, key) {
     return object !== null && typeof object === "object" && Object.prototype.hasOwnProperty.call(object, key);
@@ -59,7 +62,20 @@ function packageRows(rows) {
         if (typeof row.behind === "number" && isFinite(row.behind) && row.behind > 0) made.behind = row.behind;
         out.push(made);
     }
+
     return out;
+}
+
+function truncatedText(value) {
+    if (value === null || value === undefined) return null;
+    var text = String(value);
+    return text.length > PUBLISHED_PACKAGE_TEXT_MAX ? text.slice(0, PUBLISHED_PACKAGE_TEXT_MAX) : text;
+}
+
+function publishedPackage(row) {
+    var made = { name: truncatedText(row.name), old: truncatedText(row.old), new: truncatedText(row.new) };
+    if (typeof row.behind === "number" && isFinite(row.behind) && row.behind > 0) made.behind = row.behind;
+    return made;
 }
 
 function sourceRow(source, count, packages, checkedAt, error) {
@@ -193,7 +209,25 @@ function checkState(snapshot, checking, now, intervalMs, checkFailure) {
 }
 
 function publishValues(snapshot, checking, now, intervalMs, checkFailure) {
-    return { pending: pendingCount(snapshot), lastCheck: snapshot === null ? null : snapshot.checkedAt, checkState: checkState(snapshot, checking, now, intervalMs, checkFailure), sources: snapshot === null ? [] : clone(snapshot.sources) };
+    return { pending: pendingCount(snapshot), lastCheck: snapshot === null ? null : snapshot.checkedAt, checkState: checkState(snapshot, checking, now, intervalMs, checkFailure), sources: snapshot === null ? [] : publishedSources(snapshot.sources) };
+}
+
+function publishedSources(sources) {
+    var out = [];
+    for (var i = 0; i < sources.length; i++) {
+        var row = sources[i];
+        var packages = [];
+        var limit = Math.min(row.packages.length, PUBLISHED_PACKAGES_PER_SOURCE_MAX);
+        for (var p = 0; p < limit; p++) packages.push(publishedPackage(row.packages[p]));
+        var made = sourceRow(row.source, row.count, packages, row.checkedAt, row.error);
+        made.more = Math.max(0, row.packages.length - packages.length);
+        out.push(made);
+    }
+    return out;
+}
+
+function statusRecordBytes(values) {
+    return JSON.stringify(values).length;
 }
 
 function statusWrites(previous, next) {
