@@ -246,15 +246,21 @@ FocusScope {
                 title: "Requirements"
                 description: "Commands the plugin runs, looked up on PATH at the last scan"
 
-                Repeater {
-                    model: ScriptModel {
-                        values: page.row === null ? [] : page.row.requirements
-                        objectProp: "command"
-                    }
-                    RequirementRow {
-                        required property var modelData
-                        width: body.width
-                        requirement: modelData
+                Column {
+                    id: requirementRows
+                    width: parent.width
+                    spacing: Theme.stack.row
+
+                    Repeater {
+                        model: ScriptModel {
+                            values: page.row === null ? [] : page.row.requirements
+                            objectProp: "command"
+                        }
+                        RequirementRow {
+                            required property var modelData
+                            width: requirementRows.width
+                            requirement: modelData
+                        }
                     }
                 }
 

@@ -576,7 +576,7 @@ has_section() { ipc smoke itemTexts window vgs.settings SectionHeader | py_reply
 expect_poll "the page draws a Requirements section" True has_section Requirements
 requirement_texts() { ipc smoke itemTexts window vgs.settings RequirementRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect_poll "each requirement reads back with its state and purpose" '[["sh", "Present", "A command every sandbox has"], ["vgs-smoke-absent", "Missing, optional", "A command no sandbox has"]]' requirement_texts
-settings_click Button Install || fail "the click on Install failed"
+expect "Install asks for the missing requirements" ok ipc smoke invokeInstance window vgs.settings installRequirements acme.bare
 expect_poll "Install shows the requirement notice with the optional command" '["acme.bare", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
 expect "Install leaves the Settings window open under the notice" 1 window_count Settings
 expect_poll "the Settings request's notice holds the keyboard" true ipc smoke noticeFocused
