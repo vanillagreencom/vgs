@@ -6,10 +6,12 @@
 // how long a toast lives, the state file's shape and its judge, the image
 // copies an entry owns, what a restart restores, what the history keeps and
 // the Inbox shows, which toast a full stack lets go, which actions a card
-// offers, the paused and running clocks of the toasts on screen, the
-// per-application rules that read a sender's workspace and people, the
-// Slack token rows, photo and custom emoji lookups, and which two
-// notifications are one message sent twice.
+// offers, what opening it does and which window that raises, which
+// notifications the service keeps holding for the history, the paused and
+// running clocks of the toasts on screen, the per-application rules that
+// read a sender's workspace and people, the Slack token rows, photo and
+// custom emoji lookups, and which two notifications are one message sent
+// twice.
 
 // The history keeps the newest HISTORY_MAX notifications; the Inbox and the
 // History panel show at most PANEL_ROWS_MAX of them. LIVE_MAX toasts show at
@@ -1152,10 +1154,11 @@ function evictionKey(rows) {
 
 // ------------------------------------------------------------ actions
 
-// The hover actions of a card: the sender's own while it is live, a Show
-// that focuses the sender's window when it offers none and one is open, and
-// Dismiss. `actions` are { identifier, text } read off the notification.
-function actionsFor(actions, canFocus) {
+// The hover actions of a card: the sender's own while the service holds
+// its notification, a Show that opens it when it offers none and the
+// sender's window is open, and Dismiss. `actions` are { identifier, text }
+// read off the notification.
+function actionsFor(actions, canRaise) {
     var list = [];
     for (var i = 0; i < actions.length; i++) {
         var id = String(actions[i].identifier || "");
@@ -1163,23 +1166,80 @@ function actionsFor(actions, canFocus) {
         var text = String(actions[i].text || "");
         list.push({ id: "action:" + id, label: text || (id === "default" ? "Open" : id) });
     }
-    if (list.length === 0 && canFocus) list.push({ id: "focus", label: "Show" });
+    if (list.length === 0 && canRaise) list.push({ id: "open", label: "Show" });
     list.push({ id: "dismiss", label: "Dismiss" });
     return list;
 }
 
-// The address of the window a notification's sender owns, matched by its
-// desktop entry or its application name against each window's class, case
-// folded; "" when none matches. `windows` are { address, appClass }.
-function focusAddress(windows, desktopEntry, app) {
-    var wanted = [String(desktopEntry || "").toLowerCase(), String(app || "").toLowerCase()].filter(function (w) { return w !== "" && w !== "notify-send"; });
+// What a choice on a card does, one rule for every sender: { deliver,
+// raise, leave }. `choice` is `open` (a click on a toast or an inbox row,
+// Show, the invoke IPC), `action:<identifier>` (a pill of the sender's
+// own) or `dismiss`; `offered` the identifiers the notification the
+// service holds offers now, [] when it holds none. Opening, and the
+// `default` action's pill, delivers `default` while it is offered and
+// raises the sender's window either way, after the delivery: a sender on
+// Wayland cannot raise itself, since the server sends it no activation
+// token. Another action of the sender's is delivered and raises nothing,
+// since it acts without a switch of context. `deliver` is "" when there is
+// nothing to deliver; `leave` is the reason the row leaves with. Null for
+// a choice no card offers.
+function choicePlan(choice, offered) {
+    var c = String(choice || "");
+    if (c === "dismiss") return { deliver: "", raise: false, leave: "dismiss" };
+    var id = c === "open" ? "default" : c.indexOf("action:") === 0 ? c.slice(7) : "";
+    if (id === "") return null;
+    return { deliver: offered.indexOf(id) !== -1 ? id : "", raise: id === "default", leave: "invoke" };
+}
+
+// What becomes of the notification the service holds for a row that
+// leaves for `reason`: `keep` while its history entry can still reach its
+// sender, after it expired, a full stack let it go or an action ran (the
+// server closes it after an action itself unless it is resident);
+// `dismiss` or `expire` to close it on the server now; `drop` when it
+// closed already. A transient notification is never kept. Null for a
+// reason no row leaves with.
+function heldAfterLeave(reason, transient) {
+    if (reason === "expire") return transient ? "expire" : "keep";
+    if (reason === "invoke") return transient ? "dismiss" : "keep";
+    if (reason === "dismiss") return "dismiss";
+    if (reason === "closed") return "drop";
+    return null;
+}
+
+// The held keys whose entries are no longer stored: neither a toast on
+// screen nor in the history, so nothing can reach them. `live` and
+// `history` are the stored entries.
+function heldPastHistory(keys, live, history) {
+    var stored = {};
+    for (var i = 0; i < live.length; i++) stored[live[i].key] = true;
+    for (var j = 0; j < history.length; j++) stored[history[j].key] = true;
+    return keys.filter(function (k) { return !stored[k]; });
+}
+
+function windowAddress(window) {
+    var address = String(window.address || "");
+    return address.indexOf("0x") === 0 ? address : "0x" + address;
+}
+
+// The address of the window that sent a notification, "" when none can be
+// named. The window whose class is the notification's desktop entry or
+// application name, case folded. A browser's web notification that names
+// neither takes the browser window whose class names its site, as an
+// installed web app's does, or else the one Chromium-family window open;
+// with several and none naming the site, none. `windows` are { address,
+// appClass }; `entry` a row's { desktopEntry, app, appIcon, body }.
+function senderAddress(windows, entry) {
+    var open = windows.filter(function (w) { return String(w.address || "") !== ""; });
+    var wanted = [String(entry.desktopEntry || "").toLowerCase(), String(entry.app || "").toLowerCase()].filter(function (w) { return w !== "" && w !== "notify-send"; });
     for (var w = 0; w < wanted.length; w++)
-        for (var i = 0; i < windows.length; i++) {
-            var address = String(windows[i].address || "");
-            if (String(windows[i].appClass || "").toLowerCase() !== wanted[w] || address === "") continue;
-            return address.indexOf("0x") === 0 ? address : "0x" + address;
-        }
-    return "";
+        for (var i = 0; i < open.length; i++)
+            if (String(open[i].appClass || "").toLowerCase() === wanted[w]) return windowAddress(open[i]);
+    var host = webOrigin(entry.app, entry.appIcon, entry.body);
+    if (host === "") return "";
+    var browsers = open.filter(function (w) { return isChromiumDerived(w.appClass, ""); });
+    var site = browsers.filter(function (w) { return String(w.appClass || "").toLowerCase().indexOf(host) !== -1; });
+    if (site.length === 1) return windowAddress(site[0]);
+    return site.length === 0 && browsers.length === 1 ? windowAddress(browsers[0]) : "";
 }
 
 // ------------------------------------------------------------- clocks

@@ -11,11 +11,14 @@ import "NotificationLogic.js" as Logic
 // into the history when it expires, is dismissed, acted on, closed by its
 // sender or let go by a full stack. The Inbox shows what arrived since the
 // last Mark read, the History everything kept; while either is open the
-// toasts stay and do not expire. Silence keeps notifications off the screen
-// and records them in the history, bar a critical one from the bare command
-// line. The service owns the rows, their clocks, the live notification
-// objects and the store; the stack its layer draws on each screen is only a
-// view of them. Everything it registers is the core's to release.
+// toasts stay and do not expire. Opening a toast or an inbox row delivers
+// the sender's default action while the service still holds the
+// notification and raises the sender's window
+// (NotificationLogic.choicePlan). Silence keeps notifications off the
+// screen and records them in the history, bar a critical one from the bare
+// command line. The service owns the rows, their clocks, the notification
+// objects it holds and the store; the stack its layer draws on each screen
+// is only a view of them. Everything it registers is the core's to release.
 //   shortcut vgs.notifications:inbox     SUPER+N from the manifest's
 //                                        `hyprland` binds (README)
 //   vgsh ipc call vgs.notifications invoke <name> <arg>, names in the README
@@ -40,14 +43,18 @@ Item {
     property alias rows: rowModel
     ListModel { id: rowModel }
 
-    // key -> { notification, links }: the live notification objects, kept
-    // out of the model, since a model role holding an object the server
-    // destroys dangles. `links` are the [signal, handler] pairs connected to
-    // it, disconnected when the row lets go of it.
-    property var liveRefs: ({})
-    // key -> notification: silenced notifications held until their image
-    // copies are made, since the sender deletes its files once told they
-    // closed.
+    // key -> { notification, links }: the notification objects the service
+    // holds, kept out of the model, since a model role holding an object the
+    // server destroys dangles: each live toast's, and after it leaves the one
+    // its history entry can still open (NotificationLogic.heldAfterLeave),
+    // until that entry goes, the user dismisses it or its sender closes it.
+    // At most one per stored entry, so the history's limit bounds them.
+    // `links` are the [signal, handler] pairs connected to it, disconnected
+    // when the service lets go of it.
+    property var held: ({})
+    // key -> notification: silenced notifications waiting for their image
+    // copies, since the sender deletes its files once told they closed; then
+    // held as above.
     property var silencedRefs: ({})
     // key -> { remaining, since }: the toasts' lifetimes (NotificationLogic).
     property var clocks: ({})
@@ -202,7 +209,7 @@ Item {
             return keys.length === 0 ? "none" : "ok";
         });
         shell.ipc.handle("dismiss-latest", () => root.onLatest(key => root.leave(key, "dismiss")));
-        shell.ipc.handle("invoke-latest", () => root.onLatest(key => root.invoke(key)));
+        shell.ipc.handle("invoke-latest", () => root.onLatest(key => root.choose(key, "open")));
         shell.ipc.handle("status", () => root.status());
         shell.notifications.subscribe(n => root.receive(n));
     }
@@ -276,20 +283,21 @@ Item {
 
     // ------------------------------------------------------- receiving
 
+    // A notification arrives: a toast, or under Silence a history entry.
+    // Answers whether the service keeps it; one it does not keep is not
+    // tracked, so the server discards a new one at once.
     function receive(n) {
         const fields = fieldsOf(n);
-        if (fields === null) return;
+        if (fields === null) return false;
         const entry = Logic.entryOf(fields, Date.now(), k => root.taken(k));
-        // A second copy of a message that stays out is not tracked, so the
-        // server discards it at once.
-        if (!keepCopy(entry)) return;
+        // A second copy of a message that stays out is not kept.
+        if (!keepCopy(entry)) return false;
         wantWorkspace(entry);
         if (store.dnd && !Logic.bypassesSilence(fields.appName, fields.urgency)) {
-            // Not tracked, so the server discards it at once.
-            if (Logic.isEphemeral(fields.appName, fields.transient)) return;
+            if (Logic.isEphemeral(fields.appName, fields.transient)) return false;
             n.tracked = true;
             silence(n, entry);
-            return;
+            return true;
         }
         n.tracked = true;
         // A live toast under this id that the sender let go and sent again
@@ -312,6 +320,7 @@ Item {
             leave(Logic.evictionKey(rowsOldestLast), "expire");
         }
         countShown();
+        return true;
     }
 
     // Whether a new notification shows: false for a second copy of a
@@ -361,19 +370,20 @@ Item {
         };
         connect("closed", () => root.senderClosed(key, n));
         for (const name of updateSignals) connect(name, () => root.refresh(key));
-        const next = Object.assign({}, liveRefs);
+        const next = Object.assign({}, held);
         next[key] = { notification: n, links: links };
-        liveRefs = next;
+        held = next;
     }
 
-    // Let go of a live notification: disconnect everything, then tell the
-    // server how the toast ended, unless the object already closed.
+    // Let go of a held notification: disconnect everything, then close it
+    // on the server as `how` says, expire or dismiss; drop tells the server
+    // nothing, for an object that closed already or is handed on.
     function unlink(key, how) {
-        if (!Logic.hasOwn(liveRefs, key)) return;
-        const ref = liveRefs[key];
-        const next = Object.assign({}, liveRefs);
+        if (!Logic.hasOwn(held, key)) return;
+        const ref = held[key];
+        const next = Object.assign({}, held);
         delete next[key];
-        liveRefs = next;
+        held = next;
         try {
             for (const [name, fn] of ref.links) ref.notification[name].disconnect(fn);
             if (how === "expire") ref.notification.expire();
@@ -383,18 +393,42 @@ Item {
         }
     }
 
-    // The object closed without the service asking: its sender closed it,
-    // or the server let it go. Its toast leaves as a sender's close does.
-    function senderClosed(key, n) {
-        if (!Logic.hasOwn(liveRefs, key) || liveRefs[key].notification !== n) return;
-        unlink(key, "closed");
-        leave(key, "closed");
+    // Whether the row of `key` is a toast on screen that is not leaving.
+    function onScreen(key) {
+        const at = indexOf(key);
+        return at !== -1 && rowModel.get(at).origin === "live" && rowModel.get(at).leaving === "";
     }
 
+    // The object closed without the service asking: its sender closed it,
+    // or the server let it go, as it does after an action. Its toast leaves
+    // as a sender's close does; its history entry stays and opens no more
+    // than the sender's window.
+    function senderClosed(key, n) {
+        if (!Logic.hasOwn(held, key) || held[key].notification !== n) return;
+        unlink(key, "drop");
+        if (onScreen(key)) leave(key, "closed");
+    }
+
+    // A held notification its sender updated in place: a toast on screen
+    // draws the change; one held for the history arrives again, as a new
+    // notification under a new key, since the sender sent something new,
+    // and the history keeps what was shown.
     function refresh(key) {
+        if (!Logic.hasOwn(held, key)) return;
+        if (!onScreen(key)) {
+            const n = held[key].notification;
+            unlink(key, "drop");
+            if (!receive(n)) {
+                try {
+                    n.dismiss();
+                } catch (e) {
+                    // Already destroyed by the server.
+                }
+            }
+            return;
+        }
         const at = indexOf(key);
-        if (at === -1 || !Logic.hasOwn(liveRefs, key)) return;
-        const fields = fieldsOf(liveRefs[key].notification);
+        const fields = fieldsOf(held[key].notification);
         if (fields === null) return;
         const row = rowModel.get(at);
         const current = {};
@@ -407,12 +441,12 @@ Item {
         store.copy(stored.copies, null);
         store.putLive(stored.entry);
         // New content deserves a whole look: the clock starts over.
-        if (row.leaving === "") startClock(key, Logic.lifetimeFor(updated.urgency, updated.expireTimeout, root.normalLifetime));
+        startClock(key, Logic.lifetimeFor(updated.urgency, updated.expireTimeout, root.normalLifetime));
     }
 
-    // A silenced notification goes straight into the history, held tracked
-    // until its image copies exist; an update that lands meanwhile is
-    // recorded again under the same key.
+    // A silenced notification goes straight into the history, held once
+    // its image copies exist, as a toast that expired is; an update that
+    // lands before then is recorded again under the same key.
     function silence(n, entry) {
         const next = Object.assign({}, silencedRefs);
         next[entry.key] = n;
@@ -429,8 +463,23 @@ Item {
                 return;
             }
             root.syncPanel();
-            root.releaseSilenced(entry.key);
+            root.holdSilenced(entry.key);
         });
+    }
+
+    // Held as a toast that expired is, unless its entry went meanwhile.
+    function holdSilenced(key) {
+        if (!Logic.hasOwn(silencedRefs, key)) return;
+        const n = silencedRefs[key];
+        const fields = fieldsOf(n);
+        if (fields === null || !store.hasKey(key) || Logic.heldAfterLeave("expire", fields.transient) !== "keep") {
+            releaseSilenced(key);
+            return;
+        }
+        const next = Object.assign({}, silencedRefs);
+        delete next[key];
+        silencedRefs = next;
+        link(n, key);
     }
 
     function releaseSilenced(key) {
@@ -520,11 +569,13 @@ Item {
 
     // ---------------------------------------------------------- leaving
 
-    // Start a row's exit. A toast is off the screen for the store and the
-    // server at once, so a rebuild during the exit restores nothing it
-    // should not; the row itself goes once its animation has played.
-    // `reason` is expire, dismiss, invoke or closed for a toast, fade for a
-    // panel row, which goes with the panel's own timer.
+    // Start a row's exit. A toast is off the screen for the store at once,
+    // so a rebuild during the exit restores nothing it should not, and its
+    // notification is held for the history or closed as
+    // NotificationLogic.heldAfterLeave says; the row itself goes once its
+    // animation has played. `reason` is expire, dismiss, invoke or closed
+    // for a toast, invoke or dismiss for a panel row, or fade for a panel
+    // row, which goes with the panel's own timer.
     function leave(key, reason) {
         const at = indexOf(key);
         if (at === -1 || rowModel.get(at).leaving !== "") return;
@@ -533,9 +584,12 @@ Item {
         stopClock(key);
         countShown();
         if (reason === "fade") return;
-        if (origin !== "panel") {
-            store.dropLive(key, false);
-            unlink(key, reason === "expire" ? "expire" : reason === "closed" ? "closed" : "dismiss");
+        if (origin !== "panel") store.dropLive(key, false);
+        if (Logic.hasOwn(held, key)) {
+            const fields = fieldsOf(held[key].notification);
+            const fate = fields === null ? "drop" : Logic.heldAfterLeave(reason, fields.transient);
+            if (fate === null) console.error("notifications: refused: leave=" + reason + " want=expire|invoke|dismiss|closed");
+            else if (fate !== "keep") unlink(key, fate);
         }
         const timer = exitTimer.createObject(root, { key: key, interval: Math.max(1, exitTime) });
         timer.triggered.connect(() => root.removeRow(key));
@@ -568,32 +622,15 @@ Item {
         countShown();
     }
 
-    function dismiss(key) {
-        leave(key, "dismiss");
-    }
-
-    // A click on a card: the sender's default action while it is live, or
-    // the sender's window, then the toast leaves.
-    function invoke(key) {
-        const at = indexOf(key);
-        if (at === -1) return;
-        const row = rowModel.get(at);
-        if (!invokeAction(key, "default")) focusSender(row);
-        leave(key, "invoke");
-    }
-
-    function invokeAction(key, identifier) {
-        if (!Logic.hasOwn(liveRefs, key)) return false;
+    // The sender's own actions while the service holds its notification, as
+    // { identifier, text }; none otherwise.
+    function offered(key) {
+        if (!Logic.hasOwn(held, key)) return [];
         try {
-            for (const action of liveRefs[key].notification.actions) {
-                if (action.identifier !== identifier) continue;
-                action.invoke();
-                return true;
-            }
+            return held[key].notification.actions.map(a => ({ identifier: a.identifier, text: a.text }));
         } catch (e) {
-            console.warn("notifications: action " + identifier + " failed: " + e.message);
+            return [];
         }
-        return false;
     }
 
     function windows() {
@@ -603,35 +640,42 @@ Item {
         }));
     }
 
-    function focusSender(row) {
-        const address = Logic.focusAddress(windows(), row.desktopEntry, row.app);
-        if (address === "") return;
-        const reply = shell.compositor.focusWindow(address);
-        if (reply !== "ok") console.warn("notifications: focus " + reply);
-    }
-
     function actionsFor(key) {
         const at = indexOf(key);
         if (at === -1) return [];
-        const row = rowModel.get(at);
-        let actions = [];
-        if (row.origin === "live" && Logic.hasOwn(liveRefs, key)) {
-            try {
-                actions = liveRefs[key].notification.actions.map(a => ({ identifier: a.identifier, text: a.text }));
-            } catch (e) {
-                actions = [];
-            }
-        }
-        return Logic.actionsFor(actions, Logic.focusAddress(windows(), row.desktopEntry, row.app) !== "");
+        return Logic.actionsFor(offered(key), Logic.senderAddress(windows(), rowModel.get(at)) !== "");
     }
 
-    // A hover action, then the toast leaves.
-    function runAction(key, id) {
+    // A choice on a card, a toast's or an inbox row's: open, action:<id> or
+    // dismiss, as NotificationLogic.choicePlan says, then the row leaves.
+    // Logs what an open reached, with no content.
+    function choose(key, choice) {
         const at = indexOf(key);
         if (at === -1) return;
-        if (id === "focus") focusSender(rowModel.get(at));
-        else if (id.indexOf("action:") === 0) invokeAction(key, id.slice(7));
-        leave(key, "dismiss");
+        const plan = Logic.choicePlan(choice, offered(key).map(a => a.identifier));
+        if (plan === null) {
+            console.error("notifications: refused: choice=" + choice + " want=open|action:<id>|dismiss");
+            return;
+        }
+        // Read before the delivery, after which the server may close the
+        // notification and the toast start to leave.
+        const address = plan.raise ? Logic.senderAddress(windows(), rowModel.get(at)) : "";
+        let delivered = false;
+        if (plan.deliver !== "") {
+            try {
+                const action = held[key].notification.actions.find(a => a.identifier === plan.deliver);
+                action.invoke();
+                delivered = true;
+            } catch (e) {
+                console.warn("notifications: action " + plan.deliver + " failed: " + e.message);
+            }
+        }
+        if (address !== "") {
+            const reply = shell.compositor.focusWindow(address);
+            if (reply !== "ok") console.warn("notifications: focus " + reply);
+        }
+        if (plan.raise) console.info("notifications: opened delivered=" + (delivered ? plan.deliver : "none") + " raised=" + (address !== "" ? address : "none"));
+        leave(key, plan.leave);
     }
 
     // ------------------------------------------------------------ panel
@@ -726,7 +770,26 @@ Item {
     // rows fade out.
     function clearHistoryPanel() {
         store.clearHistory();
+        releaseUnstored("dismiss");
         if (panelOpen) fadePanelRows();
+    }
+
+    // Close, as `how` says, every held notification whose entry the store
+    // no longer keeps, trimmed off the history's end or cleared with it.
+    function releaseUnstored(how) {
+        for (const key of Logic.heldPastHistory(Object.keys(held), store.live, store.history)) unlink(key, how);
+    }
+
+    function releaseTrimmed() {
+        releaseUnstored("expire");
+    }
+
+    // The store changes its lists one after the other when a toast leaves
+    // into the history, so the held set is judged at the end of the turn.
+    Connections {
+        target: store
+        function onLiveChanged() { Qt.callLater(root.releaseTrimmed); }
+        function onHistoryChanged() { Qt.callLater(root.releaseTrimmed); }
     }
 
     function setSilence(on) {
@@ -743,17 +806,18 @@ Item {
             store: { state: store.status, problem: store.problem },
             onScreen: rowKeys(r => r.origin !== "panel").length,
             history: store.history.length,
+            held: Object.keys(held).length,
             readBefore: store.readBefore,
             duplicates: duplicates,
             slack: { runs: slackPhotos.runs, idle: !slackPhotos.loading && !slackPhotos.loadPending, emoji: { on: slackPhotos.emojiEnabled, swaps: slackPhotos.emojiSwaps, teams: slackPhotos.emojiCounts() } }
         });
     }
 
-    // Every live object goes back to the server as dismissed, since a
-    // notification nobody draws would otherwise stay tracked; its toast stays
-    // in the store and comes back restored.
+    // Every held object goes back to the server as dismissed, since a
+    // notification nobody draws would otherwise stay tracked; a toast stays
+    // in the store and comes back restored, with no live actions.
     Component.onDestruction: {
-        for (const key of Object.keys(liveRefs)) unlink(key, "dismiss");
+        for (const key of Object.keys(held)) unlink(key, "dismiss");
         for (const key of Object.keys(silencedRefs)) releaseSilenced(key);
     }
 }

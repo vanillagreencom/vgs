@@ -158,9 +158,9 @@ Item {
         emoji: slot.service !== null ? slot.service.emojiFor(card.enrichment, card.workspace) : null
         actions: slot.actions
         showActions: card.hovered && slot.leaving === ""
-        onActionTriggered: id => slot.service.runAction(slot.key, id)
-        onCloseRequested: slot.service.dismiss(slot.key)
-        onCardClicked: slot.service.invoke(slot.key)
+        onActionTriggered: id => slot.service.choose(slot.key, id)
+        onCloseRequested: slot.service.choose(slot.key, "dismiss")
+        onCardClicked: slot.service.choose(slot.key, "open")
     }
 
     GlassSurface {
