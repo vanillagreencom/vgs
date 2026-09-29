@@ -24,15 +24,21 @@
 # ticks, and again after the episode clears, as Agent Warden with its
 # urgency and Open vsys, sends nothing under notify: off, shows a move as
 # a toast under notify: everything, and a press on Open vsys hands the
-# stand-in terminal the vsys TUI's argv.
-# Five controls are copies of the plugin installed over the bundled one: a
-# logic copy that ignores staleness reads the stale document as calm, a
+# stand-in terminal the vsys TUI's argv. A notice whose run fails, or
+# cannot start, goes out again on the next status; runs waiting for a
+# press stop at eight, the rest going without the button; and a run that
+# ends gives its place back.
+# Eight controls are copies of the plugin installed over the bundled one:
+# a logic copy that ignores staleness reads the stale document as calm, a
 # service copy whose timer derives nothing keeps the ageing status calm
 # past its stale moment, a logic copy that hands the view each lane's
 # scope unit draws it in the panel, a panel copy that keeps its last
-# summary line when a new run starts still draws it after a failed run,
-# and a notices copy without episode memory sends a lane's notice again on
-# its next tick.
+# summary line when a new run starts still draws it after a failed run, a
+# notices copy without episode memory sends a lane's notice again on its
+# next tick, a service copy that keeps a failed run's episodes sends them
+# once only, one that never counts a waiting run offers the button on
+# every run, and one that never gives a place back sends later notices
+# without the button.
 # The harness starts the plugin disabled; the row ends with it disabled,
 # its runtime files gone and no stub on PATH.
 set -euo pipefail
@@ -74,14 +80,28 @@ warden_rows() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.
 vsys_on_path() { if "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" bash -c 'command -v vsys' >/dev/null; then echo '"present"'; else echo '"absent"'; fi; }
 # A notify-send stand-in in the shell's own PATH directory, written before
 # the service first runs, so no notice of the row reaches a notification
-# server: it appends each call's argv as one JSON line to $warden_sent, and
-# prints `open`, as notify-send prints the action pressed, while
-# $warden_press exists.
+# server: it appends each call's argv as one JSON line to $warden_sent;
+# fails with exit 1 while $warden_fail exists; for a call offering an
+# action, waits while $warden_hold exists, as notify-send waits for the
+# notice to close; and prints `open`, as notify-send prints the action
+# pressed, while $warden_press exists. The wait ends after 2400 polls,
+# 120 s, whatever the file does: a ceiling well past the held rows'
+# polls, not a measurement, so an interrupted run leaves no stand-in
+# behind.
 warden_sent="$sandbox/warden-notify-send"
 warden_press="$sandbox/warden-press"
+warden_fail="$sandbox/warden-fail"
+warden_hold="$sandbox/warden-hold"
 cat >"$shim/notify-send" <<EOF
 #!/usr/bin/env bash
 python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$warden_sent"
+if [[ -e "$warden_fail" ]]; then echo "notify-send: stand-in failure" >&2; exit 1; fi
+for a; do
+  if [[ \$a == -A ]]; then
+    n=0
+    while [[ -e "$warden_hold" && \$n -lt 2400 ]]; do sleep 0.05; n=\$((n + 1)); done
+  fi
+done
 if [[ -e "$warden_press" ]]; then echo open; fi
 EOF
 chmod 755 "$shim/notify-send"
@@ -120,7 +140,7 @@ PY
 }
 # The scan's answer for one of the plugin's requirement commands.
 warden_requirement() { ipc shell listPlugins | python3 -c 'import json,sys; p=[p for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.agent-warden"][0]; print([r["state"] for r in p["requirements"] if r["command"]==sys.argv[1]][0])' "$1"; }
-expected_errors+=('agent-warden: status=unreadable cause=json ' 'agent-warden: status=schema schema=2\.0 ' 'agent-warden: summary=failed ' 'plugins: hidden by a higher-precedence plugin with the same id: vgs\.agent-warden')
+expected_errors+=('agent-warden: status=unreadable cause=json ' 'agent-warden: status=schema schema=2\.0 ' 'agent-warden: summary=failed ' 'plugins: hidden by a higher-precedence plugin with the same id: vgs\.agent-warden' 'agent-warden: notice=(tasks|memory) failed=')
 
 expect "a rescan after the notify-send stand-in arrives starts" ok ipc shell rescanPlugins
 expect_poll "the scan finds notify-send" present warden_requirement notify-send
@@ -457,6 +477,96 @@ expect_poll "a press on the held-off notice's Open vsys hands the terminal the v
 rm -f -- "$warden_press"
 expect_run_end "the vsys run from the notice ends" vgs.agent-warden/vsys
 
+# A notice whose run fails, or does not start, goes out again on the next
+# status; runs waiting for a press stop at the ceiling Notices.offers
+# allows, and a run that ends gives its place back.
+# warden_put_lanes N AGE: status-near-limit.json with N agent lanes near
+# both ceilings, dated AGE seconds back; prints the time.
+warden_put_lanes() {
+  python3 - "$warden_fixtures/status-near-limit.json" "$warden_dir" "$1" "$2" <<'PY'
+import copy, json, os, sys, time
+source, target, n, age = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+doc = json.load(open(source))
+moment = int(time.time()) - age
+lane = doc["lanes"][0]
+doc["lanes"] = []
+for i in range(n):
+    extra = copy.deepcopy(lane)
+    extra["scope"] = "agent-warden-%d-1.scope" % (900 + i)
+    doc["lanes"].append(extra)
+doc["time"] = moment
+doc["events"] = []
+tmp = os.path.join(target, "status.tmp.%d" % os.getpid())
+with open(tmp, "w") as out:
+    json.dump(doc, out)
+os.replace(tmp, os.path.join(target, "status.json"))
+print(moment)
+PY
+}
+# warden_offers_since N: the calls after the first N that offer Open vsys
+# and those that do not, as [with, without].
+warden_offers_since() { warden_notices_since "$1" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(json.dumps([sum(1 for n in c if n[2]), sum(1 for n in c if not n[2])]))'; }
+warden_waiting() { ipc smoke readInstance service vgs.agent-warden waiting; }
+warden_failed_lines() { log_lines 'agent-warden: notice=(tasks|memory) failed='; }
+# warden_failed_send: two failed runs for a lane near both ceilings, then
+# the next tick of the lane read with the stand-in answering again.
+warden_failed_send() {
+  local at failed
+  failed="$(warden_failed_lines)" || { fail "warden_failed_send: the instance log is unreadable"; return; }
+  touch -- "$warden_fail"
+  at="$(warden_put near-limit 10)" || { fail "warden_failed_send: the status was not written"; return; }
+  expect_poll "the failing lane is read" "$((at * 1000))" warden_value lastCheck
+  expect_log "both failed runs are logged" "$((failed + 2))" 'agent-warden: notice=(tasks|memory) failed='
+  rm -f -- "$warden_fail"
+  at="$(warden_put near-limit 5)" || { fail "warden_failed_send: the next tick was not written"; return; }
+  expect_poll "the next tick of the failing lane is read" "$((at * 1000))" warden_value lastCheck
+  warden_put holding-off 0 >/dev/null
+  expect_poll "held-off moves after the failed runs are read" '["problem", null, 2, [["headroom", "problem"], ["slowdown", "look"]]]' warden_state
+}
+warden_twice='[["critical", "Agents are close to their memory limit", true], ["normal", "An agent is starting a lot of processes", true], ["normal", "An agent is starting a lot of processes", true], ["normal", "An agent is using a lot of memory", true], ["normal", "An agent is using a lot of memory", true]]'
+warden_once='[["critical", "Agents are close to their memory limit", true], ["normal", "An agent is starting a lot of processes", true], ["normal", "An agent is using a lot of memory", true]]'
+
+warden_put calm 0 >/dev/null
+expect_poll "a calm status clears the episodes before the failures" '["calm", null, 0, []]' warden_state
+warden_mark="$(warden_sent_count)"
+warden_failed_send
+expect_poll "a failed run's notice goes out again on the next status" "$warden_twice" warden_notices_since "$warden_mark"
+
+# A run that cannot start: the stand-in, swapped whole for a file whose
+# interpreter does not exist, fails the exec, as rows use for hyprctl. A
+# file that is not executable would not do: the PATH lookup skips it.
+printf '#!/nonexistent/interpreter\n' >"$shim/notify-send.unstartable"
+chmod 755 -- "$shim/notify-send.unstartable"
+warden_put calm 0 >/dev/null
+expect_poll "a calm status clears the episodes before the failed start" '["calm", null, 0, []]' warden_state
+warden_failed="$(log_lines 'agent-warden: notice=(tasks|memory) failed=null')" || fail "the instance log is unreadable before the failed start"
+warden_mark="$(warden_sent_count)"
+mv -T -- "$shim/notify-send" "$shim/notify-send.real"
+mv -T -- "$shim/notify-send.unstartable" "$shim/notify-send"
+warden_at="$(warden_put near-limit 10)"
+expect_poll "the lane is read while notify-send cannot start" "$((warden_at * 1000))" warden_value lastCheck
+expect_log "both runs that did not start are logged" "$((warden_failed + 2))" 'agent-warden: notice=(tasks|memory) failed=null'
+mv -T -- "$shim/notify-send.real" "$shim/notify-send"
+warden_put near-limit 5 >/dev/null
+expect_poll "a notice whose run did not start goes out on the next status" "$warden_near_notices" warden_notices_since "$warden_mark"
+
+# Five lanes near both ceilings open ten notices while every run offering
+# Open vsys waits: the first eight offer it, the last two go without.
+warden_put calm 0 >/dev/null
+expect_poll "a calm status clears the episodes before the waiting runs" '["calm", null, 0, []]' warden_state
+warden_mark="$(warden_sent_count)"
+touch -- "$warden_hold"
+warden_put_lanes 5 0 >/dev/null
+expect_poll "runs waiting for a press stop at eight; the rest go without the button" '[8, 2]' warden_offers_since "$warden_mark"
+expect_poll "the service counts eight waiting runs" 8 warden_waiting
+rm -f -- "$warden_hold"
+expect_poll "the runs that end give their places back" 0 warden_waiting
+warden_put calm 0 >/dev/null
+expect_poll "a calm status clears the lanes" '["calm", null, 0, []]' warden_state
+warden_mark="$(warden_sent_count)"
+warden_put near-limit 0 >/dev/null
+expect_poll "after the waiting runs end, new notices offer the button again" "$warden_near_notices" warden_notices_since "$warden_mark"
+
 # notify: off sends nothing, and an episode that opened meanwhile stays
 # unsent when notices come back on; the next one that opens goes out.
 warden_notify off
@@ -609,5 +719,43 @@ warden_repeated() { warden_notices_since "$1" | python3 -c 'import json,sys; pri
 warden_mark="$(warden_sent_count)"
 warden_ticks
 expect_poll "the memory control sends the lane's first notice again on the next tick" True warden_repeated "$warden_mark"
+warden_uncontrol
+
+# Control: a service copy that keeps a failed run's episodes sends their
+# notices once only, so the rows above that a failed or unstarted run's
+# notice goes out again turn red on it.
+warden_control Service.qml "            episodes = Notices.forget(episodes, run.keys);
+" ""
+warden_mark="$(warden_sent_count)"
+warden_failed_send
+expect_poll "the forget control sends the failed notices once only" "$warden_once" warden_notices_since "$warden_mark"
+warden_uncontrol
+
+# Control: a service copy that never counts a waiting run offers the
+# button on every run, so the ceiling row above turns red on it.
+warden_control Service.qml "        if (run.offers) waiting += 1;
+" ""
+warden_mark="$(warden_sent_count)"
+touch -- "$warden_hold"
+warden_put_lanes 5 0 >/dev/null
+expect_poll "the counting control offers the button on all ten runs" '[10, 0]' warden_offers_since "$warden_mark"
+rm -f -- "$warden_hold"
+warden_uncontrol
+
+# Control: a service copy that never gives a waiting run's place back
+# sends later notices without the button, so the row above that a run
+# that ends gives its place back turns red on it.
+warden_control Service.qml "        if (run.offers) waiting -= 1;
+" ""
+warden_mark="$(warden_sent_count)"
+touch -- "$warden_hold"
+warden_put_lanes 5 0 >/dev/null
+expect_poll "the release control's runs stop at eight" '[8, 2]' warden_offers_since "$warden_mark"
+rm -f -- "$warden_hold"
+warden_put calm 0 >/dev/null
+expect_poll "the release control reads calm" '["calm", null, 0, []]' warden_state
+warden_mark="$(warden_sent_count)"
+warden_put near-limit 0 >/dev/null
+expect_poll "the release control sends the next notices without the button" '[["normal", "An agent is starting a lot of processes", false], ["normal", "An agent is using a lot of memory", false]]' warden_notices_since "$warden_mark"
 warden_uncontrol
 rm -f -- "$shim/vsys" "$shim/notify-send"
