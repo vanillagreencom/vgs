@@ -1,0 +1,102 @@
+#!/usr/bin/env node
+// vgsh pkg: the system's package managers, read from the one table,
+// shell/Core/PackageManagers.js, loaded here under node (D034).
+//
+//   vgsh-pkg detect [--json]
+//       the primary manager and every overlay and source present, as
+//       `primary=<id> binary=<command>` (`primary=none` when no row serves
+//       the system), `overlay=<id> binary=<command>` and
+//       `source=<id> binary=<command>` lines, or with --json one line
+//       `{ primary, overlays, sources }`, each entry `{ id, binary }` and
+//       primary null when none
+//   vgsh-pkg present <command>...
+//       one JSON line `{ present, missing }` naming each command found and
+//       not found on PATH; exit 0 when none is missing, 1 when one is
+//   vgsh-pkg plan install|remove|upgrade <manager> [names...]
+//       one JSON line `{ manager, binary, action, elevate, steps }`: the
+//       argv of each step the action takes, in order, and whether it needs
+//       root. Runs nothing. install and remove take one name or more,
+//       upgrade none.
+//
+// The system's identity is /etc/os-release, else /usr/lib/os-release, as
+// os-release(5) orders them; with neither, no primary is detected. A
+// command is found on PATH as bin/lib/judge-files.js's onPath finds it.
+//
+// Every refusal is one line on stderr, `vgsh: refused: <key>=<value>`,
+// through bin/lib/judge-files.js. Exit 1 for a refusal: `manager=<id>
+// reason=unknown`, `manager=<id> action=<action> reason=unsupported` (the
+// table plans nothing for it), `manager=<id> reason=absent
+// binaries=<list>`, `name=<json> reason=grammar` and
+// `os-release=unreadable path=<file> error=<code>`. Exit 2 for a bad
+// invocation, a command that is not a bare file name among them:
+// `command=<json>`. `present` alone also exits 1 with no refusal line, for
+// a missing command.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+
+const repo = path.join(__dirname, "..");
+const table = require(path.join(repo, "scripts", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
+const { refuse, main, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
+
+const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
+
+function usage(first) {
+    process.stderr.write("vgsh: refused: " + first + "\nusage: vgsh pkg detect [--json] | present <command>... | plan install|remove|upgrade <manager> [names...]\n");
+    process.exit(2);
+}
+
+// The first os-release file's text, or "" when neither exists.
+function osRelease() {
+    for (const file of OS_RELEASE) {
+        try {
+            return fs.readFileSync(file, "utf8");
+        } catch (e) {
+            if (e.code !== "ENOENT") refuse("os-release=unreadable path=" + file + " error=" + e.code);
+        }
+    }
+    return "";
+}
+
+const [verb, ...args] = process.argv.slice(2);
+main(() => {
+    switch (verb) {
+    case "detect": {
+        const json = args[0] === "--json";
+        if (args.length > (json ? 1 : 0)) usage("argument=" + args[json ? 1 : 0]);
+        const found = table.detect(table.osReleaseIds(osRelease()), onPath);
+        if (json) {
+            process.stdout.write(JSON.stringify(found) + "\n");
+            break;
+        }
+        const lines = [found.primary === null ? "primary=none" : "primary=" + found.primary.id + " binary=" + found.primary.binary];
+        for (const entry of found.overlays) lines.push("overlay=" + entry.id + " binary=" + entry.binary);
+        for (const entry of found.sources) lines.push("source=" + entry.id + " binary=" + entry.binary);
+        process.stdout.write(lines.join("\n") + "\n");
+        break;
+    }
+    case "present": {
+        if (args.length === 0) usage("command=missing");
+        for (const command of args)
+            if (!table.validCommand(command)) usage("command=" + JSON.stringify(command));
+        const present = args.filter(onPath);
+        const missing = args.filter(command => !present.includes(command));
+        process.stdout.write(JSON.stringify({ present, missing }) + "\n");
+        process.exitCode = missing.length === 0 ? 0 : 1;
+        break;
+    }
+    case "plan": {
+        const [action, manager, ...names] = args;
+        if (!table.ACTIONS.includes(action)) usage("action=" + (action === undefined ? "missing" : action));
+        if (manager === undefined) usage("manager=missing");
+        if (action === "upgrade" && names.length > 0) usage("argument=" + names[0]);
+        if (action !== "upgrade" && names.length === 0) usage("names=missing");
+        const r = table.plan(manager, action, names, onPath);
+        if (!r.ok) refuse(r.error);
+        process.stdout.write(JSON.stringify(r.plan) + "\n");
+        break;
+    }
+    default:
+        usage("pkg-subcommand=" + (verb === undefined ? "missing" : verb));
+    }
+});

@@ -119,6 +119,7 @@ rows=(
   "cli|theme follow controls|scripts/test-vgsh-follow.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
   "cli|agent CLI target controls|scripts/test-vgsh-agents.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js config/shell.json"
   "cli|judge file helper controls|node scripts/test-judge-files.js|bin/lib/judge-files.js"
+  "cli|package manager table and vgsh pkg|node scripts/test-vgsh-pkg.js|shell/Core/PackageManagers.js bin/vgsh-pkg bin/vgsh bin/lib/judge-files.js scripts/qml-library.js"
   "cli|plugin scanner controls|python3 scripts/test-vgsh-scan.py|bin/vgsh-scan"
   "cli|plugin scaffold controls|python3 scripts/test-vgs-plugin.py|.agents/skills/vgs-plugin/scripts/* .agents/skills/vgs-plugin/templates/* shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js bin/vgsh-scan scripts/check-manifests.js scripts/check-plugin-boundary.py scripts/check-design-tokens.py scripts/qml_source.py scripts/qml-library.js shell/Commons/*"
   "boundary|plugin boundary|python3 scripts/check-plugin-boundary.py|shell/* bin/vgsh-scan scripts/qml_source.py"

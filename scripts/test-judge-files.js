@@ -3,6 +3,8 @@
 // `replaceFile`, whose staging copy of a file kept with a mode is created
 // owner-only before any byte is written, so a private settings file never
 // has a readable copy beside it. Every mode below was written by hand.
+// `onPath`, which answers whether a command is an executable file in an
+// absolute directory of PATH, is pinned against a PATH built here.
 //
 // The controls at the end edit a copy of the helper, one rule at a time,
 // and require this suite to fail on each copy.
@@ -27,6 +29,16 @@ fs.writeFileSync = function (file, ...rest) {
 };
 
 const modeOf = file => fs.statSync(file).mode & 0o777;
+
+// onPath rows: the name, the command, PATH's entries (a leading `/` marks one
+// made absolute under the row's directory), whether the command is found.
+const PATH_ROWS = [
+    ["an executable file in an absolute entry is found", "tool", ["/abs"], true],
+    ["a file without the execute bit is not a command", "plain", ["/abs"], false],
+    ["a directory is not a command", "folder", ["/abs"], false],
+    ["a relative entry is skipped", "local", ["rel", "/abs"], false],
+    ["an absent command is not found", "absent", ["/abs"], false]
+];
 
 // Rows: the name, the destination's mode (undefined for none), whether a
 // stale staging file of this process stands first, the staging file's mode
@@ -56,6 +68,29 @@ function verify(helper, root) {
     fs.mkdirSync(path.join(occupied, "x"), { recursive: true });
     assert.throws(() => helper.replaceFile(occupied, "x", "probe", 0o600), e => e instanceof helper.Refusal && e.first.startsWith("probe=unwritable path=" + occupied + " error="));
     assert.deepEqual(fs.readdirSync(dir), ["settings.json"]);
+
+    // PATH_ROWS run against this tree: abs/ holds `tool`, the unexecutable
+    // `plain` and the directory `folder`; rel/, reached only relatively,
+    // holds `local`.
+    const bin = fs.mkdtempSync(path.join(root, "path-"));
+    fs.mkdirSync(path.join(bin, "abs"));
+    fs.mkdirSync(path.join(bin, "rel"));
+    fs.writeFileSync(path.join(bin, "abs", "tool"), "", { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "abs", "plain"), "", { mode: 0o644 });
+    fs.mkdirSync(path.join(bin, "abs", "folder"), { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "rel", "local"), "", { mode: 0o755 });
+    const savedPath = process.env.PATH;
+    const savedCwd = process.cwd();
+    process.chdir(bin);
+    try {
+        for (const [name, command, entries, want] of PATH_ROWS) {
+            process.env.PATH = entries.map(e => e.startsWith("/") ? path.join(bin, e) : e).join(path.delimiter);
+            assert.equal(helper.onPath(command), want, name);
+        }
+    } finally {
+        process.env.PATH = savedPath;
+        process.chdir(savedCwd);
+    }
 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "judge-files-"));
@@ -66,7 +101,10 @@ try {
     const CONTROLS = [
         ["owner-only staging", '{ flag: "wx", mode: 0o600 }', '{ flag: "wx" }'],
         ["stale staging removed", "                fs.rmSync(tmp, { force: true });\n", ""],
-        ["kept mode", "                fs.chmodSync(tmp, mode);\n", ""]
+        ["kept mode", "                fs.chmodSync(tmp, mode);\n", ""],
+        ["a command is executable", "fs.accessSync(file, fs.constants.X_OK);", "fs.accessSync(file, fs.constants.F_OK);"],
+        ["a command is a file", "if (fs.statSync(file).isFile()) return true;", "return true;"],
+        ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""]
     ];
     const source = fs.readFileSync(helperFile, "utf8");
     CONTROLS.forEach(([label, needle, replacement], index) => {
@@ -81,7 +119,7 @@ try {
         }
         assert.ok(failed, `control "${label}": the suite passed on a helper without that rule`);
     });
-    console.log(`test-judge-files: ok rows=${ROWS.length + 1} controls=${CONTROLS.length}`);
+    console.log(`test-judge-files: ok rows=${ROWS.length + 1 + PATH_ROWS.length} controls=${CONTROLS.length}`);
 } finally {
     fs.writeFileSync = writeFileSync;
     fs.rmSync(root, { recursive: true, force: true });

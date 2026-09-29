@@ -36,6 +36,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-28 | D032 | VGS-508 | A Settings plugin lists every plugin; the manifest alone declares each settings page | One judged source per page, no plugin UI code, manager listed like any plugin | A setting needs a type the schema cannot hold, or a second surface needs manager rows | Active | [Full](D032-settings-plugin-and-manifest-settings-convention.md) |
 
 | 2026-09-28 | D030 | VGS-492 | Managed copies serve watched theme directories | Directory watchers need a changed file | Atomic copies fail to hot-reload | Active | [Full](D030-managed-copies-for-watched-theme-directories.md) |
+| 2026-09-28 | D034 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | One core package-manager table read by vgsh pkg; the shell never elevates for a package | v1's two collectors disagreed; one table serves every package flow | A manager cannot be argv steps, or a change needs no terminal | Active | [Full](D034-one-package-manager-table.md) |
 
 ---
 

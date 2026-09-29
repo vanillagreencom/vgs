@@ -30,6 +30,10 @@
 #   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
 #   vgsh hypr unwire               remove that line from hyprland.lua
 #   vgsh hypr render               have the running shell write the Hyprland layer again and reload Hyprland
+#   vgsh pkg detect [--json]       the system's primary package manager and every overlay and source present
+#   vgsh pkg present <command>...  which commands are on PATH, as JSON; exit 1 when one is missing
+#   vgsh pkg plan install|remove|upgrade <manager> [names...]
+#                                  print the argv of each step the action takes; runs nothing
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #
@@ -135,6 +139,11 @@
 # of v, digits and dots that is not v<X.Y.Z>, and git=describe or
 # git=rev-list path=<tree> for a failed git call, a checkout with no commit
 # included. docs/architecture/distribution.md § Version.
+#
+# `pkg` reads the one package-manager table, shell/Core/PackageManagers.js,
+# through bin/vgsh-pkg, which states its output and refusals. It needs no
+# running shell, and no `pkg` command elevates or changes a package:
+# docs/architecture/packages.md.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
@@ -764,6 +773,9 @@ PY
         printf 'vgsh: refused: hypr-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2
         ;;
     esac
+    ;;
+  pkg)
+    exec node "$root/bin/vgsh-pkg" "$@"
     ;;
   -h|--help|help)
     usage; exit 0
