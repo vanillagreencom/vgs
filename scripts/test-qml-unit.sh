@@ -86,7 +86,7 @@ mutations=(
   "scrolling does not show the bar|layout/ScrollBar.qml|function onContentYChanged() { recent.restart(); }|function onContentYChanged() {}|tst_scroll.qml"
   "hovering does not show the bar|layout/ScrollBar.qml|readonly property bool active: hovered|readonly property bool active: false|tst_scroll.qml"
   "the pane lays the scroll area outside the content edge|layout/Pane.qml|width: Math.max(0, root.width - root.contentInset)|width: root.contentWidth|tst_pane.qml"
-  "the pane ignores the container radius|layout/Pane.qml|readonly property real contentInset: Math.max(paddingOf(container), radiusOf(container))|readonly property real contentInset: paddingOf(container)|tst_pane.qml"
+  "the pane ignores the container radius|layout/Pane.qml|radius: root.baseRadius|radius: 0|tst_pane.qml"
   "the pane ignores the dialog component padding|layout/Pane.qml|case \"dialog\": return Theme.dialog.padding;|case \"dialog\": return Theme.inset.dialog;|tst_pane.qml"
   "the pane drops the gap between a header and footer without a body|layout/Pane.qml|readonly property real headerGap: headerHeight > 0 && contentBelowHeader ? gap : 0|readonly property real headerGap: headerHeight > 0 && bodyContentHeight > 0 ? gap : 0|tst_pane.qml"
   "the pane does not cap fitted content|layout/Pane.qml|readonly property real cappedHeight: maximumHeight > 0 ? Math.min(uncappedHeight, maximumHeight) : uncappedHeight|readonly property real cappedHeight: uncappedHeight|tst_pane.qml"

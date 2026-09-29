@@ -6,8 +6,8 @@ import qs.Unit
 
 // Pane owns the layout contract for an inset container: header, body and
 // footer share one content edge, the scroll bar sits in the right inset
-// strip, fit-to-content caps at a maximum height, and a rounded container's
-// effective inset grows to clear its radius.
+// strip, fit-to-content caps at a maximum height, and a rounded container
+// clears its drawn corner through the shared inset rule.
 Item {
     id: root
     width: 500
@@ -92,8 +92,12 @@ Item {
 
         function test_radius_sets_the_effective_inset_floor() {
             compare(UnitTheme.override({ radius: { md: 20 }, inset: { panel: 12 } }), "ok");
-            compare(pane.contentInset, 20);
-            compare(scroll(pane).contentWidth, pane.width - 40);
+            const expected = Math.min(20, pane.width / 2, pane.height / 2) + Theme.space.xs;
+            tryCompare(pane, "contentInset", expected);
+            compare(scroll(pane).contentWidth, pane.width - 2 * expected);
+            compare(UnitTheme.override({ radius: { md: 0 }, inset: { window: 18 } }), "ok");
+            tryCompare(pane, "contentInset", 18);
+            compare(scroll(pane).contentWidth, pane.width - 36);
         }
 
         function test_header_and_footer_keep_one_gap_when_the_body_is_empty() {

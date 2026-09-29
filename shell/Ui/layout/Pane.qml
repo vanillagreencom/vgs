@@ -17,7 +17,9 @@ Item {
     property alias header: headerSlot.data
     default property alias body: bodyColumn.data
     property alias footer: footerSlot.data
-    readonly property real contentInset: Math.max(paddingOf(container), radiusOf(container))
+    readonly property real basePadding: paddingOf(container)
+    readonly property real baseRadius: radiusOf(container)
+    readonly property real contentInset: clearingInset.inset
     readonly property real contentWidth: Math.max(0, width - 2 * contentInset)
     readonly property real bodyContentHeight: bodyColumn.implicitHeight
     readonly property real headerHeight: headerSlot.children.length > 0 ? headerSlot.implicitHeight : 0
@@ -31,6 +33,15 @@ Item {
 
     implicitWidth: Math.max(headerSlot.implicitWidth, bodyColumn.implicitWidth, footerSlot.implicitWidth) + 2 * contentInset
     implicitHeight: fitToContent ? cappedHeight : uncappedHeight
+
+    ClearingInset {
+        id: clearingInset
+        pad: root.basePadding
+        radius: root.baseRadius
+        width: root.width
+        height: root.fitToContent ? root.implicitHeight : root.height
+        step: Theme.space.xs
+    }
 
     function paddingOf(name) {
         switch (name) {
