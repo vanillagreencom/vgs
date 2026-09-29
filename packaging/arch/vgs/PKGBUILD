@@ -42,6 +42,7 @@ optdepends=(
   'imagemagick: square Slack profile photos and custom emoji in notifications'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'
+  'cronie: crontab, which schedules automations where no systemd user manager answers'
 )
 conflicts=('vgs-shell' 'vgs-shell-git')
 source=("vgs-$pkgver.tar.gz::$url/releases/download/v$pkgver/vgs-$pkgver.tar.gz")

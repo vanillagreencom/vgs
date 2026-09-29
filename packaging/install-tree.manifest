@@ -136,6 +136,11 @@ f share/vgs/shell/plugins/vgs.agent-warden/Widget.qml
 f share/vgs/shell/plugins/vgs.agent-warden/manifest.json
 f share/vgs/shell/plugins/vgs.agent-warden/tui/setup.sh
 f share/vgs/shell/plugins/vgs.agent-warden/tui/vsys.sh
+f share/vgs/shell/plugins/vgs.automations/AutomationsLogic.js
+f share/vgs/shell/plugins/vgs.automations/Service.qml
+f share/vgs/shell/plugins/vgs.automations/bin/automations
+f share/vgs/shell/plugins/vgs.automations/manifest.json
+f share/vgs/shell/plugins/vgs.automations/tui/linger.sh
 f share/vgs/shell/plugins/vgs.bar/Bar.qml
 f share/vgs/shell/plugins/vgs.bar/Builtin.qml
 f share/vgs/shell/plugins/vgs.bar/Clock.qml
@@ -206,6 +211,7 @@ f share/vgs/shell/plugins/vgs.notifications/shaders/edgelight.frag.qsb
 f share/vgs/shell/plugins/vgs.notifications/slack-emoji.js
 f share/vgs/shell/plugins/vgs.notifications/slack-photos.js
 f share/vgs/shell/plugins/vgs.notifications/token-status.sh
+f share/vgs/shell/plugins/vgs.notifications/tui/open.sh
 f share/vgs/shell/plugins/vgs.settings/KeyField.qml
 f share/vgs/shell/plugins/vgs.settings/ListPage.qml
 f share/vgs/shell/plugins/vgs.settings/PageHeader.qml

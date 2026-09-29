@@ -32,6 +32,7 @@ pkgbase = vgs
 	optdepends = imagemagick: square Slack profile photos and custom emoji in notifications
 	optdepends = vsys: the agent dashboard and warden the Agent Warden plugin reads
 	optdepends = mise: Dev Tools installs, updates and removes developer tools
+	optdepends = cronie: crontab, which schedules automations where no systemd user manager answers
 	conflicts = vgs-shell
 	conflicts = vgs-shell-git
 	source = vgs-0.1.0.tar.gz::https://github.com/vanillagreencom/vgs/releases/download/v0.1.0/vgs-0.1.0.tar.gz

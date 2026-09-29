@@ -294,7 +294,10 @@ fi
 # enables it and disables it again. vgs.devtools starts disabled too: its
 # service's IPC target and status record would sit in the capability rows'
 # lending records, and its queries would run the host's mise;
-# rows/devtools.sh enables it over stub commands. vgs.themes stays enabled, its background built on every
+# rows/devtools.sh enables it over stub commands. vgs.automations starts
+# disabled for the same reason, and rows/automations.sh enables it over
+# stand-in systemctl, systemd-run, notify-send and loginctl.
+# vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
 #
@@ -409,7 +412,7 @@ case "$plugin_set" in
     mkdir -p "$tick"
     cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
     cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations"] }
 JSON
     ;;
   default) default_set_prepare '[]' ;;

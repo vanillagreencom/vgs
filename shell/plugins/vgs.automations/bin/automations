@@ -1,0 +1,886 @@
+#!/usr/bin/env node
+// automations: the vgs.automations engine. It owns the store, the systemd
+// user units (or the cron fallback's crontab block), the runner and the run
+// history; AutomationsLogic.js beside it makes every decision. The service,
+// the floating TUIs and the tests run it; the units run a copy of it. Every
+// verb takes the VGS tree first, for the library loader and vgsh.
+//
+//   automations --tree <dir> list [--json]
+//       every automation with its summary, state, next run and last run;
+//       --json prints one line, { scheduler, linger, runsDir, automations },
+//       the rows AutomationsLogic.listRows makes. Text: one
+//       `<id>\t<state>\t<summary>` line each.
+//   automations --tree <dir> add --definition <json>
+//       adds one automation, the keys AutomationsLogic.automationError
+//       names, the missing ones defaulted; prints `added=<id>`.
+//   automations --tree <dir> edit <id> --definition <json>
+//       replaces the keys the definition holds; prints `edited=<id>`.
+//   automations --tree <dir> enable|disable <id>
+//       prints `enabled=<id>` or `disabled=<id>`. Adding or enabling marks
+//       every occurrence until now handled, so none from before runs.
+//   automations --tree <dir> remove <id>
+//       drops the automation, its units, its guard state and every run of
+//       it that is not running; prints `removed=<id>`.
+//   automations --tree <dir> run-now <id>
+//       starts one run outside the schedule and returns: through
+//       `systemd-run --user` when the systemd user manager answers, so the
+//       run outlives the caller, else as a detached process; prints
+//       `started=<id>`.
+//   automations --tree <dir> history [<id>] [--json]
+//       runs newest first. --json prints { rows, refused }, the rows
+//       AutomationsLogic.historyRows makes; text prints one
+//       `<id>\t<run>\t<outcome>\t<transcript>` line each.
+//   automations --tree <dir> clear <id> | --all
+//       removes every run that is not running; prints `cleared=<n>`.
+//   automations --tree <dir> prune [--days <n>]
+//       removes the runs older than the retention: --days, else the
+//       plugin's historyDays setting from `vgsh plugin settings`; prints
+//       `pruned=<n>`.
+//   automations --tree <dir> preview --schedule <json> [--count <n>] [--after <ms>]
+//       one JSON line, { summary, calendar, cron, occurrences }: the rule's
+//       summary, its OnCalendar= expressions and cron fields, and its next
+//       occurrences (10 by default) after --after (now by default), in ms.
+//   automations --tree <dir> sync
+//       makes the units, or the crontab block, match the store; prints
+//       `sync=<scheduler> changed=<n>`. With no automation and no unit it
+//       runs nothing.
+//   automations --tree <dir> scheduler
+//       prints systemd, cron or none: the scheduler sync would use.
+//   automations --tree <dir> run --scheduled|--manual <id>
+//       the runner, which the units, the crontab lines and run-now start
+//       under the automation's lock; a scheduled trigger runs only what
+//       AutomationsLogic.guard allows.
+//
+// Files: the store is $XDG_CONFIG_HOME/vgs/automations/automations.json;
+// the units are $XDG_CONFIG_HOME/systemd/user/vgs-automation-<id>.timer
+// and .service; the runs, the guard states and the locks are under
+// $XDG_STATE_HOME/vgs/automations/ (runs/, guard/, locks/); the runner the
+// units start is a copy of this file and the judge under
+// $XDG_DATA_HOME/vgs/automations/engine/<hash>/, since the shell runs this
+// file from a snapshot a restart removes. Every file is written whole under
+// a temporary name and renamed into place.
+//
+// A verb that changes the store runs under $XDG_STATE_HOME/vgs/automations/
+// locks/store.lock through flock. A run holds locks/<id>.lock through
+// `flock -n -E 75 -o`, so one run of an automation is live at a time, the
+// command inherits no lock, and a trigger during a live run exits 75.
+//
+// Refusals: one line on stderr, `automations: refused: <key>=<value>`, its
+// detail after it. Exit 2 for a bad invocation (`verb=`, `option=`,
+// `tree=`, `definition=not-json`, `schedule=not-json`); exit 1 for a
+// refused state: `store=<defect>`, `definition=<defect>`, `id=unknown`,
+// `schedule=<defect>`, `scheduler=none`, `systemctl=failed args=<args>
+// exit=<n>`, `systemd-run=failed exit=<n>`, `calendar=invalid
+// expression=<e>`, `crontab=failed exit=<n>`, `crontab=<defect>`,
+// `flock=missing`, `flock=failed exit=<n>`, `run=busy id=<id>`,
+// `settings=failed exit=<n>`, `home=unset`. The runner logs
+// `automations: skipped=<id> reason=<reason>`, `automations: notify=failed
+// ...` and `automations: prune=skipped ...` lines on stderr, which systemd
+// keeps in the journal; it exits 0 when the run succeeded or was skipped,
+// 1 when it failed.
+"use strict";
+const childProcess = require("child_process");
+const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const PLUGIN_ID = "vgs.automations";
+const PLUGIN_DIR = path.join(__dirname, "..");
+// The files a runner copy needs: this engine and the judge it loads.
+const ENGINE_FILES = ["bin/automations", "AutomationsLogic.js"];
+const USAGE = "usage: automations --tree <dir> list [--json] | add --definition <json> | edit <id> --definition <json> | enable <id> | disable <id> | remove <id> | run-now <id> | history [<id>] [--json] | clear <id>|--all | prune [--days <n>] | preview --schedule <json> [--count <n>] [--after <ms>] | sync | scheduler | run --scheduled|--manual <id>";
+const MUTATING = ["add", "edit", "enable", "disable", "remove", "clear", "prune", "sync"];
+
+function bad(first) {
+    process.stderr.write("automations: refused: " + first + "\n" + USAGE + "\n");
+    process.exit(2);
+}
+
+function refuse(first, detail) {
+    process.stderr.write("automations: refused: " + first + "\n" + (detail ? detail + "\n" : ""));
+    process.exit(1);
+}
+
+function log(line) {
+    process.stderr.write("automations: " + line + "\n");
+}
+
+// ------------------------------------------------------------ setting up
+
+const argv = process.argv.slice(2);
+if (argv[0] !== "--tree" || argv.length < 3) bad("option=--tree value=missing");
+const tree = path.resolve(argv[1]);
+const loaderPath = path.join(tree, "bin", "lib", "qml-library.js");
+const vgshPath = path.join(tree, "bin", "vgsh");
+if (!fs.existsSync(vgshPath) || !fs.existsSync(loaderPath)) {
+    process.stderr.write("automations: refused: tree=" + tree + " reason=not-a-vgs-tree\n");
+    process.exit(2);
+}
+const Logic = require(loaderPath).load(path.join(PLUGIN_DIR, "AutomationsLogic.js"));
+const verb = argv[2];
+const rest = argv.slice(3);
+
+const home = process.env.HOME || "";
+if (!home.startsWith("/")) refuse("home=unset", "HOME must be an absolute path");
+const configHome = absoluteOr(process.env.XDG_CONFIG_HOME, path.join(home, ".config"));
+const stateHome = absoluteOr(process.env.XDG_STATE_HOME, path.join(home, ".local", "state"));
+const dataHome = absoluteOr(process.env.XDG_DATA_HOME, path.join(home, ".local", "share"));
+const storeFile = path.join(configHome, "vgs", "automations", "automations.json");
+const unitDir = path.join(configHome, "systemd", "user");
+const automationsState = path.join(stateHome, "vgs", "automations");
+const runsDir = path.join(automationsState, "runs");
+const guardDir = path.join(automationsState, "guard");
+const lockDir = path.join(automationsState, "locks");
+const storeLock = path.join(lockDir, "store.lock");
+const engineRoot = path.join(dataHome, "vgs", "automations", "engine");
+// The directories every runner reads, handed to the units and runs since a
+// user manager's environment need not hold the ones resolved here.
+const runnerEnvironment = ["XDG_CONFIG_HOME=" + configHome, "XDG_STATE_HOME=" + stateHome, "XDG_DATA_HOME=" + dataHome];
+
+// XDG's rule: an unset or relative value takes the default.
+function absoluteOr(value, fallback) {
+    return typeof value === "string" && value.startsWith("/") ? value : fallback;
+}
+
+function lockOf(id) {
+    return path.join(lockDir, id + ".lock");
+}
+
+// The file COMMAND runs from on PATH, or null.
+function which(command) {
+    for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
+        if (!dir.startsWith("/")) continue;
+        const candidate = path.join(dir, command);
+        try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            if (fs.statSync(candidate).isFile()) return candidate;
+        } catch (_e) {
+            // Not here; keep looking.
+        }
+    }
+    return null;
+}
+
+function run(command, args, options) {
+    return childProcess.spawnSync(command, args, Object.assign({ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }, options || {}));
+}
+
+function firstLine(text) {
+    return String(text || "").split("\n").find(line => line.trim() !== "") || "";
+}
+
+function writeAtomic(file, text, mode) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = path.join(path.dirname(file), "." + path.basename(file) + ".tmp-" + process.pid);
+    fs.writeFileSync(temp, text, { mode: mode || 0o644 });
+    fs.renameSync(temp, file);
+}
+
+function readText(file) {
+    try {
+        return fs.readFileSync(file, "utf8");
+    } catch (e) {
+        if (e.code === "ENOENT") return null;
+        refuse("file=unreadable path=" + file + " error=" + e.code);
+    }
+}
+
+// ----------------------------------------------------------------- store
+
+function readStore() {
+    const text = readText(storeFile);
+    if (text === null) return Logic.emptyStore();
+    const judged = Logic.parseStore(text);
+    if (!judged.ok) refuse("store=" + judged.error.replace(/\s+/g, "-"), "path=" + storeFile);
+    return judged.store;
+}
+
+function writeStore(store) {
+    writeAtomic(storeFile, Logic.serializeStore(store), 0o600);
+}
+
+function guardFile(id) {
+    return path.join(guardDir, id + ".json");
+}
+
+function markHandled(id, ms) {
+    writeAtomic(guardFile(id), JSON.stringify({ handledThrough: ms }) + "\n", 0o600);
+}
+
+function readJsonArg(flag, words, key) {
+    const at = words.indexOf(flag);
+    if (at === -1 || at + 1 >= words.length) bad("option=" + flag + " value=missing");
+    try {
+        return JSON.parse(words[at + 1]);
+    } catch (_e) {
+        return bad(key + "=not-json");
+    }
+}
+
+function accept(judged) {
+    if (!judged.ok) refuse(judged.error.startsWith("id:") ? "id=unknown value=" + judged.error.slice(judged.error.indexOf("=") + 1) : "definition=" + judged.error.replace(/\s+/g, "-"));
+    return judged;
+}
+
+// ------------------------------------------------------------- scheduler
+
+// systemd when a systemd user manager answers, else cron when crontab is
+// on PATH, else none.
+function scheduler() {
+    const systemctl = which("systemctl");
+    if (systemctl !== null && run(systemctl, ["--user", "show-environment"]).status === 0) return "systemd";
+    return which("crontab") !== null ? "cron" : "none";
+}
+
+function lingerState() {
+    const loginctl = which("loginctl");
+    if (loginctl === null) return "unknown";
+    const out = run(loginctl, ["show-user", os.userInfo().username, "--property=Linger", "--value"]);
+    if (out.status !== 0) return "unknown";
+    const value = firstLine(out.stdout).trim();
+    return value === "yes" || value === "no" ? value : "unknown";
+}
+
+function systemctl(args) {
+    const bin = which("systemctl");
+    if (bin === null) refuse("systemctl=missing");
+    const out = run(bin, ["--user"].concat(args));
+    if (out.status !== 0) refuse("systemctl=failed args=" + args.join(",") + " exit=" + out.status, firstLine(out.stderr));
+}
+
+function requireCommand(command) {
+    const bin = which(command);
+    if (bin === null) refuse(command + "=missing");
+    return bin;
+}
+
+// ------------------------------------------------------------- the engine
+
+// The runner copy the units start, made from this file's own directory:
+// engine/<hash of the files>/, written under a temporary name and renamed
+// into place, so a unit never names a half-written copy.
+function ensureEngine() {
+    const hash = crypto.createHash("sha256");
+    const contents = ENGINE_FILES.map(name => {
+        const bytes = fs.readFileSync(path.join(PLUGIN_DIR, name));
+        hash.update(name + "\0").update(bytes).update("\0");
+        return bytes;
+    });
+    const dir = path.join(engineRoot, hash.digest("hex").slice(0, 16));
+    if (fs.existsSync(path.join(dir, "bin", "automations"))) return dir;
+    fs.mkdirSync(engineRoot, { recursive: true });
+    const temp = fs.mkdtempSync(path.join(engineRoot, ".tmp-"));
+    ENGINE_FILES.forEach((name, i) => {
+        fs.mkdirSync(path.dirname(path.join(temp, name)), { recursive: true });
+        fs.writeFileSync(path.join(temp, name), contents[i], { mode: name.startsWith("bin/") ? 0o755 : 0o644 });
+    });
+    try {
+        fs.renameSync(temp, dir);
+    } catch (e) {
+        fs.rmSync(temp, { recursive: true, force: true });
+        if (!fs.existsSync(path.join(dir, "bin", "automations"))) throw e;
+    }
+    return dir;
+}
+
+// Every engine copy but `keep`, once no unit or crontab line names them.
+function dropOtherEngines(keep) {
+    let names = [];
+    try {
+        names = fs.readdirSync(engineRoot);
+    } catch (e) {
+        if (e.code === "ENOENT") return;
+        throw e;
+    }
+    for (const name of names)
+        if (path.join(engineRoot, name) !== keep) fs.rmSync(path.join(engineRoot, name), { recursive: true, force: true });
+}
+
+// The argv a run starts with: flock holding the automation's lock, then
+// node running the engine copy.
+function runnerArgv(engine, id, trigger) {
+    return [requireCommand("flock"), "-n", "-E", "75", "-o", lockOf(id), process.execPath, path.join(engine, "bin", "automations"), "--tree", tree, "run", "--" + trigger, id];
+}
+
+// ------------------------------------------------------------------ sync
+
+function ownedUnits() {
+    try {
+        return fs.readdirSync(unitDir).filter(Logic.isOwnedUnit).sort();
+    } catch (e) {
+        if (e.code === "ENOENT") return [];
+        throw e;
+    }
+}
+
+function checkCalendars(expressions) {
+    const analyze = which("systemd-analyze");
+    if (analyze === null) refuse("systemd-analyze=missing");
+    for (const expression of expressions) {
+        const out = run(analyze, ["calendar", expression]);
+        if (out.status !== 0) refuse("calendar=invalid expression=" + expression, firstLine(out.stderr));
+    }
+}
+
+function syncSystemd(store, engine) {
+    fs.mkdirSync(lockDir, { recursive: true });
+    const wanted = {};
+    for (const a of store.automations) {
+        if (!a.enabled) continue;
+        wanted[Logic.unitName(a.id, "timer")] = { automation: a, text: Logic.timerUnit(a) };
+        wanted[Logic.unitName(a.id, "service")] = { automation: a, text: Logic.serviceUnit(a, runnerArgv(engine, a.id, "scheduled"), runnerEnvironment) };
+    }
+    const existing = ownedUnits();
+    const removed = existing.filter(name => !Logic.hasOwn(wanted, name));
+    const changed = Object.keys(wanted).sort().filter(name => readText(path.join(unitDir, name)) !== wanted[name].text);
+    const timersGone = removed.filter(name => name.endsWith(".timer"));
+    if (timersGone.length > 0) systemctl(["disable", "--now"].concat(timersGone));
+    for (const name of removed) fs.rmSync(path.join(unitDir, name), { force: true });
+    const changedTimers = changed.filter(name => name.endsWith(".timer"));
+    checkCalendars([].concat(...changedTimers.map(name => Logic.calendarExpressions(wanted[name].automation.schedule))));
+    for (const name of changed) writeAtomic(path.join(unitDir, name), wanted[name].text);
+    if (removed.length + changed.length > 0) systemctl(["daemon-reload"]);
+    const timers = Object.keys(wanted).filter(name => name.endsWith(".timer")).sort();
+    if (timers.length > 0) systemctl(["enable", "--now"].concat(timers));
+    // A timer that was already active reads its new calendar on a restart.
+    const restarted = changedTimers.filter(name => existing.indexOf(name) !== -1);
+    if (restarted.length > 0) systemctl(["restart"].concat(restarted));
+    return removed.length + changed.length;
+}
+
+// The user's crontab text, "" when the user has none.
+function readCrontab(crontab) {
+    const out = run(crontab, ["-l"]);
+    if (out.status === 0) return out.stdout;
+    // cronie and Vixie cron both answer a user without a crontab with exit 1
+    // and "no crontab for <user>".
+    if (out.status === 1 && /^no crontab for /.test(firstLine(out.stderr))) return "";
+    refuse("crontab=failed exit=" + out.status, firstLine(out.stderr));
+}
+
+function writeCrontab(crontab, lines) {
+    const before = readCrontab(crontab);
+    const next = Logic.crontabWith(before, lines);
+    if (!next.ok) refuse(next.error.replace(/: /, "="), "the lines between the vgs.automations markers are sync's own");
+    if (next.text === before) return 0;
+    const out = run(crontab, ["-"], { input: next.text, stdio: ["pipe", "pipe", "pipe"] });
+    if (out.status !== 0) refuse("crontab=failed exit=" + out.status, firstLine(out.stderr));
+    return 1;
+}
+
+function sync() {
+    const store = readStore();
+    if (store.automations.length === 0 && ownedUnits().length === 0 && !fs.existsSync(engineRoot)) {
+        process.stdout.write("sync=idle changed=0\n");
+        return;
+    }
+    const chosen = scheduler();
+    if (chosen === "none") refuse("scheduler=none", "neither a systemd user manager nor crontab answered");
+    const engine = ensureEngine();
+    let changed;
+    if (chosen === "systemd") {
+        changed = syncSystemd(store, engine);
+        const crontab = which("crontab");
+        if (crontab !== null) changed += writeCrontab(crontab, []);
+    } else {
+        fs.mkdirSync(lockDir, { recursive: true });
+        changed = writeCrontab(requireCommand("crontab"), Logic.cronLines(store.automations, a => runnerArgv(engine, a.id, "scheduled"), runnerEnvironment));
+    }
+    if (store.automations.length === 0) fs.rmSync(engineRoot, { recursive: true, force: true });
+    else dropOtherEngines(engine);
+    process.stdout.write("sync=" + chosen + " changed=" + changed + "\n");
+}
+
+// --------------------------------------------------------------- history
+
+// Whether a runner holds an automation's lock: flock answers 75 when it
+// cannot take it.
+function lockHeld(id) {
+    fs.mkdirSync(lockDir, { recursive: true });
+    const out = run(requireCommand("flock"), ["-n", "-E", "75", lockOf(id), "true"]);
+    if (out.status === 75) return true;
+    if (out.status === 0) return false;
+    refuse("flock=failed exit=" + out.status, firstLine(out.stderr));
+}
+
+// Every run file, grouped by run: { "<id>@<run>": { started, ended, log } }
+// with each record parsed (null when absent or not JSON).
+function runFiles() {
+    let names = [];
+    try {
+        names = fs.readdirSync(runsDir);
+    } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+    }
+    const groups = {};
+    for (const name of names) {
+        const parsed = Logic.parseRunFile(name);
+        if (parsed === null) continue;
+        const key = parsed.id + "@" + parsed.run;
+        if (!Logic.hasOwn(groups, key)) groups[key] = { started: null, ended: null, log: false, files: [] };
+        groups[key].files.push(name);
+        if (parsed.kind === "log") {
+            groups[key].log = true;
+            continue;
+        }
+        let record = null;
+        try {
+            record = JSON.parse(fs.readFileSync(path.join(runsDir, name), "utf8"));
+        } catch (_e) {
+            record = { unreadable: name };
+        }
+        groups[key][parsed.kind] = record;
+    }
+    return groups;
+}
+
+function history(filterId) {
+    const groups = runFiles();
+    const open = new Set();
+    for (const key of Object.keys(groups))
+        if (groups[key].ended === null && groups[key].started !== null) open.add(key.slice(0, key.indexOf("@")));
+    const live = [...open].filter(id => filterId === null || id === filterId).filter(lockHeld);
+    const records = {};
+    for (const key of Object.keys(groups))
+        if (filterId === null || key.startsWith(filterId + "@")) records[key] = { started: groups[key].started, ended: groups[key].ended };
+    const judged = Logic.historyRows(records, live);
+    return { rows: judged.rows, refused: judged.refused, groups: groups };
+}
+
+function removeRuns(keys, groups) {
+    for (const key of keys)
+        for (const name of groups[key].files) fs.rmSync(path.join(runsDir, name), { force: true });
+    return keys.length;
+}
+
+// Runs of an automation, or all when id is null, that are not running.
+function clearRuns(id) {
+    const judged = history(id);
+    return removeRuns(judged.rows.filter(row => row.outcome !== "running").map(row => row.automation + "@" + row.run), judged.groups);
+}
+
+function settingsDays() {
+    const out = run(vgshPath, ["plugin", "settings", PLUGIN_ID]);
+    if (out.status !== 0) return { ok: false, error: "settings=failed exit=" + out.status };
+    try {
+        return { ok: true, days: Logic.retentionDays(JSON.parse(out.stdout).historyDays) };
+    } catch (e) {
+        return { ok: false, error: "settings=refused detail=" + e.message.replace(/\s+/g, "-") };
+    }
+}
+
+function prune(days, filterId) {
+    const judged = history(filterId);
+    return removeRuns(Logic.prunable(judged.rows, Date.now(), days), judged.groups);
+}
+
+// ---------------------------------------------------------------- verbs
+
+function one(words, what) {
+    if (words.length !== 1 || words[0].startsWith("-")) bad(what + "=" + (words[0] || "missing"));
+    return words[0];
+}
+
+function flagged(words, allowed) {
+    for (let i = 0; i < words.length; i++) {
+        if (!words[i].startsWith("--")) continue;
+        if (allowed.indexOf(words[i]) === -1) bad("option=" + words[i]);
+    }
+}
+
+function listVerb(words) {
+    flagged(words, ["--json"]);
+    const store = readStore();
+    const rows = Logic.listRows(store, history(null).rows, Date.now());
+    if (words.indexOf("--json") !== -1) {
+        // The service lists the runs directory to learn of a run, so it
+        // exists before the first run does.
+        fs.mkdirSync(runsDir, { recursive: true });
+        process.stdout.write(JSON.stringify({ scheduler: scheduler(), linger: lingerState(), runsDir: runsDir, automations: rows }) + "\n");
+        return;
+    }
+    for (const row of rows) process.stdout.write(row.id + "\t" + row.state + "\t" + row.summary + "\n");
+}
+
+function addVerb(words) {
+    flagged(words, ["--definition"]);
+    if (words.length !== 2) bad("definition=missing");
+    const judged = accept(Logic.addAutomation(readStore(), readJsonArg("--definition", words, "definition")));
+    writeStore(judged.store);
+    markHandled(judged.automation.id, Date.now());
+    sync();
+    process.stdout.write("added=" + judged.automation.id + "\n");
+}
+
+function editVerb(words) {
+    flagged(words, ["--definition"]);
+    if (words.length !== 3 || words[1] !== "--definition") bad("usage=edit <id> --definition <json>");
+    const store = readStore();
+    const id = words[0];
+    const before = Logic.indexOfAutomation(store, id);
+    const judged = accept(Logic.editAutomation(store, id, readJsonArg("--definition", words, "definition")));
+    writeStore(judged.store);
+    if (judged.automation.enabled && !store.automations[before].enabled) markHandled(id, Date.now());
+    sync();
+    process.stdout.write("edited=" + id + "\n");
+}
+
+function enableVerb(words, enabled) {
+    const id = one(words, "id");
+    const store = readStore();
+    const judged = accept(Logic.editAutomation(store, id, { enabled: enabled }));
+    writeStore(judged.store);
+    if (enabled) markHandled(id, Date.now());
+    sync();
+    process.stdout.write((enabled ? "enabled=" : "disabled=") + id + "\n");
+}
+
+function removeVerb(words) {
+    const id = one(words, "id");
+    const judged = accept(Logic.removeAutomation(readStore(), id));
+    writeStore(judged.store);
+    sync();
+    clearRuns(id);
+    fs.rmSync(guardFile(id), { force: true });
+    process.stdout.write("removed=" + id + "\n");
+}
+
+function runNowVerb(words) {
+    const id = one(words, "id");
+    const store = readStore();
+    if (Logic.indexOfAutomation(store, id) === -1) refuse("id=unknown value=" + id);
+    if (lockHeld(id)) refuse("run=busy id=" + id, "a run of it is live");
+    const engine = ensureEngine();
+    const args = runnerArgv(engine, id, "manual");
+    if (scheduler() === "systemd") {
+        const unit = Logic.UNIT_PREFIX + id + "-now-" + Date.now();
+        const out = run(requireCommand("systemd-run"), ["--user", "--collect", "--quiet", "--unit=" + unit]
+            .concat(runnerEnvironment.map(pair => "--setenv=" + pair), ["--"], args));
+        if (out.status !== 0) refuse("systemd-run=failed exit=" + out.status, firstLine(out.stderr));
+    } else {
+        const env = Object.assign({}, process.env);
+        for (const pair of runnerEnvironment) env[pair.slice(0, pair.indexOf("="))] = pair.slice(pair.indexOf("=") + 1);
+        const child = childProcess.spawn(args[0], args.slice(1), { detached: true, stdio: "ignore", env: env, cwd: home });
+        child.unref();
+    }
+    process.stdout.write("started=" + id + "\n");
+}
+
+function historyVerb(words) {
+    flagged(words, ["--json"]);
+    const ids = words.filter(w => !w.startsWith("--"));
+    if (ids.length > 1) bad("argument=" + ids[1]);
+    const id = ids.length === 1 ? ids[0] : null;
+    if (id !== null && !Logic.ID_PATTERN.test(id)) bad("id=" + id);
+    const judged = history(id);
+    if (words.indexOf("--json") !== -1) {
+        process.stdout.write(JSON.stringify({ rows: judged.rows, refused: judged.refused }) + "\n");
+        return;
+    }
+    for (const row of judged.rows) process.stdout.write(row.automation + "\t" + row.run + "\t" + row.outcome + "\t" + row.transcript + "\n");
+    for (const r of judged.refused) log("record=refused run=" + r.key + " detail=" + r.error.replace(/\s+/g, "-"));
+}
+
+function clearVerb(words) {
+    if (words.length !== 1) bad("usage=clear <id>|--all");
+    const id = words[0] === "--all" ? null : words[0];
+    if (id !== null && !Logic.ID_PATTERN.test(id)) bad("id=" + id);
+    process.stdout.write("cleared=" + clearRuns(id) + "\n");
+}
+
+function pruneVerb(words) {
+    let days;
+    if (words.length === 0) {
+        const read = settingsDays();
+        if (!read.ok) refuse(read.error);
+        days = read.days;
+    } else {
+        if (words.length !== 2 || words[0] !== "--days") bad("usage=prune [--days <n>]");
+        days = Number(words[1]);
+        if (!/^\d+$/.test(words[1]) || days < 1 || days > Logic.HISTORY_DAYS_MAX) bad("days=" + words[1]);
+    }
+    process.stdout.write("pruned=" + prune(days, null) + "\n");
+}
+
+function previewVerb(words) {
+    flagged(words, ["--schedule", "--count", "--after"]);
+    const schedule = readJsonArg("--schedule", words, "schedule");
+    const valueOf = (flag, fallback) => {
+        const at = words.indexOf(flag);
+        if (at === -1) return fallback;
+        if (at + 1 >= words.length || !/^\d+$/.test(words[at + 1])) bad("option=" + flag + " value=" + (words[at + 1] || "missing"));
+        return Number(words[at + 1]);
+    };
+    const count = valueOf("--count", 10);
+    const after = valueOf("--after", Date.now());
+    if (count < 1 || count > Logic.PREVIEW_MAX) bad("count=" + count);
+    const defect = Logic.scheduleError(schedule);
+    if (defect !== "") refuse("schedule=" + defect.replace(/\s+/g, "-"));
+    process.stdout.write(JSON.stringify({
+        summary: Logic.summaryText(schedule),
+        calendar: Logic.calendarExpressions(schedule),
+        cron: Logic.cronFields(schedule),
+        occurrences: Logic.nextOccurrences(schedule, after, count)
+    }) + "\n");
+}
+
+// ---------------------------------------------------------------- runner
+
+function localClock(ms) {
+    const at = new Date(ms);
+    const pad = (n, w) => String(n).padStart(w, "0");
+    return pad(at.getHours(), 2) + ":" + pad(at.getMinutes(), 2) + ":" + pad(at.getSeconds(), 2) + "." + pad(at.getMilliseconds(), 3);
+}
+
+// The session bus and runtime directory a cron job does not inherit, so
+// notify-send and the command reach the user's session.
+function sessionEnvironment() {
+    const env = Object.assign({}, process.env);
+    const uid = os.userInfo().uid;
+    if (!env.XDG_RUNTIME_DIR && fs.existsSync("/run/user/" + uid)) env.XDG_RUNTIME_DIR = "/run/user/" + uid;
+    if (!env.DBUS_SESSION_BUS_ADDRESS && env.XDG_RUNTIME_DIR && fs.existsSync(path.join(env.XDG_RUNTIME_DIR, "bus")))
+        env.DBUS_SESSION_BUS_ADDRESS = "unix:path=" + path.join(env.XDG_RUNTIME_DIR, "bus");
+    return env;
+}
+
+// Sends one notification and answers its id, or null when none was sent.
+function notify(n, replaceId, env) {
+    if (n === null) return replaceId;
+    const bin = which("notify-send");
+    if (bin === null) {
+        log("notify=missing summary=" + JSON.stringify(n.summary));
+        return null;
+    }
+    const out = run(bin, Logic.notifySendArgs(n, replaceId), { env: env, timeout: 10000 });
+    if (out.status !== 0) {
+        log("notify=failed exit=" + out.status + " detail=" + JSON.stringify(firstLine(out.stderr)));
+        return null;
+    }
+    const id = Number(firstLine(out.stdout).trim());
+    return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+// The transcript: a header, one timestamped line per line of output with
+// its stream, and a footer. Lines past TRANSCRIPT_MAX_BYTES are counted and
+// dropped after one marker line; the footer is always written.
+function Transcript(file, header) {
+    const fd = fs.openSync(file, "w", 0o600);
+    let body = 0;
+    let truncated = false;
+    const put = text => fs.writeSync(fd, text);
+    put(header.map(line => "# " + line + "\n").join(""));
+    return {
+        line(stream, text) {
+            const entry = localClock(Date.now()) + " " + stream + " | " + text + "\n";
+            const bytes = Buffer.byteLength(entry);
+            if (truncated) return;
+            if (body + bytes > Logic.TRANSCRIPT_MAX_BYTES) {
+                truncated = true;
+                put("# transcript cut at " + body + " bytes; later output is not kept\n");
+                return;
+            }
+            body += bytes;
+            put(entry);
+        },
+        close(footer) {
+            put(footer.map(line => "# " + line + "\n").join(""));
+            fs.closeSync(fd);
+            return { bytes: fs.statSync(file).size, truncated: truncated };
+        }
+    };
+}
+
+// Splits a stream into lines as they arrive; the last partial line is
+// flushed when the stream ends.
+function lineReader(stream, onLine) {
+    let pending = "";
+    stream.setEncoding("utf8");
+    stream.on("data", chunk => {
+        pending += chunk;
+        let at;
+        while ((at = pending.indexOf("\n")) !== -1) {
+            onLine(pending.slice(0, at).replace(/\r$/, ""));
+            pending = pending.slice(at + 1);
+        }
+    });
+    stream.on("end", () => {
+        if (pending !== "") onLine(pending);
+        pending = "";
+    });
+}
+
+function runVerb(words) {
+    if (words.length !== 2 || (words[0] !== "--scheduled" && words[0] !== "--manual") || !Logic.ID_PATTERN.test(words[1])) bad("usage=run --scheduled|--manual <id>");
+    const trigger = words[0].slice(2);
+    const id = words[1];
+    const now = Date.now();
+    // A store or guard state the judge refuses is a run that failed to
+    // start, recorded and notified like any other, so the user learns why
+    // nothing ran.
+    const text = readText(storeFile);
+    const judged = text === null ? { ok: true, store: Logic.emptyStore() } : Logic.parseStore(text);
+    if (!judged.ok) return execute(standIn(id), trigger, null, now, "store=" + judged.error.replace(/\s+/g, "-"));
+    const at = Logic.indexOfAutomation(judged.store, id);
+    if (at === -1) {
+        log("skipped=" + id + " reason=unknown");
+        process.exit(1);
+    }
+    const automation = judged.store.automations[at];
+    if (trigger === "manual") return execute(automation, trigger, null, now, "");
+    if (!automation.enabled) {
+        log("skipped=" + id + " reason=paused");
+        return;
+    }
+    const guardText = readText(guardFile(id));
+    let handled = null;
+    if (guardText !== null) {
+        const state = Logic.parseGuardState(guardText);
+        if (!state.ok) return execute(automation, trigger, null, now, "guard=" + state.error.replace(/\s+/g, "-") + " path=" + guardFile(id));
+        handled = state.handledThrough;
+    }
+    const decision = Logic.guard(automation.schedule, now, handled, automation.catchUp);
+    if (decision.slot !== null && (handled === null || decision.slot > handled)) markHandled(id, decision.slot);
+    if (!decision.run) {
+        log("skipped=" + id + " reason=" + decision.reason);
+        return;
+    }
+    execute(automation, trigger, decision.slot, now, "");
+}
+
+// The automation a run whose store was refused reports under: its id as
+// its name, errors only.
+function standIn(id) {
+    return { id: id, name: id, command: "", workingDirectory: "", timeoutSeconds: Logic.TIMEOUT_DEFAULT, notifyEveryRun: false };
+}
+
+// One run: its started record, its transcript, the command under the
+// login shell with its timeout, its ended record, its notifications and
+// the prune of its automation's history. A non-empty `refusal` ends it as
+// failed to start before anything runs.
+function execute(automation, trigger, slot, startedAt, refusal) {
+    const id = automation.id;
+    const runId = startedAt + "-" + process.pid;
+    const transcriptFile = path.join(runsDir, Logic.runFile(id, runId, "log"));
+    const directory = automation.workingDirectory === "" ? home : automation.workingDirectory;
+    const env = sessionEnvironment();
+    env.VGS_AUTOMATION_ID = id;
+    env.VGS_AUTOMATION_RUN = runId;
+    const started = {
+        version: Logic.RECORD_VERSION, automation: id, run: runId, name: automation.name, command: automation.command,
+        directory: directory, trigger: trigger, slot: slot, startedAt: startedAt, transcript: transcriptFile
+    };
+    fs.mkdirSync(runsDir, { recursive: true });
+    writeAtomic(path.join(runsDir, Logic.runFile(id, runId, "started")), JSON.stringify(started) + "\n", 0o600);
+    const noticeId = notify(Logic.notificationFor("start", automation, started), null, env);
+    const shell = os.userInfo().shell;
+    const transcript = Transcript(transcriptFile, [
+        "vgs.automations run " + runId,
+        "automation: " + id + " (" + automation.name + ")",
+        "command: " + automation.command,
+        "directory: " + directory,
+        "shell: " + (shell || "none") + " -l -c",
+        "trigger: " + trigger + (slot === null ? "" : " for " + new Date(slot).toString()),
+        "started: " + new Date(startedAt).toString()
+    ]);
+    const stderrLines = [];
+    const stdoutLines = [];
+    const keep = (list, line) => {
+        list.push(line);
+        if (list.length > Logic.SNIPPET_LINES * 4) list.shift();
+    };
+    const finish = ending => {
+        const endedAt = Math.max(Date.now(), startedAt);
+        const outcome = Logic.outcomeOf(ending);
+        const footer = [
+            "ended: " + new Date(endedAt).toString(),
+            "outcome: " + outcome + (ending.exitCode !== null ? " exit=" + ending.exitCode : "") + (ending.signal !== null ? " signal=" + ending.signal : "") + (ending.reason !== "" ? " reason=" + ending.reason : ""),
+            "duration: " + Logic.formatDuration(endedAt - startedAt)
+        ];
+        const written = transcript.close(footer);
+        const ended = Object.assign({}, started, {
+            endedAt: endedAt, durationMs: endedAt - startedAt, outcome: outcome, exitCode: ending.exitCode, signal: ending.signal,
+            reason: ending.reason, transcriptBytes: written.bytes, truncated: written.truncated,
+            snippet: outcome === "succeeded" ? "" : Logic.snippetOf(stderrLines, stdoutLines)
+        });
+        writeAtomic(path.join(runsDir, Logic.runFile(id, runId, "ended")), JSON.stringify(ended) + "\n", 0o600);
+        notify(Logic.notificationFor("end", automation, ended), noticeId, env);
+        const days = settingsDays();
+        if (days.ok) prune(days.days, id);
+        else log("prune=skipped " + days.error);
+        process.exit(outcome === "succeeded" ? 0 : 1);
+    };
+    if (refusal !== "") return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: refusal });
+    if (!shell || !shell.startsWith("/")) return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: "shell=unknown" });
+    try {
+        if (!fs.statSync(directory).isDirectory()) return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: "directory=not-a-directory path=" + directory });
+    } catch (e) {
+        return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: "directory=" + e.code + " path=" + directory });
+    }
+    let timedOut = false;
+    let spawnError = null;
+    let killer = null;
+    const child = childProcess.spawn(shell, ["-l", "-c", automation.command], { cwd: directory, env: env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    child.on("error", e => { spawnError = e; });
+    lineReader(child.stdout, line => { keep(stdoutLines, line); transcript.line("out", line); });
+    lineReader(child.stderr, line => { keep(stderrLines, line); transcript.line("err", line); });
+    // The command runs in a process group of its own, so the timeout ends
+    // everything it started, not the shell alone.
+    const signalGroup = sig => {
+        try {
+            process.kill(-child.pid, sig);
+        } catch (e) {
+            if (e.code !== "ESRCH") throw e;
+        }
+    };
+    const timer = setTimeout(() => {
+        timedOut = true;
+        signalGroup("SIGTERM");
+        killer = setTimeout(() => signalGroup("SIGKILL"), Logic.KILL_GRACE_MS);
+    }, automation.timeoutSeconds * 1000);
+    child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        if (killer !== null) clearTimeout(killer);
+        if (spawnError !== null) return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: "spawn=" + (spawnError.code || "failed") });
+        finish({ started: true, timedOut: timedOut, exitCode: code, signal: signal, reason: timedOut ? "timeout=" + automation.timeoutSeconds + "s" : "" });
+    });
+}
+
+// ------------------------------------------------------------------ main
+
+// A verb that changes the store runs again under the store lock, held by
+// flock for the verb's whole life and inherited by nothing it starts.
+if (MUTATING.indexOf(verb) !== -1 && process.env.VGS_AUTOMATIONS_STORE_LOCK !== storeLock) {
+    const flock = which("flock");
+    if (flock === null) refuse("flock=missing");
+    fs.mkdirSync(lockDir, { recursive: true });
+    const out = childProcess.spawnSync(flock, ["-o", storeLock, process.execPath, __filename].concat(argv), {
+        stdio: "inherit",
+        env: Object.assign({}, process.env, { VGS_AUTOMATIONS_STORE_LOCK: storeLock })
+    });
+    process.exit(out.status === null ? 1 : out.status);
+}
+
+switch (verb) {
+case "list": listVerb(rest); break;
+case "add": addVerb(rest); break;
+case "edit": editVerb(rest); break;
+case "enable": enableVerb(rest, true); break;
+case "disable": enableVerb(rest, false); break;
+case "remove": removeVerb(rest); break;
+case "run-now": runNowVerb(rest); break;
+case "history": historyVerb(rest); break;
+case "clear": clearVerb(rest); break;
+case "prune": pruneVerb(rest); break;
+case "preview": previewVerb(rest); break;
+case "sync":
+    if (rest.length !== 0) bad("argument=" + rest[0]);
+    sync();
+    break;
+case "scheduler":
+    if (rest.length !== 0) bad("argument=" + rest[0]);
+    process.stdout.write(scheduler() + "\n");
+    break;
+case "run": runVerb(rest); break;
+default: bad("verb=" + (verb || "missing"));
+}

@@ -29,6 +29,8 @@ Recommends:     gum
 Recommends:     fzf
 Recommends:     less
 Recommends:     libnotify
+Recommends:     cronie
+Recommends:     xdg-utils
 Conflicts:      vgs-shell
 # end runtime dependencies
 

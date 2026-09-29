@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.automations",
+  "name": "Automations",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Runs shell commands on a recurrence through systemd user timers, with cron as the fallback, keeps each run's transcript for up to 30 days and notifies every failure. Manage automations with the plugin's bin/automations command.",
+  "license": "MIT",
+  "icon": "calendar-clock",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["ipc", "status", "tui"],
+  "settings": {
+    "historyDays": 30
+  },
+  "schema": {
+    "historyDays": { "type": "number", "label": "Keep history", "description": "Days each run and its transcript are kept before they are pruned", "min": 1, "max": 30, "step": 1, "group": "History" }
+  },
+  "requirements": [
+    { "command": "notify-send", "packages": { "pacman": "libnotify", "apt": "libnotify-bin", "dnf": "libnotify" }, "optional": true, "purpose": "Sends the notification of every failed run, and of each start and finish when asked" },
+    { "command": "systemctl", "packages": {}, "optional": true, "purpose": "Installs, enables and removes each automation's systemd user timer" },
+    { "command": "systemd-run", "packages": {}, "optional": true, "purpose": "Starts Run now as a transient user service that outlives the shell" },
+    { "command": "systemd-analyze", "packages": {}, "optional": true, "purpose": "Checks each timer's calendar before it is written" },
+    { "command": "loginctl", "packages": {}, "optional": true, "purpose": "Reads and turns on lingering, which runs timers while you are logged out" },
+    { "command": "crontab", "packages": { "pacman": "cronie", "apt": "cron", "dnf": "cronie" }, "optional": true, "purpose": "Schedules automations where no systemd user manager answers" }
+  ],
+  "status": {
+    "scheduler": { "type": "state", "label": "Scheduler", "hint": "systemd user timers when a systemd user manager answers, else the crontab" },
+    "linger": { "type": "state", "label": "While logged out", "hint": "User timers run while you are logged out only with lingering on", "command": "loginctl enable-linger" },
+    "active": { "type": "count", "label": "Scheduled automations" },
+    "nextRun": { "type": "text", "label": "Next run" },
+    "lastRuns": { "type": "state", "label": "Last runs", "hint": "Automations whose last run failed; each failure also sends a notification whose click opens its transcript" },
+    "problem": { "type": "state", "label": "Engine", "hint": "The last call of bin/automations that failed, the engine that owns the store, the timers and the history" }
+  },
+  "tui": {
+    "linger": {
+      "script": "tui/linger.sh",
+      "title": "Run automations while logged out",
+      "entry": { "label": "Run automations while logged out", "icon": "calendar-clock", "group": "Automations" }
+    }
+  }
+}
