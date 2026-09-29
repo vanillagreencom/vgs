@@ -11,7 +11,7 @@ One row per manager: `pacman`, `aur`, `apt`, `dnf`, `xbps`, `emerge`, `nix`, `fl
 - A primary serves a system when its family holds the os-release `ID`, or one `ID_LIKE` token, and its binary is on PATH. The identifiers are taken in order, `ID` first, and the first one a row serves decides. A binary alone makes no primary.
 - An overlay or a source is present when its binary is on PATH. `aur` is present only beside the `pacman` primary. Its binary is `paru`, else `yay`; `dnf`'s is `dnf5`, else `dnf`.
 - No row names an elevation command. A row's `elevate` says whether its steps need root. `aur`, `flatpak` and `mise` do not: each tool asks for root itself when it needs it. `vgsh pkg run` chooses the command that supplies root: [§ Running a plan](#running-a-plan).
-- `nix` has no steps and no check: a NixOS system changes through its own configuration. The sudo grant follows the same rule; [tui.md § sudo](tui.md#sudo) names its configuration-only path.
+- `nix` has no steps and no check: a NixOS system changes through its own configuration. The sudo grant follows the same rule; [tui-sudo.md](tui-sudo.md) names its configuration-only path.
 - `packageFor` picks the package that provides a requirement on the detected system: the primary's entry, then an overlay's, then a source's, else none. `PluginLogic.js` imports the table's manager ids and package-name grammar to judge a manifest's `requirements`: [requirements.md](requirements.md).
 
 ## Steps

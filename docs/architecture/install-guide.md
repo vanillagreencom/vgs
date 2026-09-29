@@ -17,7 +17,7 @@ Covers: README.md § Install, § Shipped plugins and § Licence, scripts/check-r
 | The first run adds one line to `hyprland.lua`, and `vgsh hypr unwire` removes it | [hyprland.md](hyprland.md) |
 | One Shipped plugins row per plugin directory | the directories `bin/vgsh-scan` lists under `shell/plugins/` |
 | The package licence expression | `license` in `packaging/arch/vgs/PKGBUILD` |
-| Fedora follows in 0.1.x. Debian, Ubuntu, openSUSE, Gentoo and Void wait until their repositories carry Quickshell 0.3.1 and Hyprland with Lua configuration. | [distribution.md § Fedora](distribution.md#fedora) for Fedora; decision 5 of [the platform roadmap](../plans/v2-platform-roadmap.md#decisions) for the rest |
+| Fedora follows in 0.1.x. Debian, Ubuntu, openSUSE, Gentoo and Void wait until their repositories carry Quickshell 0.3.1 and Hyprland with Lua configuration. | [distribution-fedora.md](distribution-fedora.md) for Fedora; decision 5 of [the platform roadmap](../plans/v2-platform-roadmap.md#decisions) for the rest |
 
 Every line of a `bash` fence in § Install is one command of one channel. A line that fits no channel above is refused, so a new install path needs a channel in the check first.
 
