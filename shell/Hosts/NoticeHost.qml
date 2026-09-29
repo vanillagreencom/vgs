@@ -10,8 +10,10 @@ import qs.Ui
 // demand. It draws the shown notice as a Dialog: each missing command with
 // its package and purpose, then Install and Not now, or Close alone when no
 // manager here installs a listed package. Install runs Notices.accept,
-// every other answer Notices.dismiss; the dialog is busy while the install
-// runs. The window sizes to the dialog.
+// every other answer Notices.dismiss. While the shown notice's install runs
+// the window is gone, so the floating TUI it opened, centred on the same
+// monitor, shows whole; a notice the scan after the run keeps comes back as
+// a new window that takes the keyboard. The window sizes to the dialog.
 Scope {
     id: host
 
@@ -36,7 +38,7 @@ Scope {
 
     Loader {
         id: loader
-        active: Notices.view !== null && Notices.screen !== null
+        active: Notices.view !== null && Notices.screen !== null && !Notices.installing
         sourceComponent: PanelWindow {
             id: win
 
@@ -59,7 +61,6 @@ Scope {
                 title: win.shown.name + " needs " + (win.shown.rows.length === 1 ? "one command" : win.shown.rows.length + " commands")
                 message: host.message(win.shown)
                 actions: win.shown.install !== null ? [{ label: "Install", role: "accept" }, { label: "Not now", role: "cancel" }] : [{ label: "Close", role: "cancel" }]
-                busy: Notices.installing
                 onAccepted: Notices.accept()
                 onRejected: Notices.dismiss()
 
@@ -82,13 +83,10 @@ Scope {
                 }
             }
 
-            // Each notice that comes to the front takes the keyboard, and so
-            // does the dialog once its install ends, since the busy dialog
-            // disabled the action that held it.
+            // Each notice that comes to the front takes the keyboard.
             Connections {
                 target: Notices
                 function onShownIdChanged() { card.forceActiveFocus(); }
-                function onInstallingChanged() { if (!Notices.installing) card.forceActiveFocus(); }
             }
             Component.onCompleted: card.forceActiveFocus()
         }

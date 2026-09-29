@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Table-driven checks for the requirement notice's decisions in
 // shell/Core/PluginLogic.js: what each trigger asks for, how the queue
-// merges, rests and fills, what the shown notice lists and installs, and
+// merges, rests and fills, which notices a scan keeps, what the shown
+// notice lists and installs, and
 // how a detection's answer is read. The file loads under node through
 // bin/lib/qml-library.js, as the shell loads it. The controls at the end
 // edit a copy of the judge, one rule at a time, and the suite must fail on
@@ -122,6 +123,21 @@ function suite(ctx, check) {
         check("noticeView: " + name, [v.satisfied, v.rows.map(rowText), v.install, v.byHand], want);
     }
 
+    // noticeSettle: [name, queue, missing per plugin, installing id, the
+    // ids kept]. acme.gone has no manifest.
+    const manifests = { "acme.needs": needs, "acme.other": Object.assign({}, needs, { id: "acme.other" }) };
+    const held = [n("acme.needs", ["vgs-one"], ["vgs-one"]), n("acme.other", ["vgs-nix"], ["vgs-nix"])];
+    const settleRows = [
+        ["notices still missing a required command stay", held, { "acme.needs": ["vgs-one"], "acme.other": ["vgs-nix"] }, "", ["acme.needs", "acme.other"]],
+        ["a satisfied notice goes", held, { "acme.needs": [], "acme.other": ["vgs-nix"] }, "", ["acme.other"]],
+        ["the installing notice stays satisfied until its run's scan", held, { "acme.needs": [], "acme.other": ["vgs-nix"] }, "acme.needs", ["acme.needs", "acme.other"]],
+        ["another plugin's install keeps no satisfied notice", held, { "acme.needs": [], "acme.other": ["vgs-nix"] }, "acme.other", ["acme.other"]],
+        ["a plugin with no missing list is satisfied", held, { "acme.other": ["vgs-nix"] }, "", ["acme.other"]],
+        ["a notice whose plugin went goes, installing or not", [n("acme.gone", ["vgs-one"], ["vgs-one"])].concat(held), { "acme.gone": ["vgs-one"], "acme.needs": ["vgs-one"], "acme.other": ["vgs-nix"] }, "acme.gone", ["acme.needs", "acme.other"]],
+    ];
+    for (const [name, queue, missing, installing, want] of settleRows)
+        check("noticeSettle: " + name, ctx.noticeSettle(queue, manifests, missing, installing).map(e => e.id), want);
+
     // noticeDetected: [name, completion, stdout, stderr, want as the
     // managers found or the log line].
     const ok = { code: 0, status: 0 };
@@ -170,6 +186,9 @@ const CONTROLS = [
     ["a view lists only missing commands", "return row.state === \"missing\" && notice.commands.indexOf(row.command) !== -1; });\n    var satisfied", "return notice.commands.indexOf(row.command) !== -1; });\n    var satisfied"],
     ["a view is satisfied only without a required command", "var satisfied = !notice.required.some(", "var satisfied = notice.required.some("],
     ["a view installs only through an installing manager", "var installable = plan.groups.filter(function (g) { return g.installs; });", "var installable = plan.groups;"],
+    ["a settle keeps the installing notice", "        if (n.id === installing)\n            return true;\n", ""],
+    ["a settle drops a notice whose plugin went", "        if (!hasOwn(manifests, n.id))\n            return false;\n", ""],
+    ["a settle drops a satisfied notice", "        return !noticeView(manifests[n.id]", "        return true || !noticeView(manifests[n.id]"],
     ["a detection that crashed is a failure", "if (completion.status !== 0 || completion.code !== 0)\n        return { ok: false, line: \"notices: detect=failed", "if (completion.code !== 0)\n        return { ok: false, line: \"notices: detect=failed"],
     ["a detected manager is a known one", " && PackageManagers.managerRow(e.id) !== null", ""],
     ["a detection names its sources", " || !Array.isArray(found.sources) || !found.sources.every(entry))", ")"],

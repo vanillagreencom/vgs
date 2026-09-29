@@ -12,8 +12,11 @@
 # held notice and is refused while it rests, for a command it did not
 # declare and for a value that is no list of commands; Install hands the
 # terminal `vgsh pkg run install` with the primary's package, the notice
-# stays open while the rescan after the run still misses the command and
-# closes once a rescan finds it; a detection that fails shows the commands
+# has no surface while the run is live, and comes back with the keyboard
+# when the rescan after the run still misses the command; a scan that finds
+# the command while the run is live keeps the installing notice in front of
+# a second plugin's waiting one, and the scan after the run closes it and
+# brings the waiting one forward; a detection that fails shows the commands
 # alone with Close. The enable trigger's control is
 # scripts/smoke/rows/notices-control.sh, the suite's last row: a shell copy
 # without the trigger raises no notice.
@@ -118,30 +121,81 @@ resting_offer() { needs offer vgs-smoke-needs | sed -E 's/retry-ms=[0-9]+$/retry
 expect "an offer while the plugin rests is refused" "refused: requirements=acme.needs reason=resting retry-ms=N" resting_offer
 expect "a refused offer raises no notice" 0 layer_count vgs:notice
 
-# Install: the primary's package through the core's TUI. The stand-in
-# terminal runs `true`, so the command is still missing after the rescan
-# the run's end starts, and the notice stays; once the command is on the
-# shell's PATH, the next install's rescan finds it and closes the notice.
+# Install: the primary's package through the core's TUI. While
+# $sandbox/core-hold exists the stand-in terminal holds the core run open
+# (rows/tui.sh), and the notice has no surface, so the terminal shows
+# whole. The command stays missing after the run's rescan, so the notice
+# comes back with the keyboard.
+hold_core() { : >"$sandbox/core-hold"; }
+release_core() { rm -f -- "$sandbox/core-hold"; }
+notice_waiting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
+notice_front() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
+needs_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"]][0]))'; }
 expect "enabling the enabled fixture raises the notice again" ok ipc shell setPluginEnabled acme.needs true
 expect_poll "the notice is back" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect_poll "the notice holds the keyboard for Install" true ipc smoke noticeFocused
 expect "no install ran before the rows" idle key_idle core/requirements-install
+hold_core
 forget_record
 type_keys -k Return || fail "sending Return failed"
 expect_poll "Install hands the terminal vgsh pkg run install with the primary's package" "$(install_words vgs-smoke-needs-pkg)" recorded
+expect_poll "the notice records its install running" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
+expect_poll "a live install leaves the notice no surface" 0 layer_count vgs:notice
+expect "the install's run is live while the notice is gone" busy key_idle core/requirements-install
+release_core
 expect_poll "the install run ends" idle key_idle core/requirements-install
 expect_poll "the rescan after an install that left the command missing keeps the notice" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
+expect_poll "the kept notice maps its surface again" 1 layer_count vgs:notice
+expect_poll "the kept notice holds the keyboard after the install" true ipc smoke noticeFocused
 expect "the notice still offers Install" '["Install", "Not now"]' drawn actions
-printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-smoke-needs"; chmod 755 "$shim/vgs-smoke-needs"
-expect_poll "the notice holds the keyboard after the install" true ipc smoke noticeFocused
+
+# A second plugin's notice waits behind the install. The installed
+# command appears and a scan runs while the install's terminal is still
+# open, as `vgsh pkg run` asks for one when its steps end: the installing
+# notice stays and the waiting one stays behind it until the run ends.
+# acme.other is acme.needs under another id, needing vgs-smoke-other.
+other_dir="$home/.config/vgs/plugins/acme.other"
+mkdir -p -- "$other_dir"
+cp -R -- "$repo/scripts/smoke/fixtures/plugins/acme.needs/." "$other_dir/"
+if python3 -c '
+import sys
+path = sys.argv[1]
+text = open(path).read()
+edits = [("\"id\": \"acme.needs\"", "\"id\": \"acme.other\""), ("\"command\": \"vgs-smoke-needs\"", "\"command\": \"vgs-smoke-other\"")]
+for old, new in edits:
+    if text.count(old) != 1:
+        sys.exit("%s occurs %d times" % (old, text.count(old)))
+    text = text.replace(old, new)
+open(path, "w").write(text)' "$other_dir/manifest.json"; then ok "acme.other is acme.needs under another id and command"; else fail "acme.other's manifest could not be derived from acme.needs"; fi
+expect "a rescan after adding acme.other starts" ok ipc shell rescanPlugins
+expect_poll "acme.other is discovered" True plugin_known acme.other
+expect "enabling acme.other is allowed" ok ipc shell setPluginEnabled acme.other true
+expect_poll "acme.other's notice waits behind acme.needs'" '["acme.other"]' notice_waiting
+expect_poll "the notice holds the keyboard for the second Install" true ipc smoke noticeFocused
+hold_core
 forget_record
 type_keys -k Return || fail "sending Return failed"
 expect_poll "the second Install reaches the terminal" "$(install_words vgs-smoke-needs-pkg)" recorded
-expect_poll "the rescan after the install finds the command and closes the notice" null notice_shown
-expect_poll "the satisfied notice leaves no surface" 0 layer_count vgs:notice
+expect_poll "the second install runs" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
+printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-smoke-needs"; chmod 755 "$shim/vgs-smoke-needs"
+expect "a rescan while the install's terminal is open starts" ok ipc shell rescanPlugins
+expect_poll "that scan finds the installed command" '"present"' needs_state
+expect "the installing notice stays after a scan that finds its command" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
+expect "the waiting notice stays behind the live install" '["acme.other"]' notice_waiting
+expect "no notice surface maps while the install runs" 0 layer_count vgs:notice
+release_core
+expect_poll "the scan after the run closes the satisfied notice and brings the waiting one forward" '"acme.other"' notice_front
+expect_poll "the waiting notice maps its surface" 1 layer_count vgs:notice
+expect_poll "the waiting notice holds the keyboard" true ipc smoke noticeFocused
+type_keys -k Escape || fail "sending Escape failed"
+expect_poll "Escape closes acme.other's notice" null notice_shown
+expect_poll "no notice leaves a surface" 0 layer_count vgs:notice
+expect "disabling acme.other is allowed" ok ipc shell setPluginEnabled acme.other false
+other_removed() { local out; out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin remove acme.other 2>>"$sandbox/ipc.log")" || return 1; printf '%s\n' "${out%%$'\n'*}"; }
+expect "acme.other is removed" "ok removed=acme.other" other_removed
+expect_poll "acme.other leaves the list" False plugin_known acme.other
 rm -f -- "$shim/vgs-smoke-needs"
 expect "a rescan after the command goes starts" ok ipc shell rescanPlugins
-needs_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"]][0]))'; }
 expect_poll "the removed command is missing again" '"missing"' needs_state
 
 # A detection that fails: the notice lists the commands with no package

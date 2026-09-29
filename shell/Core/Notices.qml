@@ -73,7 +73,8 @@ Singleton {
     }
 
     // A scan drops every notice whose plugin went or whose required
-    // commands it found, then runs the callbacks it was due for.
+    // commands it found, the installing one excepted, then runs the
+    // callbacks it was due for; the install's callback settles that one.
     Connections {
         target: Registry
         function onScanFinished() {
@@ -97,7 +98,7 @@ Singleton {
     }
 
     function settle() {
-        const kept = queue.filter(n => Registry.has(n.id) && !Logic.noticeView(Registry.manifests[n.id], missingOf(n.id), n, null).satisfied);
+        const kept = Logic.noticeSettle(queue, Registry.manifests, Registry.missingCommands, installingId);
         if (kept.length !== queue.length) queue = kept;
     }
 
@@ -182,7 +183,9 @@ Singleton {
             failure = result.code === null ? "install=" + result.reason : "install exited " + result.code;
         detect();
         afterScan(() => {
-            if (root.installingId === id) root.installingId = "";
+            if (root.installingId !== id) return;
+            root.installingId = "";
+            root.settle();
         });
     }
 

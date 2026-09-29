@@ -25,7 +25,9 @@ tui_record="$sandbox/tui-argv"
 # The argv is written whole and moved into place, so a row never reads half
 # a record. The window lives as long as the presenter. The presenter runs a
 # fixture script as it is and any other command as `true`, so no core
-# command, such as the sudo grant, runs in the sandbox.
+# command, such as the sudo grant, runs in the sandbox. While the file
+# $sandbox/core-hold exists, a core command's `true` waits for it to go,
+# polled every 0.05 s, so a row can read the shell while a core run is live.
 cat >"$shim/xdg-terminal-exec" <<EOF
 #!/usr/bin/env bash
 : >"$tui_record.next"
@@ -46,7 +48,9 @@ while [[ \$# -gt 0 && \$1 != -- ]]; do
   presenter+=("\$1")
   shift
 done
-[[ \$fixture == yes ]] || set -- -- true
+if [[ \$fixture != yes ]]; then
+  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'while [ -e "\$1" ]; do sleep 0.05; done' sh "$sandbox/core-hold"; else set -- -- true; fi
+fi
 "$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
 window=\$!
 "\${presenter[@]}" "\$@" </dev/null >/dev/null 2>&1

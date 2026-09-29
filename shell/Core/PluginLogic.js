@@ -805,6 +805,23 @@ function noticeView(manifest, missing, notice, found) {
     };
 }
 
+// QUEUE after a scan, the notices of MANIFESTS' plugins whose missing
+// commands MISSING, plugin id -> commands, now holds: a notice whose plugin
+// went is dropped, and so is one noticeView finds satisfied, except the
+// notice of INSTALLING, the plugin id whose install runs or "". That notice
+// stays until the scan after its run ended, however the run's own steps
+// asked for a rescan first, so no waiting notice comes to the front while
+// its terminal still holds the install's key.
+function noticeSettle(queue, manifests, missing, installing) {
+    return queue.filter(function (n) {
+        if (!hasOwn(manifests, n.id))
+            return false;
+        if (n.id === installing)
+            return true;
+        return !noticeView(manifests[n.id], hasOwn(missing, n.id) ? missing[n.id] : [], n, null).satisfied;
+    });
+}
+
 // The managers `bin/vgsh-pkg detect --json` answered the notice with, from
 // its COMPLETION, { code, status } or null for a run that never started,
 // its STDOUT and its STDERR: { ok: true, found }, detect's { primary,
