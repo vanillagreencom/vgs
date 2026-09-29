@@ -539,12 +539,13 @@ Item {
         }
     }
 
-    // An installed application's removal needs a confirmed host action the
-    // shell does not offer, so Delete says so instead of removing anything.
+    // The Remove row's picker opens with no arguments, so nothing can hand it
+    // the package of one application. Delete points at that row instead of
+    // removing anything.
     function requestRemove() {
         if (!cursorActive || selectedIndex < 0 || selectedIndex >= displayModel.count) return;
         if (displayModel.get(selectedIndex).kind !== "app") return;
-        notice = "Removing applications is not available: the shell has no confirmed package removal";
+        notice = "Removing one application is not available here: use Remove to pick packages";
         rebuildDisplay();
     }
 

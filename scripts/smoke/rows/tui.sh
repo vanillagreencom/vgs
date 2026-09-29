@@ -6,16 +6,17 @@
 # behind it, so the presenter writes its exit records and no terminal
 # starts. The fixture acme.tui declares one listed script and one gated
 # one, which waits for a file the row creates, polled every 0.05 s for at
-# most 20 s, and the Update entry scripts/smoke/rows/launcher.sh opens. Rows: the published list, the app-id of the script's size, the
-# snapshot path it runs from and its arguments, the core's own sudo grant
-# and package install picker opened by key as the core's bin/vgsh, each
-# refusal, a launcher that finds no terminal and the synchronous
-# `launcher-missing` answer that follows until a probe finds one again, the
-# launchers the core holds, a run's `done` and state from its exit records,
-# a second run of a live key refused busy with its window focused, a
-# destroyed instance's `done` dropped while its run ends, a presenter copy
-# that writes no ended record and the reap that ends its run, and a
-# disabled plugin's list and hold gone.
+# most 20 s, and the Update entry scripts/smoke/rows/launcher.sh opens.
+# Rows: the published list, the app-id of the script's size, the snapshot
+# path it runs from and its arguments, the core's own sudo grant and package
+# install picker opened by key as the core's bin/vgsh, each refusal, a
+# launcher that finds no terminal and the synchronous `launcher-missing`
+# answer that follows until a probe finds one again, the launchers the core
+# holds, a run's `done` and state from its exit records, a second run of a
+# live key refused busy with its window focused, a destroyed instance's
+# `done` dropped while its run ends, a presenter copy that writes no ended
+# record and the reap that ends its run, and a disabled plugin's list and
+# hold gone.
 set -euo pipefail
 tui_dir="$home/.config/vgs/plugins/acme.tui"
 mkdir -p "$tui_dir"
