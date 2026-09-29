@@ -738,9 +738,6 @@
       "packages": {
         "aur": [
           "visual-studio-code-bin"
-        ],
-        "flatpak": [
-          "com.visualstudio.code"
         ]
       },
       "present": {
@@ -766,9 +763,6 @@
       "packages": {
         "aur": [
           "vscodium-bin"
-        ],
-        "flatpak": [
-          "com.vscodium.codium"
         ]
       }
     },
@@ -801,9 +795,6 @@
       "packages": {
         "pacman": [
           "zed"
-        ],
-        "flatpak": [
-          "dev.zed.Zed"
         ]
       },
       "present": {

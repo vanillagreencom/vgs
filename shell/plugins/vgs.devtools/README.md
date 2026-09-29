@@ -53,6 +53,8 @@ Each row must declare the install route its section uses.
 
 The package map can name only package-manager ids from `shell/Core/PackageManagers.js`. A package name is present only where it was verified in the package index or came from Omarchy's own install argv. Unverified managers are omitted.
 
+A row with a `flatpak` package must use a Flatpak presence and launch model. The current catalog has no such model, so a row that probes `PATH` with `present.command` or launches a host command cannot also list `packages.flatpak`.
+
 ## Mise specs
 
 The spec grammar is `[backend:]name[[opt=value,...]][@version]`.

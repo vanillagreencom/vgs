@@ -514,6 +514,21 @@ function validateInstallRoute(section, row, path, out) {
         out.push(finding("catalog-install-route", path, "entry has no install route"));
 }
 
+function presentNamesHostCommand(present) {
+    return isPlainObject(present) && hasOwn(present, "command");
+}
+
+function launchNamesHostCommand(launch) {
+    return Array.isArray(launch) && launch.length > 0 && launch[0] !== "flatpak";
+}
+
+function validateFlatpakRoute(row, path, out) {
+    if (!isPlainObject(row.packages) || !hasOwn(row.packages, "flatpak"))
+        return;
+    if (presentNamesHostCommand(row.present) || launchNamesHostCommand(row.launch))
+        out.push(finding("catalog-flatpak-host-command", path + ".packages.flatpak", "flatpak packages cannot use host command probes or launchers"));
+}
+
 function validateContext(context, out) {
     if (!isPlainObject(context)) {
         out.push(finding("catalog-context", "<context>", "context must be an object"));
@@ -600,6 +615,7 @@ function validateRow(section, row, path, state, out) {
     validateKnownFields(row, path, SECTION_FIELDS[section], out);
     validateRequiredFields(section, row, path, out);
     validateInstallRoute(section, row, path, out);
+    validateFlatpakRoute(row, path, out);
     if (typeof row.id !== "string" || !ID_PATTERN.test(row.id))
         out.push(finding("catalog-id", path + ".id", "id must be a slug"));
     else if (hasOwn(state.seen, row.id))

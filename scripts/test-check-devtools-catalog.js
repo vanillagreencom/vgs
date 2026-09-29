@@ -129,6 +129,7 @@ try {
     refuse("bad package map is refused", "catalog-packages", data => { data.envs[5].packages.pacman = []; return data; });
     refuse("unknown package manager is refused", "catalog-package-manager", data => { data.envs[5].packages.zypper = ["libyaml"]; return data; });
     refuse("bad package name is refused", "catalog-package-name", data => { data.envs[5].packages.pacman = ["-Sy"]; return data; });
+    refuse("flatpak package with host command launcher is refused", "catalog-flatpak-host-command", data => { data.editors.find(row => row.id === "zed").packages.flatpak = ["dev.zed.Zed"]; return data; });
     refuse("bad postInstall shape is refused", "catalog-post-install", data => { data.envs.find(row => row.id === "rails").postInstall = {}; return data; });
     refuse("unknown postInstall via is refused", "catalog-via", data => { data.envs.find(row => row.id === "rails").postInstall[0].via = "missing"; return data; });
     refuse("postInstall via cannot name a non-mise entry", "catalog-via", data => { data.envs.find(row => row.id === "rails").postInstall[0].via = "rust"; return data; });
