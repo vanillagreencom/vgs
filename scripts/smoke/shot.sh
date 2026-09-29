@@ -51,14 +51,19 @@ shot_dir_under() {
   printf '%s\n' "$dir"
 }
 
+# shot_grim SOCKET RUNTIME_DIR ARGS...: grim with ARGS, alone in an empty
+# environment beside SOCKET, which shot_socket gave, within
+# SHOT_GRIM_TIMEOUT_S; the status is timeout's, 124 when grim timed out.
+shot_grim() {
+  timeout "${SHOT_GRIM_TIMEOUT_S:-10}" env -i PATH="$PATH" XDG_RUNTIME_DIR="$2" WAYLAND_DISPLAY="${1##*/}" grim "${@:3}"
+}
+
 # shot_pixel SOCKET RUNTIME_DIR X Y: the colour at layout position (X, Y)
-# as rrggbb, one pixel grim captures as a binary PPM, alone in an empty
-# environment beside SOCKET, which shot_socket gave. A capture that fails,
+# as rrggbb, one pixel grim captures as a binary PPM. A capture that fails,
 # times out or is no 1 by 1 PPM prints `pixel=unreadable` and returns 1.
 shot_pixel() {
   local out
-  out="$(timeout "${SHOT_GRIM_TIMEOUT_S:-10}" env -i PATH="$PATH" XDG_RUNTIME_DIR="$2" WAYLAND_DISPLAY="${1##*/}" \
-    grim -g "$3,$4 1x1" -t ppm - 2>/dev/null | python3 -c '
+  out="$(shot_grim "$1" "$2" -g "$3,$4 1x1" -t ppm - 2>/dev/null | python3 -c '
 import sys
 data = sys.stdin.buffer.read()
 head = data.split(b"\n", 3)
@@ -75,8 +80,7 @@ shot_last_hash=""
 # environment beside the nested socket. Exit 2 when grim timed out.
 shot_grab() {
   local status=0
-  timeout "${SHOT_GRIM_TIMEOUT_S:-10}" env -i PATH="$PATH" XDG_RUNTIME_DIR="$2" WAYLAND_DISPLAY="${1##*/}" \
-    grim -t png "$3" >/dev/null 2>>"${3%/*}/grim.log" || status=$?
+  shot_grim "$1" "$2" -t png "$3" >/dev/null 2>>"${3%/*}/grim.log" || status=$?
   [[ $status -eq 0 ]] && return 0
   [[ $status -eq 124 ]] && return 2
   return 1
