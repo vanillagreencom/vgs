@@ -180,6 +180,7 @@ f share/vgs/shell/shell.qml
 f share/vgs/themes/catalog/index.json
 f share/vgs/themes/catalog/nord/terminal.json
 f share/vgs/themes/catalog/nord/theme.json
+f share/vgs/themes/catalog/thumbnails/nord.jpg
 f share/vgs/themes/light/terminal.json
 f share/vgs/themes/light/theme.json
 f share/vgs/themes/targets/alacritty/alacritty.toml
