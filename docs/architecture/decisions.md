@@ -27,3 +27,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D028](../decisions/D028-one-generated-hyprland-layer.md): the shell writes one Hyprland Lua layer from the theme and plugin manifest data, loaded by one line in `hyprland.lua`.
 - [D030](../decisions/D030-managed-copies-for-watched-theme-directories.md): managed copies serve watched theme directories.
 - [D031](../decisions/D031-installed-themes-render-code-targets.md): an installed theme's curated file is dropped on a target whose files run code.
+- [D039](../decisions/D039-per-screen-wallpaper-map.md): wallpaper is per screen through an additive `screens` map in `backgrounds.json`; a theme apply clears it.
