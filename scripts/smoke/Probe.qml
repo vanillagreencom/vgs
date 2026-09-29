@@ -572,6 +572,14 @@ Scope {
             return JSON.stringify(root.descendants(item).filter(child => child instanceof Image).map(image =>
                 [local(image.source.toString()), states[image.status], [image.width, image.height], [image.implicitWidth, image.implicitHeight], [image.sourceSize.width, image.sourceSize.height]]));
         }
+        // The screen the host handed an instance, as [width, height,
+        // devicePixelRatio], the size in logical pixels, or "absent", so a
+        // row reads the scale the shell started on.
+        function screenOf(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || !item.screen) return "absent";
+            return JSON.stringify([item.screen.width, item.screen.height, item.screen.devicePixelRatio]);
+        }
         function hasWorkspaceAction(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
             if (item === null || !item.bar || !item.bar.shell) return false;

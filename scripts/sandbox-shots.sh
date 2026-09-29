@@ -25,12 +25,14 @@
 # with the runtime helpers a revision before bin/lib kept under scripts/,
 # under this checkout's harness and probe, for a before shot; the plugin
 # fixtures a scene installs are that revision's, which its judge accepts.
-# --scale is 1, the default, or 2: at 2 the nested output takes double its
-# mode at scale 2 before the first shot, so the layout keeps its logical
-# size and each PNG holds device pixels. Each shot at scale 2 first checks
-# that the output still reads that mode and scale, since a host resize or
-# a configuration reload resets them, and fails when it does not. Another
-# value is refused as `sandbox-shots: refused: scale=<value>`.
+# --scale is 1, the default, or 2: at 2 the harness holds the nested
+# output at double its mode and scale 2 before the shell starts
+# (shell_output_scale in scripts/smoke/harness.sh), so the layout keeps its
+# logical size and the shell draws each PNG in device pixels. Each shot at
+# scale 2 first checks that the output still reads that mode and scale,
+# since a host resize or a configuration reload resets them, and fails
+# when it does not. Another value is refused as
+# `sandbox-shots: refused: scale=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
 # tmp/sandbox-shots/<UTC time>[-REV][-x2]. shots.tsv beside them lists each shot
@@ -115,6 +117,8 @@ for scene in "${scenes[@]}"; do
   fi
 done
 
+# shellcheck disable=SC2034 # the harness sourced below reads it
+shell_output_scale="$scale"
 source "$checkout/scripts/smoke/harness.sh"
 # The harness copied the tree into the sandbox; the export is no longer read.
 [[ -z $source_tree ]] || rm -rf -- "$source_tree"
@@ -155,17 +159,7 @@ ok "grim captures only $SHOT_SOCKET"
 # Hyprland's own notice that it was not started through start-hyprland
 # would sit over the top right of every shot.
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
-main_name="$(hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || { fail "the monitor is unreadable"; exit 1; }
-# At scale 2 the first monitor holds double its mode for the whole run
-# (hold_mode in scripts/smoke/harness.sh), so its logical size stays.
-if [[ $scale == 2 ]]; then
-  base_mode="$(first_mode)" || { fail "the monitor's mode is unreadable"; exit 1; }
-  hold_mode "the monitor takes double its mode at scale 2" "$main_name" "$((${base_mode%x*} * 2))x$((${base_mode#*x} * 2))" 2
-  if [[ ${#mode_hold[@]} -eq 0 ]]; then
-    printf 'sandbox-shots: scale=2 not-held output=%s\n' "$main_name"
-    exit 1
-  fi
-fi
+main_name="$(first_name)" || { fail "the monitor is unreadable"; exit 1; }
 # The monitor's logical size, the layout coordinates the pointer helper
 # takes, and the space the bar reserves at its top.
 read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]), round(m["height"] / m["scale"]), m["reserved"][1])')

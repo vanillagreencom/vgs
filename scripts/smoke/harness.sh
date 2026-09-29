@@ -752,7 +752,6 @@ stop_shell() {
   done
   wait "$shell_pid" 2>/dev/null || true
 }
-start_shell "$repo" "$sandbox/qs.log" || exit 1
 # Lines of the instance log matching an extended regex, counted. grep exits
 # 1 for a count of zero, which is an answer; anything above is a read or
 # pattern failure: grep's message goes to stderr and the function returns 1.
@@ -956,9 +955,77 @@ release_mode() {
   expect "$1" ok output_mode "$2" "$3" "${4:-1}"
   expect_poll "$2 reads $3 scale=${4:-1}" "$3 scale=${4:-1}" mode_scale_of "$2"
 }
-# The first monitor's mode as WxH, and its logical width.
+# The first monitor's mode as WxH, its logical width, and its name.
 first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print("%dx%d" % (m["width"], m["height"]))'; }
 first_width() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]))'; }
+first_name() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])'; }
+# unscaled_mode_of NAME: output NAME's mode as WxH, its logical size, while
+# it reads a sized mode at scale 1. hidpi_mode_of NAME: double that mode,
+# which at scale 2 keeps the logical size. Each returns 1, with the reading
+# on stderr, for a 0x0 mode or a scale other than 1: an unsized output has
+# no mode to double, and a row that doubled it would compare zeros.
+unscaled_mode_of() {
+  local state
+  state="$(mode_scale_of "$1")" || return 1
+  if [[ $state =~ ^([1-9][0-9]*x[1-9][0-9]*)\ scale=1$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf '%s reads %s, not a sized mode at scale 1\n' "$1" "$state" >&2
+  return 1
+}
+hidpi_mode_of() {
+  local mode
+  mode="$(unscaled_mode_of "$1")" || return 1
+  echo "$((${mode%x*} * 2))x$((${mode#*x} * 2))"
+}
+# solid_png PATH WIDTH HEIGHT R G B: a PNG of one colour written to PATH,
+# for the images the wallpaper rows draw.
+solid_png() {
+  python3 - "$@" <<'PY'
+import struct, sys, zlib
+path, (w, h, r, g, b) = sys.argv[1], map(int, sys.argv[2:])
+def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+rows = zlib.compress(b"".join(b"\x00" + bytes((r, g, b)) * w for _ in range(h)))
+with open(path, "wb") as f:
+    f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", rows) + chunk(b"IEND", b""))
+PY
+}
+# The vgs.themes background's state directory and readers, which the
+# wallpaper rows from rows/themes.sh on share. bg_state_names PATH: the
+# state file replaced whole with one naming image PATH as current.
+# background_image_on NAME: what the background on screen NAME draws, as
+# `<path> <status>`, `-` for no image. background_source_size NAME: the
+# sourceSize it requests, as WxH. Each prints `images=<n>` while the
+# background draws other than one image.
+bg_state="$home/.local/state/vgs"
+bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }
+background_image_on() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
+background_source_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
+
+# shell_output_scale, which scripts/sandbox-shots.sh sets for --scale, is
+# the first monitor's scale when the first shell starts. 1, the default,
+# leaves the monitor as the host sized it. 2 holds it at double its mode
+# and scale 2 for the whole run, so the layout keeps its logical size and
+# the shell draws in device pixels. The scale is set before the shell
+# starts: a shell already running when the scale changes keeps drawing its
+# windows at the old ratio (docs/architecture/runtime-qml.md).
+case "${shell_output_scale:=1}" in
+  1) ;;
+  2)
+    if ! scaled_output="$(first_name)" || ! scaled_mode="$(hidpi_mode_of "$scaled_output")"; then
+      printf 'qml-smoke: shell-output-scale=2 not-held output=%s reason=mode-unread\n' "${scaled_output:-unread}"
+      exit 1
+    fi
+    hold_mode "the nested compositor holds $scaled_output at double its mode and scale 2 before the shell starts" "$scaled_output" "$scaled_mode" 2
+    if [[ ${#mode_hold[@]} -eq 0 ]]; then
+      printf 'qml-smoke: shell-output-scale=2 not-held output=%s reason=hold-not-taken\n' "$scaled_output"
+      exit 1
+    fi
+    ;;
+  *) printf 'qml-smoke: refused: shell-output-scale=%s\n' "$shell_output_scale"; exit 2 ;;
+esac
+start_shell "$repo" "$sandbox/qs.log" || exit 1
 # The one live layer with a namespace as [x, y, w, h], or layers=<n>.
 one_layer() { layers_of "$1" | python3 -c 'import json,sys; l=json.load(sys.stdin); print(json.dumps(l[0]) if len(l) == 1 else "layers=%d" % len(l))'; }
 # The shell's application windows are the nested instance's clients of the

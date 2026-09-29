@@ -1,4 +1,4 @@
-# Start order, D047. The row stops the running shell and starts the
+# Start order, D047. The row stops any running shell and starts the
 # sandbox's tree again over the default set, every first-party plugin
 # enabled as in a live session (harness.sh's default_set_prepare), plus
 # two fixtures that name the lock: acme.contention, a background, and

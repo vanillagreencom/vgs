@@ -660,46 +660,32 @@ expect_poll "the themes panel closes" closed panel_open
 # first screen through the probe's `images`, and the surface the host maps
 # from the compositor: none while no image is drawn, one per screen while
 # one is. The panel is read back through the labels it draws and clicked
-# through its icon buttons. The first screen, held at double its mode and
-# scale 2, reads the requested sourceSize back in device pixels, the mode
-# the compositor reports; a headless second monitor draws an image set on
-# it alone while the first screen draws `current`. A scale-only drop under
-# the hold, a copy of the background that decodes at logical pixels, a
+# through its icon buttons. The first screen, at scale 1, requests its
+# logical size, the mode the compositor reports; rows/hidpi.sh reads the
+# request at scale 2 on a shell started there. A headless second monitor
+# draws an image set on it alone while the first screen draws `current`. A
 # copy of the shared state reader that ignores `screens`, one that never
 # reloads the state file and a copy of the background that is always shown
 # are the block's controls.
 # The block leaves vgs applied with no current image and the plugin
 # disabled, so later rows see the bar they saw before the vgs.themes block.
-bg_state="$home/.local/state/vgs"
 scenic="$installed/scenic"
 mkdir -p -- "$scenic/backgrounds"
 printf '%s\n' '{ "schemaVersion": 1, "name": "scenic", "tokens": {} }' >"$scenic/theme.json"
-python3 - "$scenic/backgrounds" <<'PY'
-import os, struct, sys, zlib
-def png(name, w, h, rgb):
-    def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-    rows = zlib.compress(b"".join(b"\x00" + bytes(rgb) * w for _ in range(h)))
-    with open(os.path.join(sys.argv[1], name), "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", rows) + chunk(b"IEND", b""))
-png("a.png", 4000, 2000, (200, 40, 40))
-png("b.png", 64, 36, (40, 40, 200))
-png("c.png", 48, 48, (40, 200, 40))
-PY
+solid_png "$scenic/backgrounds/a.png" 4000 2000 200 40 40
+solid_png "$scenic/backgrounds/b.png" 64 36 40 40 200
+solid_png "$scenic/backgrounds/c.png" 48 48 40 200 40
 vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
-# What the first screen's background draws: `<path> <status>`, `-` for no
-# image. background_covers: whether the image decoded to cover its box and
-# smaller than the 4000x2000 file.
-background_image_on() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
+# What the first screen's background draws, as background_image_on in
+# harness.sh reads it. background_covers: whether the image decoded to
+# cover its box and smaller than the 4000x2000 file.
 background_image() { background_image_on "$screen_name"; }
 background_covers() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; _,_,box,size,*_=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
 background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
 # The drawn image's decoded width over its height, to one decimal place;
 # `images=<n>` while the background draws other than one image.
 background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%.1f" % (r[0][3][0] / r[0][3][1]) if len(r)==1 else "images=%d" % len(r))'; }
-background_source_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
 screen_listed() { hypr -j monitors | python3 -c 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
-# Replace the state file whole with one naming image PATH.
-bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }
 # The state file's current image and the image it remembers for scenic, as
 # JSON, null for none or no file.
 bg_current() { if [[ -e $bg_state/backgrounds.json ]]; then python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["current"]))' "$bg_state/backgrounds.json"; else echo null; fi; }
@@ -729,56 +715,8 @@ expect "the image is decoded to cover the screen, not at the file's size" True b
 # The first screen's mode at scale 1 is its logical size, which the
 # background requests. The mode comes from the compositor, so a screen Qt
 # reads as 0x0 cannot pass.
-screen_state="$(mode_scale_of "$screen_name")" || screen_state=unreadable
-if [[ $screen_state =~ ^([1-9][0-9]*)x([1-9][0-9]*)\ scale=1$ ]]; then
-  screen_mode="${BASH_REMATCH[1]}x${BASH_REMATCH[2]}"
-  hidpi_mode="$((BASH_REMATCH[1] * 2))x$((BASH_REMATCH[2] * 2))"
-else
-  fail "the first screen reads $screen_state, not a sized mode at scale 1"
-  screen_mode=unread hidpi_mode=unread
-fi
+screen_mode="$(unscaled_mode_of "$screen_name")" || { fail "the first screen reads no sized mode at scale 1"; screen_mode=unread; }
 expect_poll "the scale-1 screen requests its logical size" "$screen_mode" background_source_size "$screen_name"
-
-# The nested output takes double its mode at scale 2, so its logical size
-# stays; a headless output stays 0x0 in the sandbox
-# (docs/architecture/runtime.md § Hyprland). hold_mode reads the mode and
-# the scale back; the host or a reload can reset them under the rows
-# (held_mode_state in harness.sh).
-hold_mode "the nested compositor holds the first screen at double its mode and scale 2" "$screen_name" "$hidpi_mode" 2
-expect_poll "the scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
-
-plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"
-cp -p -- "$plugin_qml" "$sandbox/Background.qml.device-pixels.real"
-python3 - "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" <<'PY'
-import pathlib, sys
-src, dst = map(pathlib.Path, sys.argv[1:])
-text = src.read_text()
-replacements = {
-    "Math.ceil(root.screen.width * root.screen.devicePixelRatio)": "root.screen.width",
-    "Math.ceil(root.screen.height * root.screen.devicePixelRatio)": "root.screen.height",
-}
-for old in replacements:
-    assert text.count(old) == 1, f"device-pixel control must match once: {old}"
-for old, new in replacements.items():
-    text = text.replace(old, new)
-assert text != src.read_text(), "device-pixel control must change the file"
-dst.write_text(text)
-PY
-mv -T -- "$plugin_qml.tmp" "$plugin_qml"
-expect "a rescan builds the logical-pixel control" ok ipc shell rescanPlugins
-expect_poll "the logical-pixel control decodes the scale-2 screen at logical pixels" "$screen_mode" background_source_size "$screen_name"
-cp -p -- "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
-expect "a rescan restores the device-pixel background" ok ipc shell rescanPlugins
-expect_poll "the restored scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
-expect "the follow after the device-pixel rescan queued ends" idle theme_idle
-# Control: the scale alone drops to 1 under the held rows, the control of
-# the hold's scale reading. The reader reads the scale the compositor
-# applied, not the one a rule asked for, and the hold reads a scale-only
-# change as a reset.
-expect "the first screen drops to scale 1 at the held mode" ok output_mode "$screen_name" "$hidpi_mode" 1
-expect_poll "the first screen reads the held mode at scale 1" "$hidpi_mode scale=1" mode_scale_of "$screen_name"
-expect "the hold reads the scale reset" reset held_mode_state
-release_mode "the nested compositor gives the first screen its own mode at scale 1" "$screen_name" "$screen_mode"
 
 # Each screen draws its own entry in `screens`, else `current`: an image
 # from the user folder set on a second monitor alone, which a step of

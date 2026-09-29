@@ -201,6 +201,7 @@ source "$repo/scripts/smoke/rows/instance-guard.sh"
 source "$repo/scripts/smoke/rows/diagnostics.sh"
 source "$repo/scripts/smoke/rows/read-only-prefix.sh"
 source "$repo/scripts/smoke/rows/notices-control.sh"
+source "$repo/scripts/smoke/rows/hidpi.sh"
 source "$repo/scripts/smoke/rows/start-order.sh"
 
 smoke_finish

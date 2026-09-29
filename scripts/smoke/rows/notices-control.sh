@@ -7,7 +7,7 @@
 # and its own shell/; config/ and themes/ are links to the sandbox's. The
 # row stops the shell rows/read-only-prefix.sh started, starts the copy
 # through harness.sh's start_shell and leaves it running for
-# rows/start-order.sh, which stops it.
+# rows/hidpi.sh, which stops it.
 set -euo pipefail
 mutant="$sandbox/notice-mutant"
 mkdir -p -- "$mutant"
