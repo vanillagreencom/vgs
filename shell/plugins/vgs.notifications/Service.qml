@@ -11,9 +11,9 @@ import "NotificationLogic.js" as Logic
 // into the history when it expires, is dismissed, acted on, closed by its
 // sender or let go by a full stack. The Inbox shows what arrived since the
 // last Mark read, the History everything kept; while either is open the
-// toasts stay and do not expire. Opening a toast or an inbox row delivers
-// the sender's default action while the service still holds the
-// notification and raises the sender's window
+// toasts stay and do not expire. Opening a toast or an inbox row, or any
+// action of the sender's, delivers that action while the service still
+// holds the notification and brings the sender's window into view
 // (NotificationLogic.choicePlan). Silence keeps notifications off the
 // screen and records them in the history, bar a critical one from the bare
 // command line. The service owns the rows, their clocks, the notification
@@ -643,12 +643,14 @@ Item {
     function actionsFor(key) {
         const at = indexOf(key);
         if (at === -1) return [];
-        return Logic.actionsFor(offered(key), Logic.senderAddress(windows(), rowModel.get(at)) !== "");
+        return Logic.actionsFor(offered(key), Logic.senderWindows(windows(), rowModel.get(at)).length > 0);
     }
 
     // A choice on a card, a toast's or an inbox row's: open, action:<id> or
     // dismiss, as NotificationLogic.choicePlan says, then the row leaves.
-    // Logs what an open reached, with no content.
+    // The sender's window comes into view through the core's reveal, which
+    // after a delivered action first gives the sender the chance to raise
+    // it itself. Logs what the choice reached, with no content.
     function choose(key, choice) {
         const at = indexOf(key);
         if (at === -1) return;
@@ -659,7 +661,7 @@ Item {
         }
         // Read before the delivery, after which the server may close the
         // notification and the toast start to leave.
-        const address = plan.raise ? Logic.senderAddress(windows(), rowModel.get(at)) : "";
+        const senders = plan.raise ? Logic.senderWindows(windows(), rowModel.get(at)) : [];
         let delivered = false;
         if (plan.deliver !== "") {
             try {
@@ -670,11 +672,11 @@ Item {
                 console.warn("notifications: action " + plan.deliver + " failed: " + e.message);
             }
         }
-        if (address !== "") {
-            const reply = shell.compositor.focusWindow(address);
-            if (reply !== "ok") console.warn("notifications: focus " + reply);
+        if (senders.length > 0) {
+            const reply = shell.compositor.reveal(senders, delivered);
+            if (reply !== "ok") console.warn("notifications: reveal " + reply);
         }
-        if (plan.raise) console.info("notifications: opened delivered=" + (delivered ? plan.deliver : "none") + " raised=" + (address !== "" ? address : "none"));
+        if (plan.raise) console.info("notifications: chose delivered=" + (delivered ? plan.deliver : "none") + " windows=" + senders.length);
         leave(key, plan.leave);
     }
 

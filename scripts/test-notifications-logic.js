@@ -221,16 +221,16 @@ function verify(logic) {
     same(logic.actionsFor([], true), [{ id: "open", label: "Show" }, { id: "dismiss", label: "Dismiss" }]);
     same(logic.actionsFor([], false), [{ id: "dismiss", label: "Dismiss" }]);
 
-    // Choices: [label, choice, offered, plan]. Opening delivers default
-    // while it is offered and raises either way; another action is
-    // delivered without a raise.
+    // Choices: [label, choice, offered, plan]. Opening delivers default and
+    // a pill its own action, each while it is offered, and both raise
+    // either way; dismissing does neither.
     for (const [label, choice, offered, want] of [
         ["open while held", "open", ["default", "reply"], { deliver: "default", raise: true, leave: "invoke" }],
         ["open with nothing held", "open", [], { deliver: "", raise: true, leave: "invoke" }],
         ["open when the sender offers no default", "open", ["reply"], { deliver: "", raise: true, leave: "invoke" }],
         ["the default action's pill opens", "action:default", ["default"], { deliver: "default", raise: true, leave: "invoke" }],
-        ["another action raises nothing", "action:reply", ["default", "reply"], { deliver: "reply", raise: false, leave: "invoke" }],
-        ["an action no longer offered", "action:reply", [], { deliver: "", raise: false, leave: "invoke" }],
+        ["another action raises too", "action:reply", ["default", "reply"], { deliver: "reply", raise: true, leave: "invoke" }],
+        ["an action no longer offered still raises", "action:reply", [], { deliver: "", raise: true, leave: "invoke" }],
         ["dismiss", "dismiss", ["default"], { deliver: "", raise: false, leave: "dismiss" }],
         ["a choice no card offers", "focus", ["default"], null],
         ["an action with no identifier", "action:", ["default"], null]
@@ -246,31 +246,31 @@ function verify(logic) {
     same(logic.heldPastHistory(["a", "b", "c", "d"], [stored(1, 1, { key: "a" })], [stored(2, 2, { key: "c" })]), ["b", "d"], "held past the history");
     same(logic.heldPastHistory([], [], []), [], "nothing held");
 
-    // The sender's window: [label, windows, entry, address]. Its desktop
-    // entry, then its name, case folded; a browser's web notification that
-    // names neither, the browser window naming its site, else the one
-    // browser window.
-    const named = [{ address: "abc", appClass: "Firefox" }, { address: "0xdef", appClass: "org.chat.App" }, { address: "", appClass: "chat" }];
+    // The sender's windows: [label, windows, entry, addresses]. Those of
+    // its desktop entry, else of its name, case folded; for a browser's web
+    // notification that names neither, the browser windows naming its site,
+    // else every browser window.
+    const named = [{ address: "abc", appClass: "Firefox" }, { address: "0xdef", appClass: "org.chat.App" }, { address: "", appClass: "chat" }, { address: "0x1", appClass: "Firefox" }];
     const slackDesk = { address: "0x5", appClass: "Slack" };
     const chromium = { address: "0x7", appClass: "chromium" };
     const brave = { address: "0x8", appClass: "brave-browser" };
     const webApp = { address: "0x9", appClass: "chrome-app.slack.com__client-Default" };
     const browserSlack = { desktopEntry: "", app: "", appIcon: "", body: "app.slack.com\n\nada: hi" };
     for (const [label, windows, entry, want] of [
-        ["by desktop entry", named, { desktopEntry: "org.chat.app", app: "Chat" }, "0xdef"],
-        ["by name, the address prefixed", named, { desktopEntry: "", app: "firefox" }, "0xabc"],
-        ["a window with no address yet", named, { desktopEntry: "", app: "chat" }, ""],
-        ["the command line owns no window", named, { desktopEntry: "", app: "notify-send" }, ""],
-        ["no window", [], { desktopEntry: "x", app: "y" }, ""],
-        ["Slack's desktop copy raises Slack", [slackDesk, chromium], { desktopEntry: "slack", app: "Slack", body: "ada: hi" }, "0x5"],
-        ["Slack's browser copy raises the browser, not Slack", [slackDesk, chromium], browserSlack, "0x7"],
-        ["an installed web app naming the site wins", [slackDesk, chromium, webApp], browserSlack, "0x9"],
-        ["two browsers and none naming the site", [chromium, brave], browserSlack, ""],
-        ["no browser open", [slackDesk], browserSlack, ""],
-        ["a named browser by its desktop entry", [chromium, brave], { desktopEntry: "brave-browser", app: "Brave", body: "app.slack.com hi" }, "0x8"],
-        ["a sender that is no browser keeps its body", [chromium], { desktopEntry: "", app: "Chat", body: "app.slack.com\n\nhi" }, ""]
+        ["by desktop entry before the name", named, { desktopEntry: "org.chat.app", app: "Firefox" }, ["0xdef"]],
+        ["every window of the name, the address prefixed", named, { desktopEntry: "", app: "firefox" }, ["0xabc", "0x1"]],
+        ["a window with no address yet", named, { desktopEntry: "", app: "chat" }, []],
+        ["the command line owns no window", named, { desktopEntry: "", app: "notify-send" }, []],
+        ["no window", [], { desktopEntry: "x", app: "y" }, []],
+        ["Slack's desktop copy raises Slack", [slackDesk, chromium], { desktopEntry: "slack", app: "Slack", body: "ada: hi" }, ["0x5"]],
+        ["Slack's browser copy raises the browser, not Slack", [slackDesk, chromium], browserSlack, ["0x7"]],
+        ["an installed web app naming the site wins", [slackDesk, chromium, webApp], browserSlack, ["0x9"]],
+        ["every browser when none names the site", [chromium, brave], browserSlack, ["0x7", "0x8"]],
+        ["no browser open", [slackDesk], browserSlack, []],
+        ["a named browser by its desktop entry", [chromium, brave], { desktopEntry: "brave-browser", app: "Brave", body: "app.slack.com hi" }, ["0x8"]],
+        ["a sender that is no browser keeps its body", [chromium], { desktopEntry: "", app: "Chat", body: "app.slack.com\n\nhi" }, []]
     ])
-        assert.equal(logic.senderAddress(windows, entry), want, "sender window: " + label);
+        same(logic.senderWindows(windows, entry), want, "sender windows: " + label);
 
     // Clocks: a paused clock keeps what is left; a running one is charged
     // for the time it ran.
@@ -649,8 +649,8 @@ const CONTROLS = [
     ["Show without actions", 'if (list.length === 0 && canRaise) list.push({ id: "open", label: "Show" });', ""],
     ["an open delivers default", 'var id = c === "open" ? "default" :', 'var id = c === "open" ? "" :'],
     ["only an offered action is delivered", "deliver: offered.indexOf(id) !== -1 ? id : \"\"", "deliver: id"],
-    ["an open raises", "raise: id === \"default\", leave: \"invoke\"", "raise: false, leave: \"invoke\""],
-    ["another action raises nothing", "raise: id === \"default\", leave: \"invoke\"", "raise: true, leave: \"invoke\""],
+    ["an open raises", "raise: true, leave: \"invoke\"", "raise: id !== \"default\", leave: \"invoke\""],
+    ["another action raises too", "raise: true, leave: \"invoke\"", "raise: id === \"default\", leave: \"invoke\""],
     ["dismiss delivers nothing", 'if (c === "dismiss") return { deliver: "", raise: false, leave: "dismiss" };', ""],
     ["an unknown choice is refused", 'if (id === "") return null;', ""],
     ["an expired toast is held", 'if (reason === "expire") return transient ? "expire" : "keep";', 'if (reason === "expire") return "expire";'],
@@ -659,10 +659,11 @@ const CONTROLS = [
     ["a dismissal closes", 'if (reason === "dismiss") return "dismiss";', 'if (reason === "dismiss") return "keep";'],
     ["a held key past the history", "return keys.filter(function (k) { return !stored[k]; });", "return [];"],
     ["a held toast on screen stays", "for (var i = 0; i < live.length; i++) stored[live[i].key] = true;", ""],
-    ["the sender's window by name", "if (String(open[i].appClass || \"\").toLowerCase() === wanted[w]) return windowAddress(open[i]);", ""],
-    ["a browser notification raises a browser", 'var host = webOrigin(entry.app, entry.appIcon, entry.body);\n    if (host === "") return "";', 'return "";'],
-    ["the web app naming the site", "if (site.length === 1) return windowAddress(site[0]);", ""],
-    ["one browser, or none", "return site.length === 0 && browsers.length === 1 ? windowAddress(browsers[0]) : \"\";", "return browsers.length > 0 ? windowAddress(browsers[0]) : \"\";"],
+    ["the sender's windows by name", "if (named.length > 0) return named.map(windowAddress);", ""],
+    ["every window of the name", "if (named.length > 0) return named.map(windowAddress);", "if (named.length > 0) return [windowAddress(named[0])];"],
+    ["a browser notification raises a browser", 'var host = webOrigin(entry.app, entry.appIcon, entry.body);\n    if (host === "") return [];', 'return [];'],
+    ["the web app naming the site", "return (site.length > 0 ? site : browsers).map(windowAddress);", "return browsers.map(windowAddress);"],
+    ["every browser when none names the site", "return (site.length > 0 ? site : browsers).map(windowAddress);", "return site.map(windowAddress);"],
     ["charge a stopping clock", "next[keys[i]] = { remaining: Math.max(0, c.remaining - (now - c.since)), since: null };", "next[keys[i]] = { remaining: c.remaining, since: null };"],
     ["paused clocks wait", "if (c.since === null) continue;", ""],
     ["rule by desktop entry", 'var wanted = [String(desktopEntry || "").toLowerCase(), String(app || "").toLowerCase()];\n    for (var r = 0;', 'var wanted = [String(app || "").toLowerCase()];\n    for (var r = 0;'],

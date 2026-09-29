@@ -1175,12 +1175,12 @@ function actionsFor(actions, canRaise) {
 // raise, leave }. `choice` is `open` (a click on a toast or an inbox row,
 // Show, the invoke IPC), `action:<identifier>` (a pill of the sender's
 // own) or `dismiss`; `offered` the identifiers the notification the
-// service holds offers now, [] when it holds none. Opening, and the
-// `default` action's pill, delivers `default` while it is offered and
-// raises the sender's window either way, after the delivery: a sender on
-// Wayland cannot raise itself, since the server sends it no activation
-// token. Another action of the sender's is delivered and raises nothing,
-// since it acts without a switch of context. `deliver` is "" when there is
+// service holds offers now, [] when it holds none. Opening delivers
+// `default` and a pill its own action, each while it is offered; either
+// then brings the sender's window into view, delivered or not, since
+// every action names a place in the sender and a sender on Wayland cannot
+// raise itself without the activation token the server never sends.
+// Dismissing delivers and raises nothing. `deliver` is "" when there is
 // nothing to deliver; `leave` is the reason the row leaves with. Null for
 // a choice no card offers.
 function choicePlan(choice, offered) {
@@ -1188,7 +1188,7 @@ function choicePlan(choice, offered) {
     if (c === "dismiss") return { deliver: "", raise: false, leave: "dismiss" };
     var id = c === "open" ? "default" : c.indexOf("action:") === 0 ? c.slice(7) : "";
     if (id === "") return null;
-    return { deliver: offered.indexOf(id) !== -1 ? id : "", raise: id === "default", leave: "invoke" };
+    return { deliver: offered.indexOf(id) !== -1 ? id : "", raise: true, leave: "invoke" };
 }
 
 // What becomes of the notification the service holds for a row that
@@ -1221,25 +1221,27 @@ function windowAddress(window) {
     return address.indexOf("0x") === 0 ? address : "0x" + address;
 }
 
-// The address of the window that sent a notification, "" when none can be
-// named. The window whose class is the notification's desktop entry or
-// application name, case folded. A browser's web notification that names
-// neither takes the browser window whose class names its site, as an
-// installed web app's does, or else the one Chromium-family window open;
-// with several and none naming the site, none. `windows` are { address,
+// The addresses of the windows that may have sent a notification, for the
+// compositor to bring one into view (the one the sender asks for, else the
+// one focused last); [] when none can be named. The windows whose class
+// is the notification's desktop entry, else its application name, case
+// folded. A browser's web notification that names neither takes the
+// browser windows whose class names its site, as an installed web app's
+// does, else every Chromium-family window. `windows` are { address,
 // appClass }; `entry` a row's { desktopEntry, app, appIcon, body }.
-function senderAddress(windows, entry) {
+function senderWindows(windows, entry) {
     var open = windows.filter(function (w) { return String(w.address || "") !== ""; });
+    var classOf = function (w) { return String(w.appClass || "").toLowerCase(); };
     var wanted = [String(entry.desktopEntry || "").toLowerCase(), String(entry.app || "").toLowerCase()].filter(function (w) { return w !== "" && w !== "notify-send"; });
-    for (var w = 0; w < wanted.length; w++)
-        for (var i = 0; i < open.length; i++)
-            if (String(open[i].appClass || "").toLowerCase() === wanted[w]) return windowAddress(open[i]);
+    for (var w = 0; w < wanted.length; w++) {
+        var named = open.filter(function (win) { return classOf(win) === wanted[w]; });
+        if (named.length > 0) return named.map(windowAddress);
+    }
     var host = webOrigin(entry.app, entry.appIcon, entry.body);
-    if (host === "") return "";
-    var browsers = open.filter(function (w) { return isChromiumDerived(w.appClass, ""); });
-    var site = browsers.filter(function (w) { return String(w.appClass || "").toLowerCase().indexOf(host) !== -1; });
-    if (site.length === 1) return windowAddress(site[0]);
-    return site.length === 0 && browsers.length === 1 ? windowAddress(browsers[0]) : "";
+    if (host === "") return [];
+    var browsers = open.filter(function (win) { return isChromiumDerived(win.appClass, ""); });
+    var site = browsers.filter(function (win) { return classOf(win).indexOf(host) !== -1; });
+    return (site.length > 0 ? site : browsers).map(windowAddress);
 }
 
 // ------------------------------------------------------------- clocks
