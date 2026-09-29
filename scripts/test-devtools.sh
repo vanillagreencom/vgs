@@ -38,8 +38,9 @@ printf '#!/bin/sh\nprintf "pacman" >>"$LOG"; for a; do printf " [%%s]" "$a" >>"$
 printf '#!/bin/sh\ncase "$1" in -k) exit 0 ;; -n) shift ;; esac\nexec "$@"\n' >"$stubs/sudo"
 printf '#!/bin/sh\necho "$STUB_MACHINE"\n' >"$stubs/uname"
 # mise: $MISE_STATE/installed holds one installed key per line,
-# $MISE_STATE/global-extra the global config's keys no install backs, and
-# $MISE_STATE/auto_prune the setting. A call that changes something is
+# $MISE_STATE/global-extra the global config's keys no install backs,
+# $MISE_STATE/auto_prune the setting, and $MISE_STATE/which/<command> what
+# `mise which` answers. A call that changes something is
 # logged as `mise [arg]... {age=<MISE_MINIMUM_RELEASE_AGE>}`.
 cat >"$stubs/mise" <<'EOF'
 #!/bin/bash
@@ -85,6 +86,28 @@ case "$1" in
     mv "$st/installed.new" "$st/installed"
     rm -rf "$(dir "$k")" ;;
   where) dir "$2"; echo ;;
+  which)
+    if [ -f "$st/which/$2" ]; then cat "$st/which/$2"; exit 0; fi
+    printf 'mise ERROR %s is not a mise bin. Perhaps you need to install it first.\n' "$2" >&2
+    exit 1 ;;
+  x)
+    # What a step run through a tool leaves: a gem's executable only
+    # under mise's ruby, and Composer's global bin-dir and launcher.
+    log "$@"
+    while [ "$1" != -- ]; do shift; done
+    shift
+    mkdir -p "$st/which"
+    case "$*" in
+      "gem install "*) printf '%s/installs/ruby/bin/%s\n' "$MISE_DATA_DIR" "$3" >"$st/which/$3" ;;
+      "gem uninstall "*) rm -f "$st/which/$3" ;;
+      "composer global config bin-dir "*) echo "$5" >"$st/composer-bin" ;;
+      "composer global require laravel/installer")
+        bin="$(cat "$st/composer-bin" 2>/dev/null || echo "$HOME/.config/composer/vendor/bin")"
+        mkdir -p "$bin"; : >"$bin/laravel" ;;
+      "composer global remove laravel/installer")
+        bin="$(cat "$st/composer-bin" 2>/dev/null || echo "$HOME/.config/composer/vendor/bin")"
+        rm -f "$bin/laravel" ;;
+    esac ;;
   *) log "$@" ;;
 esac
 EOF
@@ -162,6 +185,31 @@ row_install_order() { # PLUGIN
     "mise [settings] [add] [idiomatic_version_file_enable_tools] [ruby] {age=0}" \
     "mise [use] [-g] [ruby] {age=0}")"
 }
+row_rails_install() { # PLUGIN: the rails command exists only under mise's ruby
+  reset_world
+  ENGINE_TTY=pty engine "$1" -- install rails
+  [[ $status == 0 ]] && log_is "$(lines \
+    "mise [settings] [set] [upgrade.auto_prune] [false] {age=0}" \
+    "pacman [-S] [--needed] [--] [libyaml]" \
+    "mise [settings] [set] [ruby.compile] [false] {age=0}" \
+    "mise [settings] [add] [idiomatic_version_file_enable_tools] [ruby] {age=0}" \
+    "mise [use] [-g] [ruby] {age=0}" \
+    "mise [x] [ruby] [--] [gem] [install] [rails] [--no-document] {age=0}")"
+}
+row_rails_update() { # PLUGIN: after row_rails_install
+  : >"$log"
+  ENGINE_TTY=pty engine "$1" -- update rails
+  [[ $status == 0 ]] && log_is "$(lines \
+    "mise [up] [ruby] {age=0}" \
+    "mise [x] [ruby] [--] [gem] [install] [rails] [--no-document] {age=0}")"
+}
+row_rails_remove_kept() { # PLUGIN: rails installed, and with it ruby, which stays
+  row_rails_install "$plugin" || return 1
+  : >"$log"
+  ENGINE_TTY=pty engine "$1" -- remove rails
+  [[ $status == 0 ]] && out_has "devtools: kept=ruby reason=declared-by-installed-row" && log_is \
+    "mise [x] [ruby] [--] [gem] [uninstall] [rails] [--all] [--executables] [--ignore-dependencies] {age=0}"
+}
 row_remove_mirror() { # PLUGIN: after row_install_order's install
   : >"$log"
   ENGINE_TTY=pty engine "$1" -- remove ruby
@@ -194,6 +242,35 @@ ENGINE_TTY=pty engine "$plugin" -- install ruby
 check "a second install is refused as installed" out_has "devtools: refused: id=ruby state=installed"
 check "remove takes back the tool, then the packages, in install's reverse" row_remove_mirror "$plugin"
 check "the present probe no longer holds after remove" test ! -e "$data/installs/ruby"
+
+# rails: its command lives only under mise's ruby, update installs the
+# current gem again, and remove takes the gem back while ruby stays.
+check "install of rails ends with its command found through mise" row_rails_install "$plugin"
+engine "$plugin" -- list --json
+check "list reads rails installed from mise, with update and remove" list_has '[(r["installed"], r["origin"], r["actions"]) for r in d["sections"]["envs"] if r["id"] == "rails"] == [(True, "mise", ["update", "remove"])]'
+check "update runs mise up, then the postInstall steps again" row_rails_update "$plugin"
+check "remove takes back the rails gem through postRemove while ruby stays" row_rails_remove_kept "$plugin"
+engine "$plugin" -- list --json
+check "rails lists absent and ruby installed after that removal" list_has '[(r["id"], r["installed"]) for r in d["sections"]["envs"] if r["id"] in ("ruby", "rails")] == [("ruby", True), ("rails", False)]'
+
+# laravel: Composer's global bin-dir is set before the installer lands, so
+# its launcher is at the row's probe; remove takes the installer back first.
+reset_world
+echo false >"$state/auto_prune"
+php="github:nunomaduro/static-php-builds"
+ENGINE_TTY=pty engine "$plugin" -- install laravel
+check "install of laravel sets Composer's bin-dir before requiring the installer" log_is "$(lines \
+  "mise [use] [-g] [$php] {age=0}" \
+  "mise [use] [-g] [node] {age=0}" \
+  "mise [x] [$php] [--] [composer] [global] [config] [bin-dir] [$home/.local/bin] {age=0}" \
+  "mise [x] [$php] [--] [composer] [global] [require] [laravel/installer] {age=0}")"
+check "the laravel install ends with its probe holding" test "$status" == 0
+: >"$log"
+ENGINE_TTY=pty engine "$plugin" -- remove laravel
+# Its install made the php and node rows read installed, so their tools stay.
+check "remove of laravel takes the installer back" log_is "mise [x] [$php] [--] [composer] [global] [remove] [laravel/installer] {age=0}"
+check "remove of laravel keeps the tools the php and node rows hold" out_has "devtools: kept=node reason=declared-by-installed-row"
+check "the laravel removal ends with its probe gone" test "$status" == 0
 
 # auto_prune is set once: a later install leaves it.
 reset_world
@@ -274,6 +351,7 @@ check "that refusal exits 2" test "$status" == 2
 # The keeps-packages control installs through the shipped engine, then
 # removes through its copy.
 row_remove_mirror_after_install() { row_install_order "$plugin" && row_remove_mirror "$1"; }
+row_rails_update_after_install() { row_rails_install "$plugin" && row_rails_update "$1"; }
 
 # Controls: each copy removes one rule, and the row that holds it must fail.
 # control NAME FILE NEEDLE REPLACEMENT ROW: FILE relative to the plugin.
@@ -289,6 +367,9 @@ control() {
 control overwrites-foreign bin/devtools '    if (state === "foreign") return launcherLine("foreign", row.command);' '' foreign
 control ignores-arch CatalogLogic.js '    return !Array.isArray(row.arch) || listHas(row.arch, machine);' '    return true;' arch
 control packages-last bin/devtools $'    if (row.packages !== undefined) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' $'    if (false) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' install_order
+control no-mise-which bin/devtools '        for (const finder of [resolveCommand, miseWhich])' '        for (const finder of [resolveCommand])' rails_install
+control update-skips-postinstall bin/devtools $'    runSteps((row.postInstall || []).map(step => stepArgv(catalog, step)), env);\n    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' $'    verifyPresent(row);\n    if (spec !== null) settleLauncher(row, spec, launchers);' rails_update_after_install
+control skips-postremove bin/devtools '    runSteps((row.postRemove || []).map(step => stepArgv(catalog, step)), buildEnv(row));' '' rails_remove_kept
 control keeps-packages bin/devtools $'            runPackages("remove", picked.manager,' $'            if (false) runPackages("remove", picked.manager,' remove_mirror_after_install
 
 if [[ $failures -gt 0 ]]; then echo "test-devtools: $failures failure(s)"; exit 1; fi

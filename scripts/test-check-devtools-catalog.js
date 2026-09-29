@@ -133,6 +133,11 @@ try {
     refuse("bad postInstall shape is refused", "catalog-post-install", data => { data.envs.find(row => row.id === "rails").postInstall = {}; return data; });
     refuse("unknown postInstall via is refused", "catalog-via", data => { data.envs.find(row => row.id === "rails").postInstall[0].via = "missing"; return data; });
     refuse("postInstall via cannot name a non-mise entry", "catalog-via", data => { data.envs.find(row => row.id === "rails").postInstall[0].via = "rust"; return data; });
+    refuse("postRemove shell syntax is refused", "catalog-shell-syntax", data => { data.envs.find(row => row.id === "rails").postRemove[0].exec = ["gem", "uninstall;rails"]; return data; });
+    refuse("postRemove interpreter evaluation is refused", "catalog-eval-argv", data => { data.envs.find(row => row.id === "rails").postRemove[0].exec = ["ruby", "-e", "true"]; return data; });
+    refuse("bad postRemove shape is refused", "catalog-post-install", data => { data.envs.find(row => row.id === "laravel").postRemove = []; return data; });
+    refuse("postRemove via cannot name a non-mise entry", "catalog-via", data => { data.envs.find(row => row.id === "laravel").postRemove[0].via = "rust"; return data; });
+    refuse("database postRemove is refused", "catalog-fields", data => { data.databases[0].postRemove = [{ exec: ["true"] }]; return data; });
     refuse("database present is refused", "catalog-fields", data => { data.databases[0].present = { command: "docker" }; return data; });
     refuse("bad container is refused", "catalog-container", data => { data.databases[0].container = "mysql"; return data; });
     refuse("bad container runtime is refused", "catalog-container-runtime", data => { data.databases[0].container.runtimes = ["rkt"]; return data; });

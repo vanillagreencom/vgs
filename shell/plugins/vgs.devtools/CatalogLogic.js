@@ -9,12 +9,12 @@ var MISE_BACKENDS = ["aqua", "asdf", "cargo", "conda", "dotnet", "forgejo", "gem
 
 var COMMON_FIELDS = ["id", "name", "icon", "brand", "present", "managedBy", "packages"];
 var SECTION_FIELDS = {
-    agents: COMMON_FIELDS.concat(["package", "command", "bin", "exec", "launch", "arch", "channels", "buildEnv", "requires", "postInstall"]),
-    apps: COMMON_FIELDS.concat(["package", "command", "bin", "exec", "launch", "kind", "arch", "channels", "buildEnv", "requires", "postInstall"]),
-    tools: ["id", "name", "package", "command", "buildEnv", "requires", "present", "postInstall"],
-    envs: COMMON_FIELDS.concat(["tools", "settings", "installer", "buildEnv", "requires", "postInstall"]),
-    editors: COMMON_FIELDS.concat(["kind", "command", "launch", "postInstall", "requires", "arch"]),
-    terminals: COMMON_FIELDS.concat(["command", "launch", "postInstall", "requires", "arch"]),
+    agents: COMMON_FIELDS.concat(["package", "command", "bin", "exec", "launch", "arch", "channels", "buildEnv", "requires", "postInstall", "postRemove"]),
+    apps: COMMON_FIELDS.concat(["package", "command", "bin", "exec", "launch", "kind", "arch", "channels", "buildEnv", "requires", "postInstall", "postRemove"]),
+    tools: ["id", "name", "package", "command", "buildEnv", "requires", "present", "postInstall", "postRemove"],
+    envs: COMMON_FIELDS.concat(["tools", "settings", "installer", "buildEnv", "requires", "postInstall", "postRemove"]),
+    editors: COMMON_FIELDS.concat(["kind", "command", "launch", "postInstall", "postRemove", "requires", "arch"]),
+    terminals: COMMON_FIELDS.concat(["command", "launch", "postInstall", "postRemove", "requires", "arch"]),
     databases: ["id", "name", "icon", "brand", "container", "requires", "packages"]
 };
 var REQUIRED_FIELDS = {
@@ -416,10 +416,12 @@ function validateSettings(value, path, out) {
     }
 }
 
+// A step list, `postInstall` or `postRemove`: one step or an array of
+// them, each `{ mise: argv }` or `{ exec: argv, via? }`, judged alike.
 function validatePostInstall(value, path, ids, miseIds, out) {
     var steps = Array.isArray(value) ? value : [value];
     if (steps.length === 0) {
-        out.push(finding("catalog-post-install", path, "postInstall must not be empty"));
+        out.push(finding("catalog-post-install", path, "steps must not be empty"));
         return;
     }
     for (var i = 0; i < steps.length; i++)
@@ -670,6 +672,7 @@ function validateField(field, value, path, row, state, out) {
         present: function () { validatePresent(value, path, out); },
         packages: function () { validatePackages(value, path, state.context, out); },
         postInstall: function () { validatePostInstall(value, path, state.ids, state.miseIds, out); },
+        postRemove: function () { validatePostInstall(value, path, state.ids, state.miseIds, out); },
         container: function () { validateContainer(value, path, out); }
     };
     validators[field]();

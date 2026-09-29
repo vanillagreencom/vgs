@@ -52,7 +52,9 @@
 //       its postInstall steps, and ends by checking its present probe.
 //       update runs `mise up` over the row's mise keys, reinstalls with
 //       `mise use -g --force` a row whose present probe no longer holds,
-//       and checks the probe. remove mirrors install in reverse:
+//       runs its postInstall steps again, since each installs the current
+//       release of what it adds, and checks the probe. remove mirrors
+//       install in reverse: its postRemove steps, then
 //       `mise uninstall --all` and `mise rm -g` of each of its tools or its
 //       package that no other installed row declares, the installer's own
 //       uninstall, the path its home probe names, and the packages no
@@ -144,6 +146,10 @@ const HOME = process.env.HOME || os.homedir();
 const LAUNCHER_DIR = path.join(HOME, ".local", "bin");
 // mise's data directory, by the default mise documents.
 const MISE_DATA = process.env.MISE_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(HOME, ".local", "share"), "mise");
+// What `mise which` prints on stderr for a command no active tool
+// provides: `mise ERROR <command> is not a mise bin. Perhaps you need to
+// install it first.` (mise 2026.9.9).
+const MISE_NOT_A_BIN = /is not a mise bin/;
 const TERMINAL_DETAIL = "the shell never installs a tool; open the vgs.devtools TUI or run this in a terminal";
 
 // The catalog, judged before any row is read: a catalog the judge refuses
@@ -244,23 +250,38 @@ function launcherState(command) {
 
 // A present probe's answer and the path it read: { holds, path }. `mise`
 // is a path under mise's installs directory; `home` one under $HOME, or
-// with `prefix` an entry of it; `command` a command on PATH.
+// with `prefix` an entry of it; `command` a command on PATH, else one of
+// mise's active tools provides (a gem the rails row installs into mise's
+// ruby lives only there). Presence takes mise's answer; provenance, whether
+// a command is foreign or a launcher would hide it, never does.
 function probe(present) {
     if (typeof present.mise === "string") {
         const file = path.join(MISE_DATA, "installs", present.mise);
         return { holds: fs.existsSync(file), path: file };
     }
     if (present.command !== undefined) {
-        for (const command of [].concat(present.command)) {
-            const file = resolveCommand(command);
-            if (file !== null) return { holds: true, path: file };
-        }
-        return { holds: false, path: [].concat(present.command).join(",") };
+        const commands = [].concat(present.command);
+        for (const finder of [resolveCommand, miseWhich])
+            for (const command of commands) {
+                const file = finder(command);
+                if (file !== null) return { holds: true, path: file };
+            }
+        return { holds: false, path: commands.join(",") };
     }
     const dir = path.join(HOME, present.home);
     if (present.prefix === undefined) return { holds: fs.existsSync(dir), path: dir };
     const hit = homeEntries(present).find(name => name.startsWith(present.prefix));
     return { holds: hit !== undefined, path: hit === undefined ? dir : path.join(dir, hit) };
+}
+
+// The file one of mise's active tools runs for COMMAND, from
+// `mise which`, or null when mise is absent or no tool provides it.
+function miseWhich(command) {
+    if (!onPath("mise")) return null;
+    const r = childProcess.spawnSync("mise", ["which", command], { cwd: HOME, encoding: "utf8" });
+    if (r.status === 0 && r.stdout.trim() !== "") return r.stdout.trim();
+    if (r.status === 1 && MISE_NOT_A_BIN.test(r.stderr)) return null;
+    refuse("mise=failed args=which," + command + " exit=" + (r.error !== undefined ? r.error.code : r.status), undefined, 1, r.stderr);
 }
 
 function homeEntries(present) {
@@ -496,7 +517,8 @@ function settingSteps(settings) {
     return steps;
 }
 
-// The specs `mise x` resolves a postInstall step's `via` row through.
+// The specs `mise x` resolves a postInstall or postRemove step's `via` row
+// through.
 function viaSpecs(catalog, id) {
     for (const section of Catalog.SECTION_NAMES)
         for (const row of catalog[section])
@@ -504,7 +526,9 @@ function viaSpecs(catalog, id) {
     throw new Error("devtools: postInstall via " + id + " passed validateCatalog but names no row");
 }
 
-function postInstallArgv(catalog, step) {
+// The argv of one postInstall or postRemove step: `mise` with its words,
+// or its `exec` words, through `mise x` on its `via` row's specs.
+function stepArgv(catalog, step) {
     if (step.mise !== undefined) return ["mise"].concat(step.mise.map(homeWord));
     const argv = step.exec.map(homeWord);
     return step.via === undefined ? argv : ["mise", "x"].concat(viaSpecs(catalog, step.via), ["--"], argv);
@@ -552,6 +576,11 @@ function target(catalog, surveyed, id, verb) {
     return entry;
 }
 
+// Whether one of STEPS, postInstall or postRemove, runs mise.
+function stepsUseMise(steps) {
+    return (steps || []).some(step => step.mise !== undefined || step.via !== undefined);
+}
+
 function requireMise() {
     if (!onPath("mise")) refuse("mise=absent", undefined, 1, "install mise through your package manager first");
 }
@@ -570,7 +599,7 @@ async function install(catalog, id, channel, launchers) {
     if (spec !== null && !spec.ok) refuse(spec.error);
     if (spec === null && channel !== null) refuse("channel=" + channel + " id=" + id + " offers=none");
     if (section === "databases") return runSteps([containerRun(row)]);
-    if (Catalog.rowSpecs(row).length > 0 || (row.postInstall || []).some(step => step.mise !== undefined || step.via !== undefined)) {
+    if (Catalog.rowSpecs(row).length > 0 || stepsUseMise(row.postInstall)) {
         requireMise();
         await ensureNoAutoPrune();
     }
@@ -585,7 +614,7 @@ async function install(catalog, id, channel, launchers) {
     if (spec !== null) steps.push(["mise", "use", "-g", spec.spec]);
     runSteps(steps, env);
     if (row.installer !== undefined) runInstaller(INSTALLERS[row.installer]);
-    runSteps((row.postInstall || []).map(step => postInstallArgv(catalog, step)), env);
+    runSteps((row.postInstall || []).map(step => stepArgv(catalog, step)), env);
     verifyPresent(row);
     if (spec !== null) settleLauncher(row, spec.spec, launchers);
 }
@@ -609,13 +638,16 @@ async function update(catalog, id, launchers) {
     await ensureNoAutoPrune();
     const env = buildEnv(row);
     runSteps([["mise", "up"].concat((Array.isArray(row.tools) ? row.tools : [row.package]).map(Catalog.specKey))], env);
-    if (typeof row.package !== "string") return verifyPresent(row);
     // `mise up` rebuilds with the environment of its own process only, so a
     // build the row's pin did not reach is forced again under it.
-    const spec = Catalog.installSpec(row, null).spec;
-    if (row.present !== undefined && !probe(row.present).holds) runSteps([["mise", "use", "-g", "--force", spec]], env);
+    const spec = typeof row.package === "string" ? Catalog.installSpec(row, null).spec : null;
+    if (spec !== null && row.present !== undefined && !probe(row.present).holds) runSteps([["mise", "use", "-g", "--force", spec]], env);
+    // A framework postInstall put into a tool stays at its old release, and
+    // a new ruby holds no rails gem at all, so the steps run again: each
+    // installs the current release and is safe to repeat.
+    runSteps((row.postInstall || []).map(step => stepArgv(catalog, step)), env);
     verifyPresent(row);
-    settleLauncher(row, spec, launchers);
+    if (spec !== null) settleLauncher(row, spec, launchers);
 }
 
 async function remove(catalog, id) {
@@ -631,6 +663,10 @@ async function remove(catalog, id) {
         for (const spec of Catalog.rowSpecs(other.row)) keptSpecs.add(Catalog.specKey(spec));
         for (const [m, names] of Object.entries(other.row.packages || {})) for (const n of names) keptPackages.add(m + "/" + n);
     }
+    // postRemove takes back what postInstall put into a tool, which a tool
+    // another row keeps would otherwise hold: the rails gem in a kept ruby.
+    if (stepsUseMise(row.postRemove)) requireMise();
+    runSteps((row.postRemove || []).map(step => stepArgv(catalog, step)), buildEnv(row));
     const steps = [];
     for (const key of (typeof row.package === "string" ? [row.package] : row.tools || []).map(Catalog.specKey).reverse()) {
         if (keptSpecs.has(key)) process.stdout.write("devtools: kept=" + key + " reason=declared-by-installed-row\n");

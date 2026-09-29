@@ -594,7 +594,30 @@
           "exec": [
             "composer",
             "global",
+            "config",
+            "bin-dir",
+            {
+              "home": ".local/bin"
+            }
+          ],
+          "via": "php"
+        },
+        {
+          "exec": [
+            "composer",
+            "global",
             "require",
+            "laravel/installer"
+          ],
+          "via": "php"
+        }
+      ],
+      "postRemove": [
+        {
+          "exec": [
+            "composer",
+            "global",
+            "remove",
             "laravel/installer"
           ],
           "via": "php"
@@ -653,6 +676,19 @@
             "install",
             "rails",
             "--no-document"
+          ],
+          "via": "ruby"
+        }
+      ],
+      "postRemove": [
+        {
+          "exec": [
+            "gem",
+            "uninstall",
+            "rails",
+            "--all",
+            "--executables",
+            "--ignore-dependencies"
           ],
           "via": "ruby"
         }

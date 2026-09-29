@@ -14,12 +14,12 @@
 
 ## Sections
 
-- `agents`: Coding-agent command-line tools. A row can carry `package`, `command`, `bin`, `exec`, `launch`, `arch`, `channels`, `buildEnv`, `requires`, `present` and `postInstall`.
+- `agents`: Coding-agent command-line tools. A row can carry `package`, `command`, `bin`, `exec`, `launch`, `arch`, `channels`, `buildEnv`, `requires`, `present`, `postInstall` and `postRemove`.
 - `apps`: Developer applications. A row can carry the agent fields plus `kind`.
-- `tools`: Developer CLI tools. A row can carry `package`, `command`, `buildEnv`, `requires`, `present` and `postInstall`.
-- `envs`: Language and framework environments. A row can carry `tools`, `packages`, `settings`, `present`, `installer`, `managedBy`, `buildEnv`, `requires` and `postInstall`.
-- `editors`: Editors that Omarchy offers or themes. A row can carry `kind`, `command`, `packages`, `present`, `launch`, `postInstall`, `requires` and `arch`.
-- `terminals`: Terminals that Omarchy offers. A row can carry `command`, `packages`, `present`, `launch`, `postInstall`, `requires` and `arch`.
+- `tools`: Developer CLI tools. A row can carry `package`, `command`, `buildEnv`, `requires`, `present`, `postInstall` and `postRemove`.
+- `envs`: Language and framework environments. A row can carry `tools`, `packages`, `settings`, `present`, `installer`, `managedBy`, `buildEnv`, `requires`, `postInstall` and `postRemove`.
+- `editors`: Editors that Omarchy offers or themes. A row can carry `kind`, `command`, `packages`, `present`, `launch`, `postInstall`, `postRemove`, `requires` and `arch`.
+- `terminals`: Terminals that Omarchy offers. A row can carry `command`, `packages`, `present`, `launch`, `postInstall`, `postRemove`, `requires` and `arch`.
 - `databases`: Docker or Podman database containers. A row carries `container` data and no `present` field.
 
 Every row has an `id` and `name`. A row that appears in the UI has `icon` and `brand`.
@@ -35,8 +35,9 @@ Every row has an `id` and `name`. A row that appears in the UI has `icon` and `b
 - `packages`: A map from `shell/Core/PackageManagers.js` manager id to package names. Package names use that table's own package-name rule.
 - `command` and `managedBy`: Commands found on `PATH`.
 - `bin` and `exec`: Paths below a tool install. They are relative and cannot contain `..`.
-- `present`: One probe object. `{ "mise": "node" }` means the engine checks for that path below mise's installs directory, `$MISE_DATA_DIR/installs`, where mise names each tool's directory after its key with `:` and `/` as `-`, such as `github-nunomaduro-static-php-builds`. `{ "home": ".rustup" }` means it checks below the user's home directory. `{ "home": ".mix/archives", "prefix": "phx_new-" }` means the engine checks for one entry below the home path with that prefix. `{ "command": "symfony" }` means it checks `PATH`. `{ "command": ["helix", "hx"] }` means any listed command satisfies the probe.
-- `launch`, `postInstall.exec` and `postInstall.mise`: Argument arrays. They are never shell strings. An argument can be `{ "home": ".local/bin" }` where a command needs an absolute path below the user's home directory.
+- `present`: One probe object. `{ "mise": "node" }` means the engine checks for that path below mise's installs directory, `$MISE_DATA_DIR/installs`, where mise names each tool's directory after its key with `:` and `/` as `-`, such as `github-nunomaduro-static-php-builds`. `{ "home": ".rustup" }` means it checks below the user's home directory. `{ "home": ".mix/archives", "prefix": "phx_new-" }` means the engine checks for one entry below the home path with that prefix. `{ "command": "symfony" }` means it checks `PATH`, then asks `mise which`, since a tool a row installs into a mise tool, such as the rails gem, is only there. `{ "command": ["helix", "hx"] }` means any listed command satisfies the probe.
+- `postInstall` and `postRemove`: Step lists. Each step is `{ "mise": argv }` or `{ "exec": argv, "via": "<id>" }`. `via` names a row that mise installs, and the engine runs the step through `mise x` on that row's specs. `postRemove` takes back what `postInstall` put into a tool that another row can keep, such as the rails gem in ruby. One judge checks both lists.
+- `launch`, `postInstall.exec`, `postInstall.mise`, `postRemove.exec` and `postRemove.mise`: Argument arrays. They are never shell strings. An argument can be `{ "home": ".local/bin" }` where a command needs an absolute path below the user's home directory.
 - `buildEnv`: Environment variables for install-time commands.
 - `settings`: Mise settings the engine applies before install. The engine adds each item of a list value with `mise settings add`, so it keeps the items other rows added, and sets any other value with `mise settings set`.
 - `channels`: Release streams. The engine merges a selected option into the row's mise spec.
@@ -86,8 +87,8 @@ Database ports must bind to `127.0.0.1`. A row cannot publish a database on all 
 
 - `list --json`: The state of every row this machine builds on, and the tools of the global mise config that no row declares. A row reports `installed`, `version`, `origin` and the `actions` the other verbs accept now. `origin` is `mise`, `package` (a package manager owns the command), `managedBy` (a package owns the row's `managedBy` command), `installer`, `container` or `foreign`. The list runs one `mise ls --json` and one `mise ls --global --json`.
 - `install <id>`: The row's distribution packages through `vgsh pkg run install`, then its mise settings, then `mise use -g` of each spec it requires and of its tools or package, or its named installer, then its `postInstall` steps. The engine then checks the row's `present` probe. `--channel <c>` picks a release channel.
-- `update <id>`: `mise up` over the row's mise keys. A row whose `present` probe fails after the update is installed again with `mise use -g --force` and its `buildEnv`.
-- `remove <id>`: Install in reverse. It removes each tool or package that no other installed row declares, runs the installer's own uninstall, deletes what the row's `home` probe names, and removes the packages that no other installed row lists. A database row removes its container.
+- `update <id>`: `mise up` over the row's mise keys. A row whose `present` probe fails after the update is installed again with `mise use -g --force` and its `buildEnv`. Then the row's `postInstall` steps run again. Each step installs the current release of what it adds, so rails and phoenix follow the new ruby and elixir.
+- `remove <id>`: Install in reverse. It runs the row's `postRemove` steps, then removes each tool or package that no other installed row declares, runs the installer's own uninstall, deletes what the row's `home` probe names, and removes the packages that no other installed row lists. A database row removes its container.
 - `update --mise <key>` and `remove --mise <key>`: The same for a tool that only the owner's global mise config declares. The engine never installs one, so the owner's stowed config stays the source of truth.
 - `launchers refresh|remove`: Write or delete the launchers in `~/.local/bin`.
 
@@ -95,7 +96,7 @@ Install, update and remove run only in a terminal and never in a process the she
 
 The named installers download the upstream script to a temporary file and run it with `sh`. No shell string passes through the engine. `rustup` removes itself with `rustup self uninstall -y`. The `opam` binary that its installer puts in `/usr/local/bin` stays after a removal, because only root can delete it.
 
-A `rails` row, or any row whose `present` probe is a command, reports `present=remains` after a removal when a tool that another installed row keeps still provides the command.
+A row whose `present` probe still holds after a removal reports `present=remains`: something VGS did not install provides it.
 
 ## Launchers
 
