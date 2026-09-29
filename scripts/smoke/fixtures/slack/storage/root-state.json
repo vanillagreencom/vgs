@@ -1,0 +1,26 @@
+{
+ "workspaces": {
+  "T0ACME": {
+   "id": "T0ACME",
+   "name": "Acme Corp",
+   "domain": "acme",
+   "url": "https://acme.slack.com/",
+   "order": 0,
+   "icon": {
+    "image_68": "https://avatars.slack-edge.com/fixture/acme_68.png",
+    "image_88": "https://avatars.slack-edge.com/fixture/acme_88.png"
+   }
+  },
+  "T0GLOBEX": {
+   "id": "T0GLOBEX",
+   "name": "Globex",
+   "domain": "globex",
+   "url": "https://globex.slack.com/",
+   "order": 1,
+   "icon": {
+    "image_68": "https://avatars.slack-edge.com/fixture/globex_68.png",
+    "image_88": "https://avatars.slack-edge.com/fixture/globex_88.png"
+   }
+  }
+ }
+}

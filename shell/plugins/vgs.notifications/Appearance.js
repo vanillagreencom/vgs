@@ -149,6 +149,29 @@ var TOKENS = {
         exitScale: share(0.3)
     },
 
+    // The people a notification names, as overlapping round faces in the
+    // icon slot: one alone at the icon's size, several smaller, each ringed
+    // in the glass so the ones under it stay apart, and a "+N" chip last.
+    face: {
+        small: length(26),
+        overlap: length(10),
+        ring: color("{glass.base}"),
+        ringWidth: length(2),
+        fill: ink(0.16),
+        chip: ink(0.26),
+        initials: { size: length(15), weight: weight(600) },
+        initialsSmall: { size: length(10), weight: weight(600) }
+    },
+
+    // The workspace a summary names, as its small rounded icon before it.
+    badge: {
+        size: length(16),
+        radius: length(4),
+        gap: length(6),
+        // Under the icon, which covers it.
+        fill: ink(0)
+    },
+
     // The hover actions: pills at the right end, over a fade of the glass so
     // the text under them does not collide with them.
     tray: {

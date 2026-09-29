@@ -33,6 +33,10 @@ lent_notes() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.std
 note_shortcuts() { hypr globalshortcuts | python3 -c 'import sys; print(sum(1 for line in sys.stdin if "vgs.notifications:inbox" in line))'; }
 
 expect "the notifications start disabled in the sandbox" False plugin_enabled vgs.notifications
+# A synthetic Slack under the sandbox's configuration, in place before the
+# service starts and reads its workspace list.
+mkdir -p -- "$home/.config/Slack"
+cp -R -- "$repo/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
 expect "enabling the notifications is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the notification service is built" True record_exists vgs.notifications
 expect_poll "the service registered its shortcut, IPC target and subscriber and holds no layer" '[["vgs.notifications:inbox"], ["vgs.notifications"], ["vgs.notifications"], []]' lent_notes
@@ -219,6 +223,24 @@ expect_poll "the card with its image draws it" True shows_icon Pictured
 unpictured_key="$(key_of Unpictured)"
 expect "no copy exists for the missing image" False test_file "$note_images/$unpictured_key-image"
 expect_poll "the stored entry with a missing image keeps no image" '""' stored_image "$unpictured_key"
+
+# A sender a NotificationLogic rule reads: Slack's titles, over the
+# synthetic Slack. Its workspace list names acme, whose icon its cache
+# holds, and globex, whose icon it does not.
+card_value() { ipc smoke layerItems vgs.notifications NotificationCard "summary,$2" | python3 -c 'import json,sys; print(next((json.dumps(v[sys.argv[2]]) for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), "none"))' "$1" "$2"; }
+slack_icon="$home/.cache/vgs/notifications/workspaces/slack/T0ACME-0"
+notify Slack 0 "[acme] from Ada Lovelace" "Did you see the notes?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "a Slack direct message draws its workspace's icon" true card_value "[acme] from Ada Lovelace" showsBadge
+expect "the icon is the copy out of Slack's cache" "\"file://$slack_icon\"" card_value "[acme] from Ada Lovelace" workspaceIcon
+expect "the copy is the cached image's body" "370 89504e470d0a1a0a" bash -c 'printf "%s %s\n" "$(stat -c %s -- "$1")" "$(od -An -tx1 -N8 -- "$1" | tr -d " ")"' _ "$slack_icon"
+expect "the workspace's name gives way to its icon" '"from Ada Lovelace"' card_value "[acme] from Ada Lovelace" title
+expect "a direct message shows its sender's face" '{"rule": "slack", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
+notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
+expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
+notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "a workspace with no cached icon keeps its name" '"[globex] in eng"' card_value "[globex] in eng" title
+expect "and draws no icon" false card_value "[globex] in eng" showsBadge
 
 # A full stack lets the oldest non-critical toast go for a new one.
 on_screen() { note_status onScreen; }

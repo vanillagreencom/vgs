@@ -75,6 +75,30 @@ Item {
         onReadyChanged: root.start()
     }
 
+    // One per NotificationLogic rule that keeps a workspace list.
+    Variants {
+        id: workspaceSources
+        model: Logic.workspaceRuleIds()
+        WorkspaceIcons {}
+    }
+
+    // The icon file URL of a workspace a rule's sender named, or "".
+    function workspaceIcon(ruleId, workspace) {
+        if (workspace === "") return "";
+        for (const source of workspaceSources.instances)
+            if (source.ruleId === ruleId) return source.iconFor(workspace);
+        return "";
+    }
+
+    // A notification arrived or changed: a workspace its rule does not yet
+    // hold an icon for sends that rule's list to be read again.
+    function wantWorkspace(entry) {
+        const enrichment = Logic.enrich(entry.app, entry.desktopEntry, entry.summary, entry.body);
+        if (enrichment === null || enrichment.workspace === "") return;
+        for (const source of workspaceSources.instances)
+            if (source.ruleId === enrichment.rule) source.want(enrichment.workspace);
+    }
+
     Component {
         id: stackComponent
         Stack { service: root }
@@ -193,6 +217,7 @@ Item {
         const fields = fieldsOf(n);
         if (fields === null) return;
         const entry = Logic.entryOf(fields, Date.now(), k => root.taken(k));
+        wantWorkspace(entry);
         if (store.dnd && !Logic.bypassesSilence(fields.appName, fields.urgency)) {
             // Not tracked, so the server discards it at once.
             if (Logic.isEphemeral(fields.appName, fields.transient)) return;
@@ -280,6 +305,7 @@ Item {
         for (const role of Logic.ENTRY_ROLES) current[role] = row[role];
         const updated = Logic.updatedEntry(current, fields);
         if (!Logic.entryChanged(current, updated)) return;
+        wantWorkspace(updated);
         for (const role of Logic.ENTRY_ROLES) rowModel.setProperty(at, role, updated[role]);
         const stored = Logic.persistable(updated, store.imagesDir);
         store.copy(stored.copies, null);

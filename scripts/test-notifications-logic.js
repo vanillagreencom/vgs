@@ -3,8 +3,10 @@
 // NotificationLogic.js, under node: the body a card may render, Silence,
 // lifetimes, entries and their image copies, the state file's judge, what a
 // restart restores, the history's and the panel's limits, which toast a
-// full stack lets go, the hover actions, the sender's window and the paused
-// and running clocks. Every expected value is written out by hand.
+// full stack lets go, the hover actions, the sender's window, the paused
+// and running clocks, and the per-application rules that read a sender's
+// workspace, people and workspace icons. Every expected value is written
+// out by hand.
 //
 // The controls at the end edit a copy of the logic, one rule at a time, and
 // require this suite to fail on each copy.
@@ -69,6 +71,24 @@ const STATE_REFUSED = [
     ["a remaining time that is no number", stateText({ live: [stored(5, 1, { remaining: null })] }), "live.0.remaining want=number"],
     ["a clock both running and paused", stateText({ live: [stored(5, 1, { deadline: 9, remaining: 3 })] }), "live.0 deadline and remaining both set"],
     ["a key twice", stateText({ live: [stored(5, 1)], history: [stored(5, 1)] }), "history.0.key duplicate"]
+];
+
+// Senders a rule reads, in the title forms Slack's web client builds:
+// [label, app, desktop entry, summary, body, what the card draws].
+const ENRICHED = [
+    ["a direct message", "Slack", "slack", "[acme] from Ada Lovelace", "Lunch?", { rule: "slack", workspace: "acme", title: "from Ada Lovelace", faces: ["Ada Lovelace"], more: 0 }],
+    ["a channel message", "Slack", "slack", "[acme] in eng-core", "Grace Hopper (Navy): shipped", { rule: "slack", workspace: "acme", title: "in eng-core", faces: ["Grace Hopper (Navy)"], more: 0 }],
+    ["a channel message with no sender", "Slack", "slack", "[acme] in eng-core", "shipped", { rule: "slack", workspace: "acme", title: "in eng-core", faces: [], more: 0 }],
+    ["a group message, sender first and once", "Slack", "slack", "[acme] in ada, grace, alan, edsger, barbara", "Grace: hi all", { rule: "slack", workspace: "acme", title: "in ada, grace, alan, edsger, barbara", faces: ["Grace", "ada", "alan"], more: 2 }],
+    ["a group message of three", "Slack", "slack", "[acme] in ada, grace", "alan: hi", { rule: "slack", workspace: "acme", title: "in ada, grace", faces: ["alan", "ada", "grace"], more: 0 }],
+    ["one workspace, a direct message", "Slack", "slack", "New message from Ada", "hi", { rule: "slack", workspace: "", title: "New message from Ada", faces: ["Ada"], more: 0 }],
+    ["one workspace, a thread", "Slack", "slack", "New thread message in eng", "Ada: hi", { rule: "slack", workspace: "", title: "New thread message in eng", faces: ["Ada"], more: 0 }],
+    ["past Do Not Disturb", "Slack", "slack", "Ada is trying to reach you", "urgent", { rule: "slack", workspace: "", title: "Ada is trying to reach you", faces: ["Ada"], more: 0 }],
+    ["an unknown title under a workspace", "Slack", "slack", "[acme] Reminder: standup", "", { rule: "slack", workspace: "acme", title: "Reminder: standup", faces: [], more: 0 }],
+    ["an unknown title", "Slack", "slack", "Reminder: standup", "", null],
+    ["matched by the desktop entry alone", "Electron", "slack", "[acme] from Ada", "", { rule: "slack", workspace: "acme", title: "from Ada", faces: ["Ada"], more: 0 }],
+    ["matched by the flatpak's name", "com.slack.Slack", "", "[acme] from Ada", "", { rule: "slack", workspace: "acme", title: "from Ada", faces: ["Ada"], more: 0 }],
+    ["another sender unchanged", "Chat", "chat", "[acme] from Ada", "", null]
 ];
 
 function verify(logic) {
@@ -200,6 +220,49 @@ function verify(logic) {
     // Silence over IPC.
     for (const [arg, current, want] of [["on", false, { ok: true, dnd: true }], ["OFF", true, { ok: true, dnd: false }], ["toggle", true, { ok: true, dnd: false }], ["", true, { ok: true, dnd: true }], ["loud", false, { ok: false }]])
         same(logic.silenceArgument(arg, current), want, "silence " + JSON.stringify(arg));
+
+    // Enrichment: what a card draws for a sender a rule reads.
+    for (const [label, app, entry, summary, body, want] of ENRICHED)
+        same(logic.enrich(app, entry, summary, body), want, "enrich: " + label);
+    for (const [name, want] of [["Ada Lovelace", "AL"], ["ada", "A"], ["Ada (she/her)", "A"], ["Grace B. Hopper (Navy)", "GH"], ["@ada", "A"], ["\u{1F600} Bot", "\u{1F600}B"], ["", "?"], ["(x)", "?"]])
+        assert.equal(logic.initialsOf(name), want, "initials of " + JSON.stringify(name));
+    same(logic.workspaceRuleIds(), ["slack"]);
+    assert.equal(logic.enricherById("slack").id, "slack");
+    assert.equal(logic.enricherById("none"), null);
+
+    // Slack's workspace list: team-id order, the larger icon first, unsafe
+    // ids and nameless entries skipped and counted.
+    const index = { workspaces: {
+        T2: { domain: "globex", name: "Globex", icon: { image_68: "https://a/g68.png", image_88: "https://a/g88.png" } },
+        T1: { domain: "acme", name: "Acme Corp", icon: { image_68: "https://a/a68.png" } },
+        "../x": { domain: "evil", name: "Evil" },
+        T3: { domain: "", name: "" },
+        T4: { domain: "initech", icon: { image_88: "http://a/plain.png", image_68: "https://a/has space.png" } }
+    } };
+    same(logic.slackWorkspaces(JSON.stringify(index)), { ok: true, skipped: 2, workspaces: [
+        { id: "T1", names: ["acme", "Acme Corp"], urls: ["https://a/a68.png"] },
+        { id: "T2", names: ["globex", "Globex"], urls: ["https://a/g88.png", "https://a/g68.png"] },
+        { id: "T4", names: ["initech"], urls: [] }
+    ] });
+    same(logic.slackWorkspaces("{"), { ok: false, error: "not-json" });
+    same(logic.slackWorkspaces("{\"workspaces\": []}"), { ok: false, error: "workspaces want=object" });
+    const many = { workspaces: {} };
+    for (let i = 10; i < 30; i++) many.workspaces["T" + i] = { domain: "w" + i };
+    same(logic.slackWorkspaces(JSON.stringify(many)).workspaces.map(w => w.id), Array.from({ length: 16 }, (_, i) => "T" + (10 + i)), "the list is cut at its limit");
+    const listed = logic.slackWorkspaces(JSON.stringify(index)).workspaces;
+    same(logic.workspaceCopies(listed, "/c"), [{ to: "/c/T1-0", url: "https://a/a68.png" }, { to: "/c/T2-0", url: "https://a/g88.png" }, { to: "/c/T2-1", url: "https://a/g68.png" }]);
+    const icons = logic.workspaceIconMap(listed, "/c", ["/c/T2-1", "/c/T9-0"]);
+    same(icons, { acme: "", "acme corp": "", globex: "file:///c/T2-1", initech: "" }, "a workspace answers to its first copied icon, by domain and by name");
+    same(logic.workspaceIconMap([{ id: "A", names: ["x"], urls: ["u"] }, { id: "B", names: ["X"], urls: ["u"] }], "/c", ["/c/B-0"]), { x: "" }, "a shared name keeps the first workspace");
+    // Reading the list again: [label, workspace, last read, now, want].
+    for (const [label, workspace, loadedAt, now, want] of [
+        ["one with an icon", "Globex", 0, 999999, false],
+        ["one the list does not name", "hooli", 1000, 61000, true],
+        ["one the list does not name, read a moment ago", "hooli", 1000, 60999, false],
+        ["one with no icon", "acme", 0, 60000, true],
+        ["no workspace", "", 0, 999999, false]
+    ])
+        assert.equal(logic.workspaceReload(icons, workspace, loadedAt, now), want, "reload for " + label);
 }
 verify(load(file));
 
@@ -233,7 +296,18 @@ const CONTROLS = [
     ["evict non-critical first", "if (rows[i].urgency !== URGENCY.critical) return rows[i].key;", ""],
     ["Show without actions", 'if (list.length === 0 && canFocus) list.push({ id: "focus", label: "Show" });', ""],
     ["charge a stopping clock", "next[keys[i]] = { remaining: Math.max(0, c.remaining - (now - c.since)), since: null };", "next[keys[i]] = { remaining: c.remaining, since: null };"],
-    ["paused clocks wait", "if (c.since === null) continue;", ""]
+    ["paused clocks wait", "if (c.since === null) continue;", ""],
+    ["rule by desktop entry", 'var wanted = [String(desktopEntry || "").toLowerCase(), String(app || "").toLowerCase()];\n    for (var r = 0;', 'var wanted = [String(app || "").toLowerCase()];\n    for (var r = 0;'],
+    ["faces cap", "faces: read.people.slice(0, FACES_MAX),", "faces: read.people,"],
+    ["workspace prefix", "workspace = bracket[1];\n        rest = bracket[2];", "workspace = bracket[1];"],
+    ["group members", 'var members = within[1].indexOf(",") === -1 ? [] :', "var members = true ? [] :"],
+    ["sender once", "if (sender === \"\" || fold(members[i]) !== fold(sender)) people.push(members[i]);", "people.push(members[i]);"],
+    ["initials skip a parenthesis", '.replace(/\\([^)]*\\)/g, " ")', ""],
+    ["safe team id", "if (!/^[A-Za-z0-9]{1,32}$/.test(ids[i]) || names.length === 0) {", "if (names.length === 0) {"],
+    ["larger icon first", "var urls = [icon.image_88, icon.image_68]", "var urls = [icon.image_68, icon.image_88]"],
+    ["workspace limit", "for (var i = 0; i < ids.length && out.length < WORKSPACES_MAX; i++) {", "for (var i = 0; i < ids.length; i++) {"],
+    ["first copied icon", "if (copied.indexOf(to) !== -1) file = \"file://\" + to;", "file = \"file://\" + to;"],
+    ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"]
 ];
 
 const source = fs.readFileSync(file, "utf8");
@@ -254,4 +328,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-notifications-logic: ok bodies=${BODIES.length} states=${STATE_REFUSED.length} controls=${CONTROLS.length}`);
+console.log(`test-notifications-logic: ok bodies=${BODIES.length} states=${STATE_REFUSED.length} enriched=${ENRICHED.length} controls=${CONTROLS.length}`);

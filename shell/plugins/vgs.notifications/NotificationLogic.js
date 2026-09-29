@@ -6,7 +6,8 @@
 // how long a toast lives, the state file's shape and its judge, the image
 // copies an entry owns, what a restart restores, what the history keeps and
 // the Inbox shows, which toast a full stack lets go, which actions a card
-// offers, and the paused and running clocks of the toasts on screen.
+// offers, the paused and running clocks of the toasts on screen, and the
+// per-application rules that read a sender's workspace and people.
 
 // The history keeps the newest HISTORY_MAX notifications; the Inbox and the
 // History panel show at most PANEL_ROWS_MAX of them. LIVE_MAX toasts show at
@@ -120,6 +121,190 @@ function summaryStartsWithGlyph(summary) {
         offset++;
     }
     return spaces >= 2;
+}
+
+// -------------------------------------------------------- enrichment
+
+// A card stacks at most FACES_MAX faces; the people past them are one
+// "+N" chip.
+var FACES_MAX = 3;
+// A sender's workspace list is read up to WORKSPACES_MAX workspaces, so the
+// icon copies taken from it stay bounded.
+var WORKSPACES_MAX = 16;
+// A workspace the list does not name, or names with no icon, is looked up
+// again on a later notification at most this often, in milliseconds.
+var WORKSPACE_RELOAD_GAP = 60000;
+
+// The per-application rules that read who wrote and where from a sender's
+// own text. A rule matches a notification whose desktop entry or
+// application name, case folded, is one of its `names`. `read(summary,
+// body)` answers { workspace, title, people }, or null for text in no shape
+// it knows, which the card draws as it came. `workspaces`, when set, is
+// where the sender's own client keeps its workspace list and the icons it
+// downloaded, under XDG_CONFIG_HOME, and the reader of that list.
+var ENRICHERS = [
+    {
+        id: "slack",
+        names: ["slack", "com.slack.slack"],
+        read: readSlack,
+        workspaces: { index: "Slack/storage/root-state.json", cache: "Slack/Cache/Cache_Data", read: slackWorkspaces }
+    }
+];
+
+function enricherFor(app, desktopEntry) {
+    var wanted = [String(desktopEntry || "").toLowerCase(), String(app || "").toLowerCase()];
+    for (var r = 0; r < ENRICHERS.length; r++)
+        for (var n = 0; n < ENRICHERS[r].names.length; n++)
+            if (wanted.indexOf(ENRICHERS[r].names[n]) !== -1) return ENRICHERS[r];
+    return null;
+}
+
+function enricherById(id) {
+    for (var r = 0; r < ENRICHERS.length; r++)
+        if (ENRICHERS[r].id === id) return ENRICHERS[r];
+    return null;
+}
+
+// The ids of the rules that keep a workspace list.
+function workspaceRuleIds() {
+    return ENRICHERS.filter(function (r) { return !!r.workspaces; }).map(function (r) { return r.id; });
+}
+
+// What a card draws for a notification a rule reads: the rule, the
+// workspace the summary names or "", the summary without that workspace,
+// the first FACES_MAX people it names and how many more there are. Null
+// when no rule matches or the rule does not know the text.
+function enrich(app, desktopEntry, summary, body) {
+    var rule = enricherFor(app, desktopEntry);
+    if (rule === null) return null;
+    var read = rule.read(String(summary || ""), String(body || ""));
+    if (read === null) return null;
+    return {
+        rule: rule.id,
+        workspace: read.workspace,
+        title: read.title,
+        faces: read.people.slice(0, FACES_MAX),
+        more: Math.max(0, read.people.length - FACES_MAX)
+    };
+}
+
+function fold(name) {
+    return String(name).trim().toLowerCase();
+}
+
+// The sender a message body opens with, as "Name: text", or "".
+function bodySender(body) {
+    var match = /^([^:\n<>]{1,80}): \S/.exec(body);
+    return match ? match[1].trim() : "";
+}
+
+// Slack's titles, as its web client (Slack 4.52.162, read on 2026-09-28)
+// builds them: with more than one workspace signed in, "[<domain>] from
+// <name>" for a direct message and "[<domain>] in <conversation>" for
+// anything else; with one, "New message from <name>", "New message in
+// <conversation>" and "New thread message in <conversation>"; and "<name>
+// is trying to reach you" for a direct message past Do Not Disturb. A group
+// direct message's conversation is its members' names, comma separated,
+// which no channel name holds. The body of anything but a direct message
+// opens with its sender, "Name: text". Slack on Linux sends no image.
+function readSlack(summary, body) {
+    var workspace = "";
+    var rest = summary;
+    var bracket = /^\[([^\]\n]{1,80})\] (.+)$/.exec(summary);
+    if (bracket) {
+        workspace = bracket[1];
+        rest = bracket[2];
+    }
+    var direct = /^(?:New message )?from (.+)$/.exec(rest) || /^(.+) is trying to reach you$/.exec(rest);
+    if (direct) return { workspace: workspace, title: rest, people: [direct[1]] };
+    var within = /^(?:New (?:thread )?message )?in (.+)$/.exec(rest);
+    if (!within) return workspace === "" ? null : { workspace: workspace, title: rest, people: [] };
+    var sender = bodySender(body);
+    var members = within[1].indexOf(",") === -1 ? [] : within[1].split(",").map(function (n) { return n.trim(); }).filter(function (n) { return n !== ""; });
+    var people = sender === "" ? [] : [sender];
+    for (var i = 0; i < members.length; i++)
+        if (sender === "" || fold(members[i]) !== fold(sender)) people.push(members[i]);
+    return { workspace: workspace, title: rest, people: people };
+}
+
+// The one or two letters a face without an image shows: the first of the
+// first and the last word, a parenthesised part such as a pronoun or an
+// organisation left out.
+function initialsOf(name) {
+    var words = String(name || "").replace(/\([^)]*\)/g, " ").replace(/^[\s@#]+/, "").trim().split(/\s+/).filter(function (w) { return w !== ""; });
+    if (words.length === 0) return "?";
+    var first = Array.from(words[0])[0];
+    var last = words.length > 1 ? Array.from(words[words.length - 1])[0] : "";
+    return (first + last).toUpperCase();
+}
+
+// Slack's workspace list, storage/root-state.json: `workspaces` maps a team
+// id to { domain, name, icon: { image_68, image_88 } }, each icon an https
+// URL. Answers { ok: true, workspaces: [{ id, names, urls }], skipped } in
+// team-id order, at most WORKSPACES_MAX, the larger icon first; an entry
+// with no safe id or no name is skipped and counted. { ok: false, error }
+// names why the file is not a list.
+function slackWorkspaces(text) {
+    var parsed;
+    try {
+        parsed = JSON.parse(String(text));
+    } catch (e) {
+        return { ok: false, error: "not-json" };
+    }
+    if (!isPlainObject(parsed) || !isPlainObject(parsed.workspaces)) return { ok: false, error: "workspaces want=object" };
+    var out = [];
+    var skipped = 0;
+    var ids = Object.keys(parsed.workspaces).sort();
+    for (var i = 0; i < ids.length && out.length < WORKSPACES_MAX; i++) {
+        var w = parsed.workspaces[ids[i]];
+        var names = isPlainObject(w) ? [w.domain, w.name].filter(function (n) { return typeof n === "string" && n.trim() !== ""; }) : [];
+        if (!/^[A-Za-z0-9]{1,32}$/.test(ids[i]) || names.length === 0) {
+            skipped++;
+            continue;
+        }
+        var icon = isPlainObject(w.icon) ? w.icon : {};
+        var urls = [icon.image_88, icon.image_68].filter(function (u) { return typeof u === "string" && /^https:\/\/[^\s]+$/.test(u); });
+        out.push({ id: ids[i], names: names, urls: urls });
+    }
+    return { ok: true, workspaces: out, skipped: skipped };
+}
+
+// The helper's copy pairs for a workspace list: each icon URL to
+// <dir>/<team id>-<n>, n its place among the workspace's URLs.
+function workspaceCopies(workspaces, dir) {
+    var pairs = [];
+    for (var i = 0; i < workspaces.length; i++)
+        for (var n = 0; n < workspaces[i].urls.length; n++)
+            pairs.push({ to: dir + "/" + workspaces[i].id + "-" + n, url: workspaces[i].urls[n] });
+    return pairs;
+}
+
+// Workspace name, case folded -> the file URL of its first icon the helper
+// copied, or "" when it copied none. Each workspace answers to its domain
+// and its name; a name two workspaces share keeps the first.
+function workspaceIconMap(workspaces, dir, copied) {
+    var map = {};
+    for (var i = 0; i < workspaces.length; i++) {
+        var file = "";
+        for (var n = 0; n < workspaces[i].urls.length && file === ""; n++) {
+            var to = dir + "/" + workspaces[i].id + "-" + n;
+            if (copied.indexOf(to) !== -1) file = "file://" + to;
+        }
+        for (var k = 0; k < workspaces[i].names.length; k++) {
+            var key = fold(workspaces[i].names[k]);
+            if (!hasOwn(map, key)) map[key] = file;
+        }
+    }
+    return map;
+}
+
+// Whether a notification naming `workspace` should read the list again: the
+// list does not name it or names it with no icon, and the last read began
+// WORKSPACE_RELOAD_GAP or longer ago.
+function workspaceReload(map, workspace, loadedAt, now) {
+    var key = fold(workspace);
+    if (key === "" || (hasOwn(map, key) && map[key] !== "")) return false;
+    return now - loadedAt >= WORKSPACE_RELOAD_GAP;
 }
 
 // ----------------------------------------------------------- Silence

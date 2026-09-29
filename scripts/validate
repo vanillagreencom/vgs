@@ -96,7 +96,7 @@ rows=(
   "logic|launcher menu model|node scripts/test-launcher-model.js|shell/plugins/vgs.launcher/MenuModel.js shell/plugins/vgs.launcher/menu.json scripts/qml-library.js"
   "cli|launcher file search helper|scripts/test-launcher-file-search.sh|shell/plugins/vgs.launcher/file-search.sh"
   "logic|notifications logic|node scripts/test-notifications-logic.js|shell/plugins/vgs.notifications/NotificationLogic.js scripts/qml-library.js"
-  "cli|notifications image helper|scripts/test-notifications-images.sh|shell/plugins/vgs.notifications/images.sh"
+  "cli|notifications image helper|scripts/test-notifications-images.sh|shell/plugins/vgs.notifications/images.sh scripts/smoke/fixtures/slack/*"
   "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
   "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js scripts/qml-library.js"

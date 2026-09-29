@@ -36,6 +36,17 @@ While a panel is open the toasts stay and do not expire, a press outside the sta
 
 Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-action` sender are not ported: nothing in this shell sends them.
 
+## Senders read by a rule
+
+A per-application rule in `NotificationLogic.js` (`ENRICHERS`) reads who wrote and where from a sender's own text. Other senders draw as above.
+
+- **Faces.** The people a notification names show in the icon's place as round faces: the notification's own image on the first, the person's initials otherwise. One person fills the icon slot. A group shows at most three smaller faces overlapping, the sender first, and a "+N" chip for the rest.
+- **Workspace icon.** A workspace the summary names gives way to that workspace's icon, a small rounded square before the rest of the summary. With no icon, the summary keeps the name as text.
+
+Slack is the one rule. Slack on Linux sends no image, so its faces are initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in. The workspace icons come from Slack's own client, read-only and with no credentials: the list of workspaces in `~/.config/Slack/storage/root-state.json`, and the icon images Slack's disk cache already holds, `~/.config/Slack/Cache/Cache_Data`. `images.sh cached` copies each icon out of the cache into `$XDG_CACHE_HOME/vgs/notifications/workspaces/slack/`, at most two for each of 16 workspaces. The service reads the list when it starts, and again when a notification names a workspace the list lacks or holds with no icon, at most once a minute. A workspace whose icon Slack has not cached keeps its name. The Flatpak build of Slack keeps its configuration elsewhere and is not read.
+
+Real faces for Slack would need a Slack user token and its `users.info` call. That is not built.
+
 ## State
 
 `$XDG_STATE_HOME/vgs/notifications/` (`~/.local/state/vgs/notifications/`) holds `state.json`, with Silence, the last Mark read, the toasts on screen and the history, and `images/`, the copies of the images the stored notifications show, since a sender deletes its own files once a notification closes. The history keeps the newest 100 notifications and a panel shows at most 40 of them. A sender's text is stored up to 512 characters of summary and 4096 of body, and an image up to 5 MiB, so the directory holds at most 120 entries and two images each.

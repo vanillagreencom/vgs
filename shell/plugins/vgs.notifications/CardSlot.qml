@@ -26,6 +26,7 @@ Item {
     required property string summary
     required property string body
     required property string image
+    required property string desktopEntry
     required property int urgency
     required property string origin
     required property string leaving
@@ -147,6 +148,8 @@ Item {
         summary: slot.summary
         body: slot.body
         image: slot.image
+        desktopEntry: slot.desktopEntry
+        workspaceIcon: slot.service !== null && card.enrichment !== null ? slot.service.workspaceIcon(card.enrichment.rule, card.enrichment.workspace) : ""
         actions: slot.actions
         showActions: card.hovered && slot.leaving === ""
         onActionTriggered: id => slot.service.runAction(slot.key, id)

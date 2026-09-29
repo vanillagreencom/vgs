@@ -9,4 +9,4 @@ Validation and measurement scripts. A script here reads the repository and the n
 
 - `sandbox-shots.sh` captures the sandbox's surfaces as PNGs under `tmp/` for visual evidence. It is a runner like `qml-smoke.sh`; its capture guards in `smoke/shot.sh` have their control.
 - Smoke rows live under `scripts/smoke/rows/`. The runner fixes their order because later rows use earlier state. Only `scripts/smoke/harness.sh` owns the sandbox lifetime.
-- Smoke fixtures live under `scripts/smoke/fixtures/plugins/`. Offline validation checks every fixture. Runtime refusal fixtures belong to the rows that assert their refusal.
+- Smoke fixtures live under `scripts/smoke/fixtures/plugins/`. Offline validation checks every fixture. Runtime refusal fixtures belong to the rows that assert their refusal. `scripts/smoke/fixtures/slack/` is not a plugin: it is a synthetic Slack configuration, a workspace list and one disk-cache entry, that the notifications row and `sandbox-shots.sh` place under the sandbox's configuration.

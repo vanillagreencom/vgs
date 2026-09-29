@@ -1,13 +1,17 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Widgets
 import "NotificationLogic.js" as Logic
 
 // One notification as a glass capsule: its image or application icon, its
-// summary and its body, and the hover actions over its right end. It draws
-// no fill of its own: the GlassSurface under it paints the glass and the
-// slot drives its size, its content fade and its lifetime. It holds no
-// notification object, only the values it draws.
+// summary and its body, and the hover actions over its right end. A sender
+// a NotificationLogic rule reads shows the people it names as faces in the
+// icon's place, and the workspace its summary names as that workspace's
+// icon, when there is one, in place of the name. It draws no fill of its
+// own: the GlassSurface under it paints the glass and the slot drives its
+// size, its content fade and its lifetime. It holds no notification
+// object, only the values it draws.
 Item {
     id: card
 
@@ -17,6 +21,9 @@ Item {
     property string summary: ""
     property string body: ""
     property string image: ""
+    property string desktopEntry: ""
+    // The file URL of the icon of the workspace `enrichment` names, or "".
+    property string workspaceIcon: ""
     // The slot fades the content during its morph. The content keeps its
     // full-size layout and stays centred while the card is narrower, so the
     // text never reflows.
@@ -39,6 +46,13 @@ Item {
     readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
     readonly property real padY: singleLine ? look.card.padYSingle : look.card.padY
     readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
+    // NotificationLogic.enrich's reading of this sender, or null.
+    readonly property var enrichment: Logic.enrich(app, desktopEntry, summary, body)
+    readonly property bool showsFaces: enrichment !== null && enrichment.faces.length > 0
+    readonly property bool showsBadge: enrichment !== null && enrichment.workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
+    readonly property bool showsSlot: showsFaces || showsIcon
+    // The summary as drawn: without the workspace name its icon replaces.
+    readonly property string title: showsBadge ? enrichment.title : summary
 
     // An icon value as an image source: a URL as it is, a path as a file
     // URL, a themed name through the icon theme, and nothing for a name the
@@ -73,18 +87,28 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: card.fullWidth - 2 * Math.max(card.look.card.inset, card.inset)
         opacity: card.contentOpacity
-        spacing: card.showsIcon ? card.look.card.gapIcon : 0
+        spacing: card.showsSlot ? card.look.card.gapIcon : 0
 
         Item {
             id: iconSlot
-            Layout.preferredWidth: card.showsIcon ? card.look.card.icon : 0
-            Layout.preferredHeight: card.showsIcon ? card.look.card.icon : 0
+            Layout.preferredWidth: card.showsFaces ? faceStack.implicitWidth : card.showsIcon ? card.look.card.icon : 0
+            Layout.preferredHeight: card.showsFaces ? faceStack.implicitHeight : card.showsIcon ? card.look.card.icon : 0
             Layout.alignment: Qt.AlignVCenter
-            visible: card.showsIcon
+            visible: card.showsSlot
+
+            Faces {
+                id: faceStack
+                look: card.look
+                visible: card.showsFaces
+                names: card.showsFaces ? card.enrichment.faces : []
+                more: card.showsFaces ? card.enrichment.more : 0
+                image: card.image
+            }
 
             Image {
                 id: iconImage
                 anchors.fill: parent
+                visible: !card.showsFaces
                 source: card.iconInSummary ? "" : card.iconSource
                 sourceSize.width: card.look.card.icon * Screen.devicePixelRatio
                 sourceSize.height: card.look.card.icon * Screen.devicePixelRatio
@@ -99,22 +123,60 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             spacing: card.look.card.lineGap
 
-            Text {
-                // The specification makes the summary one line of plain
-                // text, so it is never read as markup.
-                textFormat: Text.PlainText
+            RowLayout {
                 Layout.fillWidth: true
                 visible: card.summary.length > 0
-                text: card.summary
-                color: card.look.text.foreground
-                font.family: card.look.font.family
-                font.pixelSize: card.look.text.title.size
-                font.weight: card.look.text.title.weight
-                style: Text.Raised
-                styleColor: card.look.text.summaryShadow
-                wrapMode: Text.WordWrap
-                elide: Text.ElideRight
-                maximumLineCount: card.look.card.summaryLines
+                spacing: card.showsBadge ? card.look.badge.gap : 0
+
+                // The workspace's icon, level with the summary's first line.
+                // Its image loads while hidden, and the name gives way to it
+                // only once it has.
+                ClippingRectangle {
+                    Layout.preferredWidth: card.showsBadge ? card.look.badge.size : 0
+                    Layout.preferredHeight: card.look.badge.size
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: Math.max(0, (titleMetrics.height - card.look.badge.size) / 2)
+                    visible: card.showsBadge
+                    radius: card.look.badge.radius
+                    color: card.look.badge.fill
+
+                    Image {
+                        id: badgeImage
+                        anchors.fill: parent
+                        source: card.enrichment !== null && card.enrichment.workspace.length > 0 ? card.workspaceIcon : ""
+                        // The helper rewrites the same file when it reads
+                        // the workspace list again.
+                        cache: false
+                        sourceSize.width: card.look.badge.size * Screen.devicePixelRatio
+                        sourceSize.height: card.look.badge.size * Screen.devicePixelRatio
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        smooth: true
+                    }
+                }
+
+                Text {
+                    id: titleText
+                    // The specification makes the summary one line of plain
+                    // text, so it is never read as markup.
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: card.title
+                    color: card.look.text.foreground
+                    font.family: card.look.font.family
+                    font.pixelSize: card.look.text.title.size
+                    font.weight: card.look.text.title.weight
+                    style: Text.Raised
+                    styleColor: card.look.text.summaryShadow
+                    wrapMode: Text.WordWrap
+                    elide: Text.ElideRight
+                    maximumLineCount: card.look.card.summaryLines
+                }
+
+                FontMetrics {
+                    id: titleMetrics
+                    font: titleText.font
+                }
             }
 
             Text {
