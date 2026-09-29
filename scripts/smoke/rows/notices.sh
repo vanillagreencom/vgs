@@ -127,8 +127,11 @@ expect_poll "the notice holds the keyboard" true ipc smoke noticeFocused
 
 # The bar and the layer below take their own clicks; the dialog takes its
 # own. A press that passes through leaves nothing to wait for, so the
-# control's click on the title is followed by a second click beside the
-# dialog, whose count marks that the first has been delivered.
+# control's click on the title is followed by a click on the Tick widget:
+# the bar, the notice and the layer are all surfaces of the shell's one
+# Wayland connection, so the compositor delivers the presses in order, and
+# the Tick's press arriving proves the title's press arrived first. The
+# layer's count then still reads the one click beside the dialog.
 expect "the Tick widget is on the bar under the notice" True record_exists acme.tick
 tick_presses="$(read_tick presses)"
 tick_rect="$(ipc smoke instanceGeometry "$(bar_key)" acme.tick)"
@@ -142,8 +145,9 @@ expect_poll "a click on the notice surface beside the dialog reaches the layer b
 title_rect="$(ipc smoke noticeWindowGeometry title)"
 read -r title_x title_y < <(at_centre vgs:notice "$title_rect") || fail "the dialog's title was not measured"
 hover_click "$title_x" "$title_y" || fail "the click on the dialog's title failed"
-hover_click "$gap_x" "$gap_y" || fail "the marker click beside the dialog failed"
-expect_poll "control: a click on the dialog's title does not reach the layer below" "$((presses + 2))" read_layers presses
+hover_click "$tick_x" "$tick_y" || fail "the marker click on the Tick widget failed"
+expect_poll "the marker click on the Tick widget after the title's arrives" "$((tick_presses + 2))" read_tick presses
+expect "control: a click on the dialog's title does not reach the layer below" "$((presses + 1))" read_layers presses
 expect "a click on the dialog's title leaves the notice showing" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect "the layer under the notice is hidden" ok layered undraw
 expect "disabling the layers fixture under the notice is allowed" ok ipc shell setPluginEnabled acme.layers false
