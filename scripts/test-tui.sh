@@ -125,6 +125,30 @@ rm -f -- "$tmp/sudo-deny"
 run 'vgs_tui_sudo_session begin'
 check "an unknown session step is refused" test "$status:$(err_first)" == "2:vgs-tui: refused: sudo-session=begin"
 
+# The guard asks for nothing and drops the credential however the script
+# ends, keeping its exit status. guard_rows QUIET: every row against $LIB;
+# ok and FAIL lines unless QUIET is `quiet`; returns the failing rows.
+guard_rows() {
+  local row name after want_exit want_calls got red=0
+  # Rows: name | what runs after guard | exit | the sudo calls, space-delimited
+  for row in "an ended guard|vgs_tui_sudo_session end|0|-k" \
+    "a command that authorizes and fails under a guard|sudo /usr/bin/true; exit 7|7|/usr/bin/true -k" \
+    "a terminated guard|kill -TERM \$\$; sleep 5|143|-k" "an interrupted guard|kill -INT \$\$; sleep 5|130|-k"; do
+    IFS='|' read -r name after want_exit want_calls <<<"$row"
+    : >"$tmp/sudo"
+    run "vgs_tui_sudo_session guard; $after"
+    got="$(tr '\n' ' ' <"$tmp/sudo" | sed 's/ $//')" || got="unreadable"
+    if [[ $status == "$want_exit" && $got == "$want_calls" ]]; then
+      [[ $1 == quiet ]] || ok "$name exits $want_exit and drops the credential last"
+    else
+      red=$((red + 1))
+      [[ $1 == quiet ]] || fail "$name: exit=$status calls=[$got]"
+    fi
+  done
+  return "$red"
+}
+guard_rows loud || true
+
 # A nested run's session joins a live owner's: it drops nothing when it
 # ends or fails, so the owner's credential stays for its later steps, and
 # the owner's end drops it once. An owner pid naming no process starts a
@@ -271,6 +295,8 @@ control never-joins '&& kill -0 "$outer" 2>/dev/null; then' '&& false; then'
 check "the never-joins mutant fails a nested row" test "$(nested_rows quiet && echo green || echo red)" == red
 control joins-the-dead '&& kill -0 "$outer" 2>/dev/null; then' '; then'
 check "the joins-the-dead mutant fails a nested row" test "$(nested_rows quiet && echo green || echo red)" == red
+control unguarded 'guard) _vgs_tui_sudo_traps ;;' 'guard) ;;'
+check "the unguarded mutant fails a guard row" test "$(guard_rows quiet && echo green || echo red)" == red
 LIB="$lib"
 
 # The template's control: a copy that turns every confirm status into success.

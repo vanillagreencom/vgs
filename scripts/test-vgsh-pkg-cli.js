@@ -22,11 +22,14 @@ const PKG = path.join(repo, "bin", "vgsh-pkg");
 const VGSH = path.join(repo, "bin", "vgsh");
 
 // A tree at DIR holding bin/vgsh-pkg, bin/vgsh and the table as the texts
-// given, and the repository's own bin/lib, which holds the loader: `{ pkg,
-// vgsh }`.
+// given, and the repository's own bin/lib, which holds the loader, and the
+// shipped shell.json with the configuration judge a plan that elevates
+// reads: `{ pkg, vgsh }`.
 function makeTree(dir, texts) {
-    for (const sub of ["bin", path.join("shell", "Core")]) fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    for (const sub of ["bin", "config", path.join("shell", "Core"), path.join("shell", "Ui", "icons")]) fs.mkdirSync(path.join(dir, sub), { recursive: true });
     fs.symlinkSync(path.join(repo, "bin", "lib"), path.join(dir, "bin", "lib"));
+    for (const file of ["config/shell.json", "shell/Core/PluginLogic.js", "shell/Core/HyprlandLayer.js", "shell/Ui/icons/Lucide.js"])
+        fs.symlinkSync(path.join(repo, file), path.join(dir, file));
     fs.writeFileSync(path.join(dir, "shell", "Core", "PackageManagers.js"), texts.table);
     fs.writeFileSync(path.join(dir, "bin", "vgsh-pkg"), texts.pkg, { mode: 0o755 });
     fs.writeFileSync(path.join(dir, "bin", "vgsh"), texts.vgsh, { mode: 0o755 });
@@ -79,13 +82,22 @@ function verifyCli(texts, tmp) {
     expectCommand("present exits 0 when every command is found", run(scripts.pkg, ["present", "gum", "yay"]), 0, "{\"present\":[\"gum\",\"yay\"],\"missing\":[]}\n", "");
     expectCommand("present refuses a path", run(scripts.pkg, ["present", "/bin/sh"]), 2, "", "vgsh: refused: command=\"/bin/sh\"\n");
     expectCommand("plan prints the aur helper's argv", run(scripts.pkg, ["plan", "install", "aur", "gum-bin"]), 0,
-        "{\"manager\":\"aur\",\"binary\":\"yay\",\"action\":\"install\",\"elevate\":false,\"steps\":[[\"yay\",\"-S\",\"--needed\",\"--\",\"gum-bin\"]]}\n", "");
+        "{\"manager\":\"aur\",\"binary\":\"yay\",\"action\":\"install\",\"elevate\":false,\"steps\":[[\"yay\",\"-S\",\"--needed\",\"--\",\"gum-bin\"]],\"elevator\":null}\n", "");
     expectCommand("plan install without names is a bad invocation", run(scripts.pkg, ["plan", "install", "pacman"]), 2, "", "vgsh: refused: names=missing\n");
     expectCommand("plan upgrade with a name is a bad invocation", run(scripts.pkg, ["plan", "upgrade", "pacman", "gum"]), 2, "", "vgsh: refused: argument=gum\n");
     expectCommand("plan refuses an unknown action", run(scripts.pkg, ["plan", "sync", "pacman"]), 2, "", "vgsh: refused: action=sync\n");
     expectCommand("plan refuses a manager whose binary is absent", run(scripts.pkg, ["plan", "upgrade", "apt"]), 1, "", "vgsh: refused: manager=apt reason=absent binaries=apt-get\n");
     expectCommand("vgsh pkg reaches vgsh-pkg with its arguments", run(scripts.vgsh, ["pkg", "plan", "upgrade", "pacman"]), 0,
-        "{\"manager\":\"pacman\",\"binary\":\"pacman\",\"action\":\"upgrade\",\"elevate\":true,\"steps\":[[\"pacman\",\"-Syu\"]]}\n", "");
+        "{\"manager\":\"pacman\",\"binary\":\"pacman\",\"action\":\"upgrade\",\"elevate\":true,\"steps\":[[\"pacman\",\"-Syu\"]],\"elevator\":{\"ok\":false,\"error\":\"elevate=none candidates=sudo,doas,run0\"}}\n", "");
+    // The configured elevator over the first on PATH, read as `run` reads it.
+    const elevators = path.join(tmp, "elevators");
+    fs.mkdirSync(elevators, { recursive: true });
+    for (const command of ["sudo", "doas"]) fs.writeFileSync(path.join(elevators, command), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+    const configured = path.join(tmp, "configured");
+    fs.mkdirSync(path.join(configured, "vgs"), { recursive: true });
+    fs.writeFileSync(path.join(configured, "vgs", "shell.json"), "{ \"packages\": { \"elevate\": \"doas\" } }\n");
+    expectCommand("plan names the configured elevator", childProcess.spawnSync(scripts.pkg, ["plan", "upgrade", "pacman"], { encoding: "utf8", env: Object.assign({}, env, { PATH: elevators + path.delimiter + env.PATH, XDG_CONFIG_HOME: configured }) }), 0,
+        "{\"manager\":\"pacman\",\"binary\":\"pacman\",\"action\":\"upgrade\",\"elevate\":true,\"steps\":[[\"pacman\",\"-Syu\"]],\"elevator\":{\"ok\":true,\"command\":\"doas\"}}\n", "");
 
     // detect reads /etc/os-release, so a fixture is bound over it in a
     // private mount namespace. It names Void, so a run that read the
@@ -311,6 +323,7 @@ function checkRows(scripts, quick, tools, tmp, expect, failures) {
 // text one of the copy's failures must hold, for a control that proves one
 // particular assertion can fail.
 const CONTROLS = [
+    ["cli", "plan names no elevator", PKG, "elevator: planElevator(r.plan)", "elevator: null", "plan names the configured elevator"],
     ["cli", "owner asks no installed version", PKG, "const version = table.managerRow(id).installed === null ? null : query(", "const version = null && query("],
     ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],
     ["cli", "vgsh pkg drops its arguments", VGSH, "exec node \"$root/bin/vgsh-pkg\" \"$@\"", "exec node \"$root/bin/vgsh-pkg\""],

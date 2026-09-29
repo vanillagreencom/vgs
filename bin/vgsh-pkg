@@ -13,10 +13,13 @@
 //       one JSON line `{ present, missing }` naming each command found and
 //       not found on PATH; exit 0 when none is missing, 1 when one is
 //   vgsh-pkg plan install|remove|upgrade <manager> [names...]
-//       one JSON line `{ manager, binary, action, elevate, steps }`: the
-//       argv of each step the action takes, in order, and whether it needs
-//       root. Runs nothing. install and remove take one name or more,
-//       upgrade none.
+//       one JSON line `{ manager, binary, action, elevate, steps,
+//       elevator }`: the argv of each step the action takes, in order,
+//       whether it needs root, and the elevation command `run` would put
+//       before each step: null when elevate is false, else
+//       `{ ok: true, command }` or `{ ok: false, error }` with the refusal
+//       `run` would print. Runs nothing. install and remove take one name
+//       or more, upgrade none.
 //   vgsh-pkg check [--json] [--source <manager>]
 //       counts the updates each detected manager offers, through the
 //       unprivileged query its table row names, or manager <manager> alone.
@@ -109,7 +112,8 @@
 // error=<code>`, and for a picker `manager=<id> picker=<action>
 // reason=unsupported`, `picker=fzf reason=absent`, `picker=fzf
 // reason=failed exit=<n>|error=<code>` and `query=<argv0> reason=failed
-// exit=<n>|error=<code>` for a list query, its stderr after the line. Exit 2
+// exit=<n>|error=<code>` for a list query, its stderr after the line. A
+// `plan` that elevates refuses the shell.json layers as `run` does. Exit 2
 // for a bad
 // invocation, a command that is not a bare file name among them:
 // `command=<json>`. `present` alone also exits 1 with no refusal line, for
@@ -316,6 +320,14 @@ function configuredElevator() {
     return packages === undefined ? undefined : packages.elevate;
 }
 
+// The elevation command PLAN's steps run behind: null for a plan whose
+// elevate is false, else the table's elevator answer for the effective
+// packages.elevate.
+function planElevator(plan) {
+    if (!plan.elevate) return null;
+    return table.elevator(configuredElevator(), onPath);
+}
+
 // Run ACTION's plan for MANAGER over NAMES through bin/lib/pkg-run.sh, and
 // exit with its status. The steps travel as argv, each led by its length,
 // so no shell reads them, and run from $HOME, as a check's queries do, so
@@ -325,8 +337,8 @@ function run(action, manager, names) {
     const r = table.plan(manager, action, names, onPath);
     if (!r.ok) refuse(r.error);
     let command = "none";
-    if (r.plan.elevate) {
-        const chosen = table.elevator(configuredElevator(), onPath);
+    const chosen = planElevator(r.plan);
+    if (chosen !== null) {
         if (!chosen.ok) refuse(chosen.error);
         command = chosen.command;
     }
@@ -478,7 +490,7 @@ main(() => {
         if (action !== "upgrade" && names.length === 0) usage("names=missing");
         const r = table.plan(manager, action, names, onPath);
         if (!r.ok) refuse(r.error);
-        process.stdout.write(JSON.stringify(r.plan) + "\n");
+        process.stdout.write(JSON.stringify(Object.assign({}, r.plan, { elevator: planElevator(r.plan) })) + "\n");
         break;
     }
     case "run": {

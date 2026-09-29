@@ -7,7 +7,7 @@
 # names a fixture tree holding the shipped bin/lib/tui.sh and a stand-in
 # vgsh. Every stand-in appends its name and arguments to one calls file, so
 # a row reads the order of every step and its argv. No row reaches a real
-# vgsh, package manager, sudo, snapshot tool or live session. The reboot
+# vgsh, package manager, sudo, doas, snapshot tool or live session. The reboot
 # rows stand a copied `sleep` in for Hyprland and remove its file while it
 # runs, so /proc names its executable deleted.
 #
@@ -42,18 +42,19 @@ stub() { # DIR NAME BODY
   printf '#!/bin/sh\n%s\n%s\n' "$record" "$3" >"$1/$2"
   chmod +x "$1/$2"
 }
-# vgsh answers each read from $FIX; `pkg run` fails with 9 for a manager
-# $FIX/fail-<id> names; `pkg owner` answers only while $FIX/owner exists,
-# with a new version after its first answer when $FIX/owner-changes does.
+# vgsh answers each read from $FIX; pacman's plan names the elevator in
+# $FIX/elevator; `pkg run` fails with 9 for a manager $FIX/fail-<id> names;
+# `pkg owner` answers only while $FIX/owner exists, with a new version after
+# its first answer when $FIX/owner-changes does.
 stub "$tree/bin" vgsh 'case "$1 $2" in
   "plugin settings") cat "$FIX/settings.json" ;;
   "pkg detect") cat "$FIX/detect.json" ;;
   "pkg plan")
     case "$4" in
-      pacman) echo "{\"manager\":\"pacman\",\"binary\":\"pacman\",\"action\":\"upgrade\",\"elevate\":true,\"steps\":[[\"pacman\",\"-Syu\"]]}" ;;
-      flatpak) echo "{\"manager\":\"flatpak\",\"binary\":\"flatpak\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"flatpak\",\"update\"]]}" ;;
-      mise) echo "{\"manager\":\"mise\",\"binary\":\"mise\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"env\",\"MISE_MINIMUM_RELEASE_AGE=0\",\"mise\",\"upgrade\"]]}" ;;
-      aur) echo "{\"manager\":\"aur\",\"binary\":\"paru\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"paru\",\"-Sua\"]]}" ;;
+      pacman) echo "{\"manager\":\"pacman\",\"binary\":\"pacman\",\"action\":\"upgrade\",\"elevate\":true,\"steps\":[[\"pacman\",\"-Syu\"]],\"elevator\":{\"ok\":true,\"command\":\"$(cat "$FIX/elevator")\"}}" ;;
+      flatpak) echo "{\"manager\":\"flatpak\",\"binary\":\"flatpak\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"flatpak\",\"update\"]],\"elevator\":null}" ;;
+      mise) echo "{\"manager\":\"mise\",\"binary\":\"mise\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"env\",\"MISE_MINIMUM_RELEASE_AGE=0\",\"mise\",\"upgrade\"]],\"elevator\":null}" ;;
+      aur) echo "{\"manager\":\"aur\",\"binary\":\"paru\",\"action\":\"upgrade\",\"elevate\":false,\"steps\":[[\"paru\",\"-Sua\"]],\"elevator\":null}" ;;
       *) echo "vgsh: refused: manager=$4 action=upgrade reason=unsupported" >&2; exit 1 ;;
     esac ;;
   "self status") cat "$FIX/self.json" ;;
@@ -78,8 +79,13 @@ stub "$stubs" gum 'case "$1" in
     st=0; [ ! -e "$FIX/answer-$f" ] || read -r st <"$FIX/answer-$f"; exit "$st" ;;
   style) shift; for a; do printf "%s\n" "$a"; done ;;
 esac'
-stub "$stubs" sudo 'case "$1" in -k|-n|/usr/bin/true) exit 0 ;; esac
+# sudo refuses every authorization and every command while
+# $FIX/sudo-refuses exists; doas runs its command.
+stub "$stubs" sudo 'case "$1" in -k) exit 0 ;; esac
+[ ! -e "$FIX/sudo-refuses" ] || exit 1
+case "$1" in -n|/usr/bin/true) exit 0 ;; esac
 exec "$@"'
+stub "$stubs" doas 'exec "$@"'
 stub "$snapper_dir" snapper 'case "$*" in
   "--csvout list-configs") printf "config,subvolume\nroot,/\n" ;;
   *create*) [ ! -e "$FIX/fail-snapper" ] || exit 1 ;;
@@ -89,7 +95,8 @@ stub "$stubs" df 'a=99999999999; [ ! -e "$FIX/avail" ] || read -r a <"$FIX/avail
 stub "$stubs" pgrep '[ -e "$FIX/pids" ] || exit 1; cat "$FIX/pids"'
 stub "$stubs" uname "echo $kernel"
 stub "$stubs" systemctl ''
-stub "$stubs" paru ''
+# paru authorizes through sudo and fails with 7 while $FIX/fail-paru exists.
+stub "$stubs" paru '[ ! -e "$FIX/fail-paru" ] || { sudo /usr/bin/true; exit 7; }'
 for tool in bash env readlink dirname mkdir mv rm script flock sleep cat id; do
   found="$(command -v "$tool")" || { echo "test-updates-pipeline: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$(readlink -f -- "$found")" "$tools/$tool"
@@ -115,6 +122,7 @@ reset_fix() {
   rm -rf -- "${fix:?}" "$state/vgs"
   mkdir -p "$fix"
   settings "" false
+  echo sudo >"$fix/elevator"
   printf '{"primary":{"id":"pacman","binary":"pacman"},"overlays":[{"id":"aur","binary":"paru"},{"id":"flatpak","binary":"flatpak"}],"sources":[{"id":"mise","binary":"mise"}]}\n' >"$fix/detect.json"
   self_json checkout null true
   printf '[{"id":"acme.one","behind":2,"head":"h","upstream":"u","error":null},{"id":"acme.two","behind":0,"head":"h","upstream":"h","error":null}]\n' >"$fix/plugins.json"
@@ -181,7 +189,7 @@ row_full() {
     "vgsh plugin update acme.one" "vgsh theme update night" "sudo -k" \
     "vgsh pkg run upgrade --manager aur" "sudo -k" "pacman -Qtdq"
   assert "a plugin update gets no --yes by default" has_call "vgsh plugin update acme.one"
-  assert "no snapshot tool is 127 and warns nothing" out_lacks "snapshot=failed"
+  assert "no snapshot tool warns nothing" out_lacks "snapshot=failed"
   assert "no snapshot tool keeps the update going quietly" out_lacks "without a snapshot"
   assert "the log keeps the plan box" grep -qF "Update everything" "$log"
 }
@@ -269,6 +277,46 @@ row_aur_command() {
   assert "aurCommand replaces the table's AUR plan" test "$(grep -c 'plan upgrade aur' "$tmp/seq")" == 0
   assert "aurCommand runs after the session ends" before "vgsh theme update night" "paru -Sua --devel"
 }
+# An AUR helper that caches a sudo credential and then fails still has it
+# dropped, after it, and the run ends with the helper's status and the
+# recovery message.
+row_aur_failure() {
+  reset_fix
+  settings "paru -Sua --devel" false
+  touch "$fix/fail-paru"
+  pipeline update.sh
+  assert "a failed AUR step ends the run with its status" test "$status" == 7
+  assert "a failed AUR step names the log in its recovery message" out_has "updates: failed exit=7 log=$log"
+  assert "a failed AUR step drops the credential it cached, last" test "$(tail -n 1 "$tmp/seq")" == "sudo -k"
+  assert "the credential is dropped after the failed AUR step" before "paru -Sua --devel" "sudo -k"
+}
+# packages.elevate names doas: sudo is installed but refuses, and the
+# update runs through doas without a sudo session.
+row_doas() {
+  reset_fix
+  echo doas >"$fix/elevator"
+  touch "$fix/sudo-refuses"
+  PIPE_PATH="$snapper_dir" pipeline update.sh
+  assert "a doas update exits 0" test "$status" == 0
+  assert "a doas update starts no sudo session" test "$(grep -c '^sudo /usr/bin/true' "$tmp/seq")" == 0
+  assert "a doas update takes its snapshot through doas" has_call "doas snapper -c root create -c number -d VGS update"
+  assert "a doas update names doas in the plan box" out_has "Snapshot: snapper through doas, first"
+  assert "a doas update runs the system step" has_call "vgsh pkg run upgrade --manager pacman"
+}
+# update-source.sh vgs on a vgs-git behind: the rebuild replaces the
+# package, so a snapshot comes first and the running shell restarts on the
+# new version, and no other package is upgraded.
+row_vgs_only() {
+  reset_fix
+  self_json package '"vgs-git"' true
+  touch "$fix/owner" "$fix/owner-changes" "$fix/running"
+  PIPE_PATH="$snapper_dir" pipeline update-source.sh vgs
+  assert "a VGS rebuild alone exits 0" test "$status" == 0
+  assert "a VGS rebuild alone takes a snapshot before it" before "sudo snapper -c root create -c number -d VGS update" "paru -S vgs-git"
+  assert "a VGS rebuild alone drops the credential after it" before "paru -S vgs-git" "sudo -k"
+  assert "a VGS rebuild alone restarts the running shell" has_call "vgsh restart"
+  assert "a VGS rebuild alone upgrades no other package" test "$(grep -c -e 'pkg run' -e '^pacman' "$tmp/seq")" == 0
+}
 row_vgs_git() {
   reset_fix
   self_json package '"vgs-git"' true
@@ -295,7 +343,7 @@ row_source() {
 }
 
 row_full; row_trusted; row_snapshot; row_failure; row_reboot; row_orphans; row_yes
-row_declined; row_busy; row_aur_command; row_vgs_git; row_source
+row_declined; row_busy; row_aur_command; row_aur_failure; row_doas; row_vgs_only; row_vgs_git; row_source
 
 # Controls: each runs one row against a plugin copy whose pipeline drops
 # one rule, quietly, and that row must turn red.
@@ -311,7 +359,10 @@ control() { # NAME NEEDLE REPLACEMENT ROW
 control aur-before-revoke 'if [[ $session == 1 ]]; then vgs_tui_sudo_session end; fi' \
   'if [[ $session == 1 ]]; then "$_updates_vgsh" pkg run upgrade --manager aur; vgs_tui_sudo_session end; fi' row_full
 control passes-yes '_updates_yes_flag=()' '_updates_yes_flag=(--yes)' row_full
-control snapshot-127-warns 'if [[ $status -ne 0 && $status -ne 127 ]]; then' 'if [[ $status -ne 0 ]]; then' row_full
+control aur-unguarded '      vgs_tui_sudo_session guard' '      :' row_aur_failure
+control session-ignores-elevator 'if [[ $elevator == sudo ]]; then session=1; fi' 'if command -v sudo >/dev/null; then session=1; fi' row_doas
+control snapshot-ignores-elevator '_updates_snapshot "$snapshot_tool" "$elevator" || status=$?' '_updates_snapshot "$snapshot_tool" sudo || status=$?' row_doas
+control rebuild-unguarded 'if [[ $upgrades == 1 || $rebuild == 1 ]]; then replaces=1; fi' 'if [[ $upgrades == 1 ]]; then replaces=1; fi' row_vgs_only
 control no-recovery "trap '_updates_failed \$?' ERR" ':' row_failure
 control no-reboot-check '  _updates_reboot' '  :' row_reboot
 control orphans-default-yes '--default=false || status=$?' '|| status=$?' row_orphans

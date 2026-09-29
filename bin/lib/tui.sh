@@ -18,8 +18,10 @@
 #                                    gum confirm; yes under VGS_TUI_UNATTENDED=1
 #   vgs_tui_choose|input|filter [GUM_ARG...]
 #                                    gum choose, input or filter
-#   vgs_tui_sudo_session start|end   one sudo authorization kept alive for this script,
-#                                    joined by a nested run's session
+#   vgs_tui_sudo_session start|guard|end
+#                                    one sudo authorization kept alive for this script,
+#                                    joined by a nested run's session; guard only drops
+#                                    the credential when the script ends
 #   vgs_tui_lock NAME                hold $XDG_RUNTIME_DIR/vgs-tui-NAME.lock until exit
 #   vgs_tui_log FILE [ARG...]        run this script again under script(1) into FILE
 #   vgs_tui_reboot_check             print why a reboot is needed; 1 when none is
@@ -110,7 +112,13 @@ _vgs_tui_sudo_joined=""
 # otherwise revoke the credential the pipeline's later steps use. A pid that
 # names no live process, as a command a step started that outlives the
 # owner carries, starts a session of its own.
-vgs_tui_sudo_session() { # start|end
+#
+# guard asks for nothing and keeps nothing alive: it sets the traps start
+# sets, so a credential a later command caches is dropped however the
+# script ends, and end drops it and clears them. The Updates pipeline
+# guards its AUR steps, which run after its session ends and whose helper
+# asks sudo for itself. A script guards only while it holds no session.
+vgs_tui_sudo_session() { # start|guard|end
   case "${1:-}" in
     start)
       local outer="${VGS_TUI_SUDO_SESSION:-}"
@@ -136,11 +144,9 @@ vgs_tui_sudo_session() { # start|end
       ) </dev/null &
       _vgs_tui_keepalive_pid=$!
       export VGS_TUI_SUDO_SESSION=$$
-      trap 'vgs_tui_sudo_session end' EXIT
-      trap 'exit 129' HUP
-      trap 'exit 130' INT
-      trap 'exit 143' TERM
+      _vgs_tui_sudo_traps
       ;;
+    guard) _vgs_tui_sudo_traps ;;
     end)
       if [[ -n $_vgs_tui_sudo_joined ]]; then
         _vgs_tui_sudo_joined=""
@@ -158,6 +164,15 @@ vgs_tui_sudo_session() { # start|end
       ;;
     *) _vgs_tui_refuse 2 "sudo-session=${1:-missing}" ;;
   esac
+}
+
+# EXIT ends the session; HUP, INT and TERM exit with 128 plus the signal's
+# number, which runs EXIT.
+_vgs_tui_sudo_traps() {
+  trap 'vgs_tui_sudo_session end' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 }
 
 # NAME is lower case letters, digits and dashes. The lock is held on a

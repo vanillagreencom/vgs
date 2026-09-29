@@ -289,7 +289,7 @@ control no-sudo-session bin/lib/pkg-run.sh $'if [[ $elevator == sudo ]]; then\n 
 control runs-past-failure bin/lib/pkg-run.sh '[[ $status -eq 0 ]] || exit "$status"' ':' first_failure
 control shell-string bin/lib/pkg-run.sh '  "${step[@]}" || status=$?' '  bash -c "${step[*]}" || status=$?' literal_name
 control caller-directory bin/vgsh-pkg 'stdio: "inherit", cwd: process.env.HOME || "/" });' 'stdio: "inherit" });' home_directory
-control always-elevates bin/vgsh-pkg '    if (r.plan.elevate) {' '    if (true) {' aur_unelevated
+control always-elevates bin/vgsh-pkg '    if (!plan.elevate) return null;' '    if (false) return null;' aur_unelevated
 control ignores-configuration bin/vgsh-pkg 'table.elevator(configuredElevator(), onPath)' 'table.elevator(undefined, onPath)' configured
 control unquoted-preview bin/lib/judge-files.js '    return "'"'"'" + word.replace' '    return word; "'"'"'" + word.replace' picker_install
 control fixed-colour bin/vgsh-pkg 'return value !== undefined && HEX_COLOUR.test(value) ? value : fallback;' 'return fallback;' picker_install

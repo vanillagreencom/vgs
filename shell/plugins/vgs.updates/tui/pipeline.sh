@@ -13,10 +13,17 @@
 #      busy never truncates the log of the run it found
 #   2. a warning when / has less than 10 GiB free
 #   3. the plan box, then one question unless -y
-#   4. one sudo session, when a snapshot or the system step needs root
-#   5. a snapshot through snapper or timeshift, unless the plugin's
-#      `snapshot` setting is off; no tool on PATH is status 127 and skips
-#      quietly, any other failure warns and the update goes on
+#   4. one sudo session, when the package layer's elevation command is
+#      sudo and a snapshot or the system step needs root. That command is
+#      the one `vgsh pkg plan upgrade <primary>` names, from shell.json's
+#      `packages.elevate`, else the first of sudo, doas and run0 on PATH;
+#      doas and run0 ask as their own rules say, as bin/lib/pkg-run.sh does
+#   5. a snapshot through snapper or timeshift behind that command, before
+#      any step that replaces a package: the system's, the AUR's or the
+#      vgs-git rebuild. None is taken when the plugin's `snapshot` setting
+#      is off, when neither tool is on PATH or when no elevation command
+#      resolves, and the plan box says which; a failed snapshot warns and
+#      the update goes on
 #   6. VGS itself: `vgsh self update` for a checkout or a curl install
 #   7. the system: `vgsh pkg run upgrade --manager <primary>`, which joins
 #      the session
@@ -29,9 +36,13 @@
 #      the `aurCommand` setting's words, else `vgsh pkg run upgrade
 #      --manager aur`, then `<helper> -S vgs-git` when VGS is that package
 #      and behind, since an AUR helper rebuilds a -git package only when
-#      its recipe's version changes; the credential is dropped again after
-#  12. pacman's orphaned packages, removed only on a yes, default no
-#  13. a shell restart when a package step replaced the VGS package
+#      its recipe's version changes. The helper asks sudo itself, so the
+#      phase runs under tui.sh's sudo guard: the credential it caches is
+#      dropped when the phase ends, fails or is interrupted
+#  12. pacman's orphaned packages, removed only on a yes, default no, after
+#      a system or AUR upgrade
+#  13. a shell restart when a package step or the rebuild replaced the VGS
+#      package
 #  14. a reboot question when the kernel or the running Hyprland was
 #      replaced (tui.sh's vgs_tui_reboot_check)
 #
@@ -42,7 +53,7 @@
 # reported instead of asked. A plugin or theme update that fails or is
 # declined warns and the run goes on. Any other failing step ends the run:
 # the ERR trap prints `updates: failed exit=<n> log=<file>` and how to
-# recover, and the session's EXIT trap drops the credential.
+# recover, and the session's or the guard's EXIT trap drops the credential.
 #
 # Every refusal prints `updates: refused: <key>=<value>` first. A bad
 # invocation exits 2; a held lock exits 75.
@@ -86,44 +97,48 @@ _updates_facts() {
 }
 
 # `vgsh pkg plan upgrade ID`: sets _updates_plan_text, the steps joined by
-# `; `, and _updates_plan_elevate, or returns 1 with the refusal's first
-# line in _updates_plan_text.
+# `; `, and _updates_plan_elevator, the elevation command the steps run
+# behind, empty when they need none or none resolves; or returns 1 with the
+# refusal's first line in _updates_plan_text. A refusal that leaves no
+# elevator, the elevator's or the plan's own, is in
+# _updates_plan_elevator_refused.
 _updates_plan() { # ID
   local out facts key value
   _updates_plan_text=""
-  _updates_plan_elevate=false
+  _updates_plan_elevator=""
+  _updates_plan_elevator_refused=""
   if ! out="$("$_updates_vgsh" pkg plan upgrade "$1" 2>&1)"; then
     _updates_plan_text="${out%%$'\n'*}"
+    _updates_plan_elevator_refused="$_updates_plan_text"
     return 1
   fi
   facts="$(_updates_facts plan <<<"$out")"
   while read -r key value; do
     case "$key" in
-      elevate) _updates_plan_elevate="$value" ;;
+      elevator) _updates_plan_elevator="$value" ;;
+      elevator-refused) _updates_plan_elevator_refused="$value" ;;
       step) _updates_plan_text+="${_updates_plan_text:+; }$value" ;;
     esac
   done <<<"$facts"
 }
 
-# The snapshot tool on PATH: snapper, else timeshift; status 127 when
-# neither is, which the caller skips quietly.
+# The snapshot tool on PATH: snapper, else timeshift; 1 when neither is.
 _updates_snapshot_tool() {
   if command -v snapper >/dev/null; then echo snapper
   elif command -v timeshift >/dev/null; then echo timeshift
-  else return 127
+  else return 1
   fi
 }
 
-# One snapshot per snapper configuration, or one timeshift snapshot; 127
-# when neither tool is on PATH. A tool with nothing configured takes none
-# and says so: a quiet success would read as a snapshot the next update
-# could roll back to.
-_updates_snapshot() {
-  local tool csv config configs=() first=1
-  tool="$(_updates_snapshot_tool)" || return
+# One snapshot per snapper configuration, or one timeshift snapshot, each
+# command behind ELEVATOR. A tool with nothing configured takes none and
+# says so: a quiet success would read as a snapshot the next update could
+# roll back to.
+_updates_snapshot() { # snapper|timeshift ELEVATOR
+  local tool="$1" elevator="$2" csv config configs=() first=1
   case "$tool" in
     snapper)
-      csv="$(sudo snapper --csvout list-configs)" || return
+      csv="$("$elevator" snapper --csvout list-configs)" || return
       while IFS=, read -r config _; do
         if [[ $first == 1 ]]; then first=0; continue; fi
         [[ -z $config ]] || configs+=("$config")
@@ -134,8 +149,8 @@ _updates_snapshot() {
       fi
       vgs_tui_step "Taking a snapshot"
       for config in "${configs[@]}"; do
-        sudo snapper -c "$config" create -c number -d "VGS update" || return
-        sudo snapper -c "$config" cleanup number || return
+        "$elevator" snapper -c "$config" create -c number -d "VGS update" || return
+        "$elevator" snapper -c "$config" cleanup number || return
       done
       ;;
     timeshift)
@@ -144,8 +159,9 @@ _updates_snapshot() {
         return 1
       fi
       vgs_tui_step "Taking a snapshot"
-      sudo timeshift --create --comments "VGS update" --scripted || return
+      "$elevator" timeshift --create --comments "VGS update" --scripted || return
       ;;
+    *) vgs_tui_error "updates: snapshot-tool=$tool is neither snapper nor timeshift"; return 1 ;;
   esac
 }
 
@@ -355,8 +371,9 @@ updates_main() {
 
   # Each source's plan, for the box and the steps. A package source whose
   # plan the table refuses, as it refuses nix's, leaves the run.
-  local plan=() elevate=false kept=() id label vgs_method="" vgs_package="" vgs_behind=false plugins=() themes=()
-  local _updates_plan_text _updates_plan_elevate
+  local plan=() kept=() id label vgs_method="" vgs_package="" vgs_behind=false plugins=() themes=()
+  local primary_planned=0 elevator="" elevator_refused=""
+  local _updates_plan_text _updates_plan_elevator _updates_plan_elevator_refused
   if _updates_in vgs "${run[@]}"; then
     out="$("$_updates_vgsh" self status --json)"
     facts="$(_updates_facts self <<<"$out")"
@@ -391,10 +408,14 @@ updates_main() {
     if _updates_plan "$id"; then
       kept+=("$id")
       plan+=("$label: $_updates_plan_text")
-      if [[ $id == "$primary" && $_updates_plan_elevate == true ]]; then elevate=true; fi
     else
       [[ $mode == all ]] || _updates_refuse 1 "source=$only reason=no-plan" "$_updates_plan_text"
       plan+=("$label: skipped, $_updates_plan_text")
+    fi
+    if [[ $id == "$primary" ]]; then
+      primary_planned=1
+      elevator="$_updates_plan_elevator"
+      elevator_refused="$_updates_plan_elevator_refused"
     fi
   done
   run=("${kept[@]}")
@@ -410,21 +431,39 @@ updates_main() {
     plan+=("Themes: ${themes[*]:-current}")
   fi
 
-  # A snapshot guards a package step: the system's or the AUR's.
-  local system_run=0 snapshot_line="" snapshot_tool=""
-  if _updates_in aur "${run[@]}" || { [[ -n $primary ]] && _updates_in "$primary" "${run[@]}"; }; then system_run=1; fi
-  if [[ $system_run == 1 ]]; then
+  # A snapshot and the VGS version check guard every step that replaces
+  # packages: the upgrades, the system's and the AUR's, and the vgs-git
+  # rebuild. The orphans follow the upgrades alone.
+  local upgrades=0 rebuild=0 replaces=0
+  if _updates_in aur "${run[@]}" || { [[ -n $primary ]] && _updates_in "$primary" "${run[@]}"; }; then upgrades=1; fi
+  if _updates_in vgs "${run[@]}" && [[ $vgs_method:$vgs_behind:$vgs_package == package:true:vgs-git && -n $aur_binary ]]; then rebuild=1; fi
+  if [[ $upgrades == 1 || $rebuild == 1 ]]; then replaces=1; fi
+  local snapshot_line="" snapshot_tool=""
+  if [[ $replaces == 1 ]]; then
     if [[ $snapshot_setting == off ]]; then
       snapshot_line="Snapshot: off in the plugin's settings"
-    elif snapshot_tool="$(_updates_snapshot_tool)"; then
-      snapshot_line="Snapshot: $snapshot_tool, first"
-    else
+    elif ! snapshot_tool="$(_updates_snapshot_tool)"; then
       snapshot_tool=""
       snapshot_line="Snapshot: none, no snapper or timeshift found"
+    else
+      # The primary's plan names the elevation command, also when the run
+      # leaves the system step out; a refused plan leaves its refusal in
+      # elevator_refused, for the box.
+      if [[ $primary_planned == 0 && -n $primary ]]; then
+        _updates_plan "$primary" || true
+        elevator="$_updates_plan_elevator"
+        elevator_refused="$_updates_plan_elevator_refused"
+      fi
+      if [[ -n $elevator ]]; then
+        snapshot_line="Snapshot: $snapshot_tool through $elevator, first"
+      else
+        snapshot_tool=""
+        snapshot_line="Snapshot: none, no elevation command${elevator_refused:+: $elevator_refused}"
+      fi
     fi
   fi
   local session=0
-  if command -v sudo >/dev/null && [[ $elevate == true || -n $snapshot_tool ]]; then session=1; fi
+  if [[ $elevator == sudo ]]; then session=1; fi
 
   # The free space and the plan box.
   local avail
@@ -438,7 +477,8 @@ updates_main() {
   fi
   local box=("Update ${only:-everything}" "")
   [[ -z $snapshot_line ]] || box+=("$snapshot_line")
-  if _updates_in aur "${run[@]}"; then box+=("${plan[@]}" "The AUR runs last, after the update's sudo credential is dropped."); else box+=("${plan[@]}"); fi
+  box+=("${plan[@]}")
+  if [[ $rebuild == 1 ]] || _updates_in aur "${run[@]}"; then box+=("The AUR runs last, after every step that runs as root."); fi
   box+=("" "Log: $_updates_log")
   vgs_tui_header "${box[@]}"
   if [[ $_updates_yes != 1 ]]; then
@@ -453,15 +493,14 @@ updates_main() {
 
   # The run.
   local vgs_before=""
-  if [[ $system_run == 1 ]]; then vgs_before="$(_updates_vgs_package_version)"; fi
+  if [[ $replaces == 1 ]]; then vgs_before="$(_updates_vgs_package_version)"; fi
   if [[ $session == 1 ]]; then vgs_tui_sudo_session start; fi
-  # 127 means no snapshot tool is here. Any other failure said what went
-  # wrong; a missing snapshot does not block the update, but it must not
-  # pass for one either.
-  if [[ $system_run == 1 && $snapshot_setting != off ]]; then
+  # A failed snapshot said what went wrong; it does not block the update,
+  # but it must not pass for one either.
+  if [[ -n $snapshot_tool ]]; then
     status=0
-    _updates_snapshot || status=$?
-    if [[ $status -ne 0 && $status -ne 127 ]]; then
+    _updates_snapshot "$snapshot_tool" "$elevator" || status=$?
+    if [[ $status -ne 0 ]]; then
       vgs_tui_warn "updates: snapshot=failed exit=$status"
       vgs_tui_warn "Continuing the update without a snapshot."
     fi
@@ -480,21 +519,24 @@ updates_main() {
   if [[ ${#themes[@]} -gt 0 ]]; then _updates_update_each theme "${themes[@]}"; fi
   if [[ $session == 1 ]]; then vgs_tui_sudo_session end; fi
 
-  local rebuild=0
-  if _updates_in vgs "${run[@]}" && [[ $vgs_method:$vgs_behind:$vgs_package == package:true:vgs-git && -n $aur_binary ]]; then rebuild=1; fi
-  if _updates_in aur "${run[@]}"; then
-    if [[ ${#aur_command[@]} -gt 0 ]]; then
-      _updates_run "${aur_command[*]}" "${aur_command[@]}"
-    else
-      "$_updates_vgsh" pkg run upgrade --manager aur
-    fi
-  fi
-  if [[ $rebuild == 1 ]]; then _updates_run "$aur_binary -S vgs-git" "$aur_binary" -S vgs-git; fi
   if [[ $rebuild == 1 ]] || _updates_in aur "${run[@]}"; then
-    if command -v sudo >/dev/null; then sudo -k || vgs_tui_warn "updates: sudo=revoke-failed"; fi
+    local guarded=0
+    if command -v sudo >/dev/null; then
+      vgs_tui_sudo_session guard
+      guarded=1
+    fi
+    if _updates_in aur "${run[@]}"; then
+      if [[ ${#aur_command[@]} -gt 0 ]]; then
+        _updates_run "${aur_command[*]}" "${aur_command[@]}"
+      else
+        "$_updates_vgsh" pkg run upgrade --manager aur
+      fi
+    fi
+    if [[ $rebuild == 1 ]]; then _updates_run "$aur_binary -S vgs-git" "$aur_binary" -S vgs-git; fi
+    if [[ $guarded == 1 ]]; then vgs_tui_sudo_session end; fi
   fi
 
-  if [[ $primary == pacman ]] && [[ $system_run == 1 ]]; then _updates_orphans; fi
+  if [[ $primary == pacman ]] && [[ $upgrades == 1 ]]; then _updates_orphans; fi
   if [[ -n $vgs_before ]] && [[ "$(_updates_vgs_package_version)" != "$vgs_before" ]] && "$_updates_vgsh" pid >/dev/null 2>&1; then
     vgs_tui_step "Restarting the shell on the updated VGS"
     "$_updates_vgsh" restart || vgs_tui_warn "updates: restart=failed exit=$?"

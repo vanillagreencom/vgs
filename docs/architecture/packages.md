@@ -16,7 +16,7 @@ One row per manager: `pacman`, `aur`, `apt`, `dnf`, `xbps`, `emerge`, `nix`, `fl
 
 ## Steps
 
-`vgsh pkg plan` prints a plan: each step's argv, in order. It runs nothing.
+`vgsh pkg plan` prints a plan: each step's argv, in order, and the elevation command `run` would use. It runs nothing.
 
 - Install and remove take one package name or more; upgrade takes none.
 - A package name is printable ASCII with no space and never starts with `-`, so no manager reads it as an option.

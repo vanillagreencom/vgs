@@ -9,7 +9,9 @@
 //       `primary <id>` when a primary serves the system, then
 //       `present <id> <binary>` for each overlay and source
 //   facts <loader> plan             `vgsh pkg plan upgrade <id>`
-//       `elevate true|false`, then `step <argv joined by spaces>` per step
+//       `elevate true|false`, `elevator <command>` or
+//       `elevator-refused <refusal>` when the plan elevates, then
+//       `step <argv joined by spaces>` per step
 //   facts <loader> self             `vgsh self status --json`
 //       `method <method>`, `package <name>` when a package owns the tree,
 //       `current <version>`, `behind true|false`, and `error <refusal>`
@@ -67,7 +69,13 @@ case "detect": {
 }
 case "plan": {
     if (!isObject(answer) || typeof answer.elevate !== "boolean" || !Array.isArray(answer.steps)) refuse("plan=malformed", 1);
+    // null exactly when the plan does not elevate, else the table's answer.
+    const elevator = answer.elevator;
+    const judged = elevator === null ? !answer.elevate
+        : answer.elevate && isObject(elevator) && typeof elevator.ok === "boolean" && typeof (elevator.ok ? elevator.command : elevator.error) === "string";
+    if (!judged) refuse("plan=malformed", 1);
     line("elevate", answer.elevate);
+    if (elevator !== null) line(elevator.ok ? "elevator" : "elevator-refused", elevator.ok ? elevator.command : elevator.error);
     for (const step of answer.steps) line("step", step.join(" "));
     break;
 }
