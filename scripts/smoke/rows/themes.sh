@@ -318,16 +318,7 @@ expect_poll "the themes widget is built on the bar" '"vgs.themes"' ipc smoke rea
 # background and the placed widget on every screen, and the service.
 themes_instances=$((2 * monitors + 1))
 
-themes_tui_record="$sandbox/themes-tui-argv"
-cat >"$shim/xdg-terminal-exec" <<EOF
-#!/bin/sh
-: >"$themes_tui_record.next"
-for a; do printf '%s\n' "\$a" >>"$themes_tui_record.next"; done
-mv -f -- "$themes_tui_record.next" "$themes_tui_record"
-EOF
-chmod 755 "$shim/xdg-terminal-exec"
-themes_tui_recorded() { python3 -c 'import json,os,sys; print(json.dumps(open(sys.argv[1]).read().split("\n")[:-1]) if os.path.exists(sys.argv[1]) else "absent")' "$themes_tui_record"; }
-themes_forget_tui_record() { rm -f -- "$themes_tui_record"; }
+terminal_stand_in
 expect_poll "the themes TUI probe is not running" false lent tui.probing
 if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
   expect "a setup theme-add open answers launcher-missing" "refused: tui=core/theme-add reason=launcher-missing" ipc shell openTui core/theme-add
@@ -419,12 +410,11 @@ expect "the catalog Download wallpapers button reaches the theme capability" ins
 expect_poll "the panel is open after catalog wallpaper download" open panel_open
 expect_poll "the catalog wallpaper download removes the download action" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Installed"]]' theme_row catalog-smoke
 scroll_themes 0
-themes_forget_tui_record
+forget_record
 click_button "Add from URL" || fail "the click on Add from URL failed"
-themes_tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
-themes_core_add="$(dirname -- "$(dirname -- "$themes_tui_self")")/shell/../bin/vgsh"
 expect_poll "Add from URL opens the core theme add TUI" \
-  "$(words --app-id=org.vgs.tui "--title=VGS · Add theme" -- "$themes_tui_self" present --presentation full -- "$themes_core_add" theme add)" themes_tui_recorded
+  "$(core_words core/theme-add "Add a theme" org.vgs.tui theme add)" recorded
+expect_run_end "the theme add core run ends before later rows" core/theme-add
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 
 fixture_target smoke-fails 'accent=@{palette.nope}'
