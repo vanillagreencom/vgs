@@ -8,9 +8,11 @@ import qs.Ui
 // whose menu lists every plugin, the current one checked, and opens the
 // chosen one's page. The body holds the description, the capabilities,
 // every error, the enabled switch, the listing metadata, the update and
-// remove commands of an installed plugin, one settings section per schema
-// group (entries without a group first, under `Settings`) and the Keys
-// section. A disabled plugin's fields are read-only and say to enable it.
+// remove commands of an installed plugin, one read-only status section per
+// status group (entries without a group first, under `Status`), one
+// settings section per schema group (entries without a group first, under
+// `Settings`) and the Keys section. A disabled plugin's fields are
+// read-only and say to enable it; its status rows say it has not reported.
 // The body leaves the scroll bar's gutter free whether it overflows or not,
 // so every page's fields end on one right edge, and each inline value draws
 // at line height 1, centred on its label.
@@ -44,6 +46,28 @@ FocusScope {
             section.keys.push(key);
         }
         return out.filter(s => s.keys.length > 0);
+    }
+
+    // The displayable status entries' keys by section, as `sections` holds
+    // the schema's: [{ group, keys }], ungrouped first, then each group in
+    // the order its first entry appears. The row's `status` is in manifest
+    // order and holds no `data` or hidden entry.
+    readonly property var statusSections: {
+        if (row === null) return [];
+        const out = [{ group: "", keys: [] }];
+        for (const entry of row.status) {
+            let section = out.find(s => s.group === entry.group);
+            if (section === undefined) {
+                section = { group: entry.group, keys: [] };
+                out.push(section);
+            }
+            section.keys.push(entry.key);
+        }
+        return out.filter(s => s.keys.length > 0);
+    }
+
+    function statusEntry(key) {
+        return row === null ? null : row.status.find(entry => entry.key === key) || null;
     }
 
     function focusBack() { back.forceActiveFocus(); }
@@ -181,6 +205,37 @@ FocusScope {
                     label: modelData[0]
                     inline: true
                     Label { role: "itemCode"; text: command.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                }
+            }
+
+            // What the plugin published, read-only, above what can be set.
+            Repeater {
+                model: ScriptModel {
+                    values: page.statusSections
+                    objectProp: "group"
+                }
+                Column {
+                    id: statusSection
+                    required property var modelData
+                    width: body.width
+                    spacing: Theme.space.xs
+
+                    SectionHeader {
+                        text: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
+                        leftPadding: Theme.row.paddingX
+                        rightPadding: Theme.row.paddingX
+                    }
+
+                    Repeater {
+                        model: ScriptModel {
+                            values: statusSection.modelData.keys
+                        }
+                        StatusRow {
+                            required property string modelData
+                            width: statusSection.width
+                            entry: page.statusEntry(modelData)
+                        }
+                    }
                 }
             }
 

@@ -88,6 +88,17 @@ Item {
 
     SlackPhotos {
         id: slackPhotos
+        onTokenStateChanged: root.publishToken()
+    }
+
+    // The Slack token row of the plugin's status: whether the token is
+    // stored, as the probe last found it. The token itself never enters
+    // status.
+    function publishToken() {
+        const state = slackPhotos.tokenState;
+        if (shell === null || state === "" || shell.status.values.slackToken === state) return;
+        const reply = shell.status.set("slackToken", state);
+        if (reply !== "ok") console.error("notifications: " + reply);
     }
 
     // The icon file URL of a workspace a rule's sender named, or "".
@@ -125,7 +136,10 @@ Item {
         Timer { property string key: "" }
     }
 
-    onShellChanged: start()
+    onShellChanged: {
+        start();
+        publishToken();
+    }
 
     // Registers once, when both the shell and the stored state are here, so
     // no notification arrives before the restored toasts are in place.

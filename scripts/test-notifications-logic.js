@@ -304,6 +304,22 @@ function verify(logic) {
     same(logic.slackFaceImages(direct, singleTeam, ""), ["file:///cache/T1/U1.png?v=abcdef0123456789"], "one workspace can match titles without a prefix");
     same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png?v=1111111111111111" }, { id: "U2", names: ["ADA"], photo: "file:///second.png?v=2222222222222222" }] }], ""), ["file:///first.png?v=1111111111111111"], "the first duplicate name owns the photo");
     assert.equal(logic.slackWorkspaceIcon(photoCache.teams, "acme"), "file:///cache/T1/workspace.png?v=0123456789abcdef");
+    // The probe's stdout: one line per state token-status.sh prints, and
+    // anything else read as no answer.
+    const TOKEN_LINES = [
+        ["slack-token: present\n", "present"],
+        ["slack-token: absent\n", "absent"],
+        ["slack-token: locked\n", "locked"],
+        ["slack-token: unavailable reason=secret-tool-missing\n", "unavailable"],
+        ["slack-token: unavailable reason=search-failed status=1\n", "unavailable"],
+        ["slack-token: present", "present"],
+        ["slack-token: unsafe\n", ""],
+        ["slack-token: presently\n", ""],
+        ["slack-token: present\nslack-token: absent\n", ""],
+        ["secret = xoxp-1\nslack-token: present\n", ""],
+        ["", ""]
+    ];
+    for (const [text, want] of TOKEN_LINES) assert.equal(logic.slackTokenState(text), want, "slackTokenState " + JSON.stringify(text));
 }
 verify(load(file));
 
@@ -358,6 +374,8 @@ const CONTROLS = [
     ["Slack photo file URL only", 'return typeof value === "string" && /^file:\\/\\/\\/[^\\s?#]+\\.png\\?v=[0-9a-f]{16}$/.test(value) ? value : "";', 'return typeof value === "string" ? value : "";'],
     ["Slack photo workspace match", "if (fold(teams[t].names[n]) === wanted) return teams[t];", "if (false) return teams[t];"],
     ["Slack photo first name wins", "if (!hasOwn(map, key)) map[key] = photo;", "map[key] = photo;"],
+    ["the Slack token state is one of the probe's", "return match !== null && SLACK_TOKEN_STATES.indexOf(match[1]) !== -1 ? match[1] : \"\";", "return match !== null ? match[1] : \"\";"],
+    ["the Slack token line is the whole output", "var match = /^slack-token: ([a-z]+)(?: [^\\n]*)?\\n?$/.exec(String(text));", "var match = /slack-token: ([a-z]+)/.exec(String(text));"],
     ["Slack photo per face", "images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || \"\") : \"\"));", "images.push(i === 0 ? String(carriedImage || \"\") : \"\");"]
 ];
 

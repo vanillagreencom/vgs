@@ -1,0 +1,14 @@
+{ "schemaVersion": 1, "id": "acme.status", "name": "Status", "version": "0.1.0", "author": "acme", "description": "smoke fixture publishing plugin status",
+  "icon": "activity",
+  "kinds": ["service", "bar-widget", "panel"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml" },
+  "defaultSection": "right",
+  "capabilities": ["status", "ipc"],
+  "status": {
+    "token": { "type": "presence", "label": "Token", "group": "Sync", "hint": "Needed for the fixture's sync", "command": "secret-tool store --label='acme token' service acme account token" },
+    "check": { "type": "state", "label": "Check" },
+    "pending": { "type": "count", "label": "Pending", "group": "Sync" },
+    "lastCheck": { "type": "time", "label": "Last check" },
+    "note": { "type": "text", "label": "Note" },
+    "detail": { "type": "data", "label": "Detail" },
+    "quiet": { "type": "count", "label": "Quiet", "hidden": true }
+  } }

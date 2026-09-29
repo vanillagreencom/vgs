@@ -54,6 +54,10 @@ row("a manifest the judge refuses is refused with the judge's line", tmp => { co
 // judge imports; offline, the loader resolves that import.
 row("an icon from the shipped set passes offline", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ icon: "settings" }, good), true); return ["--", d]; }, 0, "ok       acme.one");
 row("an icon outside the shipped set is refused offline with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ icon: "no-such-icon" }, good), true); return ["--", d]; }, 1, 'icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got "no-such-icon"', "ok       acme.one");
+// A manifest's status declarations are judged offline too, and a status key
+// without its capability refuses the manifest with the judge's line.
+row("a status declaration with its capability passes offline", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ capabilities: ["status"], status: { token: { type: "presence", label: "Token", command: "secret-tool store --label=x service x account y" } } }, good), true); return ["--", d]; }, 0, "ok       acme.one");
+row("a status declaration without its capability is refused offline with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ status: { token: { type: "presence", label: "Token" } } }, good), true); return ["--", d]; }, 1, "status needs capability status", "ok       acme.one");
 row("a missing directory exits 2", tmp => ["--", path.join(tmp, "missing")], 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "missing", "manifest.json") + ": ENOENT");
 row("a directory named like an option after -- is a plugin directory", tmp => { const d = path.join(tmp, "--base"); plugin(d, good, true); return ["--", d]; }, 0, "ok       acme.one");
 row("a base lists every plugin under it", tmp => { plugin(path.join(tmp, "a"), good, true); plugin(path.join(tmp, "b"), Object.assign({}, good, { id: "acme.two" }), true); return ["--base", tmp]; }, 0, "ok       acme.two");

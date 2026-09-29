@@ -10,7 +10,7 @@ metadata:
   source: in-place
   repository: "https://github.com/vanillagreencom/vgs"
   bugs: "https://github.com/vanillagreencom/vgs/issues"
-  version: "0.4.0"
+  version: "0.5.0"
 tags: [plugins, quickshell]
 ---
 
@@ -47,6 +47,7 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 - Compose the components of `qs.Ui` ([`references/api.md` § Components in `qs.Ui`](references/api.md#components-in-qsui)) before drawing anything by hand. Every colour, size, font, radius, opacity and duration reads a token through `Theme` in `qs.Commons`. `scripts/check-design-tokens.py` refuses a `Theme` path that names no token and reports each literal it finds.
 - A plugin whose design must look the same under every theme owns its look instead: the manifest's `appearance` names a table of its own, every value is `look.<path>` from `Theme.appearance(TOKENS, LIGHT)`, and the theme reaches it through its mode, accent and motion scale alone. [`docs/architecture/appearance.md`](../../../docs/architecture/appearance.md) is the contract; it reads no other `Theme` member.
 - One owner per timer, watcher, poller and subprocess, inside the entry point's tree. A `Process` gets its stdout parser before it starts.
+- A value the plugin's widgets, flyout or Settings page show is plugin status: declare it in the manifest's `status`, name capability `status`, write it from the one instance that owns its source, the service, with `shell.status.set`, and read it from `shell.status.values`. One writer per key; a credential's value never enters status, only its presence. [`docs/architecture/status.md`](../../../docs/architecture/status.md), [D037](../../../docs/decisions/D037-plugin-status.md).
 - A plugin that needs a Hyprland key or a blur rule declares it as data in the manifest's `hyprland` key and never writes Hyprland configuration: the core renders it into the one Hyprland layer, [`docs/architecture/hyprland.md`](../../../docs/architecture/hyprland.md).
 - No cache keyed by data other applications supply without a ceiling.
 - Every Quickshell type, property and signal comes from the 0.3.1 reference on Context7: `ctx7 docs /websites/quickshell_v0_3_1 <query>`.

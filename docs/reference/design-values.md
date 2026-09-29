@@ -48,6 +48,7 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `SectionHeader` | its lines, 8 above, 4 below | 0; 12 where the surface insets its rows | 4 | | `sectionHeader.paddingTop`, `sectionHeader.paddingBottom`, `sectionHeader.gap` | `.listing-checks h3` | min-height 40, padding 0 13 | no height floor; the 4 px line gap has no rule |
 | `Badge` | 20 | 4 | 7 | 0 | `badge.height`, `badge.paddingX`, `badge.gap` | `.listing-check-status` | min-height 20, padding 2 7 0 | padding 4 |
 | `Kbd` | line + 4 | 2 | | 0 | `kbd.paddingX` | `.sidebar-search kbd` | padding 3 7 | padding 2 |
+| `CodeLine` | its lines + 4, the `sm` Copy button's 24 at least | 9; 2 on the right, beside the button | 7 between the text and the button | 0 | `codeLine.paddingX`, `codeLine.paddingY`, `codeLine.gap`, `size.control.sm` | none | | |
 | `Tabs` | 30 | 4 | 8 between tabs | | `tabs.height`, `space.xs`, `tabs.gap` | `.market-nav a` | height 32, padding 0 10 | 30 tall, padding 4 |
 | `Tooltip` | line + 4 | 6 | 4 from the anchor | 0 | `tooltip.paddingX`, `tooltip.paddingY`, `tooltip.gap` | `.control-tooltip` | padding 5 7 | padding 2 6 |
 | `Toast` | content + 16 | 8 | 7 between icon, text and close; 6 between toasts | 0 | `toast.padding`, `toast.contentGap`, `toast.gap` | `.toast` | padding 9 12 | padding 8 |

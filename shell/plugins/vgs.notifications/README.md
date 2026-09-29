@@ -57,6 +57,8 @@ secret-tool store --label='VGS notifications Slack token' service vgs-notificati
 
 Type the token at `secret-tool`'s prompt. Do not put the token on the command line.
 
+Settings shows a Slack token row with this command to copy. It reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). The check runs at start and after each photo refresh; it never reads the token or unlocks the keyring. Disable and enable the plugin to check again.
+
 Remove it with:
 
 ```bash
@@ -70,8 +72,6 @@ The helper writes to `$XDG_CACHE_HOME/vgs/notifications/slack-photos/<team id>/`
 An image URL that is missing or outside Slack's allowed image hosts is skipped as unavailable. A failed download from an allowed image URL writes one sanitized `notifications-slack-photos: downloads=failed count=<n>` line. The helper keeps any older file for that photo when it can. An index with download failures is retried after 15 minutes instead of staying fresh for the full day.
 
 Production image URLs must be HTTPS and must come from Slack's image hosts or `secure.gravatar.com`. Tests alone can set `VGS_NOTIFICATIONS_SLACK_TEST=1`, `VGS_NOTIFICATIONS_SLACK_API_BASE` at `127.0.0.1`, and `VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR` for a stub `secret-tool`. These are process environment variables for the helper. `shell.json` and notification contents do not set them.
-
-Omarchy `main` has no `secret-tool`, `libsecret`, `gnome-keyring` or notification-avatar implementation in GitHub code search. VGS uses libsecret here because the issue requires a local secret store and because the token must not enter `shell.json`, argv, the repository or logs.
 
 ## State
 

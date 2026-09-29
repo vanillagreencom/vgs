@@ -130,6 +130,11 @@ Singleton {
         layers: ctx => ({
             show: component => Layers.show(ctx, component)
         }),
+        status: ctx => ({
+            set: (key, value) => PluginStatus.set(ctx, key, value),
+            get values() { return PluginStatus.valuesOf(ctx.id); },
+            get revision() { return PluginStatus.revisionOf(ctx.id); }
+        }),
         theme: themes.provider
     })
 
@@ -172,6 +177,7 @@ Singleton {
             lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null },
             toasts: Toasts.record(),
             layers: Layers.record(),
+            status: PluginStatus.record(),
             theme: themes.record()
         });
     }

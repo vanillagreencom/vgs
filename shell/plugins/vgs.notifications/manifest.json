@@ -18,7 +18,8 @@
     "ipc",
     "layers",
     "notifications",
-    "shortcut"
+    "shortcut",
+    "status"
   ],
   "settings": {
     "duration": 8
@@ -31,6 +32,15 @@
       "min": 2,
       "max": 30,
       "step": 1
+    }
+  },
+  "status": {
+    "slackToken": {
+      "type": "presence",
+      "label": "Slack token",
+      "group": "Slack",
+      "hint": "Needed for sender photos in Slack notifications",
+      "command": "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
     }
   },
   "appearance": "Appearance.js",

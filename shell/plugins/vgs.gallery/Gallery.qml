@@ -126,7 +126,7 @@ Item {
                 Slider { from: 0; to: 100; value: 40; width: parent.width }
                 Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
 
-                SectionHeader { text: "Feedback"; description: "Progress, spinner, badges and key caps" }
+                SectionHeader { text: "Feedback"; description: "Progress, spinner, badges, key caps and a code line to copy" }
                 Flow {
                     width: parent.width
                     spacing: Theme.space.lg
@@ -144,6 +144,7 @@ Item {
                     Kbd { text: "Ctrl" }
                     Kbd { text: "K" }
                 }
+                CodeLine { width: parent.width; text: "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"; copyLabel: "Copy the command" }
                 Flow {
                     width: parent.width
                     spacing: Theme.space.sm

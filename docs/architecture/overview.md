@@ -17,6 +17,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Bar widget: a plugin of kind `bar-widget`. It draws one item in a bar section.
 - Service: a plugin of kind `service`. No surface. It owns watchers, pollers and subprocesses.
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
+- Status: runtime values a plugin declares in its manifest and publishes through capability `status`, held once per plugin for its instances and the Settings page.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the Settings plugin, `vgs.settings`, through the `manager` capability; its mechanism is core.
 - Requirement: an external command a plugin or the core runs, declared with its package per manager in a manifest's `requirements` or in `config/requirements.json`. It names a command, never a plugin; the scan probes it and the manager reports its state: [requirements.md](requirements.md).
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
@@ -55,6 +56,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [appearance.md](appearance.md): read before writing a plugin that owns its look, or touching `Theme.appearance` or its judge.
 - [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
+- [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the Settings window.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.

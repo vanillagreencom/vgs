@@ -15,7 +15,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -57,7 +57,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status"];
 
 // What one entry of a manifest's `requirements`, and of the core's own
 // config/requirements.json, may carry: an external command the plugin runs,
@@ -69,6 +69,36 @@ var REQUIREMENT_PURPOSE_MAX = 120;
 var REQUIREMENT_STATES = ["present", "missing"];
 // A purpose is one printable line: no C0 or C1 control character.
 var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+
+
+// Plugin status: the runtime values a plugin publishes through its `status`
+// capability, each declared in the manifest's `status` key with one of these
+// types. `data` is structured JSON only the plugin's own instances read; the
+// Settings window draws every other type unless the entry is `hidden`.
+var STATUS_TYPES = ["presence", "state", "text", "count", "time", "data"];
+var STATUS_ENTRY_KEYS = ["type", "label", "group", "hint", "command", "hidden"];
+// A status key names a value in `shell.status.values`, so it is a plain
+// identifier.
+var STATUS_KEY_PATTERN = /^[a-z][A-Za-z0-9]*$/;
+// Declaration text lengths, in characters: a label and a group are one short
+// line, a hint a sentence, a command one shell line the page shows and never
+// runs. A `text` value and a `state` value's text are one line of this length.
+var STATUS_LABEL_MAX = 60;
+var STATUS_HINT_MAX = 200;
+var STATUS_COMMAND_MAX = 300;
+var STATUS_TEXT_MAX = 200;
+// The ceiling on one plugin's published values: the UTF-8 bytes of their
+// JSON. A write that would pass it is refused and the values stay.
+var STATUS_MAX_BYTES = 65536;
+// A `presence` value, and the badge tone Settings draws it with: the thing is
+// stored and readable; not stored; stored but locked, so a background probe
+// cannot read it without prompting; its store cannot be asked; stored where
+// another user can read it.
+var STATUS_PRESENCE_TONES = { present: "success", absent: "warning", locked: "info", unavailable: "neutral", unsafe: "danger" };
+// A `state` value's `tone`, and the badge tone Settings draws it with.
+var STATUS_STATE_TONES = { ok: "success", info: "info", warning: "warning", danger: "danger" };
+// The keys a `state` value carries.
+var STATUS_STATE_KEYS = ["tone", "text"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, and the name a manifest's Hyprland bind gives its shortcut.
@@ -252,6 +282,214 @@ function schemaError(schema, settings) {
             return "settings." + key + " does not fit its schema: " + bad;
     }
     return "";
+}
+
+// Whether `text` is one printable line of 1 to `max` characters: a string
+// with no control character (C0, DEL, C1) and no line or paragraph
+// separator, so a page draws it on one line and a log line holds it whole.
+function isPrintableLine(text, max) {
+    return typeof text === "string" && text.length > 0 && text.length <= max && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(text);
+}
+
+// The first defect of a manifest's `status` key, or "". An object keyed by
+// status key (STATUS_KEY_PATTERN), each entry naming a type from
+// STATUS_TYPES and a printable `label`, with an optional printable `group`
+// and `hint`, an optional printable `command` the Settings page shows as
+// text and never runs, and an optional boolean `hidden`. A `data` entry is
+// never drawn, so it carries none of `group`, `hint`, `command` or `hidden`.
+// A plugin publishes status only through its `status` capability, so the
+// key needs the capability, and the capability needs at least one entry.
+function statusError(status, capabilities) {
+    if (!isPlainObject(status))
+        return "status must be an object";
+    var keys = Object.keys(status);
+    if (keys.length === 0)
+        return "status must declare at least one entry";
+    if (capabilities.indexOf("status") === -1)
+        return "status needs capability status";
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var entry = status[key];
+        var at = "status." + key;
+        if (!STATUS_KEY_PATTERN.test(key))
+            return "status key " + JSON.stringify(key) + " must match " + STATUS_KEY_PATTERN.source;
+        if (!isPlainObject(entry))
+            return at + " must be an object";
+        var entryKeys = Object.keys(entry);
+        for (var u = 0; u < entryKeys.length; u++) {
+            if (STATUS_ENTRY_KEYS.indexOf(entryKeys[u]) === -1)
+                return at + " has unknown key " + JSON.stringify(entryKeys[u]);
+        }
+        if (STATUS_TYPES.indexOf(entry.type) === -1)
+            return at + ".type must be one of " + STATUS_TYPES.join(", ") + ", got " + JSON.stringify(entry.type);
+        if (!isPrintableLine(entry.label, STATUS_LABEL_MAX))
+            return at + ".label must be a printable line of 1 to " + STATUS_LABEL_MAX + " characters";
+        if (entry.group !== undefined && !isPrintableLine(entry.group, STATUS_LABEL_MAX))
+            return at + ".group must be a printable line of 1 to " + STATUS_LABEL_MAX + " characters when present";
+        if (entry.hint !== undefined && !isPrintableLine(entry.hint, STATUS_HINT_MAX))
+            return at + ".hint must be a printable line of 1 to " + STATUS_HINT_MAX + " characters when present";
+        if (entry.command !== undefined && !isPrintableLine(entry.command, STATUS_COMMAND_MAX))
+            return at + ".command must be a printable line of 1 to " + STATUS_COMMAND_MAX + " characters when present";
+        if (entry.hidden !== undefined && typeof entry.hidden !== "boolean")
+            return at + ".hidden must be a boolean when present";
+        if (entry.type === "data") {
+            var drawn = ["group", "hint", "command", "hidden"];
+            for (var d = 0; d < drawn.length; d++) {
+                if (entry[drawn[d]] !== undefined)
+                    return at + "." + drawn[d] + " needs a type Settings draws; data is never drawn";
+            }
+        }
+    }
+    return "";
+}
+
+// Whether `value` is plain JSON: null, a boolean, a finite number, a string,
+// an array of plain JSON, or an object whose prototype is Object's or none
+// holding plain JSON. Anything JSON.stringify would drop, change or refuse,
+// such as a function, a Date or a QML object, is not.
+function isPlainJson(value) {
+    if (value === null || typeof value === "boolean" || typeof value === "string")
+        return true;
+    if (typeof value === "number")
+        return isFinite(value);
+    if (Array.isArray(value)) {
+        for (var i = 0; i < value.length; i++)
+            if (!isPlainJson(value[i])) return false;
+        return true;
+    }
+    if (typeof value !== "object")
+        return false;
+    // A plain object's prototype is Object.prototype of whichever realm made
+    // it, whose own prototype is null, or it has none.
+    var proto = Object.getPrototypeOf(value);
+    if (Object.prototype.toString.call(value) !== "[object Object]" || (proto !== null && Object.getPrototypeOf(proto) !== null))
+        return false;
+    var keys = Object.keys(value);
+    for (var k = 0; k < keys.length; k++)
+        if (!isPlainJson(value[keys[k]])) return false;
+    return true;
+}
+
+// Whether `value` fits a status entry of type `type`: `presence` a key of
+// STATUS_PRESENCE_TONES; `state` { tone, text } with a tone of
+// STATUS_STATE_TONES and a printable text; `text` a printable line; `count`
+// a whole number from 0; `time` a whole number of milliseconds since the
+// Unix epoch, from 0; `data` plain JSON.
+function statusValueFits(type, value) {
+    if (type === "presence") return typeof value === "string" && hasOwn(STATUS_PRESENCE_TONES, value);
+    if (type === "state") {
+        if (!isPlainObject(value) || !isPlainJson(value)) return false;
+        var keys = Object.keys(value);
+        for (var i = 0; i < keys.length; i++)
+            if (STATUS_STATE_KEYS.indexOf(keys[i]) === -1) return false;
+        return typeof value.tone === "string" && hasOwn(STATUS_STATE_TONES, value.tone) && isPrintableLine(value.text, STATUS_TEXT_MAX);
+    }
+    if (type === "text") return isPrintableLine(value, STATUS_TEXT_MAX);
+    if (type === "count" || type === "time") return typeof value === "number" && isFinite(value) && value >= 0 && Math.floor(value) === value && value <= Number.MAX_SAFE_INTEGER;
+    if (type === "data") return isPlainJson(value);
+    throw new Error("statusValueFits: status type " + JSON.stringify(type) + " passed validation but has no rule");
+}
+
+// The number of UTF-8 bytes that encode `text`. A lone surrogate counts as
+// the three bytes of its replacement character.
+function utf8Bytes(text) {
+    var bytes = 0;
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i);
+        if (code < 0x80) bytes += 1;
+        else if (code < 0x800) bytes += 2;
+        else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+            bytes += 4;
+            i += 1;
+        } else bytes += 3;
+    }
+    return bytes;
+}
+
+// A deep-frozen copy of plain JSON, so the writer cannot reach a published
+// value. The QML engine lets a frozen array be written in place
+// (docs/architecture/runtime-qml.md), so PluginStatus hands each reader a
+// copy of its own.
+function frozenJson(value) {
+    var copy = JSON.parse(JSON.stringify(value));
+    var freeze = function (node) {
+        if (node === null || typeof node !== "object") return node;
+        var keys = Object.keys(node);
+        for (var i = 0; i < keys.length; i++) freeze(node[keys[i]]);
+        return Object.freeze(node);
+    };
+    return freeze(copy);
+}
+
+// The one keyed line a refused status write answers:
+// `refused: status=<key> reason=<reason>`, a key STATUS_KEY_PATTERN does not
+// admit written as JSON so the line stays one line.
+function statusRefusal(key, reason) {
+    var named = typeof key === "string" && STATUS_KEY_PATTERN.test(key) ? key : JSON.stringify(String(key));
+    return "refused: status=" + named + " reason=" + reason;
+}
+
+// One status write by a plugin whose validated manifest is `manifest` and
+// whose published values are `values`: { ok: true, values, bytes } with
+// the new deep-frozen values and their size, or { ok: false, error } with
+// the one keyed line `refused: status=<key> reason=<reason>`, the reason
+// `undeclared` (the manifest's `status` has no such key), `type` (the value
+// does not fit the entry's type) or `size` (the values would pass
+// STATUS_MAX_BYTES). A refused write leaves `values` as they were.
+function statusWrite(manifest, values, key, value) {
+    var refused = function (reason) { return { ok: false, error: statusRefusal(key, reason) }; };
+    if (typeof key !== "string" || !hasOwn(manifest.status, key))
+        return refused("undeclared");
+    if (!statusValueFits(manifest.status[key].type, value))
+        return refused("type");
+    var next = {};
+    var keys = Object.keys(values);
+    for (var i = 0; i < keys.length; i++) next[keys[i]] = values[keys[i]];
+    next[key] = value;
+    var bytes = utf8Bytes(JSON.stringify(next));
+    if (bytes > STATUS_MAX_BYTES)
+        return refused("size");
+    return { ok: true, values: frozenJson(next), bytes: bytes };
+}
+
+// Whether the Settings window draws status entry `entry`: every type but
+// `data`, unless the entry is `hidden`.
+function statusDisplayable(entry) {
+    return entry.type !== "data" && entry.hidden !== true;
+}
+
+// The badge tone Settings draws a reported status value with: the
+// presence's or the state's tone, "" for a type drawn as text.
+function statusTone(type, value) {
+    if (type === "presence") return STATUS_PRESENCE_TONES[value];
+    if (type === "state") return STATUS_STATE_TONES[value.tone];
+    return "";
+}
+
+// The Status rows the plugin manager shows for a plugin: one per entry
+// statusDisplayable admits, in manifest key order, as { key, type, label,
+// group, hint, command, report, value, tone }. `group`, `hint` and
+// `command` are "" when the manifest omits them. `report` is `reported`
+// with the published `value` and its `tone`, or `unreported` with `value`
+// null and `tone` "" while `values` holds nothing for the key.
+function statusRows(manifest, values) {
+    return Object.keys(manifest.status).filter(function (key) {
+        return statusDisplayable(manifest.status[key]);
+    }).map(function (key) {
+        var entry = manifest.status[key];
+        var reported = hasOwn(values, key);
+        return {
+            key: key,
+            type: entry.type,
+            label: entry.label,
+            group: entry.group === undefined ? "" : entry.group,
+            hint: entry.hint === undefined ? "" : entry.hint,
+            command: entry.command === undefined ? "" : entry.command,
+            report: reported ? "reported" : "unreported",
+            value: reported ? values[key] : null,
+            tone: reported ? statusTone(entry.type, values[key]) : ""
+        };
+    });
 }
 
 // A Hyprland key written `MOD+MOD+KEY`, such as `SUPER+SPACE`, normalised:
@@ -450,8 +688,8 @@ function requirementRows(manifest, missing) {
 // normalized manifest, or { ok: false, error } naming the first defect.
 // `sourceDir` is recorded on the manifest so entry points resolve later.
 // A normalized manifest always carries `capabilities` and `requirements`
-// (arrays, the latter's entries normalRequirements' shape), `settings` and
-// `schema` (objects), `defaultSection` only when declared, and
+// (arrays, the latter's entries normalRequirements' shape), `settings`,
+// `schema` and `status` (objects), `defaultSection` only when declared, and
 // `hyprland` only when declared, as { binds, layerRules } with every bind's
 // key normalised by hyprlandKey.
 function validateManifest(raw, sourceDir) {
@@ -546,11 +784,19 @@ function validateManifest(raw, sourceDir) {
     var badRequirements = requirementsError(requirements);
     if (badRequirements !== "")
         return { ok: false, error: badRequirements };
+    if (raw.status !== undefined) {
+        var badStatus = statusError(raw.status, capabilities);
+        if (badStatus !== "")
+            return { ok: false, error: badStatus };
+    } else if (capabilities.indexOf("status") !== -1) {
+        return { ok: false, error: "capability status needs a status declaration" };
+    }
     var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();
     manifest.requirements = normalRequirements(requirements);
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
+    manifest.status = raw.status === undefined ? {} : clone(raw.status);
     if (raw.hyprland !== undefined) {
         manifest.hyprland = {
             binds: (raw.hyprland.binds || []).map(function (bind) { return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key }; }),

@@ -20,6 +20,7 @@ Spinner 1.0 feedback/Spinner.qml
 ProgressBar 1.0 feedback/ProgressBar.qml
 Badge 1.0 feedback/Badge.qml
 Kbd 1.0 feedback/Kbd.qml
+CodeLine 1.0 feedback/CodeLine.qml
 ScrollArea 1.0 layout/ScrollArea.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml

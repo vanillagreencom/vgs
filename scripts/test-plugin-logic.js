@@ -119,6 +119,30 @@ function suite(ctx, check) {
         ["enum default outside its options", { settings: { a: "z" }, schema: { a: { type: "enum", label: "A", options: ["x", "y"] } } }, "settings.a does not fit its schema: want=one-of:x|y"],
         ["configure without a schema", { capabilities: ["configure"] }, "capability configure needs a schema"],
         ["configure with a schema", { capabilities: ["configure"], settings: { a: true }, schema: { a: { type: "boolean", label: "A" } } }, null],
+        ["status with every entry key", { capabilities: ["status"], status: { slackToken: { type: "presence", label: "Slack token", group: "Slack", hint: "h", command: "secret-tool store x", hidden: false }, detail: { type: "data", label: "Detail" } } }, null],
+        ["status not an object", { capabilities: ["status"], status: [] }, "status must be an object"],
+        ["status with no entry", { capabilities: ["status"], status: {} }, "status must declare at least one entry"],
+        ["status without capability status", { status: { a: { type: "text", label: "A" } } }, "status needs capability status"],
+        ["capability status without a status", { capabilities: ["status"] }, "capability status needs a status declaration"],
+        ["a status key with a dash", { capabilities: ["status"], status: { "slack-token": { type: "text", label: "A" } } }, "status key \"slack-token\" must match"],
+        ["a status key starting upper case", { capabilities: ["status"], status: { Token: { type: "text", label: "A" } } }, "status key \"Token\" must match"],
+        ["a status entry not an object", { capabilities: ["status"], status: { a: "text" } }, "status.a must be an object"],
+        ["a status entry with an unknown key", { capabilities: ["status"], status: { a: { type: "text", label: "A", run: true } } }, "status.a has unknown key \"run\""],
+        ["a status entry with an unknown type", { capabilities: ["status"], status: { a: { type: "secret", label: "A" } } }, "status.a.type must be one of presence, state, text, count, time, data"],
+        ["a status entry without a label", { capabilities: ["status"], status: { a: { type: "text" } } }, "status.a.label must be a printable line of 1 to 60"],
+        ["a status label of 61 characters", { capabilities: ["status"], status: { a: { type: "text", label: "x".repeat(61) } } }, "status.a.label must be a printable line of 1 to 60"],
+        ["a status label of 60 characters", { capabilities: ["status"], status: { a: { type: "text", label: "x".repeat(60) } } }, null],
+        ["a status label with a newline", { capabilities: ["status"], status: { a: { type: "text", label: "A\nB" } } }, "status.a.label must be a printable line"],
+        ["an empty status group", { capabilities: ["status"], status: { a: { type: "text", label: "A", group: "" } } }, "status.a.group must be a printable line of 1 to 60"],
+        ["a status hint of 201 characters", { capabilities: ["status"], status: { a: { type: "text", label: "A", hint: "x".repeat(201) } } }, "status.a.hint must be a printable line of 1 to 200"],
+        ["a status hint of 200 characters", { capabilities: ["status"], status: { a: { type: "text", label: "A", hint: "x".repeat(200) } } }, null],
+        ["a status command of 301 characters", { capabilities: ["status"], status: { a: { type: "text", label: "A", command: "x".repeat(301) } } }, "status.a.command must be a printable line of 1 to 300"],
+        ["a status command of 300 characters", { capabilities: ["status"], status: { a: { type: "text", label: "A", command: "x".repeat(300) } } }, null],
+        ["a status command with a control character", { capabilities: ["status"], status: { a: { type: "text", label: "A", command: "a\u001b[2Jb" } } }, "status.a.command must be a printable line"],
+        ["a status hidden that is not a boolean", { capabilities: ["status"], status: { a: { type: "text", label: "A", hidden: "yes" } } }, "status.a.hidden must be a boolean"],
+        ["a data entry with a hint", { capabilities: ["status"], status: { a: { type: "data", label: "A", hint: "h" } } }, "status.a.hint needs a type Settings draws"],
+        ["a data entry with a command", { capabilities: ["status"], status: { a: { type: "data", label: "A", command: "c" } } }, "status.a.command needs a type Settings draws"],
+        ["a data entry that is hidden", { capabilities: ["status"], status: { a: { type: "data", label: "A", hidden: true } } }, "status.a.hidden needs a type Settings draws"],
     ];
     for (const [name, patch, want] of manifestRows) {
         const raw = Object.assign(JSON.parse(JSON.stringify(bar)), patch);
@@ -128,6 +152,7 @@ function suite(ctx, check) {
     check("validateManifest does not alias its input", (() => { const raw = JSON.parse(JSON.stringify(bar)); const m = ctx.validateManifest(raw, "/p").manifest; m.kinds.push("x"); return raw.kinds; })(), ["bar"]);
     check("validateManifest normalizes capabilities and settings", (() => { const m = ctx.validateManifest(bar, "/p").manifest; return [m.capabilities, m.settings, m.defaultSection]; })(), [[], {}, undefined]);
     check("validateManifest normalizes an absent schema to an object", ctx.validateManifest(bar, "/p").manifest.schema, {});
+    check("validateManifest normalizes an absent status to an object", ctx.validateManifest(bar, "/p").manifest.status, {});
     check("validateManifest records sourceDir", ctx.validateManifest(bar, "/p").manifest.__sourceDir, "/p");
     check("validateManifest normalizes absent requirements to a list", ctx.validateManifest(bar, "/p").manifest.requirements, []);
     const required = ctx.validateManifest(Object.assign({}, bar, { requirements: [{ command: "gum", purpose: "Dialogs" }, { command: "checkupdates", packages: { pacman: "pacman-contrib" }, optional: true, purpose: "Counts updates" }] }), "/p").manifest;
@@ -522,6 +547,22 @@ const CONTROLS = [
     ["a bind row carries its registered description", "hasOwn(descriptions, name) ? descriptions[name] : \"\"", "\"\""],
     ["a bind row carries the manifest's key", "\"default\": defaults[i].key", "\"default\": bind.key"],
     ["a plugin without an icon is listed with the default", ": DEFAULT_ICON;", ": \"\";"],
+    ["status is a manifest key", "\"hyprland\", \"status\"];", "\"hyprland\"];"],
+    ["status needs capability status", "if (capabilities.indexOf(\"status\") === -1)\n        return \"status needs capability status\";", "if (false)\n        return \"status needs capability status\";"],
+    ["capability status needs a status", "} else if (capabilities.indexOf(\"status\") !== -1) {", "} else if (false) {"],
+    ["a status declaration holds an entry", "if (keys.length === 0)\n        return \"status must declare", "if (false)\n        return \"status must declare"],
+    ["a status key matches its pattern", "if (!STATUS_KEY_PATTERN.test(key))\n            return \"status key \"", "if (false)\n            return \"status key \""],
+    ["a status entry has only known keys", "if (STATUS_ENTRY_KEYS.indexOf(entryKeys[u]) === -1)", "if (false)"],
+    ["a status entry names a known type", "if (STATUS_TYPES.indexOf(entry.type) === -1)\n            return at", "if (false)\n            return at"],
+    ["a status label is a printable line", "if (!isPrintableLine(entry.label, STATUS_LABEL_MAX))", "if (false)"],
+    ["a status group is a printable line", "if (entry.group !== undefined && !isPrintableLine(entry.group, STATUS_LABEL_MAX))", "if (false)"],
+    ["a status hint is a printable line", "if (entry.hint !== undefined && !isPrintableLine(entry.hint, STATUS_HINT_MAX))", "if (false)"],
+    ["a status command is a printable line", "if (entry.command !== undefined && !isPrintableLine(entry.command, STATUS_COMMAND_MAX))", "if (false)"],
+    ["a printable line holds no control character", "!/[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]/.test(text)", "true"],
+    ["a printable line has a ceiling", "text.length <= max &&", ""],
+    ["status hidden is a boolean", "if (entry.hidden !== undefined && typeof entry.hidden !== \"boolean\")", "if (false)"],
+    ["a data entry is never drawn", "if (entry[drawn[d]] !== undefined)", "if (false)"],
+    ["an absent status is normalised", "manifest.status = raw.status === undefined ? {} : clone(raw.status);", "manifest.status = clone(raw.status);"],
     ["a centred surface ignores reserved space", "exclusion: placement === \"center\" ? \"ignore\" : \"normal\"", "exclusion: \"normal\""],
     ["requires is refused by name", "if (hasOwn(raw, \"requires\"))", "if (false)"],
     ["requirements is a manifest key", "\"hyprland\", \"requirements\"];", "\"hyprland\"];"],

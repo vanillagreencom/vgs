@@ -8,6 +8,8 @@
 
 **Research**: VGS-508
 
+**Refined by**: [D037](D037-plugin-status.md): a page also shows the read-only status rows the manifest's `status` key declares, above its editable fields. The manifest is still the whole page, and status is no setting.
+
 **Context**: The plugin manager's user interface was a `manager` built-in of `vgs.bar`: a Plugins button and a small popup that listed every plugin with a switch and drew every schema form inline, [D013](D013-built-in-widgets-are-the-bar-plugins.md). A user could not see one plugin's details, capabilities or keys in one place, and plugin keybinds, which `hyprland.binds` declares and `shell.json` `keys` rebinds ([D028](D028-one-generated-hyprland-layer.md)), had no user interface. No manifest named an icon, and most first-party plugins declared no schema, so the list showed lower-case ids with a generic icon and nothing to change.
 
 **Decision**: A first-party plugin, `vgs.settings` ("Settings"), is the manager's whole user interface. It lists every discovered plugin, itself included, and opens one settings page per plugin, drawn only from that plugin's manifest and the configuration. `vgs.bar` keeps its bar, its workspaces and its clock.

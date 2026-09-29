@@ -1,0 +1,71 @@
+import QtQuick
+import qs.Commons
+import qs.Ui
+
+// A command or path the reader copies: the text in the code role on a
+// sunken fill, wrapped anywhere so a long line shows whole, and a Copy
+// button, an `IconButton` of size `sm`, at its right edge. The text is
+// read-only and takes no focus. `copy()`, which the button calls, puts
+// `text` on the clipboard, emits `copied()` and shows a check mark on the
+// button for `codeLine.confirm` milliseconds. `copyLabel` is what a screen
+// reader and a tooltip say for the button.
+Rectangle {
+    id: root
+
+    property string text: ""
+    property string copyLabel: "Copy"
+    // True while the button shows its check mark after a copy.
+    readonly property bool confirming: confirm.running
+
+    signal copied()
+
+    function copy() {
+        clipboard.text = root.text;
+        clipboard.selectAll();
+        clipboard.copy();
+        clipboard.deselect();
+        confirm.restart();
+        root.copied();
+    }
+
+    implicitWidth: Theme.codeLine.paddingX + label.implicitWidth + Theme.codeLine.gap + button.implicitWidth + Theme.codeLine.paddingY
+    implicitHeight: Math.max(label.implicitHeight, button.implicitHeight) + 2 * Theme.codeLine.paddingY
+    radius: Theme.codeLine.radius
+    color: Theme.codeLine.background
+    border.width: Theme.codeLine.border
+    border.color: Theme.codeLine.borderColor
+
+    Label {
+        id: label
+        role: "code"
+        text: root.text
+        color: Theme.codeLine.foreground
+        x: Theme.codeLine.paddingX
+        width: Math.max(0, button.x - Theme.codeLine.gap - x)
+        wrapMode: Text.WrapAnywhere
+        anchors.verticalCenter: parent.verticalCenter
+    }
+
+    IconButton {
+        id: button
+        size: "sm"
+        iconName: root.confirming ? "check" : "copy"
+        label: root.copyLabel
+        x: root.width - width - Theme.codeLine.paddingY
+        anchors.verticalCenter: parent.verticalCenter
+        onClicked: root.copy()
+    }
+
+    // The clipboard is the application's, reached through a text edit's
+    // copy, so the component imports no Quickshell module.
+    TextEdit {
+        id: clipboard
+        visible: false
+        readOnly: true
+    }
+
+    Timer {
+        id: confirm
+        interval: Theme.codeLine.confirm
+    }
+}

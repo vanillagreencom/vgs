@@ -6,6 +6,9 @@ import "NotificationLogic.js" as Logic
 // Optional Slack Web API photos. The helper reads the Slack user token from
 // libsecret, then refreshes this plugin's cache under XDG cache at most
 // once per day. A missing token returns an empty map and prints nothing.
+// token-status.sh reports whether the token is stored, never reading it,
+// at start and after each helper run; `tokenState` holds its answer, a
+// `presence` status value, and "" before the first.
 Scope {
     id: photos
 
@@ -16,6 +19,16 @@ Scope {
     property var teams: []
     property bool loading: false
     property string lastProblem: ""
+    readonly property string tokenScript: String(Qt.resolvedUrl("token-status.sh")).replace(/^file:\/\//, "")
+    property string tokenState: ""
+    // A check asked for while one runs runs once it ends.
+    property bool tokenCheckPending: false
+
+    function checkToken() {
+        if (tokenProbe.running) { tokenCheckPending = true; return; }
+        tokenProbe.command = ["bash", tokenScript];
+        tokenProbe.running = true;
+    }
 
     function load() {
         if (loading) return;
@@ -71,6 +84,7 @@ Scope {
             const done = completion;
             completion = null;
             photos.loading = false;
+            photos.checkToken();
             const line = photos.problemLine();
             const read = Logic.slackPhotos(helperOut.text);
             if (!read.ok) {
@@ -87,11 +101,40 @@ Scope {
         }
     }
 
+    // The token probe. A run that fails, or prints what the probe never
+    // prints, is logged and read as `unavailable`: the store could not be
+    // asked, which is not a stored token and not a missing one.
+    Process {
+        id: tokenProbe
+        property var completion: null
+        stdout: StdioCollector { id: tokenOut }
+        stderr: StdioCollector { id: tokenErr }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            const done = completion;
+            completion = null;
+            const state = done !== null && done.code === 0 ? Logic.slackTokenState(tokenOut.text) : "";
+            if (state === "") {
+                const line = String(tokenErr.text || "").split("\n")[0];
+                console.warn("notifications-token-status: probe=failed " + (done === null ? "start=failed" : "exit=" + done.code) + (line !== "" ? " stderr=" + line : ""));
+            }
+            photos.tokenState = state === "" ? "unavailable" : state;
+            if (photos.tokenCheckPending) {
+                photos.tokenCheckPending = false;
+                photos.checkToken();
+            }
+        }
+    }
+
     Timer {
         id: retry
         repeat: false
         onTriggered: photos.load()
     }
 
-    Component.onCompleted: load()
+    Component.onCompleted: {
+        checkToken();
+        load();
+    }
 }

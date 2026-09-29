@@ -239,8 +239,9 @@ Singleton {
     // Every discovered plugin as the plugin manager shows it: listing
     // metadata, its icon, capabilities and source, whether it is enabled,
     // its settings schema, the settings it currently receives (a bar
-    // widget's from its first layout entry), its Keys rows, its requirements
-    // with their state and its errors:
+    // widget's from its first layout entry), its Keys rows, its Status rows
+    // (PluginLogic.statusRows over the values it published), its
+    // requirements with their state and its errors:
     // each failed build of one of its kinds, once per cause, then each
     // problem the Hyprland layer reports for it.
     readonly property var managerRows: {
@@ -273,6 +274,7 @@ Singleton {
                 schema: m.schema,
                 settings: Logic.managerSettings(config, m),
                 binds: Logic.bindRows(config, m, descriptions),
+                status: Logic.statusRows(m, PluginStatus.valuesOf(id)),
                 requirements: requirementsOf(id),
                 errors: errors
             };

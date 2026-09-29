@@ -55,6 +55,39 @@ if changes_before="$(config_changes)"; then
 else
   fail "configuration counters unreadable before the rapid write rows"
 fi
+# Status rows, D037: a page draws each status entry its manifest does not
+# keep from Settings, read-only, with its label, its value in the tone of
+# its type, its hint and the command it names, the entries without a group
+# first; `data` and hidden entries are not drawn, an entry nothing published
+# says so, and a disabled plugin's rows all say so. The status fixture,
+# which rows/status.sh left disabled, publishes; the notifications, which
+# the harness starts disabled, have published nothing.
+fixture_command="secret-tool store --label='acme token' service acme account token"
+status_of() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
+drawn_status() { ipc smoke itemTexts panel vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+page_fields_of() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
+# The drawn rows with each time value replaced by `time` when it is drawn
+# as a date, so a row compares the rows whatever the locale's format.
+drawn_status_timeless() { drawn_status | python3 -c 'import json,re,sys; print(json.dumps([[("time" if re.search(r"\d", t) and len(t) > 6 else t) for t in r] if r[0] == "Last check" else r for r in json.load(sys.stdin)]))'; }
+expect "enabling the status fixture for its Status rows is allowed" ok ipc shell setPluginEnabled acme.status true
+expect_poll "the status fixture's service published its first value" '"ok"' ipc smoke readInstance service acme.status startReply
+expect "the fixture publishes a state" ok ipc acme.status invoke set 'check={"tone":"warning","text":"Two sources failed"}'
+expect "the fixture publishes a count" ok ipc acme.status invoke set 'pending=3'
+expect "the fixture publishes a time" ok ipc acme.status invoke set 'lastCheck=1790650695194'
+expect "the fixture publishes data" ok ipc acme.status invoke detail ''
+expect "the window opens the status fixture's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.status
+expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", 1790650695194, "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command")" status_of acme.status
+expect_poll "the page draws the ungrouped entries, then each group's, read-only" "$(python3 -c 'import json,sys; print(json.dumps([["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", sys.argv[1]], ["Pending", "3"]]))' "$fixture_command")" drawn_status_timeless
+expect_poll "the page heads the status sections before any other" '["Status", "Sync"]' section_names
+expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
+expect "the page draws no settings field for the status fixture" '[0, 0]' page_fields_of acme.status
+expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance panel vgs.settings toggle acme.status
+expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
+expect "the window opens the notifications' page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.notifications
+expect_poll "the disabled notifications list the Slack token row unreported" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "unreported", None, "", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" status_of vgs.notifications
+expect_poll "the page draws the Slack token row with its hint and command" "$(python3 -c 'import json,sys; print(json.dumps([["Slack token", "Not reported", "Needed for sender photos in Slack notifications", sys.argv[1]]]))' "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack")" drawn_status
+expect "no Slack token row takes an edit" '[[]]' ipc smoke statusRowInputs panel vgs.settings
+
 expect "the gear closes the Settings window after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the Settings window is gone after the edit rows" 0 layer_count vgs:panel
 expect "disabling the Settings plugin after its rows is allowed" ok ipc shell setPluginEnabled vgs.settings false

@@ -20,6 +20,9 @@ Scope {
     property var heldField: null
     property var heldEditor: null
     property string grab: ""
+    // A plugin instance's status provider, kept past the instance, so a row
+    // writes through it once the core has retired the instance.
+    property var heldStatus: null
 
     Connections {
         target: Plugins
@@ -434,6 +437,28 @@ Scope {
             return -1;
         }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.invoke(hostKey, id, name, arg); }
+        // Every StatusRow under an instance, in tree order, as the type
+        // names of its descendants that take an edit: a text input, a text
+        // edit that is not read-only, a checkable control, or an item with
+        // a setting's or a key's apply. A read-only row lists none.
+        function statusRowInputs(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const takesEdit = child => child instanceof TextInput || (child instanceof TextEdit && !child.readOnly) || child.checkable === true || typeof child.apply === "function" || typeof child.applyKey === "function";
+            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === "StatusRow").map(row =>
+                root.descendants(row).filter(child => child !== row && takesEdit(child)).map(child => root.typeName(child))));
+        }
+        // Keep an instance's `status` provider, answering `held` or `absent`.
+        function holdStatus(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null || item.shell === null || item.shell.status === undefined) return "absent";
+            root.heldStatus = item.shell.status;
+            return "held";
+        }
+        // Publish a JSON value through the kept provider; its reply.
+        function heldStatusSet(key: string, valueJson: string): string {
+            return root.heldStatus === null ? "absent" : root.heldStatus.set(key, JSON.parse(valueJson));
+        }
         // The first visible, enabled item named `type` under an instance
         // whose `text`, or `label` for an icon button, is `text`, as its
         // box in its window's coordinates, or "absent".

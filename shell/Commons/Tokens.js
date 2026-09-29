@@ -445,6 +445,21 @@ var TOKENS = {
         foreground: color("{color.textMuted}")
     },
 
+    // A command or path shown to copy: its text on a sunken fill, a Copy
+    // button at its right edge, and `confirm` the milliseconds the button
+    // shows a check mark after a copy.
+    codeLine: {
+        radius: length("{radius.sm}"),
+        border: length("{border.thin}"),
+        paddingX: length("{control.paddingX}"),
+        paddingY: length("{space.xxs}"),
+        gap: length("{control.gap}"),
+        background: color("{color.surfaceSunken}"),
+        borderColor: color("{color.borderSubtle}"),
+        foreground: color("{color.text}"),
+        confirm: number(1500, 0, 10000)
+    },
+
     tabs: {
         height: length("{size.control.md}"),
         gap: length("{space.md}"),

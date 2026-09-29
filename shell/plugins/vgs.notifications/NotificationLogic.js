@@ -328,6 +328,18 @@ function workspaceReload(map, workspace, loadedAt, now) {
     return now - loadedAt >= WORKSPACE_RELOAD_GAP;
 }
 
+// The states token-status.sh reports for the Slack token, each a value of
+// the core's `presence` status type.
+var SLACK_TOKEN_STATES = ["present", "absent", "locked", "unavailable"];
+
+// The Slack token's state from token-status.sh's stdout: the word after
+// `slack-token: ` on its one line, or "" for output the probe does not
+// print.
+function slackTokenState(text) {
+    var match = /^slack-token: ([a-z]+)(?: [^\n]*)?\n?$/.exec(String(text));
+    return match !== null && SLACK_TOKEN_STATES.indexOf(match[1]) !== -1 ? match[1] : "";
+}
+
 // Slack photos cache data, as slack-photos.js prints and stores it, reduced
 // to the fields the card needs. Names are matched case-folded the same way
 // initials and Slack sender parsing key them.
