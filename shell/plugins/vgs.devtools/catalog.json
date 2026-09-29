@@ -555,7 +555,7 @@
       "icon": "braces",
       "brand": "php",
       "tools": [
-        "php"
+        "github:nunomaduro/static-php-builds"
       ],
       "present": {
         "mise": "php"
@@ -567,7 +567,9 @@
             "global",
             "config",
             "bin-dir",
-            ".local/bin"
+            {
+              "home": ".local/bin"
+            }
           ],
           "via": "php"
         }
@@ -579,7 +581,7 @@
       "icon": "flame",
       "brand": "laravel",
       "tools": [
-        "php",
+        "github:nunomaduro/static-php-builds",
         "node"
       ],
       "present": {
@@ -603,10 +605,10 @@
       "icon": "component",
       "brand": "symfony",
       "tools": [
-        "php"
+        "github:nunomaduro/static-php-builds"
       ],
       "packages": {
-        "pacman": [
+        "aur": [
           "symfony-cli"
         ]
       },
@@ -662,7 +664,8 @@
         "elixir"
       ],
       "present": {
-        "home": ".mix/archives/phx_new"
+        "home": ".mix/archives",
+        "prefix": "phx_new-"
       },
       "postInstall": [
         {
@@ -708,8 +711,7 @@
             "opam",
             "init",
             "--yes"
-          ],
-          "via": "ocaml"
+          ]
         },
         {
           "exec": [
@@ -720,8 +722,7 @@
             "ocamlformat",
             "utop",
             "--yes"
-          ],
-          "via": "ocaml"
+          ]
         }
       ]
     }
@@ -737,6 +738,9 @@
       "packages": {
         "aur": [
           "visual-studio-code-bin"
+        ],
+        "flatpak": [
+          "com.visualstudio.code"
         ]
       },
       "present": {
@@ -758,7 +762,15 @@
       },
       "launch": [
         "codium"
-      ]
+      ],
+      "packages": {
+        "aur": [
+          "vscodium-bin"
+        ],
+        "flatpak": [
+          "com.vscodium.codium"
+        ]
+      }
     },
     {
       "id": "cursor-editor",
@@ -788,19 +800,14 @@
       "command": "zeditor",
       "packages": {
         "pacman": [
-          "zed",
-          "omazed"
+          "zed"
+        ],
+        "flatpak": [
+          "dev.zed.Zed"
         ]
       },
       "present": {
         "command": "zeditor"
-      },
-      "postInstall": {
-        "exec": [
-          "omazed",
-          "setup"
-        ],
-        "via": "zed"
       },
       "launch": [
         "zeditor"
@@ -831,12 +838,9 @@
       "kind": "tui",
       "icon": "file-code",
       "brand": "helix",
-      "command": "helix",
+      "command": "hx",
       "packages": {
         "pacman": [
-          "helix"
-        ],
-        "apt": [
           "helix"
         ],
         "dnf": [
@@ -844,10 +848,13 @@
         ]
       },
       "present": {
-        "command": "helix"
+        "command": [
+          "helix",
+          "hx"
+        ]
       },
       "launch": [
-        "helix"
+        "hx"
       ]
     },
     {
@@ -883,8 +890,14 @@
       "brand": "emacs",
       "command": "emacs",
       "packages": {
-        "aur": [
-          "omarchy-emacs"
+        "pacman": [
+          "emacs"
+        ],
+        "apt": [
+          "emacs"
+        ],
+        "dnf": [
+          "emacs"
         ]
       },
       "present": {
@@ -1011,9 +1024,6 @@
           "MYSQL_ROOT_PASSWORD": "",
           "MYSQL_ALLOW_EMPTY_PASSWORD": "true"
         }
-      },
-      "present": {
-        "command": "docker"
       }
     },
     {
@@ -1038,9 +1048,6 @@
         "env": {
           "POSTGRES_HOST_AUTH_METHOD": "trust"
         }
-      },
-      "present": {
-        "command": "docker"
       }
     },
     {
@@ -1062,9 +1069,6 @@
             "containerPort": 6379
           }
         ]
-      },
-      "present": {
-        "command": "docker"
       }
     },
     {
@@ -1090,9 +1094,6 @@
           "MONGO_INITDB_ROOT_USERNAME": "admin",
           "MONGO_INITDB_ROOT_PASSWORD": "admin123"
         }
-      },
-      "present": {
-        "command": "docker"
       }
     },
     {
@@ -1118,9 +1119,6 @@
           "MARIADB_ROOT_PASSWORD": "",
           "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD": "true"
         }
-      },
-      "present": {
-        "command": "docker"
       }
     },
     {
@@ -1147,9 +1145,6 @@
           "ACCEPT_EULA": "Y",
           "MSSQL_SA_PASSWORD": "@dmin123"
         }
-      },
-      "present": {
-        "command": "docker"
       }
     }
   ]

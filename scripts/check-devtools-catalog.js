@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Validate the vgs.devtools catalog and its plugin-owned appearance table.
 //
-//   check-devtools-catalog.js [catalog.json]
+//   check-devtools-catalog.js [--appearance Appearance.js] [catalog.json]
 //
 // Prints one line per finding as:
 //   <rule> <path> <detail>
@@ -13,16 +13,27 @@ const { load } = require("./qml-library.js");
 
 const repo = path.join(__dirname, "..");
 const pluginDir = path.join(repo, "shell", "plugins", "vgs.devtools");
-const catalogPath = process.argv.length > 2 ? path.resolve(process.argv[2]) : path.join(pluginDir, "catalog.json");
-
-if (process.argv.length > 3) {
-    console.log("check-devtools-catalog: unreadable: invocation: too many arguments");
-    process.exit(2);
-}
 
 function unreadable(where, cause) {
     console.log("check-devtools-catalog: unreadable: " + where + ": " + cause);
     process.exit(2);
+}
+
+function readArgs(argv) {
+    let appearance = path.join(pluginDir, "Appearance.js");
+    let catalog = path.join(pluginDir, "catalog.json");
+    const positional = [];
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === "--appearance" && i + 1 < argv.length) {
+            appearance = path.resolve(argv[++i]);
+            continue;
+        }
+        if (argv[i].startsWith("-")) unreadable("invocation", "unknown option " + argv[i]);
+        positional.push(argv[i]);
+    }
+    if (positional.length > 1) unreadable("invocation", "too many arguments");
+    if (positional.length === 1) catalog = path.resolve(positional[0]);
+    return { catalog, appearance };
 }
 
 function readJson(file) {
@@ -39,59 +50,54 @@ function readJson(file) {
     }
 }
 
-function hasOwn(obj, key) {
-    return Object.prototype.hasOwnProperty.call(obj, key);
-}
-
-function leaves(node, prefix, out) {
-    for (const key of Object.keys(node || {})) {
-        const child = node[key];
-        const at = prefix === "" ? key : prefix + "." + key;
-        if (child && typeof child === "object" && !Array.isArray(child) && typeof child.type === "string") out.push(at);
-        else if (child && typeof child === "object" && !Array.isArray(child)) leaves(child, at, out);
+function loadLibrary(file) {
+    let source;
+    try {
+        source = fs.readFileSync(file, "utf8");
+    } catch (e) {
+        unreadable(file, e.code || e.message);
+    }
+    if (!source.startsWith(".pragma library\n"))
+        unreadable(file, "pragma=missing");
+    try {
+        return load(file);
+    } catch (e) {
+        unreadable(file, e.message);
     }
 }
 
-function catalogBrands(catalog) {
-    const used = new Set();
-    for (const section of Object.keys(catalog || {})) {
-        const rows = catalog[section];
-        if (!Array.isArray(rows)) continue;
-        for (const row of rows) if (row && typeof row === "object" && typeof row.brand === "string") used.add(row.brand);
-    }
-    return used;
+function printFinding(finding) {
+    console.log(finding.rule + " " + (finding.path || "<catalog>") + " " + finding.detail);
 }
 
-function printFinding(f) {
-    console.log(f.rule + " " + (f.path || "<catalog>") + " " + f.detail);
-}
+const args = readArgs(process.argv.slice(2));
+const catalog = readJson(args.catalog);
+const PackageManagers = loadLibrary(path.join(repo, "shell", "Core", "PackageManagers.js"));
+const Lucide = loadLibrary(path.join(repo, "shell", "Ui", "icons", "Lucide.js"));
+const ThemeLogic = loadLibrary(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
+const Tokens = loadLibrary(path.join(repo, "shell", "Commons", "Tokens.js"));
+const Appearance = loadLibrary(args.appearance);
+const CatalogLogic = loadLibrary(path.join(pluginDir, "CatalogLogic.js"));
 
-const catalog = readJson(catalogPath);
-const PackageManagers = load(path.join(repo, "shell", "Core", "PackageManagers.js"));
-const Lucide = load(path.join(repo, "shell", "Ui", "icons", "Lucide.js"));
-const ThemeLogic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
-const Appearance = load(path.join(pluginDir, "Appearance.js"));
-const CatalogLogic = load(path.join(pluginDir, "CatalogLogic.js"));
-
-const managerIds = PackageManagers.MANAGERS.map(row => row.id);
-const lucideNames = Object.keys(Lucide.ICONS);
-const brandLeaves = [];
-leaves(Appearance.TOKENS.brand, "", brandLeaves);
-const brandKeys = brandLeaves.map(path => path.split(".")[0]);
+const brandResult = CatalogLogic.validateBrandTable(catalog, Appearance.TOKENS && Appearance.TOKENS.brand);
+const context = {
+    managerIds: PackageManagers.MANAGERS.map(row => row.id),
+    lucideNames: Object.keys(Lucide.ICONS),
+    brandKeys: brandResult.brandKeys,
+    packageNameValid: PackageManagers.validName
+};
 
 const findings = [];
-const judged = CatalogLogic.validateCatalog(catalog, managerIds, lucideNames, brandKeys, PackageManagers.validName);
+for (const refusal of brandResult.refusals) findings.push(refusal);
+const judged = CatalogLogic.validateCatalog(catalog, context);
 for (const refusal of judged.refusals) findings.push(refusal);
 
+const defaults = ThemeLogic.defaults(Tokens.TOKENS).values;
 for (const mode of ["dark", "light"]) {
-    const theme = { scheme: { mode }, palette: { accent: "#ff5a36ff" }, motion: { scale: 1 } };
+    const theme = Object.assign({}, defaults, { scheme: { mode } });
     const accepted = ThemeLogic.acceptAppearance(Appearance.TOKENS, Appearance.LIGHT, theme);
-    if (!accepted.ok) findings.push({ rule: "catalog-appearance", path: "Appearance.js", detail: ThemeLogic.refusalLine(accepted) });
+    if (!accepted.ok) findings.push({ rule: "catalog-appearance", path: args.appearance, detail: ThemeLogic.refusalLine(accepted) });
 }
-
-const usedBrands = catalogBrands(catalog);
-for (const brand of brandKeys) if (!usedBrands.has(brand)) findings.push({ rule: "catalog-brand-orphan", path: "Appearance.js:TOKENS.brand." + brand, detail: "brand colour is unused" });
-for (const brand of usedBrands) if (!hasOwn(Appearance.TOKENS.brand, brand)) findings.push({ rule: "catalog-brand", path: "catalog", detail: "unknown brand " + brand });
 
 for (const finding of findings) printFinding(finding);
 if (findings.length > 0) process.exit(1);
