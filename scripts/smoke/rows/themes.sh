@@ -663,10 +663,11 @@ expect_poll "the themes panel closes" closed panel_open
 # through its icon buttons. The first screen, held at double its mode and
 # scale 2, reads the requested sourceSize back in device pixels, the mode
 # the compositor reports; a headless second monitor draws an image set on
-# it alone while the first screen draws `current`. A copy of the
-# background that decodes at logical pixels, a copy of the shared state
-# reader that ignores `screens`, one that never reloads the state file and
-# a copy of the background that is always shown are the block's controls.
+# it alone while the first screen draws `current`. A scale-only drop under
+# the hold, a copy of the background that decodes at logical pixels, a
+# copy of the shared state reader that ignores `screens`, one that never
+# reloads the state file and a copy of the background that is always shown
+# are the block's controls.
 # The block leaves vgs applied with no current image and the plugin
 # disabled, so later rows see the bar they saw before the vgs.themes block.
 bg_state="$home/.local/state/vgs"
@@ -743,13 +744,6 @@ expect_poll "the scale-1 screen requests its logical size" "$screen_mode" backgr
 # (docs/architecture/runtime.md § Hyprland). hold_mode reads the mode and
 # the scale back; the host or a reload can reset them under the rows
 # (held_mode_state in harness.sh).
-# Control: the same reader on a headless output reads a zero size, so the
-# held output's reading is the compositor's and not the reader's.
-zero_output=SMOKE-ZERO
-expect "the nested compositor adds a headless output" ok hypr output create headless "$zero_output"
-expect_poll "the headless output reads a zero size" "0x0 scale=1" mode_scale_of "$zero_output"
-expect "the nested compositor removes the headless output" ok hypr output remove "$zero_output"
-expect_poll "the headless output is gone" False screen_listed "$zero_output"
 hold_mode "the nested compositor holds the first screen at double its mode and scale 2" "$screen_name" "$hidpi_mode" 2
 expect_poll "the scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
 
@@ -777,6 +771,13 @@ cp -p -- "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" && mv -T
 expect "a rescan restores the device-pixel background" ok ipc shell rescanPlugins
 expect_poll "the restored scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$screen_name"
 expect "the follow after the device-pixel rescan queued ends" idle theme_idle
+# Control: the scale alone drops to 1 under the held rows, the control of
+# the hold's scale reading. The reader reads the scale the compositor
+# applied, not the one a rule asked for, and the hold reads a scale-only
+# change as a reset.
+expect "the first screen drops to scale 1 at the held mode" ok output_mode "$screen_name" "$hidpi_mode" 1
+expect_poll "the first screen reads the held mode at scale 1" "$hidpi_mode scale=1" mode_scale_of "$screen_name"
+expect "the hold reads the scale reset" reset held_mode_state
 release_mode "the nested compositor gives the first screen its own mode at scale 1" "$screen_name" "$screen_mode"
 
 # Each screen draws its own entry in `screens`, else `current`: an image
