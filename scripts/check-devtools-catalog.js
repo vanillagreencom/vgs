@@ -9,7 +9,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const { load } = require("./qml-library.js");
+const { load } = require("../bin/lib/qml-library.js");
 
 const repo = path.join(__dirname, "..");
 const pluginDir = path.join(repo, "shell", "plugins", "vgs.devtools");

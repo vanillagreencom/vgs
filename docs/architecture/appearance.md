@@ -19,7 +19,7 @@ Most plugins draw from the shell's tokens, so a theme restyles them. A plugin wh
 
 ## The style check
 
-`scripts/check-design-tokens.py` holds a plugin that declares `appearance` to the contract, in the shell's trees and under `vgs-plugin check`. In a repository scan, a directory under `shell/plugins` without `manifest.json` is not a plugin and is not checked as one; `bin/vgsh-scan`, `scripts/check-manifests.js` and `scripts/check-plugin-boundary.py` use the same boundary.
+`scripts/check-design-tokens.py` holds a plugin that declares `appearance` to the contract, in the shell's trees and under `vgs-plugin check`. In a repository scan, a directory under `shell/plugins` without `manifest.json` is not a plugin and is not checked as one; `bin/vgsh-scan`, `bin/lib/check-manifests.js` and `scripts/check-plugin-boundary.py` use the same boundary.
 
 - `appearance-refused`: the declared file throws as it loads, or the judge refuses it in dark or in light mode against the shell's defaults.
 - `look-unknown`: a `look.<path>` names no path of the table.

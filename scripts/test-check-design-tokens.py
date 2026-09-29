@@ -191,7 +191,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         root = build_repo(tmp, ("shell/plugins/acme.notes/Appearance.js", '.pragma library\nvar c = "#ff0000";\n'))
         proc = run_check(root)
-        results.append(report("a directory without a manifest under plugins is not checked as a plugin", proc.returncode == 0 and not keys_of(proc) and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=11"], proc))
+        results.append(report("a directory without a manifest under plugins is not checked as a plugin", proc.returncode == 0 and not keys_of(proc) and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=12"], proc))
     with tempfile.TemporaryDirectory() as tmp:
         root = build_repo(tmp, ("shell/plugins/acme.widget/manifest.json", '{"schemaVersion": 1, "id": "acme.widget"}'))
         proc = run_check(root)
