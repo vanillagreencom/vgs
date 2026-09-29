@@ -334,6 +334,32 @@ PY
   fi
 done
 
+# The harness names a missing ImageMagick among its prerequisites, since the
+# notifications row and the Slack scene draw converted emoji: with no tool
+# on PATH its not-measured line lists magick, and a copy without the check
+# leaves it out.
+# harness_missing HARNESS: the harness's missing list with an empty PATH.
+harness_missing() {
+  local out status=0
+  out="$(env -i PATH="$tmp/no-tools" HOME="$tmp" "$BASH" -c 'repo="$1"; source "$2"' _ "$repo" "$1" 2>/dev/null)" || status=$?
+  [[ $status -eq 77 ]] || { echo "exit=$status"; return; }
+  sed -n 's/^qml-smoke: status=not-measured missing=//p' <<<"$out"
+}
+mkdir -p "$tmp/no-tools"
+has_magick() { tr ',' '\n' <<<"$1" | grep -qx magick; }
+got="$(harness_missing "$repo/scripts/smoke/harness.sh")"
+if has_magick "$got"; then ok "the harness names a missing ImageMagick"; else fail "the harness names a missing ImageMagick: got $got"; fi
+harness_mutant="$tmp/harness-mutant.sh"
+needle='|| missing+=("magick")'
+if [[ $(grep -cF -- "$needle" "$repo/scripts/smoke/harness.sh") -eq 1 ]]; then
+  text="$(<"$repo/scripts/smoke/harness.sh")"
+  printf '%s\n' "${text/"$needle"/|| true}" >"$harness_mutant"
+  got="$(harness_missing "$harness_mutant")"
+  if has_magick "$got"; then fail "control: a harness without the ImageMagick check still names it"; else ok "control: a harness without the ImageMagick check leaves it out"; fi
+else
+  fail "control: the ImageMagick check could not be planted"
+fi
+
 if [[ $failures -gt 0 ]]; then
   echo "test-sandbox-shots: failed=$failures"
   exit 1

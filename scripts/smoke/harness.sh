@@ -10,6 +10,9 @@ missing=()
 for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
+# ImageMagick, `magick` or `convert`, converts the Slack custom emoji the
+# notifications row and the shots' Slack scene draw.
+command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1 || missing+=("magick")
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists wayland-client; then missing+=("wayland-client.pc"); fi
 [[ -n ${WAYLAND_DISPLAY:-} ]] || missing+=("WAYLAND_DISPLAY")
 [[ -n ${XDG_RUNTIME_DIR:-} ]] || missing+=("XDG_RUNTIME_DIR")

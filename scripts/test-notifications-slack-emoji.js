@@ -47,6 +47,12 @@ function realMagick() {
     return "";
 }
 const magick = realMagick();
+// The fixtures below are drawn by ImageMagick, so its absence is decided
+// before any of them.
+if (magick === "") {
+    console.log("test-notifications-slack-emoji: status=not-measured missing=magick");
+    process.exit(77);
+}
 
 // An image ImageMagick draws: `spec` is its argv before the output.
 function image(spec, coder) {
@@ -101,8 +107,9 @@ function serve(req, res) {
         world.calls.push([TOKENS[bearer], method]);
         res.setHeader("content-type", "application/json");
         if (world.down) { res.end(JSON.stringify({ ok: false, error: "ratelimited" })); return; }
-        if (method === "team.info") { res.end(JSON.stringify({ ok: true, team: { id: TOKENS[bearer], domain: TOKENS[bearer].toLowerCase(), name: TOKENS[bearer] } })); return; }
-        if (method === "users.list") { res.end(JSON.stringify({ ok: true, members: [], response_metadata: { next_cursor: "" } })); return; }
+        const port = req.socket.localPort;
+        if (method === "team.info") { res.end(JSON.stringify({ ok: true, team: { id: TOKENS[bearer], domain: TOKENS[bearer].toLowerCase(), name: TOKENS[bearer], icon: { image_68: `http://127.0.0.1:${port}/emoji/apionly.png` } } })); return; }
+        if (method === "users.list") { res.end(JSON.stringify({ ok: true, members: [{ id: "U" + TOKENS[bearer] + "A", name: "ada", profile: { display_name: "Ada", image_48: `http://127.0.0.1:${port}/emoji/apionly.png` } }], response_metadata: { next_cursor: "" } })); return; }
         if (method === "emoji.list" && TOKENS[bearer] === "T1") { res.end(JSON.stringify({ ok: true, emoji: world.list })); return; }
         if (method === "emoji.list" && TOKENS[bearer] === "T2") { res.end(JSON.stringify({ ok: false, error: "missing_scope", needed: "emoji:read" })); return; }
         res.end(JSON.stringify({ ok: false, error: "unknown_method" }));
@@ -297,6 +304,24 @@ exec "${magick}" "$@"
     await runJson(root, ["--emoji", cache, "T1"]);
     assert.equal(fs.existsSync(file(root, "T1", photoHex)), false, "the file goes the run after");
 
+    // A token that goes: its team keeps its emoji and loses its photos, and
+    // a token stored again fetches the team afresh.
+    const tokenRoot = path.join(scratch, "token-root");
+    store({ "slack:T1": "xoxp-acme-4f2a" });
+    const served = await runJson(tokenRoot, ["--emoji", cache, "T1"]);
+    assert.deepEqual(served.teams.map(team => team.id), ["T1"], "the token serves its team's photos");
+    assert.deepEqual(fs.readdirSync(path.join(tokenRoot, "T1")).sort(), ["emoji", "emoji.json", "team.json", "users", "users.json", "workspace.png"], "a served team holds its photos beside its emoji");
+    store({});
+    const unserved = await runJson(tokenRoot, ["--emoji", cache, "T1"]);
+    assert.equal(unserved.status, "absent");
+    assert.deepEqual(fs.readdirSync(path.join(tokenRoot, "T1")).sort(), ["emoji", "emoji.json"], "a team whose token is gone keeps its emoji and loses its photos");
+    assert.ok(teamOf(unserved, "T1").count > 0, "the team's emoji stay in its map");
+    store({ "slack:T1": "xoxp-acme-4f2a" });
+    since = world.calls.length;
+    await runJson(tokenRoot, ["--emoji", cache, "T1"]);
+    assert.deepEqual(world.calls.slice(since).filter(c => c[1] === "team.info"), [["T1", "team.info"]], "a token stored again fetches the team afresh");
+    store({});
+
     // A failed chunk is converted again one image a process.
     const chunkRoot = path.join(scratch, "chunk-root");
     write(failChunks, "");
@@ -338,26 +363,28 @@ function controls() {
     const photos = fs.readFileSync(path.join(pluginDir, "slack-photos.js"), "utf8");
     const dir = path.join(scratch, "controls");
     const table = [
-        ["newest entry wins", "mtimeMs > prior.mtimeMs", "mtimeMs < prior.mtimeMs", /the newest cache entry of a name wins/],
-        ["name rule", "if (!NAME.test(match[3])) {", "if (false) {", /a name outside the rule is skipped/],
-        ["first frame", "job.coder + \":\" + job.input + \"[0]\"", "job.coder + \":\" + job.input", /a GIF gives its first frame|a name outside the rule is skipped/],
-        ["reuse", "previous.sources.get(candidate.name) === candidate.url ? previousHex(candidate.name) : \"\"", "\"\"", /a second run converts nothing/],
-        ["alias resolution", "const target = map.get(value.slice(\"alias:\".length));", "const target = undefined;", /an alias resolves/],
-        ["missing_scope is steady", "if (/ error=missing_scope$/.test(reason))", "if (false)", /missing_scope prints no problem line/],
-        ["the list is asked daily", "if (stored !== null && now - stored.at < DAY_MS) return stored;", "", /emoji.list is asked at most once a day/],
-        ["swap grace", "new Set(Array.from(map.values()).concat(Array.from(previous.map.values())))", "new Set(Array.from(map.values()))", /the previous index's file survives one run/],
-        ["chunk fallback", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS);", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS) && false;", /every image converts after its chunk failed/],
-        ["work budget", "if (work.remaining <= 0) {", "if (false) {", /a run converts at most its budget/],
-        ["disabled grace", "writeState(root, id, { map: new Map(), sources: new Map(), list: null }, deps.atomicWrite);\n    sweepFiles(root, id, new Set(previous.map.values()));\n    return true;", "removeState(root, id);\n    return false;", /emoji off empties the index|survive the first run with emoji off/]
+        ["a team with no token keeps its photos", "slack-photos.js", "if (emojiTeams.has(name)) sweepTeam(path.join(root, name), new Set(), null);", "if (emojiTeams.has(name)) continue;", /keeps its emoji and loses its photos/],
+        ["newest entry wins", "slack-emoji.js", "mtimeMs > prior.mtimeMs", "mtimeMs < prior.mtimeMs", /the newest cache entry of a name wins/],
+        ["name rule", "slack-emoji.js", "if (!NAME.test(match[3])) {", "if (false) {", /a name outside the rule is skipped/],
+        ["first frame", "slack-emoji.js", "job.coder + \":\" + job.input + \"[0]\"", "job.coder + \":\" + job.input", /a GIF gives its first frame|a name outside the rule is skipped/],
+        ["reuse", "slack-emoji.js", "previous.sources.get(candidate.name) === candidate.url ? previousHex(candidate.name) : \"\"", "\"\"", /a second run converts nothing/],
+        ["alias resolution", "slack-emoji.js", "const target = map.get(value.slice(\"alias:\".length));", "const target = undefined;", /an alias resolves/],
+        ["missing_scope is steady", "slack-emoji.js", "if (/ error=missing_scope$/.test(reason))", "if (false)", /missing_scope prints no problem line/],
+        ["the list is asked daily", "slack-emoji.js", "if (stored !== null && now - stored.at < DAY_MS) return stored;", "", /emoji.list is asked at most once a day/],
+        ["swap grace", "slack-emoji.js", "new Set(Array.from(map.values()).concat(Array.from(previous.map.values())))", "new Set(Array.from(map.values()))", /the previous index's file survives one run/],
+        ["chunk fallback", "slack-emoji.js", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS);", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS) && false;", /every image converts after its chunk failed/],
+        ["work budget", "slack-emoji.js", "if (work.remaining <= 0) {", "if (false) {", /a run converts at most its budget/],
+        ["disabled grace", "slack-emoji.js", "writeState(root, id, { map: new Map(), sources: new Map(), list: null }, deps.atomicWrite);\n    sweepFiles(root, id, new Set(previous.map.values()));\n    return true;", "removeState(root, id);\n    return false;", /emoji off empties the index|survive the first run with emoji off/]
     ];
     let passed = 0;
     for (let index = 0; index < table.length; index++) {
-        const [label, needle, replacement, failure] = table[index];
-        assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);
+        const [label, target, needle, replacement, failure] = table[index];
+        const sources = { "slack-emoji.js": source, "slack-photos.js": photos };
+        assert.equal(sources[target].split(needle).length, 2, `control "${label}": the text to replace must occur once`);
         const copyDir = path.join(dir, String(index));
         fs.mkdirSync(copyDir, { recursive: true });
-        fs.writeFileSync(path.join(copyDir, "slack-emoji.js"), source.replace(needle, () => replacement));
-        fs.writeFileSync(path.join(copyDir, "slack-photos.js"), photos, { mode: 0o700 });
+        for (const name of Object.keys(sources))
+            fs.writeFileSync(path.join(copyDir, name), name === target ? sources[name].replace(needle, () => replacement) : sources[name], { mode: 0o700 });
         const result = childProcess.spawnSync(process.execPath, [__filename], {
             cwd: repo,
             env: { PATH: process.env.PATH, NOTIFICATIONS_SLACK_EMOJI_HELPER: path.join(copyDir, "slack-photos.js"), NOTIFICATIONS_SLACK_EMOJI_SKIP_CONTROLS: "1" },
@@ -382,10 +409,6 @@ async function withServer(body) {
     }
 }
 
-if (magick === "") {
-    console.log("test-notifications-slack-emoji: status=not-measured missing=magick");
-    process.exit(77);
-}
 fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(scratch, { recursive: true });
 withServer(main)
