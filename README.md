@@ -4,7 +4,7 @@ A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the
 
 ## Install
 
-There is no install command. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
+Package recipes and the planned curl installer call `packaging/install-system.sh`. It installs one tree under `$PREFIX/share/vgs/` and links `$PREFIX/bin/vgsh` to it. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
 
 It needs Quickshell 0.3.1 or later, Hyprland 0.56 or later with a Lua configuration, node 18 or later, python3 and git. `bin/vgsh run` checks them before it starts and names the first one that is missing or too old.
 

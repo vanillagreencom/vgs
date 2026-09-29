@@ -23,6 +23,7 @@ fi
 
 sandbox=""
 rt_dir=""
+source_repo="$repo"
 pgids=()
 failures=0
 # A row that reads positions, sizes or reserved space from the compositor
@@ -68,6 +69,7 @@ cleanup() {
   if [[ $keep == true ]]; then
     echo "qml-smoke: sandbox kept at $sandbox (runtime dir $rt_dir)"
   else
+    [[ -z $sandbox ]] || chmod -R u+rwx -- "$sandbox" 2>/dev/null || echo "qml-smoke: cleanup=chmod-failed path=$sandbox" >&2
     [[ -z $sandbox ]] || rm -rf -- "$sandbox"
     [[ -z $rt_dir ]] || rm -rf -- "$rt_dir"
   fi
@@ -89,9 +91,11 @@ home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 python3 - "$repo" "$sandbox/repo" "${source_tree:-$repo}" <<'PY'
 import pathlib, shutil, sys
 source, target, tree = map(pathlib.Path, sys.argv[1:])
-for directory in ("shell", "bin", "config", "themes"):
+for directory in ("shell", "bin", "config", "themes", "packaging"):
     shutil.copytree(tree / directory, target / directory)
 shutil.copytree(source / "scripts", target / "scripts")
+for file_name in ("VERSION", "LICENSE", "README.md"):
+    shutil.copyfile(tree / file_name, target / file_name)
 # The copy ships no target: each would detect the host's own application on
 # PATH, and its reload hook would signal that application in the live
 # session. The rows add the fixture targets they read. A tree older than the

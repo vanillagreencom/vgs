@@ -148,7 +148,8 @@ row "a file under bin/ the boundary check cannot read is an error, not a pass" "
 # fixture tree, so removing that row makes the planted defect pass wrongly.
 d="$tmp/smoke-fixtures"; fresh "$d"
 cp -R "$repo/scripts/." "$d/scripts/"
-cp -R "$repo/shell" "$repo/bin" "$d/"
+cp -R "$repo/shell" "$repo/bin" "$repo/config" "$repo/themes" "$repo/packaging" "$d/"
+cp -- "$repo/VERSION" "$repo/LICENSE" "$repo/README.md" "$d/"
 # The token check walks the skill templates beside the shell tree.
 mkdir -p "$d/.agents/skills/vgs-plugin"
 cp -R "$repo/.agents/skills/vgs-plugin/templates" "$d/.agents/skills/vgs-plugin/"
@@ -169,15 +170,18 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 # Selection is checked through the command the caller will run. Expected
 # plans name consumers independently of the dependency table under test.
 repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
+install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
-dispatch_plan=$'node scripts/test-dispatch.js\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
+dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
-version_plan=$'scripts/test-vgsh-version.sh\n'"$repo_plan"
+version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
-  "licence|LICENSE|all|$repo_plan"
+  "licence|LICENSE|all|$install_plan"$'\nscripts/qml-smoke.sh'
+  "installer|packaging/install-system.sh|offline|$install_plan"
+  "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
@@ -226,7 +230,7 @@ if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed
 d="$tmp/plan-shared"; fresh "$d"
 mkdir -p "$d/bin/lib"; printf 'changed\n' >"$d/bin/lib/qml-library.js"
 out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")"
-for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node bin/lib/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
+for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node bin/lib/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'scripts/test-install-tree.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
   if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
 done
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
@@ -271,7 +275,8 @@ test_args=()
 # still judges the same changed source rather than its own policy edit.
 d="$tmp/selected-guard"; fresh "$d"
 cp -R "$repo/scripts/." "$d/scripts/"
-cp -R "$repo/shell" "$repo/bin" "$d/"
+cp -R "$repo/shell" "$repo/bin" "$repo/config" "$repo/themes" "$repo/packaging" "$d/"
+cp -- "$repo/VERSION" "$repo/LICENSE" "$repo/README.md" "$d/"
 # The token check walks the skill templates beside the shell tree.
 mkdir -p "$d/.agents/skills/vgs-plugin"
 cp -R "$repo/.agents/skills/vgs-plugin/templates" "$d/.agents/skills/vgs-plugin/"
