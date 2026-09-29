@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The launcher's decisions, shell/plugins/vgs.launcher/MenuModel.js, under
-// node: the menu file judge and its merge, routes, ranking, the summon
+// node: the menu file judge and its merge, the TUI rows, routes, ranking, the summon
 // payload, select options and the file search helper's output. Every
 // expected value is written out by hand. The shipped menu.json is judged
 // too, so a defect in it fails here before the launcher logs it.
@@ -43,8 +43,25 @@ const MENU_REFUSED = [
     ["a required command with a space", menuText({ apps: { requires: ["a b"] } }), "items.apps.requires must be a list of command names"],
     ["an unknown provider", menuText({ apps: { provider: "fonts" } }), "items.apps.provider must be one of apps, themes"],
     ["a parent that is no id", menuText({ "a.b": { parent: "A" } }), "items.a.b.parent is not an id"],
-    ["a target that is no id", menuText({ apps: { target: "../x" } }), "items.apps.target is not an id"]
+    ["a target that is no id", menuText({ apps: { target: "../x" } }), "items.apps.target is not an id"],
+    ["a tui key that is no string", menuText({ apps: { tui: 3 } }), "items.apps.tui must be a string"],
+    ["a tui key with no owner", menuText({ apps: { tui: "pkg-install" } }), "items.apps.tui is not a TUI key"],
+    ["a tui key with capitals", menuText({ apps: { tui: "core/Pkg-install" } }), "items.apps.tui is not a TUI key"],
+    ["a tui key that climbs", menuText({ apps: { tui: "core/../pkg-install" } }), "items.apps.tui is not a TUI key"],
+    ["a tui group that is no string", menuText({ apps: { tuiGroup: ["Update"] } }), "items.apps.tuiGroup must be a string"],
+    ["a blank tui group", menuText({ apps: { tuiGroup: " " } }), "items.apps.tuiGroup must be one printable line"],
+    ["a tui group of two lines", menuText({ apps: { tuiGroup: "Up\ndate" } }), "items.apps.tuiGroup must be one printable line"]
 ];
+
+// shell.tui.entries as the core lists it, by key: the core's own TUIs, and
+// two plugins' entries in the Update group.
+const CORE_ENTRIES = [
+    { key: "core/pkg-install", plugin: "core", name: "pkg-install", title: "Install packages", label: "Install packages", icon: "package-plus", group: "Packages" },
+    { key: "core/pkg-remove", plugin: "core", name: "pkg-remove", title: "Remove packages", label: "Remove packages", icon: "package-minus", group: "Packages" },
+    { key: "core/sudo-grant", plugin: "core", name: "sudo-grant", title: "Passwordless sudo", label: "Passwordless sudo", icon: "shield-alert", group: "System" }
+];
+const UPDATES = { key: "acme.updates/pipeline", plugin: "acme.updates", name: "pipeline", title: "Update the system", label: "Update", icon: "refresh-cw", group: "Update" };
+const ZETA = { key: "zeta.up/all", plugin: "zeta.up", name: "all", title: "Update all", label: "Update all", icon: "refresh-cw", group: "Update" };
 
 // Payloads the judge refuses: [label, text, the start of the error].
 const PAYLOAD_REFUSED = [
@@ -76,7 +93,8 @@ function verify(model) {
     assert.equal(alone.items.apps.provider, "apps");
     assert.equal(alone.items["system.reboot"].kind, "action");
     assert.equal(alone.items["system.reboot"].parent, "system");
-    assert.equal(alone.items.install.kind, "unavailable");
+    same(["install", "remove", "update"].map(id => [alone.items[id].kind, alone.items[id].tui, alone.items[id].tuiGroup]),
+        [["tui", "core/pkg-install", ""], ["tui", "core/pkg-remove", ""], ["tui", "", "Update"]]);
     // Lock runs a real locker: loginctl only asks a logind listener the
     // shell does not provide. Without hyprlock the row says so.
     same(alone.items["system.lock"].run, ["hyprlock"]);
@@ -102,10 +120,44 @@ function verify(model) {
     assert.equal(both.ok, false);
     assert.equal(both.error, "items.system.reboot states run and target");
     assert.equal(model.mergeMenuSources([], model.parseMenu(menuText({ x: { parent: "" } })).entries).items.x.parent, "");
+    const tuiRun = model.mergeMenuSources(shipped.entries, model.parseMenu(menuText({ install: { run: ["true"] } })).entries);
+    assert.equal(tuiRun.error, "items.install states run and tui");
+    const keyAndGroup = model.mergeMenuSources(shipped.entries, model.parseMenu(menuText({ update: { tui: "core/pkg-install" } })).entries);
+    assert.equal(keyAndGroup.error, "items.update states tui and tuiGroup");
+    const otherKey = model.mergeMenuSources(shipped.entries, model.parseMenu(menuText({ install: { tui: "acme.tui/hello" } })).entries);
+    assert.equal(otherKey.ok, true, "a user row may point a shipped tui row at another key");
+    assert.equal(otherKey.items.install.tui, "acme.tui/hello");
+
+    // TUI rows: a key opens when listed, a group opens its first listed
+    // entry in the list's order, and a row that resolves to nothing hides.
+    const judgedTuis = model.parseMenu(menuText({ a: { tui: "core/pkg-install" }, b: { tui: "acme.tui/hello" }, c: { tuiGroup: "Update" } }));
+    assert.equal(judgedTuis.ok, true, judgedTuis.error);
+    const tuiKeys = (from, entries) => {
+        const resolved = model.resolveTuiRows(from.items, from.itemOrder, entries);
+        return ["install", "remove", "update"].map(id => resolved[id].tuiKey);
+    };
+    same(tuiKeys(alone, CORE_ENTRIES), ["core/pkg-install", "core/pkg-remove", ""], "no Update entry leaves update unresolved");
+    same(tuiKeys(alone, CORE_ENTRIES.concat([UPDATES])), ["core/pkg-install", "core/pkg-remove", "acme.updates/pipeline"]);
+    same(tuiKeys(alone, [ZETA, UPDATES]), ["", "", "zeta.up/all"], "the first Update entry in the list wins");
+    same(tuiKeys(alone, [UPDATES, ZETA]), ["", "", "acme.updates/pipeline"], "the first Update entry in the list wins");
+    same(tuiKeys(alone, [Object.assign({}, UPDATES, { key: "core/pkg-install", group: "Packages" })]), ["core/pkg-install", "", ""], "a key row matches by key, never by group");
+    const enabled = model.resolveTuiRows(alone.items, alone.itemOrder, CORE_ENTRIES.concat([UPDATES]));
+    assert.equal(alone.items.update.tuiKey, "", "the map handed in is never written");
+    same(model.menuRows(enabled, alone.itemOrder, "root", []).filter(r => r.kind === "tui").map(r => r.label), ["Install", "Remove", "Update"]);
+    same(tuiKeys({ items: enabled, itemOrder: alone.itemOrder }, CORE_ENTRIES), ["core/pkg-install", "core/pkg-remove", ""], "a disabled plugin's entry leaving the list unresolves the row");
+    const disabled = model.resolveTuiRows(enabled, alone.itemOrder, CORE_ENTRIES);
+    same(model.menuRows(disabled, alone.itemOrder, "root", []).filter(r => r.kind === "tui").map(r => r.label), ["Install", "Remove"], "an unresolved row is hidden");
+    same(model.searchRows(disabled, alone.itemOrder, "root", "update", []).map(r => r.label), [], "an unresolved row is hidden from search");
+    same(model.menuRows(model.resolveTuiRows(alone.items, alone.itemOrder, []), alone.itemOrder, "root", []).filter(r => r.kind === "tui"), [], "an empty list hides every tui row");
+
+    // What the launcher does with shell.tui.open's answer.
+    for (const [reply, want] of [["ok", true], ["refused: tui=core/pkg-install reason=busy", true], ["refused: tui=core/pkg-install reason=launcher-missing", false],
+        ["refused: tui=acme.updates/pipeline reason=disabled", false], ["refused: shell=none", false], ["refused: tui=core/pkg-install reason=busy-ish", false]])
+        assert.equal(model.tuiShown(reply), want, "tui answer " + reply);
 
     // Routes: an id, an alias, a link's id, and an app's keyword that must
     // not shadow a menu.
-    const items = merged.items;
+    const items = model.resolveTuiRows(merged.items, merged.itemOrder, CORE_ENTRIES);
     const order = merged.itemOrder;
     assert.equal(model.resolveRoute(items, order, ""), "root");
     assert.equal(model.resolveRoute(items, order, "Menu"), "root");
@@ -154,7 +206,7 @@ function verify(model) {
     // Menu rows: in file order, a menu with no visible row hidden, apps by
     // label, a missing command named.
     const roots = model.menuRows(again.items, again.itemOrder, "root", []);
-    same(roots.map(r => r.label), ["Apps", "Style", "Power", "Tools", "Install", "Remove", "Update"]);
+    same(roots.map(r => r.label), ["Apps", "Style", "Power", "Tools", "Install", "Remove"]);
     const lacking = model.menuRows(again.items, again.itemOrder, "tools", ["grim"]);
     same(lacking.filter(r => r.kind === "unavailable").map(r => [r.label, r.detail]), [["Screenshot", "needs grim"]]);
     const empty = model.mergeMenuSources([], model.parseMenu(menuText({ bare: {} })).entries);
@@ -232,6 +284,17 @@ const CONTROLS = [
     ["schema version", "if (document.schemaVersion !== SCHEMA_VERSION)", "if (false)"],
     ["merge per key", "merged[entry.id][key] = entry.raw[key];", "merged[entry.id] = entry.raw;"],
     ["one kind per row", "if (stated.length > 1)", "if (false)"],
+    ["tui exclusive", '"provider", "unavailable", "tui", "tuiGroup"]', '"provider", "unavailable"]'],
+    ["tui key shape", 'if (hasOwn(raw, "tui") && !TUI_KEY_PATTERN.test(raw.tui))', "if (false)"],
+    ["tui group printable", 'if (hasOwn(raw, "tuiGroup") && (raw.tuiGroup.trim().length === 0 || CONTROL_PATTERN.test(raw.tuiGroup)))', "if (false)"],
+    ["tui kind", 'hasOwn(raw, "tui") || hasOwn(raw, "tuiGroup") ? "tui"', 'false ? "tui"'],
+    ["listed key", "entries[i].key === entry.tui :", "true :"],
+    ["group match", "entries[i].group === entry.tuiGroup)", 'entries[i].group !== "")'],
+    ["first in list", "for (var i = 0; i < entries.length; i++) {\n        if (entry.tui", "for (var i = entries.length - 1; i >= 0; i--) {\n        if (entry.tui"],
+    ["resolution is fresh", "Object.assign({}, entry, { tuiKey: tuiKeyFor(entry, entries) })", "(entry.tuiKey = tuiKeyFor(entry, entries), entry)"],
+    ["unresolved hidden", 'if (entry.kind === "tui") return entry.tuiKey !== "";', 'if (entry.kind === "tui") return true;'],
+    ["busy is shown", 'return reply === "ok" || /^refused: tui=\\S+ reason=busy$/.test(reply);', 'return reply === "ok";'],
+    ["only busy is shown", 'return reply === "ok" || /^refused: tui=\\S+ reason=busy$/.test(reply);', 'return reply === "ok" || /^refused: tui=\\S+ reason=/.test(reply);'],
     ["exact id first", "if (hasOwn(items, raw)) return raw;", ""],
     ["apps are no route", 'if (entry.kind === "app") continue;\n        for', "for"],
     ["handed maps unwritten", "var row = Object.assign({}, rows[j], { providerMenu: menuId, order: nextOrder.length });", "var row = rows[j]; row.providerMenu = menuId; row.order = nextOrder.length; items[row.id] = row;"],

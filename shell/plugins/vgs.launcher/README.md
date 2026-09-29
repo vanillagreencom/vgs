@@ -41,11 +41,17 @@ until [[ -s $done ]]; do sleep 0.05; done
 - `target`: a link to another menu. `provider`: `apps` for installed applications, `themes` for the theme packages.
 - `requires`: commands the row needs; a missing one shows the row as unavailable, naming it.
 - `unavailable`: why the shell cannot offer the row. It shows, and does nothing.
+- `tui`: the key of a floating TUI `shell.tui.entries` lists, `core/<name>` or `<plugin id>/<name>` ([tui.md § The capability](../../../docs/architecture/tui.md#the-capability)). Picking the row opens it and closes the launcher; a refusal other than `busy` stays in the list as a notice and is logged as `launcher: tui <key> <answer>`.
+- `tuiGroup`: a group of that list. The row opens the first listed entry of the group, in the list's key order, so it opens another plugin's TUI without naming the plugin.
 - `label`, `icon` (a Lucide name), `title`, `description`, `aliases`, `parent`.
+
+A row states one of `run`, `target`, `provider`, `unavailable`, `tui` and `tuiGroup` at most. A `tui` or `tuiGroup` row whose TUI is not listed is hidden, as a disabled plugin's TUIs leave the list, and it shows again when a plugin that lists one is enabled while the launcher is open.
 
 A file the judge refuses is logged as `launcher: menu refused: file=<path> <defect>` and shows as a notice row; the shipped menu stands.
 
-Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped menu maps what a Hyprland session has everywhere (lock with `hyprlock`, since the shell ships no locker a logind lock request reaches; suspend, hibernate, log out, reboot, shut down; a terminal, a screenshot, the theme packages), and shows installing, removing and updating packages as unavailable. Delete on an application says removal is unavailable instead of removing it: the shell has no confirmed package removal action.
+Omarchy's own menu actions are not ported: they run Omarchy scripts. The shipped menu maps what a Hyprland session has everywhere (lock with `hyprlock`, since the shell ships no locker a logind lock request reaches; suspend, hibernate, log out, reboot, shut down; a terminal, a screenshot, the theme packages). Delete on an application says removal is unavailable instead of removing it: the shell has no confirmed package removal action.
+
+Install opens `core/pkg-install` and Remove `core/pkg-remove`, the core's package pickers ([packages.md § Pickers](../../../docs/architecture/packages.md#pickers)). Update opens the first listed entry of the group `Update`, which an updates plugin declares for its pipeline, and is hidden while no enabled plugin declares one. Omarchy's Install › Package and Remove › Package rows are action strings, `xdg-terminal-exec --app-id=org.omarchy.terminal omarchy-pkg-install`, and Update › Omarchy runs `omarchy-launch-floating-terminal-with-presentation omarchy-update` (`default/omarchy/omarchy-menu.jsonc`, basecamp/omarchy `e332dc97`). VGS names an entry instead: the core builds the argv and the window from the TUI's declaration, so no menu text becomes shell code. The rows sit at the top level rather than one level down, since the shell has one installer, one remover and one update entry to offer. The Terminal row still runs `xdg-terminal-exec`.
 
 ## Files
 

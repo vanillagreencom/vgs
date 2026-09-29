@@ -1,6 +1,7 @@
-{ "schemaVersion": 1, "id": "acme.tui", "name": "TUI", "version": "0.1.0", "author": "acme", "description": "smoke fixture declaring a listed floating TUI and a gated one",
+{ "schemaVersion": 1, "id": "acme.tui", "name": "TUI", "version": "0.1.0", "author": "acme", "description": "smoke fixture declaring a listed floating TUI, a gated one and an Update entry",
   "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["tui", "ipc"],
   "tui": {
     "hello": { "script": "tui/hello.sh", "title": "Hello", "size": "wide", "presentation": "full", "entry": { "label": "Say hello", "icon": "terminal", "group": "Smoke" } },
-    "wait": { "script": "tui/wait.sh", "title": "Wait" }
+    "wait": { "script": "tui/wait.sh", "title": "Wait" },
+    "update": { "script": "tui/update.sh", "title": "Update", "entry": { "label": "Update", "icon": "refresh-cw", "group": "Update" } }
   } }

@@ -6,7 +6,7 @@
 # behind it, so the presenter writes its exit records and no terminal
 # starts. The fixture acme.tui declares one listed script and one gated
 # one, which waits for a file the row creates, polled every 0.05 s for at
-# most 20 s. Rows: the published list, the app-id of the script's size, the
+# most 20 s, and the Update entry scripts/smoke/rows/launcher.sh opens. Rows: the published list, the app-id of the script's size, the
 # snapshot path it runs from and its arguments, the core's own sudo grant
 # and package install picker opened by key as the core's bin/vgsh, each
 # refusal, a launcher that finds no terminal and the synchronous
@@ -78,7 +78,7 @@ expect_poll "the tui fixture's service is built" True record_exists acme.tui
 expect_poll "the fixture holds the tui capability" True tui_held
 
 core_listed='{"key": "core/pkg-install", "plugin": "core", "name": "pkg-install", "title": "Install packages", "label": "Install packages", "icon": "package-plus", "group": "Packages"}, {"key": "core/pkg-remove", "plugin": "core", "name": "pkg-remove", "title": "Remove packages", "label": "Remove packages", "icon": "package-minus", "group": "Packages"}, {"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}'
-listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}, '"$core_listed"']'
+listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}, {"key": "acme.tui/update", "plugin": "acme.tui", "name": "update", "title": "Update", "label": "Update", "icon": "refresh-cw", "group": "Update"}, '"$core_listed"']'
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
 

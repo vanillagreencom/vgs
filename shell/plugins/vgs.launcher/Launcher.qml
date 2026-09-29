@@ -105,6 +105,14 @@ Item {
     property var providersLoaded: ({})
     // Commands a row's `requires` names that are not on PATH.
     property var missing: []
+    // Every listed TUI, which the menu's `tui` rows resolve against. The
+    // core assigns `shell` after creation, so the rows resolve again then,
+    // and whenever a plugin's enable changes the list.
+    readonly property var tuiEntries: shell === null ? [] : shell.tui.entries
+    onTuiEntriesChanged: {
+        items = MenuModel.resolveTuiRows(items, itemOrder, tuiEntries);
+        if (opened) rebuildDisplay();
+    }
 
     function readMenu(source, path, text) {
         const parsed = MenuModel.parseMenu(text);
@@ -132,7 +140,7 @@ Item {
             menuErrors = errors;
             merged = MenuModel.mergeMenuSources(shippedEntries, []);
         }
-        items = merged.items;
+        items = MenuModel.resolveTuiRows(merged.items, merged.itemOrder, tuiEntries);
         itemOrder = merged.itemOrder;
         providersLoaded = ({});
         rowsLoaded = true;
@@ -452,6 +460,19 @@ Item {
         return reply;
     }
 
+    // A listed TUI by key. The launcher closes once its window is on screen;
+    // any other answer is logged and stays in the list as a notice.
+    function openTui(key) {
+        const reply = shell === null ? "refused: shell=none" : shell.tui.open(key);
+        if (MenuModel.tuiShown(reply)) {
+            dismiss();
+            return;
+        }
+        console.error("launcher: tui " + key + " " + reply);
+        notice = reply;
+        rebuildDisplay();
+    }
+
     function launchApp(appId) {
         const entry = DesktopEntries.byId(appId);
         if (entry === null) {
@@ -491,6 +512,9 @@ Item {
             return;
         case "action":
             if (runArgv(items[row.itemId].run) === "ok") dismiss();
+            return;
+        case "tui":
+            openTui(items[row.itemId].tuiKey);
             return;
         case "theme":
             applyTheme(items[row.itemId].theme);

@@ -4,7 +4,9 @@
 # bar entry), types into it on the nested seat and reads what it drew back
 # through the probe: its rows, its look and its shader. A picker answers
 # through two files under the sandbox's runtime directory, read here. The
-# row ends with the plugin disabled and every registration released.
+# Install, Remove and Update rows open floating TUIs, read back from the
+# stand-in terminal scripts/smoke/rows/tui.sh left. The row ends with the
+# plugin disabled and every registration released.
 set -euo pipefail
 launcher() { ipc vgs.launcher invoke "$1" "${2:-}"; }
 read_launcher() { ipc smoke readInstance overlay vgs.launcher "$1"; }
@@ -71,7 +73,9 @@ expect_poll "the toggled launcher maps" 1 layer_count vgs:overlay
 focused
 type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
 expect_poll "Ctrl+B shows the categories" True has_row menu System
-expect "an unavailable integration shows why instead of vanishing" True has_row unavailable Install
+expect "the Install row lists the core's install picker" True has_row tui Install
+expect "the Remove row lists the core's remove picker" True has_row tui Remove
+expect "Update is hidden while no enabled plugin lists an Update entry" False has_row tui Update
 type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
 expect_poll "Ctrl+B hides them again" '[]' launcher_rows
 expect "a route by alias opens its menu" ok ipc shell summon overlay vgs.launcher '{"menu":"power-menu"}'
@@ -84,6 +88,89 @@ expect_poll "the query searched the rows" True has_row action Reboot
 focused
 type_keys -k Escape -k Escape || fail "sending Escape failed"
 expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
+
+# TUI rows open their TUI through the tui capability. The argv reaches the
+# stand-in xdg-terminal-exec tui.sh wrote, read with that row's helpers
+# `words`, `recorded`, `forget_record` and `key_idle`. Install and Remove
+# open the core's package pickers; Update opens the first listed entry of
+# the Update group, the fixture acme.tui's while it is enabled, and hides
+# while it is disabled, as tui.sh left it and as this block leaves it.
+# The index of the launcher's row of kind $1 and label $2, or none.
+row_index() { launcher_rows | python3 -c 'import json,sys; r=[i for i, x in enumerate(json.load(sys.stdin)) if x[0] == sys.argv[1] and x[1] == sys.argv[2]]; print(r[0] if r else "none")' "$1" "$2"; }
+# categories LABEL: summon the launcher and show its categories.
+categories() {
+  expect "the launcher summons for $1" ok ipc shell summon overlay vgs.launcher '{}'
+  focused
+  type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
+  expect_poll "the categories show for $1" True has_row menu System
+}
+# pick_tui LABEL: in the open list, move the cursor to the tui row LABEL
+# and press Return.
+pick_tui() {
+  local index n keys=()
+  index="$(row_index tui "$1")" || { fail "the launcher's rows are unreadable for $1"; return 1; }
+  [[ $index =~ ^[0-9]+$ ]] || { fail "no tui row $1 to pick: $index"; return 1; }
+  for ((n = 0; n < index; n++)); do keys+=(-k Down); done
+  if ((index > 0)); then type_keys "${keys[@]}" || { fail "moving to $1 failed"; return 1; }; fi
+  expect_poll "the cursor rests on $1" "$index" read_launcher selectedIndex
+  type_keys -k Return || fail "sending Return on $1 failed"
+}
+picker_words() {
+  words --app-id=org.vgs.tui "--title=VGS · $1" -- "$tui_self" present --presentation full \
+    --record "core/pkg-$2" --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · $1" -- "$core_vgsh" pkg "$2"
+}
+update_words() {
+  words --app-id=org.vgs.tui "--title=VGS · Update" -- "$tui_self" present --presentation full --plugin acme.tui --dir "$snapshot" \
+    --record acme.tui/update --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Update" -- tui/update.sh
+}
+for row in "Install|install|Install packages" "Remove|remove|Remove packages"; do
+  IFS='|' read -r label verb title <<<"$row"
+  forget_record
+  categories "$label"
+  pick_tui "$label"
+  expect_poll "$label hands the terminal the core's vgsh pkg $verb" "$(picker_words "$title" "$verb")" recorded
+  expect_poll "$label closes the launcher" 0 layer_count vgs:overlay
+  expect_poll "the $verb picker's run ends" idle key_idle "core/pkg-$verb"
+done
+expect "the Update fixture starts disabled, as tui.sh left it" False plugin_enabled acme.tui
+categories Update
+expect "Update is hidden while its fixture is disabled" False has_row tui Update
+expect "enabling the Update fixture while the launcher is open is allowed" ok ipc shell setPluginEnabled acme.tui true
+expect_poll "the open launcher shows Update once the fixture lists it" True has_row tui Update
+forget_record
+pick_tui Update
+expect_poll "Update hands the terminal the fixture's Update script" "$(update_words)" recorded
+expect_poll "Update closes the launcher" 0 layer_count vgs:overlay
+expect_poll "the Update run ends" idle key_idle acme.tui/update
+categories Update
+expect "Update shows while its fixture is enabled" True has_row tui Update
+expect "disabling the Update fixture while the launcher is open is allowed" ok ipc shell setPluginEnabled acme.tui false
+expect_poll "the open launcher hides Update once the fixture leaves the list" False has_row tui Update
+type_keys -k Escape || fail "sending Escape failed"
+expect_poll "Escape closes the launcher after Update" 0 layer_count vgs:overlay
+
+# A refusal other than busy stays in the list as a notice. tui.sh's
+# stand-in bin/vgsh-tui, which finds no terminal, makes the core's launcher
+# state missing through one launch that answered ok; the next pick answers
+# launcher-missing at once. The real one returns, and the probe a direct
+# request starts finds the terminal again.
+cp -- "$sandbox/vgsh-tui.missing" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
+expected_errors+=('tui: refused: tui=core/pkg-install reason=launcher-missing' 'launcher: tui core/pkg-install refused: tui=core/pkg-install reason=launcher-missing')
+categories "Install without a terminal"
+pick_tui Install
+expect_poll "the launch that answered ok closed the launcher" 0 layer_count vgs:overlay
+expect_poll "the launch that found no terminal leaves the launcher state missing" '"missing"' lent tui.launcher
+categories "Install refused"
+pick_tui Install
+expect_poll "the launcher-missing answer shows as a notice" True has_row notice "refused: tui=core/pkg-install reason=launcher-missing"
+expect_log "the launcher logs the refused TUI" 1 'launcher: tui core/pkg-install refused: tui=core/pkg-install reason=launcher-missing'
+expect "the refused row leaves the launcher open" 1 layer_count vgs:overlay
+expect_poll "the probe the refusal started ends" false lent tui.probing
+cp -- "$sandbox/vgsh-tui.real" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
+expect "a request before the next probe answers launcher-missing" "refused: tui=core/pkg-install reason=launcher-missing" ipc shell openTui core/pkg-install
+expect_poll "the probe that request started finds the terminal again" '"present"' lent tui.launcher
+type_keys -k Escape || fail "sending Escape failed"
+expect_poll "Escape closes the refused launcher" 0 layer_count vgs:overlay
 
 # A user menu merges over the shipped one per key; a route naming an action
 # runs it without opening; a row whose command is missing says so.
@@ -193,6 +280,20 @@ if launcher_mutant "the undirected control" 'command: ["mkdir", "-p", "--", root
   expect_poll "the undirected control closed" 0 layer_count vgs:overlay
 fi
 rm -f -- "${user_menu:?}"
+
+# A copy that resolves its TUI rows only when its menus are read keeps
+# Update hidden when the fixture is enabled while it is open. It waits the
+# five seconds the real launcher had to show Update above.
+if launcher_mutant "the unresolved control" 'onTuiEntriesChanged: {' 'function unresolved() {'; then
+  categories "the unresolved control"
+  expect "the unresolved control hides Update" False has_row tui Update
+  expect "enabling the Update fixture under the unresolved control is allowed" ok ipc shell setPluginEnabled acme.tui true
+  sleep 5
+  expect "the unresolved control keeps Update hidden" False has_row tui Update
+  expect "disabling the Update fixture under the unresolved control is allowed" ok ipc shell setPluginEnabled acme.tui false
+  expect "the host hides the unresolved control" ok ipc shell hide overlay vgs.launcher
+  expect_poll "the unresolved control closed" 0 layer_count vgs:overlay
+fi
 launcher_source "the restored launcher" "$sandbox/Launcher.qml.real" || true
 
 # A payload the judge refuses throws out of open(), and the host refuses the

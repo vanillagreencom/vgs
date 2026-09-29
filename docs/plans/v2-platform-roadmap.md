@@ -154,7 +154,7 @@ One convention for a plugin's runtime values, read by its own instances and by t
 
 ### Launcher and Settings (issues 51 and 14)
 
-The launcher's `install`, `remove` and `update` rows stop being `unavailable`: they open `core/pkg-install`, `core/pkg-remove` and whatever entry an enabled plugin declares in the `update` group (Updates' pipeline), read from `shell.tui.entries`. Settings changes are in § 3.
+The launcher's `install`, `remove` and `update` rows stop being `unavailable`: they open `core/pkg-install`, `core/pkg-remove` and whatever entry an enabled plugin declares in the `Update` group (Updates' pipeline), read from `shell.tui.entries`. Settings changes are in § 3.
 
 ## Distribution and release (issues 17-28 and 52, D040)
 

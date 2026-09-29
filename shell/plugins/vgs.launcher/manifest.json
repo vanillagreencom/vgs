@@ -22,7 +22,8 @@
     "run",
     "shortcut",
     "surfaces",
-    "theme"
+    "theme",
+    "tui"
   ],
   "settings": {},
   "defaultSection": "left",

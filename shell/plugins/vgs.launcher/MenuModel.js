@@ -2,8 +2,9 @@
 
 // The launcher's decisions, with no QML object and no I/O, so
 // scripts/test-launcher-model.js runs every function under node: the menu
-// file and its merge, routes, search and ranking, the summon payload, the
-// select options, and what the file search helper prints.
+// file and its merge, the TUI rows' resolution, routes, search and ranking,
+// the summon payload, the select options, and what the file search helper
+// prints.
 //
 // A menu file is `{ "schemaVersion": 1, "items": { "<id>": { ... } } }`. An
 // id is dotted, and its dots name its parent unless `parent` says
@@ -11,17 +12,28 @@
 // and the user's file merge per key, the user's winning, so the user can
 // change one label without restating the row. The kind is inferred after
 // the merge: `unavailable` for an integration this shell does not offer,
-// `run` for an action, `target` for a link to another menu, and a menu
-// otherwise.
+// `tui` for a floating TUI, `run` for an action, `target` for a link to
+// another menu, and a menu otherwise.
+//
+// A `tui` row names a TUI shell.tui.entries lists: by key with `tui`, or
+// with `tuiGroup` as the first listed entry of that group, so a row can
+// open another plugin's TUI without naming the plugin. resolveTuiRows
+// resolves it against the list; one that resolves to nothing is hidden.
 
 var SCHEMA_VERSION = 1;
 var FILE_KEYS = ["schemaVersion", "items"];
-var ITEM_KEYS = ["label", "icon", "title", "description", "aliases", "parent", "target", "run", "provider", "requires", "unavailable"];
+var ITEM_KEYS = ["label", "icon", "title", "description", "aliases", "parent", "target", "run", "provider", "requires", "unavailable", "tui", "tuiGroup"];
+// The keys that each give a row its kind; a merged row states one at most.
+var KIND_KEYS = ["run", "target", "provider", "unavailable", "tui", "tuiGroup"];
 // Menus whose rows the launcher lists itself: installed applications, and
 // the theme packages the theme capability reports.
 var PROVIDERS = ["apps", "themes"];
 var ID_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*$/;
 var COMMAND_PATTERN = /^[A-Za-z0-9._+-]+$/;
+// The shape of a key shell.tui.entries lists, `core/<name>` or
+// `<plugin id>/<name>`; whether a key is listed is the list's to answer.
+var TUI_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\/[a-z0-9][a-z0-9-]*$/;
+var CONTROL_PATTERN = /[\u0000-\u001f\u007f]/;
 // Every walk up the tree stops here, so a parent cycle a file states ends.
 var DEPTH_LIMIT = 32;
 
@@ -48,7 +60,7 @@ function itemError(id, raw) {
     var keys = Object.keys(raw);
     for (var i = 0; i < keys.length; i++)
         if (ITEM_KEYS.indexOf(keys[i]) === -1) return at + " has unknown key " + JSON.stringify(keys[i]);
-    var strings = ["label", "icon", "title", "description", "parent", "target", "unavailable"];
+    var strings = ["label", "icon", "title", "description", "parent", "target", "unavailable", "tui", "tuiGroup"];
     for (var s = 0; s < strings.length; s++)
         if (hasOwn(raw, strings[s]) && typeof raw[strings[s]] !== "string") return at + "." + strings[s] + " must be a string";
     if (hasOwn(raw, "label") && raw.label.length === 0) return at + ".label must not be empty";
@@ -59,6 +71,8 @@ function itemError(id, raw) {
     if (hasOwn(raw, "provider") && PROVIDERS.indexOf(raw.provider) === -1) return at + ".provider must be one of " + PROVIDERS.join(", ");
     if (hasOwn(raw, "parent") && raw.parent !== "" && !ID_PATTERN.test(raw.parent)) return at + ".parent is not an id";
     if (hasOwn(raw, "target") && !ID_PATTERN.test(raw.target)) return at + ".target is not an id";
+    if (hasOwn(raw, "tui") && !TUI_KEY_PATTERN.test(raw.tui)) return at + ".tui is not a TUI key, core/<name> or <plugin id>/<name>";
+    if (hasOwn(raw, "tuiGroup") && (raw.tuiGroup.trim().length === 0 || CONTROL_PATTERN.test(raw.tuiGroup))) return at + ".tuiGroup must be one printable line";
     return "";
 }
 
@@ -91,7 +105,7 @@ function parseMenu(text) {
 // One merged item in the shape every other function reads.
 function normalizeItem(id, raw, order) {
     var parent = hasOwn(raw, "parent") ? raw.parent : (id.indexOf(".") >= 0 ? id.split(".").slice(0, -1).join(".") : "root");
-    var kind = hasOwn(raw, "unavailable") ? "unavailable" : (hasOwn(raw, "run") ? "action" : (hasOwn(raw, "target") ? "link" : "menu"));
+    var kind = hasOwn(raw, "unavailable") ? "unavailable" : (hasOwn(raw, "tui") || hasOwn(raw, "tuiGroup") ? "tui" : (hasOwn(raw, "run") ? "action" : (hasOwn(raw, "target") ? "link" : "menu")));
     return {
         id: id,
         parent: id === "root" ? "" : parent,
@@ -106,13 +120,17 @@ function normalizeItem(id, raw, order) {
         aliases: raw.aliases ? raw.aliases.slice() : [],
         requires: raw.requires ? raw.requires.slice() : [],
         reason: raw.unavailable || "",
+        tui: raw.tui || "",
+        tuiGroup: raw.tuiGroup || "",
+        // The listed key a `tui` row opens, "" until resolveTuiRows finds one.
+        tuiKey: "",
         order: order
     };
 }
 
 // The shipped entries under the user's, merged per key by id, the user's
 // winning, as { ok, items, itemOrder }. A merged row that states two of
-// `run`, `target`, `provider` and `unavailable` is refused, naming it.
+// KIND_KEYS is refused, naming it.
 function mergeMenuSources(shipped, user) {
     var merged = {};
     var order = [];
@@ -135,11 +153,33 @@ function mergeMenuSources(shipped, user) {
     var items = {};
     for (var k = 0; k < order.length; k++) {
         var raw = merged[order[k]];
-        var stated = ["run", "target", "provider", "unavailable"].filter(function (name) { return hasOwn(raw, name); });
+        var stated = KIND_KEYS.filter(function (name) { return hasOwn(raw, name); });
         if (stated.length > 1) return { ok: false, error: "items." + order[k] + " states " + stated.join(" and ") };
         items[order[k]] = normalizeItem(order[k], raw, k);
     }
     return { ok: true, items: items, itemOrder: order };
+}
+
+// The key a `tui` row opens from ENTRIES, shell.tui.entries' rows
+// `{ key, group, ... }` in the core's order: its own `tui` key when listed,
+// else the first listed entry of its `tuiGroup`; "" when none is.
+function tuiKeyFor(entry, entries) {
+    for (var i = 0; i < entries.length; i++) {
+        if (entry.tui !== "" ? entries[i].key === entry.tui : entries[i].group === entry.tuiGroup) return entries[i].key;
+    }
+    return "";
+}
+
+// ITEMS with every `tui` row's tuiKey resolved against ENTRIES, as a fresh
+// map; every other item is handed on as it is. The launcher resolves again
+// whenever the list changes, as a plugin is enabled or disabled.
+function resolveTuiRows(items, itemOrder, entries) {
+    var next = {};
+    for (var i = 0; i < itemOrder.length; i++) {
+        var entry = items[itemOrder[i]];
+        next[itemOrder[i]] = entry.kind === "tui" ? Object.assign({}, entry, { tuiKey: tuiKeyFor(entry, entries) }) : entry;
+    }
+    return next;
 }
 
 // Swap the rows one provider contributed under `menuId` for `rows`, leaving
@@ -186,6 +226,9 @@ function appRow(menuId, entry) {
         aliases: aliases,
         requires: [],
         reason: "",
+        tui: "",
+        tuiGroup: "",
+        tuiKey: "",
         order: 0
     };
 }
@@ -209,6 +252,9 @@ function themeRow(menuId, pkg) {
         aliases: [],
         requires: [],
         reason: refused ? "The theme judge refused this package: " + (pkg.reason || "unknown") : "",
+        tui: "",
+        tuiGroup: "",
+        tuiKey: "",
         theme: pkg.name,
         order: 0
     };
@@ -280,9 +326,11 @@ function childCount(items, itemOrder, id) {
 }
 
 // A static menu shows while any row under it shows; a provider's menu
-// always shows, since its rows load when it opens. Every other row shows:
-// an unavailable one says why rather than vanishing.
+// always shows, since its rows load when it opens. A `tui` row shows while
+// it resolves to a listed TUI, as a disabled plugin's TUIs leave the list.
+// Every other row shows: an unavailable one says why rather than vanishing.
 function isVisible(items, itemOrder, entry, depth) {
+    if (entry.kind === "tui") return entry.tuiKey !== "";
     if (entry.kind !== "menu" && entry.kind !== "link") return true;
     if (entry.provider) return true;
     var guard = depth || 0;
@@ -420,6 +468,13 @@ function displayRow(items, itemOrder, entry, detail, score, section, missing) {
 // already applied. `partial` and `failed`, and anything else, are not.
 function applySucceeded(result) {
     return isPlainObject(result) && (result.state === "applied" || result.state === "unchanged");
+}
+
+// Whether shell.tui.open's answer leaves the TUI's window on screen: `ok`,
+// or `busy`, whose live window the core focused. Any other refusal is one
+// the launcher shows.
+function tuiShown(reply) {
+    return reply === "ok" || /^refused: tui=\S+ reason=busy$/.test(reply);
 }
 
 // --- the summon payload

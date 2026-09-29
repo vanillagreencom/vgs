@@ -15,8 +15,8 @@
     "tools.terminal": { "icon": "terminal", "label": "Terminal", "requires": ["xdg-terminal-exec"], "run": ["xdg-terminal-exec"] },
     "tools.screenshot": { "icon": "camera", "label": "Screenshot", "description": "Select a region and copy it", "requires": ["grim", "slurp", "wl-copy"], "run": ["sh", "-c", "grim -g \"$(slurp)\" - | wl-copy --type image/png"] },
     "tools.files": { "icon": "folder", "label": "Files", "requires": ["xdg-open"], "run": ["sh", "-c", "exec xdg-open \"$HOME\""] },
-    "install": { "icon": "package", "label": "Install", "unavailable": "Installing packages needs a distribution's installer; the shell has none" },
-    "remove": { "icon": "package", "label": "Remove", "aliases": ["uninstall"], "unavailable": "Removing packages needs a confirmed host action; the shell has none" },
-    "update": { "icon": "refresh-cw", "label": "Update", "unavailable": "System updates belong to the distribution's own tools" }
+    "install": { "icon": "package", "label": "Install", "tui": "core/pkg-install" },
+    "remove": { "icon": "package", "label": "Remove", "aliases": ["uninstall"], "tui": "core/pkg-remove" },
+    "update": { "icon": "refresh-cw", "label": "Update", "tuiGroup": "Update" }
   }
 }
