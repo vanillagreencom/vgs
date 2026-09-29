@@ -52,7 +52,9 @@
 //       detection order: the words after `vgsh` that install those
 //       packages, `pkg run install [--manager <id>] <package>...`, with
 //       --manager for every manager but the primary, which `vgsh pkg run`
-//       takes by default.
+//       takes by default. A manager the table gives no install steps, nix,
+//       whose system changes through its own configuration, gets a
+//       `by-hand <manager> <package>...` line instead.
 //
 // A requirement row is PluginLogic.requirementRows' row, `{ command,
 // packages, optional, purpose, state }`, with `package`, the
@@ -205,7 +207,8 @@ function doctorLines(report) {
 }
 
 // `unmet`'s lines for PLUGIN: its missing requirements, then the commands
-// that install their packages, one per manager in detection order.
+// that install their packages, one per manager in detection order, or the
+// packages alone for a manager that installs nothing through vgsh.
 function unmetLines(plugin) {
     const missing = logic.requirementRows(plugin.manifest, plugin.missing).filter(row => row.state === "missing");
     const found = managersFor([missing]);
@@ -221,6 +224,10 @@ function unmetLines(plugin) {
     const order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
     for (const manager of order) {
         if (!names.has(manager.id)) continue;
+        if (logic.PackageManagers.managerRow(manager.id).install === null) {
+            lines.push("by-hand " + manager.id + " " + names.get(manager.id).join(" "));
+            continue;
+        }
         const words = ["pkg", "run", "install"];
         if (manager !== found.primary) words.push("--manager", manager.id);
         lines.push("install " + words.concat(names.get(manager.id)).join(" "));

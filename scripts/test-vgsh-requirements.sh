@@ -39,6 +39,8 @@ stub sudo 'case "$1" in -k) exit 0 ;; -n) shift ;; esac
 exec "$@"'
 stub pacman '[ "${STUB_FAIL:-}" != "$1" ] || exit 7'
 stub paru ''
+stub flatpak ''
+stub nix ''
 stub qs 'echo ok'
 # The qs the usage rows reach through $tmp, first on their PATH: it records
 # its arguments in $STUB_ARGS and answers $STUB_REPLY.
@@ -46,6 +48,7 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"${STUB_ARGS:-/dev/null}"\nprintf "%%s\
 chmod +x "$tmp/qs"
 
 os_release="$tmp/os-release"; printf 'NAME="Arch Linux"\nID=arch\n' >"$os_release"
+nixos_release="$tmp/os-release-nixos"; printf 'NAME=NixOS\nID=nixos\n' >"$nixos_release"
 rt_live="$tmp/rt-live"; mkdir -p "$rt_live"; printf '%s\n' "$$" >"$rt_live/vgsh.lock"
 log="$tmp/log"
 # The doctor rows' PATH: the stubs, then only what bin/vgsh, the scan and
@@ -61,8 +64,8 @@ ln -s -- "$node_bin" "$tools/node"
 # fixture os-release, with a fresh $LOG. MODE `plain` gives it /dev/null on
 # stdin, stdout in $tmp/out and stderr in $tmp/err; `terminal` runs it on a
 # pseudo-terminal script(1) opens with ANSWER typed, both streams in
-# $tmp/out. REQ_PATH replaces the PATH after the stubs. The exit status
-# lands in $status.
+# $tmp/out. REQ_PATH replaces the PATH after the stubs and REQ_OS_RELEASE
+# the bound os-release. The exit status lands in $status.
 req() {
   local bin="$1" mode="$2" answer="$3" cfg="$4" rt="$5" extra=() words
   shift 5
@@ -70,7 +73,7 @@ req() {
   shift
   : >"$log"
   words=("${base_env[@]}" PATH="$stubs:${REQ_PATH:-$base_path}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt" LOG="$log" "${extra[@]}")
-  local bound=(unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "$os_release")
+  local bound=(unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "${REQ_OS_RELEASE:-$os_release}")
   status=0
   : >"$tmp/err"
   if [[ $mode == plain ]]; then
@@ -89,7 +92,7 @@ lines() { printf '%s\n' "$@"; }
 rescans() { grep -cxF "qs [ipc] [--pid] [$$] [call] [shell] [rescanPlugins]" "$log" || true; }
 
 check "every command a row elevates, installs or reaches the shell with is a stub" \
-  test "$("${base_env[@]}" PATH="$stubs:$base_path" sh -c 'for c in sudo pacman paru qs; do command -v "$c"; done')" == "$(lines "$stubs/sudo" "$stubs/pacman" "$stubs/paru" "$stubs/qs")"
+  test "$("${base_env[@]}" PATH="$stubs:$base_path" sh -c 'for c in sudo pacman paru flatpak nix qs; do command -v "$c"; done')" == "$(lines "$stubs/sudo" "$stubs/pacman" "$stubs/paru" "$stubs/flatpak" "$stubs/nix" "$stubs/qs")"
 
 # The fixture plugin: missing commands with a pacman package, an AUR-only
 # package, no package, an optional one, one sharing another's package and
@@ -107,6 +110,9 @@ $(need vgs-need-dup '{ "pacman": "need-one" }' "Same package"),
 $(need vgs-need-quote '{ "pacman": "need;one" }' Quoted)"
 source_repo needs "$(manifest acme.needs 0.1.0 ", \"requirements\": [ $requirements ]")"
 source_repo probe "$(manifest acme.probe 0.1.0)"
+# On NixOS: a package for nix, which installs nothing through vgsh, beside
+# one for the Flatpak overlay.
+source_repo nixos "$(manifest acme.nixos 0.1.0 ", \"requirements\": [ $(need vgs-nix-one '{ "nix": "nix-one" }' Nix), $(need vgs-flat '{ "flatpak": "org.flat" }' Flat) ]")"
 
 offer="$(lines \
   "requires vgs-need-one (need-one)" \
@@ -153,6 +159,14 @@ row_install_failure() {
   req "$1" terminal y "$2" "$rt_empty" STUB_FAIL=-S -- plugin add "$tmp/src/needs.git"
   [[ $status == 7 ]] && log_has "pacman [-S] [--needed] [--] [need-one] [need-opt] [need;one]" && ! grep -q "^paru " "$log"
 }
+row_nix_by_hand() {
+  REQ_OS_RELEASE="$nixos_release" req "$1" plain "" "$2" "$rt_empty" -- plugin add "$tmp/src/nixos.git"
+  [[ $status == 0 ]] && err_is "" && log_is "" && out_is "$(lines "ok added=acme.nixos path=$2/vgs/plugins/acme.nixos config=unchanged" "shell=not-running" \
+    "requires vgs-nix-one (nix-one)" "requires vgs-flat (org.flat)" "by-hand nix nix-one" "install: vgsh pkg run install --manager flatpak org.flat")" || return 1
+  rm -rf -- "${2:?}/vgs/plugins/acme.nixos"
+  REQ_OS_RELEASE="$nixos_release" req "$1" terminal y "$2" "$rt_empty" -- plugin add "$tmp/src/nixos.git"
+  [[ $status == 0 ]] && log_is "flatpak [install] [org.flat]"
+}
 row_run_rescans() {
   req "$1" terminal "" "$2" "$rt_live" -- pkg run install --manager pacman foo
   [[ $status == 0 && $(rescans) == 1 ]] && grep -qF "shell=rescan-started" "$tmp/out"
@@ -198,6 +212,7 @@ declare -a ROWS=(
   "add accepted on a terminal installs each manager's packages and rescans|row_offer_accepted"
   "add of a plugin that requires nothing asks nothing|row_offer_silent"
   "a failed install ends add with its status|row_install_failure"
+  "nix's packages are named for its own configuration, and the overlay's installed|row_nix_by_hand"
   "a run asks a running shell to rescan|row_run_rescans"
   "a failed run still asks for the rescan|row_failed_run_rescans"
   "a refused run asks for no rescan|row_refused_run_leaves_shell"
@@ -249,6 +264,7 @@ declare -a CONTROLS=(
   "a row carries this system's package" vgsh-plugin-judge '{ package: logic.PackageManagers.packageFor(row.packages, found) }' '{ package: null }'
   "an overlay's install names its manager" vgsh-plugin-judge 'if (manager !== found.primary) words.push("--manager", manager.id);' ''
   "a package is installed once" vgsh-plugin-judge 'if (!names.get(pick.manager).includes(pick.name)) ' ''
+  "nix gets no install command" vgsh-plugin-judge 'if (logic.PackageManagers.managerRow(manager.id).install === null) {' 'if (false) {'
 )
 for ((i = 0; i < ${#CONTROLS[@]}; i += 4)); do
   label="${CONTROLS[i]}" file="${CONTROLS[i + 1]}"

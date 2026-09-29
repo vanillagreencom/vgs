@@ -110,7 +110,9 @@
 # requirement of the new plugin whose command is not on PATH, the package
 # being this system's pick as `plugin list` names it, then one
 # `install: vgsh pkg run install [--manager <id>] <package>...` line per
-# manager those packages come from. On a terminal it then asks
+# manager those packages come from; a manager the package table gives no
+# install steps, nix, gets `by-hand <manager> <package>...` instead, for the
+# user to add to that system's own configuration. On a terminal it then asks
 # `Install now? [y/N]` on stderr and on y or yes runs each command in turn,
 # its exit status the first failing one's; any other answer, or no
 # terminal on stdin, leaves the commands printed for the user. The report
