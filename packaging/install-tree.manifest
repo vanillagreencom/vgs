@@ -134,7 +134,6 @@ f share/vgs/shell/plugins/vgs.devtools/manifest.json
 f share/vgs/shell/plugins/vgs.devtools/tui/devtools.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/install.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/remove.sh
-f share/vgs/shell/plugins/vgs.devtools/tui/requirement.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/update.sh
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
