@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Controls for the checks scripts/validate makes itself, run as
-# `scripts/validate repo` in a scratch repository: a copy of the script and
+# `scripts/validate repo`, or `scripts/validate tools` for the document byte
+# ceiling row, in a scratch repository: a copy of the script and
 # the kendex settings loader, a base branch `trunk` with its remote-tracking
 # ref, and a feature branch on top. Each row plants one defect in a fresh
 # copy and asserts the exit status and the keyed lines the script's header
@@ -190,8 +191,10 @@ recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging
 # An Arch recipe is also the README's source for the AUR commands.
 arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-publish-aur.sh\n'"$repo_plan"
 cases=(
-  "docs|docs/architecture/overview.md|offline|$repo_plan"
-  "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"
+  "docs|docs/architecture/overview.md|offline|$repo_plan"$'\ndoc_limits_check'
+  "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"$'\ndoc_limits_check'
+  "docs-html|docs/guide.html|offline|$repo_plan"$'\ndoc_limits_check'
+  "root-markdown|NOTES.md|offline|$repo_plan"$'\ndoc_limits_check'
   "version|VERSION|offline|$version_plan"
   "licence|LICENSE|all|$install_plan"$'\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
   "flake|flake.nix|all|$repo_plan"$'\nscripts/test-flake.sh'
@@ -249,9 +252,9 @@ printf 'source\n' >"$d/shell/Core/Dispatch.js"
 "${base_env[@]}" git -C "$d" commit -q -m source
 "${base_env[@]}" git -C "$d" mv shell/Core/Dispatch.js README.md
 # The removed path's consumers, and README.md's: the install tree and the
-# README check.
+# README check, and the ceiling row, since README.md is a document.
 rename_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\n'"$readme_rows"$'python3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
-if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$rename_plan" ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
+if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$rename_plan"$'\ndoc_limits_check' ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
 
 d="$tmp/plan-shared"; fresh "$d"
 mkdir -p "$d/bin/lib"; printf 'changed\n' >"$d/bin/lib/qml-library.js"
@@ -361,6 +364,85 @@ path.write_text(source.replace('export VGS_TEST_RUN=1\n', ''))
 PY
 "${base_env[@]}" git -C "$d" commit -q -am control
 row "a validate without the marker export fails the planted row" "$d" 1 "" "validate: failed=test-run marker (exit 1)"
+
+# The document byte ceiling row. Its fixture carries the doc-limits checker,
+# a 1 KiB class for every Markdown file and a committed 900-byte grown.md,
+# all in the base; only the documents a row plants differ from it.
+doc_fixture() {
+  local dir="$1"
+  fresh "$dir"
+  mkdir -p "$dir/.agents/skills/doc-limits/scripts" "$dir/.agents/skills/commit-guards/scripts/lib"
+  cp -R "$repo/.agents/skills/doc-limits/scripts/." "$dir/.agents/skills/doc-limits/scripts/"
+  cp -- "$repo/.agents/skills/commit-guards/scripts/lib/generated-paths.sh" "$repo/.agents/skills/commit-guards/scripts/lib/messages.sh" "$dir/.agents/skills/commit-guards/scripts/lib/"
+  printf '[env]\nWORKTREE_DEFAULT_BRANCH = "trunk"\nDOC_LIMITS_CLASSES = "*.md=1k"\nDOC_LIMITS_DEFAULT_CLASSES = ""\n' >"$dir/kendex.settings.toml"
+  head -c 900 /dev/zero | tr '\0' x >"$dir/grown.md"
+  "${base_env[@]}" git -C "$dir" add -A
+  "${base_env[@]}" git -C "$dir" commit -q -m docs
+  "${base_env[@]}" git -C "$dir" update-ref refs/remotes/origin/trunk HEAD
+}
+test_area=tools
+test_args=()
+d="$tmp/doc-small"; doc_fixture "$d"
+doc_base="$("${base_env[@]}" git -C "$d" rev-parse HEAD)"
+printf 'small\n' >"$d/small.md"
+row "an untracked document under its ceiling is measured and passes" "$d" 0 "" \
+  "doc-limits: base=$doc_base" "doc-limits: OK: 2 document(s) checked" "validate: ok"
+d="$tmp/doc-big"; doc_fixture "$d"
+head -c 2000 /dev/zero | tr '\0' x >"$d/big.md"
+row "an untracked document over its ceiling fails" "$d" 1 "" \
+  "doc-limits FAIL: big.md: 2000 bytes > 1024 bytes (class *.md)" "validate: failed=document byte ceilings (exit 1)"
+if [[ -z "$("${base_env[@]}" git -C "$d" ls-files -- big.md)" ]] && "${base_env[@]}" git -C "$d" diff --cached --quiet; then
+  ok "the ceiling row leaves the real index as it was"
+else
+  fail "the ceiling row wrote the real index"
+fi
+d="$tmp/doc-grown"; doc_fixture "$d"
+head -c 1010 /dev/zero | tr '\0' x >"$d/grown.md"
+row "an unstaged edit that grows a document into the margin fails" "$d" 1 "" \
+  "doc-limits FAIL: grown.md: stored size grown from 900 to 1010 bytes; its 1010 bytes are within the 20-byte margin under 1024 bytes (class *.md)"
+d="$tmp/doc-no-checker"; fresh "$d"; printf 'doc\n' >"$d/a.md"
+row "a document change with no checker exits 77" "$d" 77 "" \
+  "doc-limits: status=not-measured reason=checker-missing path=.agents/skills/doc-limits/scripts/doc-limits" \
+  "validate: status=not-measured skipped=document byte ceilings"
+# No base: only --full reaches the row without one, so this copy of validate
+# holds the ceiling row alone.
+d="$tmp/doc-no-base"; doc_fixture "$d"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import re, sys
+path = Path(sys.argv[1])
+source = path.read_text()
+row = next(l for l in source.splitlines() if '|doc_limits_check|' in l)
+source, count = re.subn(r'rows=\(\n.*?\n\)\n', 'rows=(\n' + row + '\n)\n', source, count=1, flags=re.S)
+assert count == 1
+path.write_text(source)
+PY
+test_args=(--full)
+row "the ceiling row with no base exits 77" "$d" 77 "WORKTREE_DEFAULT_BRANCH=absent" \
+  "doc-limits: status=not-measured reason=no-base missing=base-ref branch=absent remote-refs=0"
+# Controls: copies of validate with one rule removed each, committed so the
+# plan against HEAD judges the planted documents alone.
+test_args=(--changed HEAD)
+doc_control() { # NAME OLD NEW: a doc fixture whose validate replaces OLD once
+  local dir="$tmp/doc-control-$1"
+  doc_fixture "$dir"
+  python3 - "$dir/scripts/validate" "$2" "$3" <<'PY'
+from pathlib import Path
+import sys
+path, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+source = path.read_text()
+assert source.count(old) == 1, old
+path.write_text(source.replace(old, new))
+PY
+  "${base_env[@]}" git -C "$dir" commit -q -am control
+  d="$dir"
+}
+doc_control scratch-index 'GIT_INDEX_FILE="$scratch" "$checker"' '"$checker"'
+head -c 2000 /dev/zero | tr '\0' x >"$d/big.md"
+row "control: on the real index an untracked document over its ceiling escapes" "$d" 0 "" "validate: ok"
+doc_control margin '"$checker" --against "$base"' '"$checker"'
+head -c 1010 /dev/zero | tr '\0' x >"$d/grown.md"
+row "control: without --against a growth into the margin escapes" "$d" 0 "" "validate: ok"
 test_area=offline
 test_args=()
 

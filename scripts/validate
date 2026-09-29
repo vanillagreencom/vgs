@@ -7,11 +7,15 @@
 #   repo holds the checks this file makes itself, the whitespace
 #   row, the self-check that every scripts/test-* file has a row and the
 #   check that nothing under bin/ or shell/ loads a file under scripts/;
-#   scripts/test-validate.sh, under tools, is their control. unit runs the
-#   QML unit tests, which need Qt and no Wayland session; package builds and
-#   installs the Arch recipes in a podman container; nix builds the flake in
-#   a container, which needs podman or docker and the network; offline runs
-#   every row but unit, package, nix and the nested smoke.
+#   scripts/test-validate.sh, under tools, is their control. tools also
+#   holds the document byte ceiling check this file makes, selected, unlike
+#   a repo row, only when a Markdown file, a file under docs/ or the
+#   doc-limits configuration changes; test-validate.sh is its control too.
+#   unit runs the QML unit tests, which need Qt and no Wayland session;
+#   package builds and installs the Arch recipes in a podman container; nix
+#   builds the flake in a container, which needs podman or docker and the
+#   network; offline runs every row but unit, package, nix and the nested
+#   smoke.
 #   --changed BASE selects rows whose inputs changed against BASE, including
 #   staged, unstaged and untracked files. Renames include both paths. Unknown
 #   inputs or an unreadable diff select the whole area. Repository checks
@@ -176,6 +180,7 @@ rows=(
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "repo|the runtime loads nothing under scripts/|runtime_reads_no_scripts|"
+  "tools|document byte ceilings|doc_limits_check|*.md docs/* tools/doc-limits-excludes kendex.settings.toml .kendex/settings.toml .kendex-generated.json .agents/skills/doc-limits/scripts/* .agents/skills/commit-guards/scripts/lib/generated-paths.sh .agents/skills/commit-guards/scripts/lib/messages.sh"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh bin/lib/check-manifests.js scripts/test-check-manifests.js bin/lib/qml-library.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/vgsh-scan scripts/smoke/fixtures/*"
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js themes/*"
   "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
@@ -263,6 +268,54 @@ whitespace_check() {
     status=1
   done < <(git ls-files -z --others --exclude-standard)
   [[ $status -eq 0 ]] || echo "whitespace: failed base=$base"
+  return "$status"
+}
+
+# The document byte ceilings of the doc-limits skill, measured on the tree
+# the change will commit: doc-limits reads tracked documents and their index
+# blobs, so it runs on a scratch copy of the index into which every tracked
+# and untracked, non-ignored Markdown file and docs HTML file is added as
+# the worktree holds it. A tracked file under an ignored directory is
+# added with --force; the list names no ignored untracked file. The real
+# index is never written. --against the
+# change base adds the growth margin: a document the change grows may not
+# end within the margin under its ceiling. doc-limits exit 2, a
+# configuration or collection error, fails the row. First lines, then
+# doc-limits' own output:
+#   doc-limits: base=<commit>
+#   doc-limits: failed status=<n>
+#   doc-limits: status=not-measured reason=no-base <missing key=value>
+#   doc-limits: status=not-measured reason=checker-missing path=<file>
+#   doc-limits: status=not-measured reason=index-copy-failed path=<file>
+doc_limits_check() {
+  local base checker=".agents/skills/doc-limits/scripts/doc-limits" index scratch status=0
+  if [[ ! -x $checker ]]; then
+    echo "doc-limits: status=not-measured reason=checker-missing path=$checker"
+    return 77
+  fi
+  if ! base="$(whitespace_base)"; then
+    echo "doc-limits: status=not-measured reason=no-base ${base##*$'\n'}"
+    echo "set VGS_VALIDATE_BASE to the commit to compare against"
+    return 77
+  fi
+  echo "doc-limits: base=$base"
+  index="$(git rev-parse --path-format=absolute --git-path index)" || index=""
+  scratch="$(mktemp)" || return 1
+  # With no index yet, git starts the scratch index empty.
+  [[ -e $index ]] || rm -f -- "$scratch"
+  if [[ -z $index ]] || { [[ -e $index ]] && ! cp -- "$index" "$scratch"; } ||
+     ! git ls-files -z --cached --others --exclude-standard -- ':(glob)**/*.md' ':(glob)docs/**/*.html' |
+       GIT_INDEX_FILE="$scratch" GIT_LITERAL_PATHSPECS=1 git add -A --force --pathspec-from-file=- --pathspec-file-nul; then
+    rm -f -- "$scratch" "$scratch.lock"
+    echo "doc-limits: status=not-measured reason=index-copy-failed path=${index:-unresolved}"
+    return 77
+  fi
+  GIT_INDEX_FILE="$scratch" "$checker" --against "$base" || status=$?
+  rm -f -- "$scratch"
+  case "$status" in
+    0|1) ;;
+    *) echo "doc-limits: failed status=$status"; status=1 ;;
+  esac
   return "$status"
 }
 
