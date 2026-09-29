@@ -946,7 +946,7 @@ notify smoke-app 0 "Quiet while open" "" '[]' '{}' 0 >/dev/null
 expect_poll "a silenced notification joins the open inbox" True has_row panel "Quiet while open"
 notify smoke-chat 0 "Quiet pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}" 0 >/dev/null
 expect_poll "a silenced notification with an image joins the open inbox" True has_row panel "Quiet pictured"
-expect_poll "its row draws the copy, made before the row showed" True shows_icon "Quiet pictured"
+expect_poll "its row draws the copy, made before the row showed" True shows_slot "Quiet pictured"
 # Clearing fades the panel's rows and removes them a moment later; one that
 # arrives in that moment stays.
 expect "clearing the history with the inbox open is allowed" ok notes clear-history

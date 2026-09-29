@@ -86,6 +86,8 @@ f share/vgs/shell/Ui/controls/Switch.qml
 f share/vgs/shell/Ui/controls/TextField.qml
 f share/vgs/shell/Ui/controls/TitleButton.qml
 f share/vgs/shell/Ui/controls/ToggleButton.qml
+f share/vgs/shell/Ui/feedback/AvatarFace.qml
+f share/vgs/shell/Ui/feedback/AvatarGroup.qml
 f share/vgs/shell/Ui/feedback/Badge.qml
 f share/vgs/shell/Ui/feedback/CodeLine.qml
 f share/vgs/shell/Ui/feedback/Dialog.qml
@@ -184,9 +186,9 @@ f share/vgs/shell/plugins/vgs.notifications/Appearance.js
 f share/vgs/shell/plugins/vgs.notifications/CardSlot.qml
 f share/vgs/shell/plugins/vgs.notifications/ColorAnim.qml
 f share/vgs/shell/plugins/vgs.notifications/EdgeLight.qml
-f share/vgs/shell/plugins/vgs.notifications/Faces.qml
 f share/vgs/shell/plugins/vgs.notifications/GlassSurface.qml
 f share/vgs/shell/plugins/vgs.notifications/InboxHeader.qml
+f share/vgs/shell/plugins/vgs.notifications/MediaSlot.qml
 f share/vgs/shell/plugins/vgs.notifications/NotificationCard.qml
 f share/vgs/shell/plugins/vgs.notifications/NotificationLogic.js
 f share/vgs/shell/plugins/vgs.notifications/PillButton.qml
