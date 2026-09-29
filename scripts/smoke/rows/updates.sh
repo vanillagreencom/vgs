@@ -201,6 +201,7 @@ expect "opening the updates TUI answers ok" ok ipc shell openTui vgs.updates/fin
 expect_poll "the updates TUI is running" true updates_tui_running
 expect "a running TUI starts no check" STEADY checks_settle_at "$before"
 touch "$updates_state/tui-gate"
+expect_run_end "the updates TUI's run ends" vgs.updates/finish
 expect_poll "the TUI's end starts a check" "$((before + 1))" checks
 expect "the TUI's end starts exactly one check" STEADY checks_settle_at "$((before + 1))"
 expect_poll "the service is idle after the TUI check" idle updates_idle
