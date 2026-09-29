@@ -11,6 +11,9 @@ import qs.Ui
 // remove commands of an installed plugin, one settings section per schema
 // group (entries without a group first, under `Settings`) and the Keys
 // section. A disabled plugin's fields are read-only and say to enable it.
+// The body leaves the scroll bar's gutter free whether it overflows or not,
+// so every page's fields end on one right edge, and each inline value draws
+// at line height 1, centred on its label.
 FocusScope {
     id: page
 
@@ -97,7 +100,7 @@ FocusScope {
 
         Column {
             id: body
-            width: parent.width
+            width: scroll.width - Theme.scrollArea.gutter
             spacing: Theme.space.md
             visible: page.row !== null
 
@@ -177,7 +180,7 @@ FocusScope {
                     width: body.width
                     label: modelData[0]
                     inline: true
-                    Label { role: "code"; text: command.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                    Label { role: "itemCode"; text: command.modelData[1]; width: parent.width; elide: Text.ElideRight }
                 }
             }
 

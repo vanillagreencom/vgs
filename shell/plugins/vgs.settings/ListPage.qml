@@ -7,7 +7,10 @@ import qs.Ui
 // field. A row shows the plugin's icon, name, version and source, a danger
 // badge counting its errors, its enabled switch and a chevron; a click
 // opens its page. With the search field focused, Up and Down move the
-// highlighted row and Enter opens it.
+// highlighted row and Enter opens it. The heading, the search field and the
+// rows share the list's edges, which leave the scroll bar's gutter free
+// whether the list overflows or not; the heading's text starts where a
+// row's icon does.
 FocusScope {
     id: page
 
@@ -23,6 +26,8 @@ FocusScope {
         return panel.plugins.filter(p => wanted === "" || [p.name, p.id, p.description].some(t => String(t).toLowerCase().indexOf(wanted) !== -1));
     }
     readonly property alias scrollArea: scroll
+    // The width every row and the header span.
+    readonly property real listWidth: width - 2 * Theme.surface.padding - Theme.scrollArea.gutter
 
     onShownChanged: current = Math.max(0, Math.min(current, shown.length - 1))
 
@@ -45,7 +50,7 @@ FocusScope {
         id: header
         x: Theme.surface.padding
         y: Theme.surface.padding
-        width: parent.width - 2 * Theme.surface.padding
+        width: page.listWidth
         spacing: Theme.space.sm
 
         Label {
@@ -87,7 +92,7 @@ FocusScope {
 
         Column {
             id: list
-            width: parent.width
+            width: page.listWidth
 
             Label {
                 role: "hint"
