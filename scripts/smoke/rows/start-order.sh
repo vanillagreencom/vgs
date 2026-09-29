@@ -220,9 +220,9 @@ restart_over "$repo" "$sandbox/start-order-lock-qs.log" || :
 # which the next `vgsh run` refuses. The no-bar restart below then stops
 # through the real stop_shell, which waits for the holder to exit.
 unwaited_needle='flock -w "$stop_lock_wait_s" "$lock" true'
-stop_shell_def="$(declare -f stop_shell)"
-stop_shell_rest="${stop_shell_def//"$unwaited_needle"/}"
-if [[ $(( (${#stop_shell_def} - ${#stop_shell_rest}) / ${#unwaited_needle} )) == 1 ]] \
+if stop_shell_def="$(declare -f stop_shell)" \
+  && stop_shell_rest="${stop_shell_def//"$unwaited_needle"/}" \
+  && [[ $(( (${#stop_shell_def} - ${#stop_shell_rest}) / ${#unwaited_needle} )) == 1 ]] \
   && unwaited_def="${stop_shell_def/"$unwaited_needle"/true}" \
   && [[ $unwaited_def != "$stop_shell_def" ]] \
   && eval "unwaited_$unwaited_def"; then
