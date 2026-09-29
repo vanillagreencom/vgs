@@ -80,6 +80,10 @@ geometry expect_poll "the Settings window is centred on its monitor's work area"
 expect "the gallery, a layer panel, opens beside it" ok ipc shell summon panel vgs.gallery '{}'
 expect_poll "the gallery maps one layer surface" 1 layer_count vgs:panel
 expect "the shell's only client is the Settings window, not the gallery" '["Settings"]' shell_clients
+# The gallery can hold the keyboard, which a newly mapped window then does
+# not take, so it is closed until the control rows at the end.
+expect "hiding the gallery before the focus rows is allowed" ok ipc shell hide panel vgs.gallery
+expect_poll "the gallery's surface is gone before the focus rows" 0 layer_count vgs:panel
 
 # The float comes from the layer's rule: disabled by name after the line,
 # the rule floats nothing and a new Settings window tiles.
@@ -119,14 +123,6 @@ render expect "the border ends at its size" none past_border
 if open_other; then
   expect_poll "the new window takes the focus" '["smoke.other", "Other window"]' active_window
   render expect_poll "the unfocused window's border is 4 px of the inactive colour" "0000ff 0000ff 0000ff 0000ff" edge_pixels 1 2 3 4
-  # Control: the gallery's layer edge draws neither colour.
-  gallery_edge() {
-    local box x y
-    box="$(one_layer vgs:panel)" && [[ $box == \[* ]] || { echo "$box"; return; }
-    read -r x y < <(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(b[0] - 2, b[1] + b[3] // 2)' "$box")
-    pixel "$x" "$y" | python3 -c 'import sys; c=sys.stdin.read().strip(); print("none" if c not in ("ff0000", "0000ff") else c)'
-  }
-  render expect "the gallery's layer edge draws no window border" none gallery_edge
 
   # (c) Dispatches act on the window: a move by 40, 30, a float toggle
   # each way and focus, each read back from the nested instance.
@@ -150,11 +146,6 @@ if open_other; then
     expect_poll "the focus dispatch focused the other window" '["smoke.other", "Other window"]' active_window
     expect "a focus dispatch aimed at the Settings window answers ok" ok hypr dispatch "hl.dsp.focus({ window = \"address:$address\" })"
     expect_poll "the focus dispatch focused the Settings window" "[\"$shell_class\", \"Settings\"]" active_window
-    # Control: the same move aimed at the gallery's title reaches no
-    # window, and its layer stays where it was.
-    gallery_before="$(layers_of vgs:panel)"
-    hypr dispatch 'hl.dsp.window.move({ x = 40, y = 30, relative = true, window = "title:^Gallery$" })' >/dev/null || true
-    geometry expect "a move aimed at the gallery moves no layer" "$gallery_before" layers_of vgs:panel
 
     # (d) The keyboard goes to the focused window alone. With Settings
     # focused, typed letters reach its search field and the helper gets no
@@ -189,6 +180,21 @@ else
   fail "the toplevel helper maps the other window"
 fi
 
+# Controls: under the same border settings the gallery's layer edge draws
+# neither border colour, and a move aimed at the gallery's title reaches no
+# window and leaves its layer where it was.
+expect "the gallery opens for the control rows" ok ipc shell summon panel vgs.gallery '{}'
+expect_poll "the gallery maps one layer surface for the control rows" 1 layer_count vgs:panel
+gallery_edge() {
+  local box x y
+  box="$(one_layer vgs:panel)" && [[ $box == \[* ]] || { echo "$box"; return; }
+  read -r x y < <(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(b[0] - 2, b[1] + b[3] // 2)' "$box")
+  pixel "$x" "$y" | python3 -c 'import sys; c=sys.stdin.read().strip(); print("none" if c not in ("ff0000", "0000ff") else c)'
+}
+render expect "the gallery's layer edge draws no window border" none gallery_edge
+gallery_before="$(layers_of vgs:panel)"
+hypr dispatch 'hl.dsp.window.move({ x = 40, y = 30, relative = true, window = "title:^Gallery$" })' >/dev/null || true
+geometry expect "a move aimed at the gallery moves no layer" "$gallery_before" layers_of vgs:panel
 expect "hiding the gallery after the window rows is allowed" ok ipc shell hide panel vgs.gallery
 expect_poll "the gallery's surface is gone after the window rows" 0 layer_count vgs:panel
 restore_windows_lua || fail "hyprland.lua is put back after the window rows"
