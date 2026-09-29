@@ -388,7 +388,7 @@ const CATALOG_REFUSED = [
 // A package a catalog entry names: theme.json with MODE and ACCENT over
 // CATALOG_PALETTE, under NAME.
 const catalogTheme = (name, mode, accent) => JSON.stringify({ schemaVersion: 1, name, tokens: { scheme: { mode }, palette: Object.assign({}, CATALOG_PALETTE, { accent }) } });
-const READABILITY_ROLES = ["color.text", "color.textHeading", "color.textMuted", "color.textFaint", "color.success", "color.warning", "color.danger", "color.info"];
+const READABILITY_ROLES = ["color.text", "color.textHeading", "color.textMuted", "color.textFaint", "color.accent", "color.success", "color.warning", "color.danger", "color.info"];
 const READABILITY_SURFACES = ["color.background", "color.surface", "color.surfaceRaised", "color.surfaceSunken"];
 const truncateRatio = value => Math.floor(value * 100) / 100;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -421,6 +421,9 @@ function verify(judge) {
         Object.assign({}, faintShortfalls[0], { ratio: truncateRatio(faintShortfalls[0].ratio) }),
         { text: "color.textFaint", surface: "color.background", ratio: 1.11, floor: 4.5 }
     );
+    const accentFailure = judge.accept(TOKENS, document({ palette: { accent: "#111111" } }));
+    assert.equal(accentFailure.ok, true, accentFailure.ok ? "" : judge.refusalLine(accentFailure));
+    assert.equal(judge.readabilityShortfalls(accentFailure.values).some(row => row.text === "color.accent" && row.surface === "color.background"), true);
     const statusFailure = judge.accept(TOKENS, document({ color: { success: "#111111" } }));
     assert.equal(statusFailure.ok, true, statusFailure.ok ? "" : judge.refusalLine(statusFailure));
     assert.equal(judge.readabilityShortfalls(statusFailure.values).some(row => row.text === "color.success" && row.surface === "color.background"), true);
@@ -673,6 +676,7 @@ const CONTROLS = [
     ["appearance theme input", "if (value === undefined)\n            return refusal(\"appearance-theme\"", "if (false)\n            return refusal(\"appearance-theme\""],
     ["appearance inputs applied", "overrides[APPEARANCE_INPUTS[j]] = value;", ""],
     ["readability contrast ratio", "return (light + 0.05) / (dark + 0.05);", "return 1;"],
+    ["readability accent role", "    \"color.accent\",\n", ""],
     ["readability text roles", "    \"color.success\",\n", ""],
     ["readability surfaces", "    \"color.surfaceRaised\",\n", ""],
     ["readability floor", "var READABILITY_FLOOR = 4.5;", "var READABILITY_FLOOR = 1;"],

@@ -196,11 +196,13 @@ function contrastRatio(a, b) {
 
 // Text drawn at rest must meet WCAG 2.2 SC 1.4.3 AA for normal-size text
 // on each resting surface. Inactive controls and hover surfaces are exempt.
+// `color.accent` draws text roles such as eyebrow, checked buttons and badges.
 var READABILITY_TEXT_ROLES = [
     "color.text",
     "color.textHeading",
     "color.textMuted",
     "color.textFaint",
+    "color.accent",
     "color.success",
     "color.warning",
     "color.danger",

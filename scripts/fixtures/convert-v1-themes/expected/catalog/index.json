@@ -8,7 +8,7 @@
       "palette": {
         "background": "#101010",
         "foreground": "#eeeeee",
-        "accent": "#123456",
+        "accent": "#788b9f",
         "success": "#001100",
         "warning": "#111100",
         "danger": "#110000",
@@ -29,7 +29,7 @@
       "palette": {
         "background": "#fafafa",
         "foreground": "#111111",
-        "accent": "#abcdef",
+        "accent": "#596b7c",
         "success": "#00aa00",
         "warning": "#aaaa00",
         "danger": "#aa0000",

@@ -45,7 +45,7 @@ const PALETTE_FROM_COLORS = [
     ["danger", "color1"],
     ["info", "color4"]
 ];
-const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "danger", "info"];
+const COLOR_OVERRIDE_ORDER = ["accent", "textMuted", "textFaint", "success", "warning", "danger", "info"];
 const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.map(role => `color.${role}`));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
@@ -225,6 +225,23 @@ function withColorOverride(shell, role, expression) {
     return candidate;
 }
 
+function withPaletteOverride(shell, role, value) {
+    const candidate = cloneJson(shell);
+    candidate.tokens.palette[role] = value;
+    return candidate;
+}
+
+function hex6(colour) {
+    return colour.endsWith("ff") ? colour.slice(0, 7) : colour;
+}
+
+function paletteForEntry(theme, shell) {
+    const resolved = resolvedShell(theme, shell).values.palette;
+    const out = {};
+    for (const [target] of PALETTE_FROM_COLORS) out[target] = hex6(resolved[target]);
+    return out;
+}
+
 function fadeExpression(step) {
     return `mix({palette.foreground}, {palette.background}, ${(step / 100).toFixed(2)})`;
 }
@@ -256,12 +273,30 @@ function statusExpression(role, step) {
     return `mix({palette.${role}}, contrast({palette.background}), ${(step / 100).toFixed(2)})`;
 }
 
+function accentPaletteLiteral(theme, shell, step) {
+    const probe = withColorOverride(shell, "accent", statusExpression("accent", step));
+    return hex6(resolvedShell(theme, probe).values.color.accent);
+}
+
 function addReadabilityOverrides(theme, shell) {
     let fixed = cloneJson(shell);
     const defaults = fadeDefaults();
     const initialShortfalls = shortfallsFor(theme, fixed);
     const firstUnfixable = initialShortfalls.find(shortfall => !FIXABLE_READABILITY.has(shortfall.text));
     if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };
+
+    if (roleShortfall(initialShortfalls, "accent") !== undefined) {
+        let chosen = null;
+        for (let step = 1; step <= 100; step++) {
+            const candidate = withPaletteOverride(fixed, "accent", accentPaletteLiteral(theme, fixed, step));
+            if (roleShortfall(shortfallsFor(theme, candidate), "accent") === undefined) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "accent") };
+        fixed = chosen;
+    }
 
     let faintAmount = defaults.textFaint;
     if (roleShortfall(initialShortfalls, "textFaint") !== undefined) {
@@ -311,9 +346,11 @@ function addReadabilityOverrides(theme, shell) {
     const finalShortfalls = shortfallsFor(theme, fixed);
     if (finalShortfalls.length > 0) return { held: true, shortfall: finalShortfalls[0] };
     const overrides = [];
+    if (fixed.tokens.palette.accent !== shell.tokens.palette.accent) overrides.push("palette.accent");
     if (fixed.tokens.color !== undefined) {
         const ordered = {};
         for (const role of COLOR_OVERRIDE_ORDER) {
+            if (role === "accent") continue;
             if (Object.hasOwn(fixed.tokens.color, role)) {
                 ordered[role] = fixed.tokens.color[role];
                 overrides.push(`color.${role}`);
@@ -350,7 +387,7 @@ function convertTheme(theme, v1ThemesDir, catalog, lock) {
     const readability = addReadabilityOverrides(theme, shell);
     if (readability.held) return { theme, held: true, shortfall: readability.shortfall };
     const imagery = pinFromV1(theme, catalog, lock);
-    const entry = { name: theme, mode: themeJson.mode, thumbnail: `thumbnails/${theme}.jpg`, palette, imagery };
+    const entry = { name: theme, mode: themeJson.mode, thumbnail: `thumbnails/${theme}.jpg`, palette: paletteForEntry(theme, readability.shell), imagery };
     return { theme, held: false, shell: readability.shell, terminal, entry, overrides: readability.overrides };
 }
 

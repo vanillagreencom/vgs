@@ -8,7 +8,7 @@
       "palette": {
         "background": "#0e1e36",
         "foreground": "#f4b999",
-        "accent": "#9279aa",
+        "accent": "#9e88b3",
         "success": "#be6f76",
         "warning": "#f4b999",
         "danger": "#d2495b",
@@ -29,7 +29,7 @@
       "palette": {
         "background": "#1b1112",
         "foreground": "#f2e8e8",
-        "accent": "#b44a4a",
+        "accent": "#c57474",
         "success": "#c05a5a",
         "warning": "#d66b6b",
         "danger": "#b44a4a",
@@ -71,7 +71,7 @@
       "palette": {
         "background": "#0c060d",
         "foreground": "#fafafa",
-        "accent": "#0c060d",
+        "accent": "#858386",
         "success": "#b0413b",
         "warning": "#dca23e",
         "danger": "#6a5457",
@@ -113,7 +113,7 @@
       "palette": {
         "background": "#181c1f",
         "foreground": "#fdf9f8",
-        "accent": "#ed333b",
+        "accent": "#f2666c",
         "success": "#9f6769",
         "warning": "#bb6d6c",
         "danger": "#9b584d",
@@ -176,7 +176,7 @@
       "palette": {
         "background": "#1a1515",
         "foreground": "#dcc9bc",
-        "accent": "#ae3f82",
+        "accent": "#c371a3",
         "success": "#959a6b",
         "warning": "#e39c45",
         "danger": "#f07342",
@@ -197,7 +197,7 @@
       "palette": {
         "background": "#121212",
         "foreground": "#ded3d3",
-        "accent": "#940404",
+        "accent": "#c27070",
         "success": "#630a0a",
         "warning": "#cc7a7a",
         "danger": "#450404",
@@ -260,7 +260,7 @@
       "palette": {
         "background": "#eff1f5",
         "foreground": "#4c4f69",
-        "accent": "#1e66f5",
+        "accent": "#1b5ddf",
         "success": "#40a02b",
         "warning": "#df8e1d",
         "danger": "#d20f39",
@@ -533,7 +533,7 @@
       "palette": {
         "background": "#313132",
         "foreground": "#8dffd5",
-        "accent": "#849be3",
+        "accent": "#93a7e6",
         "success": "#47ae83",
         "warning": "#46b287",
         "danger": "#d68679",
@@ -575,7 +575,7 @@
       "palette": {
         "background": "#171717",
         "foreground": "#ccd0cf",
-        "accent": "#f25623",
+        "accent": "#f25825",
         "success": "#f25623",
         "warning": "#757864",
         "danger": "#aeab94",
@@ -659,7 +659,7 @@
       "palette": {
         "background": "#1b1b1b",
         "foreground": "#efebdc",
-        "accent": "#e75a50",
+        "accent": "#e96b62",
         "success": "#e75a50",
         "warning": "#a99b7a",
         "danger": "#f44336",
@@ -701,7 +701,7 @@
       "palette": {
         "background": "#fdf0ed",
         "foreground": "#06060c",
-        "accent": "#da103f",
+        "accent": "#c60f39",
         "success": "#1eb980",
         "warning": "#af5427",
         "danger": "#da103f",
@@ -722,7 +722,7 @@
       "palette": {
         "background": "#13131d",
         "foreground": "#c8c8c8",
-        "accent": "#7c7ca8",
+        "accent": "#8585ae",
         "success": "#a6b2c7",
         "warning": "#d18ba2",
         "danger": "#ea90a8",
@@ -911,7 +911,7 @@
       "palette": {
         "background": "#1c1b19",
         "foreground": "#f0e4c5",
-        "accent": "#706e6b",
+        "accent": "#92918f",
         "success": "#a89984",
         "warning": "#ebdbb2",
         "danger": "#c5564a",
@@ -932,7 +932,7 @@
       "palette": {
         "background": "#222222",
         "foreground": "#c2c2b0",
-        "accent": "#78824b",
+        "accent": "#90996b",
         "success": "#5f875f",
         "warning": "#b36d43",
         "danger": "#685742",
@@ -995,7 +995,7 @@
       "palette": {
         "background": "#232529",
         "foreground": "#dcd6d6",
-        "accent": "#4c566a",
+        "accent": "#949aa6",
         "success": "#98b398",
         "warning": "#bab292",
         "danger": "#b18786",
@@ -1037,7 +1037,7 @@
       "palette": {
         "background": "#2e3440",
         "foreground": "#d8dee9",
-        "accent": "#81a1c1",
+        "accent": "#94afca",
         "success": "#a3be8c",
         "warning": "#ebcb8b",
         "danger": "#bf616a",
@@ -1058,7 +1058,7 @@
       "palette": {
         "background": "#111c18",
         "foreground": "#c1c497",
-        "accent": "#509475",
+        "accent": "#5b9a7d",
         "success": "#549e6a",
         "warning": "#459451",
         "danger": "#ff5345",
@@ -1121,7 +1121,7 @@
       "palette": {
         "background": "#1c1213",
         "foreground": "#e3a68c",
-        "accent": "#684c59",
+        "accent": "#95828b",
         "success": "#806c61",
         "warning": "#f28171",
         "danger": "#c24f57",
@@ -1163,7 +1163,7 @@
       "palette": {
         "background": "#101c38",
         "foreground": "#d8e0f2",
-        "accent": "#587ea8",
+        "accent": "#7695b8",
         "success": "#6ca994",
         "warning": "#f4a261",
         "danger": "#e56b6f",
@@ -1205,7 +1205,7 @@
       "palette": {
         "background": "#faf4ed",
         "foreground": "#575279",
-        "accent": "#56949f",
+        "accent": "#417079",
         "success": "#286983",
         "warning": "#ea9d34",
         "danger": "#b4637a",
@@ -1268,7 +1268,7 @@
       "palette": {
         "background": "#f5e6d3",
         "foreground": "#35302a",
-        "accent": "#9e4f5b",
+        "accent": "#934955",
         "success": "#9e4f5b",
         "warning": "#644535",
         "danger": "#a02b16",
@@ -1331,7 +1331,7 @@
       "palette": {
         "background": "#1a1b1f",
         "foreground": "#eff2f5",
-        "accent": "#7b8da3",
+        "accent": "#8293a8",
         "success": "#9eafc0",
         "warning": "#a8b6c4",
         "danger": "#7a92ae",
@@ -1373,7 +1373,7 @@
       "palette": {
         "background": "#101315",
         "foreground": "#cacccc",
-        "accent": "#798186",
+        "accent": "#81898d",
         "success": "#9fa5a9",
         "warning": "#d9dbdc",
         "danger": "#565d60",
@@ -1415,7 +1415,7 @@
       "palette": {
         "background": "#d0d0c8",
         "foreground": "#242424",
-        "accent": "#de6a41",
+        "accent": "#813d26",
         "success": "#2e3125",
         "warning": "#51573b",
         "danger": "#db0030",
@@ -1499,7 +1499,7 @@
       "palette": {
         "background": "#1e2125",
         "foreground": "#f0e9ec",
-        "accent": "#b4756b",
+        "accent": "#bf8a81",
         "success": "#b4756b",
         "warning": "#c17a6a",
         "danger": "#976870",
@@ -1625,7 +1625,7 @@
       "palette": {
         "background": "#050111",
         "foreground": "#c9ffff",
-        "accent": "#450090",
+        "accent": "#956ec0",
         "success": "#4efaff",
         "warning": "#46d6fd",
         "danger": "#9f34f3",
@@ -1646,7 +1646,7 @@
       "palette": {
         "background": "#ffffff",
         "foreground": "#000000",
-        "accent": "#6e6e6e",
+        "accent": "#6b6b6b",
         "success": "#3a3a3a",
         "warning": "#4a4a4a",
         "danger": "#2a2a2a",
@@ -1667,7 +1667,7 @@
       "palette": {
         "background": "#2f3138",
         "foreground": "#c7c6c1",
-        "accent": "#4a5a70",
+        "accent": "#9fa8b3",
         "success": "#8b8e76",
         "warning": "#d6c8ba",
         "danger": "#a07d7d",

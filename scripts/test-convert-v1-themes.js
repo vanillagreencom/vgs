@@ -297,12 +297,56 @@ try {
         assert.equal(digestDir(path.join(dir, "themes", "catalog")), before, "rerun changed output");
     });
 
+    row("accent override updates palette and index", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const proc = runThemes(dir, ["accent"]);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /overrides=palette\.accent/);
+        const theme = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "accent", "theme.json"), "utf8"));
+        const index = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "index.json"), "utf8"));
+        assert.equal(theme.tokens.palette.accent, "#838084");
+        assert.equal(index.entries[0].palette.accent, "#838084");
+        const contrast = spawnSync(NODE, [CONTRAST, path.join(dir, "themes")], { encoding: "utf8", env: env(dir) });
+        assert.equal(contrast.status, 0, contrast.stdout + contrast.stderr);
+    });
+
+    row("accent override controls", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const noAccent = converterCopy(path.join(dir, "no-accent"), "const COLOR_OVERRIDE_ORDER = [\"accent\", \"textMuted\", \"textFaint\", \"success\", \"warning\", \"danger\", \"info\"];", "const COLOR_OVERRIDE_ORDER = [\"textMuted\", \"textFaint\", \"success\", \"warning\", \"danger\", \"info\"];");
+        const noAccentDir = path.join(dir, "no-accent-run");
+        freshRoot(noAccentDir);
+        copyFixtureArchives(noAccentDir);
+        const refused = runThemes(noAccentDir, ["accent"], [], noAccent);
+        assert.equal(refused.status, 0, refused.stdout + refused.stderr);
+        assert.match(refused.stdout, /held-back theme=accent text=color\.accent/, "accent was still fixable without its role");
+
+        const staleIndex = converterCopy(path.join(dir, "stale-index"), "palette: paletteForEntry(theme, readability.shell)", "palette");
+        const staleIndexDir = path.join(dir, "stale-index-run");
+        freshRoot(staleIndexDir);
+        copyFixtureArchives(staleIndexDir);
+        const mismatch = runThemes(staleIndexDir, ["accent"], [], staleIndex);
+        assert.equal(mismatch.status, 1, mismatch.stdout + mismatch.stderr);
+        assert.match(mismatch.stderr, /catalog-palette-mismatch/);
+
+        const smallestNeedle = "if (roleShortfall(initialShortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)";
+        const largestAccent = converterCopy(path.join(dir, "largest-accent"), smallestNeedle, "if (roleShortfall(initialShortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)");
+        const mutantDir = path.join(dir, "largest-accent-run");
+        freshRoot(mutantDir);
+        copyFixtureArchives(mutantDir);
+        const mutant = runThemes(mutantDir, ["accent"], [], largestAccent);
+        assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
+        const mutantTheme = JSON.parse(fs.readFileSync(path.join(mutantDir, "themes", "catalog", "accent", "theme.json"), "utf8"));
+        assert.notEqual(mutantTheme.tokens.palette.accent, "#838084");
+    });
+
     row("muted and faint overrides keep the fade hierarchy", dir => {
         freshRoot(dir);
         copyFixtureArchives(dir);
         const proc = runThemes(dir, ["muted"]);
         assert.equal(proc.status, 0, proc.stdout + proc.stderr);
-        assert.match(proc.stdout, /overrides=color\.textMuted,color\.textFaint/);
+        assert.match(proc.stdout, /overrides=palette\.accent,color\.textMuted,color\.textFaint/);
         const theme = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "muted", "theme.json"), "utf8"));
         assert.equal(theme.tokens.color.textMuted, "mix({palette.foreground}, {palette.background}, 0.05)");
         assert.equal(theme.tokens.color.textFaint, "mix({palette.foreground}, {palette.background}, 0.11)");
@@ -494,7 +538,7 @@ try {
     row("deterministic index control", dir => assertMutantFails(dir, "deterministic index", "entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name))", "entries: Array.from(byName.values())"));
     row("override only on failure control", dir => assertMutantFails(dir, "override only on failure", "if (roleShortfall(initialShortfalls, \"textFaint\") !== undefined) {", "if (true) {"));
     row("largest textFaint control", dir => assertMutantFails(dir, "largest textFaint", "for (let step = start; step >= 0; step--)", "for (let step = 0; step <= start; step++)"));
-    row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (let step = 1; step <= 100; step++)", "for (let step = 100; step >= 1; step--)"));
+    row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)"));
     row("unfixable hold-back control", dir => {
         freshRoot(dir);
         const copy = converterCopy(dir, "if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };", "if (false) return { held: true, shortfall: firstUnfixable };");

@@ -98,6 +98,14 @@ try {
         assert.match(proc.stdout, /short    catalog\/faint: color\.textFaint on color\.background ratio=1\.11 floor=4\.5/);
     });
 
+    row("accent matching background is a shortfall", dir => {
+        fs.mkdirSync(dir, { recursive: true });
+        writeTheme(dir, "arcish", { palette: { background: "#0c060d", foreground: "#d7d7d9", accent: "#0c060d" } });
+        const proc = run(dir, dir);
+        assertStatus(proc, 1);
+        assert.match(proc.stdout, /short    arcish: color\.accent on color\.background ratio=1\.00 floor=4\.5/);
+    });
+
     row("translucent text is a shortfall", dir => {
         fs.mkdirSync(dir, { recursive: true });
         writeTheme(dir, "translucent", { color: { textFaint: "alpha({palette.foreground}, 0.5)" } });

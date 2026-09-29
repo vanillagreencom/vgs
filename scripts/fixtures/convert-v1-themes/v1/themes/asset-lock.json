@@ -37,6 +37,15 @@
       "sha256": "d62835ad81369b74c57df61d143af28918e757531c1f2f1d362f9bd8ba6d3191",
       "preview": "0000000000000000000000000000000000000000000000000000000000000000",
       "published": true
+    },
+    "accent": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-alpha-r1.tar.gz",
+      "rev": 1,
+      "size": 437,
+      "sha256": "d62835ad81369b74c57df61d143af28918e757531c1f2f1d362f9bd8ba6d3191",
+      "preview": "0000000000000000000000000000000000000000000000000000000000000000",
+      "published": true
     }
   }
 }
