@@ -9,47 +9,9 @@ toast_titles() { ipc shell lent | python3 -c 'import json,sys; t=json.load(sys.s
 toast_screen() { ipc shell lent | python3 -c 'import json,sys; print(json.load(sys.stdin)["toasts"]["screen"])'; }
 toast_surface_height() { layers_of vgs:toast | python3 -c 'import json,sys; l=json.load(sys.stdin); print(l[0][3] if l else 0)'; }
 settings_open() { [[ $(ipc smoke instanceGeometry window vgs.settings) != absent ]] && echo open || echo closed; }
-layered() { ipc acme.layers invoke "$1" "${2:-}"; }
-read_layers() { ipc smoke readInstance service acme.layers "$1"; }
-toast_bar_geometry() {
-  local toast_layers bar_layers margin
-  toast_layers="$(layers_of vgs:toast)" || return
-  bar_layers="$(layers_of vgs:bar)" || return
-  margin="$(ipc smoke themeValue toast.margin)" || return
-  python3 - "$toast_layers" "$bar_layers" "$margin" <<'PY'
-import json, sys
-toasts, bars, margin = json.loads(sys.argv[1]), json.loads(sys.argv[2]), int(json.loads(sys.argv[3]))
-if not toasts or not bars:
-    print("absent")
-    sys.exit()
-print("toast=%d,%d,%d,%d bar=%d,%d,%d,%d margin=%d" % (*toasts[0], *bars[0], margin))
-PY
-}
-toast_bar_contract_value() {
-  python3 -c 'import re,sys
-t = sys.stdin.read().strip()
-m = re.fullmatch(r"toast=(\d+),(\d+),(\d+),(\d+) bar=(\d+),(\d+),(\d+),(\d+) margin=(\d+)", t)
-if not m: print(t); sys.exit()
-tx, ty, tw, th, bx, by, bw, bh, margin = map(int, m.groups())
-horizontal = tx < bx + bw and bx < tx + tw
-vertical = ty < by + bh and by < ty + th
-problems = []
-if horizontal and vertical:
-    problems.append("overlap")
-elif horizontal:
-    gap = ty - (by + bh) if by < ty else by - (ty + th)
-    if gap < margin:
-        problems.append("margin")
-print("ok" if not problems else "violation " + ",".join(problems))'
-}
-toast_bar_clear() {
-  local t
-  t="$(toast_bar_geometry)" || return
-  toast_bar_contract_value <<<"$t"
-}
 note_toast_bar_geometry() {
   local t
-  t="$(toast_bar_geometry)" || { fail "toast geometry unreadable"; return; }
+  t="$(layer_bar_geometry vgs:toast toast.margin)" || { fail "toast geometry unreadable"; return; }
   ok "toast geometry measured: $t"
 }
 toast_gap_rect_between_first_two() {
@@ -109,8 +71,8 @@ expect_poll "the toast host maps one surface" 1 layer_count vgs:toast
 expect "the toast sits on the focused screen" "$(bar_key | sed 's/^bar://')" toast_screen
 toast_margin="$(ipc smoke themeValue toast.margin)"
 geometry expect "the toast surface sits below the bar in the top-right corner" "[[$((mon_w - toast_margin - 360)), $((bar_reserved + toast_margin)), 360, $(toast_surface_height)]]" layers_of vgs:toast
-expect "the toast/bar overlap predicate rejects an overlap" "violation overlap" toast_bar_contract_value <<<"toast=1400,10,360,44 bar=0,0,$mon_w,$bar_reserved margin=$toast_margin"
-geometry expect "the toast surface clears the bar by the toast margin" ok toast_bar_clear
+expect "the layer/bar overlap predicate rejects an overlap" "violation overlap" layer_bar_contract_value <<<"layer=1400,10,360,44 bar=0,0,$mon_w,$bar_reserved margin=$toast_margin"
+geometry expect "the toast surface clears the bar by the toast margin" ok layer_bar_clear vgs:toast toast.margin
 expect "enabling Settings for the toast click-through check is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings widget is on the bar for the toast click-through check" True record_exists vgs.settings
 click_centre "$(bar_key)" vgs.settings || fail "the right-side Settings widget receives a click while a toast shows"

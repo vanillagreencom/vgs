@@ -355,6 +355,16 @@ Scope {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             return dialog !== null && root.descendants(dialog).some(child => child.activeFocus);
         }
+        // The dialog's box, or its title's for `title`, in the notice
+        // window's coordinates, or "absent" while no notice shows.
+        function noticeWindowGeometry(part: string): string {
+            const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
+            if (dialog === null) return "absent";
+            if (part === "card") return JSON.stringify(root.windowBox(dialog));
+            if (part !== "title") return "refused: part=" + part + " want=card|title";
+            const title = root.descendants(dialog).find(child => root.typeName(child) === "Label" && child.visible && child.text === dialog.title);
+            return title === undefined ? "absent" : JSON.stringify(root.windowBox(title));
+        }
         function noticeDrawn(): string {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             if (dialog === null) return "absent";

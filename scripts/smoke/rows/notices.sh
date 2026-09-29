@@ -5,9 +5,15 @@
 # and runs the core's command as `true`, and the harness's helpers. A stand-in bin/vgsh-pkg answers detection with pacman and
 # paru, whatever the host runs. The Settings plugin is disabled throughout:
 # the notice is the core's. Rows: `vgsh plugin add` raises the notice
-# through pluginInstalled, which maps one surface centred on the focused
-# monitor holding the keyboard and drawing each missing command with this
-# system's package; Escape closes it and rests the plugin's own offers;
+# through pluginInstalled, which maps one surface on the focused monitor
+# holding the keyboard and drawing each missing command with this system's
+# package; the surface fills the monitor less the bar's reserved space less
+# `dialog.margin`, clears the bar by that margin and centres the dialog; a
+# click on the bar's acme.tick widget reaches it while the notice shows; a
+# click on the surface beside the dialog reaches the acme.layers fixture's
+# layer below, which rows/toasts.sh installed and left disabled, and a click
+# on the dialog's title does not, which is the mask's control;
+# Escape closes it and rests the plugin's own offers;
 # enabling the plugin raises it again; the plugin's offer merges into a
 # held notice and is refused while it rests, for a command it did not
 # declare and for a value that is no list of commands; Install hands the
@@ -47,22 +53,46 @@ pkg_stub '{"primary":{"id":"pacman","binary":"pacman"},"overlays":[{"id":"aur","
 notice_resting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["resting"]))'; }
 drawn() { ipc smoke noticeDrawn | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[sys.argv[1]]))' "$1"; }
 needs() { ipc acme.needs invoke "$1" "${2:-}"; }
-# `centred` when the notice's one surface sits in the middle of the focused
-# monitor, to within a pixel; else the two rectangles.
-notice_centred() {
-  local layers
+# `placed` when the notice's one surface is the focused monitor less the
+# space other layers reserve less `dialog.margin` on every edge, and the
+# dialog sits in its centre to within a pixel; else the readings.
+notice_placed() {
+  local layers card margin
   layers="$(layers_of vgs:notice)" || return 1
+  card="$(ipc smoke noticeWindowGeometry card)" || return 1
+  [[ $card == \[* ]] || { echo "card=$card"; return; }
+  margin="$(ipc smoke themeValue dialog.margin)" || return 1
   hypr -j monitors | python3 -c '
 import json, sys
-ls = json.loads(sys.argv[1])
+ls, card, margin = json.loads(sys.argv[1]), json.loads(sys.argv[2]), int(json.loads(sys.argv[3]))
 m = [m for m in json.load(sys.stdin) if m["focused"]]
 if len(ls) != 1 or len(m) != 1:
     print("layers=%d focused=%d" % (len(ls), len(m))); sys.exit()
-x, y, w, h = ls[0]
 m = m[0]
+left, top, right, bottom = m["reserved"]
 mw, mh = m["width"] / m["scale"], m["height"] / m["scale"]
-ok = abs(x + w / 2 - (m["x"] + mw / 2)) <= 1 and abs(y + h / 2 - (m["y"] + mh / 2)) <= 1
-print("centred" if ok else json.dumps([ls[0], [m["x"], m["y"], mw, mh]]))' "$layers"
+want = [m["x"] + left + margin, m["y"] + top + margin, mw - left - right - 2 * margin, mh - top - bottom - 2 * margin]
+x, y, w, h = ls[0]
+cx, cy, cw, ch = card
+fills = ls[0] == want
+centred = abs(cx + cw / 2 - w / 2) <= 1 and abs(cy + ch / 2 - h / 2) <= 1
+print("placed" if fills and centred else json.dumps({"layer": ls[0], "want": want, "card": card}))' "$layers" "$card" "$margin"
+}
+# hover_click X Y: the pointer moves a pixel off first, since a surface
+# mapped since the last press takes no click until the pointer moves
+# (validation-smoke.md), then one click at (X, Y).
+hover_click() { hover "$(($1 + 1))" "$2" && click "$1" "$2"; }
+read_tick() { ipc smoke readInstance "$(bar_key)" acme.tick "$1"; }
+# notice_gap_point: the layout point on the notice's surface halfway
+# between its left edge and the dialog's, at the dialog's middle height.
+notice_gap_point() {
+  local layer card
+  layer="$(surface_box vgs:notice)" || return 1
+  card="$(ipc smoke noticeWindowGeometry card)" || return 1
+  python3 -c 'import json,sys
+l, c = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+if not isinstance(l, list) or not isinstance(c, list) or c[0] < 2: sys.exit(1)
+print(int(l[0] + c[0] / 2), int(l[1] + c[1] + c[3] / 2))' "$layer" "$card"
 }
 install_words() {
   words --app-id=org.vgs.tui "--title=VGS · Install requirements" -- "$tui_self" present --presentation full \
@@ -74,6 +104,11 @@ all_needs='["vgs-smoke-needs", "vgs-smoke-extra", "vgs-smoke-unmapped"]'
 expect "the Settings plugin is disabled for the notice rows" False plugin_enabled vgs.settings
 expect "no notice shows at first" null notice_shown
 expect "the notice host has no surface at first" 0 layer_count vgs:notice
+# The layer under the notice counts the presses that pass its surface.
+expect "enabling the layers fixture under the notice is allowed" ok ipc shell setPluginEnabled acme.layers true
+expect_poll "the layers fixture under the notice is built" True record_exists acme.layers
+expect "the layer under the notice is shown" ok layered draw
+expect "the layer under the notice takes input everywhere" ok layered full 1
 
 # pluginInstalled: add lands the plugin disabled, the shell scans and then
 # raises the notice for the commands the scan did not find.
@@ -86,8 +121,34 @@ else
 fi
 expect_poll "pluginInstalled raises the notice for every missing command" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect_poll "the notice host maps one surface" 1 layer_count vgs:notice
-geometry expect "the notice is centred on the focused monitor" centred notice_centred
+geometry expect "the notice fills the monitor less the bar and its margin, the dialog centred" placed notice_placed
+geometry expect "the notice surface clears the bar by the dialog margin" ok layer_bar_clear vgs:notice dialog.margin
 expect_poll "the notice holds the keyboard" true ipc smoke noticeFocused
+
+# The bar and the layer below take their own clicks; the dialog takes its
+# own. A press that passes through leaves nothing to wait for, so the
+# control's click on the title is followed by a second click beside the
+# dialog, whose count marks that the first has been delivered.
+expect "the Tick widget is on the bar under the notice" True record_exists acme.tick
+tick_presses="$(read_tick presses)"
+tick_rect="$(ipc smoke instanceGeometry "$(bar_key)" acme.tick)"
+read -r tick_x tick_y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$tick_rect") || fail "the Tick widget was not measured"
+hover_click "$tick_x" "$tick_y" || fail "the click on the Tick widget failed"
+expect_poll "a click on the bar's widget while the notice shows reaches it" "$((tick_presses + 1))" read_tick presses
+read -r gap_x gap_y < <(notice_gap_point) || fail "the notice surface beside the dialog was not measured"
+presses="$(read_layers presses)"
+hover_click "$gap_x" "$gap_y" || fail "the click beside the dialog failed"
+expect_poll "a click on the notice surface beside the dialog reaches the layer below" "$((presses + 1))" read_layers presses
+title_rect="$(ipc smoke noticeWindowGeometry title)"
+read -r title_x title_y < <(at_centre vgs:notice "$title_rect") || fail "the dialog's title was not measured"
+hover_click "$title_x" "$title_y" || fail "the click on the dialog's title failed"
+hover_click "$gap_x" "$gap_y" || fail "the marker click beside the dialog failed"
+expect_poll "control: a click on the dialog's title does not reach the layer below" "$((presses + 2))" read_layers presses
+expect "a click on the dialog's title leaves the notice showing" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
+expect "the layer under the notice is hidden" ok layered undraw
+expect "disabling the layers fixture under the notice is allowed" ok ipc shell setPluginEnabled acme.layers false
+expect_poll "the layers fixture under the notice is gone" False record_exists acme.layers
+expect_poll "the notice holds the keyboard after the clicks" true ipc smoke noticeFocused
 expect "the notice names the plugin and the count" '"Needs needs 3 commands"' drawn title
 expect "each missing command is drawn with this system's package" "$needs_rows" drawn rows
 expect "an installable notice offers Install and Not now" '["Install", "Not now"]' drawn actions

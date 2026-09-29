@@ -8,8 +8,6 @@ set -euo pipefail
 layers_dir="$home/.config/vgs/plugins/acme.layers"
 mkdir -p "$layers_dir"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.layers/." "$layers_dir/"
-layered() { ipc acme.layers invoke "$1" "${2:-}"; }
-read_layers() { ipc smoke readInstance service acme.layers "$1"; }
 # JSON the shell answers, respaced as python prints it, so a row compares values.
 respaced() { "$@" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 built_screens() { respaced read_layers built; }

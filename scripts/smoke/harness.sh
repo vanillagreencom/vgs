@@ -783,6 +783,56 @@ reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum
 # Live layers with a namespace as [[x, y, w, h], ...], sorted.
 layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
 layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# The acme.layers fixture's passive layer, which rows/toasts.sh,
+# rows/layers.sh and rows/notices.sh put under other surfaces: layered
+# VERB [ARG] runs one of its IPC verbs, read_layers PROPERTY reads its
+# service, such as `presses`, the count of presses that reached it.
+layered() { ipc acme.layers invoke "$1" "${2:-}"; }
+read_layers() { ipc smoke readInstance service acme.layers "$1"; }
+# layer_bar_geometry NAMESPACE TOKEN: the one live layer of NAMESPACE, the
+# first bar and the theme's length TOKEN, the gap the layer keeps from the
+# free area's edges, as `layer=x,y,w,h bar=x,y,w,h margin=n`, or `absent`
+# while either layer is missing. layer_bar_contract_value reads that line
+# on stdin: `ok` when the layer overlaps no bar and keeps at least the
+# margin from a bar it shares a column with, else `violation` and the
+# broken rules, or the line itself when it is no measurement.
+# layer_bar_clear NAMESPACE TOKEN: the two in one.
+layer_bar_geometry() { # NAMESPACE TOKEN
+  local layers bars margin
+  layers="$(layers_of "$1")" || return
+  bars="$(layers_of vgs:bar)" || return
+  margin="$(ipc smoke themeValue "$2")" || return
+  python3 - "$layers" "$bars" "$margin" <<'PY'
+import json, sys
+layers, bars, margin = json.loads(sys.argv[1]), json.loads(sys.argv[2]), int(json.loads(sys.argv[3]))
+if not layers or not bars:
+    print("absent")
+    sys.exit()
+print("layer=%d,%d,%d,%d bar=%d,%d,%d,%d margin=%d" % (*layers[0], *bars[0], margin))
+PY
+}
+layer_bar_contract_value() {
+  python3 -c 'import re,sys
+t = sys.stdin.read().strip()
+m = re.fullmatch(r"layer=(\d+),(\d+),(\d+),(\d+) bar=(\d+),(\d+),(\d+),(\d+) margin=(\d+)", t)
+if not m: print(t); sys.exit()
+tx, ty, tw, th, bx, by, bw, bh, margin = map(int, m.groups())
+horizontal = tx < bx + bw and bx < tx + tw
+vertical = ty < by + bh and by < ty + th
+problems = []
+if horizontal and vertical:
+    problems.append("overlap")
+elif horizontal:
+    gap = ty - (by + bh) if by < ty else by - (ty + th)
+    if gap < margin:
+        problems.append("margin")
+print("ok" if not problems else "violation " + ",".join(problems))'
+}
+layer_bar_clear() { # NAMESPACE TOKEN
+  local t
+  t="$(layer_bar_geometry "$1" "$2")" || return
+  layer_bar_contract_value <<<"$t"
+}
 # output_mode NAME MODE: the nested compositor gives output NAME the mode
 # MODE, such as 480x720, at scale 1 and the layout's origin, through a Lua
 # monitor rule; the reply is hyprctl's. The nested output takes any mode,
