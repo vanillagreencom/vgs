@@ -62,6 +62,25 @@ if [[ $status -eq 143 ]]; then ok "TERM exits as 128 plus the signal"; else fail
 left=0
 while read -r pid; do [[ -n $pid && -d /proc/$pid ]] && left=$((left + 1)); done <"$root/state/vgs/updates-test/grandchildren"
 if [[ $left -eq 0 ]]; then ok "TERM kills probe grandchildren"; else fail "TERM kills probe grandchildren: left=$left"; fi
+cat >"$root/bin/vgsh" <<'VGSH'
+#!/usr/bin/env bash
+record="$XDG_STATE_HOME/vgs/updates-test"
+mkdir -p -- "$record"
+echo "$$" >>"$record/slow-shipped"
+trap 'sleep 3; exit 143' TERM
+sleep 60
+VGSH
+chmod 755 "$root/bin/vgsh"
+set +e
+"${run_env[@]}" "$check" --vgsh "$root/bin/vgsh" >/dev/null 2>"$root/slow-shipped.err" &
+slow_pid=$!
+for _ in $(seq 1 50); do [[ -s "$root/state/vgs/updates-test/slow-shipped" ]] && break; sleep 0.1; done
+kill -TERM "$slow_pid"
+wait "$slow_pid"
+set -e
+slow_left=0
+while read -r pid; do [[ -n $pid && -d /proc/$pid ]] && slow_left=$((slow_left + 1)); done <"$root/state/vgs/updates-test/slow-shipped"
+if [[ $slow_left -eq 0 ]]; then ok "TERM waits for delayed probe shutdown"; else fail "TERM waits for delayed probe shutdown: left=$slow_left"; fi
 mutant="$root/check-no-rewait"
 python3 - "$check" "$mutant" <<'PY'
 import pathlib, sys
