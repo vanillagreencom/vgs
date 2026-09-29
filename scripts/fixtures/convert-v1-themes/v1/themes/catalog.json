@@ -6,8 +6,8 @@
     "ref": "fixture",
     "baseUrl": "https://example.invalid/releases/download"
   },
-  "count": 5,
-  "totalSize": 1838,
+  "count": 6,
+  "totalSize": 2275,
   "themes": [
     {
       "name": "accent",
@@ -67,6 +67,20 @@
     },
     {
       "name": "muted",
+      "mode": "dark",
+      "pair": "",
+      "source": "curated",
+      "size": 437,
+      "assets": {
+        "release": "themes-v1",
+        "archive": "vgs-theme-alpha-r1.tar.gz",
+        "rev": 1,
+        "size": 437,
+        "sha256": "d62835ad81369b74c57df61d143af28918e757531c1f2f1d362f9bd8ba6d3191"
+      }
+    },
+    {
+      "name": "text",
       "mode": "dark",
       "pair": "",
       "source": "curated",

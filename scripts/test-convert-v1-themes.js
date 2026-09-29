@@ -23,6 +23,11 @@ const NODE = process.execPath;
 const MAGICK = findOnPath("magick");
 const FLOCK = findOnPath("flock");
 const TEST_PATH = Array.from(new Set([path.dirname(NODE), path.dirname(MAGICK), path.dirname(FLOCK)])).join(path.delimiter);
+// The text fixture's palette.foreground after the smallest passing lift.
+const TEXT_LIFTED = "#669afd";
+// Converter text the text-family controls edit.
+const TEXT_SEARCH = "for (let step = 1; step / 100 < headingAmount; step++)";
+const HEADING_RETURN = "reason=heading-shape value=${JSON.stringify(value)}`);\n    return parsed.args[2].value;";
 const TLS_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDP29gb/Ka2HUVG
 XsVeQGSQxtfEF94aWUGszUgb/GIEZL/luPXGYbbrBR0iAH0HHh8E7Muik6OpsfXT
@@ -191,13 +196,18 @@ function assertRefuses(root, mutate, want) {
     assert.ok(proc.stderr.split("\n")[0].includes(want), `want ${want}, got ${proc.stderr}`);
 }
 
-function converterCopy(root, needle, replacement) {
-    const source = fs.readFileSync(CONVERTER, "utf8");
-    assert.equal(source.split(needle).length, 2, `control needle must occur once: ${needle}`);
+// A converter copy under ROOT with NEEDLE replaced, then each
+// [needle, replacement] pair of MORE_EDITS in order.
+function converterCopy(root, needle, replacement, moreEdits = []) {
+    let source = fs.readFileSync(CONVERTER, "utf8");
+    for (const [from, to] of [[needle, replacement], ...moreEdits]) {
+        assert.equal(source.split(from).length, 2, `control needle must occur once: ${from}`);
+        source = source.replace(from, () => to);
+    }
     fs.mkdirSync(path.join(root, "copy", "tools"), { recursive: true });
     for (const link of ["bin", "shell"]) fs.symlinkSync(path.join(repo, link), path.join(root, "copy", link));
     const copy = path.join(root, "copy", "tools", "convert-v1-themes");
-    fs.writeFileSync(copy, source.replace(needle, replacement));
+    fs.writeFileSync(copy, source);
     return copy;
 }
 
@@ -314,7 +324,7 @@ try {
     row("accent override controls", dir => {
         freshRoot(dir);
         copyFixtureArchives(dir);
-        const noAccent = converterCopy(path.join(dir, "no-accent"), "const PALETTE_OVERRIDE_ROLES = [\"accent\"];", "const PALETTE_OVERRIDE_ROLES = [];");
+        const noAccent = converterCopy(path.join(dir, "no-accent"), "const PALETTE_OVERRIDE_ROLES = { text: \"foreground\", accent: \"accent\" };", "const PALETTE_OVERRIDE_ROLES = { text: \"foreground\" };");
         const noAccentDir = path.join(dir, "no-accent-run");
         freshRoot(noAccentDir);
         copyFixtureArchives(noAccentDir);
@@ -339,6 +349,55 @@ try {
         assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
         const mutantTheme = JSON.parse(fs.readFileSync(path.join(mutantDir, "themes", "catalog", "accent", "theme.json"), "utf8"));
         assert.notEqual(mutantTheme.tokens.palette.accent, "#838084");
+    });
+
+    row("text override lifts the palette foreground", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const proc = runThemes(dir, ["text"]);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /overrides=palette\.foreground,color\.textMuted,color\.textFaint$/m);
+        const theme = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "text", "theme.json"), "utf8"));
+        const index = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "index.json"), "utf8"));
+        assert.equal(theme.tokens.palette.foreground, TEXT_LIFTED);
+        assert.equal(index.entries[0].palette.foreground, TEXT_LIFTED);
+        assert.equal(Object.hasOwn(theme.tokens.color, "text"), false, "the lift is a palette colour, not a color.text expression");
+        const contrast = spawnSync(NODE, [CONTRAST, path.join(dir, "themes")], { encoding: "utf8", env: env(dir) });
+        assert.equal(contrast.status, 0, contrast.stdout + contrast.stderr);
+    });
+
+    row("text override controls", dir => {
+        const run = (name, copy) => {
+            const runDir = path.join(dir, `${name}-run`);
+            freshRoot(runDir);
+            copyFixtureArchives(runDir);
+            const proc = runThemes(runDir, ["text"], [], copy);
+            assert.equal(proc.status, 0, `${name}: ${proc.stdout}${proc.stderr}`);
+            const file = path.join(runDir, "themes", "catalog", "text", "theme.json");
+            return { stdout: proc.stdout, theme: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null };
+        };
+        const heldText = /held-back theme=text text=color\.text surface=color\.surfaceRaised ratio=4\.33 floor=4\.5/;
+
+        const noText = run("no-text", converterCopy(path.join(dir, "no-text"), "const PALETTE_OVERRIDE_ROLES = { text: \"foreground\", accent: \"accent\" };", "const PALETTE_OVERRIDE_ROLES = { accent: \"accent\" };"));
+        assert.match(noText.stdout, heldText, "text was still fixable without its role");
+
+        const largest = run("largest-text", converterCopy(path.join(dir, "largest-text"), TEXT_SEARCH, "for (let step = Math.ceil(headingAmount * 100) - 1; step >= 1; step--)"));
+        assert.notEqual(largest.theme.tokens.palette.foreground, TEXT_LIFTED, "a largest-first search chose the smallest lift");
+
+        const lowHeading = [HEADING_RETURN, HEADING_RETURN.replace("return parsed.args[2].value;", "return 0.03;")];
+        const capped = run("capped", converterCopy(path.join(dir, "capped"), ...lowHeading));
+        assert.match(capped.stdout, heldText, "a lift at the heading amount was admitted");
+        const uncapped = run("uncapped", converterCopy(path.join(dir, "uncapped"), ...lowHeading, [[TEXT_SEARCH, "for (let step = 1; step <= 100; step++)"]]));
+        assert.equal(uncapped.theme.tokens.palette.foreground, TEXT_LIFTED, "without the cap the planted heading amount still held the theme back");
+    });
+
+    row("heading default shape refusal names the token", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const copy = converterCopy(dir, "const value = logic.nodeAt(tokens, \"color.textHeading\").value;", "const value = \"mix({palette.foreground}, {palette.background}, 0.55)\";");
+        const proc = runThemes(dir, ["beta"], [], copy);
+        assert.equal(proc.status, 1, proc.stdout + proc.stderr);
+        assert.match(proc.stderr.split("\n")[0], /^convert-v1-themes: refused: token=color\.textHeading reason=heading-shape /);
     });
 
     row("muted and faint overrides keep the fade hierarchy", dir => {
@@ -402,7 +461,7 @@ try {
         }, null, 2) + "\n");
         const proc = runThemes(dir, ["body"]);
         assert.equal(proc.status, 0, proc.stdout + proc.stderr);
-        assert.match(proc.stdout, /held-back theme=body text=color\.text surface=color\.background ratio=1\.26 floor=4\.5/);
+        assert.match(proc.stdout, /held-back theme=body text=color\.textHeading surface=color\.background ratio=3\.40 floor=4\.5/);
         assert.equal(fs.existsSync(path.join(dir, "themes", "catalog", "body")), false, "stale package remains");
         assert.equal(fs.existsSync(path.join(dir, "themes", "catalog", "thumbnails", "body.jpg")), false, "stale thumbnail remains");
         const index = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "index.json"), "utf8"));
@@ -545,7 +604,7 @@ try {
         const proc = runThemes(dir, ["body"], [], copy);
         assert.equal(proc.status, 0, proc.stdout + proc.stderr);
         assert.match(proc.stdout, /held-back theme=body/, "mutant stopped holding the theme back before reporting a reason");
-        assert.doesNotMatch(proc.stdout, /text=color\.text surface=color\.background/, "mutant still reported the unfixable role first");
+        assert.doesNotMatch(proc.stdout, /text=color\.textHeading /, "mutant still reported the unfixable role first");
     });
     row("held-back removal control", dir => {
         freshRoot(dir);

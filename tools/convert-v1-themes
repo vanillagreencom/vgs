@@ -46,8 +46,11 @@ const PALETTE_FROM_COLORS = [
     ["info", "color4"]
 ];
 const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "danger", "info"];
-const PALETTE_OVERRIDE_ROLES = ["accent"];
-const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(PALETTE_OVERRIDE_ROLES).map(role => `color.${role}`));
+// Readability roles fixed at the palette level, each with the palette
+// colour its token default reads. Other roles derive from that colour too,
+// so the fix changes the palette colour, not the role's expression.
+const PALETTE_OVERRIDE_ROLES = { text: "foreground", accent: "accent" };
+const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(Object.keys(PALETTE_OVERRIDE_ROLES)).map(role => `color.${role}`));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
 const REPO_HOST = "https://github.com/";
@@ -270,26 +273,59 @@ function proportionalMutedCap(defaults, faintAmount) {
     return Math.floor(faintAmount * (defaults.textMuted / defaults.textFaint) * 100) / 100;
 }
 
-function statusExpression(role, step) {
+function contrastMixExpression(role, step) {
     return `mix({palette.${role}}, contrast({palette.background}), ${(step / 100).toFixed(2)})`;
 }
 
-function accentPaletteLiteral(theme, shell, step) {
-    const probe = withColorOverride(shell, "accent", statusExpression("accent", step));
-    return hex6(resolvedShell(theme, probe).values.color.accent);
+// The mix amount of color.textHeading's default. The text family lifts
+// palette.foreground along the same line, and a lift below this amount
+// keeps headings stronger than body text.
+function headingDefaultAmount() {
+    const value = logic.nodeAt(tokens, "color.textHeading").value;
+    const parsed = typeof value === "string" ? logic.parseExpression(value) : { error: "not-expression" };
+    const toward = parsed.error === undefined && parsed.kind === "call" && parsed.args.length === 3 ? parsed.args[1] : null;
+    const valid = toward !== null && parsed.name === "mix"
+        && parsed.args[0].kind === "reference" && parsed.args[0].path === "palette.foreground"
+        && toward.kind === "call" && toward.name === "contrast" && toward.args.length === 1
+        && toward.args[0].kind === "reference" && toward.args[0].path === "palette.background"
+        && parsed.args[2].kind === "number" && parsed.args[2].value > 0 && parsed.args[2].value <= 1;
+    if (!valid) refuseGlobal("token=color.textHeading", `reason=heading-shape value=${JSON.stringify(value)}`);
+    return parsed.args[2].value;
+}
+
+// The opaque colour that ROLE's palette colour becomes when mixed STEP
+// hundredths toward contrast({palette.background}), resolved through
+// ThemeLogic.accept so that 8-bit rounding is part of the value.
+function liftedPaletteLiteral(theme, shell, role, step) {
+    const probe = withColorOverride(shell, role, contrastMixExpression(PALETTE_OVERRIDE_ROLES[role], step));
+    return hex6(resolvedShell(theme, probe).values.color[role]);
 }
 
 function addReadabilityOverrides(theme, shell) {
     let fixed = cloneJson(shell);
     const defaults = fadeDefaults();
+    const headingAmount = headingDefaultAmount();
     const initialShortfalls = shortfallsFor(theme, fixed);
     const firstUnfixable = initialShortfalls.find(shortfall => !FIXABLE_READABILITY.has(shortfall.text));
     if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };
 
+    if (roleShortfall(initialShortfalls, "text") !== undefined) {
+        let chosen = null;
+        for (let step = 1; step / 100 < headingAmount; step++) {
+            const candidate = withPaletteOverride(fixed, "foreground", liftedPaletteLiteral(theme, fixed, "text", step));
+            if (roleShortfall(shortfallsFor(theme, candidate), "text") === undefined) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "text") };
+        fixed = chosen;
+    }
+
     if (roleShortfall(initialShortfalls, "accent") !== undefined) {
         let chosen = null;
         for (let step = 1; step <= 100; step++) {
-            const candidate = withPaletteOverride(fixed, "accent", accentPaletteLiteral(theme, fixed, step));
+            const candidate = withPaletteOverride(fixed, "accent", liftedPaletteLiteral(theme, fixed, "accent", step));
             if (roleShortfall(shortfallsFor(theme, candidate), "accent") === undefined) {
                 chosen = candidate;
                 break;
@@ -334,7 +370,7 @@ function addReadabilityOverrides(theme, shell) {
         if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;
         let chosen = null;
         for (let step = 1; step <= 100; step++) {
-            const candidate = withColorOverride(fixed, role, statusExpression(role, step));
+            const candidate = withColorOverride(fixed, role, contrastMixExpression(role, step));
             if (roleShortfall(shortfallsFor(theme, candidate), role) === undefined) {
                 chosen = candidate;
                 break;
@@ -347,7 +383,9 @@ function addReadabilityOverrides(theme, shell) {
     const finalShortfalls = shortfallsFor(theme, fixed);
     if (finalShortfalls.length > 0) return { held: true, shortfall: finalShortfalls[0] };
     const overrides = [];
-    if (fixed.tokens.palette.accent !== shell.tokens.palette.accent) overrides.push("palette.accent");
+    for (const role of Object.values(PALETTE_OVERRIDE_ROLES)) {
+        if (fixed.tokens.palette[role] !== shell.tokens.palette[role]) overrides.push(`palette.${role}`);
+    }
     if (fixed.tokens.color !== undefined) {
         const ordered = {};
         for (const role of COLOR_OVERRIDE_ORDER) {
