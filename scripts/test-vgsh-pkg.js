@@ -12,7 +12,9 @@
 //   no fzf placeholder. The elevation commands, their order and the choice
 //   a run makes over them are pinned; bin/vgsh-pkg's `run` and pickers are
 //   scripts/test-vgsh-pkg-run.sh's.
-// - packageFor picks a requirement's package for a detected system.
+// - packageFor picks a requirement's package for a detected system, and
+//   installGroups groups the picks by manager with the arguments
+//   `vgsh pkg run install` takes for each.
 // - Each update parser reads the canned outputs under scripts/fixtures/pkg/
 //   and inline odd lines; each manager's update query and the meaning of
 //   its exit statuses are pinned. No row touches the network.
@@ -218,6 +220,27 @@ const PACKAGE_FOR_ROWS = [
     ["no package is mapped at all", {}, { primary: PACMAN, overlays: [], sources: [] }, null]
 ];
 
+// installGroups rows: name, the rows' packages, detect's answer, the picks
+// as manager/name or null, then each group as [manager, primary, names,
+// installs, the arguments after `vgsh pkg run install` or null].
+const NIX = { id: "nix", binary: "nix" };
+const FLATPAK = { id: "flatpak", binary: "flatpak" };
+const INSTALL_GROUP_ROWS = [
+    ["one primary package", [{ pacman: "gum" }], { primary: PACMAN, overlays: [PARU], sources: [] },
+        ["pacman/gum"], [["pacman", true, ["gum"], true, ["gum"]]]],
+    ["an overlay's install names its manager, after the primary's", [{ aur: "vsys" }, { pacman: "gum" }], { primary: PACMAN, overlays: [PARU], sources: [] },
+        ["aur/vsys", "pacman/gum"], [["pacman", true, ["gum"], true, ["gum"]], ["aur", false, ["vsys"], true, ["--manager", "aur", "vsys"]]]],
+    ["a package two commands share is installed once", [{ pacman: "coreutils" }, { pacman: "coreutils" }, { pacman: "gum" }], { primary: PACMAN, overlays: [], sources: [] },
+        ["pacman/coreutils", "pacman/coreutils", "pacman/gum"], [["pacman", true, ["coreutils", "gum"], true, ["coreutils", "gum"]]]],
+    ["a source comes after the overlays", [{ mise: "node" }, { aur: "vsys" }], { primary: PACMAN, overlays: [PARU], sources: [MISE] },
+        ["mise/node", "aur/vsys"], [["aur", false, ["vsys"], true, ["--manager", "aur", "vsys"]], ["mise", false, ["node"], true, ["--manager", "mise", "node"]]]],
+    ["a row no present manager maps is picked by none", [{ apt: "gum" }, { pacman: "fzf" }], { primary: PACMAN, overlays: [], sources: [] },
+        [null, "pacman/fzf"], [["pacman", true, ["fzf"], true, ["fzf"]]]],
+    ["nix installs nothing through vgsh", [{ nix: "gum" }, { flatpak: "org.flat" }], { primary: NIX, overlays: [FLATPAK], sources: [] },
+        ["nix/gum", "flatpak/org.flat"], [["nix", true, ["gum"], false, null], ["flatpak", false, ["org.flat"], true, ["--manager", "flatpak", "org.flat"]]]],
+    ["no row", [], { primary: PACMAN, overlays: [], sources: [] }, [], []]
+];
+
 // Parser rows: name, parser, the text (a string, or { fixture } under
 // scripts/fixtures/pkg/), and the packages as [name, old, new] or the
 // parser's error. Fixture origins: checkupdates, paru and mise were captured
@@ -399,6 +422,15 @@ function verifyTable(t) {
         const got = t.packageFor(packages, found);
         if (!same(got, want)) failures.push("packageFor: " + name + ": got " + JSON.stringify(got));
     }
+    for (const [name, rows, found, picks, groups] of INSTALL_GROUP_ROWS) {
+        const plan = t.installGroups(rows.map(packages => ({ packages })), found);
+        const gotPicks = plan.picks.map(p => p === null ? null : p.manager + "/" + p.name);
+        const gotGroups = plan.groups.map(g => [g.manager, g.primary, g.names, g.installs, g.installs ? t.installArgs(g) : null]);
+        if (!same(gotPicks, picks)) failures.push("installGroups: " + name + ": picks " + JSON.stringify(gotPicks));
+        if (!same(gotGroups, groups)) failures.push("installGroups: " + name + ": groups " + JSON.stringify(gotGroups));
+    }
+    const refusal = (() => { try { t.installArgs({ manager: "nix", primary: true, names: ["gum"], installs: false }); return "answered"; } catch (e) { return e.message; } })();
+    if (refusal !== "installArgs: manager nix has no install steps") failures.push("installArgs: a manager without install steps: got " + JSON.stringify(refusal));
 
     const parsed = new Set();
     for (const [name, parser, input, want] of PARSE_ROWS) {
@@ -726,8 +758,12 @@ const CONTROLS = [
     ["table", "an overlay ignores the primary it requires", TABLE, "if (other.requires !== null && (primary === null || primary.id !== other.requires)) continue;", ""],
     ["table", "a name may start with a dash", TABLE, " && name.charAt(0) !== \"-\"", ""],
     ["table", "the first binary wins even when absent", TABLE, "if (onPath(row.binaries[i])) return row.binaries[i];", "return row.binaries[i];"],
-    ["table", "a requirement's package ignores the primary's rank", TABLE, "var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "var order = found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
+    ["table", "a requirement's package ignores the primary's rank", TABLE, "return (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);", "return found.overlays.concat(found.sources, found.primary === null ? [] : [found.primary]);"],
     ["table", "a requirement's package is picked for an unmapped manager", TABLE, "if (Object.prototype.hasOwnProperty.call(packages, order[i].id))", "if (true)"],
+    ["table", "a package two commands share is installed twice", TABLE, " && names.indexOf(picks[j].name) === -1) names.push", ") names.push"],
+    ["table", "the primary's install names its manager", TABLE, "return (group.primary ? [] : [\"--manager\", group.manager]).concat(group.names);", "return [\"--manager\", group.manager].concat(group.names);"],
+    ["table", "an overlay's install omits its manager", TABLE, "return (group.primary ? [] : [\"--manager\", group.manager]).concat(group.names);", "return group.names;"],
+    ["table", "nix is offered an install", TABLE, "installs: managerRow(order[i].id).install !== null", "installs: true"],
     ["table", "a query's answer ignores its pattern", TABLE, "return m === null ? null : m[1];", "return stdout.split(\"\\n\")[0];"],
     ["cli", "owner asks no installed version", PKG, "const version = table.managerRow(id).installed === null ? null : query(", "const version = null && query("],
     ["cli", "present exits 0 with a command missing", PKG, "process.exitCode = missing.length === 0 ? 0 : 1;", "process.exitCode = 0;"],

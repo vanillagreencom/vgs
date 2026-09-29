@@ -143,13 +143,15 @@ row_offer_declined() {
   [[ $status == 0 ]] && log_is "" && grep -qF "Install now? [y/N]" "$tmp/out" && out_has "install: vgsh pkg run install --manager aur need-two"
 }
 # y installs each manager's packages as argv, pacman's behind one sudo
-# session and paru's with none, and a running shell rescans after the
-# landing and after each install.
+# session and paru's with none. A running shell hears the landing as
+# pluginInstalled with the new plugin's id, which rescans and raises its
+# notice, and rescans after each install.
 row_offer_accepted() {
   req "$1" terminal y "$2" "$rt_live" -- plugin add "$tmp/src/needs.git"
   [[ $status == 0 ]] && log_has "sudo [pacman] [-S] [--needed] [--] [need-one] [need-opt] [need;one]" \
     && log_has "pacman [-S] [--needed] [--] [need-one] [need-opt] [need;one]" \
-    && log_has "paru [-S] [--needed] [--] [need-two]" && [[ $(rescans) == 3 ]]
+    && log_has "paru [-S] [--needed] [--] [need-two]" && [[ $(rescans) == 2 ]] \
+    && [[ $(grep -cxF "qs [ipc] [--pid] [$$] [call] [shell] [pluginInstalled] [acme.needs]" "$log") == 1 ]]
 }
 row_offer_silent() {
   req "$1" terminal y "$2" "$rt_empty" -- plugin add "$tmp/src/probe.git"
@@ -262,9 +264,8 @@ declare -a CONTROLS=(
   "doctor reports enabled plugins only" vgsh-plugin-judge '.filter(id => logic.isEnabled(effective, plugins.get(id).manifest, defaultBarId))' ''
   "the core's commands are looked up on PATH" vgsh-plugin-judge '.filter(command => !onPath(command))' '.filter(command => false)'
   "a row carries this system's package" vgsh-plugin-judge '{ package: logic.PackageManagers.packageFor(row.packages, found) }' '{ package: null }'
-  "an overlay's install names its manager" vgsh-plugin-judge 'if (manager !== found.primary) words.push("--manager", manager.id);' ''
-  "a package is installed once" vgsh-plugin-judge 'if (!names.get(pick.manager).includes(pick.name)) ' ''
-  "nix gets no install command" vgsh-plugin-judge 'if (logic.PackageManagers.managerRow(manager.id).install === null) {' 'if (false) {'
+  "nix gets no install command" vgsh-plugin-judge 'lines.push(group.installs ? ' 'lines.push(true ? '
+  "add tells the shell which plugin it installed" vgsh '  rescan_if_running pluginInstalled "$id"' '  rescan_if_running rescanPlugins'
 )
 for ((i = 0; i < ${#CONTROLS[@]}; i += 4)); do
   label="${CONTROLS[i]}" file="${CONTROLS[i + 1]}"

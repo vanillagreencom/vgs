@@ -16,7 +16,9 @@ import "PluginLogic.js" as Logic
 // forks the terminal into a session of its own and exits once the
 // presenter wrote its record, so a terminal outlives the shell that opened
 // it. Each run's `done` belongs to the lifetime of the instance that asked:
-// a destroyed instance's callback is dropped and its run still ends.
+// a destroyed instance's callback is dropped and its run still ends. The
+// core's own request, through openCore, holds its `done` for the shell's
+// life.
 Scope {
     id: root
 
@@ -43,6 +45,9 @@ Scope {
     // creates it before the shell starts: FolderListModel lists the working
     // directory for a folder that is absent (runtime-qml.md).
     readonly property string recordDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/tui"
+    // The core's bin/ beside the shell directory, where a core TUI's command
+    // lives: the shell's PATH need not hold it.
+    readonly property string coreBin: Quickshell.shellDir + "/../bin"
     readonly property bool recordsWatched: String(recordFiles.folder) === "file://" + recordDir
 
     // Every listed TUI: the core's and every enabled plugin's, as
@@ -86,7 +91,15 @@ Scope {
     // open: any listed TUI by key, with no arguments; the `openTui` IPC
     // function answers with this.
     function open(key) {
-        return start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, Quickshell.shellDir + "/../bin", runner(), Logic.CORE_TUIS, key), null, undefined);
+        return start(Logic.tuiOpen(Registry.manifests, enabledIds(), Registry.sourceDir, coreBin, runner(), Logic.CORE_TUIS, key), null, undefined);
+    }
+
+    // openCore: the core's own TUI NAME, listed or not, with ARGS after its
+    // argv, for a core component such as the requirement notice. `done`
+    // receives { code, reason } as run's does, and belongs to the shell's
+    // lifetime, since the core has no instance to drop it with.
+    function openCore(name, args, done) {
+        return start(Logic.tuiCore(Logic.CORE_TUIS, coreBin, runner(), name, args), null, done);
     }
 
     // The state a request is judged against, with the id a launch gets:
@@ -134,11 +147,16 @@ Scope {
         return "ok";
     }
 
+    // A `done` waiting for RUN, dropped with the lifetime of CTX, the
+    // instance that asked, or kept for the shell's life when CTX is null,
+    // the core's own request.
     function wait(ctx, run, done) {
-        const waiter = { id: ctx.id, run: run, done: done };
-        waiter.release = ctx.onDispose(() => {
-            root.waiters = root.waiters.filter(w => w !== waiter);
-        });
+        const waiter = { id: ctx === null ? "core" : ctx.id, run: run, done: done, release: () => {} };
+        if (ctx !== null) {
+            waiter.release = ctx.onDispose(() => {
+                root.waiters = root.waiters.filter(w => w !== waiter);
+            });
+        }
         waiters = waiters.concat([waiter]);
     }
 

@@ -104,7 +104,8 @@
 # `shell=rescan-started` or `shell=rescan-queued` when a shell runs (the
 # scan's result is in `vgsh plugin list`), or `shell=not-running` when none
 # does and the next start reads the change. `plugin rescan` prints the same
-# line alone.
+# line alone. add asks the shell for that scan through `pluginInstalled
+# <id>`, so the shell also shows its requirement notice for the new plugin.
 #
 # After that line add prints `requires <command> (<package>)` for each
 # requirement of the new plugin whose command is not on PATH, the package
@@ -482,11 +483,16 @@ owners_of() { # ID
 }
 
 # After add, update or remove: a running shell re-reads its manifests, and
-# with none running the next start reads them.
-rescan_if_running() {
+# with none running the next start reads them. CALL is the shell's IPC
+# function with its arguments, rescanPlugins when absent. add sends
+# `pluginInstalled <id>`, which starts the same scan and then raises the
+# shell's requirement notice for the plugin when a command it needs is
+# missing (docs/architecture/requirement-notice.md).
+rescan_if_running() { # [CALL...]
   local reply
+  [[ $# -gt 0 ]] || set -- rescanPlugins
   if ! shell_pid >/dev/null 2>&1; then echo "shell=not-running"; return 0; fi
-  reply="$(ipc shell rescanPlugins)" || exit $?
+  reply="$(ipc shell "$@")" || exit $?
   case "$reply" in
     ok) echo "shell=rescan-started" ;;
     busy) echo "shell=rescan-queued" ;;
@@ -604,7 +610,7 @@ plugin_add() { # URL
   landed="$(node "$judge" land-disabled "$root/config/shell.json" "$config_home/vgs/shell.json" "$stage/plugin")" || exit 1
   mv -T -- "$stage/plugin" "$target" || refuse 1 "move=$target"
   echo "ok added=$id path=$target config=$landed"
-  rescan_if_running
+  rescan_if_running pluginInstalled "$id"
   offer_requirements "$id"
 }
 

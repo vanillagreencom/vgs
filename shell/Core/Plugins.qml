@@ -416,13 +416,16 @@ Singleton {
     // Enable or disable one plugin. The reply is one keyed line the CLI
     // prints as is: `ok`, `ok hidden=<a,b>` when disabling the active bar
     // takes those widgets off the screen, `unknown: <id>`, or a refusal
-    // naming why the user file was not written.
+    // naming why the user file was not written. Enabling a plugin that
+    // misses a command it needs raises the requirement notice, whichever
+    // caller asked: the IPC function, the CLI or the `manager` capability.
     function setEnabled(id, enabled) {
         if (!Registry.has(id)) return "unknown: " + id;
         const m = Registry.manifests[id];
         const hidden = enabled ? [] : Logic.hiddenByDisabling(Registry.manifests, Config.effective, id, Registry.defaultBarId);
         const written = Config.writeUser(Logic.withEnabled(Config.user, m, enabled, Config.effective));
         if (written !== "ok") return written;
+        if (enabled) Notices.enabled(id);
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";
     }
 

@@ -587,7 +587,7 @@ check "add lands a listed plugin disabled and keeps its settings row" json_is "$
 
 cfg="$tmp/cfg-live"
 inst "add rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin add "$tmp/src/probe.git"
-check "the rescan names the runner's pid" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell rescanPlugins"
+check "the rescan names the runner's pid and the plugin add installed" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell pluginInstalled acme.probe"
 # The plugin landed before the rescan was asked for; a reply the runner does
 # not know is a refusal that names it, after the landing line.
 cfg="$tmp/cfg-weird"

@@ -211,27 +211,10 @@ function doctorLines(report) {
 // packages alone for a manager that installs nothing through vgsh.
 function unmetLines(plugin) {
     const missing = logic.requirementRows(plugin.manifest, plugin.missing).filter(row => row.state === "missing");
-    const found = managersFor([missing]);
-    const lines = [];
-    const names = new Map();
-    for (const row of missing) {
-        const pick = logic.PackageManagers.packageFor(row.packages, found);
-        lines.push("requires " + requirementText(row.command, pick, row.optional));
-        if (pick === null) continue;
-        if (!names.has(pick.manager)) names.set(pick.manager, []);
-        if (!names.get(pick.manager).includes(pick.name)) names.get(pick.manager).push(pick.name);
-    }
-    const order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
-    for (const manager of order) {
-        if (!names.has(manager.id)) continue;
-        if (logic.PackageManagers.managerRow(manager.id).install === null) {
-            lines.push("by-hand " + manager.id + " " + names.get(manager.id).join(" "));
-            continue;
-        }
-        const words = ["pkg", "run", "install"];
-        if (manager !== found.primary) words.push("--manager", manager.id);
-        lines.push("install " + words.concat(names.get(manager.id)).join(" "));
-    }
+    const plan = logic.PackageManagers.installGroups(missing, managersFor([missing]));
+    const lines = missing.map((row, i) => "requires " + requirementText(row.command, plan.picks[i], row.optional));
+    for (const group of plan.groups)
+        lines.push(group.installs ? "install " + ["pkg", "run", "install"].concat(logic.PackageManagers.installArgs(group)).join(" ") : "by-hand " + group.manager + " " + group.names.join(" "));
     return lines;
 }
 

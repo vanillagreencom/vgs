@@ -17,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "backgr
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui"];
+var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -695,6 +695,138 @@ function requirementRows(manifest, missing) {
     });
 }
 
+// The requirement notice, shell/Core/Notices.qml
+// (requirement-notice.md). At most NOTICE_QUEUE_MAX plugins hold a notice at once, the
+// first shown and the rest waiting. After the user answers a plugin's
+// notice Not now, the plugin's own offers are refused for
+// NOTICE_OFFER_REST_MS; the install and enable triggers are the user's own
+// acts, which no rest refuses. An offer names 1 to NOTICE_OFFER_MAX
+// commands. Core policy, like the toast stack's ceilings.
+var NOTICE_QUEUE_MAX = 8;
+var NOTICE_OFFER_REST_MS = 600000;
+var NOTICE_OFFER_MAX = 16;
+// What raises a notice: `installed`, the pluginInstalled IPC function
+// `vgsh plugin add` calls; `enabled`, setPluginEnabled turning a plugin on;
+// `offered`, the plugin's own `requirements` capability.
+var NOTICE_TRIGGERS = ["installed", "enabled", "offered"];
+
+// The notice TRIGGER asks for plugin MANIFEST, whose commands MISSING the
+// last scan did not find: { answer, commands, required }, `commands` the
+// commands the notice lists and `required` those whose absence keeps it
+// open. `answer` is "ok", "satisfied" when `required` is empty and no
+// notice is due, or a refusal. The install and enable triggers list every
+// missing command and require those the plugin does not mark optional, so
+// a plugin missing only optional commands raises none. An offer lists and
+// requires each of COMMANDS still missing, and is refused as
+// `refused: requirements=malformed` for anything but a list of 1 to
+// NOTICE_OFFER_MAX strings, then as `refused: requirement=<command>
+// reason=undeclared` for the first command MANIFEST does not declare, so a
+// plugin never raises a notice for a package it did not declare.
+function noticeRequest(manifest, missing, trigger, commands) {
+    var rows = requirementRows(manifest, missing);
+    var listed;
+    var required;
+    switch (trigger) {
+    case "installed":
+    case "enabled":
+        listed = rows.filter(function (row) { return row.state === "missing"; });
+        required = listed.filter(function (row) { return !row.optional; });
+        break;
+    case "offered":
+        if (!Array.isArray(commands) || commands.length === 0 || commands.length > NOTICE_OFFER_MAX || !commands.every(function (c) { return typeof c === "string"; }))
+            return { answer: "refused: requirements=malformed", commands: [], required: [] };
+        var declared = rows.map(function (row) { return row.command; });
+        var undeclared = commands.filter(function (c) { return declared.indexOf(c) === -1; });
+        if (undeclared.length > 0)
+            return { answer: "refused: requirement=" + tuiLabel(undeclared[0]) + " reason=undeclared", commands: [], required: [] };
+        listed = rows.filter(function (row) { return row.state === "missing" && commands.indexOf(row.command) !== -1; });
+        required = listed;
+        break;
+    default:
+        throw new Error("notices: trigger " + JSON.stringify(trigger) + " is not one of " + NOTICE_TRIGGERS.join(", "));
+    }
+    var commandOf = function (row) { return row.command; };
+    return { answer: required.length === 0 ? "satisfied" : "ok", commands: listed.map(commandOf), required: required.map(commandOf) };
+}
+
+// QUEUE, the notices held, each { id, commands, required }, the first
+// shown, after REQUEST, an "ok" noticeRequest for plugin ID raised by
+// TRIGGER at NOW, in ms since the epoch: { answer, queue }. A plugin
+// holding a notice gets REQUEST's commands merged into it, after those it
+// holds, and answers "ok" whatever the trigger, since the user sees one
+// notice either way. Otherwise an offer while REST, plugin id -> the end
+// of its rest in ms, holds a later end for ID is refused as
+// `refused: requirements=<id> reason=resting retry-ms=<ms>`; a queue
+// holding NOTICE_QUEUE_MAX notices refuses as
+// `refused: notices=full limit=<n>`; and any other request joins the end
+// of the queue.
+function noticeAdmit(queue, rest, id, request, trigger, now) {
+    if (NOTICE_TRIGGERS.indexOf(trigger) === -1)
+        throw new Error("notices: trigger " + JSON.stringify(trigger) + " is not one of " + NOTICE_TRIGGERS.join(", "));
+    var union = function (held, added) { return held.concat(added.filter(function (c) { return held.indexOf(c) === -1; })); };
+    var at = -1;
+    for (var i = 0; i < queue.length; i++)
+        if (queue[i].id === id) at = i;
+    if (at !== -1) {
+        var merged = queue.slice();
+        merged[at] = { id: id, commands: union(queue[at].commands, request.commands), required: union(queue[at].required, request.required) };
+        return { answer: "ok", queue: merged };
+    }
+    if (trigger === "offered" && hasOwn(rest, id) && rest[id] > now)
+        return { answer: "refused: requirements=" + id + " reason=resting retry-ms=" + (rest[id] - now), queue: queue };
+    if (queue.length >= NOTICE_QUEUE_MAX)
+        return { answer: "refused: notices=full limit=" + NOTICE_QUEUE_MAX, queue: queue };
+    return { answer: "ok", queue: queue.concat([{ id: id, commands: request.commands.slice(), required: request.required.slice() }]) };
+}
+
+// What NOTICE, { commands, required }, shows for plugin MANIFEST after the
+// last scan, whose missing commands are MISSING, on a system whose managers
+// are FOUND, detect's answer, or null when detection has no answer:
+// { satisfied, rows, install, byHand }. `satisfied` holds once no command
+// of `required` is missing. `rows` are the listed commands still missing,
+// in declaration order, each { command, purpose, optional, package }, the
+// package PackageManagers.installGroups picks, null with FOUND null or when
+// no present manager maps one. `install` is the arguments after
+// `vgsh pkg run install` of the first group whose manager installs, null
+// when none does; one Install runs one manager's packages, and the notice
+// offers the next group once a rescan finds the first installed. `byHand`
+// is each group whose manager installs nothing through vgsh, nix, as
+// { manager, names }.
+function noticeView(manifest, missing, notice, found) {
+    var rows = requirementRows(manifest, missing).filter(function (row) { return row.state === "missing" && notice.commands.indexOf(row.command) !== -1; });
+    var satisfied = !notice.required.some(function (c) { return missing.indexOf(c) !== -1; });
+    var plan = found === null ? { picks: rows.map(function () { return null; }), groups: [] } : PackageManagers.installGroups(rows, found);
+    var installable = plan.groups.filter(function (g) { return g.installs; });
+    return {
+        satisfied: satisfied,
+        rows: rows.map(function (row, i) { return { command: row.command, purpose: row.purpose, optional: row.optional, package: plan.picks[i] }; }),
+        install: installable.length === 0 ? null : PackageManagers.installArgs(installable[0]),
+        byHand: plan.groups.filter(function (g) { return !g.installs; }).map(function (g) { return { manager: g.manager, names: g.names }; })
+    };
+}
+
+// The managers `bin/vgsh-pkg detect --json` answered the notice with, from
+// its COMPLETION, { code, status } or null for a run that never started,
+// its STDOUT and its STDERR: { ok: true, found }, detect's { primary,
+// overlays, sources } with each entry a known manager, or { ok: false,
+// line }, the log line naming why there is none.
+function noticeDetected(completion, stdout, stderr) {
+    if (completion === null)
+        return { ok: false, line: "notices: detect=unstarted" };
+    if (completion.status !== 0 || completion.code !== 0)
+        return { ok: false, line: "notices: detect=failed exit=" + completion.code + " status=" + completion.status + " " + stderr.split("\n")[0] };
+    var found;
+    try {
+        found = JSON.parse(stdout);
+    } catch (e) {
+        return { ok: false, line: "notices: detect=unparseable" };
+    }
+    var entry = function (e) { return isPlainObject(e) && typeof e.id === "string" && PackageManagers.managerRow(e.id) !== null && typeof e.binary === "string"; };
+    if (!isPlainObject(found) || !(found.primary === null || entry(found.primary)) || !Array.isArray(found.overlays) || !found.overlays.every(entry) || !Array.isArray(found.sources) || !found.sources.every(entry))
+        return { ok: false, line: "notices: detect=malformed" };
+    return { ok: true, found: found };
+}
+
 // What one entry of a manifest's `tui` key may carry, keyed by a
 // NAME_PATTERN name: the script, the window's title, its size class and
 // presentation, and, when present, the row shell.tui.entries lists it with.
@@ -744,6 +876,8 @@ var TUI_RUN_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // rest as a normalized manifest `tui` entry has them. coreTuiTable judges
 // the table when this file loads. The package pickers run in the default
 // size, the window Omarchy's floating terminal gives omarchy-pkg-install.
+// `requirements-install` is not listed: the requirement notice opens it
+// through tuiCore with the arguments PluginLogic.noticeView names.
 var CORE_TUIS = coreTuiTable({
     "pkg-install": {
         argv: ["vgsh", "pkg", "install"],
@@ -765,6 +899,13 @@ var CORE_TUIS = coreTuiTable({
         size: "default",
         presentation: "full",
         entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" }
+    },
+    "requirements-install": {
+        argv: ["vgsh", "pkg", "run", "install"],
+        title: "Install requirements",
+        size: "default",
+        presentation: "full",
+        entry: null
     }
 });
 
@@ -998,12 +1139,31 @@ function tuiRun(manifest, enabled, sourceDir, runner, name, args) {
     return { ok: true, key: key, run: runner.run, argv: tuiArgv(row, plugin, key, runner.run, [row.script].concat(args === undefined ? [] : args)) };
 }
 
-// The listed TUI KEY, with no arguments: `core/<name>` from CORE, the
-// CORE_TUIS table, its command resolved under CORE_BIN, the core's bin/
-// directory, or `<plugin id>/<name>` of a script whose manifest in
-// MANIFESTS gives it an `entry`, from the plugin's snapshot under
-// SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key nothing
-// lists, `reason=disabled` for a plugin not in ENABLED_IDS, then
+// The core's own TUI NAME of CORE, the CORE_TUIS table, listed or not,
+// with ARGS after its argv, its command resolved under CORE_BIN, the core's
+// bin/ directory, for RUNNER: answers as tuiRun, keyed `core/<name>`, with
+// `reason=undeclared` for a name CORE lacks, `reason=args` for arguments
+// tuiArgsValid refuses, then `reason=busy` or `reason=launcher-missing` as
+// tuiRunnerRefusal decides. The core alone calls it; tuiOpen opens a
+// listed row with no arguments through it.
+function tuiCore(core, coreBin, runner, name, args) {
+    var key = "core/" + name;
+    if (typeof name !== "string" || !hasOwn(core, name))
+        return tuiRefusal(key, "undeclared");
+    if (!tuiArgsValid(args))
+        return tuiRefusal(key, "args");
+    var refusal = tuiRunnerRefusal(runner, key, key);
+    if (refusal !== null)
+        return refusal;
+    var row = core[name];
+    return { ok: true, key: key, run: runner.run, argv: tuiArgv(row, null, key, runner.run, [coreBin + "/" + row.argv[0]].concat(row.argv.slice(1), args === undefined ? [] : args)) };
+}
+
+// The listed TUI KEY, with no arguments: `core/<name>` of a CORE row with
+// an `entry`, through tuiCore, or `<plugin id>/<name>` of a script whose
+// manifest in MANIFESTS gives it an `entry`, from the plugin's snapshot
+// under SOURCE_DIR. Answers as tuiRun, with `reason=undeclared` for a key
+// nothing lists, `reason=disabled` for a plugin not in ENABLED_IDS, then
 // `reason=busy` or `reason=launcher-missing` as tuiRunnerRefusal decides
 // for RUNNER.
 function tuiOpen(manifests, enabledIds, sourceDir, coreBin, runner, core, key) {
@@ -1013,13 +1173,9 @@ function tuiOpen(manifests, enabledIds, sourceDir, coreBin, runner, core, key) {
     var owner = key.slice(0, slash);
     var name = key.slice(slash + 1);
     if (owner === "core") {
-        if (!hasOwn(core, name))
+        if (!hasOwn(core, name) || core[name].entry === null)
             return tuiRefusal(key, "undeclared");
-        var coreRefusal = tuiRunnerRefusal(runner, key, key);
-        if (coreRefusal !== null)
-            return coreRefusal;
-        var row = core[name];
-        return { ok: true, key: key, run: runner.run, argv: tuiArgv(row, null, key, runner.run, [coreBin + "/" + row.argv[0]].concat(row.argv.slice(1))) };
+        return tuiCore(core, coreBin, runner, name, []);
     }
     if (!hasOwn(manifests, owner) || !hasOwn(manifests[owner].tui, name) || manifests[owner].tui[name].entry === null)
         return tuiRefusal(key, "undeclared");

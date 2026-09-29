@@ -138,7 +138,10 @@ Singleton {
             get revision() { return PluginStatus.revisionOf(ctx.id); }
         }),
         theme: themes.provider,
-        tui: tuis.provider
+        tui: tuis.provider,
+        requirements: ctx => ({
+            offer: commands => Notices.offer(ctx, commands)
+        })
     })
 
     // The compositor places anchored surfaces relative to the item's own
@@ -186,7 +189,8 @@ Singleton {
             layers: Layers.record(),
             status: PluginStatus.record(),
             theme: themes.record(),
-            tui: tuis.record()
+            tui: tuis.record(),
+            notices: Notices.record()
         });
     }
 }

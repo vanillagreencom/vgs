@@ -374,6 +374,7 @@ function suite(ctx, check) {
     check("toasts is a capability", ctx.CAPABILITIES.indexOf("toasts") !== -1, true);
     check("theme is a capability", ctx.CAPABILITIES.indexOf("theme") !== -1, true);
     check("layers is a capability", ctx.CAPABILITIES.indexOf("layers") !== -1, true);
+    check("requirements is a capability", ctx.CAPABILITIES.indexOf("requirements") !== -1, true);
 
     const refusalRows = [
         ["a string fits a string entry", "label", "y", ""],

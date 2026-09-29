@@ -267,17 +267,57 @@ function detect(osIds, onPath) {
     return { primary: primary, overlays: overlays, sources: sources };
 }
 
+// The managers of FOUND, detect's answer, in the order a requirement's
+// package is picked from them: the primary, then each overlay, then each
+// source.
+function managersInOrder(found) {
+    return (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
+}
+
 // The package that provides one requirement on this system, as `{ manager,
 // name }`: the first manager of FOUND, detect's answer, taken primary, then
 // each overlay, then each source, that PACKAGES maps to a name; null when
 // it maps none of them. PACKAGES is a requirement's `packages`, manager ids
 // to package names, as PluginLogic.requirementsError accepts it.
 function packageFor(packages, found) {
-    var order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
+    var order = managersInOrder(found);
     for (var i = 0; i < order.length; i++)
         if (Object.prototype.hasOwnProperty.call(packages, order[i].id))
             return { manager: order[i].id, name: packages[order[i].id] };
     return null;
+}
+
+// The packages that provide ROWS on this system, rows carrying a
+// requirement's `packages`: `{ picks, groups }`. `picks` holds packageFor's
+// pick from FOUND for each row, in order. `groups` holds one `{ manager,
+// primary, names, installs }` per manager a pick names, in FOUND's order,
+// primary first, then overlays, then sources: `names` each package once in
+// the order the rows first pick it, `primary` whether the manager is
+// FOUND's primary, and `installs` whether its row has install steps. A
+// manager without them, nix, changes the system through its own
+// configuration, so its packages are added there by hand.
+function installGroups(rows, found) {
+    var picks = rows.map(function (row) { return packageFor(row.packages, found); });
+    var order = managersInOrder(found);
+    var groups = [];
+    for (var i = 0; i < order.length; i++) {
+        var names = [];
+        for (var j = 0; j < picks.length; j++)
+            if (picks[j] !== null && picks[j].manager === order[i].id && names.indexOf(picks[j].name) === -1) names.push(picks[j].name);
+        if (names.length === 0) continue;
+        groups.push({ manager: order[i].id, primary: order[i] === found.primary, names: names, installs: managerRow(order[i].id).install !== null });
+    }
+    return { picks: picks, groups: groups };
+}
+
+// The arguments after `vgsh pkg run install` that install GROUP, one of
+// installGroups' groups whose manager installs: `--manager <id>` for every
+// manager but the primary, which `vgsh pkg run` takes by default, then the
+// names.
+function installArgs(group) {
+    if (!group.installs)
+        throw new Error("installArgs: manager " + group.manager + " has no install steps");
+    return (group.primary ? [] : ["--manager", group.manager]).concat(group.names);
 }
 
 // Manager ID's row and the binary ON_PATH resolves: `{ ok: true, row,

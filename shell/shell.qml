@@ -64,6 +64,11 @@ ShellRoot {
 
     LazyLoader {
         active: root.guarded
+        NoticeHost {}
+    }
+
+    LazyLoader {
+        active: root.guarded
         LayerHost {}
     }
 
@@ -95,6 +100,9 @@ ShellRoot {
         function lent(): string { return Capabilities.lentJson(); }
         function reloadConfig(): string { return root.ifGuarded(() => { Config.reload(); return "ok"; }); }
         function rescanPlugins(): string { return root.ifGuarded(() => Registry.rescan()); }
+        // `vgsh plugin add` landed plugin `id`: the same scan, then the
+        // requirement notice for it (requirement-notice.md).
+        function pluginInstalled(id: string): string { return root.ifGuarded(() => Notices.installed(id)); }
         function setPluginEnabled(id: string, enabled: bool): string { return root.ifGuarded(() => Plugins.setEnabled(id, enabled)); }
         function summon(kind: string, id: string, payloadJson: string): string { return root.ifGuarded(() => Plugins.route("summon", kind, id, payloadJson, null)); }
         function hide(kind: string, id: string): string { return root.ifGuarded(() => Plugins.route("hide", kind, id, "", null)); }

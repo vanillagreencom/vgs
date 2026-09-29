@@ -1,0 +1,8 @@
+{ "schemaVersion": 1, "id": "acme.needs", "name": "Needs", "version": "0.1.0", "author": "acme", "description": "smoke fixture missing commands it declares",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["requirements", "ipc"],
+  "requirements": [
+    { "command": "vgs-smoke-needs", "packages": { "pacman": "vgs-smoke-needs-pkg" }, "purpose": "The command the fixture runs" },
+    { "command": "vgs-smoke-extra", "packages": { "aur": "vgs-smoke-extra-git" }, "optional": true, "purpose": "An extra the fixture can do without" },
+    { "command": "vgs-smoke-unmapped", "packages": { "apt": "vgs-smoke-unmapped" }, "optional": true, "purpose": "A command no manager here provides" },
+    { "command": "sh", "packages": { "pacman": "bash" }, "purpose": "A command every sandbox has" }
+  ] }

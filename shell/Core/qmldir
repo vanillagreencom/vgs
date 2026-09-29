@@ -6,6 +6,7 @@ PluginLogic 1.0 PluginLogic.js
 singleton Capabilities 1.0 Capabilities.qml
 singleton Registry 1.0 Registry.qml
 singleton Toasts 1.0 Toasts.qml
+singleton Notices 1.0 Notices.qml
 singleton Layers 1.0 Layers.qml
 singleton PluginStatus 1.0 PluginStatus.qml
 ShortcutRegistry 1.0 ShortcutRegistry.qml

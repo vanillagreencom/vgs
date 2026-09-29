@@ -182,7 +182,7 @@ row_of() { settings_rows | python3 -c 'import json,sys; r=[r for r in json.load(
 expect "the Settings plugin lists itself, bundled, with its icon, capabilities and key" '["Settings", "settings", "bundled", ["ipc", "manager", "screens", "shortcut", "surfaces"], [{"shortcut": "toggle", "key": "SUPER+M", "default": "SUPER+M", "description": "Open or close Settings"}], []]' row_of vgs.settings name icon source capabilities binds errors
 expect "an installed fixture is listed as installed with its manifest icon" '["Probe", "flask-conical", "installed", "acme"]' row_of acme.probe name icon source author
 expect "a plugin without a manifest icon is listed with the package icon" '["package"]' row_of acme.bare icon
-expect "a manager row carries each requirement with its state" '[[{"command": "sh", "packages": {"pacman": "bash"}, "optional": false, "purpose": "A command every sandbox has", "state": "present"}, {"command": "vgs-smoke-absent", "packages": {}, "optional": false, "purpose": "A command no sandbox has", "state": "missing"}]]' row_of acme.bare requirements
+expect "a manager row carries each requirement with its state" '[[{"command": "sh", "packages": {"pacman": "bash"}, "optional": false, "purpose": "A command every sandbox has", "state": "present"}, {"command": "vgs-smoke-absent", "packages": {}, "optional": true, "purpose": "A command no sandbox has", "state": "missing"}]]' row_of acme.bare requirements
 
 # A page: a click on a row opens it, drawn from the manifest alone; its
 # schema's groups are its sections, in manifest order after the entries

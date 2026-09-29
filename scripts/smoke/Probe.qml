@@ -265,6 +265,25 @@ Scope {
             return JSON.stringify(out);
         }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
+        // The requirement notice's dialog: whether an item in it holds the
+        // keyboard focus, and what it draws as { title, message, rows,
+        // actions, busy }, `rows` the visible lines under the message.
+        function noticeFocused(): bool {
+            const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
+            return dialog !== null && root.descendants(dialog).some(child => child.activeFocus);
+        }
+        function noticeDrawn(): string {
+            const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
+            if (dialog === null) return "absent";
+            const labels = root.descendants(dialog).filter(child => root.typeName(child) === "Label" && child.visible);
+            return JSON.stringify({
+                title: dialog.title,
+                message: dialog.message,
+                rows: labels.map(label => label.text).filter(text => text !== dialog.title && text !== dialog.message && !dialog.entries.some(entry => entry.label === text)),
+                actions: dialog.entries.map(entry => entry.label),
+                busy: dialog.busy
+            });
+        }
         // The components of qs.Ui, read from its qmldir, that the gallery
         // draws no instance of; an empty list is the pass. A QML-defined
         // type prints as `<Name>_QMLTYPE_<n>(...)`.

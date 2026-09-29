@@ -19,7 +19,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - Capability: a core API a plugin names in its manifest and receives on its scoped `shell` object at load. Its provider is made for one instance, and everything the instance registers through it is released when the instance is destroyed.
 - Status: runtime values a plugin declares in its manifest and publishes through capability `status`, held once per plugin for its instances and the Settings page.
 - Plugin manager: the core component that discovers, validates, enables and disables plugins, and installs, updates and removes them. Its user interface is the Settings plugin, `vgs.settings`, through the `manager` capability; its mechanism is core.
-- Requirement: an external command a plugin or the core runs, declared with its package per manager in a manifest's `requirements` or in `config/requirements.json`. It names a command, never a plugin; the scan probes it and the manager reports its state: [requirements.md](requirements.md).
+- Requirement: an external command a plugin or the core runs, declared with its package per manager in a manifest's `requirements` or in `config/requirements.json`. It names a command, never a plugin; the scan probes it and the manager reports its state. When a plugin is installed or enabled without a command it needs, the core's requirement notice lists it and installs its package in one press: [requirements.md](requirements.md) and [requirement-notice.md](requirement-notice.md).
 - Token: one named value the shell draws with, typed and defaulted in `shell/Commons/Tokens.js`, read as `Theme.<group>.<token>`. A theme is a document that overrides tokens; the defaults are the `vgs` theme.
 - Component: one type of `qs.Ui` that draws from tokens alone, listed in `shell/Ui/qmldir`. A plugin composes components; it draws a value of its own only through a token, or through its own judged table when it owns its look ([appearance.md](appearance.md)).
 - Floating TUI: a core terminal window that runs one command as argv under the VGS presentation ([tui.md](tui.md)).
@@ -78,6 +78,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
 - [requirements.md](requirements.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe or the `missing` lines.
+- [requirement-notice.md](requirement-notice.md): read before touching the requirement notice, its triggers or the `requirements` capability.
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.

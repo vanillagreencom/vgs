@@ -2,5 +2,5 @@
   "kinds": ["service"], "entryPoints": { "service": "Service.qml" },
   "requirements": [
     { "command": "sh", "packages": { "pacman": "bash" }, "purpose": "A command every sandbox has" },
-    { "command": "vgs-smoke-absent", "purpose": "A command no sandbox has" }
+    { "command": "vgs-smoke-absent", "optional": true, "purpose": "A command no sandbox has" }
   ] }

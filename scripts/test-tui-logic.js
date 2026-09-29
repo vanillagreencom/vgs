@@ -2,7 +2,8 @@
 // Table-driven checks for the floating TUI decisions in
 // shell/Core/PluginLogic.js: the manifest's `tui` key and its normalized
 // shape, the core's own TUI table, the arguments a plugin's script takes,
-// the launch of a plugin's own script and of a listed TUI by key, the busy
+// the launch of a plugin's own script, of a listed TUI by key and of the
+// core's own TUI with arguments, the busy
 // key and the launcher state among the refusals, the listed rows, the log
 // lines of a launcher's, a probe's and a reap's end, the exit records and
 // the runs, state and `done` answers they make, and a run's window. The
@@ -182,6 +183,7 @@ function suite(ctx, check) {
         ["a disabled plugin is refused before a busy key", ["acme.tui"], "present", ["acme.other/fix"], "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", "none"]],
         ["a disabled plugin is refused before a missing launcher", ["acme.tui"], "missing", [], "acme.other/fix", ["refused: tui=acme.other/fix reason=disabled", "none"]],
         ["a launcher no probe has answered yet opens the key", [], "unknown", [], "core/doctor", doctorArgv],
+        ["a core TUI with no entry is not listed", [], "present", [], "core/quiet", ["refused: tui=core/quiet reason=undeclared", "none"]],
     ];
     for (const [name, enabledIds, launcher, busy, key, want] of openRows) {
         const r = ctx.tuiOpen(manifests, enabledIds, "/run/src", "/core/bin", runner(launcher, busy), core, key);
@@ -190,6 +192,29 @@ function suite(ctx, check) {
     check("tuiOpen keys a launch by the key it opened", ctx.tuiOpen(manifests, [], "/run/src", "/core/bin", runner("present", []), core, "core/doctor").key, "core/doctor");
     check("tuiOpen hands a plugin launch the runner's run id", ctx.tuiOpen(manifests, ["acme.tui"], "/run/src", "/core/bin", runner("present", []), core, "acme.tui/update").run, "7-1");
     check("tuiOpen names the busy key it asks to focus", ctx.tuiOpen(manifests, [], "/run/src", "/core/bin", runner("present", ["core/doctor"]), core, "core/doctor").key, "core/doctor");
+    // tuiCore: [name, launcher state, busy keys, core name, arguments, argv,
+    // or the answer and the action it asks for]. The core opens its own
+    // rows, listed or not, with arguments after their argv.
+    const quietArgv = rest => ["launch", "--title", "Quiet", "--size", "default", "--presentation", "plain", "--record", "core/quiet", "--run", "7-1", "--", "/core/bin/true"].concat(rest);
+    const coreOpenRows = [
+        ["an unlisted core TUI opens with its arguments", "present", [], "quiet", ["--manager", "aur", "a;b"], quietArgv(["--manager", "aur", "a;b"])],
+        ["a listed core TUI opens with its arguments", "present", [], "doctor", ["--json"], doctorArgv.concat(["--json"])],
+        ["no argument list opens the argv alone", "present", [], "quiet", undefined, quietArgv([])],
+        ["an unknown core name", "present", [], "none", ["a"], ["refused: tui=core/none reason=undeclared", "none"]],
+        ["a core name that is a prototype member", "present", [], "constructor", [], ["refused: tui=core/constructor reason=undeclared", "none"]],
+        ["a name that is not a string", "present", [], null, [], ["refused: tui=core/null reason=undeclared", "none"]],
+        ["seventeen arguments", "present", [], "quiet", Array(17).fill("a"), ["refused: tui=core/quiet reason=args", "none"]],
+        ["an empty argument", "present", [], "quiet", [""], ["refused: tui=core/quiet reason=args", "none"]],
+        ["arguments that are not a list", "present", [], "quiet", "a", ["refused: tui=core/quiet reason=args", "none"]],
+        ["a busy key", "present", ["core/quiet"], "quiet", ["a"], ["refused: tui=core/quiet reason=busy", "focus"]],
+        ["a missing launcher", "missing", [], "quiet", ["a"], ["refused: tui=core/quiet reason=launcher-missing", "probe"]],
+        ["arguments are judged before a busy key", "present", ["core/quiet"], "quiet", [""], ["refused: tui=core/quiet reason=args", "none"]],
+    ];
+    for (const [name, launcher, busy, coreName, args, want] of coreOpenRows) {
+        const r = ctx.tuiCore(core, "/core/bin", runner(launcher, busy), coreName, args);
+        check("tuiCore: " + name, r.ok ? r.argv : [r.answer, r.action], want);
+    }
+    check("tuiCore keys a launch by core/<name>", ctx.tuiCore(core, "/core/bin", runner("present", []), "quiet", []).key, "core/quiet");
     check("tuiEntries: the core's and every enabled plugin's listed TUIs, by key", ctx.tuiEntries(manifests, ["acme.tui"], core), [
         { key: "acme.tui/update", plugin: "acme.tui", name: "update", title: "Update", label: "Update the system", icon: "terminal", group: "System" },
         { key: "core/doctor", plugin: "core", name: "doctor", title: "Doctor", label: "Check the system", icon: "stethoscope", group: "System" },
@@ -239,6 +264,7 @@ function suite(ctx, check) {
     // each command a file of the core's bin/ its owner may run.
     check("the core lists its package install picker", ctx.CORE_TUIS["pkg-install"], { argv: ["vgsh", "pkg", "install"], title: "Install packages", size: "default", presentation: "full", entry: { label: "Install packages", icon: "package-plus", group: "Packages" } });
     check("the core lists its package remove picker", ctx.CORE_TUIS["pkg-remove"], { argv: ["vgsh", "pkg", "remove"], title: "Remove packages", size: "default", presentation: "full", entry: { label: "Remove packages", icon: "package-minus", group: "Packages" } });
+    check("the requirement notice's install is a core row nothing lists", ctx.CORE_TUIS["requirements-install"], { argv: ["vgsh", "pkg", "run", "install"], title: "Install requirements", size: "default", presentation: "full", entry: null });
     check("the core lists its passwordless sudo grant", ctx.CORE_TUIS["sudo-grant"], { argv: ["vgsh", "sudo", "grant"], title: "Passwordless sudo", size: "default", presentation: "full", entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" } });
     check("every core command is an executable file of bin/", Object.keys(ctx.CORE_TUIS).filter(n => {
         const file = path.join(BIN, ctx.CORE_TUIS[n].argv[0]);
@@ -428,9 +454,9 @@ const CONTROLS = [
     ["a core row's arguments are judged", "if (!tuiArgsValid(row.argv.slice(1)))", "if (false)"],
     ["a core row's window is judged", "    var windowError = tuiWindowError(at, row);\n    if (windowError !== \"\")\n        return windowError;\n    return row.entry", "    return row.entry"],
     ["a core row's entry is judged", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return \"\";"],
-    ["a core row may have no entry", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return tuiEntryError(at, row.entry);"],
+    ["a core row may have no entry", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return tuiEntryError(at, row.entry);", "tui: core/requirements-install.entry must be an object"],
     ["the core table throws on a defect", "if (error !== \"\")\n            throw new Error(\"tui: \" + error);", "if (false)\n            throw new Error(\"tui: \" + error);"],
-    ["open resolves a core command under the core's bin/", "[coreBin + \"/\" + row.argv[0]].concat(row.argv.slice(1))", "row.argv"],
+    ["open resolves a core command under the core's bin/", "[coreBin + \"/\" + row.argv[0]]", "[row.argv[0]]"],
     ["the manifest judge runs the tui judge", "var badTui = tuiError(raw.tui, capabilities);", "var badTui = \"\";"],
     ["the manifest carries its tui normalized", "manifest.tui = normalTui(raw.tui === undefined ? {} : raw.tui);", "manifest.tui = raw.tui;"],
     ["an absent size is default", "size: row.size === undefined ? \"default\" : row.size", "size: row.size"],
@@ -444,12 +470,12 @@ const CONTROLS = [
     ["an argument holds no control character", " && !CONTROL_CHARACTER.test(arg);", ";"],
     ["run opens only a declared script", "if (typeof name !== \"string\" || !hasOwn(manifest.tui, name))", "if (false)"],
     ["run refuses a disabled plugin", "if (!enabled)\n        return tuiRefusal(name, \"disabled\");", "if (false)\n        return tuiRefusal(name, \"disabled\");"],
-    ["run judges its arguments", "if (!tuiArgsValid(args))", "if (false)"],
+    ["run judges its arguments", "    if (!tuiArgsValid(args))\n        return tuiRefusal(name, \"args\");", "    if (false)\n        return tuiRefusal(name, \"args\");"],
     ["run starts from the published snapshot", "dir: sourceDir + \"/\" + manifest.__revision", "dir: manifest.__sourceDir"],
     ["the launch names the plugin", "argv.push(\"--plugin\", plugin.id, \"--dir\", plugin.dir);", "argv.push(\"--dir\", plugin.dir);"],
     ["open needs a key with a slash", "if (slash === -1)\n        return tuiRefusal(key, \"undeclared\");", "if (false)\n        return tuiRefusal(key, \"undeclared\");"],
     ["the core's install picker runs vgsh pkg install", "argv: [\"vgsh\", \"pkg\", \"install\"]", "argv: [\"vgsh\", \"pkg\", \"remove\"]"],
-    ["open finds a core TUI in the table", "if (!hasOwn(core, name))\n            return tuiRefusal(key, \"undeclared\");", "if (core[name] === undefined)\n            return tuiRefusal(key, \"undeclared\");"],
+    ["a core TUI is found in the table by its own key", "if (typeof name !== \"string\" || !hasOwn(core, name))", "if (typeof name !== \"string\" || core[name] === undefined)"],
     ["open needs an entry", " || manifests[owner].tui[name].entry === null)", ")"],
     ["open refuses a disabled plugin", "if (enabledIds.indexOf(owner) === -1)", "if (false)"],
     ["entries skip a script without an entry", "if (row.entry === null)\n            return;", "if (false)\n            return;"],
@@ -465,7 +491,7 @@ const CONTROLS = [
     ["a runner refusal names its key", "    refusal.key = key;\n", ""],
     ["a launcher state outside the table throws", "if (TUI_LAUNCHER_STATES.indexOf(runner.launcher) === -1)", "if (false)"],
     ["run consults the runner after the judge", "    var refusal = tuiRunnerRefusal(runner, name, key);\n    if (refusal !== null)\n        return refusal;\n", ""],
-    ["open consults the runner for a core TUI", "        if (coreRefusal !== null)\n            return coreRefusal;\n", ""],
+    ["open consults the runner for a core TUI", "    var refusal = tuiRunnerRefusal(runner, key, key);\n    if (refusal !== null)\n        return refusal;\n    var row = core[name];", "    var row = core[name];"],
     ["open consults the runner for a plugin TUI", "    if (pluginRefusal !== null)\n        return pluginRefusal;\n", ""],
     ["a launch carries its record key and run", "    argv.push(\"--record\", key, \"--run\", run);\n", ""],
     ["a launcher that saw the record waits for the run", "if (completion !== null && completion.status === 0 && completion.code === 0)\n        return null;", "if (false)\n        return null;"],
@@ -510,6 +536,9 @@ const CONTROLS = [
     ["a crash keeps the state", "if (completion === null || completion.status !== 0)\n        return state;", "if (completion === null)\n        return state;"],
     ["a probe that answered logs nothing", "if (completion.status === 0 && (completion.code === 0 || completion.code === TUI_LAUNCHER_MISSING))", "if (completion.status === 0 && completion.code === 0)"],
     ["a probe that never started is logged", "if (completion === null)\n        return \"tui: probe=unstarted\";", "if (false)\n        return \"tui: probe=unstarted\";"],
+    ["openTui opens a listed core row only", "if (!hasOwn(core, name) || core[name].entry === null)", "if (!hasOwn(core, name))"],
+    ["a core request's arguments are judged", "    if (!tuiArgsValid(args))\n        return tuiRefusal(key, \"args\");\n    var refusal = tuiRunnerRefusal(runner, key, key);", "    var refusal = tuiRunnerRefusal(runner, key, key);"],
+    ["a core request's arguments follow its argv", "row.argv.slice(1), args === undefined ? [] : args)", "row.argv.slice(1))"],
     ["a launcher that never started is logged", "if (completion === null)\n        return \"tui: launcher=unstarted", "if (false)\n        return \"tui: launcher=unstarted"],
 ];
 
@@ -520,11 +549,20 @@ try {
         fs.symlinkSync(source, path.join(temp, relative));
     }
     const source = fs.readFileSync(LOGIC, "utf8");
-    for (const [label, needle, replacement] of CONTROLS) {
+    for (const [label, needle, replacement, loadRefusal] of CONTROLS) {
         const count = source.split(needle).length - 1;
         if (count !== 1) { report("control: " + label + ": the text to replace occurs once", count, 1); continue; }
         const mutant = path.join(temp, "shell", "Core", "PluginLogic.js");
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        // A control whose rule the shipped CORE_TUIS table reaches when the
+        // file loads names the refusal coreTuiTable throws; the load is its
+        // red.
+        if (loadRefusal !== undefined) {
+            let thrown = "loaded";
+            try { load(mutant); } catch (e) { thrown = e.message; }
+            report("control: the shipped table refuses to load without the rule: " + label, thrown, loadRefusal);
+            continue;
+        }
         // Loaded outside the try, so a copy that does not evaluate fails the
         // suite instead of passing for a control.
         const ctx = load(mutant);
