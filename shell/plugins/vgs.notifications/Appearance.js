@@ -112,7 +112,9 @@ var TOKENS = {
 
     radius: {
         // Larger than any side, so a corner rounds to a pill or a circle.
-        full: length(4096)
+        full: length(4096),
+        // How far past a rounded end's radius text starts.
+        clearance: length(4)
     },
 
     stack: {
@@ -235,7 +237,6 @@ var TOKENS = {
         height: length(48),
         gap: length(4),
         drop: length(10),
-        textInset: length(20),
         lineGap: length(1),
         controlsInset: length(10),
         controlsGap: length(8),

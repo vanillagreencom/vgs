@@ -42,6 +42,7 @@ Item {
         // A positioner lays its children out on the next polish, so a
         // position is waited for rather than read at once.
         function same(read, want, what) { tryVerify(() => read() === want, 1000, what + ": got " + read() + ", want " + want); }
+        function close(read, want, what) { tryVerify(() => Math.abs(read() - want) <= 0.01, 1000, what + ": got " + read() + ", want " + want); }
 
         function checkRhythm() {
             const height = Theme.size.control.md;
@@ -79,6 +80,8 @@ Item {
             compare(Theme.control.gap, 7);
             compare(Theme.row.paddingX, 12);
             checkRhythm();
+            same(() => toast.children[0].x, Theme.toast.padding, "toast default inset");
+            same(() => toast.children[0].width, toast.width - 2 * Theme.toast.padding, "toast default width");
         }
 
         function test_one_token_moves_every_component() {
@@ -86,6 +89,13 @@ Item {
             compare(Theme.control.paddingX, 13);
             compare(Theme.row.paddingX, 20);
             checkRhythm();
+        }
+
+        function test_toast_text_clears_a_rounded_corner() {
+            compare(UnitTheme.override({ radius: { md: 32 } }), "ok");
+            const inset = Math.ceil(Math.min(Theme.toast.radius, toast.width / 2, toast.height / 2) + Theme.space.xs);
+            close(() => toast.children[0].x, inset, "toast rounded inset");
+            close(() => toast.width - (toast.children[0].x + toast.children[0].width), inset, "toast rounded right inset");
         }
     }
 }

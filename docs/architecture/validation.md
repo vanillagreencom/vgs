@@ -1,6 +1,6 @@
 # Validation
 
-Covers: scripts/validate, bin/lib/qml-library.js, scripts/test-qml-library.js, bin/lib/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-plugin-logic.js, scripts/test-vgs-plugin.py, scripts/test-validate.sh, .github/workflows/**
+Covers: scripts/validate, bin/lib/qml-library.js, scripts/test-qml-library.js, bin/lib/check-manifests.js, scripts/check-plugin-boundary.py, scripts/test-check-manifests.js, scripts/test-check-plugin-boundary.py, scripts/test-plugin-logic.js, scripts/test-inset.js, scripts/test-vgs-plugin.py, scripts/test-validate.sh, .github/workflows/**
 
 How the shell's changes are checked: the check selector and its rows. The nested sandbox, its harness and the smoke's verdicts are in [validation-smoke.md](validation-smoke.md).
 

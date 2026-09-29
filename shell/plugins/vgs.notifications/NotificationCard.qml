@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Widgets
+import qs.Commons
 import qs.Ui
 import "NotificationLogic.js" as Logic
 
@@ -49,6 +50,8 @@ Item {
     // maxHeight less that pad: the body shows only the lines that fit.
     readonly property real fullHeight: content.implicitHeight + 2 * pad
     readonly property real pad: look.card.pad
+    property real horizontalInset: pad
+    property bool insetSettlePending: false
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
     readonly property bool singleLine: sanitizedBody.length === 0
@@ -59,6 +62,12 @@ Item {
     readonly property bool showsFaces: enrichment !== null && enrichment.faces.length > 0
     readonly property bool showsBadge: enrichment !== null && workspace.length > 0 && workspaceIcon.length > 0 && badgeImage.status === Image.Ready
     readonly property bool showsSlot: showsFaces || showsIcon
+    readonly property real slotWidth: showsFaces ? faceStack.implicitWidth : showsIcon ? look.card.icon : 0
+    readonly property real slotGap: showsSlot ? Math.max(look.card.gapIcon, horizontalInset - pad - slotWidth) : 0
+    readonly property real contentLeftInset: showsSlot ? pad : horizontalInset
+    readonly property real contentWidth: Math.max(0, fullWidth - contentLeftInset - horizontalInset)
+    readonly property real contentOffset: contentLeftInset - (fullWidth - contentWidth) / 2
+    readonly property real slotLeft: showsSlot ? content.x + iconSlot.x : -1
     // The summary as drawn: the rule's title once the workspace's icon
     // stands in for the workspace.
     readonly property string title: showsBadge ? enrichment.title : summary
@@ -74,9 +83,41 @@ Item {
         return Quickshell.iconPath(value, true);
     }
 
+    function targetInset() {
+        return Inset.clearing(pad, radius, fullWidth, fullHeight, look.radius.clearance);
+    }
+
+    function scheduleInsetSettle() {
+        if (insetSettlePending) return;
+        insetSettlePending = true;
+        Qt.callLater(settleInset);
+    }
+
+    function resetInset() {
+        horizontalInset = pad;
+        scheduleInsetSettle();
+    }
+
+    function settleInset() {
+        insetSettlePending = false;
+        if (typeof card.targetInset !== "function") return;
+        const next = Math.ceil(card.targetInset());
+        if (Math.abs(horizontalInset - next) <= 0.01) return;
+        horizontalInset = next;
+        scheduleInsetSettle();
+    }
+
     implicitWidth: fullWidth
     implicitHeight: fullHeight
     clip: true
+    Component.onCompleted: scheduleInsetSettle()
+    onFullHeightChanged: scheduleInsetSettle()
+    onFullWidthChanged: resetInset()
+    onPadChanged: resetInset()
+    onRadiusChanged: resetInset()
+    onSummaryChanged: resetInset()
+    onBodyChanged: resetInset()
+    onShowsSlotChanged: resetInset()
 
     HoverHandler { id: hoverTracker }
 
@@ -94,13 +135,14 @@ Item {
         id: content
         anchors.verticalCenter: parent.verticalCenter
         anchors.horizontalCenter: parent.horizontalCenter
-        width: card.fullWidth - 2 * card.pad
+        anchors.horizontalCenterOffset: card.contentOffset
+        width: card.contentWidth
         opacity: card.contentOpacity
-        spacing: card.showsSlot ? card.look.card.gapIcon : 0
+        spacing: card.slotGap
 
         Item {
             id: iconSlot
-            Layout.preferredWidth: card.showsFaces ? faceStack.implicitWidth : card.showsIcon ? card.look.card.icon : 0
+            Layout.preferredWidth: card.slotWidth
             Layout.preferredHeight: card.showsFaces ? faceStack.implicitHeight : card.showsIcon ? card.look.card.icon : 0
             Layout.alignment: Qt.AlignVCenter
             visible: card.showsSlot
@@ -169,6 +211,7 @@ Item {
 
                 Text {
                     id: titleText
+                    objectName: "notificationTitleText"
                     // The specification makes the summary one line of plain
                     // text, so it is never read as markup.
                     textFormat: Text.PlainText
@@ -193,6 +236,7 @@ Item {
 
             Text {
                 id: bodyText
+                objectName: "notificationBodyText"
                 // The height left for the body under maxHeight, and so the
                 // whole lines it shows; the last one elides.
                 readonly property real room: card.look.card.maxHeight - 2 * card.pad - Layout.topMargin - (summaryRow.visible ? summaryRow.implicitHeight + textBlock.spacing : 0)

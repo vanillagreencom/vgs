@@ -1,6 +1,6 @@
 # Design system
 
-Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/smoke/rows/gallery.sh, shell/plugins/vgs.gallery/**, shell/Ui/AGENTS.md, shell/Commons/AGENTS.md, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/qml_source.py, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
+Covers: shell/Commons/Tokens.js, shell/Commons/ThemeLogic.js, shell/Commons/Theme.qml, shell/Commons/ThemeSource.qml, shell/Commons/Inset.js, shell/assets/**, shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/smoke/rows/gallery.sh, shell/plugins/vgs.gallery/**, shell/Ui/AGENTS.md, shell/Commons/AGENTS.md, scripts/check-design-tokens.py, scripts/test-check-design-tokens.py, scripts/test-theme-logic.js, scripts/test-inset.js, scripts/qml_source.py, scripts/qml-unit.sh, scripts/test-qml-unit.sh, scripts/qml-tests/**, scripts/smoke/rows/theme.sh, tools/byte-ceiling-excludes
 
 Every value the shell draws with is a token: one table, one judge, one singleton, and one component library that reads it. A theme is a document that overrides tokens. First-party plugins and third-party plugins read the same singleton and compose the same components, so one theme restyles every surface, and nothing a user sees is a literal in code. A plugin that owns its look takes the theme's mode, accent and motion scale alone: [appearance.md](appearance.md).
 
@@ -57,6 +57,8 @@ Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `fo
 ## Component spacing
 
 Every one-line control is `size.control.md` tall, with `control.paddingX` a side and `control.gap` between an icon and its text. Every row pads its content `row.paddingX` a side, and a row's inline label is `row.labelWidth` wide and `row.gap` from its control. A component token still names each value, derived from these, so a theme can move one component. Each component's measured height, padding, gap and radius beside the reference rule it follows is [design-values.md § Component spacing](../reference/design-values.md#component-spacing). `scripts/qml-tests/tst_spacing.qml` reads the rhythm back from drawn components under the defaults and under a theme that moves it. `scripts/smoke/rows/manager.sh` holds the Settings page's fields to one label edge and one control edge, [manager.md](manager.md).
+
+Rectangular content inside a rounded container clears the drawn corner by one spacing step on both sides. The drawn corner is `min(radius, width / 2, height / 2)`, and `shell/Commons/Inset.js` owns the calculation. A square corner keeps the component's normal padding. A round avatar, face stack or pill control may sit at the normal padding when its centre stays concentric with the rounded end. `scripts/test-inset.js` checks the helper with controls. `scripts/qml-tests/tst_spacing.qml` checks `Toast`, and `scripts/smoke/rows/notifications.sh` checks the notifications card in the sandbox.
 
 ## Gallery
 

@@ -320,7 +320,7 @@ expect_poll "the clicked toast leaves" none key_of Clicked
 # Images: a sender's file is copied for the stored entry; a missing one is
 # skipped and the card draws no image.
 python3 -c 'import base64,sys; open(sys.argv[1], "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))' "$home/avatar.png"
-notify smoke-chat 0 "Pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}" 0 >/dev/null
+notify smoke-chat 0 "Pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}" 30000 >/dev/null
 expect_poll "a toast with an image shows" True has_row live "Pictured"
 pictured_key="$(key_of Pictured)"
 expect_poll "the sender's image was copied for the stored entry" True test_file "$note_images/$pictured_key-image"
@@ -340,13 +340,13 @@ expect_poll "the stored entry with a missing image keeps no image" '""' stored_i
 # holds, and globex, whose icon it does not.
 card_value() { ipc smoke layerItems vgs.notifications NotificationCard "summary,$2" | python3 -c 'import json,sys; print(next((json.dumps(v[sys.argv[2]]) for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), "none"))' "$1" "$2"; }
 slack_icon="$home/.cache/vgs/notifications/workspaces/slack/T0ACME-0"
-notify Slack 0 "[acme] from Ada Lovelace" "Did you see the notes?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify Slack 0 "[acme] from Ada Lovelace" "Did you see the notes?" '[]' '{"desktop-entry": <"slack">}' 30000 >/dev/null
 expect_poll "a Slack direct message draws its workspace's icon" true card_value "[acme] from Ada Lovelace" showsBadge
 expect "the icon is the copy out of Slack's cache" "$(file_url_json "$slack_icon")" card_value "[acme] from Ada Lovelace" workspaceIcon
 expect "the copy is the cached image's body" "370 89504e470d0a1a0a" bash -c 'printf "%s %s\n" "$(stat -c %s -- "$1")" "$(od -An -tx1 -N8 -- "$1" | tr -d " ")"' _ "$slack_icon"
 expect "the workspace's name gives way to its icon" '"from Ada Lovelace"' card_value "[acme] from Ada Lovelace" title
 expect "a direct message shows its sender's face" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
-notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 30000 >/dev/null
 expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
 expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
 token_faces_loaded() { ipc smoke layerItems vgs.notifications Faces names,images | python3 -c 'import json,sys
@@ -358,7 +358,7 @@ for _screen, _rect, value in json.load(sys.stdin):
 else:
     print(False)' ; }
 expect_poll "the token cache supplies distinct Slack group photos" True token_faces_loaded
-notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify Slack 0 "[globex] in eng" "Grace: shipped" '[]' '{"desktop-entry": <"slack">}' 30000 >/dev/null
 expect_poll "a workspace with no disk-cache icon uses the token-cache icon" true card_value "[globex] in eng" showsBadge
 expect "the token-cache workspace icon replaces that workspace name" '"in eng"' card_value "[globex] in eng" title
 expect "the fallback icon came from the Slack photo cache" "$(file_url_json "$slack_photos/T0GLOBEX/workspace.png")" card_value "[globex] in eng" workspaceIcon
@@ -395,42 +395,60 @@ expect "the log says the desktop copy stayed twice" 2 duplicate_count
 expect "the status counts the copies kept" '{"keptDesktop": 2, "keptBrowser": 0}' note_status duplicates
 
 # The space around a card's text, from the card's rectangle and its visible
-# text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card
-# whose summary is SUMMARY on the first screen; `absent` before the card
-# exists and `no-text` while none of its text lines is visible.
+# title and body items, as `top=<px> bottom=<px> left=<px> right=<px>
+# height=<px> slot=<px> pad=<px>` for the card whose summary is SUMMARY on
+# the first screen; `absent` before the card exists and `no-text` while
+# none of its text lines is visible. The predicate below is the contract
+# and its control.
 text_space() {
   local cards texts
-  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary)" || return
-  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible)" || return
+  cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary,slotLeft,pad)" || return
+  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
   python3 -c 'import json,sys
 cards, texts = json.loads(sys.argv[2]), json.loads(sys.argv[3])
-card = next(((s, r) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
+card = next(((s, r, v) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
 if card is None: print("absent"); sys.exit()
-screen, (x, y, w, h) = card
-lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and x <= r[0] < x + w and y <= r[1] < y + h]
+screen, (x, y, w, h), values = card
+lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and v["objectName"] in ("notificationTitleText", "notificationBodyText") and x <= r[0] < x + w and y <= r[1] < y + h]
 if not lines: print("no-text"); sys.exit()
-top, bottom, left = min(r[1] for r in lines), max(r[1] + r[3] for r in lines), min(r[0] for r in lines)
-print("top=%d bottom=%d side=%d height=%d" % (top - y, y + h - bottom, left - x, h))' "$1" "$cards" "$texts"
+top, bottom = min(r[1] for r in lines), max(r[1] + r[3] for r in lines)
+left, right = min(r[0] for r in lines), max(r[0] + r[2] for r in lines)
+print("top=%d bottom=%d left=%d right=%d height=%d slot=%d pad=%d" % (top - y, y + h - bottom, left - x, x + w - right, h, round(values["slotLeft"]), round(values["pad"])))' "$1" "$cards" "$texts"
 }
-# Even: the space above and below the text within a pixel, and the pad
-# (Appearance card.pad, 14) at the top and at the start; `clamped`, whether the
-# card's height sits between card.maxHeight, 94, and one body line under it.
-even_space() { # SUMMARY [clamped]
-  text_space "$1" | python3 -c 'import re,sys
+# Rectangular text clears the rounded end by one spacing step on both sides.
+# A round slot stays at the pad.
+inset_contract_value() { # KIND CLAMPED MEASUREMENT
+  python3 -c 'import math,re,sys
 t = sys.stdin.read().strip()
-m = re.fullmatch(r"top=(\d+) bottom=(\d+) side=(\d+) height=(\d+)", t)
+m = re.fullmatch(r"top=(\d+) bottom=(\d+) left=(\d+) right=(\d+) height=(\d+) slot=(-?\d+) pad=(\d+)", t)
 if not m: print(t); sys.exit()
-top, bottom, side, height = map(int, m.groups())
-out = "even=%s top=%d side=%d" % (abs(top - bottom) <= 1, top, side)
-if sys.argv[1] == "clamped": out += " clamped=%s" % (80 <= height <= 94)
-print(out)' "${2:-}"
+top, bottom, left, right, height, slot, pad = map(int, m.groups())
+need = math.ceil(height / 2) + 4
+problems = []
+if abs(top - bottom) > 1: problems.append("vertical")
+if left < need: problems.append("left")
+if right < need: problems.append("right")
+if sys.argv[1] == "avatarless" and abs(left - right) > 1: problems.append("sides")
+if sys.argv[1] == "slot":
+    if abs(slot - pad) > 1: problems.append("slot")
+    if right > need + 1: problems.append("right-clear")
+if sys.argv[2] == "clamped" and not (80 <= height <= 94): problems.append("clamped")
+print("ok" if not problems else "violation " + ",".join(problems))' "$1" "$2" <<<"$3"
+}
+checked_space() { # SUMMARY KIND [clamped]
+  local t
+  t="$(text_space "$1")" || return
+  inset_contract_value "$2" "${3:-}" "$t"
 }
 notify smoke-app 0 "Even one" "" '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even two" "One line of body text" '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even max" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}' 0 >/dev/null
-expect_poll "a one-line card has the same space above and below its text as at its start" "even=True top=14 side=14" even_space "Even one"
-expect_poll "a two-line card keeps its text centred with the same space" "even=True top=14 side=14" even_space "Even two"
-expect_poll "a card past its most lines stops at its maximum height, text centred, the same space kept" "even=True top=14 side=14 clamped=True" even_space "Even max" clamped
+expect "the inset predicate rejects text under the rounded end" "violation left,right" inset_contract_value avatarless "" "top=14 bottom=14 left=14 right=14 height=45 slot=-1 pad=14"
+expect_poll "a one-line card clears the rounded end on both sides" ok checked_space "Even one" avatarless
+expect_poll "a two-line card clears the rounded end on both sides" ok checked_space "Even two" avatarless
+expect_poll "a card past its most lines stops at its maximum height and clears both sides" ok checked_space "Even max" avatarless clamped
+expect_poll "a card with an image keeps its round slot at the pad and clears the text" ok checked_space Pictured slot
+expect_poll "a Slack faces card keeps its round slot at the pad and clears the text" ok checked_space "[acme] in ada, grace, alan, edsger, barbara" slot
 
 # A full stack lets the oldest non-critical toast go for a new one.
 on_screen() { note_status onScreen; }

@@ -25,6 +25,7 @@ f share/vgs/bin/vgsh-theme-judge
 f share/vgs/bin/vgsh-tui
 f share/vgs/config/requirements.json
 f share/vgs/config/shell.json
+f share/vgs/shell/Commons/Inset.js
 f share/vgs/shell/Commons/Paths.qml
 f share/vgs/shell/Commons/Theme.qml
 f share/vgs/shell/Commons/ThemeLogic.js

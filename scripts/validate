@@ -108,6 +108,7 @@ rows=(
   "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js bin/lib/qml-library.js"
   "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js bin/lib/qml-library.js"
   "logic|library loader controls|node scripts/test-qml-library.js|bin/lib/qml-library.js"
+  "logic|rounded inset helper|node scripts/test-inset.js|shell/Commons/Inset.js bin/lib/qml-library.js"
   "logic|theme judge table|node scripts/test-theme-logic.js|shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js themes/*"
   "logic|shipped theme packages and targets|bin/vgsh-theme-judge packages themes|themes/* bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js"
   "logic|theme catalog|bin/vgsh-theme-judge catalog-check themes|themes/catalog/* themes/targets/* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js"

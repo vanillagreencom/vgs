@@ -263,6 +263,7 @@ out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HE
 for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.js' 'node scripts/test-lifetime.js' 'node scripts/test-qml-library.js' 'node bin/lib/check-manifests.js' 'node scripts/test-check-manifests.js' 'scripts/test-vgsh.sh' 'scripts/test-install-tree.sh' 'python3 scripts/test-vgs-plugin.py' 'scripts/test-validate.sh'; do
   if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
 done
+if grep -qxF 'node scripts/test-inset.js' <<<"$out"; then ok "shared loader selects node scripts/test-inset.js"; else fail "shared loader omitted node scripts/test-inset.js"; fi
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
 
 # bin/vgsh holds the preflight floors the recipe check and the README check

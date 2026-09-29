@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Commons
 
 // The panel's header over the stack while the Inbox or the History is open:
 // its title and subtitle, the Silence switch, Mark read (Inbox) or Clear
@@ -14,6 +15,7 @@ Item {
     readonly property var service: host ? host.service : null
     property bool shown: false
     readonly property bool history: service !== null && service.panelMode === "history"
+    readonly property real titleInset: Inset.clearing(look.header.controlsInset, look.radius.full, width, height, look.radius.clearance)
 
     implicitWidth: look.header.width
     implicitHeight: look.header.height
@@ -29,7 +31,7 @@ Item {
 
     Column {
         anchors.left: parent.left
-        anchors.leftMargin: header.look.header.textInset
+        anchors.leftMargin: header.titleInset
         anchors.verticalCenter: parent.verticalCenter
         spacing: header.look.header.lineGap
 

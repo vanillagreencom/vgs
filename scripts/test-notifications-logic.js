@@ -256,10 +256,10 @@ function verify(logic) {
         assert.equal(logic.faceTint(name), want, "tint of " + JSON.stringify(name));
     same(Object.keys(appearance.TOKENS.face.tint), ["coral", "amber", "green", "blue", "indigo", "magenta", "teal", "rose"], "the look holds every tint");
     same(logic.FACE_TINTS, ["coral", "amber", "green", "blue", "indigo", "magenta", "teal", "rose"]);
-    // A card at its tallest keeps a content corner, `pad` in from both
-    // edges, inside the capsule's round end of radius maxHeight / 2.
-    const card = appearance.TOKENS.card;
-    assert.ok(card.pad.value >= (1 - Math.SQRT1_2) / 2 * card.maxHeight.value, `card.pad=${card.pad.value} leaves a corner outside a ${card.maxHeight.value} px capsule's end`);
+    // A card's QML uses this step when it places rectangular text past a
+    // rounded end.
+    assert.equal(appearance.TOKENS.radius.clearance.type, "length");
+    assert.equal(appearance.TOKENS.radius.clearance.value, 4);
     same(logic.workspaceRuleIds(), ["slack"]);
     assert.equal(logic.enricherById("slack").id, "slack");
     assert.equal(logic.enricherById("none"), null);
