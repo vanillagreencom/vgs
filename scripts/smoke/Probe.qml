@@ -23,6 +23,12 @@ Scope {
     // A plugin instance's status provider, kept past the instance, so a row
     // writes through it once the core has retired the instance.
     property var heldStatus: null
+    // A copy of the core's ThemeRunner built from a file for a control, and
+    // what each of its members' callbacks received: verb -> { count,
+    // result }. The copy's context is never torn down.
+    property var runnerCopy: null
+    property var runnerAnswers: ({})
+    readonly property var runnerContext: ({ id: "smoke-runner-copy", onDispose: () => () => {} })
 
     Connections {
         target: Plugins
@@ -553,6 +559,43 @@ Scope {
             const shader = root.descendants(item).find(child => child instanceof ShaderEffect);
             if (shader === undefined) return "no-shader";
             return JSON.stringify({ url: String(shader.fragmentShader), compiled: shader.status === ShaderEffect.Compiled, log: shader.log });
+        }
+        // Build a copy of ThemeRunner from FILE, a path under the shell's
+        // Core directory so its imports resolve as the shipped one's do:
+        // `ok`, or the component's error.
+        function runnerLoad(file: string): string {
+            if (root.runnerCopy !== null) return "loaded";
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return "error: " + component.errorString();
+            const made = component.createObject(root);
+            if (made === null) return "error: create";
+            root.runnerAnswers = {};
+            root.runnerCopy = made;
+            return "ok";
+        }
+        // Call the copy's member VERB with ARG as a capability call would,
+        // its answers kept by verb; the member's reply, `ok` for none.
+        function runnerCall(verb: string, arg: string): string {
+            if (root.runnerCopy === null) return "absent";
+            const done = result => {
+                const next = Object.assign({}, root.runnerAnswers);
+                next[verb] = { count: (verb in root.runnerAnswers ? root.runnerAnswers[verb].count : 0) + 1, result: result };
+                root.runnerAnswers = next;
+            };
+            const reply = root.runnerCopy[verb](root.runnerContext, arg, done);
+            return reply === undefined ? "ok" : String(reply);
+        }
+        // How many times the copy answered VERB.
+        function runnerAnswered(verb: string): int {
+            return verb in root.runnerAnswers ? root.runnerAnswers[verb].count : 0;
+        }
+        // The copy's lending record, or `absent`.
+        function runnerRecord(): string { return root.runnerCopy === null ? "absent" : JSON.stringify(root.runnerCopy.record()); }
+        function runnerDrop(): string {
+            if (root.runnerCopy === null) return "absent";
+            root.runnerCopy.destroy();
+            root.runnerCopy = null;
+            return "ok";
         }
     }
 }

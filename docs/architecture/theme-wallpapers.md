@@ -29,6 +29,8 @@ A progress `state` is `downloading`, `verifying` or `unpacking`, and `bytes` cou
 
 Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when either lock is busy.
 
+The `theme` capability runs `--json` on its download lane and reads the progress lines into `last.downloading`: [theme-capability.md](theme-capability.md).
+
 ## Refusals
 
 Each refusal prints `vgsh: refused: wallpapers=<name> reason=<key>` and its fields, and the member refusals name the member as `member=<JSON name>`.

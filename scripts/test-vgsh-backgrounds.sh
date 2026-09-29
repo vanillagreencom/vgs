@@ -317,7 +317,7 @@ printf '{ "schemaVersion": 1, "current": null, "stamp": null, "themes": {}, "scr
 bg_control screens 'Object.entries(doc.screens).every(isScreen)' 'true'
 tinst "the screens mutant applies over an output name no output has" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 reset_dusk "output control"
-bg_control output 'OUTPUT_NAME.test(name)' 'true'
+judge_control output 'if (screen !== null && !logic.isOutputName(screen))' 'if (false)'
 tinst "the output mutant sets an image for a malformed output name" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png" ../x)" "" theme background set "$user/u.png" --screen ../x
 reset_dusk "screens key control"
 bg_control screens-key 'if (Object.keys(state.screens).length > 0) doc.screens' 'if (true) doc.screens'

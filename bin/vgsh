@@ -32,7 +32,8 @@
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
 #   vgsh theme catalog [--json]    every catalog theme with its install state
-#   vgsh theme install <name>      install one catalog theme package, with no network
+#   vgsh theme install [--json] <name>
+#                                  install one catalog theme package, with no network
 #   vgsh theme wallpapers [--json] <name> [--update]
 #                                  download, verify and unpack a catalog install's wallpapers; --update replaces another archive's
 #   vgsh theme outdated [--json]   fetch every installed theme package and report how far it is behind its upstream
@@ -160,7 +161,8 @@
 # way from a staging directory, under the theme lock, with the marker
 # .vgs-catalog.json that makes it a catalog install; it refuses a catalog
 # install of that name as reason=installed and anything else there as
-# reason=exists. update of a catalog install asks nothing: it replaces the
+# reason=exists. --json prints `{ state, theme, path, shadows, reason }`
+# as one line, a refusal's included. update of a catalog install asks nothing: it replaces the
 # definition when the catalog's package changed, keeps the package's other
 # files, and follows as a git update does. The installed package waits in
 # a backup beside themes/ while update swaps it, and add, install, update
@@ -942,13 +944,14 @@ theme_wallpapers() { # FORMAT NAME MODE
   node "$theme_judge" wallpapers-land "$1" "$config_home/vgs" "$stage" "$verdict" "$2" "$3"
 }
 
-# The judge stages and judges the catalog package and moves it into place;
+# The judge recovers, stages and judges the catalog package and moves it
+# into place, and prints a result on every path the lock verdict reaches;
 # this process holds the stage and the lock.
-theme_install() { # NAME
+theme_install() { # FORMAT NAME
   mkdir -p -- "$user_themes"
   theme_stage install
-  theme_lock_change "theme=$1"
-  node "$theme_judge" install "$config_home/vgs" "$stage" "$1"
+  theme_lock_verdict
+  node "$theme_judge" install "$1" "$config_home/vgs" "$stage" "$verdict" "$2"
 }
 
 theme_remove() { # NAME
@@ -1352,7 +1355,13 @@ case "$cmd" in
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
         exec node "$theme_judge" catalog "$format" "$config_home/vgs"
         ;;
-      add|update|remove|install)
+      install)
+        name="${1:-}"
+        if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        theme_install "$format" "$name"
+        ;;
+      add|update|remove)
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
         if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
         arg="${1:-}"

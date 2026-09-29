@@ -21,6 +21,10 @@ Item {
     property int themeApplies: 0
     property string themeStepped: ""
     property int themeSteps: 0
+    // What each of the theme capability's catalog, install, wallpapers,
+    // images and set callbacks last received, by verb, and how many times
+    // it ran: verb -> { count, result }.
+    property var themeAnswers: ({})
     readonly property bool lockSecure: shell !== null && shell.lock.secure
     readonly property bool hasAgent: shell !== null && shell.polkit.agent !== null
     readonly property bool agentRegistered: shell !== null && shell.polkit.registered
@@ -28,6 +32,15 @@ Item {
     readonly property bool noCurrentScreen: shell !== null && shell.screens.current === null
 
     Component { id: lockContent; Item { property var screen: null } }
+
+    // The callback that keeps what VERB's member handed it in themeAnswers.
+    function themeAnswer(verb) {
+        return result => {
+            const next = Object.assign({}, root.themeAnswers);
+            next[verb] = { count: (verb in root.themeAnswers ? root.themeAnswers[verb].count : 0) + 1, result: result };
+            root.themeAnswers = next;
+        };
+    }
 
     onShellChanged: {
         if (shell === null || registered) return;
@@ -70,6 +83,18 @@ Item {
         shell.ipc.handle("theme-apply", name => root.shell.theme.apply(name, result => { root.themeApplied = JSON.stringify(result); root.themeApplies += 1; }));
         shell.ipc.handle("theme-background", step => root.shell.theme.background(step, result => { root.themeStepped = JSON.stringify(result); root.themeSteps += 1; }));
         shell.ipc.handle("theme", member => JSON.stringify(member.startsWith("swatch=") ? root.shell.theme.swatch(member.slice(7)) : root.shell.theme[member]));
+        // theme-catalog, theme-install <name>, theme-wallpapers <name>,
+        // theme-images <scope> and theme-set <path>[|<screen>] keep what
+        // their callbacks received in themeAnswers and answer what the
+        // member returned, `ok` for catalog.
+        shell.ipc.handle("theme-catalog", () => { root.shell.theme.catalog(root.themeAnswer("catalog")); return "ok"; });
+        shell.ipc.handle("theme-install", name => root.shell.theme.install(name, root.themeAnswer("install")));
+        shell.ipc.handle("theme-wallpapers", name => root.shell.theme.wallpapers(name, root.themeAnswer("wallpapers")));
+        shell.ipc.handle("theme-images", scope => root.shell.theme.images(scope, root.themeAnswer("images")));
+        shell.ipc.handle("theme-set", arg => {
+            const at = arg.indexOf("|");
+            return at === -1 ? root.shell.theme.set(arg, null, root.themeAnswer("set")) : root.shell.theme.set(arg.slice(0, at), arg.slice(at + 1), root.themeAnswer("set"));
+        });
         // A lock holder rebuilt into a locked session hands its screen over again.
         if (shell.lock.locked) shell.lock.lock(lockContent);
     }

@@ -28,19 +28,12 @@ const STATE_FILE = "backgrounds.json";
 const LINK = "background";
 // What the shell's Image reads with the image plugins Qt ships by default.
 const EXTENSIONS = [".png", ".jpg", ".jpeg"];
-// A Hyprland output name as `hyprctl monitors` prints it and Quickshell's
-// `screen.name` carries it: `DP-1`, `HDMI-A-1`, `eDP-1`, `HEADLESS-2`.
-const OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 // Whether NAME can be one image of a backgrounds/ directory: a file name,
 // not hidden, with an image extension in any case.
 function isImageName(name) {
     return typeof name === "string" && name !== "" && !name.includes("/") && !name.startsWith(".") &&
         EXTENSIONS.includes(path.extname(name).toLowerCase());
-}
-
-function isOutputName(name) {
-    return typeof name === "string" && OUTPUT_NAME.test(name);
 }
 
 // What entry NAME of a backgrounds/ directory is, STAT its lstat or a
@@ -166,7 +159,7 @@ function read(logic, stateDir, key) {
     const doc = readJson(file, key, true);
     if (doc === null) return { current: null, themes: {}, screens: {} };
     const isShown = (at, stamp) => typeof at === "string" && path.isAbsolute(at) && typeof stamp === "string";
-    const isScreen = ([name, shown]) => isOutputName(name) && logic.isPlainObject(shown) &&
+    const isScreen = ([name, shown]) => logic.isOutputName(name) && logic.isPlainObject(shown) &&
         Object.keys(shown).length === 2 && isShown(shown.path, shown.stamp);
     const shaped = logic.isPlainObject(doc) && doc.schemaVersion === 1 &&
         Object.keys(doc).length === (Object.hasOwn(doc, "screens") ? 5 : 4) &&
@@ -249,4 +242,4 @@ function land(stateDir, after, before, key) {
     else replaceFile(state, doc + "\n", key);
 }
 
-module.exports = { DIR, STATE_FILE, LINK, isImageName, entryKind, firstImageName, isOutputName, images, imagePath, locate, stamped, read, choose, land };
+module.exports = { DIR, STATE_FILE, LINK, isImageName, entryKind, firstImageName, images, imagePath, locate, stamped, read, choose, land };

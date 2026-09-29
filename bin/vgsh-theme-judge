@@ -78,11 +78,12 @@
 //       every entry of the shipped catalog's index with its install state
 //       under <config-dir>/themes: `installed`, `definitionUpdate`,
 //       `imageryInstalled` and `imageryUpdate`.
-//   vgsh-theme-judge install <config-dir> <stage> <name>
-//       under the theme lock the caller holds, copy catalog package NAME
-//       into <stage>/package with its marker, judge it as `accept` does and
-//       rename it to <config-dir>/themes/NAME; prints `ok installed=<name>
-//       path=<dir>[ shadows=<shipped dir>]`.
+//   vgsh-theme-judge install <text|json> <config-dir> <stage> <held|busy|failed> <name>
+//       under the theme lock verdict, after `recover`: copy catalog
+//       package NAME into <stage>/package with its marker, judge it as
+//       `accept` does and rename it to <config-dir>/themes/NAME; prints `ok
+//       installed=<name> path=<dir>[ shadows=<shipped dir>]`, or under
+//       `json` `{ state, theme, path, shadows, reason }`.
 //   vgsh-theme-judge catalog-update <config-dir> <stage> <name>
 //       under the theme lock the caller holds, replace catalog install
 //       NAME's definition with the catalog's when it changed, the installed
@@ -121,8 +122,8 @@
 // wallpapers-fetch and wallpapers-land refuse with one line on stderr,
 // `vgsh: refused: <key>=...`, through bin/lib/judge-files.js: exit 1, or
 // 75 for `reason=busy`. Under `json`, apply prints its structured result
-// on stdout first, refusals included, and so do follow, reload, background
-// and both wallpapers commands, whose refusals are `wallpapers=<name>
+// on stdout first, refusals included, and so do follow, reload, background,
+// install and both wallpapers commands, whose refusals are `wallpapers=<name>
 // reason=<key>`, each key in theme-wallpapers.md § Refusals. A partial
 // apply, follow or
 // reload prints one such line per failed or reload-pending target and
@@ -178,6 +179,14 @@ function heldLock(key, lock, file) {
 // heldLock for the theme lock, <config-dir>/theme.lock.
 function themeLock(key, lock, configDir) {
     heldLock(key, lock, path.join(configDir, THEME_LOCK));
+}
+
+// themeLock, then `recover`, so a change starts from whole packages: what
+// bin/vgsh's theme_lock_change does for a command whose judge reads the
+// lock verdict and prints a result on every path.
+function themeLockChange(key, lock, configDir) {
+    themeLock(key, lock, configDir);
+    recover(configDir);
 }
 
 function usage(first) {
@@ -1711,7 +1720,7 @@ function stepBackground(result, step, configDir, stateDir, lock) {
 // are remembered for none.
 function setBackground(result, argument, screen, configDir, stateDir, lock) {
     const key = "background=set reason";
-    if (screen !== null && !backgrounds.isOutputName(screen)) refuse(key + "=malformed-screen screen=" + JSON.stringify(screen), "malformed-screen");
+    if (screen !== null && !logic.isOutputName(screen)) refuse(key + "=malformed-screen screen=" + JSON.stringify(screen), "malformed-screen");
     result.screen = screen;
     themeLock(key, lock, configDir);
     const shown = backgrounds.read(logic, stateDir, key);
@@ -1748,7 +1757,7 @@ function listBackgrounds(result, scope, configDir, stateDir) {
 // Run RUN, which fills RESULT, and print it: under `json` one line on
 // stdout, a refusal's included, `state` "failed" beside the refusal's
 // reason; in text the lines LINES answers for it.
-function backgroundReport(format, result, run, lines) {
+function resultReport(format, result, run, lines) {
     try {
         run();
     } catch (e) {
@@ -1771,20 +1780,20 @@ function imageFields(background, theme, at) {
 function background(format, verb, configDir, stateDir, rest) {
     if (Object.hasOwn(BACKGROUND_STEPS, verb)) {
         const result = { state: "failed", background: null, theme: null, path: null, reason: null };
-        backgroundReport(format, result, () => stepBackground(result, verb, configDir, stateDir, rest[0]),
+        resultReport(format, result, () => stepBackground(result, verb, configDir, stateDir, rest[0]),
             r => ["ok " + imageFields(r.background, r.theme, r.path)]);
         return;
     }
     switch (verb) {
     case "set": {
         const result = { state: "failed", background: null, theme: null, path: null, screen: null, reason: null };
-        backgroundReport(format, result, () => setBackground(result, rest[1], rest.length === 3 ? rest[2] : null, configDir, stateDir, rest[0]),
+        resultReport(format, result, () => setBackground(result, rest[1], rest.length === 3 ? rest[2] : null, configDir, stateDir, rest[0]),
             r => ["ok " + imageFields(r.background, r.theme, r.path) + (r.screen === null ? "" : " screen=" + r.screen)]);
         return;
     }
     case "list": {
         const result = { state: "failed", images: null, reason: null };
-        backgroundReport(format, result, () => listBackgrounds(result, rest[0], configDir, stateDir),
+        resultReport(format, result, () => listBackgrounds(result, rest[0], configDir, stateDir),
             r => r.images.map(i => imageFields(i.background, i.theme, i.path)));
         return;
     }
@@ -2018,13 +2027,15 @@ function judgeStaged(pkg, name) {
     if (!verdict.ok) refuse("theme=" + name + " " + refusalFields(verdict), verdict.reason);
 }
 
-// `vgsh theme install NAME` under the theme lock its caller holds: land the
-// catalog package NAME at <config-dir>/themes/NAME through PKG, staged
-// beside themes/ in a directory the caller made and removes. A catalog
-// install already there is refused `installed`, anything else there
-// `exists`, so no install replaces a package or its edits.
-function install(configDir, stage, name) {
+// `vgsh theme install NAME` under the theme lock, LOCK its caller's
+// verdict, after `recover`: land the catalog package NAME at
+// <config-dir>/themes/NAME through PKG, staged beside themes/ in a
+// directory the caller made and removes, into RESULT. A catalog install
+// already there is refused `installed`, anything else there `exists`, so
+// no install replaces a package or its edits.
+function install(result, configDir, stage, lock, name) {
     const { dir, key } = installedPath(configDir, name);
+    themeLockChange(key, lock, configDir);
     const entry = catalogEntry(name, key);
     let there;
     try {
@@ -2050,7 +2061,9 @@ function install(configDir, stage, name) {
     } catch (e) {
         refuse(key + "=move path=" + dir + " error=" + e.code, "move");
     }
-    console.log("ok installed=" + name + " path=" + dir + (shipped !== null && shipped.includes(name) ? " shadows=" + path.join(SHIPPED, name) : ""));
+    result.path = dir;
+    result.shadows = shipped !== null && shipped.includes(name) ? path.join(SHIPPED, name) : null;
+    result.state = "ok";
 }
 
 // The catalog install NAME and the catalog package it follows: refused
@@ -2419,8 +2432,7 @@ async function wallpapersLand(format, configDir, stage, lock, name, mode) {
     const result = wallpaperResult(name);
     await wallpaperReport(format, result, () => {
         const { key } = installedPath(configDir, name, "wallpapers");
-        themeLock(key, lock, configDir);
-        recover(configDir);
+        themeLockChange(key, lock, configDir);
         const plan = wallpaperPlan(configDir, name, mode, result);
         if (plan.state !== "up-to-date") {
             const staged = readJson(path.join(stage, STAGED_PIN), key, true);
@@ -2492,10 +2504,14 @@ main(() => {
         if (args.length !== 2 || !FORMATS.includes(args[0])) usage("arguments=" + command);
         catalogList(args[0], args[1]);
         break;
-    case "install":
-        if (args.length !== 3) usage("arguments=" + command);
-        install(...args);
+    case "install": {
+        if (args.length !== 5 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3])) usage("arguments=" + command);
+        const [format, configDir, stage, lock, name] = args;
+        const result = { state: "failed", theme: name, path: null, shadows: null, reason: null };
+        resultReport(format, result, () => install(result, configDir, stage, lock, name),
+            r => ["ok installed=" + name + " path=" + r.path + (r.shadows === null ? "" : " shadows=" + r.shadows)]);
         break;
+    }
     case "catalog-update":
         if (args.length !== 3) usage("arguments=" + command);
         catalogUpdate(...args);

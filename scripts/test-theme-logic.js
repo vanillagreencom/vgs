@@ -568,6 +568,16 @@ function verify(judge) {
     for (const name of ["", ".", "..", "../x", "a/b", "a b", "-x", ".x", "x\n", 7, undefined])
         assert.equal(judge.isPackageName(name), false, JSON.stringify(name));
 
+    for (const name of ["DP-1", "HDMI-A-1", "eDP-1", "HEADLESS-2", "SMOKE_HIDPI"])
+        assert.equal(judge.isOutputName(name), true, name);
+    for (const name of ["", "-DP", "_DP", "DP 1", "DP.1", "DP/1", "DP-1\n", null, 1])
+        assert.equal(judge.isOutputName(name), false, JSON.stringify(name));
+
+    for (const text of ["/a", "/home/u/.config/vgs/themes/x/backgrounds/a.png", "/a b/.c"])
+        assert.equal(judge.isAbsolutePath(text), true, text);
+    for (const text of ["", "/", "a.png", "./a.png", "~/a.png", "//a", "/a//b", "/a/", "/a/./b", "/a/../b", "/..", "/a\u0000b", null, ["/a"]])
+        assert.equal(judge.isAbsolutePath(text), false, JSON.stringify(text));
+
     for (const [label, table, light, theme, want] of APPEARANCE_ACCEPTED) {
         const result = judge.acceptAppearance(table, light, theme);
         assert.equal(result.ok, true, `${label}: ${result.ok ? "" : judge.refusalLine(result)}`);
@@ -628,6 +638,10 @@ const CONTROLS = [
     ["table defect throws", "if (defect !== \"\")\n        throw new Error(\"theme: token table: \"", "if (false)\n        throw new Error(\"theme: token table: \""],
     ["package name", "if (!isPackageName(files.directoryName))", "if (false)"],
     ["package name pattern", "PACKAGE_NAME_PATTERN.test(name)", "true"],
+    ["output name pattern", "OUTPUT_NAME_PATTERN.test(name)", "true"],
+    ["absolute path leading slash", 'text.charAt(0) !== "/" || ', ""],
+    ["absolute path NUL", ' || text.indexOf("\\u0000") !== -1', ""],
+    ["absolute path segments", 'if (segments[i] === "" || segments[i] === "." || segments[i] === "..")', "if (false)"],
     ["package reserved name", "if (files.directoryName === DEFAULT_NAME && files.shipped !== true)", "if (false)"],
     ["package reserved directory", "if (RESERVED_DIRECTORIES.indexOf(files.directoryName) !== -1)", "if (false)"],
     ["catalog document", "if (!isPlainObject(document))\n        return refusal(\"catalog-document\"", "if (false)\n        return refusal(\"catalog-document\""],

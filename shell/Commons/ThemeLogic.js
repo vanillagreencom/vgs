@@ -621,6 +621,30 @@ function isPackageName(name) {
     return typeof name === "string" && PACKAGE_NAME_PATTERN.test(name);
 }
 
+// A Hyprland output name as `hyprctl monitors` prints it and Quickshell's
+// `screen.name` carries it: `DP-1`, `HDMI-A-1`, `eDP-1`, `HEADLESS-2`.
+// Its shape alone; whether the output exists is Hyprland's answer.
+var OUTPUT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+function isOutputName(name) {
+    return typeof name === "string" && OUTPUT_NAME_PATTERN.test(name);
+}
+
+// An absolute path in the form `vgsh theme background list` prints it: a
+// leading `/` and no empty, `.` or `..` segment. The theme capability
+// passes only such a path to the runner, whose working directory is the
+// shell's and no plugin's.
+function isAbsolutePath(text) {
+    if (typeof text !== "string" || text.charAt(0) !== "/" || text.indexOf("\u0000") !== -1)
+        return false;
+    var segments = text.slice(1).split("/");
+    for (var i = 0; i < segments.length; i++) {
+        if (segments[i] === "" || segments[i] === "." || segments[i] === "..")
+            return false;
+    }
+    return true;
+}
+
 // The directories of a themes directory or the catalog that hold no
 // package: the targets, the catalog and generated thumbnails. A walk of a
 // themes directory skips them, so no package of any source takes these

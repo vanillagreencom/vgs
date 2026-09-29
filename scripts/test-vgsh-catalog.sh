@@ -75,7 +75,11 @@ check "a refused install leaves no staging directory" unstaged
 tinst "install of a name the catalog lacks is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=fen reason=not-in-catalog" theme install fen
 tinst "install of a malformed name is refused" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme="../moor" reason=malformed-name' theme install ../moor
 tinst "install of a shipped name shadows the shipped package" "$cfg" "$rt_empty" 0 "ok installed=light path=$themes/light shadows=$tree/themes/light" "" theme install light
-tinst "install takes no --json" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--json" theme install --json moor
+rm -r -- "$themes/light"
+tinst "install --json prints a landed install's result" "$cfg" "$rt_empty" 0 '{"state":"ok","theme":"light","path":"'"$themes/light"'","shadows":"'"$tree/themes/light"'","reason":null}' "" theme install --json light
+tinst "install --json prints a refusal as its result" "$cfg" "$rt_empty" 1 '{"state":"failed","theme":"light","path":null,"shadows":null,"reason":"installed"}' "vgsh: refused: theme=light reason=installed path=$themes/light" theme install --json light
+tinst "install --json prints a malformed name's refusal as its result" "$cfg" "$rt_empty" 1 '{"state":"failed","theme":"../moor","path":null,"shadows":null,"reason":"malformed-name"}' 'vgsh: refused: theme="../moor" reason=malformed-name' theme install --json ../moor
+tinst "install --json takes one name" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=light" theme install --json moor light
 tinst "install without a name is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: name=missing" theme install
 
 # A git source whose own repository carries a marker stays a git install:
@@ -187,8 +191,11 @@ mkdir -p "$themes/moor/backgrounds"; printf 'image\n' >"$themes/moor/backgrounds
 theme_pkg "$shelf/moor" "$(doc moor '{ "palette": { "accent": "#3366f7" } }')" "$(slots_json '#202020')"
 interrupted "an update ended for the unrecovered control exits 137" INTERRUPT_FROM
 tree_control unrecovered bin/vgsh '  node "$theme_judge" recover "$config_home/vgs" || exit $?' ''
-tinst "the unrecovered mutant installs over the package in the backup" "$cfg" "$rt_empty" 0 "ok installed=moor path=$themes/moor" "" theme install moor
-check "the unrecovered mutant's install has no backgrounds" test ! -e "$themes/moor/backgrounds"
+tinst "the unrecovered mutant's remove finds no package beside the backup" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=moor reason=unknown" theme remove moor
+check "the unrecovered mutant's remove keeps the backup" test -d "$backup"
+judge_control unrecovered-install '    recover(configDir);' ''
+tinst "the unrecovered install mutant installs over the package in the backup" "$cfg" "$rt_empty" 0 "ok installed=moor path=$themes/moor" "" theme install moor
+check "the unrecovered install mutant's install has no backgrounds" test ! -e "$themes/moor/backgrounds"
 unset THEME_BIN
 tinst "remove clears the unrecovered mutant's install" "$cfg" "$rt_empty" 0 "ok removed=moor" "vgsh: recovered: theme=moor state=completed path=$themes/moor" theme remove moor
 tinst "moor installs for the staged-backup control" "$cfg" "$rt_empty" 0 "$any_out" "" theme install moor
@@ -211,9 +218,10 @@ tinst "remove deletes a package with a malformed marker" "$cfg" "$rt_empty" 0 "o
 exec 7>>"$cfg/vgs/theme.lock"
 flock 7
 tinst "install while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=bad reason=busy" theme install bad
+tinst "install --json prints a held lock's busy result" "$cfg" "$rt_empty" 75 '{"state":"failed","theme":"bad","path":null,"shadows":null,"reason":"busy"}' "vgsh: refused: theme=bad reason=busy" theme install --json bad
 check "a busy install leaves no staging directory" unstaged
 tinst "update of a catalog install while the lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: theme=moor reason=busy" theme update moor
-tree_control lockless bin/vgsh '  theme_lock_change "theme=$1"' ''
+tree_control lockless bin/vgsh 'install "$1" "$config_home/vgs" "$stage" "$verdict"' 'install "$1" "$config_home/vgs" "$stage" held'
 tinst "the lockless mutant installs under the held lock" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme=bad reason=terminal-slot token=terminal missing=color1' theme install bad
 unset THEME_BIN
 exec 7>&-
