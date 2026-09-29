@@ -171,7 +171,6 @@ FocusScope {
                 width: parent.width
                 label: "Enabled"
                 inline: true
-                contentPaddingX: 0
                 hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
                 Switch {
                     checked: page.row !== null && page.row.enabled
@@ -190,8 +189,7 @@ FocusScope {
                     width: body.width
                     label: modelData[0]
                     inline: true
-                    contentPaddingX: 0
-                    Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                        Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                 }
             }
 
@@ -200,7 +198,6 @@ FocusScope {
                 width: parent.width
                 label: "Manage"
                 inline: true
-                contentPaddingX: 0
                 visible: page.row !== null && page.row.source === "installed"
                 hint: "Each opens a terminal that asks before it changes anything."
                 Row {
@@ -236,8 +233,8 @@ FocusScope {
 
                     SectionHeader {
                         text: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
-                        leftPadding: 0
-                        rightPadding: 0
+                        leftPadding: Theme.row.paddingX
+                        rightPadding: Theme.row.paddingX
                     }
 
                     Repeater {
@@ -261,8 +258,8 @@ FocusScope {
                 SectionHeader {
                     text: "Requirements"
                     description: "Commands the plugin runs, looked up on PATH at the last scan"
-                    leftPadding: 0
-                    rightPadding: 0
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
                 }
 
                 Repeater {
@@ -281,8 +278,7 @@ FocusScope {
                     width: parent.width
                     label: "Missing"
                     inline: true
-                    contentPaddingX: 0
-                    visible: page.requirementMissing
+                        visible: page.requirementMissing
                     hint: "Opens a terminal that names each package and asks before it installs them."
                     Button {
                         text: "Install"
@@ -310,8 +306,8 @@ FocusScope {
 
                     SectionHeader {
                         text: section.modelData.group === "" ? "Settings" : section.modelData.group
-                        leftPadding: 0
-                        rightPadding: 0
+                        leftPadding: Theme.row.paddingX
+                        rightPadding: Theme.row.paddingX
                     }
 
                     Repeater {
@@ -343,8 +339,8 @@ FocusScope {
                 SectionHeader {
                     text: "Keys"
                     description: "Written to shell.json; an empty key unbinds it"
-                    leftPadding: 0
-                    rightPadding: 0
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
                 }
 
                 Repeater {

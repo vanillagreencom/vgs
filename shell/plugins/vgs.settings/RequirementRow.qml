@@ -27,7 +27,6 @@ Column {
         width: row.width
         label: row.requirement.command
         inline: true
-        contentPaddingX: 0
         hint: row.requirement.purpose
         Item {
             implicitHeight: chip.height

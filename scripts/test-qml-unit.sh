@@ -257,7 +257,7 @@ mutations=(
   "the list item pads off the row rhythm|layout/ListItem.qml|leftPadding: Theme.listItem.paddingX|leftPadding: Theme.space.sm|tst_spacing.qml"
   "the list item uses the control gap after its icon|layout/ListItem.qml|x: icon.visible ? icon.width + Theme.listItem.iconGap : 0|x: icon.visible ? icon.width + Theme.control.gap : 0|tst_spacing.qml"
   "the menu item pads off the row rhythm|overlay/MenuItem.qml|leftPadding: Theme.menu.item.paddingX|leftPadding: Theme.space.sm|tst_spacing.qml"
-  "the field draws its label on the column's edge|controls/Field.qml|property real contentPaddingX: Theme.field.paddingX|property real contentPaddingX: 0|tst_spacing.qml"
+  "the field draws its label on the column's edge|controls/Field.qml|leftPadding: Theme.field.paddingX|leftPadding: 0|tst_spacing.qml"
   "the button's icon gap is its own step|controls/Button.qml|spacing: Theme.button.gap|spacing: Theme.space.xs|tst_spacing.qml"
   "the menu item's icon gap is its own step|overlay/MenuItem.qml|spacing: Theme.menu.item.gap|spacing: Theme.space.sm|tst_spacing.qml"
   "the badge's icon gap is its own step|feedback/Badge.qml|spacing: Theme.badge.gap|spacing: Theme.space.xxs|tst_spacing.qml"

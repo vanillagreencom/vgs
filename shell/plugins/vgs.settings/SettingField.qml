@@ -26,7 +26,6 @@ Field {
     label: spec.label !== undefined ? String(spec.label) : key
     hint: spec.description !== undefined ? String(spec.description) : ""
     inline: true
-    contentPaddingX: 0
 
     Loader {
         id: loader
