@@ -565,12 +565,23 @@ theme_idle() { # [IPC_FN]
   printf '%s\n' "$state"
 }
 
-# start_shell TREE LOG [BAR]: start the runner of TREE, a product tree
-# holding its own bin/ and shell/, as the sandbox's shell, its output in
-# LOG, and wait for it. Sets shell_pid, the first-bar reading, shell_qs_pid
-# and instance_log. BAR `no-bar` takes no first-bar reading, for a start
-# that maps no bar. Returns 1, with the row failed, when the shell does not
-# answer ping within timeout_s or names no instance log.
+# The PATH every sandbox shell starts with: the shell's stand-in directory,
+# then node's, then the host's. A row that stands in more commands puts
+# its own directory ahead of it.
+shell_start_path="$shim:$(dirname -- "$node_bin"):$PATH"
+# start_shell TREE LOG [BAR [NAME=VALUE...]]: start the runner of TREE, a
+# product tree holding its own bin/vgsh, as the sandbox's shell, its
+# output in LOG, and wait for it through the ipc function, which a row
+# that starts another tree's runner redefines first. The NAME=VALUE words
+# go to env after the harness's own, so a row's PATH wins over
+# shell_start_path. Sets shell_pid, the first-bar reading, shell_qs_pid
+# and instance_log, which it clears first, so a failed start leaves no
+# earlier shell's log in its place. BAR `no-bar` takes no first-bar
+# reading, for a start that maps no bar. Returns 1, with the row failed,
+# when the shell does not answer ping within timeout_s or names no
+# instance log. The instance is found by pid among every instance in the
+# sandbox's runtime dir, so an installed prefix, whose shell is not
+# TREE/shell, is found as a checkout is.
 #
 # The first-bar reading is the latency from the runner's exec to the first
 # bar surface with a client, polled every 10 ms from the compositor's
@@ -587,13 +598,16 @@ theme_idle() { # [IPC_FN]
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
 # runner execs qs, so the shell's pid is the runner's unless setsid forked.
-start_shell() { # TREE LOG [BAR]
+start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
   local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false child instance_id
+  shift $(( $# < 3 ? $# : 3 ))
   [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
+  instance_log=""
   start_cpu_some_us="$(cpu_some_us)"
   start_ms="$(now_ms)"
-  spawn "$log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$tree/bin/vgsh" run
+  spawn "$log" "${shell_env[@]}" PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$@" "$tree/bin/vgsh" run
   shell_pid="$spawn_pid"
+  shell_qs_pid="$shell_pid"
   first_bar_ms=""
   first_bar_cpu_some_pct=unmeasured
   if [[ $bar == bar ]]; then
@@ -624,17 +638,25 @@ start_shell() { # TREE LOG [BAR]
     return 1
   fi
   ok "shell answers ping"
-  shell_qs_pid="$shell_pid"
   if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
-  instance_log=""
   for _ in $(seq 1 50); do
-    if instance_id="$("${shell_env[@]}" qs list -p "$tree/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
+    if instance_id="$("${shell_env[@]}" qs list --all -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
       instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
       break
     fi
     sleep 0.2
   done
-  if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; return 1; fi
+  if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; instance_log=""; return 1; fi
+}
+# stop_shell: TERM to the runner start_shell started, waited on for up to
+# 5 s, before a row starts another.
+stop_shell() {
+  kill -TERM "$shell_pid" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    kill -0 "$shell_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  wait "$shell_pid" 2>/dev/null || true
 }
 start_shell "$repo" "$sandbox/qs.log" || exit 1
 # Lines of the instance log matching an extended regex, counted. grep exits
@@ -681,22 +703,49 @@ service_release() {
   echo "unreleased -"
 }
 
+# A reader answers a state word for every state it can meet, such as
+# `absent` before a record exists, so a Python traceback on its stderr is
+# a reader defect, never a state to retry past. reader_stderr LABEL
+# ERR_FILE: when ERR_FILE, a reader's stderr, holds a traceback, the row
+# LABEL fails with the traceback printed under it, and it returns 1;
+# otherwise the file's text goes on to stderr and it returns 0. The file
+# is removed either way. The pollers below send each read's stderr to a
+# file named for the process that reads, since a row can nest a poller
+# inside another's command substitution.
+reader_stderr() { # LABEL ERR_FILE
+  local label="$1" err="$2" status=0
+  if grep -q -s -F -e 'Traceback (most recent call last):' -- "$err"; then
+    fail "$label: the reader raised a Python traceback"
+    sed 's/^/        /' -- "$err"
+    status=1
+  elif [[ -s $err ]]; then
+    cat -- "$err" >&2
+  fi
+  rm -f -- "$err"
+  return "$status"
+}
 # expect LABEL WANT CMD...: the command's last stdout line must equal WANT.
 # A command that fails is a failure, never an empty string that happens to
-# compare unequal.
+# compare unequal; one that raised a traceback fails as reader_stderr says.
 expect() {
-  local label="$1" want="$2" got
+  local label="$1" want="$2" got status=0 err="$sandbox/reader-$BASHPID.stderr"
   shift 2
-  if ! got="$("$@")"; then fail "$label: command failed: $*"; return; fi
+  got="$("$@" 2>"$err")" || status=$?
+  reader_stderr "$label" "$err" || return 0
+  if [[ $status -ne 0 ]]; then fail "$label: command failed: $*"; return; fi
   if [[ $got == "$want" ]]; then ok "$label"; else fail "$label: got $got"; fi
 }
 # expect_poll LABEL WANT CMD...: as expect, retried for up to 5 s, for a
 # state that follows a write through the watcher, the merge and a rebuild.
+# A failed read is retried; a traceback fails the row at once.
 expect_poll() { # LABEL WANT CMD...
-  local label="$1" want="$2" got=""
+  local label="$1" want="$2" got="" matched err="$sandbox/reader-$BASHPID.stderr"
   shift 2
   for _ in $(seq 1 25); do
-    if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
+    matched=false
+    if got="$("$@" 2>"$err")" && [[ $got == "$want" ]]; then matched=true; fi
+    reader_stderr "$label" "$err" || return 0
+    if [[ $matched == true ]]; then ok "$label"; return; fi
     sleep 0.2
   done
   fail "$label: got $got want $want"
@@ -947,11 +996,14 @@ for i in range(len(words) - 1):
 print(json.dumps(words))' "$tui_record"; }
 words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 # The key the recorded run carries, then the recorded argv from the script
-# on, as JSON, or `absent`.
+# on, as JSON; `absent` before a record exists, and `partial` for a record
+# with no `--record` or no `--` after it.
 recorded_tail() { recorded | python3 -c 'import json,sys
 t=sys.stdin.read().strip()
 if t == "absent": print(t); sys.exit()
-w=json.loads(t); at=w.index("--record")
+w=json.loads(t)
+at=w.index("--record") if "--record" in w else -1
+if at < 0 or at + 1 >= len(w) or "--" not in w[at + 1:]: print("partial"); sys.exit()
 print(json.dumps([w[at + 1]] + w[w.index("--", at) + 1:]))'; }
 forget_record() { rm -f -- "${tui_record:?}"; }
 # A core TUI's command is the core's bin/ beside the shell directory,
@@ -995,15 +1047,17 @@ print("idle" if key not in t["pending"] and (r is None or r["running"] is None) 
 # every 0.2 s, the last wait cut to the time left, and the time from the
 # call to the end of the first read that answers WANT is printed as
 # latency_<READING>_ms, a reading that carries one poll interval and one
-# CMD. A WANT read after the ceiling fails like none. Returns 0 either
-# way, since a row runs under set -e.
+# CMD. A WANT read after the ceiling fails like none, and a traceback
+# fails at once, as in expect_poll. Returns 0 either way, since a row runs
+# under set -e.
 expect_within() { # LABEL READING WANT CEILING_MS CMD...
-  local label="$1" reading="$2" want="$3" ceiling_ms="$4" got="" start elapsed matched pause
+  local label="$1" reading="$2" want="$3" ceiling_ms="$4" got="" start elapsed matched pause err="$sandbox/reader-$BASHPID.stderr"
   shift 4
   start="$(now_ms)"
   while :; do
     matched=false
-    if got="$("$@")" && [[ $got == "$want" ]]; then matched=true; fi
+    if got="$("$@" 2>"$err")" && [[ $got == "$want" ]]; then matched=true; fi
+    reader_stderr "$label" "$err" || return 0
     elapsed=$(( $(now_ms) - start ))
     if [[ $matched == true && $elapsed -le $ceiling_ms ]]; then
       printf '  latency_%s_ms=%d ceiling_ms=%d\n' "$reading" "$elapsed" "$ceiling_ms"

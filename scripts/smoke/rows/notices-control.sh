@@ -5,8 +5,9 @@
 # replies, so the lending record read after the reply is decisive. The copy
 # holds its own bin/, since bin/vgsh finds the tree from its own real path,
 # and its own shell/; config/ and themes/ are links to the sandbox's. The
-# row stops the shell rows/read-only-prefix.sh started and leaves the copy
-# running for rows/start-order.sh, which stops it.
+# row stops the shell rows/read-only-prefix.sh started, starts the copy
+# through harness.sh's start_shell and leaves it running for
+# rows/start-order.sh, which stops it.
 set -euo pipefail
 mutant="$sandbox/notice-mutant"
 mkdir -p -- "$mutant"
@@ -35,30 +36,12 @@ fi
 mkdir -p -- "$home/.config/vgs/plugins/acme.needs"
 cp -R -- "$repo/scripts/smoke/fixtures/plugins/acme.needs/." "$home/.config/vgs/plugins/acme.needs/"
 
-kill -TERM "$shell_pid" 2>/dev/null || true
-for _ in $(seq 1 50); do
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.1
-done
-wait "$shell_pid" 2>/dev/null || true
-
-mutant_bin="$mutant/bin/vgsh"
-spawn "$sandbox/notice-mutant-qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$mutant_bin" run
-shell_pid="$spawn_pid"
+stop_shell
 ipc() {
-  "${shell_env[@]}" "$mutant_bin" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
+  "${shell_env[@]}" "$mutant/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
-up=false
-for _ in $(seq 1 $((timeout_s * 5))); do
-  if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ $up == true ]]; then
+if start_shell "$mutant" "$sandbox/notice-mutant-qs.log"; then
   ok "the control copy starts as the guarded shell"
-else
-  fail "the control copy did not answer ping within ${timeout_s}s"
-  tail -n 40 "$sandbox/notice-mutant-qs.log"
 fi
 expect "the control copy is the guarded shell" true ipc shell guarded
 needs_required_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"] if r["command"]=="vgs-smoke-needs"]))'; }

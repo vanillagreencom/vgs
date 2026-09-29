@@ -39,12 +39,7 @@ done
 # start_shell's readings follow, BAR passed on. Returns 1 when the start
 # failed.
 restart_over() { # TREE LOG [DISABLED_JSON BAR]
-  kill -TERM "$shell_pid" 2>/dev/null || true
-  for _ in $(seq 1 50); do
-    kill -0 "$shell_pid" 2>/dev/null || break
-    sleep 0.1
-  done
-  wait "$shell_pid" 2>/dev/null || true
+  stop_shell
   default_set_prepare '["acme.locker", "acme.contention"]' "${3:-[]}"
   rm -rf -- "$home/.cache/quickshell/qmlcache"
   start_shell "$1" "$2" "${4:-bar}"

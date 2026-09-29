@@ -1,6 +1,8 @@
 # Measured on host cachy, AMD Ryzen 9 9950X, 2026-09-29. This row adds no
-# latency budget. It reuses the smoke startup poll intervals in harness.sh:
-# 10 ms for the first bar and one `vgsh ipc` round trip for readiness.
+# latency budget. It starts the installed shell through harness.sh's
+# start_shell, with the process-signalling stand-ins first on its PATH,
+# so it reuses the smoke startup poll intervals: 10 ms for the first bar
+# and one `vgsh ipc` round trip for readiness.
 set -euo pipefail
 
 read_only_prefix_signal_path() { # DIR
@@ -81,37 +83,18 @@ PY
 
 tree_snapshot "$readonly_dest/usr" >"$sandbox/read-only-before.txt"
 
-kill -TERM "$shell_pid" 2>/dev/null || true
-for _ in $(seq 1 50); do
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.1
-done
-wait "$shell_pid" 2>/dev/null || true
-
+stop_shell
 installed_bin="$readonly_dest/usr/bin/vgsh"
-installed_shell="$readonly_dest/usr/share/vgs/shell"
-spawn "$sandbox/read-only-qs.log" "${shell_env[@]}" PATH="$signal_shim:$shim:$(dirname -- "$node_bin"):$PATH" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$installed_bin" run
-shell_pid="$spawn_pid"
 ipc() {
   "${shell_env[@]}" "$installed_bin" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
-
-up=false
-for _ in $(seq 1 $((timeout_s * 5))); do
-  if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ $up == true ]]; then
+if start_shell "$readonly_dest/usr" "$sandbox/read-only-qs.log" bar PATH="$signal_shim:$shell_start_path" VGS_READ_ONLY_SIGNAL_LOG="$signal_log"; then
   ok "the shell starts from a non-writable installed prefix"
-else
-  fail "installed shell did not answer ping within ${timeout_s}s"
-  tail -n 40 "$sandbox/read-only-qs.log"
 fi
 
 installed_apply_vgs() {
   local err status=0
-  err="$("${shell_env[@]}" PATH="$signal_shim:$shim:$(dirname -- "$node_bin"):$PATH" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$installed_bin" theme apply vgs 2>&1 >/dev/null)" || status=$?
+  err="$("${shell_env[@]}" PATH="$signal_shim:$shell_start_path" VGS_READ_ONLY_SIGNAL_LOG="$signal_log" "$installed_bin" theme apply vgs 2>&1 >/dev/null)" || status=$?
   if [[ $status == 0 ]]; then echo ok; else printf 'exit=%s %s\n' "$status" "${err%%$'\n'*}"; fi
 }
 # The first scan queues the theme follow, which holds the theme lock while
@@ -171,15 +154,4 @@ else
   esac
 fi
 chmod -R u+w -- "$readonly_dest/usr"
-
-shell_qs_pid="$shell_pid"
-if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
-instance_log=""
-for _ in $(seq 1 50); do
-  if instance_id="$("${shell_env[@]}" qs list -p "$installed_shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
-    instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
-    break
-  fi
-  sleep 0.2
-done
 read_only_prefix_check_installed_log "$instance_log"

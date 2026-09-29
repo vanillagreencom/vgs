@@ -39,7 +39,10 @@
 # twice the interval, and a rebuild of the plugin publishes the real ones
 # again, with no check of its own. Its control is a copy of the widget's
 # judge that hides on a failed check, which the visibility readback reads
-# hidden.
+# hidden. The reader of a button's argv answers absent with no record and
+# partial for a record planted empty or cut before its script; its control
+# is a reader of the old shape, which raises on an absent record, and
+# expect_poll fails once on its traceback.
 set -euo pipefail
 updates_dir="$home/.config/vgs/plugins/vgs.updates"
 updates_state="$home/.local/state/vgs/updates-smoke"
@@ -298,9 +301,16 @@ open_flyout() {
   click_centre "$widget_key" vgs.updates || fail "the click on the updates widget failed"
   expect_poll "the widget's click opens the flyout" open flyout_open
 }
-# The words after the presenter's `--`: the script's file name and its
-# arguments.
-launched() { recorded | python3 -c 'import json,os,sys; w=json.load(sys.stdin); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
+# The words after the presenter's `--`, the last `--` in the record: the
+# script's file name and its arguments, as JSON; `absent` before a record
+# exists, and `partial` for a record with no `--` or nothing after it.
+launched() { recorded | python3 -c 'import json,os,sys
+t=sys.stdin.read().strip()
+if t == "absent": print(t); sys.exit()
+w=json.loads(t)
+a=w[len(w) - w[::-1].index("--"):] if "--" in w else []
+if not a: print("partial"); sys.exit()
+print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
 # Click the flyout button reading TEXT, read the argv it launched, WANT,
 # and wait for its run of KEY, and the check its end starts, to end.
 press_and_launch() { # TEXT KEY WANT
@@ -314,6 +324,28 @@ press_and_launch() { # TEXT KEY WANT
   expect_poll "the $1 run's end starts one check" "$((before + 1))" checks
   expect_poll "the service is idle after the $1 run" idle updates_idle
 }
+
+# Controls for launched and for the pollers' traceback rule. Until the
+# terminal stand-in writes its record the reader answers absent, and a
+# record cut before the script, or an empty one, answers partial, so a
+# poll that starts before the record is written retries on a state word.
+# A reader of the old shape parses `absent` as JSON and raises; the poll
+# over it runs in a subshell whose failure count is its answer, its lines
+# kept aside, so the traceback lands there and not in the smoke's log.
+forget_record
+expect "with no record the launch reader answers absent" absent launched
+printf '%s\n' "--app-id=vgs-tui" "--title=VGS · Updates" >"$tui_record"
+expect "a record cut before its script reads partial" partial launched
+printf '%s\n' "--app-id=vgs-tui" "--title=VGS · Updates" -- >"$tui_record"
+expect "a record that ends at its separator reads partial" partial launched
+: >"$tui_record"
+expect "an empty record reads partial" partial launched
+forget_record
+old_launched() { recorded | python3 -c 'import json,os,sys; w=json.load(sys.stdin); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
+old_reader_poll() { (failures=0 behaviour_failures=0; expect_poll "the old launch reader" '["update.sh"]' old_launched >"$sandbox/reader-traceback-control.log"; echo "$failures"); }
+expect "control: a poll whose reader raises on an absent record fails once" 1 old_reader_poll
+expect "control: the failed poll names the reader's traceback" 1 grep -c -F -- "the old launch reader: the reader raised a Python traceback" "$sandbox/reader-traceback-control.log"
+expect "control: the failed poll prints the traceback under its row" 1 grep -c -x -F -- "        Traceback (most recent call last):" "$sandbox/reader-traceback-control.log"
 
 # Pending, from the last real check.
 expect_poll "a pending check draws the accent count" '["pending", "refresh-cw", "accent", "7", "accent"]' widget_view

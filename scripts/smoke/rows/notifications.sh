@@ -146,12 +146,16 @@ panel_count() { row_summaries panel | python3 -c 'import json,sys; print(len(jso
 clock_state() { clock_of "$(key_of "$1")" | cut -d' ' -f1; }
 test_file() { if [[ -f $1 ]]; then echo True; else echo False; fi; }
 # wait_for LABEL WANT SECONDS CMD...: expect_poll with its own bound, for a
-# toast's lifetime, which runs for seconds.
+# toast's lifetime, which runs for seconds; a traceback fails at once, as
+# harness.sh's reader_stderr says.
 wait_for() {
-  local label="$1" want="$2" seconds="$3" got=""
+  local label="$1" want="$2" seconds="$3" got="" matched err="$sandbox/reader-$BASHPID.stderr"
   shift 3
   for _ in $(seq 1 $((seconds * 5))); do
-    if got="$("$@")" && [[ $got == "$want" ]]; then ok "$label"; return; fi
+    matched=false
+    if got="$("$@" 2>"$err")" && [[ $got == "$want" ]]; then matched=true; fi
+    reader_stderr "$label" "$err" || return 0
+    if [[ $matched == true ]]; then ok "$label"; return; fi
     sleep 0.2
   done
   fail "$label: got $got want $want"
@@ -352,7 +356,8 @@ expect "the status counts the copies kept" '{"keptDesktop": 2, "keptBrowser": 0}
 
 # The space around a card's text, from the card's rectangle and its visible
 # text lines, as `top=<px> bottom=<px> side=<px> height=<px>` for the card
-# whose summary is SUMMARY on the first screen.
+# whose summary is SUMMARY on the first screen; `absent` before the card
+# exists and `no-text` while none of its text lines is visible.
 text_space() {
   local cards texts
   cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary)" || return
@@ -363,6 +368,7 @@ card = next(((s, r) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
 if card is None: print("absent"); sys.exit()
 screen, (x, y, w, h) = card
 lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and x <= r[0] < x + w and y <= r[1] < y + h]
+if not lines: print("no-text"); sys.exit()
 top, bottom, left = min(r[1] for r in lines), max(r[1] + r[3] for r in lines), min(r[0] for r in lines)
 print("top=%d bottom=%d side=%d height=%d" % (top - y, y + h - bottom, left - x, h))' "$1" "$cards" "$texts"
 }
