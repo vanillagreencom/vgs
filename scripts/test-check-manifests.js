@@ -49,7 +49,7 @@ row("missing entry point is refused and prints no ok line", tmp => { const d = p
 row("entry point directory is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, good, false); fs.mkdirSync(path.join(d, "Service.qml")); return ["--", d]; }, 1, "entry point for service not a file", "ok       acme.one");
 row("duplicate id across directories is refused", tmp => { const a = path.join(tmp, "a"), b = path.join(tmp, "b"); plugin(a, good, true); plugin(b, good, true); return ["--", a, b]; }, 1, "already used by");
 row("unparseable manifest is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, "{not json", true); return ["--", d]; }, 1, "manifest does not parse");
-row("a manifest the judge refuses is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ requires: [] }, good), true); return ["--", d]; }, 1, 'unknown key "requires"', "ok       acme.one");
+row("a manifest the judge refuses is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ requires: [] }, good), true); return ["--", d]; }, 1, "requires is refused: a plugin names no other plugin (D005)", "ok       acme.one");
 // The manifest's icon is judged against the shipped icon set, which the
 // judge imports; offline, the loader resolves that import.
 row("an icon from the shipped set passes offline", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ icon: "settings" }, good), true); return ["--", d]; }, 0, "ok       acme.one");

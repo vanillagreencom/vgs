@@ -243,7 +243,7 @@ verify(load(logicFile), load(layerFile));
 // Each control removes one rule from a copy of one file and keeps the text
 // around it. The suite must fail on every copy.
 const CONTROLS = [
-    [logicFile, "hyprland is a manifest key", "\"appearance\", \"hyprland\"];", "\"appearance\"];"],
+    [logicFile, "hyprland is a manifest key", "\"appearance\", \"hyprland\", ", "\"appearance\", "],
     [logicFile, "key parts upper case", "return part.trim().toUpperCase();", "return part.trim();"],
     [logicFile, "modifier order", "var ordered = HYPRLAND_MODIFIERS.filter(function (mod) { return mods.indexOf(mod) !== -1; });", "var ordered = mods;"],
     [logicFile, "key string", "if (typeof text !== \"string\")\n        return { ok: false, error: \"must be a string", "if (false)\n        return { ok: false, error: \"must be a string"],
@@ -315,12 +315,13 @@ const CONTROLS = [
 ];
 
 // A copy sits at its file's own place in a temporary tree, beside the icon
-// set PluginLogic.js imports.
+// set and the package-manager table PluginLogic.js imports.
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hyprland-layer-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
     fs.symlinkSync(path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
+    fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "PackageManagers.js"), path.join(temp, "shell", "Core", "PackageManagers.js"));
     CONTROLS.forEach(([file, label, needle, replacement], index) => {
         const source = fs.readFileSync(file, "utf8");
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once in ${path.basename(file)}`);
