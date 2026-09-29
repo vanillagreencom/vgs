@@ -34,6 +34,28 @@ Item {
         Rectangle { width: parent.width; height: 220; color: "transparent" }
     }
 
+    Pane {
+        id: emptyBody
+        x: 260
+        width: 200
+        fitToContent: true
+        container: "dialog"
+        header: [ Label { text: "Header"; role: "h3"; width: parent.width } ]
+        footer: [ Button { text: "Apply"; variant: "secondary" } ]
+    }
+
+    Pane {
+        id: hiddenBody
+        x: 260
+        y: 120
+        width: 200
+        fitToContent: true
+        container: "dialog"
+        header: [ Label { text: "Header"; role: "h3"; width: parent.width } ]
+        Rectangle { width: parent.width; height: 80; color: "transparent"; visible: false }
+        footer: [ Button { text: "Apply"; variant: "secondary" } ]
+    }
+
     TestCase {
         name: "pane"
         when: windowShown
@@ -72,6 +94,25 @@ Item {
             compare(UnitTheme.override({ radius: { md: 20 }, inset: { panel: 12 } }), "ok");
             compare(pane.contentInset, 20);
             compare(scroll(pane).contentWidth, pane.width - 40);
+        }
+
+        function test_header_and_footer_keep_one_gap_when_the_body_is_empty() {
+            compare(emptyBody.bodyContentHeight, 0);
+            compare(footerSlot(emptyBody).y, headerSlot(emptyBody).y + headerSlot(emptyBody).height + emptyBody.gap);
+            compare(emptyBody.implicitHeight, 2 * emptyBody.contentInset + headerSlot(emptyBody).height + emptyBody.gap + footerSlot(emptyBody).height);
+            compare(hiddenBody.bodyContentHeight, 0);
+            compare(footerSlot(hiddenBody).y, headerSlot(hiddenBody).y + headerSlot(hiddenBody).height + hiddenBody.gap);
+            compare(hiddenBody.implicitHeight, 2 * hiddenBody.contentInset + headerSlot(hiddenBody).height + hiddenBody.gap + footerSlot(hiddenBody).height);
+        }
+
+        function test_dialog_padding_token_sets_the_dialog_container_inset() {
+            compare(UnitTheme.override({ dialog: { padding: 31 } }), "ok");
+            compare(emptyBody.contentInset, 31);
+            compare(headerSlot(emptyBody).x, 31);
+            compare(UnitTheme.override({ inset: { dialog: 27 } }), "ok");
+            compare(Theme.dialog.padding, 27);
+            compare(emptyBody.contentInset, 27);
+            compare(headerSlot(emptyBody).x, 27);
         }
     }
 }

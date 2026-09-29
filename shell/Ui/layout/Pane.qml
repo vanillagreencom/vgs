@@ -17,12 +17,13 @@ Item {
     property alias header: headerSlot.data
     default property alias body: bodyColumn.data
     property alias footer: footerSlot.data
-    readonly property real contentInset: Math.max(insetOf(container), radiusOf(container))
+    readonly property real contentInset: Math.max(paddingOf(container), radiusOf(container))
     readonly property real contentWidth: Math.max(0, width - 2 * contentInset)
     readonly property real bodyContentHeight: bodyColumn.implicitHeight
     readonly property real headerHeight: headerSlot.children.length > 0 ? headerSlot.implicitHeight : 0
     readonly property real footerHeight: footerSlot.children.length > 0 ? footerSlot.implicitHeight : 0
-    readonly property real headerGap: headerHeight > 0 && bodyContentHeight > 0 ? gap : 0
+    readonly property bool contentBelowHeader: bodyContentHeight > 0 || footerHeight > 0
+    readonly property real headerGap: headerHeight > 0 && contentBelowHeader ? gap : 0
     readonly property real footerGap: footerHeight > 0 && bodyContentHeight > 0 ? gap : 0
     readonly property real uncappedHeight: 2 * contentInset + headerHeight + headerGap + bodyContentHeight + footerGap + footerHeight
     readonly property real cappedHeight: maximumHeight > 0 ? Math.min(uncappedHeight, maximumHeight) : uncappedHeight
@@ -31,11 +32,15 @@ Item {
     implicitWidth: Math.max(headerSlot.implicitWidth, bodyColumn.implicitWidth, footerSlot.implicitWidth) + 2 * contentInset
     implicitHeight: fitToContent ? cappedHeight : uncappedHeight
 
-    function insetOf(name) {
-        const found = Theme.inset[name];
-        if (found !== undefined) return found;
-        console.error("Pane: no inset named " + JSON.stringify(name));
-        return Theme.inset.panel;
+    function paddingOf(name) {
+        switch (name) {
+        case "dialog": return Theme.dialog.padding;
+        case "popover": return Theme.popover.padding;
+        case "panel": return Theme.surface.padding;
+        case "window": return Theme.inset.window;
+        }
+        console.error("Pane: no padding rule named " + JSON.stringify(name));
+        return Theme.surface.padding;
     }
 
     function radiusOf(name) {

@@ -54,28 +54,21 @@ FocusScope {
                 width: layout.contentWidth
                 spacing: Theme.space.sm
 
-                Item {
+                PageHeader {
                     width: layout.contentWidth
-                    height: Math.max(heading.height, add.height)
+                    text: page.panel.title
 
-                    Label {
-                        id: heading
-                        role: "h2"
-                        text: page.panel.title
-                        width: add.x - Theme.space.sm
-                        elide: Text.ElideRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Button {
-                        id: add
-                        text: "Add plugin"
-                        iconName: "circle-plus"
-                        variant: "secondary"
-                        size: "sm"
-                        x: parent.width - width
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: page.panel.addPlugin()
-                    }
+                    trailing: [
+                        Button {
+                            id: add
+                            text: "Add plugin"
+                            iconName: "circle-plus"
+                            variant: "secondary"
+                            size: "sm"
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: page.panel.addPlugin()
+                        }
+                    ]
                 }
                 Label {
                     role: "hint"

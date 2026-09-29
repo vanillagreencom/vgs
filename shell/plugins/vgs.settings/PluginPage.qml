@@ -31,7 +31,7 @@ FocusScope {
     readonly property bool isSelf: row !== null && panel.shell !== null && row.id === panel.shell.manifest.id
     readonly property alias scrollArea: layout.scrollArea
     readonly property alias titleMenu: menu
-    readonly property alias title: title
+    readonly property alias title: titleHeader.titleButton
 
     // The schema's keys by section: [{ group, keys }], entries without a
     // group first under "", then each group in the order its first entry
@@ -82,42 +82,36 @@ FocusScope {
         bodySpacing: 0
 
         header: [
-            Item {
+            PageHeader {
+                id: titleHeader
                 width: parent.width
-                height: Theme.size.control.md
+                text: page.row === null ? "" : page.row.name
+                menu: menu
 
-                IconButton {
-                    id: back
-                    iconName: "chevron-left"
-                    label: "Back to the plugin list"
-                    size: "sm"
-                    anchors.verticalCenter: parent.verticalCenter
-                    onClicked: page.panel.back()
-                }
+                leading: [
+                    IconButton {
+                        id: back
+                        iconName: "chevron-left"
+                        label: "Back to the plugin list"
+                        size: "sm"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: page.panel.back()
+                    }
+                ]
 
-                TitleButton {
-                    id: title
-                    x: back.width + Theme.space.sm
-                    width: Math.min(implicitWidth, parent.width - x)
-                    anchors.verticalCenter: parent.verticalCenter
-                    role: "h2"
-                    text: page.row === null ? "" : page.row.name
-                    menu: menu
-
-                    Menu {
-                        id: menu
-                        Repeater {
-                            model: ScriptModel {
-                                values: page.panel.plugins
-                                objectProp: "id"
-                            }
-                            MenuItem {
-                                required property var modelData
-                                text: modelData.name
-                                iconName: modelData.icon
-                                checked: page.row !== null && modelData.id === page.row.id
-                                onTriggered: page.panel.openPlugin(modelData.id)
-                            }
+                Menu {
+                    id: menu
+                    Repeater {
+                        model: ScriptModel {
+                            values: page.panel.plugins
+                            objectProp: "id"
+                        }
+                        MenuItem {
+                            required property var modelData
+                            text: modelData.name
+                            iconName: modelData.icon
+                            checked: page.row !== null && modelData.id === page.row.id
+                            onTriggered: page.panel.openPlugin(modelData.id)
                         }
                     }
                 }

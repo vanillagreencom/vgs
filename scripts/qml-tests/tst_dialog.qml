@@ -39,6 +39,22 @@ Item {
         title: "Install gum?"
         actions: [{ label: "Not now", role: "cancel" }, { label: "Install", role: "accept", enabled: false }]
     }
+    Dialog {
+        id: emptyBody
+        x: 260
+        y: 300
+        title: "Download wallpaper?"
+        message: "The file is ready."
+        actions: [{ label: "Cancel", role: "cancel" }, { label: "Download", role: "accept" }]
+    }
+    Dialog {
+        id: hiddenBody
+        x: 260
+        y: 420
+        title: "Apply theme?"
+        actions: [{ label: "Cancel", role: "cancel" }, { label: "Apply", role: "accept" }]
+        Label { role: "body"; text: "Hidden"; visible: false }
+    }
     SignalSpy { id: accepts; target: dialog; signalName: "accepted" }
     SignalSpy { id: rejects; target: dialog; signalName: "rejected" }
     SignalSpy { id: threeAccepts; target: three; signalName: "accepted" }
@@ -62,6 +78,8 @@ Item {
         function titleLabel(of) { return headerColumn(of).children[0]; }
         function messageLabel(of) { return headerColumn(of).children[1]; }
         function footer(of) { return pane(of).children[2].children[0]; }
+        function headerSlot(of) { return pane(of).children[0]; }
+        function footerSlot(of) { return pane(of).children[2]; }
         function spinner(of) { return footer(of).children[0]; }
         function ring(button) { return button.background.children[button.background.children.length - 1]; }
 
@@ -223,6 +241,15 @@ Item {
             compare(pane(three).scrollArea.contentItem.children[0].children[0].visible, false);
         }
 
+        function test_actions_keep_one_gap_under_the_header_when_the_body_is_empty() {
+            for (const ofDialog of [emptyBody, hiddenBody]) {
+                const p = pane(ofDialog);
+                compare(p.bodyContentHeight, 0);
+                compare(footerSlot(ofDialog).y, headerSlot(ofDialog).y + headerSlot(ofDialog).height + p.gap);
+                compare(ofDialog.implicitHeight, 2 * p.contentInset + p.headerHeight + p.gap + p.footerHeight);
+            }
+        }
+
         function test_tall_content_scrolls_under_the_maximum_height() {
             const tall = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nDialog { width: 360; availableHeight: 200; title: \"Tall\"; Rectangle { width: parent.width; height: 400; color: \"transparent\" } }", root);
             tryCompare(tall, "implicitHeight", 160);
@@ -249,6 +276,16 @@ Item {
             compare(titleLabel(dialog).role, "h2");
             compare(titleLabel(dialog).font.pixelSize, Theme.text.h2.size);
             compare(messageLabel(dialog).role, "hint");
+        }
+
+        function test_padding_changes_reach_the_pane_inset() {
+            compare(UnitTheme.override({ dialog: { padding: 31 } }), "ok");
+            compare(pane(emptyBody).contentInset, 31);
+            compare(headerSlot(emptyBody).x, 31);
+            compare(UnitTheme.override({ inset: { dialog: 27 } }), "ok");
+            compare(Theme.dialog.padding, 27);
+            compare(pane(emptyBody).contentInset, 27);
+            compare(headerSlot(emptyBody).x, 27);
         }
     }
 }

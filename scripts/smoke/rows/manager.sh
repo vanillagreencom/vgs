@@ -186,6 +186,26 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the list's heading, search field and rows share its edges, each row's lines on its icon" '[]' list_alignment
+page_header_height() {
+  local rows
+  rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
+  python3 - "$rows" "$1" <<'PY'
+import json, sys
+rows, page_type = json.loads(sys.argv[1]), sys.argv[2]
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+pages = [i for i, r in enumerate(rows) if r["type"] == page_type and r["box"][2] > 0 and r["box"][3] > 0]
+if len(pages) != 1:
+    print("pages=%d" % len(pages)); sys.exit()
+headers = [rows[i] for i, r in enumerate(rows) if r["type"] == "PageHeader" and inside(i, pages[0]) and r["box"][2] > 0 and r["box"][3] > 0]
+print(json.dumps(headers[0]["box"][3]) if len(headers) == 1 else "headers=%d" % len(headers))
+PY
+}
+list_header_height="$(page_header_height ListPage)" || fail "the list page header row is unreadable"
+[[ $list_header_height != *=* ]] || fail "the list page header row is unreadable: $list_header_height"
 # The keyboard reaches the shown page alone: twelve steps of Tab and of
 # Shift+Tab from the focused item stay on it, and a real Tab moves focus on
 # it; the page slid out is hidden, not merely offscreen.
@@ -233,6 +253,15 @@ expect_poll "Tab from the pushed page stays on it" '["PluginPage"]' focus_pages 
 expect_poll "Shift+Tab from the pushed page stays on it" '["PluginPage"]' focus_pages -12
 type_keys -k Tab || fail "sending Tab to the page failed"
 expect_poll "a real Tab keeps the focus on the page" '["PluginPage"]' focus_pages 0
+header_height_pair() {
+  local page_height
+  page_height="$(page_header_height PluginPage)" || return
+  python3 - "$1" "$page_height" <<'PY'
+import json, sys
+print(json.dumps([json.loads(sys.argv[1]), json.loads(sys.argv[2])]))
+PY
+}
+geometry expect_poll "the list page and plugin page header rows share one measured height" "[$list_header_height, $list_header_height]" header_height_pair "$list_header_height"
 section_names() { ipc smoke itemTexts window vgs.settings SectionHeader | py_reply 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin) if t]))'; }
 expect_poll "the page draws one section per schema group, ungrouped first" '["Settings", "Layout", "Behaviour", "Look"]' section_names
 page_fields() { ipc smoke drawnFields window vgs.settings | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
