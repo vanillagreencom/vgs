@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The scratch-directory guard at the top of the suites that remove their
 # scratch directory on exit: scripts/vgsh-rows.sh (sourced by every
-# scripts/test-vgsh*.sh) and the five suites below that make their own. A
+# scripts/test-vgsh*.sh) and the six suites below that make their own. A
 # stub mktemp first on PATH answers each way a failed or wrong mktemp can,
 # and each subject runs from a disposable caller directory inside this
 # suite's scratch. Each case pins exit 1 and the first stderr line, and
@@ -57,6 +57,7 @@ subjects=(
   "test-notifications-token-status.sh|$repo/scripts/test-notifications-token-status.sh"
   "test-sandbox-shots.sh|$repo/scripts/test-sandbox-shots.sh"
   "test-smoke-verdict.sh|$repo/scripts/test-smoke-verdict.sh"
+  "test-smoke-teardown.sh|$repo/scripts/test-smoke-teardown.sh"
 )
 
 # run PREFIX STUB KEY BASH_ARGS...: run bash BASH_ARGS from a fresh caller

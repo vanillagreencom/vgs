@@ -80,24 +80,9 @@ check_unexpected_log() { # LABEL LOG
   fi
 }
 
-# Runs on every exit, so it is armed before either directory exists and
-# removes only what was made.
-cleanup() {
-  local pg
-  for pg in "${pgids[@]}"; do kill -TERM -- "-$pg" 2>/dev/null || true; done
-  sleep 0.5
-  for pg in "${pgids[@]}"; do kill -KILL -- "-$pg" 2>/dev/null || true; done
-  if [[ $keep == true ]]; then
-    echo "qml-smoke: sandbox kept at $sandbox (runtime dir $rt_dir)"
-  else
-    [[ -z $sandbox ]] || chmod -R u+rwx -- "$sandbox" 2>/dev/null || echo "qml-smoke: cleanup=chmod-failed path=$sandbox" >&2
-    [[ -z $sandbox ]] || rm -rf -- "$sandbox"
-    [[ -z $rt_dir ]] || rm -rf -- "$rt_dir"
-  fi
-  # A caller's export of another tree is read only by the copy below.
-  [[ -z ${source_tree:-} ]] || rm -rf -- "$source_tree"
-}
-trap cleanup EXIT
+# The teardown runs on every exit, so it is armed before either directory
+# exists and removes only what was made.
+source "$repo/scripts/smoke/teardown.sh"
 
 sandbox="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-smoke.XXXXXX")"
 # Keep the runtime path short to leave room for Hyprland's IPC socket names.
