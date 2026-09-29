@@ -177,12 +177,33 @@ Singleton {
         return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
     }
 
-    // The `doctor` capability's request for OWNER's COMMANDS, the core's or
-    // an enabled plugin's, judged by PluginLogic.noticeOwnerError first.
-    function request(owner, commands) {
-        const refusal = Logic.noticeOwnerError(owner, Registry.requirementOwners, Object.keys(Registry.manifests).filter(id => Registry.isEnabled(id)));
+    // The `doctor` capability's choice of OWNER's COMMANDS, the core's or
+    // an enabled plugin's. The owner and the commands are judged at once;
+    // the notice is raised after a scan this choice starts, since the view
+    // that asks read PATH later than the last scan did (a removal through
+    // mise rescans nothing), so a command that view lists missing is judged
+    // missing or present by the same PATH. Answers `ok` once that scan is
+    // asked for; the notice shows after it only while a command is missing.
+    function chosen(owner, commands) {
+        const refusal = choiceRefusal(owner, commands);
         if (refusal !== "") return refusal;
-        return raise(owner, "chosen", commands);
+        afterScan(() => {
+            const late = root.choiceRefusal(owner, commands);
+            const answer = late !== "" ? late : root.raise(owner, "chosen", commands);
+            if (answer !== "ok" && answer !== "satisfied") console.warn("notices: chosen=" + owner + " " + answer);
+        });
+        return "ok";
+    }
+
+    // Why a `doctor` choice of OWNER's COMMANDS is refused, or "":
+    // PluginLogic.noticeOwnerError, then noticeRequest's own refusals, which
+    // read no missing command.
+    function choiceRefusal(owner, commands) {
+        const owners = Registry.requirementOwners;
+        const refusal = Logic.noticeOwnerError(owner, owners, Object.keys(Registry.manifests).filter(id => Registry.isEnabled(id)));
+        if (refusal !== "") return refusal;
+        const answer = Logic.noticeRequest(owners[owner], [], "chosen", commands).answer;
+        return answer.startsWith("refused: ") ? answer : "";
     }
 
     // Install: the shown notice's first installable group through the core

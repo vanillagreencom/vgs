@@ -150,7 +150,7 @@ Singleton {
             get missing() { return Notices.missingOf(ctx.id).slice(); }
         }),
         doctor: ctx => ({
-            offer: (owner, commands) => Notices.request(owner, commands),
+            offer: (owner, commands) => Notices.chosen(owner, commands),
             get missing() { return Registry.enabledOwnerMissing(); }
         })
     })

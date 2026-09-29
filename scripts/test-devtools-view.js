@@ -70,7 +70,7 @@ function verify(logic) {
     same(logic.queriesFor("refresh", { vgs: 0, updates: 0 }, 1), ["launchers", "requirements", "vgs", "updates"]);
     same(logic.queriesFor("tui", {}, 0), ["launchers", "requirements", "updates"]);
     same(logic.queriesFor("setting", {}, 0), ["launchers"]);
-    same(logic.queriesFor("scan", {}, 0), ["requirements"]);
+    same(logic.queriesFor("scan", {}, 0), ["launchers", "requirements", "updates"], "a scan that found another set lists again, since it can bring mise");
     const fresh = logic.NETWORK_FRESH_MS;
     same(logic.queriesFor("open", { vgs: 1000, updates: 1000 }, 1000 + fresh - 1), ["launchers", "requirements"], "an open inside the window asks no remote");
     same(logic.queriesFor("open", { vgs: 1000, updates: 2000 }, 1000 + fresh), ["launchers", "requirements", "vgs"], "an open asks each remote whose answer is stale");
@@ -105,6 +105,8 @@ function verify(logic) {
     // Status values.
     same(logic.statusValues({}), { catalog: { tools: null, requirements: null, vgs: null, updates: null } }, "nothing answered publishes the empty catalog alone");
     same(logic.statusValues({ vgs: ok(self({})) }).checks, { tone: "ok", text: "Every check answered" });
+    same(logic.statusValues({ vgs: ok(self({ error: "latest=timeout" })) }).checks, { tone: "warning", text: "vgsh self status failed: latest=timeout; a count a failed check feeds keeps its last answer" },
+        "a self status that exited 0 with an error is a failed check");
     const listed = list({ agents: [row({ installed: true, origin: "mise", version: "2", actions: ["update", "remove"] }), row({ id: "codex" })], apps: [row({ id: "cmux", installed: null, error: "e" })] },
         [{ id: "github:o/x", installed: true, version: "1", actions: ["update", "remove"] }]);
     const values = logic.statusValues({ catalog: ok(listed), updates: ok({ count: 3, packages: [] }), requirements: ok({ core: [requirement({})], plugins: { "acme.y": [requirement({ state: "present" })] } }) });
@@ -114,7 +116,7 @@ function verify(logic) {
     const failed = logic.statusValues({ catalog: { value: null, error: "mise=absent" }, updates: { value: null, error: "timeout=120" }, requirements: { value: null, error: "exit=1" } });
     same(failed.mise, { tone: "danger", text: "Unknown: the tool list failed: mise=absent" });
     same(["installed", "outdated", "missingRequirements"].filter(k => k in failed), [], "a failed query publishes no count");
-    same(failed.checks, { tone: "warning", text: "The tool list failed: mise=absent; vgsh doctor failed: exit=1; The update check failed: timeout=120; a count it feeds is from its last check that answered" },
+    same(failed.checks, { tone: "warning", text: "The tool list failed: mise=absent; vgsh doctor failed: exit=1; The update check failed: timeout=120; a count a failed check feeds keeps its last answer" },
         "a failure after a count was published names the count as older than the check");
 
     // TUI ends.
@@ -200,7 +202,6 @@ function verify(logic) {
     assert.equal(logic.replyLine("ok"), "");
     assert.equal(logic.replyLine("refused: tui=install reason=busy"), "", "a busy answer raised the live window");
     assert.equal(logic.replyLine("refused: tui=install reason=launcher-missing"), "refused: tui=install reason=launcher-missing");
-    assert.equal(logic.replyLine("satisfied"), "Nothing to install: the core's last scan finds the command");
     assert.equal(logic.replyLine("refused: owner=acme.x reason=disabled"), "refused: owner=acme.x reason=disabled");
     assert.equal(logic.missingKey({ "acme.b": ["x"], core: [] }), logic.missingKey({ core: [], "acme.b": ["x"] }), "the owners' order is no change");
     assert.notEqual(logic.missingKey({ core: [] }), logic.missingKey({ core: ["gum"] }), "another missing command is a change");
@@ -227,6 +228,7 @@ const CONTROLS = [
     ["install only with a package", 'if (requirement.package === null) out.lines.push("No package on this system provides it; install " + requirement.command + " by hand");\n    else out.actions', "out.actions"],
     ["empty sections are left out", "if (drawn.rows.length > 0 || drawn.lines.length > 0) out.push(drawn);", "out.push(drawn);"],
     ["checks name a failure", "if (failed.length === 0) return", "if (true) return"],
+    ["a self status's own error fails its check", '    if (name === "vgs" && answer.value.error !== null) return answer.value.error;\n', ""],
     ["summary names a failed update check", '    else if (updates !== null) parts.push("the update check failed: " + updates.error);\n', ""],
     ["the missing key sorts its owners", "Object.keys(missing).sort().map(", "Object.keys(missing).map("],
     ["busy says nothing", ' || /^refused: tui=\\S+ reason=busy$/.test(reply)', ""]

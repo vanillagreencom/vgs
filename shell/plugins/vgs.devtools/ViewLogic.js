@@ -46,14 +46,14 @@ var QUERIES = {
 // `setting` a change of writeLaunchers, `scan` a change of the missing
 // commands the core's scan reports for the core and each enabled plugin
 // (the `doctor` capability's `missing`), such as an install the core's
-// requirement notice ran.
+// requirement notice ran, which can bring mise itself.
 var TRIGGERS = {
     start: ["launchers", "requirements", "vgs", "updates"],
     refresh: ["launchers", "requirements", "vgs", "updates"],
     open: ["launchers", "requirements", "vgs", "updates"],
     tui: ["launchers", "requirements", "updates"],
     setting: ["launchers"],
-    scan: ["requirements"]
+    scan: ["launchers", "requirements", "updates"]
 };
 
 // An `open` asks a remote again only when that query's last answer is
@@ -221,15 +221,23 @@ function catalogValue(answers) {
     };
 }
 
+// Why query NAME's ANSWER failed, or null: its own error, or for `vgs` the
+// error the self-status reports inside an answer that exited 0.
+function answerError(name, answer) {
+    if (answer.error !== null) return answer.error;
+    if (name === "vgs" && answer.value.error !== null) return answer.value.error;
+    return null;
+}
+
 // The `checks` status: whether every query that answered did so without a
 // failure, and else which failed and why. A published count keeps the
 // value of its query's last answer that succeeded, since a status key is
-// never unset, so this names the counts that are older than the check.
+// never unset, so this says so.
 function checksValue(answers) {
-    var failed = Object.keys(QUERY_LABELS).filter(function (name) { return hasOwn(answers, name) && answers[name].error !== null; });
+    var failed = Object.keys(QUERY_LABELS).filter(function (name) { return hasOwn(answers, name) && answerError(name, answers[name]) !== null; });
     if (failed.length === 0) return { tone: "ok", text: "Every check answered" };
-    return { tone: "warning", text: clip(failed.map(function (name) { return QUERY_LABELS[name] + " failed: " + answers[name].error; }).join("; ")
-        + "; a count it feeds is from its last check that answered") };
+    return { tone: "warning", text: clip(failed.map(function (name) { return QUERY_LABELS[name] + " failed: " + answerError(name, answers[name]); }).join("; ")
+        + "; a count a failed check feeds keeps its last answer") };
 }
 
 // The status values ANSWERS support now, by key, for Service.qml to
@@ -450,12 +458,10 @@ function runningLines(state) {
 }
 
 // The line the panel shows for the REPLY an action was answered with: none
-// for `ok`, none for a TUI's `busy`, whose answer is the live run's window
-// raised, and for a requirement notice's `satisfied` that the scan already
-// finds the command.
+// for `ok`, and none for a TUI's `busy`, whose answer is the live run's
+// window raised.
 function replyLine(reply) {
     if (reply === "ok" || /^refused: tui=\S+ reason=busy$/.test(reply)) return "";
-    if (reply === "satisfied") return "Nothing to install: the core's last scan finds the command";
     return clip(reply);
 }
 
