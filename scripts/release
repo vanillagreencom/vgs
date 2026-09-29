@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Make the GitHub release of VGS X.Y.Z from its pushed tag.
+#
+#   scripts/release [--dry-run] X.Y.Z
+#
+# Run it from a clean checkout whose HEAD is the tag vX.Y.Z; docs/RELEASING.md
+# holds the whole flow. Before it writes anything it refuses:
+#   - X.Y.Z that is not VERSION's line;
+#   - a tree with changes or untracked files git does not ignore;
+#   - a missing tag vX.Y.Z, or one that names a commit other than HEAD;
+#   - install.sh's release_key empty or not a fingerprint: the release
+#     signs with the key the curl installer verifies SHA256SUMS against;
+#   - gpg without that key's secret key;
+#   - GitHub's refs/tags/vX.Y.Z missing or naming another object than the
+#     local tag, since `gh release create --verify-tag` publishes GitHub's.
+# Then it writes four files into dist/:
+#   vgs-X.Y.Z.tar.gz  `git archive --prefix=vgs-X.Y.Z/` of the tag, `gzip -n`;
+#                     no architecture in the name, so v1's install.sh, which
+#                     resolves releases/latest, finds no archive of its own
+#   install.sh        the tag's install.sh, the curl installer
+#   SHA256SUMS        the sha256 of those two, one line each
+#   SHA256SUMS.asc    `gpg --armor --detach-sign` of SHA256SUMS by release_key
+# and runs `gh release create vX.Y.Z --verify-tag` with those four files and
+# generated notes. Other files in dist/ are never touched or uploaded.
+# --dry-run makes every check and the first three files, then prints the
+# signing key and the gh command instead of running them.
+#
+# Output, on stdout: `release: sha256 name=vgs-X.Y.Z.tar.gz value=<hex>`,
+# the sum the vgs AUR recipe pins, then `release: ok tag=vX.Y.Z
+# dry-run=<true|false>`. A refusal is one line on stderr, `release: refused:
+# <key>=<value> ...`, then English. Exit 0 on success, 1 for a refusal, 2 for
+# an argument.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo="$(cd -- "$(dirname -- "$self")/.." && pwd -P)"
+repository=vanillagreencom/vgs
+remote_url="https://github.com/$repository.git"
+
+refuse() { # STATUS KEY [DETAIL...]
+  local status="$1"
+  printf 'release: refused: %s\n' "$2" >&2
+  shift 2
+  [[ $# -eq 0 ]] || printf '%s\n' "$@" >&2
+  exit "$status"
+}
+
+dry_run=false
+version=""
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      [[ $dry_run == false ]] || refuse 2 "argument=$arg" "--dry-run is given once"
+      dry_run=true ;;
+    -h|--help) sed -n '2,/^[^#]/{/^#/{s/^# \{0,1\}//;p}}' "$self"; exit 0 ;;
+    -*) refuse 2 "argument=$arg" ;;
+    *)
+      [[ -z $version ]] || refuse 2 "argument=$arg" "one version per release"
+      version="$arg" ;;
+  esac
+done
+[[ -n $version ]] || refuse 2 "argument=missing" "usage: scripts/release [--dry-run] X.Y.Z"
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse 2 "version=$version reason=not-a-version"
+tag="v$version"
+
+IFS= read -r want <"$repo/VERSION" || refuse 1 "version-file=unreadable path=$repo/VERSION"
+[[ $version == "$want" ]] || refuse 1 "version=mismatch want=$want got=$version" "the release is VERSION's; commit the bump and tag it first"
+
+changes="$(git -C "$repo" status --porcelain --untracked-files=normal)" || refuse 1 "git=status path=$repo"
+[[ -z $changes ]] || refuse 1 "tree=dirty path=$repo" "$changes"
+
+tag_object="$(git -C "$repo" rev-parse --verify --quiet "refs/tags/$tag")" ||
+  refuse 1 "tag=missing name=$tag" "tag the release commit: git tag -s $tag -m \"VGS $version\""
+tag_commit="$(git -C "$repo" rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || refuse 1 "tag=not-a-commit name=$tag"
+head="$(git -C "$repo" rev-parse --verify HEAD)" || refuse 1 "git=rev-parse path=$repo"
+[[ $tag_commit == "$head" ]] || refuse 1 "tag=not-head name=$tag commit=$tag_commit head=$head" "check out $tag and run the release again"
+
+# install.sh owns the fingerprint: the curl installer is fetched alone and
+# reads no other file, so the release reads its one assignment.
+key_lines=()
+while IFS= read -r line || [[ -n $line ]]; do
+  if [[ $line =~ ^[[:space:]]*release_key= ]]; then key_lines+=("$line"); fi
+done <"$repo/install.sh"
+[[ ${#key_lines[@]} -eq 1 && ${key_lines[0]} =~ ^[[:space:]]*release_key=\"([^\"]*)\"$ ]] ||
+  refuse 1 "release-key=unreadable path=install.sh count=${#key_lines[@]}" "install.sh must assign release_key once, as release_key=\"<fingerprint>\""
+key="${BASH_REMATCH[1]}"
+[[ -n $key ]] || refuse 1 "release-key=unset path=install.sh" "set release_key in install.sh to the release signing key's fingerprint, commit and tag again"
+[[ $key =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]] || refuse 1 "release-key=malformed value=$key path=install.sh" "release_key is the full upper-case fingerprint gpg prints"
+
+command -v gpg >/dev/null || refuse 1 "tool=missing name=gpg"
+[[ $dry_run == true ]] || command -v gh >/dev/null || refuse 1 "tool=missing name=gh"
+gpg --batch --list-secret-keys -- "$key" >/dev/null 2>&1 ||
+  refuse 1 "release-key=no-secret-key key=$key" "gpg holds no secret key for the fingerprint install.sh names"
+
+remote="$(GIT_TERMINAL_PROMPT=0 git -C "$repo" ls-remote -- "$remote_url" "refs/tags/$tag")" ||
+  refuse 1 "git=ls-remote url=$remote_url"
+remote_object=""
+while IFS=$'\t' read -r object ref; do
+  [[ $ref == "refs/tags/$tag" ]] && remote_object="$object"
+done <<<"$remote"
+[[ -n $remote_object ]] || refuse 1 "tag=not-pushed name=$tag url=$remote_url" "git push origin $tag"
+[[ $remote_object == "$tag_object" ]] || refuse 1 "tag=differs name=$tag local=$tag_object remote=$remote_object"
+
+archive="vgs-$version.tar.gz"
+assets=("$archive" install.sh SHA256SUMS SHA256SUMS.asc)
+dist="$repo/dist"
+mkdir -p -- "$dist" || refuse 1 "dist=unwritable path=$dist"
+stage="$(mktemp -d -- "$dist/.release.XXXXXX")" || refuse 1 "dist=unwritable path=$dist"
+trap 'rm -rf -- "${stage:?}"' EXIT
+
+git -C "$repo" archive --format=tar --prefix="vgs-$version/" "refs/tags/$tag" | gzip -n -9 >"$stage/$archive" ||
+  refuse 1 "archive=failed tag=$tag"
+git -C "$repo" show "refs/tags/$tag:install.sh" >"$stage/install.sh" || refuse 1 "archive=failed name=install.sh tag=$tag"
+(cd -- "$stage" && sha256sum -- "$archive" install.sh >SHA256SUMS) || refuse 1 "sha256sum=failed path=$stage"
+sum="$(sha256sum -- "$stage/$archive")" || refuse 1 "sha256sum=failed path=$stage/$archive"
+sum="${sum%% *}"
+
+if [[ $dry_run == false ]]; then
+  gpg --local-user "$key" --armor --detach-sign --output "$stage/SHA256SUMS.asc" -- "$stage/SHA256SUMS" ||
+    refuse 1 "gpg=sign-failed key=$key"
+fi
+
+# dist/ keeps no asset of an earlier run: a SHA256SUMS.asc that signs other
+# sums would be uploaded beside them.
+for name in "${assets[@]}"; do
+  rm -f -- "${dist:?}/$name" || refuse 1 "dist=unwritable path=$dist/$name"
+  [[ ! -e $stage/$name ]] || mv -f -- "$stage/$name" "$dist/$name" || refuse 1 "dist=unwritable path=$dist/$name"
+done
+rm -rf -- "${stage:?}"
+
+create=(gh release create --repo "$repository" --verify-tag --title "VGS $version" --generate-notes -- "$tag" "${assets[@]}")
+printf 'release: sha256 name=%s value=%s\n' "$archive" "$sum"
+if [[ $dry_run == true ]]; then
+  printf 'release: would-sign key=%s name=SHA256SUMS\n' "$key"
+  printf 'release: would-run cwd=%s %s\n' "$dist" "${create[*]}"
+else
+  # Relative names: gh reads `#` in an asset path as a label.
+  (cd -- "$dist" && "${create[@]}") || refuse 1 "gh=release-create tag=$tag"
+fi
+printf 'release: ok tag=%s dry-run=%s\n' "$tag" "$dry_run"

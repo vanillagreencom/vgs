@@ -1,7 +1,7 @@
 # The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
 # the scratch directory, the child environment, the row helpers, the theme
-# tree fixture, the install source tree and the plugin and theme git source
-# fixtures. It sets
+# tree fixture, the install source tree, the plugin and theme git source
+# fixtures, the must-fail copy and the working-tree repository. It sets
 # `set -euo pipefail`, `repo`, `tmp` (removed on exit), `rt_empty`,
 # `node_bin`, `base_path`, `base_env`, `git_env` and `failures`.
 set -euo pipefail
@@ -292,4 +292,39 @@ source_tree() { # DIR VERSION_TEXT
 rows_done() { # SUITE
   if [[ $failures -gt 0 ]]; then echo "$1: failed=$failures"; exit 1; fi
   echo "$1: ok"
+}
+
+# copy_with NAME FILE NEEDLE REPLACEMENT: sets copy to a copy of FILE with
+# NEEDLE, which must occur on one line, replaced once: a suite's must-fail
+# control. A needle on no line or on several, or a copy equal to FILE,
+# stops the suite.
+copy_with() {
+  local count suite_name
+  suite_name="$(basename -- "$0" .sh)"
+  copy="$tmp/copies/$1"
+  mkdir -p "$tmp/copies"
+  count="$(grep -cF -- "$3" "$2" || true)"
+  [[ $count == 1 ]] || { echo "$suite_name: control=$1 needle-count=$count" >&2; exit 1; }
+  NEEDLE="$3" REPLACEMENT="$4" python3 -c 'import os, sys
+text = open(sys.argv[1]).read()
+open(sys.argv[2], "w").write(text.replace(os.environ["NEEDLE"], os.environ["REPLACEMENT"], 1))' "$2" "$copy"
+  if cmp -s -- "$2" "$copy"; then echo "$suite_name: control=$1 unchanged" >&2; exit 1; fi
+}
+
+# work_tree_repo DIR: a git repository at DIR holding one commit of this
+# repository's working tree as `git add -A` would commit it: the tracked
+# files that exist and the untracked files git does not ignore. It reads
+# the repository and writes nothing there.
+work_tree_repo() {
+  local file suite_name
+  suite_name="$(basename -- "$0" .sh)"
+  mkdir -p "$1"
+  git -C "$repo" ls-files -z --cached --others --exclude-standard --deduplicate |
+    while IFS= read -r -d '' file; do
+      if [[ -e $repo/$file || -L $repo/$file ]]; then printf '%s\0' "$file"; fi
+    done |
+    tar -C "$repo" --null -T - -cf - | tar -C "$1" -xf - ||
+    { echo "$suite_name: fixture=work-tree-copy" >&2; exit 1; }
+  { g init -q "$1" && g -C "$1" add -A && g -C "$1" commit -q -m "working tree"; } ||
+    { echo "$suite_name: fixture=work-tree-commit" >&2; exit 1; }
 }

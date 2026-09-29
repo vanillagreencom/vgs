@@ -150,19 +150,6 @@ signed_release() { # VERSION FINGERPRINT
 signed_release 0.5.0 "$release_fpr"
 signed_release 0.6.0 "$other_fpr"
 
-# copy_with NAME FILE NEEDLE REPLACEMENT: sets copy to a copy of FILE with
-# NEEDLE, which must occur once, replaced.
-copy_with() {
-  local count
-  copy="$tmp/copies/$1"
-  mkdir -p "$tmp/copies"
-  count="$(grep -cF -- "$3" "$2" || true)"
-  [[ $count == 1 ]] || { echo "$suite: control=$1 needle-count=$count" >&2; exit 1; }
-  NEEDLE="$3" REPLACEMENT="$4" python3 -c 'import os, sys
-text = open(sys.argv[1]).read()
-open(sys.argv[2], "w").write(text.replace(os.environ["NEEDLE"], os.environ["REPLACEMENT"], 1))' "$2" "$copy"
-  if cmp -s -- "$2" "$copy"; then echo "$suite: control=$1 unchanged" >&2; exit 1; fi
-}
 copy_with signing "$installer" 'release_key=""' "release_key=\"$release_fpr\""
 signing="$copy"
 

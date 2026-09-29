@@ -171,18 +171,18 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 # plans name consumers independently of the dependency table under test.
 repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
-installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\n'"$repo_plan"
-curl_installer_plan=$'scripts/test-install-sh.sh\n'"$repo_plan"
+installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
+curl_installer_plan=$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
 fedora_plan=$'scripts/test-fedora-srpm.sh\n'
-version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$repo_plan"
+version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 # A recipe change runs the recipe check and its controls, never the product
 # smoke; the container build runs only where the area admits it, never
 # offline.
-recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$repo_plan"
+recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-publish-aur.sh\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
@@ -194,8 +194,8 @@ cases=(
   "recipe|packaging/arch/vgs/PKGBUILD|offline|$recipe_plan"
   "recipe-all|packaging/arch/vgs-git/.SRCINFO|all|$recipe_plan"$'\nscripts/arch-packages.sh'
   "recipe-package|packaging/arch/vgs/PKGBUILD|package|scripts/arch-packages.sh"
-  "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-install-sh.sh\n'"$repo_plan"
-  "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
+  "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-install-sh.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
+  "install-manifest|packaging/install-tree.manifest|offline|scripts/test-install-tree.sh"$'\nscripts/test-release.sh\n'"$repo_plan"
   "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$recipe_plan"
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
