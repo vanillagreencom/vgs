@@ -278,7 +278,7 @@ mutations=(
   "the button's icon gap is its own step|controls/Button.qml|spacing: Theme.button.gap|spacing: Theme.space.xs|tst_spacing.qml"
   "the menu item's icon gap is its own step|overlay/MenuItem.qml|spacing: Theme.menu.item.gap|spacing: Theme.space.sm|tst_spacing.qml"
   "the badge's icon gap is its own step|feedback/Badge.qml|x: root.sizeTokens.paddingX + (icon.visible ? icon.width + Theme.badge.gap : 0)|x: root.sizeTokens.paddingX + (icon.visible ? icon.width + Theme.space.xxs : 0)|tst_spacing.qml"
-  "the badge does not optically centre text|feedback/Badge.qml|y: topForCapCenter(root.height)|y: 0|tst_feedback.qml"
+  "the badge centres text by its box|feedback/Badge.qml|y: topForCapCenter(root.height)|y: Math.round((root.height - height) / 2)|tst_feedback.qml"
   "the badge uses its implicit text width|feedback/Badge.qml|label.opticalWidth|label.implicitWidth|tst_feedback.qml"
   "the toast's icon gap is its own step|feedback/Toast.qml|spacing: Theme.toast.contentGap|spacing: Theme.space.sm|tst_spacing.qml"
   "a lone face does not fill the avatar box|feedback/AvatarGroup.qml|readonly property real faceSize: places <= 1 ? size : size * faceShare|readonly property real faceSize: size * faceShare|tst_avatargroup.qml"

@@ -242,6 +242,18 @@ settings_page() { ipc smoke readInstance "$settings_kind" vgs.settings page; }
 settings_menu_open() { ipc smoke menus "$settings_kind" vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
 # The page's one scroll area as the probe reads it.
 settings_scroll() { ipc smoke scrollAreas "$settings_kind" vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
+settings_scroll_to() { ipc smoke scrollTo "$settings_kind" vgs.settings "$1"; }
+settings_drag_page_down() { # LABEL
+  local area tx ty
+  if area="$(settings_scroll)" && [[ $area == \{* ]]; then
+    read -r tx ty < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
+    drag "$tx" "$ty" "$tx" "$((ty + 120))" || { fail "the drag on $1's thumb failed"; return 1; }
+    hover "$tx" "$((ty + 120))" || { fail "the hover on $1's dragged thumb failed"; return 1; }
+    return 0
+  fi
+  fail "$1 scroll area is unreadable: ${area:-}"
+  return 1
+}
 settings_close() {
   expect "the Settings window closes" ok ipc shell hide "$settings_kind" vgs.settings
   expect_poll "the Settings window is gone" 0 settings_count
@@ -319,10 +331,16 @@ scene_settings() { # MODE
   take "settings-$1-keys"
   expect "the window opens the Agent Warden page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.agent-warden
   expect_poll "the Agent Warden page is shown" '"vgs.agent-warden"' settings_page
+  settings_scroll_to 0 >/dev/null || fail "the Agent Warden page did not scroll to the top"
   take "settings-$1-agent-warden"
+  settings_drag_page_down "the Agent Warden page" || true
+  take "settings-$1-agent-warden-scrolled"
   expect "the window opens the Bar page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.bar
   expect_poll "the Bar page is shown" '"vgs.bar"' settings_page
+  settings_scroll_to 0 >/dev/null || fail "the Bar page did not scroll to the top"
   take "settings-$1-bar"
+  settings_drag_page_down "the Bar page" || true
+  take "settings-$1-bar-scrolled"
   expect "the window opens the launcher's page again" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown again" '"vgs.launcher"' settings_page
   click_in "$settings_surface" "$settings_kind" vgs.settings TitleButton Launcher || fail "the click on the title failed"
