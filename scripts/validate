@@ -118,6 +118,7 @@ rows=(
   "logic|theme selection edit|node scripts/test-theme-select.js|bin/lib/theme-select.js bin/lib/theme-render.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "logic|theme catalog marker|node scripts/test-theme-catalog.js|bin/lib/theme-catalog.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "logic|lucide icon data|node scripts/test-lucide-data.js|shell/Ui/icons/Lucide.js bin/lib/qml-library.js"
+  "logic|inline image text logic|node scripts/test-image-text-logic.js|shell/Ui/foundation/ImageTextLogic.js bin/lib/qml-library.js"
   "logic|launcher menu model|node scripts/test-launcher-model.js|shell/plugins/vgs.launcher/MenuModel.js shell/plugins/vgs.launcher/menu.json bin/lib/qml-library.js"
   "cli|launcher file search helper|scripts/test-launcher-file-search.sh|shell/plugins/vgs.launcher/file-search.sh"
   "logic|theme browser logic|node scripts/test-themes-browser.js|shell/plugins/vgs.themes/BrowserLogic.js shell/plugins/vgs.themes/Files.js bin/lib/qml-library.js"

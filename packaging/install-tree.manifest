@@ -96,6 +96,9 @@ f share/vgs/shell/Ui/feedback/Toast.qml
 f share/vgs/shell/Ui/foundation/Divider.qml
 f share/vgs/shell/Ui/foundation/FocusRing.qml
 f share/vgs/shell/Ui/foundation/Icon.qml
+f share/vgs/shell/Ui/foundation/ImagePool.qml
+f share/vgs/shell/Ui/foundation/ImageText.qml
+f share/vgs/shell/Ui/foundation/ImageTextLogic.js
 f share/vgs/shell/Ui/foundation/Label.qml
 f share/vgs/shell/Ui/foundation/PointerCursor.qml
 f share/vgs/shell/Ui/foundation/Scrim.qml
