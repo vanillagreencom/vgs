@@ -45,7 +45,7 @@ Omarchy's development channel is a git checkout that `omarchy-update-dev` fast-f
 
 ## Verification
 
-`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme. `scripts/check-fedora-specs.py` holds both Fedora specs to the requirement data and the preflight floor, and `scripts/fedora-container.sh` builds and installs them in a clean Fedora container.
+`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/test-install-sh.sh` proves the curl installer's layout, checks and refusals. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme. `scripts/check-fedora-specs.py` holds both Fedora specs to the requirement data and the preflight floor, and `scripts/fedora-container.sh` builds and installs them in a clean Fedora container.
 
 **Revisit When**: VGS ships architecture-specific binaries, package publication moves to a workflow, a channel needs a different runtime tree, or Fedora ships Quickshell and Hyprland at the floor, or a third-party COPR falls behind it.
 

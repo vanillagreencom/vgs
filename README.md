@@ -4,7 +4,19 @@ A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the
 
 ## Install
 
-Package recipes and the planned curl installer call `packaging/install-system.sh`. It installs one tree under `$PREFIX/share/vgs/` and links `$PREFIX/bin/vgsh` to it. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
+On any distribution, `install.sh` installs the newest release into your home directory: the tree in `~/.local/share/vgs`, and `vgsh` in `~/.local/bin`. It never uses sudo, checks every download against the release's `SHA256SUMS`, and names the package to install when a required tool is missing. Read it first: [install.sh](install.sh).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash
+# a pinned release, the development version, or removal
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash -s -- --git
+curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh | bash -s -- --uninstall
+```
+
+`vgsh self update` updates it. `--uninstall` keeps your settings in `~/.config/vgs`.
+
+Package recipes call `packaging/install-system.sh`. It installs one tree under `$PREFIX/share/vgs/` and links `$PREFIX/bin/vgsh` to it. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
 
 It needs Quickshell 0.3.1 or later, Hyprland 0.56 or later with a Lua configuration, node 18 or later, python3 and git. `bin/vgsh run` checks them before it starts and names the first one that is missing or too old.
 

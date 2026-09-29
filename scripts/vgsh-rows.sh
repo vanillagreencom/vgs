@@ -1,6 +1,7 @@
 # The assertion library the bin/vgsh suites, scripts/test-vgsh*.sh, source:
 # the scratch directory, the child environment, the row helpers, the theme
-# tree fixture and the plugin and theme git source fixtures. It sets
+# tree fixture, the install source tree and the plugin and theme git source
+# fixtures. It sets
 # `set -euo pipefail`, `repo`, `tmp` (removed on exit), `rt_empty`,
 # `node_bin`, `base_path`, `base_env`, `git_env` and `failures`.
 set -euo pipefail
@@ -271,6 +272,21 @@ tar.close()
 with open(out, "wb") as f:
     f.write(gzip.compress(raw.getvalue(), mtime=0))
 PY
+}
+
+# A source tree VGS installs from, as a release archive or a checkout holds
+# it: the repository's bin/, the package table the owner query reads, the
+# shared installer and VERSION, with fixture themes and root documents.
+source_tree() { # DIR VERSION_TEXT
+  mkdir -p "$1/shell/Core" "$1/config" "$1/themes" "$1/packaging"
+  cp -R -- "$repo/bin" "$1/"
+  cp -- "$repo/shell/Core/PackageManagers.js" "$1/shell/Core/"
+  cp -- "$repo/config/shell.json" "$1/config/"
+  cp -- "$repo/packaging/install-system.sh" "$1/packaging/"
+  printf 'fixture\n' >"$1/themes/README"
+  printf 'fixture\n' >"$1/LICENSE"
+  printf 'fixture\n' >"$1/README.md"
+  printf '%s\n' "$2" >"$1/VERSION"
 }
 
 rows_done() { # SUITE

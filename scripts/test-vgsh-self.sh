@@ -36,19 +36,6 @@ release="0.2.0"
 cfg="$tmp/cfg-self"
 data="$tmp/data"
 
-# A source tree VGS installs from: the repository's bin/, the package table
-# the owner query reads, the installer, and VERSION.
-source_tree() { # DIR VERSION_TEXT
-  mkdir -p "$1/shell/Core" "$1/config" "$1/themes" "$1/packaging"
-  cp -R -- "$repo/bin" "$1/"
-  cp -- "$repo/shell/Core/PackageManagers.js" "$1/shell/Core/"
-  cp -- "$repo/config/shell.json" "$1/config/"
-  cp -- "$repo/packaging/install-system.sh" "$1/packaging/"
-  printf 'fixture\n' >"$1/themes/README"
-  printf 'fixture\n' >"$1/LICENSE"
-  printf 'fixture\n' >"$1/README.md"
-  printf '%s\n' "$2" >"$1/VERSION"
-}
 # Install source DIR's tree with the shared installer and move its runtime
 # tree to TARGET, as every channel lays it out.
 install_tree() { # SOURCE TARGET
