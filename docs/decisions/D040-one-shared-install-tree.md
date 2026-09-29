@@ -22,6 +22,7 @@
 - A curl install keeps each release's runtime tree in `${XDG_DATA_HOME:-~/.local/share}/vgs/X.Y.Z`, with a relative `current` link replaced by rename and `~/.local/bin/vgsh` linked to `current/bin/vgsh`. Every writer of that directory holds `vgs/.self.lock`.
 - Publishing runs from local scripts. VGS adds no GitHub workflow for releases or package publication.
 - VGS uses the MIT licence. Package metadata uses `MIT AND OFL-1.1 AND ISC` because bundled fonts and icons carry their own licences.
+- Fedora gets `vgs` and `vgs-git` from one COPR, `vanillagreen/vgs`, from 0.1.x. Its runtime comes from the third-party COPRs `errornointernet/quickshell` and `sdegler/hyprland`, held to the preflight floor by versioned `Requires`. A Fedora release joins the project only after a clean container install passes.
 
 **Rationale**:
 
@@ -32,6 +33,7 @@
 - MIT matches v1 and the owner's selected licence.
 - The install method decides who may change the tree. VGS updates only the trees it laid out itself, a checkout and a curl install. A package manager or a Nix flake owns every other tree.
 - A versioned directory with a `current` link lets an update land beside the running tree. The running shell keeps its files until it restarts, and a failed update leaves `current` unchanged.
+- Fedora ships Quickshell below the floor and no Hyprland, so a Fedora package needs third-party repositories. v1 co-hosted its own `quickshell` in COPR and let it go stale at 0.3.0, below v1's floor; depending on the maintained COPRs, with the floor in `Requires`, fails loudly instead.
 
 ## Omarchy comparison
 
@@ -43,8 +45,8 @@ Omarchy's development channel is a git checkout that `omarchy-update-dev` fast-f
 
 ## Verification
 
-`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme.
+`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme. `scripts/check-fedora-specs.py` holds both Fedora specs to the requirement data and the preflight floor, and `scripts/fedora-container.sh` builds and installs them in a clean Fedora container.
 
-**Revisit When**: VGS ships architecture-specific binaries, package publication moves to a workflow, or a channel needs a different runtime tree.
+**Revisit When**: VGS ships architecture-specific binaries, package publication moves to a workflow, a channel needs a different runtime tree, or Fedora ships Quickshell and Hyprland at the floor, or a third-party COPR falls behind it.
 
 **References**: [distribution.md](../architecture/distribution.md) § Install methods, [validation.md](../architecture/validation.md), [D001](D001-hyprland-only.md), [D009](D009-one-manifest-judge-under-node.md)

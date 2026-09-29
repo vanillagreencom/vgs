@@ -176,7 +176,8 @@ heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
-version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$repo_plan"
+fedora_plan=$'python3 scripts/check-fedora-specs.py\npython3 scripts/test-check-fedora-specs.py\nscripts/test-fedora-srpm.sh\n'
+version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
@@ -185,6 +186,8 @@ cases=(
   "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$installer_plan"
   "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
+  "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$repo_plan"
+  "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"

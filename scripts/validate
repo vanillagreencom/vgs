@@ -117,6 +117,9 @@ rows=(
   "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js config/shell.json shell/plugins/*"
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
+  "cli|fedora specs|python3 scripts/check-fedora-specs.py|packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION"
+  "cli|fedora spec check controls|python3 scripts/test-check-fedora-specs.py|scripts/check-fedora-specs.py packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION"
+  "cli|fedora source RPM controls|scripts/test-fedora-srpm.sh|packaging/fedora/* .copr/Makefile scripts/fedora-container.sh bin/vgsh VERSION"
   "cli|plugin list controls|scripts/test-vgsh-plugin-list.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js"
   "cli|self status and update controls|scripts/test-vgsh-self.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/shell.json"
   "cli|outdated controls|scripts/test-vgsh-outdated.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js config/shell.json shell/plugins/*"
@@ -161,8 +164,8 @@ rows=(
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js themes/*"
   "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
   "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/*"
-  "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/* scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
-  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/* VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh"
+  "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh"
 )
 
 # The commit the whitespace row compares against, printed on stdout. On
