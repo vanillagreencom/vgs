@@ -449,8 +449,11 @@ var TOKENS = {
         border: color("{color.border}")
     },
 
+    // `height` is a one-line row's; `twoLineHeight` a row with a
+    // secondary line, whose two lines centre on the icon as one block.
     listItem: {
         height: length("{size.control.lg}"),
+        twoLineHeight: length("mul({listItem.height}, 1.5)"),
         paddingX: length("{row.paddingX}"),
         gap: length("{control.gap}"),
         radius: length("{radius.sm}"),

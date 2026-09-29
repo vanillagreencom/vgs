@@ -6,7 +6,9 @@ import qs.Ui
 // One row of a list: an optional icon, a text with an optional secondary
 // line under it, and `trailing` items at the end, such as a badge or a
 // switch. Both lines draw at line height 1, `row.lineGap` apart, so the
-// pair's glyphs sit on the row's centre with the icon. The template owns the click, `highlighted` and the keyboard;
+// pair's glyphs sit on the row's centre with the icon; a row with a
+// secondary line is `listItem.twoLineHeight` tall, one without
+// `listItem.height`. The template owns the click, `highlighted` and the keyboard;
 // the fill follows hover, press and highlight.
 T.ItemDelegate {
     id: root
@@ -16,7 +18,7 @@ T.ItemDelegate {
     property alias trailing: trailingRow.data
 
     implicitWidth: leftPadding + rightPadding + (iconName !== "" ? Theme.icon.size.md + spacing : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + spacing : 0)
-    implicitHeight: Math.max(Theme.listItem.height, implicitContentHeight + topPadding + bottomPadding)
+    implicitHeight: Math.max(secondary !== "" ? Theme.listItem.twoLineHeight : Theme.listItem.height, implicitContentHeight + topPadding + bottomPadding)
     leftPadding: Theme.listItem.paddingX
     rightPadding: Theme.listItem.paddingX
     spacing: Theme.listItem.gap

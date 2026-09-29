@@ -108,6 +108,8 @@ const DEFAULTS = [
     ["scrollArea.idleOpacity", 0],
     ["scrollArea.fadeDelay", 800],
     ["scrollArea.fade", 250],
+    // A list row with a secondary line: mul(36, 1.5) = 54.
+    ["listItem.twoLineHeight", 54],
     ["titleButton.gap", 4],
     ["titleButton.underline", 1],
     ["titleButton.underlineGap", 2],

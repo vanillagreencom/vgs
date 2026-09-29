@@ -41,7 +41,7 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Select` | 30 | 9; 30 on the right, past the chevron | 7 | 0 | `textField.height`, `textField.paddingX`, `textField.gap` | `.sort-control select` | padding 0 34 0 12 | 9 and 30 |
 | `SegmentedControl` | 30 | 2 inset | 2 | 0 | `segmented.height`, `segmented.padding`, `segmented.gap` | `.catalog-view-mode` | gap 4 | inset 2, gap 2 |
 | a segment | 26 | 9 | | 0 | `segmented.paddingX` | `.catalog-view-mode button` | min-height 29, padding 0 9 | 26 tall: 30 less the inset |
-| `ListItem` | 36 | 12 | 7 | 0 | `listItem.height`, `listItem.paddingX`, `listItem.gap` | `.field-row` | min-height 45, padding 0 12 | 36 tall |
+| `ListItem` | 36; 54 with a secondary line | 12 | 7; 4 between its lines | 0 | `listItem.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 tall one line, 54 two |
 | `MenuItem` | 30 | 12 | 7 | 0 | `menu.item.height`, `menu.item.paddingX`, `menu.item.gap` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
 | a `Select` list entry | 30 | 12 | | 0 | `menu.item.height`, `menu.item.paddingX` | `.aside-link` | min-height 32, padding 5 0 5 12 | 30 tall |
 | `Field`, inline | the control's | 12 | 12 after a 130 label; 4 between lines | | `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; the 4 px line gap has no rule |

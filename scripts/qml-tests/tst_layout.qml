@@ -76,6 +76,10 @@ Item {
             const iconMid = icon.mapToItem(row, 0, icon.height / 2).y;
             verify(Math.abs((top + bottom) / 2 - iconMid) <= 1, "lines centre " + (top + bottom) / 2 + ", icon centre " + iconMid);
             verify(Math.abs(iconMid - row.height / 2) <= 1, "icon centre " + iconMid + ", row centre " + row.height / 2);
+            compare(row.height, Theme.listItem.twoLineHeight, "a row with a secondary line takes the two-line height");
+            const single = Qt.createQmlObject("import qs.Ui\nListItem { text: \"One line\"; width: 200 }", root);
+            compare(single.height, Theme.listItem.height, "a row without one takes the one-line height");
+            single.destroy();
         }
 
         function test_section_header_and_divider() {
