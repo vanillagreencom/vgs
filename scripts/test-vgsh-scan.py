@@ -349,11 +349,12 @@ def url_quote_control():
 
 
 def url_import_control():
-    """The import row must fail on a scanner that spells the URL through
-    as_uri."""
-    return mutant_control("the import row fails on a scanner that calls as_uri",
-                          "return file_url(str(pathlib.Path(destination).absolute()))",
-                          "return pathlib.Path(destination).absolute().as_uri()", url_import_rows)
+    """The import row must fail on a scanner that imports urllib.request
+    when it publishes a snapshot. The mutant imports the module itself, so
+    the control holds on every Python, whatever as_uri imports there."""
+    return mutant_control("the import row fails on a scanner that imports urllib.request",
+                          "    return file_url(str(pathlib.Path(destination).absolute()))",
+                          "    import urllib.request\n    return file_url(str(pathlib.Path(destination).absolute()))", url_import_rows)
 
 
 def main():
