@@ -51,7 +51,14 @@ stub "$managers" pacman 'case "$1" in -Slq) printf "alpha\nbeta\ngamma\n" ;; -Qq
 [ "${STUB_FAIL:-}" != "$1" ] || exit 7'
 stub "$managers" paru 'case "$1" in -Slqa) printf "aurpkg\n" ;; esac'
 stub "$managers" apt-get '[ "${STUB_FAIL:-}" != "$1" ] || exit 7'
-stub "$managers" dnf ':'
+# dnf 4 prints its metadata notice on stdout unless -q is given, and with
+# the format's own newline a blank line after each name, one name per arch.
+stub "$managers" dnf 'quiet=no
+for a; do [ "$a" != -q ] || quiet=yes; done
+case " $* " in *" repoquery "*)
+  [ "$quiet" = yes ] || echo "Last metadata expiration check: 0:04:12 ago on Mon 28 Sep 2026 22:10:03 PDT."
+  printf "zsh\n\nzsh\n\nfish\n\n" ;;
+esac'
 # fzf answers its Nth call with $ANSWERS/N and exits with $ANSWERS/N.status,
 # 0 when absent; its input lands in $ANSWERS/N.input.
 stub "$tmp/picker" fzf 'n=$(( $(cat "$ANSWERS/calls" 2>/dev/null || echo 0) + 1 ))
@@ -62,13 +69,15 @@ exit "$(cat "$ANSWERS/$n.status" 2>/dev/null || echo 0)"'
 
 log="$tmp/log"; answers="$tmp/answers"; cfg="$tmp/cfg"
 tree="$tmp/tree"
-# A tree holding bin/vgsh-pkg and bin/lib as copies, so a control can
-# rewrite either, and the repository's shell/ and config/ linked.
+# A tree holding bin/vgsh-pkg, bin/lib and shell/Core as copies, so a
+# control can rewrite any of them, and the repository's shell/Ui and
+# config/ linked.
 make_tree() { # DIR
-  mkdir -p "$1/bin"
+  mkdir -p "$1/bin" "$1/shell"
   cp -- "$repo/bin/vgsh-pkg" "$1/bin/"
   cp -R -- "$repo/bin/lib" "$1/bin/lib"
-  ln -s -- "$repo/shell" "$1/shell"
+  cp -R -- "$repo/shell/Core" "$1/shell/Core"
+  ln -s -- "$repo/shell/Ui" "$1/shell/Ui"
   ln -s -- "$repo/config" "$1/config"
 }
 make_tree "$tree"
@@ -210,6 +219,11 @@ row_picker_unsupported() {
   [[ $status == 1 ]] && out_has "vgsh: refused: manager=aur picker=remove reason=unsupported" && log_is ""
 }
 
+row_dnf_picker() {
+  PKG_ANSWERS=($'fish\n')
+  pkg "$1" "$sudo_path:$tmp/picker" -- install --manager dnf
+  [[ $status == 0 && "$(cat "$answers/1.input")" == "$(lines zsh fish)" ]] && grep -qxF "sudo [dnf] [install] [fish]" "$log"
+}
 row_picker_without_fzf() {
   pkg "$1" "$sudo_path" -- install --manager pacman
   [[ $status == 1 ]] && out_has "vgsh: refused: picker=fzf reason=absent" && log_is ""
@@ -217,7 +231,7 @@ row_picker_without_fzf() {
 
 rows=(no_terminal shell_process pacman_install apt_upgrade first_failure doas run0 configured configured_absent
   configured_unknown no_elevator literal_name aur_unelevated picker_install picker_remove picker_cancelled
-  picker_nothing aur_picker picker_unsupported picker_without_fzf)
+  picker_nothing aur_picker picker_unsupported picker_without_fzf dnf_picker)
 for r in "${rows[@]}"; do
   rm -f -- "$tmp/why"
   if "row_$r" "$tree"; then ok "$r"; else fail "$r: status=$status $(cat -- "$tmp/why" 2>/dev/null) out=[$(tr '\n' '|' <"$tmp/out")]"; fi
@@ -268,6 +282,7 @@ control always-elevates bin/vgsh-pkg '    if (r.plan.elevate) {' '    if (true) 
 control ignores-configuration bin/vgsh-pkg 'table.elevator(configuredElevator(), onPath)' 'table.elevator(undefined, onPath)' configured
 control unquoted-preview bin/vgsh-pkg '    return "'"'"'" + word.replace' '    return word; "'"'"'" + word.replace' picker_install
 control fixed-colour bin/vgsh-pkg 'return value !== undefined && HEX_COLOUR.test(value) ? value : fallback;' 'return fallback;' picker_install
+control dnf-notice shell/Core/PackageManagers.js 'list: ["{bin}", "-q", "repoquery", "--available",' 'list: ["{bin}", "repoquery", "--available",' dnf_picker
 control fzf-looked-up-late bin/vgsh-pkg '        if (!onPath("fzf")) refuse("picker=fzf reason=absent");' '' picker_without_fzf
 control cancel-runs-nothing bin/vgsh-pkg '    if (r.status === 130) return { cancelled: true };' '' picker_cancelled
 

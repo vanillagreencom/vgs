@@ -187,8 +187,8 @@ const PICKER_ROWS = [
     ["aur remove is pacman's", "aur", "remove", ["paru"], "manager=aur picker=remove reason=unsupported"],
     ["apt install", "apt", "install", ["apt-get"], { list: ["apt-cache", "pkgnames"], preview: ["apt-cache", "show", "{name}"] }],
     ["apt remove lists the manual packages", "apt", "remove", ["apt-get"], { list: ["apt-mark", "showmanual"], preview: ["dpkg", "-s", "{name}"] }],
-    ["dnf install", "dnf", "install", ["dnf5"], { list: ["dnf5", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["dnf5", "info", "{name}"] }],
-    ["dnf remove lists the user's packages", "dnf", "remove", ["dnf"], { list: ["dnf", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }],
+    ["dnf install", "dnf", "install", ["dnf5"], { list: ["dnf5", "-q", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["dnf5", "info", "{name}"] }],
+    ["dnf remove lists the user's packages", "dnf", "remove", ["dnf"], { list: ["dnf", "-q", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }],
     ["flatpak offers no picker", "flatpak", "install", ["flatpak"], "manager=flatpak picker=install reason=unsupported"],
     ["an absent manager", "pacman", "install", [], "manager=pacman reason=absent binaries=pacman"]
 ];

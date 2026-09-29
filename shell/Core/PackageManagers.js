@@ -104,10 +104,11 @@ var MANAGERS = [
         installed: { argv: ["rpm", "-q", "--queryformat", "%{VERSION}\n", "--", "{name}"], read: /^(\S+)$/ },
         // The format's `\n` is dnf's own escape: dnf5 prints only what the
         // format asks for, and dnf 4 adds a newline of its own, which leaves
-        // a blank line the picker drops.
+        // a blank line the picker drops. -q keeps dnf 4's `Last metadata
+        // expiration check` notice off stdout, where it would be listed.
         picker: {
-            install: { list: ["{bin}", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["{bin}", "info", "{name}"] },
-            remove: { list: ["{bin}", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }
+            install: { list: ["{bin}", "-q", "repoquery", "--available", "--queryformat", "%{name}\\n"], preview: ["{bin}", "info", "{name}"] },
+            remove: { list: ["{bin}", "-q", "repoquery", "--userinstalled", "--queryformat", "%{name}\\n"], preview: ["rpm", "-qi", "{name}"] }
         }
     },
     {
