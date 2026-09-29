@@ -5,7 +5,8 @@ import qs.Ui
 import qs.Unit
 
 // The embedded scroll bar ScrollArea and Select draw: it shows only while
-// the content overflows, in a gutter the content leaves free; its thumb is
+// the content overflows, in a gutter a scroll area's content always leaves
+// free; its thumb is
 // never shorter than `scrollArea.minThumb` and otherwise the view's share
 // of the track; dragging the thumb scrolls the content with it and a press
 // on the track pages; it shows while hovered or scrolling and fades to
@@ -39,7 +40,7 @@ Item {
             compare(area.bar.x, area.width - Theme.scrollArea.barWidth - Theme.scrollArea.barInset);
             verify(area.bar.x >= area.contentWidth, "the bar starts at " + area.bar.x + ", past the content's " + area.contentWidth);
             compare(short.overflowing, false);
-            compare(short.contentWidth, short.width);
+            compare(short.contentWidth, short.width - Theme.scrollArea.gutter, "the gutter stays free without an overflow, so the layout does not move when one starts");
             compare(short.bar.visible, false);
         }
 

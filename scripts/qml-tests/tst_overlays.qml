@@ -122,7 +122,7 @@ Item {
             menu.open();
             // The window's width is whole pixels.
             verify(window.width + 1 >= wide.implicitWidth + 2 * Theme.menu.padding, "the window holds the widest entry: " + window.width + " for " + wide.implicitWidth);
-            compare(wide.width, window.width - 2 * Theme.menu.padding);
+            compare(wide.width, window.width - 2 * Theme.menu.padding - Theme.scrollArea.gutter);
             menu.close();
         }
 

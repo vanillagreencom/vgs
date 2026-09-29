@@ -132,7 +132,7 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding + (scroll.overflowing ? Theme.scrollArea.gutter : 0))
+        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding + Theme.scrollArea.gutter)
         implicitHeight: Math.max(1, Math.min(column.implicitHeight, root.maxHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 
