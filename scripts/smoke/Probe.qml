@@ -82,6 +82,14 @@ Scope {
         return JSON.stringify([at.x, at.y, item.width, item.height]);
     }
 
+    // An item's box in its own window's coordinates, as [x, y, w, h]: a
+    // layer surface the compositor centres knows no place of its own on the
+    // screen, so a row adds the layer's position from `hyprctl layers`.
+    function windowBox(item) {
+        const at = item.mapToItem(null, 0, 0);
+        return [at.x, at.y, item.width, item.height];
+    }
+
     // An item's type name, with the engine's suffixes for a QML-defined type
     // and for one extended in place (a delegate that declares a property of
     // its own) removed.
@@ -104,6 +112,15 @@ Scope {
             const a = JSON.parse(arg);
             return item.writeSetting(a.id, a.key, a.value);
         }
+        if (name === "applyKey") {
+            // A drawn Keys row's edit, as the row emits it: `key` absent
+            // is a reset.
+            const a = JSON.parse(arg);
+            const row = descendants(item).find(child => child.pluginId === a.id && child.bind !== undefined && child.bind.shortcut === a.shortcut && typeof child.applyKey === "function");
+            if (row === undefined) return "absent";
+            row.applyKey("key" in a ? a.key : undefined);
+            return "applied";
+        }
         if (name === "applyField" || name === "holdField") {
             const a = JSON.parse(arg);
             const field = fieldOf(item, a.id, a.key);
@@ -116,7 +133,7 @@ Scope {
             editor.cursorPosition = 1;
             heldField = { id: a.id, key: a.key, field: field };
             heldEditor = editor;
-            return geometry(editor);
+            return JSON.stringify(windowBox(editor));
         }
         if (name === "heldFieldState") {
             if (heldField === null || heldEditor === null) return "absent";
@@ -415,6 +432,51 @@ Scope {
             return -1;
         }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.invoke(hostKey, id, name, arg); }
+        // The first visible, enabled item named `type` under an instance
+        // whose `text`, or `label` for an icon button, is `text`, as its
+        // box in its window's coordinates, or "absent".
+        function windowGeometry(hostKey: string, id: string, type: string, text: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && child.enabled);
+            return found === undefined ? "absent" : JSON.stringify(root.windowBox(found));
+        }
+        // Every Menu under an instance, in tree order, as it stands: open or
+        // not, its entries' texts, the checked ones, the highlighted one and
+        // whether its entries scroll.
+        function menus(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            return JSON.stringify(root.descendants(item).filter(child => typeof child.items === "function" && child.opened !== undefined).map(menu => {
+                const entries = menu.items();
+                return {
+                    opened: menu.opened,
+                    entries: entries.map(e => e.text),
+                    checked: entries.filter(e => e.checked).map(e => e.text),
+                    current: menu.currentIndex >= 0 && menu.currentIndex < entries.length ? entries[menu.currentIndex].text : null,
+                    overflowing: menu.scrollArea.overflowing,
+                    barVisible: menu.scrollArea.bar.visible
+                };
+            }));
+        }
+        // Every shown ScrollArea under an instance, in tree order: its
+        // scroll position, content height and height, and its bar's and
+        // thumb's boxes in the window's coordinates.
+        function scrollAreas(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
+            return JSON.stringify(root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width).map(area => ({
+                contentY: area.contentY,
+                contentHeight: area.contentHeight,
+                height: area.height,
+                contentWidth: area.contentWidth,
+                width: area.width,
+                barVisible: area.bar.visible,
+                bar: root.windowBox(area.bar),
+                thumb: root.windowBox(area.bar.thumb)
+            })));
+        }
         // Whether an item under the instance holds keyboard focus in an
         // active window, so a row types only once the compositor gave the
         // surface the keyboard.

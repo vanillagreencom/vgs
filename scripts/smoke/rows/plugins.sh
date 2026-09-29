@@ -97,7 +97,7 @@ PY
   done
   if [[ $clock_changes -ge 2 ]]; then ok "the shared clock ticks seconds for a seconds format"; else fail "clock text changed $clock_changes times in 2.2 s"; fi
   expect "a bar settings change rebuilds nothing" "$before" builds
-  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+  expect_builtins "the built-ins stay registered across a bar settings change" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 else
   fail "buildCount unreadable before the settings rows"
 fi

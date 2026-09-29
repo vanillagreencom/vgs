@@ -11,8 +11,8 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, manager, launcher or notifications; the default is all
-# four, or gallery and manager with --rev. --modes is a comma list of dark
+# SCENE is gallery, settings, launcher or notifications; the default is all
+# four, or gallery and settings with --rev. --modes is a comma list of dark
 # and light, dark by default with --rev and both otherwise: dark is the
 # defaults (theme `vgs`), light is this checkout's themes/light package.
 # --rev REV runs that revision's shell, bin, config and themes (git archive)
@@ -43,12 +43,12 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|manager|launcher|notifications) scenes+=("$1"); shift ;;
+    gallery|settings|launcher|notifications) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
 if [[ ${#scenes[@]} -eq 0 ]]; then
-  if [[ -n $rev ]]; then scenes=(gallery manager); else scenes=(gallery manager launcher notifications); fi
+  if [[ -n $rev ]]; then scenes=(gallery settings); else scenes=(gallery settings launcher notifications); fi
 fi
 [[ -n $modes ]] || { if [[ -n $rev ]]; then modes=dark; else modes=dark,light; fi; }
 IFS=, read -r -a mode_list <<<"$modes"
@@ -154,16 +154,80 @@ scene_gallery() { # MODE
   expect_poll "the gallery's panel is gone" 0 layer_count vgs:panel
 }
 
-manager_listed() { ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 0)'; }
-scene_manager() { # MODE
-  local first
-  expect "the manager panel opens" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
-  expect_poll "the manager panel lists its plugins" True manager_listed
-  take "manager-$1"
-  first="$(ipc smoke readInstance panel vgs.bar plugins | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')" || first=""
-  hover_on "the pointer rests on the manager's first row" panel vgs.bar ListItem "$first" && take "manager-$1-hover"
+settings_page() { ipc smoke readInstance panel vgs.settings page; }
+settings_menu_open() { ipc smoke menus panel vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
+# The page's one scroll area as the probe reads it.
+settings_scroll() { ipc smoke scrollAreas panel vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
+settings_close() {
+  expect "the Settings window closes" ok ipc shell hide panel vgs.settings
+  expect_poll "the Settings window is gone" 0 layer_count vgs:panel
+}
+# The Settings window: the list opened from the gear, the pointer on the
+# gear; a plugin page with many grouped settings at its top and dragged
+# down its scroll bar; a plugin with keys; the title's menu open with its
+# scroll bar under the pointer; and the window clamped on a monitor
+# narrower than its width token.
+scene_settings() { # MODE
+  local area at tx ty title x y theme_file="$home/.config/vgs/theme.json"
+  click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
+  expect_poll "the gear opens the Settings window" 1 layer_count vgs:panel
+  expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn panel vgs.settings
+  take "settings-$1-list"
+  # The gear draws no text, so it is found by its label.
+  if at="$(centre_of "$(ipc smoke labelledGeometry "$(bar_key)" vgs.settings IconButton Settings)")" && [[ $at != none ]]; then
+    read -r x y <<<"$at"
+    if hover "$((x - 6))" "$y" && hover "$x" "$y"; then take "settings-$1-gear"; else fail "the hover on the gear failed"; fi
+  else
+    fail "the gear has no box"
+  fi
   park_pointer
-  expect "the manager panel closes" ok ipc smoke invokeInstance "$(bar_key)" vgs.bar/right-manager toggle ''
+  expect "the window opens the probe's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
+  expect_poll "the probe's page is shown" '"acme.probe"' settings_page
+  take "settings-$1-page"
+  if area="$(settings_scroll)" && [[ $area == \{* ]]; then
+    read -r tx ty < <(at_centre vgs:panel "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
+    drag "$tx" "$ty" "$tx" "$((ty + 120))" || fail "the drag on the page's thumb failed"
+    hover "$tx" "$((ty + 120))" || fail "the hover on the dragged thumb failed"
+    take "settings-$1-page-scrolled"
+  else
+    fail "the probe's page scroll area is unreadable: ${area:-}"
+  fi
+  park_pointer
+  expect "the window opens the launcher's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin vgs.launcher
+  expect_poll "the launcher's page is shown" '"vgs.launcher"' settings_page
+  take "settings-$1-keys"
+  click_in vgs:panel panel vgs.settings TitleButton Launcher || fail "the click on the title failed"
+  expect_poll "the title's menu opens" True settings_menu_open
+  # The menu opens under the title; the pointer rests inside it, which
+  # shows its scroll bar.
+  if title="$(ipc smoke windowGeometry panel vgs.settings TitleButton Launcher)" && [[ $title == \[* ]]; then
+    read -r x y < <(at_centre vgs:panel "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3] + 40, 80, 40]))' "$title")")
+    hover "$x" "$y" || fail "the hover inside the title's menu failed"
+  fi
+  take "settings-$1-menu"
+  type_keys -k Escape || fail "sending Escape to the title's menu failed"
+  expect_poll "the title's menu closes" False settings_menu_open
+  park_pointer
+  settings_close
+  # A width token past the monitor's width meets the clamp a narrower
+  # monitor meets; the sandbox's headless outputs have no size.
+  cp -p -- "$theme_file" "$sandbox/theme.json.shots"
+  python3 - "$theme_file" <<'PY'
+import json, sys
+path = sys.argv[1]
+doc = json.load(open(path))
+doc["name"] = doc["name"] + "-clamped"
+doc.setdefault("tokens", {}).setdefault("size", {}).setdefault("window", {})["width"] = 4096
+json.dump(doc, open(path + ".tmp", "w"))
+PY
+  mv -T -- "$theme_file.tmp" "$theme_file"
+  expect_poll "the width token is past the monitor's width" 4096 ipc smoke themeValue size.window.width
+  expect "the Settings window opens clamped" ok ipc shell summon panel vgs.settings '{"plugin":"acme.probe"}'
+  expect_poll "the clamped window maps" 1 layer_count vgs:panel
+  take "settings-$1-clamped"
+  settings_close
+  mv -T -- "$sandbox/theme.json.shots" "$theme_file"
+  expect_poll "the width token is back" 600 ipc smoke themeValue size.window.width
 }
 
 launcher_rows() { ipc smoke launcherRows overlay vgs.launcher; }
@@ -271,6 +335,22 @@ for scene in "${scenes[@]}"; do
       fi
       expect "enabling vgs.$scene is allowed" ok ipc shell setPluginEnabled "vgs.$scene" true
       expect_poll "vgs.$scene is built" True record_exists "vgs.$scene" ;;
+    settings)
+      # The Settings window lists the probe fixture, a plugin with many
+      # grouped settings, and the launcher, a plugin with a key; both
+      # enabled, so their pages are editable. Three more fixtures make the
+      # plugin list longer than the title menu's nine rows, so the menu
+      # scrolls.
+      for fixture in acme.probe acme.bare acme.idle acme.locker; do
+        mkdir -p "$home/.config/vgs/plugins/$fixture"
+        cp -R -- "$checkout/scripts/smoke/fixtures/plugins/$fixture/." "$home/.config/vgs/plugins/$fixture/"
+      done
+      expect "the fixtures are scanned" ok ipc shell rescanPlugins
+      expect_poll "the probe fixture is listed" True plugin_known acme.probe
+      for id in acme.probe vgs.launcher vgs.settings; do
+        expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
+        expect_poll "$id is built" True record_exists "$id"
+      done ;;
   esac
 done
 

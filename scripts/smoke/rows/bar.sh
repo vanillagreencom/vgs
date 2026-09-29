@@ -29,31 +29,29 @@ done
 if [[ $bars == "$monitors" && $monitors != 0 && $monitors != -1 ]]; then ok "one bar surface per monitor ($bars of $monitors)"; else fail "bar surfaces: $bars for $monitors monitors"; fi
 
 expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
-expect_builtins "every bar registered its built-in workspaces, clock and plugin manager" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+expect_builtins "every bar registered its built-in workspaces and clock" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 
 # The built-ins share one vertical centre, the bar's, and draw in the
 # `text.bar` role alone. A workspace pill is its label plus
 # `bar.item.paddingX` a side with `size.control.sm` as its floor, and its
 # label's line height plus `space.xs` tall, with the label at its centre;
-# pills stand `bar.item.gap` apart. The manager's icon and text sit on its
-# button's centre. The sandbox keeps workspaces 1, 2 and 100, so three pills
-# stand in a row and the last is wider than the floor. Read from the first
-# bar's items, each within one pixel; the answer is the list of misplaced
-# items, so `[]` is the pass.
+# pills stand `bar.item.gap` apart. The sandbox keeps workspaces 1, 2 and
+# 100, so three pills stand in a row and the last is wider than the floor.
+# Read from the first bar's items, each within one pixel; the answer is
+# the list of misplaced items, so `[]` is the pass.
 bar_alignment() {
-  local key bar_box ws clock manager pad gap floor xs
+  local key bar_box ws clock pad gap floor xs
   key="$(bar_key)" || return
   bar_box="$(ipc smoke instanceGeometry "$key" vgs.bar)" || return
   ws="$(ipc smoke descendantGeometry "$key" vgs.bar/left-workspaces)" || return
   clock="$(ipc smoke descendantGeometry "$key" vgs.bar/center-clock)" || return
-  manager="$(ipc smoke descendantGeometry "$key" vgs.bar/right-manager)" || return
   pad="$(ipc smoke themeValue bar.item.paddingX)" || return
   gap="$(ipc smoke themeValue bar.item.gap)" || return
   floor="$(ipc smoke themeValue size.control.sm)" || return
   xs="$(ipc smoke themeValue space.xs)" || return
-  python3 - "$bar_box" "$ws" "$clock" "$manager" "$pad" "$gap" "$floor" "$xs" <<'PY'
+  python3 - "$bar_box" "$ws" "$clock" "$pad" "$gap" "$floor" "$xs" <<'PY'
 import json, sys
-bar, ws, clock, manager, pad, gap, floor, xs = (json.loads(a) for a in sys.argv[1:])
+bar, ws, clock, pad, gap, floor, xs = (json.loads(a) for a in sys.argv[1:])
 out = []
 def near(a, b): return abs(a - b) <= 1
 def mid_x(r): return r["box"][0] + r["box"][2] / 2
@@ -62,7 +60,7 @@ def check(name, got, want):
     if not near(got, want): out.append("%s=%.2f want=%.2f" % (name, got, want))
 def children(rows, i, kind): return [c for c in rows if c["parent"] == i and c["type"] == kind]
 centre = bar[1] + bar[3] / 2
-for name, rows in (("workspaces", ws), ("clock", clock), ("manager", manager)):
+for name, rows in (("workspaces", ws), ("clock", clock)):
     roles = sorted({str(r.get("role")) for r in rows if r["type"] == "Label"})
     if roles != ["bar"]: out.append("%s roles=%s" % (name, roles))
 pills = sorted(((r, children(ws, i, "Label")) for i, r in enumerate(ws) if r["type"] == "QQuickRectangle" and children(ws, i, "Label")), key=lambda p: p[0]["box"][0])
@@ -78,17 +76,10 @@ for n, (pill, (label,)) in enumerate(pills):
 clock_labels = [r for r in clock if r["type"] == "Label"]
 if len(clock_labels) != 1: out.append("clock labels=%d" % len(clock_labels))
 for label in clock_labels: check("clock.label.y", mid_y(label), centre)
-buttons = [(i, r) for i, r in enumerate(manager) if r["type"] == "Button"]
-if len(buttons) != 1: out.append("manager buttons=%d" % len(buttons))
-for i, button in buttons:
-    check("manager.button.y", mid_y(button), centre)
-    inside = [r for j, r in enumerate(manager) if j > i and r["type"] in ("Icon", "Label")]
-    if sorted(r["type"] for r in inside) != ["Icon", "Label"]: out.append("manager content=%s" % sorted(r["type"] for r in inside))
-    for r in inside: check("manager.%s.y" % r["type"].lower(), mid_y(r), mid_y(button))
 print(json.dumps(out))
 PY
 }
-geometry expect_poll "the workspace pills, the clock and the manager share the bar's centre" '[]' bar_alignment
+geometry expect_poll "the workspace pills and the clock share the bar's centre" '[]' bar_alignment
 bar_font_family() { ipc smoke readInstance "$(bar_key)" vgs.bar fontFamily; }
 expect "the bar API names the family of the bar role" '"JetBrains Mono"' bar_font_family
 expect "the core built the bar, its placed widget and the vgs.themes background per screen, and no built-in" "$((3 * monitors))" builds
@@ -113,7 +104,7 @@ if [[ $disable_reply == ok ]]; then ok "disabling a widget is allowed"; else fai
 tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
 expect_widgets "the bar dropped the disabled widget" '[]'
-expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 expect "widget reads disabled after the user file changed" False plugin_enabled acme.tick
 expect "the disabled widget keeps its layout entry and settings" '[{"id": "acme.tick", "format": "ddd d MMM  HH:mm"}]' tick_entry
 expect "disable wrote only the disabled list" "bar,disabledPlugins,version" user_keys
@@ -134,7 +125,7 @@ expect "no bar reserves no screen space" 0 reserved_total
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
 expect_widgets "the bar host rebuilt the re-enabled bar" '["acme.tick"]'
 monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
-expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/center-clock","vgs.bar/left-workspaces","vgs.bar/right-manager"]'
+expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 for _ in $(seq 1 50); do
   if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
   sleep 0.2

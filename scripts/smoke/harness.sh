@@ -267,14 +267,16 @@ fi
 # enabled by default, start disabled here: their shortcuts, IPC targets,
 # notification subscriber and server would sit in every lending record the
 # capability rows read back. rows/launcher.sh and rows/notifications.sh
-# enable them. vgs.themes stays enabled, its background built on every
+# enable them. vgs.settings starts disabled for the same reason, and its
+# service would be one more build in the bar rows' count;
+# rows/manager.sh enables it and rows/settings.sh disables it again. vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
 tick="$home/.config/vgs/plugins/acme.tick"
 mkdir -p "$tick"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
 cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings"] }
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
@@ -283,12 +285,14 @@ spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):
 shell_pid="$spawn_pid"
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.
-# hover X Y: the pointer moved there with no press. type_keys ARGS...:
+# hover X Y: the pointer moved there with no press. drag X Y X2 Y2: a
+# press at (X, Y), moved to (X2, Y2) and released. type_keys ARGS...:
 # keys typed on the nested seat through wtype, so a row can reach a
 # focused input; wtype's own arguments, such as -k Escape, pass through.
 # Each prints nothing on success; a row reads its status.
 click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
 hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
+drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
 click_centre() {
   local rect
@@ -400,6 +404,27 @@ reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum
 # Live layers with a namespace as [[x, y, w, h], ...], sorted.
 layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
 layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# The one live layer with a namespace as [x, y, w, h], or layers=<n>.
+one_layer() { layers_of "$1" | python3 -c 'import json,sys; l=json.load(sys.stdin); print(json.dumps(l[0]) if len(l) == 1 else "layers=%d" % len(l))'; }
+# at_centre NAMESPACE RECT_JSON: the layout position of the centre of a box
+# given in the coordinates of that namespace's one layer window, the
+# layer's position added: a layer the compositor centres knows no place of
+# its own, so the probe answers boxes in window coordinates.
+at_centre() {
+  local layer
+  layer="$(one_layer "$1")" || return 1
+  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); print(int(l[0] + r[0] + r[2] / 2), int(l[1] + r[1] + r[3] / 2))' "$layer" "$2"
+}
+# click_in NAMESPACE HOST_KEY ID TYPE TEXT: one click on the centre of the
+# first shown item of TYPE whose text or label is TEXT in that instance,
+# drawn in the namespace's one layer.
+click_in() {
+  local rect x y
+  rect="$(ipc smoke windowGeometry "$2" "$3" "$4" "$5")" || return 1
+  [[ $rect == \[* ]] || { echo "click_in: no $4 $5: $rect" >&2; return 1; }
+  read -r x y < <(at_centre "$1" "$rect") || return 1
+  click "$x" "$y"
+}
 
 # Widget ids every bar host built, left to right, from the core's own
 # build records. Polls up to 5 s: a config write travels through the
