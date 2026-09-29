@@ -1,6 +1,7 @@
 # Sourced by qml-smoke.sh; owns the sandbox and shared readers.
 set -euo pipefail
 source "$repo/scripts/smoke/verdict.sh"
+source "$repo/scripts/smoke/tree.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs.
 for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file; do
@@ -83,7 +84,8 @@ home="$sandbox/home"; mkdir -p "$home/.config/hypr"
 # Add the observer to a copy; the live checkout never imports test code.
 # A caller may set source_tree to another export of the shell, bin, config
 # and themes, such as scripts/sandbox-shots.sh --rev; the scripts, the probe
-# and the fixtures always come from this checkout.
+# and the fixtures come from this checkout, except the runtime helpers an
+# older revision's export carries under scripts/, which its bin/ loads.
 python3 - "$repo" "$sandbox/repo" "${source_tree:-$repo}" <<'PY'
 import pathlib, shutil, sys
 source, target, tree = map(pathlib.Path, sys.argv[1:])
@@ -114,6 +116,7 @@ needle = "    id: host\n"
 assert text.count(needle) == 1, "smoke background observer insertion must match once"
 path.write_text(text.replace(needle, needle + '    onBrokenKeysChanged: console.info("smoke: backgroundFailures=" + Object.keys(brokenKeys).length)\n'))
 PY
+[[ -z ${source_tree:-} ]] || tree_overlay_helpers "$source_tree" "$sandbox/repo"
 repo="$sandbox/repo"
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'

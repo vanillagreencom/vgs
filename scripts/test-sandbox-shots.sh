@@ -6,7 +6,8 @@
 # the end plant one defect per guard in a copy of the file and require the
 # case that guard owns to go red. The scene cases drive
 # scripts/sandbox-shots.sh itself up to its harness, in a scratch git
-# repository.
+# repository, and the export cases drive scripts/smoke/tree.sh, which
+# sandbox-shots.sh and the harness share.
 #
 # Exit 0 when every case and control holds, 1 otherwise.
 set -euo pipefail
@@ -218,6 +219,79 @@ then
 else
   fail "control: the scene refusal could not be planted"
 fi
+
+# The export of another revision, scripts/smoke/tree.sh, with no sandbox. A
+# scratch repository holds a revision whose bin/judge loads
+# scripts/qml-library.js and a later one that moved the helper to bin/lib,
+# as this checkout did. export_case exports REV as sandbox-shots.sh does,
+# copies the later checkout's scripts/ and then overlays the export's
+# helpers as the harness does, and runs the copied bin/judge under node,
+# which prints which helper it loaded.
+helper_repo="$tmp/helper-repo"
+mkdir -p "$helper_repo/bin" "$helper_repo/scripts" "$helper_repo/shell" "$helper_repo/config" "$helper_repo/themes"
+printf 'module.exports = { where: "scripts" };\n' >"$helper_repo/scripts/qml-library.js"
+printf 'process.stdout.write(require(require("path").join(__dirname, "..", "scripts", "qml-library.js")).where);\n' >"$helper_repo/bin/judge"
+: >"$helper_repo/shell/shell.qml"; : >"$helper_repo/config/shell.json"; : >"$helper_repo/themes/.keep"
+helper_git() { git -C "$helper_repo" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@" >/dev/null; }
+helper_git init -q
+helper_git add -A
+helper_git commit -q -m before
+before_rev="$(git -C "$helper_repo" rev-parse HEAD)"
+mkdir -p "$helper_repo/bin/lib"
+helper_git mv scripts/qml-library.js bin/lib/qml-library.js
+printf 'module.exports = { where: "bin/lib" };\n' >"$helper_repo/bin/lib/qml-library.js"
+printf 'process.stdout.write(require(require("path").join(__dirname, "lib", "qml-library.js")).where);\n' >"$helper_repo/bin/judge"
+printf 'true\n' >"$helper_repo/scripts/validate"
+helper_git add -A
+helper_git commit -q -m after
+after_rev="$(git -C "$helper_repo" rev-parse HEAD)"
+# export_case LIB REV WANT: with tree.sh at LIB, REV's copied bin/judge
+# prints WANT.
+export_case() {
+  local lib="$1" rev="$2" want="$3" dir target out status=0
+  dir="$(mktemp -d "$tmp/export.XXXXXX")" && target="$(mktemp -d "$tmp/copy.XXXXXX")" || return 1
+  out="$(
+    source "$lib"
+    tree_export "$helper_repo" "$rev" "$dir" || { echo "tree_export failed"; exit 1; }
+    cp -R -- "$dir/bin" "$target/bin"
+    cp -R -- "$helper_repo/scripts" "$target/scripts"
+    tree_overlay_helpers "$dir" "$target"
+    node "$target/bin/judge" 2>&1
+  )" || status=$?
+  [[ $status -eq 0 && $out == "$want" ]] && return 0
+  echo "exit=$status out=$(head -n 1 <<<"$out")"
+  return 1
+}
+export_cases=(
+  "a revision before bin/lib runs its own helper from scripts/|$before_rev|scripts"
+  "a revision after bin/lib exports no helper and runs its own|$after_rev|bin/lib"
+)
+for spec in "${export_cases[@]}"; do
+  IFS='|' read -r label rev want <<<"$spec"
+  if export_case "$repo/scripts/smoke/tree.sh" "$rev" "$want"; then ok "$label"; else fail "$label"; fi
+done
+# Controls, one per rule: a copy of tree.sh that exports no helper, and one
+# that overlays nothing, each leave the older revision without its helper.
+tree_controls=(
+  "the export carries no helper|tree_runtime_helpers=(scripts/qml-library.js scripts/check-manifests.js)|tree_runtime_helpers=(scripts/no-helper.js)"
+  "the copy takes no helper|  cp -R -- \"\$tree/scripts/.\" \"\$target/scripts/\"|  :"
+)
+for spec in "${tree_controls[@]}"; do
+  IFS='|' read -r label needle replacement <<<"$spec"
+  tree_mutant="$tmp/tree-mutant.sh"
+  if python3 - "$repo/scripts/smoke/tree.sh" "$tree_mutant" "$needle" "$replacement" <<'PY'
+import sys
+src, dst, needle, replacement = sys.argv[1:]
+text = open(src).read()
+assert text.count(needle) == 1, "the control's needle must match once"
+open(dst, "w").write(text.replace(needle, replacement))
+PY
+  then
+    if export_case "$tree_mutant" "$before_rev" scripts >/dev/null; then fail "control: $label left the older revision green"; else ok "control: $label"; fi
+  else
+    fail "control: $label could not be planted"
+  fi
+done
 
 if [[ $failures -gt 0 ]]; then
   echo "test-sandbox-shots: failed=$failures"

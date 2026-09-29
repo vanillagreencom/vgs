@@ -10,7 +10,7 @@
 
 **Context**: Manifest validation, configuration merging and enablement are needed by the shell at runtime and by the checks offline. Two implementations would drift.
 
-**Decision**: `shell/Core/PluginLogic.js` is a pure `.pragma library` file with no QML object and no I/O. The shell imports it; `scripts/test-plugin-logic.js`, `scripts/check-manifests.js` and `vgsh plugin validate` run it under node. Node is a runtime dependency of `vgsh`: see the revisit outcome below.
+**Decision**: `shell/Core/PluginLogic.js` is a pure `.pragma library` file with no QML object and no I/O. The shell imports it; `scripts/test-plugin-logic.js`, `bin/lib/check-manifests.js` and `vgsh plugin validate` run it under node. Node is a runtime dependency of `vgsh`: see the revisit outcome below.
 
 **Rationale**:
 

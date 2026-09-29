@@ -20,7 +20,8 @@
 # `sandbox-shots: refused: scene=<scene> tree=<rev or checkout>`. --modes is a comma list of dark
 # and light, dark by default with --rev and both otherwise: dark is the
 # defaults (theme `vgs`), light is this checkout's themes/light package.
-# --rev REV runs that revision's shell, bin, config and themes (git archive)
+# --rev REV runs that revision's shell, bin, config and themes (git archive),
+# with the runtime helpers a revision before bin/lib kept under scripts/,
 # under this checkout's harness and probe, for a before shot; the plugin
 # fixtures a scene installs are that revision's, which its judge accepts.
 #
@@ -67,6 +68,7 @@ if ! command -v grim >/dev/null 2>&1; then
   exit 77
 fi
 source "$checkout/scripts/smoke/shot.sh"
+source "$checkout/scripts/smoke/tree.sh"
 [[ -n $out ]] || out="$checkout/tmp/sandbox-shots/$(date -u +%Y%m%dT%H%M%SZ)${rev:+-$rev}"
 SHOT_DIR="$(shot_dir_under "$checkout" "$out")" || exit 2
 if [[ -e $SHOT_DIR/shots.tsv ]]; then printf 'sandbox-shots: refused: out-dir-used=%s\n' "$SHOT_DIR" >&2; exit 2; fi
@@ -78,7 +80,7 @@ trap '[[ -z $source_tree ]] || rm -rf -- "$source_tree"' EXIT
 if [[ -n $rev ]]; then
   git -C "$checkout" rev-parse --verify --quiet "$rev^{commit}" >/dev/null || { printf 'sandbox-shots: refused: rev=%s\n' "$rev" >&2; exit 2; }
   source_tree="$(mktemp -d "${TMPDIR:-/tmp}/vgsh-shots-tree.XXXXXX")"
-  if ! git -C "$checkout" archive "$rev" shell bin config themes | tar -x -C "$source_tree"; then
+  if ! tree_export "$checkout" "$rev" "$source_tree"; then
     rm -rf -- "$source_tree"
     printf 'sandbox-shots: refused: rev-export=%s\n' "$rev" >&2
     exit 2

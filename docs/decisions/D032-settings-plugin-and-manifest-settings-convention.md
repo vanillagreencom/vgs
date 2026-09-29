@@ -26,7 +26,7 @@ Every plugin author follows one rule: the manifest is the settings page.
 
 - A setting belongs in `schema` when a user would reasonably change it and the plugin reads it. A constant becomes a setting only when a user has a reason to change it.
 - The judge, `PluginLogic.validateManifest`, enforces every new key: `icon` is a name in the shipped icon set, `min` and `max` are finite with `min < max`, `step` is positive, the three are refused on any type but `number`, the default lies inside the bounds, and `group` is a non-empty string. A written number outside `min` to `max` is refused by `settingRefusal`, like a value of the wrong type. `min`, `max` and `step` bound the control; `step` does not refuse a typed value.
-- The judge reads the icon set from `Lucide.js` through a `.import` in `PluginLogic.js`, and `scripts/qml-library.js` resolves the same `.import` under node, so the shell and every offline reader decide with one judge and one list.
+- The judge reads the icon set from `Lucide.js` through a `.import` in `PluginLogic.js`, and `bin/lib/qml-library.js` resolves the same `.import` under node, so the shell and every offline reader decide with one judge and one list.
 - A number with both `min` and `max` draws a slider with its value beside it; any other number draws a text field.
 
 ### The surface
