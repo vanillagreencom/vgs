@@ -39,13 +39,16 @@ mkdir -p -- "$home/.config/Slack"
 cp -R -- "$repo/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
 # The row runs after the shell process starts, so it cannot add the
 # helper's test API environment to that process without changing core. The
-# helper's own suite covers the HTTP refresh. This row seeds the same cache
-# shape, fresh, so the helper serves it without a call: acme from its own
-# workspace's token, and globex from the single-workspace token, whose
-# team accounts.json records.
+# helper's own suite covers the HTTP refresh. seed_slack_photos writes the
+# helper's per-team cache, fresh, so the helper serves it without a call:
+# acme from its own workspace's token, and globex from the single-workspace
+# token, whose team accounts.json records. The row seeds it before the
+# service starts, and again after the token rows, whose last states hold no
+# token and so leave no cache, so no run of the helper is due a network call.
 slack_photos="$home/.cache/vgs/notifications/slack-photos"
-mkdir -p -- "$slack_photos"
-python3 - "$slack_photos" <<'PY'
+seed_slack_photos() {
+  mkdir -p -- "$slack_photos"
+  python3 - "$slack_photos" <<'PY'
 import hashlib, json, pathlib, struct, sys, time, zlib
 
 root = pathlib.Path(sys.argv[1])
@@ -89,6 +92,8 @@ team("T0GLOBEX", ["globex", "Globex"], "slack", (200, 120, 20), [
 ])
 (root / "accounts.json").write_text(json.dumps({"slack:T0ACME": {}, "slack": {"team": "T0GLOBEX", "resolvedAt": now}}) + "\n")
 PY
+}
+seed_slack_photos
 # The stub libsecret: $shim/secret-tool.states holds `<account> <state>`
 # lines, and an account holds its token while its state reads `present`,
 # none for `absent` or an account the file does not list, and holds it in a
@@ -622,7 +627,8 @@ want_rows() {
   python3 - "$1" "$2" "$token_hint" <<'PY'
 import json, sys
 what, items, hint = sys.argv[1], sys.argv[2], sys.argv[3]
-labels = {"slack:T0ACME": "Acme Corp (acme)", "slack:T0GLOBEX": "Globex (globex)", "slack": "Single-workspace token"}
+# A name equal to its domain, case folded, is drawn once.
+labels = {"slack:T0ACME": "Acme Corp (acme)", "slack:T0GLOBEX": "Globex", "slack": "Single-workspace token"}
 tones = {"present": "success", "absent": "warning", "locked": "info"}
 words = {"present": "Present", "absent": "Absent", "locked": "Locked"}
 def command(account):
@@ -682,6 +688,7 @@ expect "the shell's log holds no token" 0 token_in_log
 expect "the Settings window closes after the token rows" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the token rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 expect_poll "the Settings service is gone after the token rows" False record_exists vgs.settings
+seed_slack_photos
 slack_states "slack:T0ACME present;slack:T0GLOBEX absent;slack present"
 
 # Disabling and enabling again, three times over, leaves nothing behind.
