@@ -141,7 +141,13 @@ Scope {
 
     function shownScrollAreas(item) {
         const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
-        return root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width);
+        const isScroll = child => child.bar !== undefined && child.contentY !== undefined;
+        const nested = child => {
+            for (let at = child.parent; at !== null && at !== item; at = at.parent)
+                if (isScroll(at) && shown(at)) return true;
+            return false;
+        };
+        return root.descendants(item).filter(child => isScroll(child) && shown(child) && !nested(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width);
     }
 
     // The first visible, enabled item named `type` whose `text` is `text`
