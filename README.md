@@ -4,7 +4,7 @@ A desktop shell for Hyprland on Quickshell. Everything is a plugin: the bar, the
 
 ## Install
 
-There is no install command. From a checkout, `bin/vgsh run` starts the shell.
+There is no install command. From a checkout, `bin/vgsh run` starts the shell. `bin/vgsh --version` prints the version.
 
 ## Features
 
@@ -43,3 +43,7 @@ There is no install command. From a checkout, `bin/vgsh run` starts the shell.
 ## Writing a plugin
 
 Read [docs/architecture/plugins.md](docs/architecture/plugins.md). An agent loads the `vgs-plugin` skill, which scaffolds a plugin from templates and checks it.
+
+## Licence
+
+VGS is under the MIT licence: [LICENSE](LICENSE). The bundled fonts, JetBrains Mono and Inter, are under the SIL Open Font License 1.1 (`shell/assets/fonts/*-OFL.txt`), and the Lucide icons under ISC ([shell/Ui/icons/LICENSE](shell/Ui/icons/LICENSE)). The package licence is `MIT AND OFL-1.1 AND ISC`.

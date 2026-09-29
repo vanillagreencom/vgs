@@ -89,4 +89,5 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 - [theme-browsers.md](theme-browsers.md): read before touching the Zen or pywalfox target, or a target's `profiles` wiring.
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
+- [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.

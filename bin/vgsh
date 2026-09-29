@@ -30,6 +30,8 @@
 #   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
 #   vgsh hypr unwire               remove that line from hyprland.lua
 #   vgsh hypr render               have the running shell write the Hyprland layer again and reload Hyprland
+#   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
+#   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #
 # `run` takes no arguments: the shell always runs in the foreground under
 # this process, which is the identity the shell's guard checks. The lock file
@@ -119,6 +121,20 @@
 # shell, and each prints `ok hypr=wired|unwired|unchanged path=<file>`.
 # `hypr render` asks the running shell to write the layer and run
 # `hyprctl reload` now. docs/architecture/hyprland.md.
+#
+# `--version` and `version` read VERSION beside bin/, one line X.Y.Z, and
+# never contact the shell. In a git checkout of this tree, one whose
+# top-level directory is the tree itself, they print the describe form
+# `vgs X.Y.Z.r<N>.g<hash>`: X.Y.Z is the newest reachable release tag's,
+# a tag v<X.Y.Z>, and N counts the commits since it; with no release tag
+# X.Y.Z is VERSION's and N counts every commit. Elsewhere they print
+# `vgs <VERSION>`. `version --json` prints
+# `{"version":"<VERSION>","describe":"X.Y.Z.r<N>.g<hash>"}`, describe null
+# outside a checkout. Refusals, with nothing on stdout: version=missing or
+# version=malformed path=<file>, tag=<tag> reason=not-a-version for a tag
+# of v, digits and dots that is not v<X.Y.Z>, and git=describe or
+# git=rev-list path=<tree> for a failed git call, a checkout with no commit
+# included. docs/architecture/distribution.md § Version.
 #
 # Every refusal prints one keyed line first: `vgsh: refused: <key>=<value>`.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 when a theme
@@ -519,6 +535,53 @@ theme_remove() { # NAME
   echo "ok removed=$name"
 }
 
+# The release version: VERSION's one line, and a release tag after its v.
+version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+# Prints the version in FORMAT, text or json, as the header states.
+version_report() { # FORMAT
+  local file="$root/VERSION" content version top out tag count hash describe=""
+  [[ -f $file && -r $file ]] || refuse 1 "version=missing path=$file"
+  content="$({ cat -- "$file" 2>/dev/null && printf .; })" || refuse 1 "version=missing path=$file"
+  content="${content%.}"
+  version="${content%$'\n'}"
+  [[ $content == "$version"$'\n' && $version =~ $version_re ]] || refuse 1 "version=malformed path=$file"
+  # A caller's GIT_DIR or its kin would point the calls below at another
+  # repository. The process ends after this report, so the unset reaches
+  # nothing else.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+  # No git, no repository, or a repository around an exported tree, whose
+  # commits are not this tree's: no describe form.
+  if command -v git >/dev/null && top="$(git_plain -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [[ $top == "$root" ]]; then
+    # The globs keep tags of v, digits and dots: v1-beta and nightly never count.
+    out="$(git_or_refuse "git=describe path=$root" -C "$root" describe --long --tags --always --match 'v[0-9]*' --exclude 'v*[!0-9.]*' HEAD)" || exit 1
+    if [[ $out =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+      tag="${BASH_REMATCH[1]}" count="${BASH_REMATCH[2]}" hash="${BASH_REMATCH[3]}"
+      [[ ${tag#v} =~ $version_re ]] || refuse 1 "tag=$tag reason=not-a-version"
+      describe="${tag#v}.r$count.g$hash"
+    elif [[ $out =~ ^[0-9a-f]+$ ]]; then
+      # --always printed the abbreviated commit alone: no release tag is
+      # reachable, so the distance is from the root.
+      count="$(git_or_refuse "git=rev-list path=$root" -C "$root" rev-list --count HEAD)" || exit 1
+      [[ $count =~ ^[0-9]+$ ]] || refuse 1 "git=rev-list path=$root" "count=$count"
+      describe="$version.r$count.g$out"
+    else
+      refuse 1 "git=describe path=$root" "describe printed: $out"
+    fi
+  fi
+  if [[ $1 == json ]]; then
+    # Both values matched the grammars above, digits, dots, r, g and hex
+    # alone, so neither needs JSON escaping.
+    if [[ -n $describe ]]; then
+      printf '{"version":"%s","describe":"%s"}\n' "$version" "$describe"
+    else
+      printf '{"version":"%s","describe":null}\n' "$version"
+    fi
+  else
+    printf 'vgs %s\n' "${describe:-$version}"
+  fi
+}
+
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$cmd" in
@@ -704,6 +767,12 @@ PY
     ;;
   -h|--help|help)
     usage; exit 0
+    ;;
+  --version|version)
+    format=text
+    if [[ $cmd == version && ${1:-} == --json ]]; then format=json; shift; fi
+    if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+    version_report "$format"
     ;;
   *)
     printf 'vgsh: refused: command=%s\n' "${cmd:-missing}" >&2; usage; exit 2
