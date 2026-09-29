@@ -75,14 +75,13 @@ run_rows() {
 }
 run_rows "$repo/bin/vgsh" loud || true
 
-# A tree the judge resolves its siblings in: bin/ copied, the libraries it
-# loads linked.
-tree="$tmp/tree"; mkdir -p "$tree/shell/Core" "$tree/shell/Ui/icons" "$tree/scripts"
+# A tree the judge resolves its siblings in: bin/ copied, its loader
+# included, and the shell libraries it loads linked.
+tree="$tmp/tree"; mkdir -p "$tree/shell/Core" "$tree/shell/Ui/icons"
 cp -R -- "$repo/bin" "$tree/"
 ln -s -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/PluginLogic.js"
 ln -s -- "$repo/shell/Core/PackageManagers.js" "$tree/shell/Core/PackageManagers.js"
 ln -s -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/Lucide.js"
-ln -s -- "$repo/scripts/qml-library.js" "$tree/scripts/qml-library.js"
 
 # Detection that cannot run is a refusal naming it, never a line without
 # its package: the tree's vgsh-pkg is set aside for the one run. Returns 1
