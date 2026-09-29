@@ -505,16 +505,20 @@ text_space() {
   local cards texts
   cards="$(ipc smoke layerItems vgs.notifications NotificationCard summary,slotLeft,pad)" || return
   texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
+  bodies="$(ipc smoke layerItems vgs.notifications ImageText lineCount,visible,objectName)" || return
   python3 -c 'import json,sys
-cards, texts = json.loads(sys.argv[2]), json.loads(sys.argv[3])
+cards, texts, bodies = json.loads(sys.argv[2]), json.loads(sys.argv[3]), json.loads(sys.argv[4])
 card = next(((s, r, v) for s, r, v in cards if v["summary"] == sys.argv[1]), None)
 if card is None: print("absent"); sys.exit()
 screen, (x, y, w, h), values = card
-lines = [r for s, r, v in texts if s == screen and v["visible"] and v["text"] and v["objectName"] in ("notificationTitleText", "notificationBodyText") and x <= r[0] < x + w and y <= r[1] < y + h]
+inside = lambda s, r: s == screen and x <= r[0] < x + w and y <= r[1] < y + h
+# The body is an ImageText, whose box is its drawn text'"'"'s.
+lines = [r for s, r, v in texts if inside(s, r) and v["visible"] and v["text"] and v["objectName"] == "notificationTitleText"]
+lines += [r for s, r, v in bodies if inside(s, r) and v["visible"] and v["lineCount"] > 0 and v["objectName"] == "notificationBodyText"]
 if not lines: print("no-text"); sys.exit()
 top, bottom = min(r[1] for r in lines), max(r[1] + r[3] for r in lines)
 left, right = min(r[0] for r in lines), max(r[0] + r[2] for r in lines)
-print("top=%d bottom=%d left=%d right=%d height=%d slot=%d pad=%d" % (top - y, y + h - bottom, left - x, x + w - right, h, round(values["slotLeft"]), round(values["pad"])))' "$1" "$cards" "$texts"
+print("top=%d bottom=%d left=%d right=%d height=%d slot=%d pad=%d" % (top - y, y + h - bottom, left - x, x + w - right, h, round(values["slotLeft"]), round(values["pad"])))' "$1" "$cards" "$texts" "$bodies"
 }
 # Rectangular text clears the rounded end by one spacing step on both sides.
 # A round slot stays at the pad.
