@@ -202,6 +202,7 @@ INST_BIN="$running_data/vgs/current/bin/vgsh" inst "an update beside a running s
 check "the running shell's tree stays" test -d "$running_data/vgs/0.0.8/shell"
 check "the tree the update ran from stays" test -d "$running_data/vgs/$version_text"
 check "a tree nothing runs is removed" test ! -e "$running_data/vgs/0.0.7"
+kill "$fake_shell" 2>/dev/null || true
 inst_env=("${saved_env[@]}")
 
 # Package: the tree a package recipe installs, owned by a stub pacman
@@ -291,10 +292,14 @@ printf '%s  %s\n' "$good_sum" "$archive" >"$www/dl/SHA256SUMS"
 self_control shellblind 'if (running !== null && path.dirname(running) === real(data)) kept.push(path.basename(running));' ''
 blind_data="$tmp/data-shellblind"; running_layout "$blind_data"
 cp -- "$(dirname -- "$(dirname -- "$control_bin")")/bin/lib/self.js" "$blind_data/vgs/$version_text/bin/lib/self.js"
-printf '%s\n' "$fake_shell" >"$rt_running/vgsh.lock"
+"$stubs/qs" -p "$blind_data/vgs/0.0.8/shell" &
+blind_shell=$!
+trap 'kill "$fake_shell" "$blind_shell" "$www_pid" 2>/dev/null || true; rm -rf -- "${tmp:?}"' EXIT
+printf '%s\n' "$blind_shell" >"$rt_running/vgsh.lock"
 inst_env=(VGS_RELEASE_API="$api" XDG_DATA_HOME="$blind_data")
 INST_BIN="$blind_data/vgs/current/bin/vgsh" inst "the shell-blind mutant updates beside the running shell" "$cfg" "$rt_running" 78 "$any_out" "$any_out" self update
 check "and removes the running shell's tree, which the row above keeps" test ! -e "$blind_data/vgs/0.0.8"
+kill "$blind_shell" 2>/dev/null || true
 inst_env=("${saved_env[@]}")
 
 rows_done test-vgsh-self
