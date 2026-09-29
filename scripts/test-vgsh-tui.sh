@@ -304,18 +304,20 @@ plain_run env PATH="$bare" "$subject" launch --title t -- exits 0
 check "no terminal launcher exits 69" test "$plain_status" == 69
 check "no terminal launcher is named" test "$(err_first)" == "vgsh-tui: refused: terminal=missing"
 
-# A tree holding bin/ and the size table with its loader, the files launch
-# reads beside it.
-tui_tree() { # DIR
-  mkdir -p "$1/bin" "$1/shell/Core" "$1/scripts"
-  cp -R -- "$repo/bin/lib" "$repo/bin/vgsh" "$repo/bin/vgsh-tui" "$1/bin/"
-  cp -- "$repo/shell/Core/HyprlandLayer.js" "$1/shell/Core/"
-  cp -- "$repo/scripts/qml-library.js" "$1/scripts/"
+# A tree for a copy of bin/vgsh or bin/vgsh-tui, as the runner CLI's mutant
+# trees are built: both files copied, so a control can rewrite one, and
+# bin/lib, which holds the loader, linked beside them. SHELL_DIR is linked
+# as shell/, where launch reads the size table.
+tui_tree() { # DIR SHELL_DIR
+  mkdir -p "$1/bin"
+  cp -- "$repo/bin/vgsh" "$repo/bin/vgsh-tui" "$1/bin/"
+  ln -s -- "$repo/bin/lib" "$1/bin/lib"
+  ln -s -- "$2" "$1/shell"
 }
 
 # With the size table unreadable, launch refuses rather than guess an app-id.
-tui_tree "$tmp/no-table"
-mv -- "$tmp/no-table/shell/Core/HyprlandLayer.js" "$tmp/no-table/shell/Core/HyprlandLayer.js.gone"
+mkdir -p "$tmp/no-table-shell/Core"
+tui_tree "$tmp/no-table" "$tmp/no-table-shell"
 rm -f -- "$tmp/term"
 plain_run "$tmp/no-table/bin/vgsh-tui" launch --title t -- exits 0
 check "an unreadable size table exits 1" test "$plain_status" == 1
@@ -326,7 +328,7 @@ check "an unreadable size table opens no terminal" test ! -e "$tmp/term"
 # control NAME FILE NEEDLE REPLACEMENT: sets control_bin to the copy of FILE.
 control() {
   local dir="$tmp/control-$1"
-  tui_tree "$dir"
+  tui_tree "$dir" "$repo/shell"
   check "the $1 control's text occurs once in $2" \
     python3 -c 'import sys; sys.exit(0 if open(sys.argv[1]).read().count(sys.argv[2]) == 1 else 1)' "$repo/bin/$2" "$3"
   python3 -c 'import sys; p, o, a, b = sys.argv[1:]; open(o, "w").write(open(p).read().replace(a, b))' "$repo/bin/$2" "$dir/bin/$2" "$3" "$4"

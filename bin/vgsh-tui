@@ -70,7 +70,7 @@ app_id_of() { # SIZE
     "use strict";
     const path = require("path");
     const [root, size] = process.argv.slice(1);
-    const layer = require(path.join(root, "scripts", "qml-library.js")).load(path.join(root, "shell", "Core", "HyprlandLayer.js"));
+    const layer = require(path.join(root, "bin", "lib", "qml-library.js")).load(path.join(root, "shell", "Core", "HyprlandLayer.js"));
     if (!Object.prototype.hasOwnProperty.call(layer.TUI_WINDOWS, size)) process.exit(3);
     process.stdout.write(layer.TUI_WINDOWS[size].appId);
   ' "$root" "$1"
