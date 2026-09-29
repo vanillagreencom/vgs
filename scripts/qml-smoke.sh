@@ -43,13 +43,17 @@
 # high-water mark is printed beside it as the reproducible reading.
 #
 # VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
-# to the first bar surface with a client in the compositor's layer list.
+# to the first bar surface with a client in the compositor's layer list,
+# polled every 10 ms. The default is twice the highest reading of two passes
+# of --first-bar-runs 12 on the owner's machine (host cachy, AMD Ryzen 9
+# 9950X) on 2026-09-29, at load average 10 to 14; each pass lost one start
+# to an unsized nested monitor. The 22 readings, each a start with no
+# compiled QML cache, were 253 to 310 ms with cpu_some_pct at most 1.3.
 # VGSH_SMOKE_RECONCILE_BUDGET_MS: ceiling on the time from a
 # setPluginEnabled reply to the build records no longer listing the
-# disabled widget, polled with qs ipc. Both defaults are twice the highest
-# reading of twelve runs of this script on the owner's machine (host cachy,
-# AMD Ryzen 9 9950X) on 2026-09-23, which read 100 to 127 ms and 12 to
-# 15 ms, each carrying its poll interval.
+# disabled widget, polled with qs ipc. The default is twice the highest
+# reading of twelve runs of this script on the same machine on 2026-09-23,
+# which read 12 to 15 ms.
 set -euo pipefail
 
 timeout_s=60
@@ -70,7 +74,7 @@ done
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
-first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-254}"
+first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
 
 # The measurement mode. Each run sources the harness in its own subshell,
