@@ -420,6 +420,45 @@ PY
 test_args=(--full)
 row "the ceiling row with no base exits 77" "$d" 77 "WORKTREE_DEFAULT_BRANCH=absent" \
   "doc-limits: status=not-measured reason=no-base missing=base-ref branch=absent remote-refs=0"
+# A fix round after a rebase: the branch holds a commit from before it, the
+# base branch then grew grown.md into its margin, and the branch, rebased
+# onto it, leaves grown.md alone. --changed names the pre-rebase commit, so
+# the base branch's growth selects the row; the row measures growth from
+# the branch point and passes. OLD NEW, when given, is a replacement in the
+# fixture's validate, committed before the rebase.
+rebased_fixture() { # NAME [OLD NEW]
+  local dir="$tmp/doc-rebased-$1"
+  doc_fixture "$dir"
+  if [[ $# -eq 3 ]]; then
+    python3 - "$dir/scripts/validate" "$2" "$3" <<'PY'
+from pathlib import Path
+import sys
+path, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+source = path.read_text()
+assert source.count(old) == 1, old
+path.write_text(source.replace(old, new))
+PY
+  fi
+  printf 'branch\n' >"$dir/branch.txt"
+  "${base_env[@]}" git -C "$dir" add -A
+  "${base_env[@]}" git -C "$dir" commit -q -m pre-rebase
+  pre_rebase="$("${base_env[@]}" git -C "$dir" rev-parse HEAD)"
+  "${base_env[@]}" git -C "$dir" checkout -q --detach refs/remotes/origin/trunk
+  head -c 1010 /dev/zero | tr '\0' x >"$dir/grown.md"
+  "${base_env[@]}" git -C "$dir" commit -q -am upstream-growth
+  "${base_env[@]}" git -C "$dir" update-ref refs/remotes/origin/trunk HEAD
+  "${base_env[@]}" git -C "$dir" checkout -q feature
+  "${base_env[@]}" git -C "$dir" rebase -q refs/remotes/origin/trunk
+  d="$dir"
+}
+rebased_fixture branch-point
+test_args=(--changed "$pre_rebase")
+row "a fix round after a rebase does not charge the base branch's growth to the branch" "$d" 0 "" \
+  "doc-limits: base=$("${base_env[@]}" git -C "$d" rev-parse refs/remotes/origin/trunk)" "validate: ok"
+rebased_fixture change-base 'base="$(branch_point)"' 'base="$(whitespace_base)"'
+test_args=(--changed "$pre_rebase")
+row "control: measured from the fix-round base, the base branch's growth fails the branch" "$d" 1 "" \
+  "doc-limits FAIL: grown.md: stored size grown from 900 to 1010 bytes; its 1010 bytes are within the 20-byte margin under 1024 bytes (class *.md)"
 # Controls: copies of validate with one rule removed each, committed so the
 # plan against HEAD judges the planted documents alone.
 test_args=(--changed HEAD)

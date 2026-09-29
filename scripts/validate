@@ -28,6 +28,10 @@
 #   whitespace_base below resolves the base; an unavailable base exits 77.
 # DEV_VALIDATE_BASE: the fix-round base supplied by Kendex; used when neither
 #   --changed nor --full is present.
+# The document byte ceiling row reads none of --changed, VGS_VALIDATE_BASE
+#   and DEV_VALIDATE_BASE for its growth margin: it measures growth from the
+#   branch point, the default branch's merge base, and exits 77 when no
+#   branch point resolves. Those bases only choose whether it runs.
 #
 # Exit 0: every selected check passed. Exit 77: every check that ran passed
 # but at least one could not run and is named; that is not a pass. Exit 1: a
@@ -190,22 +194,14 @@ rows=(
   "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh"
 )
 
-# The commit the whitespace row compares against, printed on stdout. On
-# failure it prints what is missing as key=value and returns 1.
-# VGS_VALIDATE_BASE wins when set. Otherwise the base is the merge base of
-# HEAD with the remote-tracking copy of the project's base branch,
-# WORKTREE_DEFAULT_BRANCH from the environment or from kendex.settings.toml
-# (read by the kendex settings loader, so the file has one reader). Exactly
-# one remote may carry that branch; none or several is missing, never a
-# guess, so no ref that merely contains HEAD is taken for its base.
-whitespace_base() {
-  if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
-    if ! git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"; then
-      echo "missing=commit VGS_VALIDATE_BASE=$VGS_VALIDATE_BASE"
-      return 1
-    fi
-    return 0
-  fi
+# The branch point, printed on stdout: the merge base of HEAD with the
+# remote-tracking copy of the project's base branch, WORKTREE_DEFAULT_BRANCH
+# from the environment or from kendex.settings.toml (read by the kendex
+# settings loader, so the file has one reader). Exactly one remote may carry
+# that branch; none or several is missing, never a guess, so no ref that
+# merely contains HEAD is taken for its base. On failure it prints what is
+# missing as key=value and returns 1.
+branch_point() {
   local branch="${WORKTREE_DEFAULT_BRANCH:-}" loader="$repo/.agents/skills/orch/scripts/lib/kendex-env.sh" ref refs=()
   if [[ -z $branch && -f $repo/kendex.settings.toml ]]; then
     # shellcheck source=/dev/null
@@ -226,6 +222,20 @@ whitespace_base() {
     echo "missing=merge-base ref=${refs[0]}"
     return 1
   fi
+}
+
+# The commit the whitespace row compares against, printed on stdout, and the
+# default change base: VGS_VALIDATE_BASE when set, else the branch point. On
+# failure it prints what is missing as key=value and returns 1.
+whitespace_base() {
+  if [[ -n ${VGS_VALIDATE_BASE:-} ]]; then
+    if ! git rev-parse --verify --quiet "${VGS_VALIDATE_BASE}^{commit}"; then
+      echo "missing=commit VGS_VALIDATE_BASE=$VGS_VALIDATE_BASE"
+      return 1
+    fi
+    return 0
+  fi
+  branch_point
 }
 
 # Whitespace errors the tree adds over the base: tracked files against the
@@ -277,11 +287,14 @@ whitespace_check() {
 # and untracked, non-ignored Markdown file and docs HTML file is added as
 # the worktree holds it. A tracked file under an ignored directory is
 # added with --force; the list names no ignored untracked file. The real
-# index is never written. --against the
-# change base adds the growth margin: a document the change grows may not
-# end within the margin under its ceiling. doc-limits exit 2, a
-# configuration or collection error, fails the row. First lines, then
-# doc-limits' own output:
+# index is never written. --against the branch point adds the growth
+# margin: a document the branch grows may not end within the margin under
+# its ceiling. The branch point is the doc-limits policy's REF for a local
+# run, so --changed, DEV_VALIDATE_BASE and VGS_VALIDATE_BASE, which choose
+# the rows and the whitespace range, never move it: a fix-round base from
+# before a rebase would charge the base branch's own growth to the branch.
+# doc-limits exit 2, a configuration or collection error, fails the row.
+# First lines, then doc-limits' own output:
 #   doc-limits: base=<commit>
 #   doc-limits: failed status=<n>
 #   doc-limits: status=not-measured reason=no-base <missing key=value>
@@ -293,9 +306,9 @@ doc_limits_check() {
     echo "doc-limits: status=not-measured reason=checker-missing path=$checker"
     return 77
   fi
-  if ! base="$(whitespace_base)"; then
+  if ! base="$(branch_point)"; then
     echo "doc-limits: status=not-measured reason=no-base ${base##*$'\n'}"
-    echo "set VGS_VALIDATE_BASE to the commit to compare against"
+    echo "set WORKTREE_DEFAULT_BRANCH to the base branch one remote carries"
     return 77
   fi
   echo "doc-limits: base=$base"
