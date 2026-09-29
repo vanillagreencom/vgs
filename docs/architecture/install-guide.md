@@ -9,7 +9,7 @@ Covers: README.md § Install, § Shipped plugins and § Licence, scripts/check-r
 | Fact | Source |
 |---|---|
 | The floor, stated once in the first paragraph: each tool with `<need> or later`, or its name for `present` | the `preflight_floor` table of `bin/vgsh` ([runtime.md § Process](runtime.md#process)) |
-| Arch: `yay -S <pkg>` for each package | the recipes under `packaging/arch/` |
+| Arch: `yay -S <pkg>` for each package, each in its own fence, because the two conflict | the recipes under `packaging/arch/` |
 | The install script: `curl -fsSL <main install.sh> \| bash`, and `bash -s -- <options>` | the option parser of `install.sh`; a `--version` value is `v` plus `VERSION` |
 | Nix: `nix run github:vanillagreencom/vgs/v<VERSION> -- <vgsh args>` | `VERSION`, and the usage header of `bin/vgsh` for the command |
 | A checkout: `git clone https://github.com/vanillagreencom/vgs`, then `vgs/bin/vgsh <args>` | the usage header of `bin/vgsh` |
@@ -35,7 +35,8 @@ Every line of a `bash` fence in § Install is one command of one channel. A line
 
 - The aur, curl and checkout commands run in an `archlinux:latest` image with Quickshell, Hyprland, node, python and git. They run as an unprivileged user with a login session's `HOME` and `XDG_RUNTIME_DIR`.
 - The nix command runs in `nixos/nix`.
-- Each fence runs top to bottom in one fresh container. Every prompt gets an empty answer, so it takes its default.
+- Each fence runs top to bottom in one fresh container, so alternatives such as the two AUR packages go in separate fences. Every prompt gets an empty answer, so it takes its default.
+- A command runs under `pipefail`, so a `curl ... | bash` whose download fails fails too, though bash exits 0 on an empty script.
 - A command passes on exit 0. A command that runs `vgsh run` passes when it exits 78 at the Hyprland floor, because no Hyprland runs in a container.
 
 The curl and checkout commands read `main` on GitHub, so the runner checks what users get, not the working tree. It needs podman and the network, so it runs by hand, not in `scripts/validate`. `scripts/test-readme-install.sh` covers its host side with stubs.

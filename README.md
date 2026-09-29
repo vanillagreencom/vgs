@@ -8,12 +8,19 @@ VGS needs Hyprland 0.56 or later, configured in Lua (`~/.config/hypr/hyprland.lu
 
 ### Arch Linux
 
+Install one of the two packages. The latest release:
+
 ```bash
-yay -S vgs        # the latest release
-yay -S vgs-git    # the development version, built from main
+yay -S vgs
 ```
 
-Each package conflicts with v1's `vgs-shell`, so pacman offers to remove it.
+The development version, built from `main`:
+
+```bash
+yay -S vgs-git
+```
+
+The two packages conflict with each other and with v1's `vgs-shell`, so pacman offers to remove the one installed before.
 
 ### Any distribution: install script
 
@@ -35,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/main/install.sh
 nix run github:vanillagreencom/vgs/v0.1.0 -- run
 ```
 
-Every `vgsh` command works after `--`. To install VGS, add the flake's `packages.<system>.default` to your configuration, for `x86_64-linux` or `aarch64-linux`. The package puts Quickshell and every tool VGS runs on the `PATH` of `vgsh`. Hyprland comes from your session, not from the package.
+Every `vgsh` command works after `--`. To install VGS, add the flake's `packages.<system>.default` to your configuration, for `x86_64-linux` or `aarch64-linux`. The package puts Quickshell and the tools the core needs, the rows of `config/requirements.json`, on the `PATH` of `vgsh`. A plugin feature can need more tools, which its README names and `vgsh plugin list` reports as `missing`. Hyprland comes from your session, not from the package.
 
 ### From a checkout
 

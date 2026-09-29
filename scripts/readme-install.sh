@@ -19,7 +19,10 @@
 #
 # Each bash fence of the section runs top to bottom in one fresh container,
 # in the home directory, with an empty line on stdin for every prompt, so
-# each prompt takes its default answer:
+# each prompt takes its default answer. A command runs under pipefail, so a
+# `curl ... | bash` whose download fails fails, though bash exits 0 on the
+# empty script. Alternatives the README offers, such as the two AUR
+# packages, sit in separate fences:
 #   - aur, curl and checkout commands in an archlinux:latest image prepared
 #     once per run: base-devel, git, sudo, quickshell, hyprland, nodejs and
 #     python, the unprivileged user `user` with passwordless sudo inside the
@@ -85,7 +88,7 @@ not_measured() { # REASON [DETAIL...]
 
 case "${1:-}" in
   "") ;;
-  -h|--help) sed -n '2,61{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
+  -h|--help) sed -n '2,64{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
   *) refuse 2 "argument=$1" ;;
 esac
 [[ $# -le 1 ]] || refuse 2 "argument=$2"
@@ -238,7 +241,7 @@ for row in "${rows[@]}"; do
   started=$SECONDS
   status=0
   podman exec --user "$user" --workdir "$home" -e HOME="$home" -e XDG_RUNTIME_DIR="$runtime" -- "$container" \
-    bash -c 'yes "" | timeout "$1" bash -c "$2"' _ "$command_seconds" "$command" >"$log" 2>&1 || status=$?
+    bash -c 'yes "" | timeout "$1" bash -o pipefail -c "$2"' _ "$command_seconds" "$command" >"$log" 2>&1 || status=$?
   seconds=$((SECONDS - started))
   if [[ $vgsh == run ]]; then
     grep -q -E "^vgsh: refused: preflight=hyprland have=$want_have need=" -- "$log" && [[ $status -eq 78 ]] ||

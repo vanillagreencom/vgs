@@ -108,9 +108,9 @@ const ROWS = [
     ["a floor sentence without a present tool is refused", t => replaceIn(t, "README.md", ", python3 and git.", " and git."),
         1, tree => [`floor README.md:${floorLine(tree)} tool=python3 need=present`]],
     // command
-    ["a command of no channel is refused", t => replaceIn(t, "README.md", "yay -S vgs        #", "sudo pacman -S vgs        #"),
+    ["a command of no channel is refused", t => replaceIn(t, "README.md", "\nyay -S vgs\n", "\nsudo pacman -S vgs\n"),
         1, tree => [`command README.md:${lineOf(tree, "sudo pacman -S vgs", true)} unknown text=sudo pacman -S vgs`]],
-    ["an AUR package with no recipe is refused", t => replaceIn(t, "README.md", "yay -S vgs        #", "yay -S vgs-bin    #"),
+    ["an AUR package with no recipe is refused", t => replaceIn(t, "README.md", "\nyay -S vgs\n", "\nyay -S vgs-bin\n"),
         1, tree => [`command README.md:${lineOf(tree, "yay -S vgs-bin", true)} channel=aur package=vgs-bin reason=no-recipe`]],
     ["a curl option install.sh no longer parses is refused", t => replaceIn(t, "install.sh", "      --git | --uninstall)", "      --git)"),
         1, tree => [`command README.md:${curlLine(tree, " -s -- --uninstall")} channel=curl option=--uninstall reason=not-in-install.sh`]],
