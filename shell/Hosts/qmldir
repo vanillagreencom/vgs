@@ -6,6 +6,7 @@ LockHost 1.0 LockHost.qml
 BackgroundHost 1.0 BackgroundHost.qml
 SummonHost 1.0 SummonHost.qml
 SummonPopup 1.0 SummonPopup.qml
+AppWindow 1.0 AppWindow.qml
 ToastHost 1.0 ToastHost.qml
 NoticeHost 1.0 NoticeHost.qml
 LayerHost 1.0 LayerHost.qml

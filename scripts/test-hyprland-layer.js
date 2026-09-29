@@ -21,6 +21,7 @@ const same = (got, want, message) => assert.deepStrictEqual(JSON.parse(JSON.stri
 
 const logicFile = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const layerFile = path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js");
+const shellFile = path.join(__dirname, "..", "shell", "shell.qml");
 
 const service = { schemaVersion: 1, id: "acme.keys", name: "K", version: "1.0.0", author: "a", description: "d", kinds: ["service"], entryPoints: { service: "S.qml" }, capabilities: ["shortcut"] };
 const overlayRule = { namespace: "^vgs:overlay$", blur: true, ignoreAlpha: 0.6 };
@@ -36,6 +37,26 @@ const TUI_SECTION = [
     "hl.window_rule({ name = \"vgs:tui-wide\", match = { class = \"^org\\\\.vgs\\\\.tui\\\\.wide$\" }, float = true, center = true, size = { 1200, 720 } })",
     "hl.window_rule({ name = \"vgs:tui-tall\", match = { class = \"^org\\\\.vgs\\\\.tui\\\\.tall$\" }, float = true, center = true, size = { 875, 900 } })"
 ];
+// The shell's application window rule, byte for byte: no size, so each
+// window keeps the size it asks for.
+const APP_SECTION = [
+    "-- Application windows: the shell's windows float, centred, at the size they ask.",
+    "hl.window_rule({ name = \"vgs:window\", match = { class = \"^org\\\\.vgs\\\\.shell$\" }, float = true, center = true })"
+];
+
+// The app-id shell.qml's leading pragmas give every toplevel, read as
+// Quickshell 0.3.1 reads them (src/launch/launch.cpp): each `//@ pragma`
+// line up to the first line that starts with `import`, the last AppId
+// winning; null when none sets it, which Quickshell reads as org.quickshell.
+function pragmaAppId(text) {
+    let appId = null;
+    for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (line.startsWith("import")) break;
+        if (line.startsWith("//@ pragma AppId ")) appId = line.slice("//@ pragma AppId ".length).trim();
+    }
+    return appId;
+}
 
 // hyprlandKey rows: [text, want key or the start of the error].
 const KEYS = [
@@ -104,7 +125,7 @@ function manifestOf(logic, patch) {
     return r.manifest;
 }
 
-function verify(logic, layer) {
+function verify(logic, layer, shellText) {
     for (const [text, want] of KEYS) {
         const got = logic.hyprlandKey(text);
         if (want.key !== undefined) same(got, { ok: true, key: want.key }, "hyprlandKey " + JSON.stringify(text));
@@ -138,7 +159,9 @@ function verify(logic, layer) {
     const section = (id, binds, layerRules, version) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, unknownKeys: [] });
     const lines = out => out.text.split("\n");
     const bare = layer.render([], colours, "vgs");
-    same(lines(bare).slice(lines(bare).indexOf("})") + 1), ["", ...TUI_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, right after the border colours");
+    same(lines(bare).slice(lines(bare).indexOf("})") + 1), ["", ...TUI_SECTION, "", ...APP_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, right after the border colours, then the application window rule");
+    same(layer.APP_WINDOW, { appId: "org.vgs.shell", rule: "vgs:window" }, "the application windows' app-id and rule name");
+    same(pragmaAppId(shellText), layer.APP_WINDOW.appId, "shell.qml's AppId pragma is the application windows' app-id");
     assert.ok(lines(bare).some(line => line.includes("`" + layer.REGENERATE + "`")), "the header names the regenerate command");
     assert.strictEqual(layer.REGENERATE, "vgsh hypr render", "the regenerate command is the runner's verb");
     assert.ok(lines(bare).includes("-- Theme vgs: window, group and group bar borders."), "the border block names its theme");
@@ -157,6 +180,8 @@ function verify(logic, layer) {
     same(tail, [
         "",
         ...TUI_SECTION,
+        "",
+        ...APP_SECTION,
         "",
         "-- acme.keys 2?os.exit(): binds and layer rules from its manifest",
         "hl.layer_rule({ name = \"acme.keys:overlay\", match = { namespace = \"^vgs:overlay$\" }, blur = true, ignore_alpha = 0.6 })",
@@ -238,7 +263,8 @@ const SEQUENCES = [
         ["none", "read", "mkdir", "write", "reload"], { firstRun: false }]
 ];
 
-verify(load(logicFile), load(layerFile));
+const shellText = fs.readFileSync(shellFile, "utf8");
+verify(load(logicFile), load(layerFile), shellText);
 
 // Each control removes one rule from a copy of one file and keeps the text
 // around it. The suite must fail on every copy.
@@ -293,10 +319,16 @@ const CONTROLS = [
     [layerFile, "colour order", "return \"rgba(\" + value.slice(3, 9) + value.slice(1, 3) + \")\";", "return \"rgba(\" + value.slice(1, 9) + \")\";"],
     [layerFile, "colour judged", "if (typeof value !== \"string\" || !/^#[0-9a-fA-F]{8}$/.test(value))", "if (false)"],
     [layerFile, "bind keys spaced", "return key.split(\"+\").join(\" + \");", "return key;"],
-    [layerFile, "floating TUI rules written", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines());", ".concat(borderLines(colours, themeName));"],
-    [layerFile, "floating TUI rules after the borders", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines());", ".concat(tuiWindowLines(), [\"\"], borderLines(colours, themeName));"],
+    [layerFile, "floating TUI rules written", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines(), ", ".concat(borderLines(colours, themeName), "],
+    [layerFile, "floating TUI rules after the borders", ".concat(borderLines(colours, themeName), [\"\"], tuiWindowLines(), ", ".concat(tuiWindowLines(), [\"\"], borderLines(colours, themeName), "],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
+    [layerFile, "application window rule written", "[\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "[\"\"], tuiWindowLines());"],
+    [layerFile, "application window rule after the TUIs", "[\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "[\"\"], appWindowLines(), [\"\"], tuiWindowLines());"],
+    [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
+    [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],
+    [shellFile, "shell.qml's app-id is the layer's", "//@ pragma AppId org.vgs.shell\n", "//@ pragma AppId org.vgs.other\n"],
+    [shellFile, "the app-id pragma comes before the imports", "//@ pragma AppId org.vgs.shell\nimport QtQuick\n", "import QtQuick\n//@ pragma AppId org.vgs.shell\n"],
     [layerFile, "a stale view is read first", "if (state.queuedForce || state.stale)", "if (state.queuedForce)"],
     [layerFile, "a queued render reads first", "if (state.queuedForce || state.stale)", "if (state.stale)"],
     [layerFile, "a queued render forces its cycle", "forcing: state.forcing || state.queuedForce,", "forcing: state.forcing,"],
@@ -334,7 +366,7 @@ try {
         const layer = load(file === layerFile ? mutant : layerFile);
         let failed = false;
         try {
-            verify(logic, layer);
+            verify(logic, layer, file === shellFile ? fs.readFileSync(mutant, "utf8") : shellText);
         } catch (e) {
             failed = true;
         }

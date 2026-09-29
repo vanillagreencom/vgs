@@ -524,6 +524,22 @@ function suite(ctx, check) {
     check("pluginIcon: a plugin without one is listed as a package", ctx.pluginIcon(manifests["acme.svc"]), "package");
 
     check("SUMMONABLE_KINDS are kinds", ctx.SUMMONABLE_KINDS.every(k => ctx.KINDS.indexOf(k) !== -1), true);
+    check("window is a summonable kind", ctx.SUMMONABLE_KINDS.indexOf("window"), 3);
+
+    // summonSurface rows: [name, kind, anchored, want]. An application
+    // window is a toplevel whatever the anchor; every other summonable kind
+    // is a popup under its anchor and a layer surface without one.
+    const surfaceRows = [
+        ["a window without an anchor is a toplevel", "window", false, "window"],
+        ["an anchored window is still a toplevel", "window", true, "window"],
+        ["an anchored panel is a popup", "panel", true, "popup"],
+        ["an unanchored panel is a layer surface", "panel", false, "layer"],
+        ["an anchored menu is a popup", "menu", true, "popup"],
+        ["an unanchored overlay is a layer surface", "overlay", false, "layer"],
+    ];
+    for (const [name, kind, anchored, want] of surfaceRows)
+        check("summonSurface: " + name, ctx.summonSurface(kind, anchored), want);
+    check("summonSurface refuses a kind no host summons", (() => { try { return ctx.summonSurface("background", false); } catch (e) { return e.message; } })(), "summonSurface: kind \"background\" is not summonable");
 }
 
 suite(load(LOGIC), report);
@@ -572,6 +588,12 @@ const CONTROLS = [
     ["status hidden is a boolean", "if (entry.hidden !== undefined && typeof entry.hidden !== \"boolean\")", "if (false)"],
     ["a data entry is never drawn", "if (entry[drawn[d]] !== undefined)", "if (false)"],
     ["an absent status is normalised", "manifest.status = raw.status === undefined ? {} : clone(raw.status);", "manifest.status = clone(raw.status);"],
+    ["window is a kind", "\"menu\", \"window\", \"service\"", "\"menu\", \"service\""],
+    ["window is summonable", "\"menu\", \"window\"];", "\"menu\"];"],
+    ["a window is a toplevel", "if (kind === \"window\") return \"window\";", ""],
+    ["an anchored window is a toplevel", "if (kind === \"window\") return \"window\";", "if (kind === \"window\" && !anchored) return \"window\";"],
+    ["an anchored summon is a popup", "return anchored ? \"popup\" : \"layer\";", "return \"layer\";"],
+    ["a kind no host summons is refused a surface", "if (SUMMONABLE_KINDS.indexOf(kind) === -1)\n        throw new Error(\"summonSurface", "if (false)\n        throw new Error(\"summonSurface"],
     ["a centred surface ignores reserved space", "exclusion: placement === \"center\" ? \"ignore\" : \"normal\"", "exclusion: \"normal\""],
     ["requires is refused by name", "if (hasOwn(raw, \"requires\"))", "if (false)"],
     ["requirements is a manifest key", "\"hyprland\", \"requirements\", ", "\"hyprland\", "],

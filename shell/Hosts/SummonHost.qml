@@ -4,15 +4,18 @@ import Quickshell.Wayland
 import qs.Core
 import qs.Commons
 
-// The surfaces of one summonable kind: `panel`, `overlay` or `menu`. A
-// plugin of that kind is drawn only while summoned. `summon` creates a
-// surface on the screen it was summoned on, builds the plugin inside
-// it and calls its `open(payloadJson)`; `hide` destroys the surface, and
+// The surfaces of one summonable kind: `panel`, `overlay`, `menu` or
+// `window`. A plugin of that kind is drawn only while summoned. `summon`
+// creates a surface on the screen it was summoned on, the one
+// PluginLogic.summonSurface names: a layer surface, a popup under an
+// anchor, or for `window` an application window whatever the anchor. It
+// builds the plugin inside it and calls its `open(payloadJson)`; `hide` destroys the surface, and
 // the slot calls `close()` first, so nothing of a hidden plugin stays
 // mapped. One surface per plugin id; summoning an open one hands it the new
 // payload. A plugin disabled while open is closed the same way. An open()
 // that throws is logged and refuses the summon; a close() that throws is
-// logged and the surface still goes.
+// logged and the surface still goes. A window the user closes through
+// Hyprland is hidden the same way.
 Scope {
     id: host
 
@@ -120,7 +123,22 @@ Scope {
 
             Loader {
                 active: entry.request !== undefined
-                sourceComponent: entry.request && entry.request.anchored ? popup : layer
+                sourceComponent: {
+                    if (!entry.request) return null;
+                    const surface = PluginLogic.summonSurface(host.kind, entry.request.anchored);
+                    return surface === "window" ? appWindow : surface === "popup" ? popup : layer;
+                }
+            }
+
+            Component {
+                id: appWindow
+                AppWindow {
+                    pluginId: entry.modelData
+                    kind: host.kind
+                    request: entry.request
+                    onBuilt: instance => host.built(entry.modelData, instance)
+                    onDismissed: Qt.callLater(() => host.drop(entry.modelData))
+                }
             }
 
             Component {

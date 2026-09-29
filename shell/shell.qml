@@ -1,4 +1,5 @@
 //@ pragma UseQApplication
+//@ pragma AppId org.vgs.shell
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -54,6 +55,7 @@ ShellRoot {
             SummonHost { kind: "panel" }
             SummonHost { kind: "overlay" }
             SummonHost { kind: "menu" }
+            SummonHost { kind: "window" }
         }
     }
 

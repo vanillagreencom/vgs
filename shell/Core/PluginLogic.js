@@ -13,7 +13,7 @@
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
-var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "service", "background"];
+var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service", "background"];
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
@@ -49,7 +49,7 @@ var SECTIONS = ["left", "center", "right"];
 
 // Kinds a host shows on demand: `summon`, `hide` and `toggle` reach them.
 // Every other kind is shown for as long as it is enabled.
-var SUMMONABLE_KINDS = ["panel", "overlay", "menu"];
+var SUMMONABLE_KINDS = ["panel", "overlay", "menu", "window"];
 
 // Where a summoned panel or menu may sit when no anchor places it, read
 // from the plugin's `placement` setting. `center` when the setting is
@@ -2172,6 +2172,16 @@ function toastOptions(raw) {
     if (raw.duration !== undefined && !(typeof raw.duration === "number" && isFinite(raw.duration) && raw.duration >= 0 && Math.floor(raw.duration) === raw.duration))
         return { ok: false, error: "duration must be a whole number of milliseconds at or above 0" };
     return { ok: true, value: { title: raw.title, message: raw.message === undefined ? "" : raw.message, tone: raw.tone === undefined ? "neutral" : raw.tone, icon: raw.icon === undefined ? "" : raw.icon, duration: raw.duration === undefined ? null : raw.duration } };
+}
+
+// The surface a summon of KIND builds: `window`, a Hyprland toplevel, for
+// kind `window` whatever the anchor, since a toplevel is never placed by
+// the shell; `popup` under an ANCHORED summon's item; `layer` otherwise.
+function summonSurface(kind, anchored) {
+    if (SUMMONABLE_KINDS.indexOf(kind) === -1)
+        throw new Error("summonSurface: kind " + JSON.stringify(kind) + " is not summonable");
+    if (kind === "window") return "window";
+    return anchored ? "popup" : "layer";
 }
 
 // Layer placement for a summon without an item anchor. Popups delegate
