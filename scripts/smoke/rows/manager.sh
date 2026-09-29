@@ -130,11 +130,12 @@ listing, at = json.JSONDecoder().raw_decode(text)
 names = json.loads(text[at:])
 print(len(names) == len(listing["plugins"]))'; }
 expect_poll "the cleared search lists every plugin again" True list_complete
-# The list page: the search field and every row span one left and one
-# right edge, the list's, `scrollArea.gutter` clear of the scroll area's
-# right; the heading's text and every row's icon start `row.paddingX` past
-# that left edge; and each row's lines centre on its icon, which centres on
-# the row, all within one pixel. `[]` is the pass.
+# The list page: the content box's left and right insets match
+# `inset.window`; the search field, every row and the heading span that
+# content box; the scroll bar is in the right inset; the placeholder and
+# typed text are vertically centred; and each row's lines centre on its
+# icon. Unit mutations in tst_pane, tst_scroll, tst_textfield and
+# tst_layout are the controls for these geometry rules. `[]` is the pass.
 list_alignment() {
   local rows pad inset
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
@@ -161,8 +162,13 @@ heading = [i for i in under("Label") if rows[i].get("role") == "h2"]
 if len(search) != 1 or len(areas) != 1 or len(heading) != 1 or len(items) < 3:
     print(json.dumps(["search=%d areas=%d heading=%d items=%d" % (len(search), len(areas), len(heading), len(items))])); sys.exit()
 edge_l, edge_r = rows[search[0]]["box"][0], right(rows[search[0]])
+check("content.leftInset", edge_l - rows[page[0]]["box"][0], inset)
+check("content.rightInset", right(rows[page[0]]) - edge_r, inset)
 check("search.right", edge_r, right(rows[areas[0]]) - inset)
 check("heading.x", rows[heading[0]]["box"][0], edge_l)
+placeholders = [j for j, r in enumerate(rows) if r["type"] == "Label" and r.get("text") == "Search plugins" and inside(j, search[0])]
+if len(placeholders) != 1: out.append("placeholder=%d" % len(placeholders))
+else: check("search.placeholder.y", mid_y(rows[placeholders[0]]), mid_y(rows[search[0]]))
 for n, i in enumerate(items):
     item = rows[i]
     check("item%d.left" % n, item["box"][0], edge_l)
@@ -235,22 +241,21 @@ sliders() { ipc smoke descendantGeometry window vgs.settings | python3 -c 'impor
 expect "the two bounded numbers draw sliders" 2 sliders
 # page_alignment SETTINGS KEYS: [] when the shown page draws SETTINGS
 # setting fields and KEYS key rows and every inline field, the details and
-# commands included, starts its label `row.paddingX` in from the page's
-# column and its control `field.labelWidth` plus `field.labelGap` past that,
-# ends its control `row.paddingX` in from the column's right, which leaves
-# the scroll bar inside the right inset on every page, and centres its label
-# on its control or value, each within one pixel, a text value at line
-# height 1 so its box is its glyphs; else the misfits.
+# commands included, leaves equal insets around the content box, starts a
+# field label on the content edge and its control `field.labelWidth` plus
+# `field.labelGap` past that, ends the control on the content edge, puts
+# section headers on the same edge and leaves the scroll bar inside the
+# right inset. Unit mutations in tst_pane, tst_scroll and tst_spacing are
+# the controls for these geometry rules. `[]` is the pass.
 page_alignment() {
-  local rows pad label_w label_gap inset
+  local rows label_w label_gap inset
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
-  pad="$(ipc smoke themeValue row.paddingX)" || return
   label_w="$(ipc smoke themeValue field.labelWidth)" || return
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
   inset="$(ipc smoke themeValue inset.window)" || return
-  python3 - "$rows" "$pad" "$label_w" "$label_gap" "$inset" "$1" "$2" <<'PY'
+  python3 - "$rows" "$label_w" "$label_gap" "$inset" "$1" "$2" <<'PY'
 import json, sys
-rows, pad, label_w, label_gap, inset, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
+rows, label_w, label_gap, inset, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
 out = []
 def inside(j, i):
     while j != -1:
@@ -267,6 +272,14 @@ if len(page) != 1 or len(areas) != 1:
     print(json.dumps(["pages=%d areas=%d" % (len(page), len(areas))])); sys.exit()
 area = rows[areas[0]]
 column_right = right(area) - inset
+content_left = area["box"][0]
+check("content.leftInset", content_left - rows[page[0]]["box"][0], inset)
+check("content.rightInset", right(rows[page[0]]) - column_right, inset)
+headers = [i for i, r in enumerate(rows) if r["type"] == "SectionHeader" and inside(i, page[0])]
+for n, i in enumerate(headers):
+    labels = [j for j, r in enumerate(rows) if r["type"] == "Label" and inside(j, i) and r.get("role") == "eyebrow"]
+    if len(labels) != 1: out.append("section%d labels=%d" % (n, len(labels))); continue
+    check("section%d.x" % n, rows[labels[0]]["box"][0], content_left)
 fields = [i for i, r in enumerate(rows) if r["type"] in ("SettingField", "KeyField", "Field") and inside(i, page[0])]
 counts = [sum(1 for i in fields if rows[i]["type"] == kind) for kind in ("SettingField", "KeyField")]
 if counts != [want_settings, want_keys]: out.append("settings,keys=%s want=%s" % (counts, [want_settings, want_keys]))
@@ -281,15 +294,16 @@ for n, i in enumerate(fields):
     label, slot = rows[labels[0]], rows[slots[0]]
     values = [r for r in rows if r["parent"] == slots[0]]
     if len(values) != 1: out.append("%s values=%d" % (name, len(values))); continue
-    check(name + ".label.x", label["box"][0], left + pad)
-    check(name + ".control.x", slot["box"][0], left + pad + label_w + label_gap)
-    check(name + ".control.right", right(slot), column_right - pad)
+    check(name + ".left", left, content_left)
+    check(name + ".label.x", label["box"][0], content_left)
+    check(name + ".control.x", slot["box"][0], content_left + label_w + label_gap)
+    check(name + ".control.right", right(slot), column_right)
     check(name + ".label.y", mid_y(label), mid_y(values[0]))
     # A value drawn with leading below its glyphs is centred as a box and
     # not as text.
     if values[0]["type"] == "Label" and values[0].get("lineHeight") != 1: out.append("%s.value.lineHeight=%s" % (name, values[0].get("lineHeight")))
     for j, r in enumerate(rows):
-        if r["type"] in ("TextField", "Select") and inside(j, i): check(name + "." + r["type"] + ".right", right(r), column_right - pad)
+        if r["type"] in ("TextField", "Select") and inside(j, i): check(name + "." + r["type"] + ".right", right(r), column_right)
 print(json.dumps(out))
 PY
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import qs.Commons
 import qs.Ui
 
@@ -28,11 +29,16 @@ FocusScope {
     property string message: ""
     property var actions: []
     property bool busy: false
+    // Hosts may set this. When they do not, the dialog reads its window's
+    // screen height, so the cap remains relative to the surface it draws on.
     property real availableHeight: 0
     default property alias content: body.data
     readonly property var entries: actions.map(entryOf)
     readonly property int acceptIndex: entries.findIndex(entry => entry.role === "accept")
-    readonly property real maximumHeight: availableHeight > 0 ? availableHeight * Theme.dialog.maxHeightShare : Theme.size.panel.maxHeight
+    readonly property real maximumHeight: {
+        const height = availableHeight > 0 ? availableHeight : root.screenHeight();
+        return height > 0 ? height * Theme.dialog.maxHeightShare : Theme.size.panel.maxHeight;
+    }
     signal accepted()
     signal rejected()
 
@@ -42,12 +48,19 @@ FocusScope {
             console.error("Dialog: no action role named " + JSON.stringify(role));
             role = "cancel";
         }
+
         return {
             label: String(action.label),
             role: role,
             variant: action.variant !== undefined ? action.variant : role === "accept" ? "primary" : "tertiary",
             enabled: action.enabled !== false
         };
+    }
+
+    function screenHeight() {
+        const window = root.Window.window;
+        if (window === null || window === undefined || window.screen === null || window.screen === undefined) return 0;
+        return window.screen.height;
     }
 
     // The action buttons, in order.

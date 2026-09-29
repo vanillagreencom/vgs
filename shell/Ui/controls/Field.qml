@@ -7,7 +7,8 @@ import qs.Ui
 // theme's label width and label gap), `hint` under it, and `error` in the
 // hint's place in the error colour while it is set. Width comes from the
 // parent; the label, the control and the hint sit `field.paddingX` in from
-// each side, the edge a list item's icon starts on.
+// each side. The default is zero, so a field's unboxed label sits on the
+// container's content edge and its control ends on that edge.
 Column {
     id: root
 

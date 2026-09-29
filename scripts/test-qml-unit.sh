@@ -123,6 +123,7 @@ mutations=(
   "the dialog's card ignores its background token|feedback/Dialog.qml|color: Theme.dialog.background|color: Theme.color.surface|tst_dialog.qml"
   "the dialog's content is hidden|feedback/Dialog.qml|visible: children.length > 0|visible: false|tst_dialog.qml"
   "a dialog ignores its maximum height|feedback/Dialog.qml|implicitHeight: pane.implicitHeight|implicitHeight: pane.uncappedHeight|tst_dialog.qml"
+  "a dialog without an available height ignores its screen|feedback/Dialog.qml|const height = availableHeight > 0 ? availableHeight : root.screenHeight();|const height = availableHeight;|tst_dialog.qml"
   "the card leans by a fixed skew|layout/AngledCard.qml|property real skew: Theme.angledCard.skew|property real skew: 28|tst_angledcard.qml"
   "the card's top edge does not lean|layout/AngledCard.qml|Qt.point(Math.max(skew, 0), 0),|Qt.point(0, 0),|tst_angledcard.qml"
   "a negative skew leans the card as a positive one|layout/AngledCard.qml|Qt.point(-Math.min(skew, 0), height)|Qt.point(0, height)|tst_angledcard.qml"

@@ -6,8 +6,9 @@ import qs.Unit
 
 // The spacing rhythm, read from drawn components: Button, TextField,
 // Select and SegmentedControl stand `size.control.md` tall with their text
-// `control.paddingX` from the edge; ListItem, MenuItem and Field start
-// their content `row.paddingX` in; controls share `control.gap`, and
+// `control.paddingX` from the edge; ListItem and MenuItem start their
+// content `row.paddingX` in; Field starts at `field.paddingX`, zero by
+// default so a container owns its edge. Controls share `control.gap`, and
 // ListItem owns its larger icon gap. A theme that moves the shared token
 // moves every component that follows it.
 Item {
@@ -76,9 +77,10 @@ Item {
             const row = Theme.row.paddingX;
             same(() => item.contentItem.x, row, "list item content x");
             same(() => entry.contentItem.x, row, "menu item content x");
-            same(() => field.children[0].x, row, "field label x");
-            same(() => field.children[1].x, row, "field control row x");
-            same(() => field.children[1].width, field.width - 2 * row, "field control row width");
+            const fieldPad = Theme.field.paddingX;
+            same(() => field.children[0].x, fieldPad, "field label x");
+            same(() => field.children[1].x, fieldPad, "field control row x");
+            same(() => field.children[1].width, field.width - 2 * fieldPad, "field control row width");
 
             const gap = Theme.control.gap;
             same(() => gapOf(button.contentItem), gap, "button icon gap");
@@ -94,6 +96,7 @@ Item {
             compare(Theme.control.paddingX, 9);
             compare(Theme.control.gap, 7);
             compare(Theme.row.paddingX, 12);
+            compare(Theme.field.paddingX, 0);
             compare(Theme.listItem.iconGap, 12);
             checkRhythm();
             same(() => toast.children[0].x, Theme.toast.padding, "toast default inset");
@@ -101,9 +104,10 @@ Item {
         }
 
         function test_one_token_moves_every_component() {
-            compare(UnitTheme.override({ size: { control: { md: 34 } }, control: { paddingX: 13, gap: 3 }, row: { paddingX: 20 }, listItem: { iconGap: 16 } }), "ok");
+            compare(UnitTheme.override({ size: { control: { md: 34 } }, control: { paddingX: 13, gap: 3 }, row: { paddingX: 20 }, field: { paddingX: 5 }, listItem: { iconGap: 16 } }), "ok");
             compare(Theme.control.paddingX, 13);
             compare(Theme.row.paddingX, 20);
+            compare(Theme.field.paddingX, 5);
             compare(Theme.listItem.iconGap, 16);
             checkRhythm();
         }

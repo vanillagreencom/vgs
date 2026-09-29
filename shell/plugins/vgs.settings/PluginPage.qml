@@ -90,6 +90,7 @@ FocusScope {
                     id: back
                     iconName: "chevron-left"
                     label: "Back to the plugin list"
+                    size: "sm"
                     anchors.verticalCenter: parent.verticalCenter
                     onClicked: page.panel.back()
                 }
@@ -189,7 +190,7 @@ FocusScope {
                     width: body.width
                     label: modelData[0]
                     inline: true
-                        Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                    Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                 }
             }
 
@@ -233,8 +234,6 @@ FocusScope {
 
                     SectionHeader {
                         text: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
-                        leftPadding: Theme.row.paddingX
-                        rightPadding: Theme.row.paddingX
                     }
 
                     Repeater {
@@ -258,8 +257,6 @@ FocusScope {
                 SectionHeader {
                     text: "Requirements"
                     description: "Commands the plugin runs, looked up on PATH at the last scan"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
                 }
 
                 Repeater {
@@ -278,7 +275,7 @@ FocusScope {
                     width: parent.width
                     label: "Missing"
                     inline: true
-                        visible: page.requirementMissing
+                    visible: page.requirementMissing
                     hint: "Opens a terminal that names each package and asks before it installs them."
                     Button {
                         text: "Install"
@@ -306,8 +303,6 @@ FocusScope {
 
                     SectionHeader {
                         text: section.modelData.group === "" ? "Settings" : section.modelData.group
-                        leftPadding: Theme.row.paddingX
-                        rightPadding: Theme.row.paddingX
                     }
 
                     Repeater {
@@ -339,8 +334,6 @@ FocusScope {
                 SectionHeader {
                     text: "Keys"
                     description: "Written to shell.json; an empty key unbinds it"
-                    leftPadding: Theme.row.paddingX
-                    rightPadding: Theme.row.paddingX
                 }
 
                 Repeater {

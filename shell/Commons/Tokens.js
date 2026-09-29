@@ -423,11 +423,13 @@ var TOKENS = {
         selectedText: color("{color.text}")
     },
 
-    // `gap` stacks the label, the control and the hint; `labelGap` is the
-    // gap after an inline label.
+    // `paddingX` defaults to zero because a field's label is unboxed text
+    // on its container's content edge; a theme may indent field rows by
+    // moving it. `gap` stacks the label, the control and the hint;
+    // `labelGap` is the gap after an inline label.
     field: {
         inline: flag(false),
-        paddingX: length("{row.paddingX}"),
+        paddingX: length(0),
         labelWidth: length("{row.labelWidth}"),
         labelGap: length("{row.gap}"),
         gap: length("{row.lineGap}")

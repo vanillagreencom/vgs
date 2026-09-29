@@ -90,7 +90,7 @@ const DEFAULTS = [
     ["segmented.paddingX", 9],
     ["listItem.paddingX", 12],
     ["menu.item.paddingX", 12],
-    ["field.paddingX", 12],
+    ["field.paddingX", 0],
     ["field.labelWidth", 130],
     ["field.labelGap", 12],
     ["bar.item.iconGap", 7],
@@ -175,11 +175,12 @@ const ACCEPTED = [
     { tokens: { bar: { active: "#ff5a3680", onActive: "#ffffff" } }, want: [["bar.active", "#ff5a3680"], ["bar.onActive", "#ffffffff"]] },
     // One component value changes, and the values derived from it.
     { tokens: { bar: { active: "#ffffff" } }, want: [["bar.active", "#ffffffff"], ["bar.onActive", "#000000ff"], ["color.accent", "#ff5a36ff"]] },
-    { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10], ["row.paddingX", 15], ["listItem.paddingX", 15], ["field.paddingX", 15]] },
+    { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10], ["row.paddingX", 15], ["listItem.paddingX", 15], ["field.paddingX", 0]] },
     // One shared token moves every control that follows the rhythm.
     { tokens: { control: { paddingX: 12, gap: 5 } }, want: [["button.paddingX", 12], ["textField.paddingX", 12], ["segmented.paddingX", 12], ["button.gap", 5], ["textField.gap", 5], ["listItem.gap", 5], ["menu.item.gap", 5], ["toast.contentGap", 5], ["bar.item.iconGap", 5], ["bar.item.paddingX", 6]] },
     { tokens: { size: { control: { md: 34 } } }, want: [["textField.height", 34], ["segmented.height", 34], ["menu.item.height", 34]] },
-    { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 16], ["button.paddingX", 9]] },
+    { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 0], ["button.paddingX", 9]] },
+    { tokens: { field: { paddingX: 6 } }, want: [["field.paddingX", 6], ["listItem.paddingX", 12]] },
     { tokens: { font: { size: 16 } }, want: [["text.body.size", 16], ["text.hint.size", 14]] },
     { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0]] },
     // The scale applies after a duration's own expression, so a theme that

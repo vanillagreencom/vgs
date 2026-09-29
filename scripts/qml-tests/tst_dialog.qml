@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtTest
 import qs.Commons
 import qs.Ui
@@ -228,6 +229,16 @@ Item {
             const p = pane(tall);
             verify(p.scrollArea.overflowing, "the body scrolls when the fitted height is capped");
             tall.destroy();
+        }
+
+        function test_the_default_maximum_height_comes_from_the_screen() {
+            const window = Qt.createQmlObject("import QtQuick\nimport QtQuick.Window\nimport qs.Ui\nWindow { width: 300; height: 300; visible: true; Dialog { id: d; objectName: \"dialog\"; width: 240; title: \"Screen\"; Rectangle { width: parent.width; height: 4000; color: \"transparent\" } } }", root);
+            wait(0);
+            const made = window.contentItem.children[0];
+            const screenHeight = made.screenHeight();
+            verify(screenHeight > 0, "the test window has a screen");
+            tryCompare(made, "maximumHeight", screenHeight * Theme.dialog.maxHeightShare);
+            window.destroy();
         }
 
         function test_theme_change_reaches_the_card_and_the_roles() {

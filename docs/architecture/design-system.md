@@ -56,7 +56,7 @@ Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `fo
 
 ## Layout contract
 
-A container owns one inset box, [D045](../decisions/D045-container-layout-contract.md). A boxed child, such as a field, button, list-row highlight or card, puts its outer box on that inset edge. Unboxed container content, such as a heading, notice, hint or description, puts its text on that edge. A child then uses its own component padding for its internal text, icon or control. A scroll area in a container extends into the right inset strip: its content ends on the inset box, and its bar sits to the right of that content. A theme whose rounded container radius is larger than the inset raises the effective inset to the radius, so content clears the corner.
+A container owns one inset box, [D045](../decisions/D045-container-layout-contract.md). A boxed child, such as a button, list-row highlight or card, puts its outer box on that inset edge. Unboxed container content, such as a heading, notice, hint, description or field label, puts its text on that edge. A child then uses its own component padding for its internal text, icon or control. A scroll area in a container extends into the right inset strip: its content ends on the inset box, and its bar sits to the right of that content. A theme whose rounded container radius is larger than the inset raises the effective inset to the radius, so content clears the corner.
 
 Dialogs and popovers use the same container. They fit their content until their max-height share is reached; after that, only the body scrolls. The Settings window's outer size is outside this contract and is owned by the window host.
 

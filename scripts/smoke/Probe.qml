@@ -512,7 +512,8 @@ Scope {
                     implicit: [child.implicitWidth, child.implicitHeight],
                     parent: items.indexOf(child.parent),
                     role: child.role,
-                    lineHeight: child.lineHeight
+                    lineHeight: child.lineHeight,
+                    text: child.text
                 };
             }));
         }
