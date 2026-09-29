@@ -19,8 +19,10 @@ Item {
     property bool drawn: false
     // The source WallpaperState names for this screen, its own or `current`.
     readonly property string wanted: wallpaper.sourceFor(root.screen === null ? "" : root.screen.name)
-    // A screen's own source that failed to decode. While `wanted` names it
-    // the screen draws `current`; a changed entry is tried again.
+    // The last `wanted` source that failed to decode. While `wanted` names
+    // it the screen draws `current`, the same URL when the entry names the
+    // current image, so a failed URL is not loaded again and a later
+    // `current` is drawn; a changed entry is tried again.
     property string unreadable: ""
 
     WallpaperState { id: wallpaper }
@@ -42,7 +44,7 @@ Item {
             else if (status !== Image.Loading) root.drawn = false;
             if (status !== Image.Error) return;
             console.error("background: " + source + " unreadable");
-            if (root.wanted !== root.unreadable && root.wanted !== wallpaper.source) root.unreadable = root.wanted;
+            if (root.wanted !== root.unreadable) root.unreadable = root.wanted;
         }
     }
 }

@@ -437,9 +437,9 @@ expect_poll "the themes panel closes" closed panel_open
 # alone while the first screen draws `current`. A copy of the background
 # that decodes at logical pixels, a copy of the shared state reader that
 # ignores `screens`, one that never reloads the state file and a copy of
-# the background that is always shown are the block's controls. The block leaves vgs applied with no current
-# image and the plugin disabled, so later rows see the bar they saw before
-# the vgs.themes block.
+# the background that is always shown are the block's controls. The block
+# leaves vgs applied with no current image and the plugin disabled, so
+# later rows see the bar they saw before the vgs.themes block.
 bg_state="$home/.local/state/vgs"
 scenic="$installed/scenic"
 mkdir -p -- "$scenic/backgrounds"
@@ -573,6 +573,20 @@ expect_poll "the scale-2 monitor is gone before it comes back" False screen_list
 expect "the nested compositor adds the scale-2 monitor back" ok hypr output create headless "$hidpi_output"
 expect_poll "a screen whose own image cannot be read draws the current image" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
 expect_log "the background logs the unreadable own image" 1 'background: file://.*/own\.png\?.* unreadable'
+# A screen's own entry that names the current image under the same stamp
+# fails with it, and the screen follows the next readable `current`.
+cp -- "$scenic/backgrounds/c.png" "$user_bg/same.png"
+expected_errors+=('background: file://.*/same\.png\?.* unreadable' 'Background\.qml.*Cannot open: file://.*/same\.png')
+expect "set makes a user-folder image current" "ok background=same.png theme=- path=$user_bg/same.png" vgsh_theme background set "$user_bg/same.png"
+expect "set --screen gives the scale-2 monitor the current image as its own" "ok background=same.png theme=- path=$user_bg/same.png screen=$hidpi_output" vgsh_theme background set "$user_bg/same.png" --screen "$hidpi_output"
+expect_poll "the scale-2 monitor draws its own entry that names the current image" "$user_bg/same.png ready" background_image_on "$hidpi_output"
+rm -- "$user_bg/same.png"
+expect "the nested compositor removes the scale-2 monitor over its removed current image" ok hypr output remove "$hidpi_output"
+expect_poll "the scale-2 monitor is gone before it comes back again" False screen_listed "$hidpi_output"
+expect "the nested compositor adds the scale-2 monitor back again" ok hypr output create headless "$hidpi_output"
+expect_poll "an own entry equal to an unreadable current draws nothing" "$user_bg/same.png error" background_image_on "$hidpi_output"
+expect "set makes a readable package image current" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background set "$scenic/backgrounds/a.png"
+expect_poll "a screen whose failed own entry named the old current draws the new current" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
 expect "the nested compositor removes the scale-2 monitor" ok hypr output remove "$hidpi_output"
 expect_poll "the scale-2 background surface is gone" "$monitors" layer_count vgs:background
 expect_poll "the removed scale-2 monitor is gone" False screen_listed "$hidpi_output"
