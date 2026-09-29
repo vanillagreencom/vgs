@@ -9,9 +9,10 @@ beside this script, one entry point per kind, then runs `check` on it. The
 manifest names the icon given, `package` by default, which the judge holds
 to the shipped icon set; a bar widget's `label` default gets its schema
 entry, so the Settings window draws its field.
-`check` runs the repository's manifest judge, boundary check and token check on one
-plugin directory. Exit 0 when clean, 1 on findings, 2 on a refusal, whose
-first line is keyed: `vgs-plugin: refused: <key>=<value>`, with `kind=` for
+`check` runs the repository's manifest judge, boundary check, token check and
+pointer cursor check on one plugin directory. Exit 0 when clean, 1 on
+findings, 2 on a refusal, whose first line is keyed:
+`vgs-plugin: refused: <key>=<value>`, with `kind=` for
 a kind no template covers, `manifest=` for a manifest the judge refuses
 (its verdict follows), `judge=exit-<status>` for a judge that exited with
 any status other than 0 or 1 (both of its streams follow), `exists=` for an
@@ -32,6 +33,7 @@ TEMPLATES = os.path.join(SKILL, "templates")
 MANIFEST_CHECK = os.path.join(REPO, "bin", "lib", "check-manifests.js")
 BOUNDARY_CHECK = os.path.join(REPO, "scripts", "check-plugin-boundary.py")
 TOKEN_CHECK = os.path.join(REPO, "scripts", "check-design-tokens.py")
+POINTER_CHECK = os.path.join(REPO, "scripts", "check-pointer-cursor.py")
 # Every child runs under this environment and nothing inherited beyond it;
 # HOME stays because a version-managed node reads its configuration there.
 ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "LC_ALL": "C"}
@@ -145,6 +147,7 @@ def cmd_check(args):
         ["node", MANIFEST_CHECK, "--", target],
         [sys.executable, BOUNDARY_CHECK, "--shell", os.path.join(REPO, "shell"), target],
         [sys.executable, TOKEN_CHECK, "--repo", REPO, target],
+        [sys.executable, POINTER_CHECK, target],
     ):
         proc = subprocess.run(command, check=False, env=ENV)
         if proc.returncode != 0:
