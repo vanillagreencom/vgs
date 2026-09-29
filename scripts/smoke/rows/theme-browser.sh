@@ -32,7 +32,8 @@ has_badge() { ipc smoke itemTexts overlay vgs.themes Badge | python3 -c 'import 
 lent_themes() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("vgs.themes")]))'; }
 themes_bind() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:themes"]))'; }
 catalog_imagery() { "${shell_env[@]}" "$repo/bin/vgsh" theme catalog --json | python3 -c 'import json,sys; print([e["imageryInstalled"] for e in json.load(sys.stdin)["entries"] if e["name"]==sys.argv[1]][0])' "$1"; }
-press_themes() { hypr dispatch 'hl.dsp.global("vgs.themes:themes")'; }
+# SUPER+T typed on the nested seat.
+press_themes() { type_keys -M logo -k t -m logo; }
 browser_focused() { expect_poll "${1:-the browser holds the keyboard}" true ipc smoke activeFocusIn overlay vgs.themes; }
 
 # The fixture archive and nord's pin to it, in the sandbox copy's catalog.
@@ -68,10 +69,18 @@ expect_poll "the themes service registered its shortcut" '["vgs.themes:themes"]'
 expect_poll "the nested instance binds SUPER+T to the theme browser" '[[64, "T"]]' themes_bind
 themes_global() { hypr globalshortcuts | python3 -c 'import sys; print(sum(1 for line in sys.stdin if "vgs.themes:themes" in line))'; }
 expect_poll "the compositor lists the themes shortcut" 1 themes_global
+# wtype types on a virtual keyboard with keycodes of its own, which a bind
+# resolves only by keysym, so the sandbox user's settings turn that on
+# for these rows, as rows/hyprland.sh does for its own (docs/architecture/
+# runtime.md § Hyprland), and the file is put back after them.
+hypr_lua="$home/.config/hypr/hyprland.lua"
+cp -p -- "$hypr_lua" "$sandbox/hyprland-before-browser.lua"
+printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = true } })' >>"$hypr_lua"
+expect "the nested instance reloads with binds resolved by keysym" ok hypr reload config-only
 expect "no browser shows before SUPER+T" 0 layer_count vgs:overlay
 
 # SUPER+T opens the theme view on the applied theme.
-press_themes || fail "dispatching the SUPER+T shortcut failed"
+press_themes || fail "typing SUPER+T failed"
 expect_poll "SUPER+T opens the browser" 1 layer_count vgs:overlay
 expect "the browser shows the theme view" '"themes"' ipc smoke readInstance overlay vgs.themes view
 browser_focused "the open browser holds the keyboard"
@@ -133,7 +142,7 @@ type_keys -k Return || fail "sending Return to the Dialog failed"
 expect_poll "Download runs the download" "download nord" job_step
 expect_poll "the Dialog shows the download's progress" True dialog_has "Downloading 2 of 4 MB"
 type_keys -k Escape || fail "sending Escape during the download failed"
-press_themes || fail "dispatching the SUPER+T shortcut during the download failed"
+press_themes || fail "typing SUPER+T during the download failed"
 expect "Escape and SUPER+T leave the browser open during the download" 1 layer_count vgs:overlay
 touch -- "$wallpaper_gate"
 expect_poll "the download and the apply after it close the browser" 0 layer_count vgs:overlay
@@ -143,7 +152,7 @@ expect_poll "the apply after the download shows nord's first wallpaper" "\"$inst
 
 # nord's card now draws its first wallpaper; Escape clears the filter,
 # then closes.
-press_themes || fail "dispatching the SUPER+T shortcut to reopen failed"
+press_themes || fail "typing SUPER+T to reopen failed"
 expect_poll "SUPER+T opens the browser again" 1 layer_count vgs:overlay
 browser_focused
 expect_poll "the reopened browser selects the applied nord" '"nord"' view_value selectedName
@@ -157,9 +166,9 @@ type_keys -k Escape || fail "sending Escape again failed"
 expect_poll "Escape with no filter closes the browser" 0 layer_count vgs:overlay
 
 # SUPER+T closes the view it opened, and a click on the scrim closes it.
-press_themes || fail "dispatching the SUPER+T shortcut failed"
+press_themes || fail "typing SUPER+T failed"
 expect_poll "SUPER+T opens the browser" 1 layer_count vgs:overlay
-press_themes || fail "dispatching the SUPER+T shortcut again failed"
+press_themes || fail "typing SUPER+T again failed"
 expect_poll "SUPER+T on the open theme view closes it" 0 layer_count vgs:overlay
 expect "a summon over IPC opens the first view" ok ipc shell summon overlay vgs.themes '{}'
 expect_poll "the summon maps the browser" 1 layer_count vgs:overlay
@@ -172,7 +181,7 @@ expect "a payload with an unknown key is refused" "refused: open-failed=vgs.them
 expect_poll "a refused summon leaves no browser" 0 layer_count vgs:overlay
 
 # vgs applies from the browser, which closes it, since vgs offers nothing.
-press_themes || fail "dispatching the SUPER+T shortcut for vgs failed"
+press_themes || fail "typing SUPER+T for vgs failed"
 expect_poll "SUPER+T opens the browser for vgs" 1 layer_count vgs:overlay
 browser_focused
 type_keys "vgs" || fail "typing vgs failed"
@@ -184,6 +193,8 @@ expect_poll "an apply that offers nothing closes the browser" 0 layer_count vgs:
 expect "disabling vgs.themes after the browser rows is allowed" ok ipc shell setPluginEnabled vgs.themes false
 expect_poll "disabling vgs.themes released its shortcut" '[]' lent_themes
 expect_poll "disabling vgs.themes unbinds SUPER+T" '[]' themes_bind
+cp -p -- "$sandbox/hyprland-before-browser.lua" "$hypr_lua.next" && mv -T -- "$hypr_lua.next" "$hypr_lua"
+expect "the nested instance reloads the hyprland.lua the browser rows found" ok hypr reload config-only
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 cp -p -- "$sandbox/catalog-index.json" "$index"
 rm -r -- "$installed/nord" "$assets" "$wallpaper_gate"

@@ -46,7 +46,10 @@ const EDITS = [
 
 function verify(logic, files) {
     // Views and payloads.
-    same(logic.VIEWS.map(v => v.name), ["themes"]);
+    same(logic.VIEWS.map(v => [v.name, v.source]), [["themes", "ThemeView.qml"]]);
+    assert.equal(logic.viewSource("themes"), "ThemeView.qml");
+    assert.throws(() => logic.viewSource("fonts"), /view="fonts" unknown/);
+    for (const view of logic.VIEWS) assert.ok(fs.existsSync(path.join(dir, view.source)), "view " + view.name + " names a file beside Browser.qml");
     same(logic.parsePayload("{}"), { view: "themes" }, "an empty payload opens the first view");
     same(logic.parsePayload(""), { view: "themes" }, "no payload opens the first view");
     same(logic.parsePayload(JSON.stringify({ view: "themes" })), { view: "themes" });

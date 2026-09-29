@@ -19,13 +19,10 @@ Item {
     property var shell: null
     // The view the browser shows, "" before the first open.
     property string view: ""
-    // Each view's component, by its name in BrowserLogic.VIEWS.
-    readonly property var views: ({ themes: "ThemeView.qml" })
     readonly property bool busy: page.item !== null && page.item.busy
 
     function open(payloadJson) {
         const payload = BrowserLogic.parsePayload(payloadJson);
-        if (!Object.prototype.hasOwnProperty.call(views, payload.view)) throw new Error("themes: refused: view=" + payload.view + " has no component");
         if (payload.view === view) Qt.callLater(dismiss);
         else if (!busy) view = payload.view;
     }
@@ -47,9 +44,11 @@ Item {
         id: page
         anchors.fill: parent
         focus: true
-        source: root.view === "" ? "" : root.views[root.view]
+        source: root.view === "" ? "" : BrowserLogic.viewSource(root.view)
+        // A view takes the shell through a binding, so a settings change's
+        // new shell object reaches it as it reaches the browser.
         onLoaded: {
-            item.shell = root.shell;
+            item.shell = Qt.binding(() => root.shell);
             item.closeRequested.connect(root.dismiss);
         }
     }

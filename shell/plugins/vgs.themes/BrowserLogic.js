@@ -7,12 +7,13 @@
 // across a filter or a refresh, the wallpaper download offer, and the text
 // the browser shows for a download's progress and a failed step.
 
-// The overlay's views, one row each: the payload's `view`, and the global
+// The overlay's views, one row each: the payload's `view` and the global
 // shortcut, `vgs.themes:<name>`, that Service.qml registers to open or close
-// it. Browser.qml draws each from its own component. The first view is the
-// one a payload without `view` opens.
+// it, with the shortcut's description, and `source`, the file beside
+// Browser.qml that draws it. The first view is the one a payload without
+// `view` opens. A view is one row here and its file.
 var VIEWS = [
-    { name: "themes", description: "Open or close the theme browser" }
+    { name: "themes", description: "Open or close the theme browser", source: "ThemeView.qml" }
 ];
 var PAYLOAD_KEYS = ["view"];
 
@@ -40,6 +41,13 @@ function hasOwn(obj, key) {
 
 function viewNames() {
     return VIEWS.map(function (v) { return v.name; });
+}
+
+// The file that draws view NAME, one of VIEWS.
+function viewSource(name) {
+    for (var i = 0; i < VIEWS.length; i++)
+        if (VIEWS[i].name === name) return VIEWS[i].source;
+    throw new Error("view=" + JSON.stringify(name) + " unknown");
 }
 
 // The view a summon's payload TEXT names. A payload is a JSON object whose
