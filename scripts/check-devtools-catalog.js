@@ -79,18 +79,8 @@ const Tokens = loadLibrary(path.join(repo, "shell", "Commons", "Tokens.js"));
 const Appearance = loadLibrary(args.appearance);
 const CatalogLogic = loadLibrary(path.join(pluginDir, "CatalogLogic.js"));
 
-const brandResult = CatalogLogic.validateBrandTable(catalog, Appearance.TOKENS && Appearance.TOKENS.brand);
-const context = {
-    managerIds: PackageManagers.MANAGERS.map(row => row.id),
-    lucideNames: Object.keys(Lucide.ICONS),
-    brandKeys: brandResult.brandKeys,
-    packageNameValid: PackageManagers.validName
-};
-
-const findings = [];
-for (const refusal of brandResult.refusals) findings.push(refusal);
-const judged = CatalogLogic.validateCatalog(catalog, context);
-for (const refusal of judged.refusals) findings.push(refusal);
+const findings = CatalogLogic.judgeCatalog(catalog, Appearance.TOKENS && Appearance.TOKENS.brand,
+    PackageManagers.MANAGERS.map(row => row.id), PackageManagers.validName, Object.keys(Lucide.ICONS)).refusals;
 
 const defaults = ThemeLogic.defaults(Tokens.TOKENS).values;
 for (const mode of ["dark", "light"]) {

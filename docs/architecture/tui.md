@@ -68,7 +68,7 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 ## A plugin's script
 
 - With `--plugin <id> --dir <snapshot>`, argv[0] is a path relative to the plugin's published snapshot, inside its `tui/` directory.
-- `present` copies the snapshot's `tui/` directory into a new directory under `$XDG_RUNTIME_DIR`, runs argv[0] from the copy, and removes the copy when it exits. The runner removes old snapshot roots when a shell starts ([runtime.md § Process](runtime.md#process)), so a `vgsh restart` during the run cannot remove a file the script sources.
+- `present` copies the whole snapshot under `$XDG_RUNTIME_DIR`, runs argv[0] from the copy and removes the copy when it exits. A shell start removes old snapshot roots ([runtime.md § Process](runtime.md#process)), so a `vgsh restart` cannot remove a file the script reads ([D042](../decisions/D042-tui-scripts-run-from-a-copy-of-the-whole-snapshot.md)).
 - `present` exports `VGS_PLUGIN_ID` and `VGS_PLUGIN_DIR`, the copy, to the script. A core command gets neither, whatever the caller's environment held.
 - argv[0] must resolve, after every link and `..`, to an executable file inside the copied `tui/` directory. Anything else is refused before it runs.
 
@@ -77,7 +77,7 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 1. A command reaches the terminal as an argv list and never passes through a shell. Enforced by `scripts/test-vgsh-tui.sh`, which hands `present` an argument holding `$(...)` and `;`, with a control that runs argv through `bash -c`.
 2. `gum.env` is parsed, never sourced, and a file with one bad line exports nothing. Enforced by `scripts/test-vgsh-tui.sh`, with a control that sources a file holding a planted `$(...)` line.
 3. The Done and Failed prompt is on the terminal whatever stdout is. Enforced by `scripts/test-vgsh-tui.sh`, with a control that prompts on stdout.
-4. A plugin's script runs from a private copy that outlives the snapshot and leaves with `present`. Enforced by `scripts/test-vgsh-tui.sh`, whose script removes its snapshot before it sources a file beside it, with a control that points `VGS_PLUGIN_DIR` at the snapshot.
+4. A plugin's script runs from a private copy that outlives the snapshot and leaves with `present`. Enforced by `scripts/test-vgsh-tui.sh`, whose script removes its snapshot before it sources a file in `tui/` and one at the root, with controls that point `VGS_PLUGIN_DIR` at the snapshot and copy only `tui/`.
 5. A Ctrl-C stops the command, and `present` exits 130 with no prompt and no plugin copy left. Enforced by `scripts/test-vgsh-tui.sh`, which types the interrupt byte on the pseudo-terminal while a command sleeps, with a control whose `present` ignores SIGINT.
 6. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`.
 7. `launch` forks the terminal into a session of its own and returns, and `check` answers with the terminal test `launch` uses. Enforced by `scripts/test-vgsh-tui.sh` with a stand-in `setsid`, with a control that execs `setsid` without `-f` and one whose `check` skips the test. Its terminal gets no `VGSH_RUNNER_PID`; a control keeps it.

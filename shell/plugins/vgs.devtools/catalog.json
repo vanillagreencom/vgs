@@ -183,7 +183,7 @@
         "uv"
       ],
       "present": {
-        "mise": "hermes-agent/lib/python3.13"
+        "mise": "pipx-hermes-agent/latest/hermes-agent/lib/python3.13"
       },
       "launch": [
         "hermes",
@@ -435,7 +435,9 @@
       },
       "settings": {
         "ruby.compile": "false",
-        "idiomatic_version_file_enable_tools": "ruby"
+        "idiomatic_version_file_enable_tools": [
+          "ruby"
+        ]
       },
       "present": {
         "mise": "ruby"
@@ -558,7 +560,7 @@
         "github:nunomaduro/static-php-builds"
       ],
       "present": {
-        "mise": "php"
+        "mise": "github-nunomaduro-static-php-builds"
       },
       "postInstall": [
         {
@@ -637,7 +639,9 @@
       },
       "settings": {
         "ruby.compile": "false",
-        "idiomatic_version_file_enable_tools": "ruby"
+        "idiomatic_version_file_enable_tools": [
+          "ruby"
+        ]
       },
       "present": {
         "command": "rails"

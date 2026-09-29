@@ -1,7 +1,8 @@
 // The file helpers and the refusal bin/vgsh-plugin-judge,
-// bin/vgsh-theme-judge, bin/vgsh-hypr-judge and bin/vgsh-pkg share, so each
-// writes a watched file the same way, finds a command on PATH the same way
-// and refuses with the same line.
+// bin/vgsh-theme-judge, bin/vgsh-hypr-judge, bin/vgsh-pkg and the
+// vgs.devtools engine share, so each writes a watched file the same way,
+// finds a command on PATH the same way, keeps a change to the system in
+// the user's terminal the same way and refuses with the same line.
 //
 // A refusal is one line on stderr, `vgsh: refused: <first>`, then its
 // detail, the English or a tool's own words, when it carries one, and the
@@ -31,12 +32,14 @@ function refuse(first, reason, status, detail) {
 
 // Run a judge's command; a Refusal ends the process with its line, its
 // detail and its status. A command that returns a promise ends the same way
-// when the promise rejects with a Refusal.
-function main(command) {
+// when the promise rejects with a Refusal. NAME leads the line: `vgsh` for
+// the core's commands, a plugin program's own name for one that shares
+// these helpers.
+function main(command, name = "vgsh") {
     const end = e => {
         if (!(e instanceof Refusal)) throw e;
         const detail = e.detail === "" || e.detail.endsWith("\n") ? e.detail : e.detail + "\n";
-        process.stderr.write("vgsh: refused: " + e.first + "\n" + detail);
+        process.stderr.write(name + ": refused: " + e.first + "\n" + detail);
         process.exit(e.status);
     };
     let result;
@@ -175,4 +178,28 @@ function onPath(command) {
     return false;
 }
 
-module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, editFile, onPath };
+// A change to the user's system runs only where its user sees and answers
+// the prompt: never in a process the shell started, and never without a
+// terminal. `vgsh run` exports VGSH_RUNNER_PID to the shell and so to every
+// process the shell starts, apart from the programs it opens for the user
+// (shell.run.detached and a floating TUI's terminal). Refuses
+// `caller=shell verb=<verb>` with SHELL_DETAIL, which names where the
+// change runs instead, or `<verb>=no-terminal`. Checked before any query,
+// plan or step.
+function refuseOutsideTerminal(verb, shellDetail) {
+    if (process.env.VGSH_RUNNER_PID !== undefined)
+        refuse("caller=shell verb=" + verb, undefined, 1, shellDetail);
+    try {
+        fs.closeSync(fs.openSync("/dev/tty", "r+"));
+    } catch (e) {
+        refuse(verb + "=no-terminal", undefined, 1, "/dev/tty did not open (" + e.code + "); run this in a terminal, where the password prompt shows");
+    }
+}
+
+// One word as a POSIX shell reads it back: single-quoted, each quote
+// closed, escaped and reopened.
+function shellWord(word) {
+    return "'" + word.replace(/'/g, "'\\''") + "'";
+}
+
+module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, editFile, onPath, refuseOutsideTerminal, shellWord };

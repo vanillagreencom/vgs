@@ -118,7 +118,9 @@ f share/vgs/shell/plugins/vgs.bar/Workspaces.qml
 f share/vgs/shell/plugins/vgs.bar/manifest.json
 f share/vgs/shell/plugins/vgs.devtools/Appearance.js
 f share/vgs/shell/plugins/vgs.devtools/CatalogLogic.js
+f share/vgs/shell/plugins/vgs.devtools/bin/devtools
 f share/vgs/shell/plugins/vgs.devtools/catalog.json
+f share/vgs/shell/plugins/vgs.devtools/tui/devtools.sh
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml

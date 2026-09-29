@@ -41,9 +41,10 @@
 #   - VGS_TUI_LIB, this checkout's bin/lib/tui.sh, and VGS_TUI_LOGO, its
 #     bin/lib/logo.txt;
 #   - with --plugin, VGS_PLUGIN_ID and VGS_PLUGIN_DIR, a private copy of the
-#     snapshot's tui/ directory under $XDG_RUNTIME_DIR that present removes
-#     when it exits, so a `vgsh restart`, which removes the snapshot, cannot
-#     pull a file from under a running script. argv[0] is then a path
+#     whole snapshot under $XDG_RUNTIME_DIR that present removes when it
+#     exits, so a `vgsh restart`, which removes the snapshot, cannot pull a
+#     file from under a running script, the plugin's own data and programs
+#     beside tui/ included. argv[0] is then a path
 #     relative to the snapshot, inside its tui/ directory, and runs from the
 #     copy. Without --plugin both are unset.
 #
@@ -262,13 +263,13 @@ export_gum_env() {
   for i in "${!keys[@]}"; do export "${keys[i]}=${values[i]}"; done
 }
 
-# Copies the snapshot's tui/ directory into a fresh directory under the
-# runtime dir and points argv[0] at the copy of the script it names. Sets
+# Copies the whole snapshot into a fresh directory under the runtime dir
+# and points argv[0] at the copy of the script it names. Sets
 # copy_dir, which the EXIT trap removes, and refusal on a refusal.
 copy_plugin() {
   local rel="${argv[0]}" script
   copy_dir="$(mktemp -d -- "$rt_dir/vgs-tui.XXXXXX")" || { refusal="copy=$rt_dir reason=mktemp"; return 1; }
-  cp -R -- "$plugin_dir/tui" "$copy_dir/tui" || { refusal="copy=$plugin_dir/tui reason=failed"; return 1; }
+  cp -R -- "$plugin_dir/." "$copy_dir/" || { refusal="copy=$plugin_dir reason=failed"; return 1; }
   # readlink -f resolves every link and `..`, so the prefix test is on the
   # file that runs.
   script="$(readlink -f -- "$copy_dir/$rel")" && [[ $script == "$copy_dir/tui/"* && -f $script ]] ||

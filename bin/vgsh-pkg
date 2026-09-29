@@ -122,7 +122,7 @@ const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const table = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
-const { Refusal, refuse, main, onPath, readConfig } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { Refusal, refuse, main, onPath, readConfig, refuseOutsideTerminal, shellWord } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
 const RUNNER = path.join(__dirname, "lib", "pkg-run.sh");
@@ -302,18 +302,7 @@ function managerAndNames(rest) {
     return { manager: rest[1], names: rest.slice(2) };
 }
 
-// A package change runs only where its user sees and answers the prompt:
-// never in a process the shell started, and never without a terminal.
-// Checked before any query, plan or step.
-function refuseOutsideTerminal(verb) {
-    if (process.env.VGSH_RUNNER_PID !== undefined)
-        refuse("caller=shell verb=" + verb, undefined, 1, "the shell never changes a package; run this in a terminal or open core/pkg-install");
-    try {
-        fs.closeSync(fs.openSync("/dev/tty", "r+"));
-    } catch (e) {
-        refuse(verb + "=no-terminal", undefined, 1, "/dev/tty did not open (" + e.code + "); run this in a terminal, where the password prompt shows");
-    }
-}
+const SHELL_CALLER = "the shell never changes a package; run this in a terminal or open core/pkg-install";
 
 // The effective shell.json's `packages.elevate`, or undefined: the shipped
 // layer merged with the user's as the shell merges them, each judged by
@@ -368,12 +357,6 @@ function run(action, manager, names) {
 function rescanShell() {
     const r = childProcess.spawnSync(path.join(__dirname, "vgsh"), ["plugin", "rescan"], { stdio: ["ignore", "inherit", "inherit"] });
     if (r.error !== undefined) process.stderr.write("vgsh: refused: rescan=failed error=" + r.error.code + "\n");
-}
-
-// One word as a POSIX shell reads it back: single-quoted, each quote
-// closed, escaped and reopened.
-function shellWord(word) {
-    return "'" + word.replace(/'/g, "'\\''") + "'";
 }
 
 // fzf runs a preview as a shell command string, `$SHELL -c`, so ARGV, the
@@ -504,13 +487,13 @@ main(() => {
         const { manager, names } = managerAndNames(rest);
         if (action === "upgrade" && names.length > 0) usage("argument=" + names[0]);
         if (action !== "upgrade" && names.length === 0) usage("names=missing");
-        refuseOutsideTerminal(verb);
+        refuseOutsideTerminal(verb, SHELL_CALLER);
         return run(action, manager === null ? primaryId() : manager, names);
     }
     case "install":
     case "remove": {
         const { manager, names } = managerAndNames(args);
-        refuseOutsideTerminal(verb);
+        refuseOutsideTerminal(verb, SHELL_CALLER);
         if (names.length > 0) return run(verb, manager === null ? primaryId() : manager, names);
         if (!onPath("fzf")) refuse("picker=fzf reason=absent");
         let chosen = manager;

@@ -283,15 +283,15 @@ control() {
   check "the $1 mutant differs from $2" test "$(cmp -s "$repo/$2" "$dir/$2"; echo $?)" == 1
   if "row_$5" "$dir"; then fail "the $1 mutant passes row $5"; else ok "the $1 mutant fails row $5"; fi
 }
-control runs-without-terminal bin/vgsh-pkg 'fs.closeSync(fs.openSync("/dev/tty", "r+"));' ';' no_terminal
-control elevates-in-shell bin/vgsh-pkg 'if (process.env.VGSH_RUNNER_PID !== undefined)' 'if (false)' shell_process
+control runs-without-terminal bin/lib/judge-files.js 'fs.closeSync(fs.openSync("/dev/tty", "r+"));' ';' no_terminal
+control elevates-in-shell bin/lib/judge-files.js 'if (process.env.VGSH_RUNNER_PID !== undefined)' 'if (false)' shell_process
 control no-sudo-session bin/lib/pkg-run.sh $'if [[ $elevator == sudo ]]; then\n  vgs_tui_sudo_session start' $'if false; then\n  vgs_tui_sudo_session start' apt_upgrade
 control runs-past-failure bin/lib/pkg-run.sh '[[ $status -eq 0 ]] || exit "$status"' ':' first_failure
 control shell-string bin/lib/pkg-run.sh '  "${step[@]}" || status=$?' '  bash -c "${step[*]}" || status=$?' literal_name
 control caller-directory bin/vgsh-pkg 'stdio: "inherit", cwd: process.env.HOME || "/" });' 'stdio: "inherit" });' home_directory
 control always-elevates bin/vgsh-pkg '    if (r.plan.elevate) {' '    if (true) {' aur_unelevated
 control ignores-configuration bin/vgsh-pkg 'table.elevator(configuredElevator(), onPath)' 'table.elevator(undefined, onPath)' configured
-control unquoted-preview bin/vgsh-pkg '    return "'"'"'" + word.replace' '    return word; "'"'"'" + word.replace' picker_install
+control unquoted-preview bin/lib/judge-files.js '    return "'"'"'" + word.replace' '    return word; "'"'"'" + word.replace' picker_install
 control fixed-colour bin/vgsh-pkg 'return value !== undefined && HEX_COLOUR.test(value) ? value : fallback;' 'return fallback;' picker_install
 control dnf-notice shell/Core/PackageManagers.js 'list: ["{bin}", "-q", "repoquery", "--available",' 'list: ["{bin}", "repoquery", "--available",' dnf_picker
 control fzf-looked-up-late bin/vgsh-pkg '        if (!onPath("fzf")) refuse("picker=fzf reason=absent");' '' picker_without_fzf

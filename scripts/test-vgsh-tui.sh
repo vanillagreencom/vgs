@@ -149,14 +149,16 @@ for bad in "${bad_lines[@]}"; do
 done
 rm -f -- "$gum_env"
 
-# --plugin: the snapshot's tui/ directory is copied, VGS_PLUGIN_DIR names the
-# copy, argv[0] runs from it, and the copy is gone when present exits. The
-# script removes the snapshot first, as a restart would, then sources a
-# file beside it through VGS_PLUGIN_DIR.
+# --plugin: the whole snapshot is copied, VGS_PLUGIN_DIR names the copy,
+# argv[0] runs from it, and the copy is gone when present exits. The script
+# removes the snapshot first, as a restart would, then sources a file beside
+# it and one at the snapshot's root, where a plugin keeps its own programs
+# and data, through VGS_PLUGIN_DIR.
 plugin_snapshot() {
   rm -rf -- "$snap"; mkdir -p "$snap/tui"
-  printf '#!/usr/bin/env bash\nset -e\nrm -rf -- %q\nsource "$VGS_PLUGIN_DIR/tui/helper.sh"\nprintf "id=%%s dir=%%s self=%%s args=%%s\\n" "$VGS_PLUGIN_ID" "$VGS_PLUGIN_DIR" "$0" "$*"\n' "$snap" >"$snap/tui/run.sh"
+  printf '#!/usr/bin/env bash\nset -e\nrm -rf -- %q\nsource "$VGS_PLUGIN_DIR/tui/helper.sh"\nsource "$VGS_PLUGIN_DIR/data.sh"\nprintf "id=%%s dir=%%s self=%%s args=%%s\\n" "$VGS_PLUGIN_ID" "$VGS_PLUGIN_DIR" "$0" "$*"\n' "$snap" >"$snap/tui/run.sh"
   printf 'echo helper-sourced\n' >"$snap/tui/helper.sh"
+  printf 'echo root-data-sourced\n' >"$snap/data.sh"
   printf '#!/bin/sh\n' >"$snap/tui/noexec.sh"
   printf '#!/bin/sh\n' >"$snap/outside.sh"
   chmod +x "$snap/tui/run.sh" "$snap/outside.sh"
@@ -168,6 +170,7 @@ plugin_snapshot
 on_tty "$subject" present --plugin acme.tui --dir "$snap" -- tui/run.sh 'x y'
 check "a plugin script exits 0" test "$tty_status" == 0
 check "a plugin script sources from the copy after the snapshot is gone" out_has "helper-sourced"
+check "a plugin script reads its snapshot's root from the copy" out_has "root-data-sourced"
 check "a plugin script sees its id, the copy, its own copy and its argument" \
   grep -qE "^id=acme\.tui dir=$rt/vgs-tui\.[^/ ]+ self=$rt/vgs-tui\.[^/ ]+/tui/run\.sh args=x y"$'\r?$' "$tmp/out"
 check "the copy is removed when present exits" test -z "$(find "$rt" -mindepth 1 -maxdepth 1 -name 'vgs-tui.*')"
@@ -194,7 +197,7 @@ for row in "${rows[@]}"; do
 done
 rm -rf -- "$snap"
 on_tty "$subject" present --plugin acme.tui --dir "$snap" -- tui/run.sh
-check "a missing snapshot is refused" out_has "vgsh-tui: refused: copy=$snap/tui reason=failed"
+check "a missing snapshot is refused" out_has "vgsh-tui: refused: copy=$snap reason=failed"
 check "a missing snapshot exits 1" test "$tty_status" == 1
 
 # Ctrl-C: the terminal's interrupt byte, typed once the command runs, stops
@@ -571,6 +574,11 @@ control snapshot-dir vgsh-tui 'if copy_plugin; then export VGS_PLUGIN_DIR="$copy
 plugin_snapshot
 on_tty "$control_bin" present --plugin acme.tui --dir "$snap" -- tui/run.sh
 check "the snapshot-dir mutant loses the sourced file with the snapshot" test "$(grep -c helper-sourced "$tmp/out")" == 0
+
+control tui-only-copy vgsh-tui 'cp -R -- "$plugin_dir/." "$copy_dir/"' 'cp -R -- "$plugin_dir/tui" "$copy_dir/tui"'
+plugin_snapshot
+on_tty "$control_bin" present --plugin acme.tui --dir "$snap" -- tui/run.sh
+check "the tui-only-copy mutant loses the snapshot's root file" test "$(grep -c root-data-sourced "$tmp/out")" == 0
 
 control one-app-id vgsh-tui 'process.stdout.write(layer.TUI_WINDOWS[size].appId);' 'process.stdout.write(layer.TUI_WINDOWS["default"].appId);'
 rm -f -- "$tmp/term"

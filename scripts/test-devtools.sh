@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# The vgs.devtools engine, shell/plugins/vgs.devtools/bin/devtools, and its
+# floating TUI script, tui/devtools.sh. Every command a row reaches is a
+# stub on a PATH that holds nothing else but the tools the engine and
+# `vgsh pkg run` need: mise keeps its installs in a scratch state and data
+# directory and records each call that changes something, with the
+# MISE_MINIMUM_RELEASE_AGE it ran under; pacman records its argv; sudo runs
+# the rest of its argv; uname answers the machine a row names. No row
+# reaches a real package manager, the owner's mise config or a live session.
+#
+# Rows run under `unshare -rm` with a fixture os-release bound over
+# /etc/os-release, so pacman is the primary whatever the host; without user
+# namespaces the suite exits 77. A verb that changes the system runs on a
+# pseudo-terminal script(1) opens, as the floating TUI's is.
+#
+# Controls run a row against a copy of the plugin with one rule removed
+# from the engine or CatalogLogic.js, and that row must fail.
+set -euo pipefail
+
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
+for tool in script setsid timeout unshare; do
+  command -v "$tool" >/dev/null || { echo "test-devtools: status=not-measured missing=$tool"; exit 77; }
+done
+unshare -rm true 2>/dev/null || { echo "test-devtools: status=not-measured missing=user-namespaces"; exit 77; }
+script_bin="$(command -v script)"
+
+tools="$tmp/tools"; mkdir -p "$tools"
+for tool in bash sh readlink dirname sleep cat env mkdir rm mktemp mv; do
+  found="$(command -v "$tool")" || { echo "test-devtools: status=not-measured missing=$tool"; exit 77; }
+  ln -s -- "$found" "$tools/$tool"
+done
+ln -s -- "$node_bin" "$tools/node"
+
+stubs="$tmp/stubs"; mkdir -p "$stubs"
+# pacman writes one line per call to $LOG: its name, then each argument in
+# brackets.
+printf '#!/bin/sh\nprintf "pacman" >>"$LOG"; for a; do printf " [%%s]" "$a" >>"$LOG"; done; echo >>"$LOG"\n' >"$stubs/pacman"
+printf '#!/bin/sh\ncase "$1" in -k) exit 0 ;; -n) shift ;; esac\nexec "$@"\n' >"$stubs/sudo"
+printf '#!/bin/sh\necho "$STUB_MACHINE"\n' >"$stubs/uname"
+# mise: $MISE_STATE/installed holds one installed key per line,
+# $MISE_STATE/global-extra the global config's keys no install backs, and
+# $MISE_STATE/auto_prune the setting. A call that changes something is
+# logged as `mise [arg]... {age=<MISE_MINIMUM_RELEASE_AGE>}`.
+cat >"$stubs/mise" <<'EOF'
+#!/bin/bash
+set -u
+st="$MISE_STATE"
+log() { printf 'mise' >>"$LOG"; for a; do printf ' [%s]' "$a" >>"$LOG"; done; printf ' {age=%s}\n' "${MISE_MINIMUM_RELEASE_AGE-unset}" >>"$LOG"; }
+key() { local k="${1/\[*\]/}"; printf '%s' "${k%%@*}"; }
+dir() { printf '%s/installs/%s' "$MISE_DATA_DIR" "$(key "$1" | tr ':/' '--')"; }
+entries() { # FILE...
+  local first=1 k
+  printf '{'
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      [ $first = 1 ] || printf ','
+      first=0
+      printf '"%s":[{"version":"1.0.0","installed":%s,"active":true,"source":{"type":"mise.toml","path":"g"}}]' "$k" "$([ "$f" = "$st/installed" ] && echo true || echo false)"
+    done <"$f"
+  done
+  printf '}\n'
+}
+case "$1" in
+  --version) echo "2026.9.9 linux-x64 (stub)" ;;
+  ls) if [ "$2" = --global ]; then entries "$st/installed" "$st/global-extra"; else entries "$st/installed"; fi ;;
+  settings)
+    if [ "$2" = get ]; then cat "$st/auto_prune" 2>/dev/null || echo true; exit 0; fi
+    log "$@"
+    [ "$3" != upgrade.auto_prune ] || echo "$4" >"$st/auto_prune" ;;
+  use)
+    log "$@"
+    spec="${!#}"
+    [ "${MISE_FAIL-}" != "$spec" ] || exit 3
+    k="$(key "$spec")"
+    grep -qxF -- "$k" "$st/installed" 2>/dev/null || echo "$k" >>"$st/installed"
+    mkdir -p "$(dir "$spec")" ;;
+  uninstall)
+    log "$@"
+    k="$3"
+    # grep exits 1 when no key is left, which is an answer; 2 is a failure.
+    s=0; grep -vxF -- "$k" "$st/installed" >"$st/installed.new" || s=$?
+    [ $s -le 1 ] || exit 90
+    mv "$st/installed.new" "$st/installed"
+    rm -rf "$(dir "$k")" ;;
+  where) dir "$2"; echo ;;
+  *) log "$@" ;;
+esac
+EOF
+chmod +x "$stubs"/*
+# grep and tr for the stub mise alone.
+for tool in grep tr; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
+
+printf 'NAME="Arch Linux"\nID=arch\n' >"$tmp/os-release"
+log="$tmp/log"; home="$tmp/home"; cfg="$tmp/cfg"; state="$tmp/mise-state"; data="$tmp/mise-data"
+plugin="$repo/shell/plugins/vgs.devtools"
+lines() { printf '%s\n' "$@"; }
+
+# A fresh world: an empty HOME, mise state and log.
+reset_world() {
+  rm -rf -- "$home" "$state" "$data" "$log" "$cfg"
+  mkdir -p "$home" "$state" "$data" "$cfg"
+  : >"$log"
+}
+
+# engine PLUGIN_DIR [VAR=VALUE...] -- ARGS: the plugin's engine against
+# this repository's tree, as `devtools --tree <repo> ARGS`, with the
+# fixture os-release. ENGINE_TTY=pty runs it on a pseudo-terminal, none
+# with no controlling terminal, and plain (the default) with neither.
+# Output lands in $tmp/out, stripped of carriage returns, the exit status
+# in $status.
+engine() {
+  local at="$1" extra=() cmd words
+  shift
+  while [[ $1 != -- ]]; do extra+=("$1"); shift; done
+  shift
+  words=(env -i PATH="$stubs:$tools" HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty"
+    LC_ALL=C LOG="$log" MISE_STATE="$state" MISE_DATA_DIR="$data" STUB_MACHINE="${MACHINE:-x86_64}"
+    VGS_TEST_RUN=1 TMPDIR="$tmp" "${extra[@]}" "$node_bin" "$at/bin/devtools" --tree "$repo" "$@")
+  status=0
+  case "${ENGINE_TTY:-plain}" in
+    pty)
+      cmd="$(printf '%q ' "${words[@]}")"
+      SHELL="$BASH" timeout 60 unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "$tmp/os-release" \
+        "$script_bin" -qec "$cmd" /dev/null </dev/null >"$tmp/out.raw" 2>&1 || status=$? ;;
+    none)
+      timeout 60 unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec setsid -w "$@"' sh "$tmp/os-release" \
+        "${words[@]}" </dev/null >"$tmp/out.raw" 2>&1 || status=$? ;;
+    plain)
+      timeout 60 unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "$tmp/os-release" \
+        "${words[@]}" </dev/null >"$tmp/out.raw" 2>&1 || status=$? ;;
+  esac
+  tr -d '\r' <"$tmp/out.raw" >"$tmp/out"
+}
+out_has() { grep -qF -- "$1" "$tmp/out"; }
+log_is() { [[ "$(cat "$log")" == "$1" ]] || { printf '    log:\n%s\n    want:\n%s\n' "$(cat "$log")" "$1"; return 1; }; }
+list_has() { json_is "$tmp/out" "$1"; }
+
+# Each row takes the plugin copy it runs and answers 0 when every
+# expectation holds; the named checks report each expectation.
+row_arch() { # PLUGIN
+  reset_world
+  MACHINE=aarch64 engine "$1" -- list --json
+  [[ $status == 0 ]] && list_has 'd["machine"] == "aarch64" and "t3code" not in [r["id"] for r in d["sections"]["apps"]] and "herdr" in [r["id"] for r in d["sections"]["apps"]]'
+}
+row_foreign() { # PLUGIN
+  reset_world
+  mkdir -p "$home/.local/bin"
+  printf '#!/bin/sh\n# the owner'"'"'s own wrapper\nexec agent-cli claude "$@"\n' >"$home/.local/bin/claude"
+  cp -- "$home/.local/bin/claude" "$tmp/claude.orig"
+  engine "$1" -- launchers refresh
+  [[ $status == 0 ]] && cmp -s "$home/.local/bin/claude" "$tmp/claude.orig" && out_has "launcher=foreign command=claude path=$home/.local/bin/claude"
+}
+row_install_order() { # PLUGIN
+  reset_world
+  ENGINE_TTY=pty engine "$1" -- install ruby
+  [[ $status == 0 ]] && log_is "$(lines \
+    "mise [settings] [set] [upgrade.auto_prune] [false] {age=0}" \
+    "pacman [-S] [--needed] [--] [libyaml]" \
+    "mise [settings] [set] [ruby.compile] [false] {age=0}" \
+    "mise [settings] [add] [idiomatic_version_file_enable_tools] [ruby] {age=0}" \
+    "mise [use] [-g] [ruby] {age=0}")"
+}
+row_remove_mirror() { # PLUGIN: after row_install_order's install
+  : >"$log"
+  ENGINE_TTY=pty engine "$1" -- remove ruby
+  [[ $status == 0 ]] && log_is "$(lines \
+    "mise [uninstall] [--all] [ruby] {age=0}" \
+    "mise [rm] [-g] [ruby] {age=0}" \
+    "pacman [-Rns] [--] [libyaml]")"
+}
+
+reset_world
+engine "$plugin" -- list --json
+check "list exits 0" test "$status" == 0
+check "list names the machine, mise and the primary manager" list_has 'd["machine"] == "x86_64" and d["mise"] == {"present": True, "version": "2026.9.9"} and d["manager"] == "pacman"'
+check "list holds every section" list_has 'sorted(d["sections"]) == sorted(["agents","apps","tools","envs","editors","terminals","databases"])'
+check "an x86_64-only row shows on x86_64" list_has '"t3code" in [r["id"] for r in d["sections"]["apps"]]'
+check "an absent row offers install" list_has '[r for r in d["sections"]["agents"] if r["id"] == "claude"][0]["actions"] == ["install"]'
+check "a row with channels lists its default first" list_has '[r for r in d["sections"]["apps"] if r["id"] == "herdr"][0]["channels"] == ["stable", "preview"]'
+check "no container runtime offers no database install" list_has 'all(r["actions"] == [] for r in d["sections"]["databases"])'
+
+check "an x86_64-only row is hidden on an aarch64 fixture, and others stay" row_arch "$plugin"
+MACHINE=aarch64 ENGINE_TTY=pty engine "$plugin" -- install t3code
+check "install of a row built for another machine is refused" out_has "devtools: refused: id=t3code arch=aarch64 reason=unsupported"
+check "that refusal runs nothing" log_is ""
+
+check "install runs packages, settings, then mise use, after auto_prune" row_install_order "$plugin"
+check "the present probe holds after install" test -d "$data/installs/ruby"
+engine "$plugin" -- list --json
+check "the installed row reads installed from mise with update and remove" list_has '[(r["installed"], r["origin"], r["version"], r["actions"]) for r in d["sections"]["envs"] if r["id"] == "ruby"] == [(True, "mise", "1.0.0", ["update", "remove"])]'
+ENGINE_TTY=pty engine "$plugin" -- install ruby
+check "a second install is refused as installed" out_has "devtools: refused: id=ruby state=installed"
+check "remove takes back the tool, then the packages, in install's reverse" row_remove_mirror "$plugin"
+check "the present probe no longer holds after remove" test ! -e "$data/installs/ruby"
+
+# auto_prune is set once: a later install leaves it.
+reset_world
+echo false >"$state/auto_prune"
+ENGINE_TTY=pty engine "$plugin" -- install claude
+check "install with auto_prune already false leaves it and uses the package" log_is "mise [use] [-g] [claude] {age=0}"
+check "install writes no launcher without --launchers" test ! -e "$home/.local/bin/claude"
+: >"$log"
+ENGINE_TTY=pty engine "$plugin" -- update claude --launchers
+check "update runs mise up on the row's key without the cooldown" log_is "mise [up] [claude] {age=0}"
+check "update --launchers writes the row's launcher" out_has "launcher=written command=claude"
+check "the launcher carries VGS's mark and installs on first run" grep -qxF "mise where 'claude' >/dev/null 2>&1 || mise use -g --quiet 'claude' || exit 1" "$home/.local/bin/claude"
+: >"$log"
+ENGINE_TTY=pty engine "$plugin" -- remove claude
+check "remove of a package row uninstalls and forgets its key" log_is "$(lines "mise [uninstall] [--all] [claude] {age=0}" "mise [rm] [-g] [claude] {age=0}")"
+check "remove deletes the launcher VGS wrote" out_has "launcher=removed command=claude"
+
+# An exec row: installed with an empty bin_path=, its launcher written
+# whatever the setting, running the exec file under mise's root.
+reset_world
+echo false >"$state/auto_prune"
+ENGINE_TTY=pty engine "$plugin" -- install cursor
+check "an exec row installs with an empty bin_path=" log_is "mise [use] [-g] [cursor-agent[bin_path=]] {age=0}"
+check "an exec row gets its launcher without --launchers" out_has "launcher=written command=cursor-agent"
+check "the exec launcher runs the exec file under mise's root" grep -qxF "exec \"\$root\"/'dist-package/cursor-agent' \"\$@\"" "$home/.local/bin/cursor-agent"
+engine "$plugin" -- launchers remove
+check "launchers remove keeps an installed exec row's launcher" test -e "$home/.local/bin/cursor-agent"
+
+check "launchers refresh leaves the owner's file untouched" row_foreign "$plugin"
+check "launchers refresh writes the other rows' launchers" out_has "launcher=written command=codex"
+printf '#!/bin/sh\n%s\n' "# vgs.devtools launcher" >"$home/.local/bin/retired-tool"
+engine "$plugin" -- launchers refresh
+check "launchers refresh retires a VGS launcher no row offers" out_has "launcher=retired command=retired-tool"
+engine "$plugin" -- launchers remove
+check "launchers remove deletes VGS's launchers" test ! -e "$home/.local/bin/codex"
+check "launchers remove keeps the owner's file" cmp -s "$home/.local/bin/claude" "$tmp/claude.orig"
+
+# Other mise tools: what the global config declares and no row does.
+reset_world
+printf 'claude\ngithub:owner/extra\n' >"$state/installed"
+echo false >"$state/auto_prune"
+engine "$plugin" -- list --json
+check "other lists the global tool no row declares, alone" list_has 'd["other"] == [{"id": "github:owner/extra", "installed": True, "version": "1.0.0", "actions": ["update", "remove"]}]'
+ENGINE_TTY=pty engine "$plugin" -- update --mise github:owner/extra
+check "update --mise runs mise up on the key" log_is "mise [up] [github:owner/extra] {age=0}"
+ENGINE_TTY=pty engine "$plugin" -- remove --mise claude
+check "remove --mise refuses a key a row declares" out_has "devtools: refused: mise-tool=claude reason=not-other"
+
+# Where a change may run.
+reset_world
+ENGINE_TTY=none engine "$plugin" -- install claude
+check "install without a terminal is refused" out_has "devtools: refused: install=no-terminal"
+ENGINE_TTY=pty engine "$plugin" VGSH_RUNNER_PID=1 -- install claude
+check "install in a process the shell started is refused" out_has "devtools: refused: caller=shell verb=install"
+check "neither refusal runs anything" log_is ""
+ENGINE_TTY=pty engine "$plugin" -- install claude --channel preview
+check "a channel the row does not offer is refused" out_has "devtools: refused: channel=preview id=claude offers=none"
+ENGINE_TTY=pty engine "$plugin" -- install no-such-row
+check "an unknown id is refused" out_has "devtools: refused: id=no-such-row reason=unknown"
+engine "$plugin" -- list
+check "list without --json is a bad invocation" test "$status" == 2
+
+# The floating TUI script hands its arguments to the engine of the copy it
+# runs from, against the tree VGS_TUI_LIB lies in.
+tui_run() { # [VAR=VALUE...]
+  timeout 60 unshare -rm sh -c 'mount --bind "$1" /etc/os-release && shift && exec "$@"' sh "$tmp/os-release" \
+    env -i PATH="$stubs:$tools" HOME="$home" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" LC_ALL=C LOG="$log" \
+    MISE_STATE="$state" MISE_DATA_DIR="$data" STUB_MACHINE=x86_64 "$@" "$plugin/tui/devtools.sh" list --json </dev/null >"$tmp/out" 2>&1 || status=$?
+}
+status=0
+tui_run VGS_TUI_LIB="$repo/bin/lib/tui.sh" VGS_PLUGIN_DIR="$plugin"
+check "the TUI script lists through the engine" list_has 'd["manager"] == "pacman"'
+status=0
+tui_run
+check "the TUI script outside the presenter is refused" out_has "devtools: refused: tui=missing"
+check "that refusal exits 2" test "$status" == 2
+
+# The keeps-packages control installs through the shipped engine, then
+# removes through its copy.
+row_remove_mirror_after_install() { row_install_order "$plugin" && row_remove_mirror "$1"; }
+
+# Controls: each copy removes one rule, and the row that holds it must fail.
+# control NAME FILE NEEDLE REPLACEMENT ROW: FILE relative to the plugin.
+control() {
+  local dir="$tmp/control-$1"
+  cp -R -- "$plugin" "$dir"
+  check "the $1 control's text occurs once in $2" \
+    python3 -c 'import sys; sys.exit(0 if open(sys.argv[1]).read().count(sys.argv[2]) == 1 else 1)' "$plugin/$2" "$3"
+  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$dir/$2" "$3" "$4"
+  check "the $1 mutant differs from $2" test "$(cmp -s "$plugin/$2" "$dir/$2"; echo $?)" == 1
+  if "row_$5" "$dir" >/dev/null; then fail "the $1 mutant passes row $5"; else ok "the $1 mutant fails row $5"; fi
+}
+control overwrites-foreign bin/devtools '    if (state === "foreign") return launcherLine("foreign", row.command);' '' foreign
+control ignores-arch CatalogLogic.js '    return !Array.isArray(row.arch) || listHas(row.arch, machine);' '    return true;' arch
+control packages-last bin/devtools $'    if (row.packages !== undefined) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' $'    if (false) {\n        const picked = PackageManagers.packageFor(row.packages, surveyed.found);' install_order
+control keeps-packages bin/devtools $'            runPackages("remove", picked.manager,' $'            if (false) runPackages("remove", picked.manager,' remove_mirror_after_install
+
+if [[ $failures -gt 0 ]]; then echo "test-devtools: $failures failure(s)"; exit 1; fi
+echo "test-devtools: ok"

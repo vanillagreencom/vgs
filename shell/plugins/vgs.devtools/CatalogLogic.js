@@ -212,16 +212,22 @@ function parseBackendOptions(options) {
     return { ok: true };
 }
 
-function parseSpec(spec) {
+// The parts of mise spec SPEC under the grammar
+// `[backend:]name[[opt=value,...]][@version]`: { ok: true, backend, name,
+// options, version }, `backend`, `options` (the text between the brackets)
+// and `version` "" when the spec has none; or { ok: false, rule, detail }.
+function specParts(spec) {
     if (typeof spec !== "string" || spec === "" || /\s|[\[\]]/.test(spec.replace(/\[[^\]]*\]/g, "")))
         return { ok: false, rule: "catalog-mise-spec", detail: "invalid spec" };
     var optionsStart = spec.indexOf("[");
     var optionsEnd = spec.indexOf("]");
     var base = spec;
+    var optionText = "";
     if (optionsStart !== -1 || optionsEnd !== -1) {
         if (optionsStart === -1 || optionsEnd === -1 || optionsEnd < optionsStart || spec.indexOf("[", optionsStart + 1) !== -1 || spec.indexOf("]", optionsEnd + 1) !== -1)
             return { ok: false, rule: "catalog-mise-spec", detail: "invalid backend options" };
-        var options = parseBackendOptions(spec.slice(optionsStart + 1, optionsEnd));
+        optionText = spec.slice(optionsStart + 1, optionsEnd);
+        var options = parseBackendOptions(optionText);
         if (!options.ok)
             return { ok: false, rule: "catalog-mise-spec", detail: options.detail };
         base = spec.slice(0, optionsStart) + spec.slice(optionsEnd + 1);
@@ -233,9 +239,10 @@ function parseSpec(spec) {
         return { ok: false, rule: "catalog-mise-backend", detail: "unknown backend " + backend };
     if (nameAndVersion === "")
         return { ok: false, rule: "catalog-mise-spec", detail: "missing name" };
+    var version = "";
     var at = nameAndVersion.lastIndexOf("@");
     if (at > 0) {
-        var version = nameAndVersion.slice(at + 1);
+        version = nameAndVersion.slice(at + 1);
         nameAndVersion = nameAndVersion.slice(0, at);
         if (version === "")
             return { ok: false, rule: "catalog-mise-spec", detail: "empty version" };
@@ -244,13 +251,82 @@ function parseSpec(spec) {
     }
     if (/\s|[\[\]]/.test(nameAndVersion) || nameAndVersion === "")
         return { ok: false, rule: "catalog-mise-spec", detail: "invalid name" };
-    return { ok: true };
+    return { ok: true, backend: backend, name: nameAndVersion, options: optionText, version: version };
 }
 
 function validateSpecField(value, path, out) {
-    var parsed = parseSpec(value);
+    var parsed = specParts(value);
     if (!parsed.ok)
         out.push(finding(parsed.rule, path, parsed.detail));
+}
+
+function judgedSpec(spec) {
+    var parts = specParts(spec);
+    if (!parts.ok)
+        throw new Error("CatalogLogic: spec " + JSON.stringify(spec) + " passed validateCatalog but " + parts.detail);
+    return parts;
+}
+
+// The id mise files SPEC under in `mise ls --json` and in its config: the
+// backend and the name, without backend options or a version. A spec the
+// judge accepted only; any other throws.
+function specKey(spec) {
+    var parts = judgedSpec(spec);
+    return parts.backend === "" ? parts.name : parts.backend + ":" + parts.name;
+}
+
+// SPEC with OPTIONS, comma-joined `key=value` text, added after the backend
+// options it already carries and ahead of its version: mise reads
+// `name[options]@version` and nothing else. "" adds nothing.
+function specWithOptions(spec, options) {
+    var parts = judgedSpec(spec);
+    if (options === "")
+        return spec;
+    var all = parts.options === "" ? options : parts.options + "," + options;
+    return (parts.backend === "" ? "" : parts.backend + ":") + parts.name + "[" + all + "]" + (parts.version === "" ? "" : "@" + parts.version);
+}
+
+// The mise spec that installs ROW from release channel CHANNEL: the row's
+// `package` with the channel's backend options, CHANNEL null for the
+// row's default, and, for a row with an `exec` path, an empty `bin_path=`,
+// which keeps the package's other exports off PATH (v1 D016). The row
+// keeps the plain spec. { ok: true, spec, channel } with `channel` null
+// for a row without channels, or { ok: false, error } for a channel the
+// row does not offer or a row without a package.
+function installSpec(row, channel) {
+    if (typeof row.package !== "string")
+        return { ok: false, error: "id=" + row.id + " reason=no-package" };
+    var spec = row.package;
+    var chosen = null;
+    if (isPlainObject(row.channels)) {
+        chosen = channel === null ? row.channels.default : channel;
+        if (!hasOwn(row.channels.options, chosen))
+            return { ok: false, error: "channel=" + chosen + " id=" + row.id + " offers=" + Object.keys(row.channels.options).join(",") };
+        spec = specWithOptions(spec, row.channels.options[chosen]);
+    } else if (channel !== null) {
+        return { ok: false, error: "channel=" + channel + " id=" + row.id + " offers=none" };
+    }
+    if (typeof row.exec === "string")
+        spec = specWithOptions(spec, "bin_path=");
+    return { ok: true, spec: spec, channel: chosen };
+}
+
+// Every mise spec ROW declares: its package, its tools and its requires.
+function rowSpecs(row) {
+    var out = [];
+    if (typeof row.package === "string")
+        out.push(row.package);
+    if (Array.isArray(row.tools))
+        out = out.concat(row.tools);
+    if (Array.isArray(row.requires))
+        out = out.concat(row.requires);
+    return out;
+}
+
+// Whether ROW builds on machine architecture MACHINE, `uname -m`'s answer:
+// a row naming no `arch` builds everywhere.
+function availableOn(row, machine) {
+    return !Array.isArray(row.arch) || listHas(row.arch, machine);
 }
 
 function validateSpecList(value, path, out) {
@@ -697,4 +773,22 @@ function usedBrands(catalog) {
                 out[rows[i].brand] = true;
     }
     return out;
+}
+
+// Every refusal of CATALOG and its brand table BRAND_TOKENS, the plugin's
+// Appearance.js `TOKENS.brand`, under the package-manager ids MANAGER_IDS
+// and package-name rule PACKAGE_NAME_VALID of shell/Core/PackageManagers.js
+// and the Lucide names LUCIDE_NAMES of shell/Ui/icons/Lucide.js: the brand
+// table's refusals, then the catalog's. The one judge
+// scripts/check-devtools-catalog.js and the engine, bin/devtools, run.
+function judgeCatalog(catalog, brandTokens, managerIds, packageNameValid, lucideNames) {
+    var brands = validateBrandTable(catalog, brandTokens);
+    var judged = validateCatalog(catalog, {
+        managerIds: managerIds,
+        lucideNames: lucideNames,
+        brandKeys: brands.brandKeys,
+        packageNameValid: packageNameValid
+    });
+    var out = brands.refusals.concat(judged.refusals);
+    return result(out);
 }

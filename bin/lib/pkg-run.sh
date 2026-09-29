@@ -2,7 +2,9 @@
 # bin/lib/pkg-run.sh: runs the steps of one package plan in the terminal
 # the user sees. bin/vgsh-pkg's `run` decides everything first (the caller,
 # the terminal, the plan and the elevation command) and then starts this
-# file with bash, so the steps run under bin/lib/tui.sh's sudo session.
+# file with bash, so the steps run under bin/lib/tui.sh's sudo session. The
+# vgs.devtools engine starts it with ELEVATOR none for its mise, container
+# and installer steps, so every step a floating TUI runs is shown alike.
 #
 #   pkg-run.sh ELEVATOR COUNT ARG... [COUNT ARG...]...
 #

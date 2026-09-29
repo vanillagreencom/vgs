@@ -1,0 +1,811 @@
+#!/usr/bin/env node
+// devtools: the vgs.devtools engine. It reads the plugin's catalog.json,
+// judged by CatalogLogic.js, and reports and changes each row's install
+// through mise, the core package layer (`vgsh pkg`) and the container
+// runtimes. Every verb takes the VGS tree it runs against first; a
+// floating TUI script passes the tree its VGS_TUI_LIB lies in.
+//
+//   devtools --tree <dir> list --json
+//       one JSON line, the state of every row this machine can build and of
+//       every other tool the global mise config declares:
+//         { machine, mise: { present, version }, manager,
+//           sections: { agents, apps, tools, envs, editors, terminals,
+//                       databases },
+//           other }
+//       `machine` is `uname -m`; `manager` the detected primary package
+//       manager's id, or null. A row a section holds is
+//         { id, name, section, icon, brand, kind, installed, version,
+//           origin, manager, package, runtime, path, launcher, channels,
+//           actions, error }
+//       `installed` is true, false, or null when a probe failed and `error`
+//       names it. `origin` says what provides the row: "mise" (mise holds
+//       the install), "package" (the package `manager` and `package` name
+//       own the command at `path`), "managedBy" (a package owns the row's
+//       `managedBy` command, so VGS leaves the row alone), "installer" (the
+//       row's named installer route put it there), "container" (a
+//       container of the row's name exists under `runtime`), "foreign"
+//       (anything else provides the command at `path`), or null when not
+//       installed. `version` is the installed version when the origin
+//       names one, else null. `launcher`, for an agent, app or tool, is
+//       "vgs", "foreign" or "absent": the file at ~/.local/bin/<command>.
+//       `channels` is the row's release channel ids with its default first,
+//       or null. `actions` is what the TUI verbs accept for the row now,
+//       from "install", "update" and "remove". `other` holds each tool of
+//       `mise ls --global --json` no row declares, as { id, installed,
+//       version, actions }, `id` the key mise files it under; its actions
+//       are "update" and "remove" alone, since the owner's own config
+//       stays the source of truth. A row whose `arch` excludes the machine
+//       is left out. mise answers one `mise ls --json` and one
+//       `mise ls --global --json` per list.
+//   devtools --tree <dir> install <id> [--channel <channel>] [--launchers]
+//   devtools --tree <dir> update <id> [--launchers]
+//   devtools --tree <dir> update --mise <key>
+//   devtools --tree <dir> remove <id>
+//   devtools --tree <dir> remove --mise <key>
+//       change one row, or one other mise tool, in this terminal: the
+//       verbs refuse in a process the shell started and without /dev/tty,
+//       before anything runs, since `vgsh pkg run` asks for a password and
+//       the floating TUI is where the user answers it. install runs, in
+//       order: the row's distribution packages through `vgsh pkg run
+//       install`, the mise settings it names, `mise use -g` of each spec it
+//       requires and of its tools or package, or its named installer, then
+//       its postInstall steps, and ends by checking its present probe.
+//       update runs `mise up` over the row's mise keys, reinstalls with
+//       `mise use -g --force` a row whose present probe no longer holds,
+//       and checks the probe. remove mirrors install in reverse:
+//       `mise uninstall --all` and `mise rm -g` of each of its tools or its
+//       package that no other installed row declares, the installer's own
+//       uninstall, the path its home probe names, and the packages no
+//       other installed row lists through `vgsh pkg run remove`, then
+//       checks the probe no longer holds; a database container goes with
+//       `<runtime> rm -f`. install and update first set
+//       `upgrade.auto_prune` false in mise's global settings when it is
+//       not, so an upgrade keeps the release a running session still
+//       executes. A mise, container or installer step runs through the
+//       core's step runner, bin/lib/pkg-run.sh, from $HOME with
+//       MISE_MINIMUM_RELEASE_AGE=0 and the row's buildEnv.
+//   devtools --tree <dir> launchers refresh|remove
+//       refresh writes the launcher of every agent, app and tool at
+//       ~/.local/bin/<command>, a script that installs the row through mise
+//       on its first run and then runs it, and deletes the launchers VGS
+//       wrote for commands no row offers. remove deletes every launcher VGS
+//       wrote but an installed `exec` row's. The plugin's `writeLaunchers`
+//       setting (default off) is what asks for either; install and update
+//       write the row's launcher only under --launchers.
+//
+// A launcher is VGS's when its second line is LAUNCHER_MARK. A file
+// without it, a link included, is the owner's and is never replaced or
+// removed. A launcher is not written where the command already answers on
+// PATH outside ~/.local/bin and mise's data directory, since it would hide
+// that copy. An installed row with an `exec` path gets its launcher
+// whatever the setting: mise installs it with an empty `bin_path=`, so its
+// launcher, which runs the `exec` file under the root `mise where` names,
+// is the only way to run it (v1 D016).
+//
+// Output: each step as bin/lib/pkg-run.sh prints it, one
+// `launcher=<state> command=<name> path=<file>` line per launcher judged,
+// state one of written, removed, retired, foreign or shadowed, one
+// `devtools: kept=<key> reason=declared-by-installed-row` line per tool a
+// removal keeps and one `devtools: removed=<path>` line per path it
+// deletes. Exit 0 when every step passed. A refusal is one line on stderr,
+// `devtools: refused: <key>=<value>...`, its detail after it, exit 1:
+// `catalog=<rule> path=<path> detail=<text>` or `catalog=unreadable`,
+// `id=<id> reason=unknown`, `id=<id> arch=<machine> reason=unsupported`,
+// `id=<id> state=installed|absent|managed` for a verb the row's state does
+// not offer, `mise-tool=<key> reason=not-other`, `mise=absent`,
+// `mise=failed args=<args> exit=<n>`, `mise=unparseable args=<args>`,
+// `pkg=failed verb=<verb> exit=<n>`, `uname=failed exit=<n>`,
+// `packages=unavailable id=<id>`, `runtime=absent id=<id>`,
+// `runner=failed error=<code>`, `step=failed exit=<n>` (the first failing
+// step's status), `present=missing id=<id> path=<file>`,
+// `present=remains id=<id> path=<file>`, `channel=<c> id=<id>
+// offers=<ids>`, and the terminal gate's `caller=shell verb=<verb>` and
+// `<verb>=no-terminal`. Exit 2 for a bad invocation, `tree=<dir>
+// reason=not-a-vgs-tree` among them.
+"use strict";
+const childProcess = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const PLUGIN_DIR = path.join(__dirname, "..");
+const LAUNCHER_MARK = "# vgs.devtools launcher";
+const USAGE = "usage: devtools --tree <dir> list --json | install <id> [--channel <channel>] [--launchers] | update <id> [--launchers] | update --mise <key> | remove <id> | remove --mise <key> | launchers refresh|remove";
+const PACKAGE_SECTIONS = ["agents", "apps", "tools"];
+// Every mise mutation runs without mise's release cooldown, which would
+// hold a tool back for days after it ships (v1 D011).
+const RELEASE_AGE = { MISE_MINIMUM_RELEASE_AGE: "0" };
+
+function bad(first) {
+    process.stderr.write("devtools: refused: " + first + "\n" + USAGE + "\n");
+    process.exit(2);
+}
+
+function readArgs(argv) {
+    if (argv[0] !== "--tree" || argv.length < 3) bad("option=--tree value=missing");
+    const tree = path.resolve(argv[1]);
+    if (!fs.existsSync(path.join(tree, "bin", "vgsh")) || !fs.existsSync(path.join(tree, "bin", "lib", "judge-files.js"))) {
+        process.stderr.write("devtools: refused: tree=" + tree + " reason=not-a-vgs-tree\n");
+        process.exit(2);
+    }
+    return { tree, verb: argv[2], rest: argv.slice(3) };
+}
+
+const args = readArgs(process.argv.slice(2));
+const { refuse, main, onPath, refuseOutsideTerminal, shellWord } = require(path.join(args.tree, "bin", "lib", "judge-files.js"));
+const { load } = require(path.join(args.tree, "bin", "lib", "qml-library.js"));
+const PackageManagers = load(path.join(args.tree, "shell", "Core", "PackageManagers.js"));
+const Lucide = load(path.join(args.tree, "shell", "Ui", "icons", "Lucide.js"));
+const Catalog = load(path.join(PLUGIN_DIR, "CatalogLogic.js"));
+const Appearance = load(path.join(PLUGIN_DIR, "Appearance.js"));
+const VGSH = path.join(args.tree, "bin", "vgsh");
+const RUNNER = path.join(args.tree, "bin", "lib", "pkg-run.sh");
+const HOME = process.env.HOME || os.homedir();
+const LAUNCHER_DIR = path.join(HOME, ".local", "bin");
+// mise's data directory, by the default mise documents.
+const MISE_DATA = process.env.MISE_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(HOME, ".local", "share"), "mise");
+const TERMINAL_DETAIL = "the shell never installs a tool; open the vgs.devtools TUI or run this in a terminal";
+
+// The catalog, judged before any row is read: a catalog the judge refuses
+// is never interpreted.
+function readCatalog() {
+    const file = path.join(PLUGIN_DIR, "catalog.json");
+    let catalog;
+    try {
+        catalog = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+        refuse("catalog=unreadable path=" + file, undefined, 1, e.message);
+    }
+    const judged = Catalog.judgeCatalog(catalog, Appearance.TOKENS.brand, PackageManagers.MANAGERS.map(row => row.id),
+        PackageManagers.validName, Object.keys(Lucide.ICONS));
+    if (!judged.ok) {
+        const first = judged.refusals[0];
+        refuse("catalog=" + first.rule + " path=" + first.path + " detail=" + JSON.stringify(first.detail), undefined, 1,
+            judged.refusals.length + " refusal(s); scripts/check-devtools-catalog.js lists them");
+    }
+    return catalog;
+}
+
+// A query's result: { status, stdout, stderr }, status null when it did
+// not start. Runs from $HOME, so no project's mise.toml in the caller's
+// directory changes what mise answers.
+function capture(argv) {
+    return new Promise(resolve => {
+        const child = childProcess.spawn(argv[0], argv.slice(1), { cwd: HOME, stdio: ["ignore", "pipe", "pipe"] });
+        let stdout = "", stderr = "";
+        child.stdout.on("data", d => { stdout += d; });
+        child.stderr.on("data", d => { stderr += d; });
+        child.on("error", e => resolve({ status: null, stdout: "", stderr: e.code }));
+        child.on("close", status => resolve({ status, stdout, stderr }));
+    });
+}
+
+async function miseJson(miseArgs) {
+    const r = await capture(["mise"].concat(miseArgs));
+    if (r.status !== 0) refuse("mise=failed args=" + miseArgs.join(",") + " exit=" + r.status, undefined, 1, r.stderr);
+    let data = null;
+    try {
+        data = JSON.parse(r.stdout);
+    } catch (e) {
+        data = null;
+    }
+    if (data === null || typeof data !== "object" || Array.isArray(data))
+        refuse("mise=unparseable args=" + miseArgs.join(","), undefined, 1, r.stdout.slice(0, 200));
+    return data;
+}
+
+// One key's `mise ls --json` entries as { installed, version }: installed
+// when one entry is, the version the active install's, else the first
+// installed one's.
+function installOf(entries) {
+    let version = null;
+    for (const e of Array.isArray(entries) ? entries : []) {
+        if (e === null || typeof e !== "object" || !e.installed) continue;
+        if (version === null || e.active) version = String(e.version);
+    }
+    return { installed: version !== null, version };
+}
+
+// The file COMMAND runs from on PATH, skipping launchers VGS wrote in
+// ~/.local/bin and anything under mise's data directory, which is mise's
+// own answer for a tool; or null.
+function resolveCommand(command) {
+    for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+        if (!path.isAbsolute(dir) || dir === MISE_DATA || dir.startsWith(MISE_DATA + "/")) continue;
+        const file = path.join(dir, command);
+        try {
+            fs.accessSync(file, fs.constants.X_OK);
+            if (!fs.statSync(file).isFile()) continue;
+        } catch (e) {
+            if (["ENOENT", "ENOTDIR", "EACCES"].includes(e.code)) continue;
+            throw e;
+        }
+        if (path.resolve(dir) === LAUNCHER_DIR && launcherState(command) === "vgs") continue;
+        return file;
+    }
+    return null;
+}
+
+// The file at ~/.local/bin/COMMAND: "absent", "vgs" when VGS wrote it, or
+// "foreign" for anything else, a link included.
+function launcherState(command) {
+    const file = path.join(LAUNCHER_DIR, command);
+    let stat;
+    try {
+        stat = fs.lstatSync(file);
+    } catch (e) {
+        if (e.code === "ENOENT") return "absent";
+        throw e;
+    }
+    if (!stat.isFile()) return "foreign";
+    const head = fs.readFileSync(file, "utf8").split("\n", 3);
+    return head[1] === LAUNCHER_MARK ? "vgs" : "foreign";
+}
+
+// A present probe's answer and the path it read: { holds, path }. `mise`
+// is a path under mise's installs directory; `home` one under $HOME, or
+// with `prefix` an entry of it; `command` a command on PATH.
+function probe(present) {
+    if (typeof present.mise === "string") {
+        const file = path.join(MISE_DATA, "installs", present.mise);
+        return { holds: fs.existsSync(file), path: file };
+    }
+    if (present.command !== undefined) {
+        for (const command of [].concat(present.command)) {
+            const file = resolveCommand(command);
+            if (file !== null) return { holds: true, path: file };
+        }
+        return { holds: false, path: [].concat(present.command).join(",") };
+    }
+    const dir = path.join(HOME, present.home);
+    if (present.prefix === undefined) return { holds: fs.existsSync(dir), path: dir };
+    const hit = homeEntries(present).find(name => name.startsWith(present.prefix));
+    return { holds: hit !== undefined, path: hit === undefined ? dir : path.join(dir, hit) };
+}
+
+function homeEntries(present) {
+    try {
+        return fs.readdirSync(path.join(HOME, present.home)).sort();
+    } catch (e) {
+        if (e.code === "ENOENT" || e.code === "ENOTDIR") return [];
+        throw e;
+    }
+}
+
+// The package owning FILE through `vgsh pkg owner`: { owner } with
+// { manager, package, version }, { owner: null } for a file no package
+// owns, or { error } for a query that could not answer.
+async function ownerOf(file) {
+    const r = await capture([VGSH, "pkg", "owner", file]);
+    if (r.status === 0) {
+        try {
+            return { owner: JSON.parse(r.stdout) };
+        } catch (e) {
+            return { error: "pkg=unparseable verb=owner" };
+        }
+    }
+    const first = r.stderr.split("\n")[0];
+    if (/^vgsh: refused: path=\S+ reason=unowned /.test(first)) return { owner: null };
+    return { error: first.replace(/^vgsh: refused: /, "") || "pkg=failed verb=owner exit=" + r.status };
+}
+
+async function detectManagers() {
+    const r = await capture([VGSH, "pkg", "detect", "--json"]);
+    if (r.status !== 0) refuse("pkg=failed verb=detect exit=" + r.status, undefined, 1, r.stderr);
+    return JSON.parse(r.stdout);
+}
+
+async function machineArch() {
+    const r = await capture(["uname", "-m"]);
+    if (r.status !== 0) refuse("uname=failed exit=" + r.status, undefined, 1, r.stderr);
+    return r.stdout.trim();
+}
+
+// The container names each runtime of RUNTIMES on PATH holds: runtime ->
+// { names } or { error }.
+async function containerNames(runtimes) {
+    const out = {};
+    await Promise.all(runtimes.filter(onPath).map(async rt => {
+        const r = await capture([rt, "ps", "-a", "--format", "{{.Names}}"]);
+        out[rt] = r.status === 0 ? { names: r.stdout.split("\n").filter(Boolean) } : { error: "runtime=" + rt + " exit=" + r.status };
+    }));
+    return out;
+}
+
+function blankRow(section, row) {
+    return {
+        id: row.id, name: row.name, section, icon: row.icon || null, brand: row.brand || null, kind: row.kind || null,
+        installed: false, version: null, origin: null, manager: null, package: null, runtime: null, path: null,
+        launcher: PACKAGE_SECTIONS.includes(section) ? launcherState(row.command) : null,
+        channels: row.channels ? [row.channels.default].concat(Object.keys(row.channels.options).filter(c => c !== row.channels.default)) : null,
+        actions: [], error: null
+    };
+}
+
+// Fills OUT from the package owning FILE: origin "package", or "foreign"
+// when no package owns it.
+async function ownedAt(out, file) {
+    out.path = file;
+    const owned = await ownerOf(file);
+    if (owned.error !== undefined) {
+        out.installed = null;
+        out.error = owned.error;
+    } else if (owned.owner === null) {
+        out.origin = "foreign";
+    } else {
+        Object.assign(out, { origin: "package", manager: owned.owner.manager, package: owned.owner.package, version: owned.owner.version });
+    }
+}
+
+async function packageRowState(section, row, world) {
+    const out = blankRow(section, row);
+    const held = installOf(world.installs[Catalog.specKey(row.package)]);
+    if (held.installed) return Object.assign(out, { installed: true, version: held.version, origin: "mise", actions: ["update", "remove"] });
+    const file = resolveCommand(row.command);
+    if (file === null) return Object.assign(out, { actions: ["install"] });
+    out.installed = true;
+    await ownedAt(out, file);
+    return out;
+}
+
+async function envRowState(row, world) {
+    const out = blankRow("envs", row);
+    const managedBy = row.managedBy === undefined ? null : resolveCommand(row.managedBy);
+    if (managedBy !== null) {
+        const owned = await ownerOf(managedBy);
+        if (owned.error !== undefined) return Object.assign(out, { installed: null, error: owned.error, path: managedBy });
+        if (owned.owner !== null)
+            return Object.assign(out, { installed: true, origin: "managedBy", path: managedBy, manager: owned.owner.manager, package: owned.owner.package, version: owned.owner.version });
+    }
+    const found = probe(row.present);
+    if (!found.holds) return Object.assign(out, { actions: ["install"] });
+    Object.assign(out, { installed: true, path: found.path });
+    if (Array.isArray(row.tools)) {
+        const last = installOf(world.installs[Catalog.specKey(row.tools[row.tools.length - 1])]);
+        return Object.assign(out, { origin: "mise", version: last.version, actions: ["update", "remove"] });
+    }
+    if (row.installer !== undefined) return Object.assign(out, { origin: "installer", actions: ["remove"] });
+    await ownedAt(out, found.path);
+    out.actions = ownedPackagesKey(row, out) !== null ? ["remove"] : [];
+    return out;
+}
+
+// The key of ROW's `packages` whose names hold the package STATE's
+// manager owns the command through: the owning manager's own, or an
+// overlay's that exists beside it, whose packages that manager removes
+// too (the AUR's under pacman); null when the row lists it under neither.
+function ownedPackagesKey(row, state) {
+    if (state.origin !== "package" || row.packages === undefined) return null;
+    const keys = [state.manager].concat(PackageManagers.MANAGERS.filter(m => m.requires === state.manager).map(m => m.id));
+    return keys.find(k => Array.isArray(row.packages[k]) && row.packages[k].includes(state.package)) || null;
+}
+
+async function packagedRowState(section, row, world) {
+    const out = blankRow(section, row);
+    const found = probe(row.present);
+    if (!found.holds) return Object.assign(out, { actions: PackageManagers.packageFor(row.packages, world.found) === null ? [] : ["install"] });
+    out.installed = true;
+    await ownedAt(out, found.path);
+    if (ownedPackagesKey(row, out) !== null) out.actions = ["remove"];
+    return out;
+}
+
+function databaseRowState(row, world) {
+    const out = blankRow("databases", row);
+    const errors = [];
+    for (const rt of row.container.runtimes) {
+        const held = world.containers[rt];
+        if (held === undefined) continue;
+        if (held.error !== undefined) errors.push(held.error);
+        else if (held.names.includes(row.container.name))
+            return Object.assign(out, { installed: true, origin: "container", runtime: rt, actions: ["remove"] });
+    }
+    if (errors.length > 0) return Object.assign(out, { installed: null, error: errors.join(" ") });
+    return Object.assign(out, { actions: row.container.runtimes.some(onPath) ? ["install"] : [] });
+}
+
+function rowState(section, row, world) {
+    if (PACKAGE_SECTIONS.includes(section)) return packageRowState(section, row, world);
+    if (section === "envs") return envRowState(row, world);
+    if (section === "databases") return databaseRowState(row, world);
+    return packagedRowState(section, row, world);
+}
+
+// Everything list reports, and what every verb judges a row's state by:
+// { machine, found, rows: id -> { section, row, state }, other, report }.
+async function survey(catalog) {
+    const version = onPath("mise") ? await miseVersion() : null;
+    const present = version !== null;
+    const [machine, found, installs, global] = await Promise.all([
+        machineArch(), detectManagers(),
+        present ? miseJson(["ls", "--json"]) : {},
+        present ? miseJson(["ls", "--global", "--json"]) : {}
+    ]);
+    const runtimes = [...new Set(catalog.databases.flatMap(row => row.container.runtimes))];
+    const world = { machine, found, installs, containers: await containerNames(runtimes) };
+    const sections = {};
+    const rows = {};
+    await Promise.all(Catalog.SECTION_NAMES.map(async section => {
+        const available = catalog[section].filter(row => Catalog.availableOn(row, machine));
+        sections[section] = await Promise.all(available.map(row => rowState(section, row, world)));
+        available.forEach((row, i) => { rows[row.id] = { section, row, state: sections[section][i] }; });
+    }));
+    const declared = new Set();
+    for (const section of Catalog.SECTION_NAMES)
+        for (const row of catalog[section])
+            for (const spec of Catalog.rowSpecs(row)) declared.add(Catalog.specKey(spec));
+    const other = Object.keys(global).filter(key => !declared.has(key)).sort().map(key => {
+        const held = installOf(global[key]);
+        return { id: key, installed: held.installed, version: held.version, actions: ["update", "remove"] };
+    });
+    return {
+        machine, found, rows, other,
+        report: { machine, mise: { present, version }, manager: found.primary === null ? null : found.primary.id, sections, other }
+    };
+}
+
+async function miseVersion() {
+    const r = await capture(["mise", "--version"]);
+    if (r.status !== 0) refuse("mise=failed args=--version exit=" + r.status, undefined, 1, r.stderr);
+    return r.stdout.trim().split(/\s+/)[0];
+}
+
+// Runs STEPS, argv lists, through the core's step runner in this terminal,
+// from $HOME, with EXTRA_ENV over this process's environment. The first
+// failing step ends the verb with its status.
+function runSteps(steps, extraEnv) {
+    if (steps.length === 0) return;
+    const argv = [RUNNER, "none"];
+    for (const step of steps) argv.push(String(step.length), ...step);
+    const r = childProcess.spawnSync("bash", argv, { stdio: "inherit", cwd: HOME, env: Object.assign({}, process.env, RELEASE_AGE, extraEnv || {}) });
+    if (r.error !== undefined) refuse("runner=failed error=" + r.error.code);
+    if (r.status !== 0) refuse("step=failed exit=" + (r.status === null ? 128 + os.constants.signals[r.signal] : r.status));
+}
+
+// `vgsh pkg run VERB --manager MANAGER NAMES`, which elevates in this
+// terminal and rescans the shell's requirements after.
+function runPackages(verb, manager, names) {
+    if (names.length === 0) return;
+    const r = childProcess.spawnSync(VGSH, ["pkg", "run", verb, "--manager", manager].concat(names), { stdio: "inherit", cwd: HOME });
+    if (r.error !== undefined) refuse("runner=failed error=" + r.error.code);
+    if (r.status !== 0) refuse("step=failed exit=" + r.status);
+}
+
+async function ensureNoAutoPrune() {
+    const r = await capture(["mise", "settings", "get", "upgrade.auto_prune"]);
+    if (r.status !== 0) refuse("mise=failed args=settings,get,upgrade.auto_prune exit=" + r.status, undefined, 1, r.stderr);
+    if (r.stdout.trim() !== "false") runSteps([["mise", "settings", "set", "upgrade.auto_prune", "false"]]);
+}
+
+function homeWord(word) {
+    return typeof word === "string" ? word : path.join(HOME, word.home);
+}
+
+function buildEnv(row) {
+    const env = {};
+    for (const [k, v] of Object.entries(row.buildEnv || {})) env[k] = String(v);
+    return env;
+}
+
+function settingSteps(settings) {
+    const steps = [];
+    for (const [key, value] of Object.entries(settings || {})) {
+        if (Array.isArray(value)) for (const item of value) steps.push(["mise", "settings", "add", key, item]);
+        else steps.push(["mise", "settings", "set", key, String(value)]);
+    }
+    return steps;
+}
+
+// The specs `mise x` resolves a postInstall step's `via` row through.
+function viaSpecs(catalog, id) {
+    for (const section of Catalog.SECTION_NAMES)
+        for (const row of catalog[section])
+            if (row.id === id) return Array.isArray(row.tools) ? row.tools : [Catalog.installSpec(row, null).spec];
+    throw new Error("devtools: postInstall via " + id + " passed validateCatalog but names no row");
+}
+
+function postInstallArgv(catalog, step) {
+    if (step.mise !== undefined) return ["mise"].concat(step.mise.map(homeWord));
+    const argv = step.exec.map(homeWord);
+    return step.via === undefined ? argv : ["mise", "x"].concat(viaSpecs(catalog, step.via), ["--"], argv);
+}
+
+// The named installer routes: the argv that fetch the upstream's script to
+// a file and run it from there, never through a shell string, and the
+// argv that undo it.
+const INSTALLERS = {
+    rustup: {
+        fetch: file => ["curl", "--proto", "=https", "--tlsv1.2", "-sSf", "-o", file, "https://sh.rustup.rs"],
+        run: file => ["sh", file, "-y"],
+        remove: [["rustup", "self", "uninstall", "-y"]]
+    },
+    opam: {
+        fetch: file => ["curl", "--proto", "=https", "--tlsv1.2", "-fsSL", "-o", file, "https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh"],
+        run: file => ["sh", file],
+        remove: []
+    }
+};
+
+function runInstaller(route) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-"));
+    try {
+        const file = path.join(dir, "install.sh");
+        runSteps([route.fetch(file), route.run(file)]);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// The surveyed row ID, refused when unknown, built for another machine, or
+// in a state whose actions do not hold VERB.
+function target(catalog, surveyed, id, verb) {
+    const entry = surveyed.rows[id];
+    if (entry === undefined) {
+        for (const section of Catalog.SECTION_NAMES)
+            if (catalog[section].some(row => row.id === id)) refuse("id=" + id + " arch=" + surveyed.machine + " reason=unsupported");
+        refuse("id=" + id + " reason=unknown");
+    }
+    if (!entry.state.actions.includes(verb)) {
+        const state = entry.state.installed !== true ? "absent" : entry.state.actions.length === 0 ? "managed" : "installed";
+        refuse("id=" + id + " state=" + state, undefined, 1, verb + " is not offered for this row now; `devtools list --json` names its actions");
+    }
+    return entry;
+}
+
+function requireMise() {
+    if (!onPath("mise")) refuse("mise=absent", undefined, 1, "install mise through your package manager first");
+}
+
+function verifyPresent(row) {
+    if (row.present === undefined) return;
+    const found = probe(row.present);
+    if (!found.holds) refuse("present=missing id=" + row.id + " path=" + found.path);
+}
+
+async function install(catalog, id, channel, launchers) {
+    refuseOutsideTerminal("install", TERMINAL_DETAIL);
+    const surveyed = await survey(catalog);
+    const { section, row } = target(catalog, surveyed, id, "install");
+    const spec = typeof row.package === "string" ? Catalog.installSpec(row, channel) : null;
+    if (spec !== null && !spec.ok) refuse(spec.error);
+    if (spec === null && channel !== null) refuse("channel=" + channel + " id=" + id + " offers=none");
+    if (section === "databases") return runSteps([containerRun(row)]);
+    if (Catalog.rowSpecs(row).length > 0 || (row.postInstall || []).some(step => step.mise !== undefined || step.via !== undefined)) {
+        requireMise();
+        await ensureNoAutoPrune();
+    }
+    if (row.packages !== undefined) {
+        const picked = PackageManagers.packageFor(row.packages, surveyed.found);
+        if (picked === null) refuse("packages=unavailable id=" + id, undefined, 1, "no detected package manager has this row's packages: " + Object.keys(row.packages).join(", "));
+        runPackages("install", picked.manager, picked.name);
+    }
+    const env = buildEnv(row);
+    const steps = settingSteps(row.settings);
+    for (const each of (row.requires || []).concat(row.tools || [])) steps.push(["mise", "use", "-g", each]);
+    if (spec !== null) steps.push(["mise", "use", "-g", spec.spec]);
+    runSteps(steps, env);
+    if (row.installer !== undefined) runInstaller(INSTALLERS[row.installer]);
+    runSteps((row.postInstall || []).map(step => postInstallArgv(catalog, step)), env);
+    verifyPresent(row);
+    if (spec !== null) settleLauncher(row, spec.spec, launchers);
+}
+
+function containerRun(row) {
+    const c = row.container;
+    const rt = c.runtimes.find(onPath);
+    if (rt === undefined) refuse("runtime=absent id=" + row.id, undefined, 1, "install one of: " + c.runtimes.join(", "));
+    if (c.volumes !== undefined) throw new Error("devtools: container.volumes of " + row.id + " has no install meaning");
+    const argv = [rt, "run", "-d", "--restart", "unless-stopped", "--name", c.name];
+    for (const p of c.ports) argv.push("-p", p.host + ":" + p.hostPort + ":" + p.containerPort);
+    for (const [k, v] of Object.entries(c.env || {})) argv.push("-e", k + "=" + v);
+    return argv.concat([c.image]);
+}
+
+async function update(catalog, id, launchers) {
+    refuseOutsideTerminal("update", TERMINAL_DETAIL);
+    requireMise();
+    const surveyed = await survey(catalog);
+    const { row } = target(catalog, surveyed, id, "update");
+    await ensureNoAutoPrune();
+    const env = buildEnv(row);
+    runSteps([["mise", "up"].concat((Array.isArray(row.tools) ? row.tools : [row.package]).map(Catalog.specKey))], env);
+    if (typeof row.package !== "string") return verifyPresent(row);
+    // `mise up` rebuilds with the environment of its own process only, so a
+    // build the row's pin did not reach is forced again under it.
+    const spec = Catalog.installSpec(row, null).spec;
+    if (row.present !== undefined && !probe(row.present).holds) runSteps([["mise", "use", "-g", "--force", spec]], env);
+    verifyPresent(row);
+    settleLauncher(row, spec, launchers);
+}
+
+async function remove(catalog, id) {
+    refuseOutsideTerminal("remove", TERMINAL_DETAIL);
+    const surveyed = await survey(catalog);
+    const { section, row, state } = target(catalog, surveyed, id, "remove");
+    if (section === "databases") return runSteps([[state.runtime, "rm", "-f", row.container.name]]);
+    // A tool or package another installed row still declares stays.
+    const keptSpecs = new Set();
+    const keptPackages = new Set();
+    for (const other of Object.values(surveyed.rows)) {
+        if (other.row.id === id || other.state.installed !== true) continue;
+        for (const spec of Catalog.rowSpecs(other.row)) keptSpecs.add(Catalog.specKey(spec));
+        for (const [m, names] of Object.entries(other.row.packages || {})) for (const n of names) keptPackages.add(m + "/" + n);
+    }
+    const steps = [];
+    for (const key of (typeof row.package === "string" ? [row.package] : row.tools || []).map(Catalog.specKey).reverse()) {
+        if (keptSpecs.has(key)) process.stdout.write("devtools: kept=" + key + " reason=declared-by-installed-row\n");
+        else steps.push(["mise", "uninstall", "--all", key], ["mise", "rm", "-g", key]);
+    }
+    if (steps.length > 0) requireMise();
+    if (row.installer !== undefined) steps.push(...INSTALLERS[row.installer].remove);
+    runSteps(steps);
+    if (row.present !== undefined && row.present.home !== undefined) removeHomeProbe(row.present);
+    if (row.packages !== undefined) {
+        // The owner's manager removes what it owns; a row mise provides
+        // takes back the packages its install added.
+        const owned = ownedPackagesKey(row, state);
+        const picked = owned !== null ? { manager: state.manager, key: owned } : PackageManagers.packageFor(row.packages, surveyed.found);
+        if (picked !== null) {
+            const key = picked.key || picked.manager;
+            runPackages("remove", picked.manager, row.packages[key].filter(n => !keptPackages.has(key + "/" + n)));
+        }
+    }
+    if (PACKAGE_SECTIONS.includes(section)) deleteLauncher(row.command, "removed");
+    if (row.present !== undefined) {
+        const left = probe(row.present);
+        if (left.holds) refuse("present=remains id=" + id + " path=" + left.path, undefined, 1, "the row's present probe still holds; what provides it is outside what VGS installed");
+    }
+}
+
+// Removes what a home probe names: the path, or each entry of it that
+// starts with its prefix. The catalog judge keeps the path relative and
+// below HOME.
+function removeHomeProbe(present) {
+    const dir = path.join(HOME, present.home);
+    const targets = present.prefix === undefined ? [dir] : homeEntries(present).filter(n => n.startsWith(present.prefix)).map(n => path.join(dir, n));
+    for (const t of targets) {
+        if (!fs.existsSync(t)) continue;
+        fs.rmSync(t, { recursive: true, force: true });
+        process.stdout.write("devtools: removed=" + t + "\n");
+    }
+}
+
+async function otherTool(key, verb) {
+    refuseOutsideTerminal(verb, TERMINAL_DETAIL);
+    requireMise();
+    const surveyed = await survey(readCatalog());
+    if (!surveyed.other.some(o => o.id === key))
+        refuse("mise-tool=" + key + " reason=not-other", undefined, 1, "--mise takes a tool of the global mise config that no catalog row declares");
+    if (verb === "update") {
+        await ensureNoAutoPrune();
+        runSteps([["mise", "up", key]]);
+    } else {
+        runSteps([["mise", "uninstall", "--all", key], ["mise", "rm", "-g", key]]);
+    }
+}
+
+function launcherLine(state, command) {
+    process.stdout.write("launcher=" + state + " command=" + command + " path=" + path.join(LAUNCHER_DIR, command) + "\n");
+}
+
+// The launcher script for ROW installing SPEC. It exports the release-age
+// opt-out and the row's buildEnv, installs what the row requires and the
+// row itself through mise when mise holds no install (forced when a
+// present probe fails), and runs the row's executable with the buildEnv
+// dropped again, so a pin the build needed never reaches the programs the
+// tool starts. It records nothing when mise already holds the install.
+// `mise x` takes SPEC, the row's default channel, as Omarchy's wrappers
+// and v1's stubs take the whole spec. A row with `exec` runs that file
+// under the root `mise where` names; any other runs `mise x`, whose
+// fall-through to this same file on PATH, for an install with no such
+// executable, is caught by process id.
+function launcherText(row, spec) {
+    const q = shellWord;
+    const env = buildEnv(row);
+    // The key comes from the row: an empty `bin_path=` is mise syntax the
+    // catalog judge refuses in data.
+    const key = Catalog.specKey(row.package);
+    const lines = ["#!/bin/sh", LAUNCHER_MARK, "# Written for catalog row " + row.id + ". A file without the line above is never replaced.", "export MISE_MINIMUM_RELEASE_AGE=0"];
+    for (const [k, v] of Object.entries(env)) lines.push("export " + k + "=" + q(v));
+    for (const req of row.requires || []) lines.push("mise where " + q(Catalog.specKey(req)) + " >/dev/null 2>&1 || mise use -g --quiet " + q(req) + " || exit 1");
+    if (row.present !== undefined && typeof row.present.mise === "string")
+        lines.push("[ -e " + q(path.join(MISE_DATA, "installs", row.present.mise)) + " ] || mise use -g --quiet --force " + q(spec) + " || exit 1");
+    else
+        lines.push("mise where " + q(key) + " >/dev/null 2>&1 || mise use -g --quiet " + q(spec) + " || exit 1");
+    const drop = Object.keys(env).map(k => " -u " + k).join("");
+    const exec = drop === "" ? "exec " : "exec env" + drop + " ";
+    if (typeof row.exec === "string") {
+        lines.push("root=$(mise where " + q(key) + ") || exit 1");
+        lines.push("[ -n \"$root\" ] || { echo " + q(row.command + ": mise reported no install root for " + key) + " >&2; exit 1; }");
+        lines.push(exec + "\"$root\"/" + q(row.exec) + " \"$@\"");
+    } else {
+        const bin = row.bin || row.command;
+        const guard = "\"$$\"" + q(":" + row.command);
+        lines.push("[ \"${VGS_DEVTOOLS_LAUNCHER-}\" != " + guard + " ] || { echo " + q(row.command + ": " + key + " installed no " + bin + " executable") + " >&2; exit 1; }");
+        lines.push("export VGS_DEVTOOLS_LAUNCHER=" + guard);
+        lines.push(exec + "mise x " + q(spec) + " -- " + q(bin) + " \"$@\"");
+    }
+    return lines.join("\n") + "\n";
+}
+
+// Writes ROW's launcher, unless the owner's file holds the path or another
+// copy of the command answers on PATH, which the launcher would hide.
+function writeLauncher(row, spec) {
+    const state = launcherState(row.command);
+    if (state === "foreign") return launcherLine("foreign", row.command);
+    if (state === "absent" && resolveCommand(row.command) !== null) return launcherLine("shadowed", row.command);
+    fs.mkdirSync(LAUNCHER_DIR, { recursive: true });
+    const temp = path.join(LAUNCHER_DIR, "." + row.command + ".devtools-" + process.pid);
+    fs.writeFileSync(temp, launcherText(row, spec), { mode: 0o755 });
+    fs.renameSync(temp, path.join(LAUNCHER_DIR, row.command));
+    launcherLine("written", row.command);
+}
+
+function deleteLauncher(command, state) {
+    if (launcherState(command) !== "vgs") return;
+    fs.unlinkSync(path.join(LAUNCHER_DIR, command));
+    launcherLine(state, command);
+}
+
+// After an install or update: the row's launcher under --launchers, and an
+// `exec` row's whatever the setting (v1 D016).
+function settleLauncher(row, spec, launchers) {
+    if (launchers || typeof row.exec === "string") writeLauncher(row, spec);
+}
+
+async function launchersVerb(catalog, action) {
+    const machine = await machineArch();
+    const rows = PACKAGE_SECTIONS.flatMap(section => catalog[section]).filter(row => Catalog.availableOn(row, machine));
+    if (action === "refresh") {
+        for (const row of rows) writeLauncher(row, Catalog.installSpec(row, null).spec);
+        const offered = new Set(rows.map(row => row.command));
+        let names = [];
+        try {
+            names = fs.readdirSync(LAUNCHER_DIR).sort();
+        } catch (e) {
+            if (e.code !== "ENOENT") throw e;
+        }
+        for (const name of names) if (!offered.has(name) && !name.startsWith(".")) deleteLauncher(name, "retired");
+        return;
+    }
+    const installs = onPath("mise") ? await miseJson(["ls", "--json"]) : {};
+    for (const row of rows)
+        if (typeof row.exec !== "string" || !installOf(installs[Catalog.specKey(row.package)]).installed) deleteLauncher(row.command, "removed");
+}
+
+// `<verb> <id>` or `<verb> --mise <key>`, with the flags FLAGS allows.
+function readTarget(rest, flags) {
+    const out = { id: null, key: null, channel: null, launchers: false };
+    for (let i = 0; i < rest.length; i++) {
+        const word = rest[i];
+        if (word === "--mise" && flags.includes(word) && i + 1 < rest.length && out.id === null && out.key === null) out.key = rest[++i];
+        else if (word === "--channel" && flags.includes(word) && i + 1 < rest.length) out.channel = rest[++i];
+        else if (word === "--launchers" && flags.includes(word)) out.launchers = true;
+        else if (!word.startsWith("-") && out.id === null && out.key === null) out.id = word;
+        else bad("argument=" + word);
+    }
+    if (out.id === null && out.key === null) bad("id=missing");
+    if (out.key !== null && out.launchers) bad("option=--mise with=--launchers");
+    return out;
+}
+
+main(async () => {
+    const { verb, rest } = args;
+    if (verb === "list") {
+        if (rest.length !== 1 || rest[0] !== "--json") bad("list=json-required");
+        process.stdout.write(JSON.stringify((await survey(readCatalog())).report) + "\n");
+    } else if (verb === "install") {
+        const t = readTarget(rest, ["--channel", "--launchers"]);
+        await install(readCatalog(), t.id, t.channel, t.launchers);
+    } else if (verb === "update" || verb === "remove") {
+        const t = readTarget(rest, verb === "update" ? ["--mise", "--launchers"] : ["--mise"]);
+        if (t.key !== null) await otherTool(t.key, verb);
+        else if (verb === "update") await update(readCatalog(), t.id, t.launchers);
+        else await remove(readCatalog(), t.id);
+    } else if (verb === "launchers") {
+        if (rest.length !== 1 || (rest[0] !== "refresh" && rest[0] !== "remove")) bad("launchers=" + (rest[0] || "missing"));
+        await launchersVerb(readCatalog(), rest[0]);
+    } else {
+        bad("verb=" + verb);
+    }
+}, "devtools");
