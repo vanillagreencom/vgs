@@ -11,15 +11,17 @@ import qs.Unit
 Item {
     id: root
     width: 300
-    height: 260
+    height: 320
 
     Button { id: primary; text: "Publish" }
     Button { id: secondary; text: "Browse"; variant: "secondary"; y: 40 }
     ToggleButton { id: toggle; text: "Pin"; y: 80 }
     Button { id: off; text: "Off"; enabled: false; y: 120 }
     IconButton { id: iconOnly; iconName: "x"; label: "Close"; y: 160 }
-    IconButton { id: checkedIcon; iconName: "check"; label: "Checked"; y: 200; checkable: true; checked: true }
-    IconButton { id: disabledIcon; iconName: "ban"; label: "Disabled"; y: 230; enabled: false }
+    IconButton { id: focusIcon; iconName: "scan-eye"; label: "Focused"; y: 200 }
+    IconButton { id: pressedIcon; iconName: "mouse-pointer-click"; label: "Pressed"; y: 230; down: true }
+    IconButton { id: checkedIcon; iconName: "check"; label: "Checked"; y: 260; checkable: true; checked: true }
+    IconButton { id: disabledIcon; iconName: "ban"; label: "Disabled"; y: 290; enabled: false }
     SignalSpy { id: clicks; target: primary; signalName: "clicked" }
 
     TestCase {
@@ -91,14 +93,24 @@ Item {
 
         function test_icon_button_opacity_states() {
             fuzzyCompare(iconOnly.contentItem.opacity, Theme.iconButton.restOpacity, 0.001);
+            mouseMove(root, root.width - 1, root.height - 1);
+            focusIcon.forceActiveFocus(Qt.TabFocusReason);
+            tryCompare(focusIcon, "visualFocus", true);
+            tryCompare(focusIcon.contentItem, "opacity", 1);
+            focusIcon.focus = false;
+            tryCompare(focusIcon.contentItem, "opacity", Theme.iconButton.restOpacity);
+            tryCompare(pressedIcon.contentItem, "opacity", 1);
+            pressedIcon.down = false;
+            tryCompare(pressedIcon.contentItem, "opacity", Theme.iconButton.restOpacity);
+            tryCompare(checkedIcon.contentItem, "opacity", 1);
+            checkedIcon.checked = false;
+            tryCompare(checkedIcon.contentItem, "opacity", Theme.iconButton.restOpacity);
             mouseMove(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
             tryCompare(iconOnly.contentItem, "opacity", 1);
-            mousePress(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
-            tryCompare(iconOnly.contentItem, "opacity", 1);
-            mouseRelease(iconOnly, iconOnly.width / 2, iconOnly.height / 2);
             mouseMove(root, 0, root.height - 1);
-            checkedIcon.forceActiveFocus(Qt.TabFocusReason);
-            tryCompare(checkedIcon.contentItem, "opacity", 1);
+            tryCompare(iconOnly.contentItem, "opacity", Theme.iconButton.restOpacity);
+            mouseMove(root, root.width - 1, 1);
+            tryCompare(disabledIcon, "hovered", false);
             compare(disabledIcon.opacity, Theme.opacity.disabled);
             fuzzyCompare(disabledIcon.contentItem.opacity, 1, 0.001);
             compare(UnitTheme.override({ iconButton: { restOpacity: 0.25 } }), "ok");

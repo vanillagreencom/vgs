@@ -440,14 +440,21 @@ Scope {
             }
             return JSON.stringify(out);
         }
-        // Scrolls the first Flickable under an instance to `y`, held inside
-        // its content, so scripts/sandbox-shots.sh captures each page of a
-        // scrolling panel. Answers [contentY, contentHeight, height].
+        function shownScrollAreas(item) {
+            const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
+            return root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width);
+        }
+
+        // Scrolls the one shown ScrollArea under an instance to `y`, held
+        // inside its content, so scripts/sandbox-shots.sh captures each
+        // page of a scrolling panel. Answers [contentY, contentHeight,
+        // height], or shown-scroll-areas=N when the target is ambiguous.
         function scrollTo(hostKey: string, id: string, y: int): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            const flick = root.descendants(item).find(child => child.contentY !== undefined && typeof child.flick === "function");
-            if (flick === undefined) return "none";
+            const areas = shownScrollAreas(item);
+            if (areas.length !== 1) return "shown-scroll-areas=" + areas.length;
+            const flick = areas[0];
             flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
             return JSON.stringify([flick.contentY, flick.contentHeight, flick.height]);
         }
@@ -721,8 +728,7 @@ Scope {
         function scrollAreas(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            const shown = child => { for (let at = child; at !== null; at = at.parent) if (!at.visible) return false; return true; };
-            return JSON.stringify(root.descendants(item).filter(child => child.bar !== undefined && child.contentY !== undefined && shown(child) && child.mapToItem(item, 0, 0).x >= 0 && child.mapToItem(item, 0, 0).x < item.width).map(area => ({
+            return JSON.stringify(shownScrollAreas(item).map(area => ({
                 contentY: area.contentY,
                 contentHeight: area.contentHeight,
                 height: area.height,
