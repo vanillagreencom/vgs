@@ -49,23 +49,27 @@ Scope {
     })
     readonly property var rendered: inputsReady ? Layer.render(sections, colours, Theme.name) : null
 
-    // What `listPlugins` reports beside the manifest errors, as { dir, error }:
-    // each bind a conflict skipped, each `keys` name no bind declares, and
-    // the last failed step.
+    // What `listPlugins` and the plugin manager report beside the manifest
+    // errors, as { id, dir, error }: each bind a conflict skipped and each
+    // `keys` name no bind declares, under the plugin's id, and the last
+    // failed step, under no id. Handed to the Registry, the one place both
+    // read them.
     readonly property var problems: {
         const out = [];
         const manifests = Registry.manifests;
         const dirOf = id => Logic.hasOwn(manifests, id) ? manifests[id].__sourceDir : id;
         if (rendered !== null)
             for (const c of rendered.conflicts)
-                out.push({ dir: dirOf(c.id), error: "hyprland: " + c.key + " for " + c.id + ":" + c.shortcut + " skipped: already bound by " + c.heldBy });
+                out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: " + c.key + " for " + c.id + ":" + c.shortcut + " skipped: already bound by " + c.heldBy });
         for (const section of sections)
             for (const name of section.unknownKeys)
-                out.push({ dir: dirOf(section.id), error: "hyprland: shell.json keys." + name + " names no bind of " + section.id });
+                out.push({ id: section.id, dir: dirOf(section.id), error: "hyprland: shell.json keys." + name + " names no bind of " + section.id });
         if (machine.failure !== "")
-            out.push({ dir: path, error: "hyprland: " + machine.failure });
+            out.push({ id: "", dir: path, error: "hyprland: " + machine.failure });
         return out;
     }
+
+    Binding { target: Registry; property: "hyprlandProblems"; value: root.problems }
 
     onRenderedChanged: Qt.callLater(() => feed({ type: "render" }))
 

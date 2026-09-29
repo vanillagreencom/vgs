@@ -23,6 +23,13 @@ Singleton {
     readonly property alias themes: themes
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
+    // `<plugin id>:<name>` -> the description each registered shortcut
+    // carries, for the plugin manager's Keys rows.
+    readonly property var shortcutDescriptions: {
+        const out = {};
+        for (const key of Object.keys(shortcuts.shortcuts)) out[key] = shortcuts.shortcuts[key].description;
+        return out;
+    }
     readonly property bool polkitHeld: holderIds("polkit").length > 0
 
     function holderIds(name) {
@@ -106,7 +113,8 @@ Singleton {
         manager: ctx => ({
             get plugins() { return Registry.managerRows; },
             setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
-            setSetting: (id, key, value) => Plugins.setSetting(id, key, value)
+            setSetting: (id, key, value) => Plugins.setSetting(id, key, value),
+            setKey: (id, shortcut, key) => Plugins.setKey(id, shortcut, key)
         }),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)

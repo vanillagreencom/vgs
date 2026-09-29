@@ -32,6 +32,11 @@ Singleton {
     property var collisions: []
     // Why the last scan produced no result, or "" when it did.
     property string scanError: ""
+    // { id, dir, error } for every problem the Hyprland layer reports: a
+    // bind a conflict skipped, a `keys` name no bind declares (each with the
+    // plugin's id) and a failed step (id ""). HyprlandLayer.qml hands them
+    // over; listJson and managerRows read them here.
+    property var hyprlandProblems: []
     property bool scanned: false
     property bool rescanPending: false
     property var completion: null
@@ -205,26 +210,54 @@ Singleton {
         return has(id) ? Logic.settingsFor(Config.effective, manifests[id], Logic.settingTargetOf(kind), null) : {};
     }
 
-    // Every discovered plugin as the plugin manager shows it: listing
-    // metadata, whether it is enabled, its settings schema and the settings
-    // it currently receives (a bar widget's from its first layout entry).
-    readonly property var managerRows: Object.keys(manifests).sort().map(id => {
-        const m = manifests[id];
-        return {
-            id: id,
-            name: m.name,
-            version: m.version,
-            description: m.description,
-            kinds: m.kinds,
-            enabled: isEnabled(id),
-            schema: m.schema,
-            settings: Logic.managerSettings(Config.effective, m)
-        };
-    })
+    // Where a plugin was found: `bundled` under the shell's own plugins
+    // directory, `installed` under the user's.
+    function sourceOf(manifest) {
+        return manifest.__sourceDir.indexOf(bundledDir + "/") === 0 ? "bundled" : "installed";
+    }
 
-    // `extra` is { dir, error } rows another core part reports beside the
-    // manifest errors: the Hyprland layer's problems.
-    function listJson(extra) {
+    // Every discovered plugin as the plugin manager shows it: listing
+    // metadata, its icon, capabilities and source, whether it is enabled,
+    // its settings schema, the settings it currently receives (a bar
+    // widget's from its first layout entry), its Keys rows and its errors:
+    // each failed build of one of its kinds, once per cause, then each
+    // problem the Hyprland layer reports for it.
+    readonly property var managerRows: {
+        const config = Config.effective;
+        const descriptions = Capabilities.shortcutDescriptions;
+        const failures = Plugins.failedBuilds;
+        const problems = hyprlandProblems;
+        return Object.keys(manifests).sort().map(id => {
+            const m = manifests[id];
+            const errors = [];
+            for (const key of Object.keys(failures)) {
+                const failure = failures[key];
+                const text = "build failed: " + failure.kind + ": " + failure.error;
+                if (failure.id === id && errors.indexOf(text) === -1) errors.push(text);
+            }
+            for (const problem of problems)
+                if (problem.id === id) errors.push(problem.error);
+            return {
+                id: id,
+                name: m.name,
+                version: m.version,
+                description: m.description,
+                author: m.author,
+                license: m.license === undefined ? "" : m.license,
+                icon: Logic.pluginIcon(m),
+                kinds: m.kinds,
+                capabilities: m.capabilities,
+                source: sourceOf(m),
+                enabled: isEnabled(id),
+                schema: m.schema,
+                settings: Logic.managerSettings(config, m),
+                binds: Logic.bindRows(config, m, descriptions),
+                errors: errors
+            };
+        });
+    }
+
+    function listJson() {
         const rows = Object.keys(manifests).sort().map(id => ({
             id: id,
             version: manifests[id].version,
@@ -235,6 +268,7 @@ Singleton {
         }));
         // Before the first scan no id is known, so none is reported unknown.
         const unknown = scanned ? Logic.unknownIds(Config.effective, manifests) : [];
+        const extra = hyprlandProblems.map(p => ({ dir: p.dir, error: p.error }));
         return JSON.stringify({ plugins: rows, errors: errors.concat(extra), collisions: collisions, unknown: unknown, scanError: scanError, scanned: scanned, config: { ready: Config.ready, shipped: Config.shippedState, user: Config.userState } });
     }
 

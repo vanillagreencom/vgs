@@ -89,7 +89,7 @@ ShellRoot {
         function ping(): string { return "ok"; }
         function guarded(): bool { return root.guarded; }
         function locked(): bool { return Capabilities.sessionLock.lockRequested; }
-        function listPlugins(): string { return Registry.listJson(hyprland.item === null ? [] : hyprland.item.problems); }
+        function listPlugins(): string { return Registry.listJson(); }
         function listShellConfig(): string { return JSON.stringify(Config.effective); }
         function built(): string { return Plugins.builtJson(); }
         function lent(): string { return Capabilities.lentJson(); }

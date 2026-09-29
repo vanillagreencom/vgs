@@ -2,8 +2,8 @@
 // Controls for scripts/check-manifests.js: one planted defect per rule the
 // script adds beyond PluginLogic.js (duplicate id, missing entry point,
 // unreadable directory, unparseable manifest), one manifest the judge itself
-// refuses so a judge that passed everything would turn a row red, and the
-// base listing: a directory without a manifest is not a plugin, an absent or
+// refuses so a judge that passed everything would turn a row red, the icon
+// rule the judge reads from the shipped icon set, and the base listing: a directory without a manifest is not a plugin, an absent or
 // unreadable base exits 2. Each row asserts the printed verdict line and the
 // exit status. The check runs in a child node with an explicit environment.
 // The permission rows need a uid that permissions bind; under euid 0 the
@@ -50,6 +50,10 @@ row("entry point directory is refused", tmp => { const d = path.join(tmp, "a"); 
 row("duplicate id across directories is refused", tmp => { const a = path.join(tmp, "a"), b = path.join(tmp, "b"); plugin(a, good, true); plugin(b, good, true); return ["--", a, b]; }, 1, "already used by");
 row("unparseable manifest is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, "{not json", true); return ["--", d]; }, 1, "manifest does not parse");
 row("a manifest the judge refuses is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ requires: [] }, good), true); return ["--", d]; }, 1, 'unknown key "requires"', "ok       acme.one");
+// The manifest's icon is judged against the shipped icon set, which the
+// judge imports; offline, the loader resolves that import.
+row("an icon from the shipped set passes offline", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ icon: "settings" }, good), true); return ["--", d]; }, 0, "ok       acme.one");
+row("an icon outside the shipped set is refused offline with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ icon: "no-such-icon" }, good), true); return ["--", d]; }, 1, 'icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got "no-such-icon"', "ok       acme.one");
 row("a missing directory exits 2", tmp => ["--", path.join(tmp, "missing")], 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "missing", "manifest.json") + ": ENOENT");
 row("a directory named like an option after -- is a plugin directory", tmp => { const d = path.join(tmp, "--base"); plugin(d, good, true); return ["--", d]; }, 0, "ok       acme.one");
 row("a base lists every plugin under it", tmp => { plugin(path.join(tmp, "a"), good, true); plugin(path.join(tmp, "b"), Object.assign({}, good, { id: "acme.two" }), true); return ["--base", tmp]; }, 0, "ok       acme.two");

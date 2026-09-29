@@ -34,8 +34,9 @@ Singleton {
     // later entry keeps its own settings. Not a binding input; read and
     // replaced only by the reconciler.
     property var mounts: Object.create(null)
-    // JSON [hostKey, kind, id] -> { id, revision, screenName }: the source revision whose
-    // build failed at that address. A settings change cannot repair code.
+    // JSON [hostKey, kind, id] -> { id, kind, revision, screenName, error }:
+    // the source revision whose build failed at that address and why. A
+    // settings change cannot repair code. The plugin manager lists `error`.
     // A source change or screen removal expires the record. Stored screen
     // names survive the destruction of the screen objects they identify.
     property var failedBuilds: Object.create(null)
@@ -110,7 +111,7 @@ Singleton {
         if (manifest === undefined) { console.error("plugins: unknown: " + id); return { state: "refused" }; }
         if (failedRevision(hostKey, kind, id) === manifest.__revision) return { state: "failed" };
         const result = attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator);
-        if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision, screen);
+        if (result.state === "failed") rememberFailure(hostKey, kind, id, manifest.__revision, screen, result.error);
         return result;
     }
 
@@ -119,33 +120,36 @@ Singleton {
         return Logic.hasOwn(failedBuilds, key) ? failedBuilds[key].revision : null;
     }
 
-    function rememberFailure(hostKey, kind, id, revision, screen) {
+    function rememberFailure(hostKey, kind, id, revision, screen, error) {
         const failures = Object.assign(Object.create(null), failedBuilds);
-        failures[JSON.stringify([hostKey, kind, id])] = { id: id, revision: revision, screenName: screen ? screen.name : null };
+        failures[JSON.stringify([hostKey, kind, id])] = { id: id, kind: kind, revision: revision, screenName: screen ? screen.name : null, error: error };
         failedBuilds = failures;
     }
 
     // One build attempt: { state: "built", instance }, { state: "refused" }
     // when enablement or exclusive lending stands in the way, or
-    // { state: "failed" } when the plugin's manifest or code does.
+    // { state: "failed", error } when the plugin's manifest or code does,
+    // `error` being the logged cause without the plugin's id.
     function attemptInstance(id, kind, parent, hostKey, layoutEntry, context, screen, locator) {
         const refused = { state: "refused" };
-        const failed = { state: "failed" };
+        const failed = error => {
+            console.error("plugins: " + id + " " + error);
+            return { state: "failed", error: error };
+        };
         const enable = Registry.enableRefusal(id);
         if (enable !== "") { console.error("plugins: " + enable); return refused; }
         const url = Registry.entryUrl(id, kind);
-        if (url === "") { console.error("plugins: " + id + " declares no " + kind + " entry point"); return failed; }
+        if (url === "") return failed("declares no " + kind + " entry point");
         const manifest = Registry.manifests[id];
         const lent = Logic.lendRefusal(Capabilities.exclusiveHolders(), manifest);
         if (lent !== "") { console.error("plugins: " + id + " " + lent); return refused; }
         const component = Qt.createComponent(url);
-        if (component.status !== Component.Ready) { console.error("plugins: " + id + " failed to load: " + component.errorString()); return failed; }
+        if (component.status !== Component.Ready) return failed("failed to load: " + component.errorString());
         const instance = component.createObject(parent);
-        if (instance === null) { console.error("plugins: " + id + " created no object"); return failed; }
+        if (instance === null) return failed("created no object");
         if (!(instance instanceof Item)) {
-            console.error("plugins: " + id + " " + kind + " not built: entry point must be an Item");
             instance.destroy();
-            return failed;
+            return failed(kind + " not built: entry point must be an Item");
         }
         const settings = Logic.settingsFor(Config.effective, manifest, Logic.settingTargetOf(kind), layoutEntry);
         const onScreen = screen !== undefined && screen !== null ? screen : null;
@@ -153,10 +157,9 @@ Singleton {
         try {
             row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: row.lifetime.register });
         } catch (e) {
-            console.error("plugins: " + id + " capabilities failed: " + e.message);
             row.lifetime.drain();
             instance.destroy();
-            return failed;
+            return failed("capabilities failed: " + e.message);
         }
         try {
             instance.shell = facadeFor(manifest, settings, row.providers);
@@ -165,14 +168,14 @@ Singleton {
             record(hostKey, row);
             if (kind === "bar") mountBar(hostKey, row);
         } catch (e) {
-            console.error("plugins: " + id + " " + kind + " not built: " + e.message);
+            const error = failed(kind + " not built: " + e.message);
             if (kind === "bar" && Logic.hasOwn(mounts, hostKey) && mounts[hostKey].row === row) unmountBar(hostKey);
             if (Logic.hasOwn(built, hostKey) && built[hostKey].indexOf(row) !== -1) destroyBuilt(hostKey, instance);
             else {
                 row.lifetime.drain();
                 instance.destroy();
             }
-            return failed;
+            return error;
         }
         return { state: "built", instance: instance };
     }
@@ -190,9 +193,10 @@ Singleton {
             instance.moduleName = id;
             instance.settings = instance.shell.settings;
         } catch (e) {
-            console.error("plugins: " + id + " bar-widget not built: " + e.message);
+            const error = "bar-widget not built: " + e.message;
+            console.error("plugins: " + id + " " + error);
             destroyBuilt(hostKey, instance);
-            rememberFailure(hostKey, "bar-widget", id, Registry.manifests[id].__revision, barRow.screen);
+            rememberFailure(hostKey, "bar-widget", id, Registry.manifests[id].__revision, barRow.screen, error);
             return null;
         }
         return instance;
@@ -443,6 +447,21 @@ Singleton {
         if (!Registry.has(id)) return "unknown: " + id;
         if (!Registry.isEnabled(id)) return "refused: disabled=" + id;
         return writeSetting(id, key, value, Logic.settingTargets(Config.effective, Registry.manifests[id]));
+    }
+
+    // Set, unbind or reset the key of shortcut `shortcut` of plugin `id` in
+    // its plugins row, for the plugin manager: a key string rebinds, null
+    // unbinds, undefined resets to the manifest's key. The Hyprland layer
+    // alone reads the row's keys. A disabled plugin is refused, as for a
+    // setting. The reply is one keyed line: `ok` (the save is queued),
+    // `unknown: <id>` or a refusal.
+    function setKey(id, shortcut, key) {
+        if (!Registry.has(id)) return "unknown: " + id;
+        if (!Registry.isEnabled(id)) return "refused: disabled=" + id;
+        const m = Registry.manifests[id];
+        const refusal = Logic.keyRefusal(m, shortcut, key);
+        if (refusal !== "") return refusal;
+        return Config.writeUser(Logic.withKey(Config.user, m, shortcut, key, Config.effective));
     }
 
     Component.onCompleted: {

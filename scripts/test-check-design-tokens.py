@@ -19,11 +19,11 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 
 # Files copied from the repository into every fixture: the real table, judge,
 # singleton and loader, so a row judges against the shipped token paths.
-SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "scripts/qml-library.js")
+SHIPPED = ("shell/Commons/Tokens.js", "shell/Commons/ThemeLogic.js", "shell/Commons/Theme.qml", "shell/Core/PluginLogic.js", "shell/Ui/icons/Lucide.js", "scripts/qml-library.js")
 # Every tree the default scope walks, each with one clean file, so a fixture
 # walks what the repository walks: these six, the three shipped files under
-# shell/Commons, the shipped manifest judge under shell/Core, and the planted
-# file.
+# shell/Commons, the shipped manifest judge under shell/Core with the icon
+# set it imports, and the planted file.
 TREES = ("shell/Ui", "shell/Hosts", "shell/plugins/acme.widget", ".agents/skills/vgs-plugin/templates", "shell/Core", "scripts/smoke/fixtures/plugins/acme.probe")
 CLEAN = "import QtQuick\nimport qs.Commons\nItem {\n    color: Theme.color.surface\n    radius: Theme.radius.md\n    width: 2 * Theme.space.md\n}\n"
 UI = "shell/Ui/Thing.qml"
@@ -127,7 +127,7 @@ def run_look_row(name, files, want):
         proc = run_check(root)
         keys = keys_of(proc)
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=12"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=13"]
         else:
             good = proc.returncode == 1 and keys == {want}
         return report(name, good, proc)
@@ -174,7 +174,7 @@ def run_row(name, path, text, want):
         proc = run_check(build_repo(tmp, (path, text)))
         keys = keys_of(proc)
         if want is None:
-            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=11"]
+            good = proc.returncode == 0 and not keys and proc.stdout.splitlines()[-1:] == ["check-design-tokens: ok files=12"]
         else:
             good = proc.returncode == 1 and keys == {want} and proc.stdout.splitlines()[-1] == "check-design-tokens: findings=1"
         return report(name, good, proc)

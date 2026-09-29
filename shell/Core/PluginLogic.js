@@ -1,7 +1,10 @@
 .pragma library
+.import "../Ui/icons/Lucide.js" as Lucide
 
 // Pure decisions about plugins and configuration. No QML objects, no I/O, so
-// scripts/test-plugin-logic.js runs every function under node.
+// scripts/test-plugin-logic.js runs every function under node. The icon set
+// a manifest's `icon` names is the one Icon draws from, imported here so the
+// shell and every offline reader judge against one list.
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
@@ -28,9 +31,14 @@ var TOAST_MESSAGE_MAX = 600;
 var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];
 
 // The types a settings schema entry may declare, and the keys an entry may
-// carry.
+// carry. `min`, `max` and `step` bound a number's control; `group` names the
+// section heading the entry is drawn under.
 var SETTING_TYPES = ["string", "number", "boolean", "enum"];
-var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options"];
+var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options", "min", "max", "step", "group"];
+var NUMBER_BOUND_KEYS = ["min", "max", "step"];
+
+// The icon a plugin without a manifest `icon` is listed with.
+var DEFAULT_ICON = "package";
 
 var SECTIONS = ["left", "center", "right"];
 
@@ -46,7 +54,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, and the name a manifest's Hyprland bind gives its shortcut.
@@ -154,19 +162,27 @@ function configError(config) {
     return "";
 }
 
-// Why `value` does not fit a schema entry, or "" when it does.
+// Why `value` does not fit a schema entry, or "" when it does. A number
+// outside the entry's `min` or `max` does not fit; `step` refuses nothing.
 function settingError(entry, value) {
     if (entry.type === "string") return typeof value === "string" ? "" : "want=string";
-    if (entry.type === "number") return typeof value === "number" && isFinite(value) ? "" : "want=number";
+    if (entry.type === "number") {
+        if (typeof value !== "number" || !isFinite(value)) return "want=number";
+        if (entry.min !== undefined && value < entry.min) return "want=at-least:" + entry.min;
+        if (entry.max !== undefined && value > entry.max) return "want=at-most:" + entry.max;
+        return "";
+    }
     if (entry.type === "boolean") return typeof value === "boolean" ? "" : "want=boolean";
     if (entry.type === "enum") return entry.options.indexOf(value) !== -1 ? "" : "want=one-of:" + entry.options.join("|");
     throw new Error("settingError: schema entry type " + JSON.stringify(entry.type) + " passed validation but has no rule");
 }
 
 // The first defect of a settings schema, or "". Every entry names a type
-// from SETTING_TYPES and a label; an enum entry lists its options; every
-// entry has a default of its type in `settings`, so a form always has a
-// value to show.
+// from SETTING_TYPES and a label; an enum entry lists its options; a number
+// entry may bound its control with finite `min` below finite `max` and a
+// positive `step`, which no other type carries; `group`, when present, is a
+// non-empty string; every entry has a default of its type, inside its
+// bounds, in `settings`, so a form always has a value to show.
 function schemaError(schema, settings) {
     if (!isPlainObject(schema))
         return "schema must be an object";
@@ -200,6 +216,21 @@ function schemaError(schema, settings) {
         } else if (entry.options !== undefined) {
             return at + ".options needs type enum";
         }
+        for (var n = 0; n < NUMBER_BOUND_KEYS.length; n++) {
+            var bound = NUMBER_BOUND_KEYS[n];
+            if (entry[bound] === undefined)
+                continue;
+            if (entry.type !== "number")
+                return at + "." + bound + " needs type number";
+            if (typeof entry[bound] !== "number" || !isFinite(entry[bound]))
+                return at + "." + bound + " must be a finite number";
+        }
+        if (entry.min !== undefined && entry.max !== undefined && !(entry.min < entry.max))
+            return at + ".min must be less than max";
+        if (entry.step !== undefined && !(entry.step > 0))
+            return at + ".step must be positive";
+        if (entry.group !== undefined && (typeof entry.group !== "string" || entry.group.length === 0))
+            return at + ".group must be a non-empty string when present";
         if (!hasOwn(settings, key))
             return at + " has no default in settings";
         var bad = settingError(entry, settings[key]);
@@ -357,6 +388,8 @@ function validateManifest(raw, sourceDir) {
     }
     if (raw.license !== undefined && (typeof raw.license !== "string" || raw.license.length === 0))
         return { ok: false, error: "license must be a non-empty string when present" };
+    if (raw.icon !== undefined && (typeof raw.icon !== "string" || !hasOwn(Lucide.ICONS, raw.icon)))
+        return { ok: false, error: "icon must name an icon of the shipped set, shell/Ui/icons/Lucide.js, got " + JSON.stringify(raw.icon) };
     if (!Array.isArray(raw.kinds) || raw.kinds.length === 0)
         return { ok: false, error: "kinds must be a non-empty array" };
     for (var k = 0; k < raw.kinds.length; k++) {
@@ -711,6 +744,71 @@ function settingRefusal(manifest, key, value) {
     return bad === "" ? "" : "refused: setting=" + key + " " + bad;
 }
 
+// Why shortcut `shortcut` of this plugin may not take `key`, or "". Only a
+// shortcut the manifest's `hyprland.binds` declares has a key. A key string
+// hyprlandKey accepts rebinds it, null unbinds it, and undefined removes the
+// plugins row's entry so the manifest's key applies. The reply is one keyed
+// line.
+function keyRefusal(manifest, shortcut, key) {
+    var binds = manifest.hyprland === undefined ? [] : manifest.hyprland.binds;
+    if (!binds.some(function (bind) { return bind.shortcut === shortcut; }))
+        return "refused: key=" + shortcut + " undeclared";
+    if (key === undefined || key === null)
+        return "";
+    if (typeof key !== "string")
+        return "refused: key=" + shortcut + " want=string-or-null";
+    var parsed = hyprlandKey(key);
+    return parsed.ok ? "" : "refused: key=" + shortcut + " " + parsed.error;
+}
+
+// The user-file change that sets one shortcut's key in the plugin's plugins
+// row `keys`: the normalised key, null to unbind, or, for undefined, no
+// entry, so the manifest's key applies; a `keys` left empty is removed. The
+// row is seeded from the effective one, since a user row replaces the
+// shipped row whole; a reset the effective row does not need changes
+// nothing. The caller checks the key with keyRefusal first.
+function withKey(user, manifest, shortcut, key, effective) {
+    var out = isPlainObject(user) ? clone(user) : {};
+    if (out.version === undefined) out.version = CONFIG_VERSION;
+    var row = pluginRow(out, manifest.id);
+    if (row === undefined) {
+        var shippedRow = pluginRow(effective, manifest.id);
+        var needed = key !== undefined || (shippedRow !== undefined && isPlainObject(shippedRow.keys) && hasOwn(shippedRow.keys, shortcut));
+        if (!needed)
+            return out;
+        row = shippedRow !== undefined ? clone(shippedRow) : { id: manifest.id };
+        out.plugins = (Array.isArray(out.plugins) ? out.plugins : []).concat([row]);
+    }
+    if (key === undefined) {
+        if (isPlainObject(row.keys)) {
+            delete row.keys[shortcut];
+            if (Object.keys(row.keys).length === 0) delete row.keys;
+        }
+        return out;
+    }
+    if (!isPlainObject(row.keys)) row.keys = {};
+    row.keys[shortcut] = key === null ? null : hyprlandKey(key).key;
+    return out;
+}
+
+// The Keys rows the plugin manager shows for a plugin: one per bind its
+// manifest declares, in order, as { shortcut, key, default, description }:
+// the key hyprlandSection puts in effect (null when unbound), the
+// manifest's key, and the description the plugin registered for
+// `<id>:<shortcut>` in `descriptions`, "" while none is registered.
+function bindRows(config, manifest, descriptions) {
+    var defaults = manifest.hyprland === undefined ? [] : manifest.hyprland.binds;
+    return hyprlandSection(config, manifest).binds.map(function (bind, i) {
+        var name = manifest.id + ":" + bind.shortcut;
+        return { shortcut: bind.shortcut, key: bind.key, "default": defaults[i].key, description: hasOwn(descriptions, name) ? descriptions[name] : "" };
+    });
+}
+
+// The icon a plugin is listed with: its manifest's, else DEFAULT_ICON.
+function pluginIcon(manifest) {
+    return typeof manifest.icon === "string" ? manifest.icon : DEFAULT_ICON;
+}
+
 // The configuration entries a plugin's instances read their settings from,
 // one per settingTargetOf(kind) over its kinds, "layout" only while a
 // widget is placed in the bar. A running instance writes only the entry it
@@ -803,7 +901,9 @@ function toastOptions(raw) {
 
 // Layer placement for a summon without an item anchor. Popups delegate
 // anchored placement to the compositor. Unknown user placement falls back
-// to center and returns an error for the host to report.
+// to center and returns an error for the host to report. A centred panel or
+// menu ignores reserved space, so it sits on the middle of the whole
+// monitor; every other placement keeps clear of it.
 function surfacePlacement(kind, settings, gap) {
     var zero = { top: 0, bottom: 0, left: 0, right: 0 };
     var layer = kind === "panel" ? "top" : "overlay";
@@ -820,5 +920,5 @@ function surfacePlacement(kind, settings, gap) {
         anchors[edge] = true;
         margins[edge] = gap;
     });
-    return { anchors: anchors, margins: margins, exclusion: "normal", layer: layer, placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
+    return { anchors: anchors, margins: margins, exclusion: placement === "center" ? "ignore" : "normal", layer: layer, placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
 }

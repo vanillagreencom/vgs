@@ -81,7 +81,7 @@ on_terminal() {
 # adds $stubs to it. XDG_STATE_HOME is unset, so the state directory is the
 # $HOME fallback, $state.
 theme_tree() { # SHIPPED_TARGET...
-  tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/config" "$tree/themes/targets"
+  tree="$tmp/tree"; mkdir -p "$tree/scripts" "$tree/shell/Commons" "$tree/shell/Core" "$tree/shell/Ui/icons" "$tree/config" "$tree/themes/targets"
   cp -R -- "$repo/bin" "$tree/"
   local entry target
   for entry in "$repo"/themes/*; do
@@ -90,6 +90,7 @@ theme_tree() { # SHIPPED_TARGET...
   for target in "$@"; do cp -R -- "$repo/themes/targets/$target" "$tree/themes/targets/"; done
   cp -- "$repo/config/shell.json" "$tree/config/"
   cp -- "$repo/shell/Core/PluginLogic.js" "$tree/shell/Core/"
+  cp -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/"
   cp -- "$repo/scripts/qml-library.js" "$tree/scripts/"
   cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
   theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"

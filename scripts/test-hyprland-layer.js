@@ -299,12 +299,17 @@ const CONTROLS = [
     [layerFile, "an unreadable file is reported", "failure: event.notFound ? state.failure : \"read=failed \" + event.detail", "failure: state.failure"]
 ];
 
+// A copy sits at its file's own place in a temporary tree, beside the icon
+// set PluginLogic.js imports.
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hyprland-layer-control-"));
 try {
+    fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
+    fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
+    fs.symlinkSync(path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     CONTROLS.forEach(([file, label, needle, replacement], index) => {
         const source = fs.readFileSync(file, "utf8");
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once in ${path.basename(file)}`);
-        const mutant = path.join(temp, `${index}-${path.basename(file)}`);
+        const mutant = path.join(temp, "shell", "Core", `${index}-${path.basename(file)}`);
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
         // Loaded outside the try, so a copy that does not evaluate fails the
         // suite instead of passing for a control.
