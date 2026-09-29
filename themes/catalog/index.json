@@ -968,6 +968,27 @@
       }
     },
     {
+      "name": "moon-orbit",
+      "mode": "dark",
+      "thumbnail": "thumbnails/moon-orbit.jpg",
+      "palette": {
+        "background": "#2d2940",
+        "foreground": "#669afd",
+        "accent": "#9b99ba",
+        "success": "#965f81",
+        "warning": "#fca766",
+        "danger": "#c0685f",
+        "info": "#7b79a4"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-moon-orbit-r4.tar.gz",
+        "size": 26577606,
+        "sha256": "628df0bc00fed3e78b2324c1f87f9924f64493be2498a6cd86bf4ad2c82f303e"
+      }
+    },
+    {
       "name": "nagai-twilight",
       "mode": "dark",
       "thumbnail": "thumbnails/nagai-twilight.jpg",

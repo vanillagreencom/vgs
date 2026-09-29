@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "moon-orbit",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#2d2940",
+      "foreground": "#669afd",
+      "accent": "#9b99ba",
+      "success": "#965f81",
+      "warning": "#fca766",
+      "danger": "#c0685f",
+      "info": "#7b79a4"
+    },
+    "color": {
+      "textMuted": "mix({palette.foreground}, {palette.background}, 0.00)",
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.00)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.31)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.23)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.24)"
+    }
+  }
+}
