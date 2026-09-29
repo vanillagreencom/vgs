@@ -1,0 +1,56 @@
+# D036: A time-boxed passwordless sudo grant is an opt-in core TUI
+
+[← Decision Index](INDEX.md)
+
+**Date**: 2026-09-28
+
+**Status**: Active
+
+**Research**: [docs/plans/v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) § 4
+
+**Context**: A long update or install session asks for the sudo password at every elevated step, and a session with an AI agent asks it for commands the owner watches but does not type. The owner asked for Omarchy's answer: `omarchy-sudo-passwordless` writes a sudoers rule that lets the user run any command as root without a password until a deadline, then removes it (basecamp/omarchy `e332dc97`). Such a grant is root for every process of the user while it lasts, so it must be opt-in, bounded, removed at the deadline, removed at boot and hard to reach by accident. [D033](D033-floating-tuis-are-core.md) gave the core a place where a user answers a question in a terminal they see; [D029](D029-chromium-policy-writer.md) set the precedent of a root half installed once by an owner command.
+
+**Decision**: The grant is a core feature driven by `vgsh sudo status|grant [minutes]|revoke|install|uninstall`, all in `bin/vgsh-sudo-grant`, and the core floating TUI `core/sudo-grant` runs `vgsh sudo grant`.
+
+- `vgsh sudo install`, run once by the owner, prints what it places, then through sudo installs `/etc/tmpfiles.d/vgs-sudo-grant.conf`, whose one line `r! /etc/sudoers.d/99-vgs-nopasswd-*` removes every grant at boot, and then a root-owned copy of `bin/vgsh-sudo-grant` at `/usr/local/bin/vgs-sudo-grant`, the root half. `uninstall` revokes the user's grant and removes both.
+- `grant` takes 1 to 1440 minutes, 15 when absent. It prints a warning, asks one `gum confirm --default=false` that `VGS_TUI_UNATTENDED` never answers, and runs the root half through `sudo -N` after `sudo -k`, so no sudo timestamp outlives it. The root half writes `<user> ALL=(ALL) NOTAFTER=<UTC> NOPASSWD: ALL` to a dotted name in `/etc/sudoers.d`, checks it with `visudo -cf`, arms the transient timer `vgs-sudo-grant-expire-<uid>` that removes it at the deadline through `systemd-run --on-calendar`, and publishes it by rename. The user half then proves the grant with `sudo -n -N /usr/bin/true` and revokes a grant sudo does not honour. While a grant is active, `grant` revokes it instead.
+- The root half runs under `bash -p`, runs itself again with an environment of `PATH`, `LC_ALL` and `SUDO_UID` alone, pins `PATH` to the system directories, holds `/run/vgs-sudo-grant.lock`, and takes only `__status <uid>`, `__enable <uid> <minutes>` and `__disable <uid>`, each for `SUDO_UID`'s own account. It refuses an enable while a grant is active, a rule it cannot read as its own, a deadline not in sudo's form, a login name sudoers would misread, and a boot cleanup file that is absent, not root's or not exactly its one line.
+- The user half refuses a sudo without `-N` and an installed root half that differs from its own bytes.
+
+[tui.md § sudo](../architecture/tui.md#sudo) holds the contract.
+
+**Rationale**:
+
+- sudo enforces `NOTAFTER` itself against the wall clock, so the grant ends at the deadline even when the timer does not run.
+- The timer ends the grant on a running machine and the boot cleanup ends it after a reboot, since a transient timer does not survive one.
+- A grant touches `/etc/sudoers.d`, which is system-wide. [D003](D003-everything-is-a-plugin.md) makes the manager core; a system-wide privilege grant has the same standing, and no plugin may own it.
+- The owner installs the root half by name, so a machine that never ran `vgsh sudo install` has no path to a grant.
+- `sudo -N` after `sudo -k` asks for the password for each root action, so the grant is never enabled on a credential another command left cached.
+
+## Where VGS differs from Omarchy
+
+| Omarchy | VGS | Why |
+|---|---|---|
+| `omarchy-sudo-passwordless` with a minutes argument renews an active grant. | Any `grant` while a grant is active revokes it; a new grant follows a revoke. | One toggle, the one the core TUI entry runs; the root half never replaces a live rule. |
+| The expiry timer runs `omarchy-sudo-passwordless __expire`, which reads the rule and removes only an expired one. | The timer runs `rm -f` on the rule; `__enable` stops the user's old timer before it arms a new one, and `__disable` stops it. | The root half keeps three actions. A timer never outlives the grant it belongs to, so it needs no deadline check. |
+| An ALPM pre-transaction hook revokes every grant before the settings package changes. | No hook. | VGS is not the distribution and ships no package that owns the root half. |
+| The installer places the root half at `/usr/bin` as part of the package. | `vgsh sudo install` places it at `/usr/local/bin` once, beside D029's writer. | The same one-time owner step as the browser policy writer. |
+| Legacy grants are migrated and foreign files in the name space are quarantined. | No migration. | VGS never wrote an older form. |
+| The lock is `/run/lock/omarchy-sudo-passwordless.lock`. | The lock is `/run/vgs-sudo-grant.lock`. | The root half takes its lock only in a directory root alone can write; `/run` is one under systemd, and `/run/lock` is not guaranteed to be. |
+| The status check reads the rule through sudo. | The same, and `status` reports whether the root half matches the checkout. | An update of VGS can change the root half's protocol; a stale copy is named, not run. |
+
+Copied: the 15 and 1440 minute bounds, the `NOTAFTER` rule, the dotted staging name, `visudo -cf`, publication by rename, the `systemd-run --on-calendar=@<epoch>` expiry with `AccuracySec=1s`, the tmpfiles `r!` boot cleanup, `bash -p` with a sanitised environment, the `SUDO_UID` caller check, the lower-case account name rule, the `sudo -N` check through `sudo -h`, the warning and the one `gum confirm`.
+
+## Alternatives Considered
+
+| Alternative | Why rejected |
+|---|---|
+| A plugin that owns the grant | A plugin could then write system-wide sudo policy; install runs no plugin code ([D007](D007-install-runs-no-plugin-code.md)), and a plugin toggle would hide a root grant. |
+| No grant | The owner asked for it; long update sessions and agent sessions ask for the password many times. |
+| A permanent `NOPASSWD` rule | Root for every process of the user with no end; a forgotten rule stays for good. |
+
+**Revisit When**: VGS ships a distribution package that can own the root half, which would make the ALPM revoke hook and a `/usr/bin` placement worth copying, or sudo drops `NOTAFTER` or `-N`.
+
+**Verification**: `scripts/test-vgsh-sudo-grant.sh` runs `vgsh sudo` against a temporary prefix with stand-in `sudo`, `visudo`, `systemd-run`, `systemctl`, `getent` and `gum`, the root half under `unshare -r`. It covers the rule text, the bounds, the deadline, the timer, the toggle, each refusal and the root half's startup, with copies that skip `visudo`, accept 1441 minutes, skip the deadline, caller, startup, environment, boot cleanup, mode, owner, effect, toggle, unattended, expiry, account, stale-copy, `-N` and cold-credential checks as its controls. `scripts/test-tui-logic.js` judges the core TUI row, and `scripts/smoke/rows/tui.sh` opens `core/sudo-grant` in the nested sandbox.
+
+**References**: [D029](D029-chromium-policy-writer.md), [D033](D033-floating-tuis-are-core.md), [D003](D003-everything-is-a-plugin.md), [D007](D007-install-runs-no-plugin-code.md), [tui.md](../architecture/tui.md)

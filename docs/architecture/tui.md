@@ -1,6 +1,6 @@
 # Floating TUIs
 
-Covers: bin/vgsh-tui, bin/lib/tui.sh, bin/lib/logo.txt, shell/Core/TuiRunner.qml, scripts/test-vgsh-tui.sh, scripts/test-tui.sh, scripts/test-tui-logic.js, scripts/smoke/rows/tui.sh, scripts/smoke/fixtures/plugins/acme.tui/**
+Covers: bin/vgsh-tui, bin/lib/tui.sh, bin/lib/logo.txt, bin/vgsh-sudo-grant, bin/lib/tmpfiles.d/**, shell/Core/TuiRunner.qml, scripts/test-vgsh-tui.sh, scripts/test-tui.sh, scripts/test-tui-logic.js, scripts/test-vgsh-sudo-grant.sh, scripts/smoke/rows/tui.sh, scripts/smoke/fixtures/plugins/acme.tui/**
 
 A floating TUI is a themed terminal window that floats over the session and runs one command under the VGS presentation: the logo, the command, then Done or Failed and a keypress. A flow that asks for a password or a `[y/N]` answer runs in one, so the user answers in a terminal they see, never in the shell process. It is a core concept: [D033](../decisions/D033-floating-tuis-are-core.md).
 
@@ -77,6 +77,7 @@ A plugin declares its scripts as data in the manifest's `tui` key and opens them
 - `bin/lib/check-manifests.js` also reads each script on disk: a regular file with its owner's execute bit, reached through no symbolic link. `bin/vgsh-scan` follows links when it publishes a snapshot, so a link would publish whatever it points at.
 - `shell.tui.run(name, args)` opens one of the calling plugin's own scripts, from the snapshot of the revision its instance runs ([D014](../decisions/D014-source-revisions-are-published-snapshots.md)), with `args` as argv after the script. `args` is absent or a list of at most 16 strings of 1 to 256 characters, with no control character.
 - `shell.tui.entries` lists every TUI with an `entry`: the core's own, keyed `core/<name>` from `PluginLogic.CORE_TUIS`, and every enabled plugin's, keyed `<plugin id>/<name>`, each as `{ key, plugin, name, title, label, icon, group }`. A disabled plugin's rows leave the list. A launcher lists other plugins' TUIs without naming those plugins ([D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md)).
+- A row of `PluginLogic.CORE_TUIS` is `{ argv, title, size, presentation, entry }` with every key set, `entry` null for a row that is not listed. `argv` starts with a file name of the core's `bin/` directory, `vgsh` or `vgsh-<word>`, and `open` runs that file from the `bin/` beside the shell directory, since the shell's `PATH` need not hold the core's commands. `PluginLogic.coreTuiTable` judges the table when the file loads and throws on a defect.
 - `shell.tui.open(key)` opens any listed TUI with no arguments. The IPC functions `listTuis` and `openTui <key>` and the commands `vgsh tui list` and `vgsh tui open <key>` do the same from outside the shell.
 - `run` and `open` answer `ok` once the launcher starts, or `refused: tui=<name> reason=` and, in this order, `undeclared`, `disabled`, `args` or `launcher-missing`. A request starts no launcher when it is refused.
 - `shell/Core/TuiRunner.qml` holds the launcher state, `unknown`, `present` or `missing`. It runs `bin/vgsh-tui check`, which uses the same terminal test as `launch`, once when the shell starts. Each probe and each launch that exits 0 sets `present`, and exit 69 sets `missing`. While the state is `missing`, every request that passes the other checks answers `launcher-missing` at once and starts one probe, never two at a time, so a terminal installed later is found by a later request without a restart.
@@ -84,6 +85,16 @@ A plugin declares its scripts as data in the manifest's `tui` key and opens them
 - `PluginLogic.js` makes every decision: the judge, the argument rule, the argv, the listed rows and the log line ([overview.md](overview.md) invariant 6). `scripts/test-tui-logic.js` pins each refusal by its text, with a control per rule. `scripts/smoke/rows/tui.sh` reads the argv back from a stand-in xdg-terminal-exec in the nested sandbox.
 
 Omarchy's menu runs each entry's JSONC `action` string, and its bar runs `bash -lc` on a command string. VGS reads the same data from a judged manifest and hands the terminal an argv list, so no plugin text becomes shell code. `presentation: plain` is Omarchy's `omarchy-launch-tui`. Omarchy's launchers `exec setsid`; VGS forks with `setsid -f`, because the shell tracks the launcher it starts (basecamp/omarchy `e332dc97`).
+
+## sudo
+
+`vgsh sudo` is the core's time-boxed passwordless sudo grant: [D036](../decisions/D036-time-boxed-passwordless-sudo-grant.md). `bin/vgsh-sudo-grant` holds both halves, and its header states each verb, output line, refusal key and exit code.
+
+- The core TUI `core/sudo-grant` runs `vgsh sudo grant` with no argument: a 15-minute grant, or a revoke while a grant is active.
+- No grant is possible until the owner runs `vgsh sudo install`. It places `bin/lib/tmpfiles.d/vgs-sudo-grant.conf` as `/etc/tmpfiles.d/vgs-sudo-grant.conf`, then the root half at `/usr/local/bin/vgs-sudo-grant`. `grant` refuses a root half that differs from the checkout's file, and `vgsh sudo install` replaces it.
+- A grant is one file, `/etc/sudoers.d/99-vgs-nopasswd-<uid>`. sudo refuses it after its `NOTAFTER` deadline, the timer `vgs-sudo-grant-expire-<uid>` removes it at the deadline, and the tmpfiles line removes it at boot.
+- Both halves resolve commands in the system directories alone: `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin`. `grant` needs `sudo` with `-N`, `gum`, `visudo`, `systemd-run`, `systemctl`, `getent` and `flock` there.
+- `status`, `grant` and `revoke` drop the sudo credential first and when they end, and run each root action through `sudo -N`, so each asks for the password unless a grant is active.
 
 ## Invariants
 
@@ -95,7 +106,9 @@ Omarchy's menu runs each entry's JSONC `action` string, and its bar runs `bash -
 6. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`.
 7. `launch` forks the terminal into a session of its own and returns, and `check` answers with the terminal test `launch` uses. Enforced by `scripts/test-vgsh-tui.sh` with a stand-in `setsid`, with a control that execs `setsid` without `-f` and one whose `check` skips the test.
 8. A plugin opens only a script its manifest declares, from its published snapshot, and only while it is enabled. While the launcher is `missing`, every request answers `launcher-missing` and starts no launcher. Enforced by `scripts/test-tui-logic.js`, with a control that drops each rule, and by `scripts/smoke/rows/tui.sh` in the nested sandbox, which swaps in a launcher that finds no terminal and then restores it.
+9. A grant is a rule `visudo` accepted, for 1 to 1440 minutes, for the caller's own account, published by rename after its expiry is armed, only while the boot cleanup is in place and only after one question that `VGS_TUI_UNATTENDED` never answers; a grant sudo does not honour is revoked, and a second `grant` revokes. Enforced by `scripts/test-vgsh-sudo-grant.sh` under a temporary prefix with stand-in `sudo`, `visudo`, `systemd-run`, `systemctl`, `getent` and `gum`, with copies that skip each check as its controls.
+10. The root half runs only under `bash -p`, with an environment of `PATH`, `LC_ALL` and `SUDO_UID` alone, and takes `__status`, `__enable` and `__disable` for `SUDO_UID`'s uid and nothing else. Enforced by `scripts/test-vgsh-sudo-grant.sh`, which runs it under `unshare -r`, with copies that skip the startup, environment and caller checks as its controls.
 
 ## Omarchy
 
-Omarchy's `omarchy-launch-floating-terminal-with-presentation`, `omarchy-show-logo` and `omarchy-show-done` (basecamp/omarchy `e332dc97`) are the model. VGS takes the app-id and window-rule mechanism, the logo, Done and Failed contract with its skip on 130, the drain of queued replies on `/dev/tty`, the parse of the gum colour file, and the sudo keepalive. It differs where [D033](../decisions/D033-floating-tuis-are-core.md) states.
+Omarchy's `omarchy-launch-floating-terminal-with-presentation`, `omarchy-show-logo` and `omarchy-show-done` (basecamp/omarchy `e332dc97`) are the model. VGS takes the app-id and window-rule mechanism, the logo, Done and Failed contract with its skip on 130, the drain of queued replies on `/dev/tty`, the parse of the gum colour file, and the sudo keepalive. It differs where [D033](../decisions/D033-floating-tuis-are-core.md) states. `vgsh sudo grant` follows `omarchy-sudo-passwordless` and differs where [D036](../decisions/D036-time-boxed-passwordless-sudo-grant.md) states.

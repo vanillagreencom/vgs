@@ -42,6 +42,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-28 | D035 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | A manifest declares external commands and their packages; the scan probes them | A requirement names the system, never a plugin; one probe per scan | A requirement is no command on PATH, or a needed command is dotted | Active | [Full](D035-manifest-requirements.md) |
 | 2026-09-28 | D038 | VGS-539 | First-party themes are a judged catalog in the vgs repository, installed as ordinary packages | Offline install, reviewed diffs, and no curated code file needs a trust exception | The catalog outgrows the repository, or needs code-carrying files | Active | [Full](D038-judged-theme-catalog.md) |
 | 2026-09-28 | D040 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | Every channel installs one `/usr/share/vgs` tree | One installer keeps packages, flake and curl aligned | Architecture-specific binaries or workflow publishing | Active | [Full](D040-one-shared-install-tree.md) |
+| 2026-09-28 | D036 | [v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) | An opt-in core TUI grants passwordless sudo until a NOTAFTER deadline | sudo ends it itself; a timer and a boot cleanup remove the rule | VGS ships a package that can own the root half and a revoke hook | Active | [Full](D036-time-boxed-passwordless-sudo-grant.md) |
 
 ---
 
