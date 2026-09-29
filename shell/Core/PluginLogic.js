@@ -1215,6 +1215,33 @@ function tuiRunnerRefusal(runner, name, key) {
     return refusal;
 }
 
+// The `ipc` capability's answer to handler NAME of plugin ID with ARG, from
+// TARGETS, IpcRegistry's record: each plugin id to { handler, functions },
+// `functions` its handlers by name. Only ID's own handlers are looked up,
+// so a plugin's `call` never reaches another plugin's target. The answer is
+// { reply, error }: `reply` the handler's result as text, "" for none,
+// `unknown: <name>` when ID holds no handler NAME, or `error: <message>`
+// when it threw, with that message in `error`, null otherwise.
+function ipcAnswer(targets, id, name, arg) {
+    var target = hasOwn(targets, id) ? targets[id] : null;
+    if (target === null || !hasOwn(target.functions, name))
+        return { reply: "unknown: " + name, error: null };
+    try {
+        var result = target.functions[name](arg);
+        return { reply: result === undefined ? "" : String(result), error: null };
+    } catch (e) {
+        // A plugin may throw a value that is not an Error.
+        var message = e !== null && typeof e === "object" && typeof e.message === "string" ? e.message : String(e);
+        return { reply: "error: " + message, error: message };
+    }
+}
+
+// Why `shell.ipc.call(name, arg)` is refused, "" when it is not: a handler
+// takes the text an outside `vgsh ipc call` sends, so ARG is a string.
+function ipcCallRefusal(name, arg) {
+    return typeof arg === "string" ? "" : "refused: ipc=" + name + " arg=not-a-string";
+}
+
 // Whether ARGS may follow a plugin's script: absent, or a list of at most
 // TUI_ARGS_MAX strings, each 1 to TUI_ARG_MAX characters with no control
 // character.

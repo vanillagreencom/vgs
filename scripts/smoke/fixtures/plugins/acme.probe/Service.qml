@@ -49,6 +49,12 @@ Item {
         try { shell.shortcut.register("ping", "again", () => {}); } catch (e) { root.duplicateShortcut = e.message; }
         shell.ipc.handle("echo", arg => arg);
         try { shell.ipc.handle("echo", arg => arg); } catch (e) { root.duplicateIpc = e.message; }
+        // `call NAME [ARG]` reaches this plugin's own handler NAME through
+        // shell.ipc.call; `throws` throws; `call-number` hands `call` a
+        // number and answers the refusal it throws.
+        shell.ipc.handle("call", arg => { const at = arg.indexOf(" "); return at < 0 ? root.shell.ipc.call(arg, "") : root.shell.ipc.call(arg.slice(0, at), arg.slice(at + 1)); });
+        shell.ipc.handle("throws", () => { throw new Error("planted"); });
+        shell.ipc.handle("call-number", () => { try { return root.shell.ipc.call("echo", 3); } catch (e) { return e.message; } });
         shell.ipc.handle("set", arg => { const at = arg.indexOf("="); return root.shell.configure.set(arg.slice(0, at), JSON.parse(arg.slice(at + 1))); });
         shell.ipc.handle("touch", path => root.shell.run.detached(["touch", path]));
         // The environment a detached process starts with, written to PATH.

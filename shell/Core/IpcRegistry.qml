@@ -20,8 +20,8 @@ Scope {
     }
 
     function callIpc(ctx, name, arg) {
-        if (typeof arg !== "string")
-            throw new Error("refused: ipc=" + name + " arg=not-a-string");
+        const refusal = Logic.ipcCallRefusal(name, arg);
+        if (refusal !== "") throw new Error(refusal);
         return invokeIpc(ctx.id, name, arg);
     }
 
@@ -60,15 +60,9 @@ Scope {
     }
 
     function invokeIpc(id, name, arg) {
-        const target = ipcTargets[id];
-        if (target === undefined || !Logic.hasOwn(target.functions, name)) return "unknown: " + name;
-        try {
-            const result = target.functions[name](arg);
-            return result === undefined ? "" : String(result);
-        } catch (e) {
-            console.error("capabilities: ipc " + id + ":" + name + " threw: " + e.message);
-            return "error: " + e.message;
-        }
+        const answer = Logic.ipcAnswer(ipcTargets, id, name, arg);
+        if (answer.error !== null) console.error("capabilities: ipc " + id + ":" + name + " threw: " + answer.error);
+        return answer.reply;
     }
 
     Component {

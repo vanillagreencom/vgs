@@ -25,6 +25,9 @@
 #   vgs_tui_lock NAME                hold $XDG_RUNTIME_DIR/vgs-tui-NAME.lock until exit
 #   vgs_tui_log FILE [ARG...]        run this script again under script(1) into FILE
 #   vgs_tui_reboot_check             print why a reboot is needed; 1 when none is
+#   vgs_tui_close_prompt CODE        `● Done!` for 0, `● Failed (exit code CODE)!`
+#                                    otherwise, and one key, on /dev/tty; nothing
+#                                    for 130, a Ctrl-C, or with no terminal
 
 # Character classes spelled out: a range such as [a-z] follows the collation
 # of the user's locale, which the script under the presentation keeps.
@@ -53,8 +56,9 @@ _vgs_tui_refuse() { # STATUS FIRST_LINE [ENGLISH...]
 # gum draws on the controlling terminal and reads the keyboard there, even
 # when stdin carries a list and stdout is captured, so the terminal is
 # /dev/tty. The device node exists without one, so only opening it tells.
+_vgs_tui_has_terminal() { : 2>/dev/null <>/dev/tty; }
 _vgs_tui_terminal() { # KEY
-  : 2>/dev/null <>/dev/tty || _vgs_tui_refuse 2 "$1=no-terminal" "run this in a terminal"
+  _vgs_tui_has_terminal || _vgs_tui_refuse 2 "$1=no-terminal" "run this in a terminal"
 }
 
 vgs_tui_header() { # TITLE [LINE...]
@@ -203,6 +207,25 @@ vgs_tui_log() { # FILE [ARG...]
   shift
   cmd="$(printf '%q ' "$BASH" "$0" "$@")"
   exec env VGS_TUI_LOGGED=1 SHELL="$BASH" script -qef --log-out "$file" -c "$cmd"
+}
+
+# The presenter's closing prompt, which a `plain` script that fails calls
+# itself, since the presenter shows it only under the full presentation. It
+# goes to /dev/tty, so a redirected caller still shows it. Replies to
+# queries the command sent the terminal are still queued on the tty and
+# would answer the keypress for the user, so they are dropped first.
+vgs_tui_close_prompt() { # CODE
+  local code="$1"
+  [[ $code != 130 ]] || return 0
+  _vgs_tui_has_terminal || return 0
+  while read -rsn 1 -t 0.1 _ </dev/tty; do :; done
+  if [[ $code == 0 ]]; then
+    printf '\n%s● \033[0mDone! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_SUCCESS:-}" 32)" >/dev/tty
+  else
+    printf '\n%s● \033[0mFailed (exit code %d)! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code" >/dev/tty
+  fi
+  read -rsn 1 _ </dev/tty || :
+  printf '\n' >/dev/tty
 }
 
 # Prints one `reboot=<reason>` line per reason and returns 0 when a reboot

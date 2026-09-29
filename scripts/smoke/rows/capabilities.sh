@@ -30,6 +30,13 @@ ipc_targets() { "${shell_env[@]}" qs ipc --pid "$shell_pid" show 2>>"$sandbox/ip
 expect "qs lists the fixture's IPC target" 1 ipc_targets
 expect "the fixture answers on its IPC target" hello probe echo hello
 expect "a second IPC handler with the same name is refused" '"refused: ipc=acme.probe:echo held"' read_service duplicateIpc
+# shell.ipc.call reaches the calling plugin's own handlers in the shell;
+# scripts/test-ipc-logic.js holds a control for each of its rules.
+expect "a plugin's call reaches its own handler" hello probe call "echo hello"
+expect "a plugin's call names a handler it holds none of as unknown" "unknown: nope" probe call nope
+expected_errors+=('capabilities: ipc acme\.probe:throws threw: planted')
+expect "a plugin's call answers a throwing handler's error" "error: planted" probe call throws
+expect "a plugin's call with an argument that is not text is refused" "refused: ipc=echo arg=not-a-string" probe call-number
 
 expect "configure writes a declared setting" ok probe set 'label="via-configure"'
 expect_poll "the running service received the setting it wrote" '"via-configure"' read_service label

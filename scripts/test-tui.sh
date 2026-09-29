@@ -280,7 +280,7 @@ control() { # NAME NEEDLE REPLACEMENT: LIB names the copy
   copy_with "$1" "$lib" "$2" "$3"
   LIB="$copy"
 }
-control no-terminal-check ': 2>/dev/null <>/dev/tty ||' 'true ||'
+control no-terminal-check '_vgs_tui_has_terminal() { : 2>/dev/null <>/dev/tty; }' '_vgs_tui_has_terminal() { true; }'
 rm -f -- "$tmp/gum"
 run 'vgs_tui_confirm "Remove it?"'
 check "the no-terminal-check mutant asks gum with no terminal" test -e "$tmp/gum"

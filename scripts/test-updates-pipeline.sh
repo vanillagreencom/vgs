@@ -343,19 +343,55 @@ row_source() {
   pipeline update-source.sh
   assert "a missing source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: source=missing"
 }
+# log_tui KEYS [ARG...]: tui/log.sh as `pipeline` runs a script, on a
+# pseudo-terminal whose input stays open. With KEYS `yes` a key is typed
+# every 0.2 s, since the closing prompt drops keys queued within 0.1 s of
+# each other as terminal replies; with `no` none is, and a run still
+# waiting after 2 s is ended by timeout, exiting 124.
+log_tui() {
+  local keys="$1" script_path="${PLUGIN:-$plugin}/tui/log.sh" filtered=0 ceiling=10
+  shift
+  [[ $keys == yes ]] || ceiling=2
+  : >"$calls"
+  set +e
+  { if [[ $keys == yes ]]; then while :; do printf x; sleep 0.2; done; else sleep 3; fi; } |
+    timeout "$ceiling" "${base_env[@]}" PATH="$stubs:$tools" VGS_TUI_LIB="$tree/bin/lib/tui.sh" VGS_PLUGIN_ID=vgs.updates VGS_PLUGIN_DIR="${PLUGIN:-$plugin}" \
+      XDG_STATE_HOME="$state" XDG_RUNTIME_DIR="$rt" CALLS="$calls" FIX="$fix" \
+      script -qec "$(printf '%q ' "$BASH" "$script_path" "$@")" /dev/null >"$tmp/out" 2>&1
+  status=${PIPESTATUS[1]}
+  set -e
+  grep -v -e '^df ' -e '^uname ' -e '^pgrep ' -e '^gum style' "$calls" >"$tmp/seq" || filtered=$?
+  [[ $filtered -le 1 ]] || { echo "test-updates-pipeline: calls=unreadable exit=$filtered" >&2; exit 1; }
+}
+# The first line of the output, without the typed keys the terminal echoed
+# before the script read any.
+first_line() { head -n 1 "$tmp/out" | tr -d '\r' | sed -e 's/^x*//'; }
+failed_prompt="Failed (exit code 1)! Press any key to close..."
 # tui/log.sh opens the log the pipeline wrote, at its end, and refuses
-# before any run wrote one.
+# before any run wrote one and without less. Its presentation is plain, so
+# a refusal holds the window on the closing prompt until a key: with no key
+# typed the run is still waiting at the ceiling.
 row_log() {
   reset_fix
-  pipeline log.sh
-  assert "the log TUI before any run is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "1:updates: refused: log=absent path=$log"
+  log_tui yes
+  assert "the log TUI before any run is refused" test "$status:$(first_line)" == "1:updates: refused: log=absent path=$log"
+  assert "the log TUI's refusal ends on the Failed prompt" out_has "$failed_prompt"
   assert "the log TUI before any run opens no pager" test ! -s "$tmp/seq"
+  log_tui no
+  assert "the log TUI holds its refusal until a key" test "$status:$(first_line)" == "124:updates: refused: log=absent path=$log"
+  assert "the held refusal shows the Failed prompt" out_has "$failed_prompt"
   pipeline update.sh
-  pipeline log.sh
+  mv -- "$stubs/less" "$tmp/less.off"
+  log_tui no
+  mv -- "$tmp/less.off" "$stubs/less"
+  assert "the log TUI without less holds its refusal until a key" test "$status:$(first_line)" == "124:updates: refused: pager=missing"
+  assert "the held pager refusal shows the Failed prompt" out_has "$failed_prompt"
+  log_tui yes
   assert "the log TUI opens the log the pipeline wrote, at its end" seq_is "less -R +G -- $log"
   assert "the log TUI exits with the pager's status" test "$status" == 0
-  pipeline log.sh extra
-  assert "the log TUI refuses an argument" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: argument=extra"
+  assert "the log TUI leaves the window to the pager with no prompt" out_lacks "Press any key"
+  log_tui yes extra
+  assert "the log TUI refuses an argument" test "$status:$(first_line)" == "2:updates: refused: argument=extra"
 }
 
 row_full; row_trusted; row_snapshot; row_failure; row_reboot; row_orphans; row_yes
@@ -387,5 +423,6 @@ control log-clobbers 'vgs_tui_log "$UPDATES_LOG_PART"' 'vgs_tui_log "$_updates_l
 control unasked-start 'vgs_tui_confirm "Start the update?" || status=$?' 'true || status=$?' row_declined
 control log-elsewhere 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/update.log"' 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/other.log"' row_log
 control log-absent-opens '[[ -f $log ]] || _updates_refuse 1' '[[ -n $log ]] || _updates_refuse 1' row_log log.sh
+control log-closes-unread "trap 'status=\$?; [[ \$status == 0 ]] || vgs_tui_close_prompt \"\$status\"' EXIT" ':' row_log log.sh
 
 rows_done test-updates-pipeline

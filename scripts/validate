@@ -102,6 +102,7 @@ rows=(
   "logic|plugin logic table|node scripts/test-plugin-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js config/shell.json config/requirements.json"
   "logic|plugin status judge|node scripts/test-plugin-status.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "logic|floating TUI logic table|node scripts/test-tui-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
+  "logic|ipc capability logic table|node scripts/test-ipc-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "logic|requirement notice logic table|node scripts/test-notice-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "logic|Hyprland layer logic|node scripts/test-hyprland-layer.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/shell.qml bin/lib/qml-library.js"
   "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js bin/lib/qml-library.js"

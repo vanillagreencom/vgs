@@ -46,6 +46,9 @@ expect "the nested compositor adds a monitor for the status rows" ok hypr output
 expect_poll "the new monitor gets a bar" "$((monitors + 1))" bar_count
 expect "enabling the status fixture is allowed" ok ipc shell setPluginEnabled acme.status true
 expect_poll "the status fixture's service is built" True record_exists acme.status
+# acme.probe holds no `detail` handler and acme.status does: a plugin's
+# shell.ipc.call reaches its own target alone.
+expect "a plugin's call does not reach another plugin's handler" "unknown: detail" ipc acme.probe invoke call detail
 expect_poll "the service's first write is accepted" '"ok"' read_status service startReply
 expect_poll "a status widget is built on every bar" "$((monitors + 1))" status_widgets
 expect "the fixture's panel is summoned" ok ipc shell summon panel acme.status '{}'

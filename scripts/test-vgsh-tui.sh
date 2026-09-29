@@ -585,7 +585,21 @@ plain_run "$control_bin" present --presentation plain -- exits 0
 check "the sourced-gum-env mutant runs the planted line" test -e "$tmp/planted"
 rm -f -- "$gum_env" "$tmp/planted"
 
-control stdout-prompt vgsh-tui '"$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code" >/dev/tty' '"$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code"'
+# The prompt is the library's: this control's tree holds a copy of bin/lib
+# rather than the link tui_tree makes, so the mutant never reaches the
+# tracked file.
+control_lib() { # NAME NEEDLE REPLACEMENT
+  local dir="$tmp/control-$1"
+  tui_tree "$dir" "$repo/shell"
+  rm -- "$dir/bin/lib"
+  cp -R -- "$repo/bin/lib" "$dir/bin/lib"
+  check "the $1 control's text occurs once in lib/tui.sh" \
+    python3 -c 'import sys; sys.exit(0 if open(sys.argv[1]).read().count(sys.argv[2]) == 1 else 1)' "$repo/bin/lib/tui.sh" "$2"
+  python3 -c 'import sys; p, o, a, b = sys.argv[1:]; open(o, "w").write(open(p).read().replace(a, b))' "$repo/bin/lib/tui.sh" "$dir/bin/lib/tui.sh" "$2" "$3"
+  check "the $1 mutant differs" test "$(cmp -s "$repo/bin/lib/tui.sh" "$dir/bin/lib/tui.sh"; echo $?)" == 1
+  control_bin="$dir/bin/vgsh-tui"
+}
+control_lib stdout-prompt '"$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code" >/dev/tty' '"$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code"'
 prompt_on_tty "$control_bin"
 check "the stdout-prompt mutant keeps the prompt off the terminal" test "$(grep -c 'Failed (' "$tmp/out")" == 0
 check "the stdout-prompt mutant writes the prompt to stdout" grep -q 'Failed (exit code 1)' "$tmp/stdout"

@@ -32,10 +32,10 @@
 #
 # present clears the screen, prints bin/lib/logo.txt in the theme accent,
 # runs argv as a list, never through a shell, and keeps its exit code.
-# Unless the code is 130, a Ctrl-C, it drops the terminal replies queued on
-# /dev/tty, prints `● Done! Press any key to close...` or `● Failed (exit
-# code N)! Press any key to close...` there, not on stdout, and waits for one
-# key. `plain` skips the logo and the prompt. Before the command runs it
+# Unless the code is 130, a Ctrl-C, it shows the library's closing prompt,
+# vgs_tui_close_prompt: `● Done! Press any key to close...` or `● Failed
+# (exit code N)! Press any key to close...` on /dev/tty, not on stdout, and
+# waits for one key. `plain` skips the logo and the prompt. Before the command runs it
 # exports:
 #   - each line of ${XDG_STATE_HOME:-~/.local/state}/vgs/theme/gum.env, which
 #     is parsed and never sourced: every line must be KEY=#rrggbb, KEY
@@ -379,22 +379,6 @@ present_exit() {
   if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi
 }
 
-prompt() { # CODE
-  local code="$1"
-  # The device node is there with no terminal behind it; opening it is the test.
-  : 2>/dev/null <>/dev/tty || return 0
-  # Replies to queries the command sent the terminal are still queued on
-  # the tty, and would answer the keypress for the user.
-  while read -rsn 1 -t 0.1 _ </dev/tty; do :; done
-  if [[ $code == 0 ]]; then
-    printf '\n%s● \033[0mDone! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_SUCCESS:-}" 32)" >/dev/tty
-  else
-    printf '\n%s● \033[0mFailed (exit code %d)! Press any key to close...' "$(vgs_tui_sgr "${VGS_TUI_DANGER:-}" 31)" "$code" >/dev/tty
-  fi
-  read -rsn 1 _ </dev/tty || :
-  printf '\n' >/dev/tty
-}
-
 present() {
   local code refusal=""
   copy_dir="" record_fd="" record_active=0 ran_code="" stem="" started_at=""
@@ -431,7 +415,7 @@ present() {
     trap - INT
   fi
   ran_code="$code"
-  [[ $presentation == plain || $code == 130 ]] || prompt "$code"
+  [[ $presentation == plain ]] || vgs_tui_close_prompt "$code"
   exit "$code"
 }
 

@@ -57,7 +57,7 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 
 - `present` clears the screen, prints the logo, runs argv and keeps its exit code. Unless the code is 130, a Ctrl-C, it prints `● Done! Press any key to close...` or `● Failed (exit code N)! Press any key to close...` and waits for one key. `present` exits with the command's code.
 - The prompt goes to `/dev/tty`, not stdout, so a caller that redirects the output still sees it. Before it, `present` drops the bytes queued on the terminal: replies to queries the command sent the terminal would otherwise answer the keypress.
-- `plain` skips the logo and the prompt, for a full-screen program that owns the window.
+- `plain` skips the logo and the prompt, for a full-screen program that owns the window. The prompt is the library's `vgs_tui_close_prompt`, so a `plain` script that fails before its program takes the window calls it itself, and the user reads the failure before the window closes; `vgs.updates`'s `log` TUI does.
 - A refusal of the plugin copy or script is reported under the same Failed prompt, so the window does not close before the user reads it.
 
 ## Colours
