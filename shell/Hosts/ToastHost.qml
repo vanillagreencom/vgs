@@ -41,7 +41,12 @@ Scope {
             // The shown toasts, which take the surface's pointer input.
             property var cards: []
 
-            function toastAt(index) { return index < stack.count ? stack.itemAt(index) : null; }
+            // The Column places its children once per frame, so a reading
+            // right after the stack changed would find them unplaced.
+            function toastAt(index) {
+                column.forceLayout();
+                return index < stack.count ? stack.itemAt(index) : null;
+            }
 
             screen: Toasts.screen
             placement: Theme.toast.corner
