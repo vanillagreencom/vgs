@@ -39,7 +39,7 @@ The judge tries each method in this order, on the real path of the tree beside `
 
 ## Verification
 
-`scripts/test-vgsh-self.sh` builds one fixture tree per method: a clone of a local bare repository, a curl layout under a fixture `XDG_DATA_HOME`, a package tree owned by a stub `pacman` under a fixture Arch os-release bound under `unshare -rm`, and a tree under a fixture `NIX_STORE_DIR`. The newest release is a local release fixture served on 127.0.0.1, and a stub `qs` whose pid sits in the instance lock stands in for a running shell. Its controls are copies of `self.js` that call every tree a checkout, accept a loopback API outside a test run, skip the checksum comparison, or remove the running shell's tree. `scripts/test-vgsh-pkg.js` pins the owner and installed queries.
+`scripts/test-vgsh-self.sh` builds one fixture tree per method: a clone of a local bare repository, a curl layout under a fixture `XDG_DATA_HOME`, a package tree owned by a stub `pacman` under a fixture Arch os-release bound under `unshare -rm`, and a tree under a fixture `NIX_STORE_DIR`. The newest release is a local release fixture served on 127.0.0.1, and a stub `qs` whose pid sits in the instance lock stands in for a running shell. Its controls are copies of `self.js` that call every tree a checkout, accept a loopback API outside a test run, skip the checksum comparison, or remove the running shell's tree. `scripts/test-vgsh-pkg-table.js` pins the owner and installed queries.
 
 ## Omarchy comparison
 
