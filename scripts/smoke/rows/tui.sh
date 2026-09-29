@@ -14,9 +14,10 @@
 # answer that follows until a probe finds one again, the launchers the core
 # holds, a run's `done` and state from its exit records, a second run of a
 # live key refused busy with its window focused, a destroyed instance's
-# `done` dropped while its run ends, a presenter copy that writes no ended
-# record, whose run fails harness.sh's expect_run_end at its ceiling, and
-# the reap that ends its run, and a disabled plugin's list and hold gone.
+# `done` dropped while its run ends, a live run that fails harness.sh's
+# expect_run_end at its ceiling, a presenter copy that writes no ended
+# record, whose run the core's `vgsh-tui wait` ends, and a disabled plugin's
+# list and hold gone.
 set -euo pipefail
 tui_dir="$home/.config/vgs/plugins/acme.tui"
 mkdir -p "$tui_dir"
@@ -161,6 +162,9 @@ wait_state() { tui state | python3 -c 'import json,sys; s=json.load(sys.stdin)["
 wait_window() { hypr -j clients | python3 -c 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"]=="org.vgs.tui" and c["title"]=="VGS · Wait"))'; }
 # The last ended code of the wait script's key the lending record holds.
 wait_ended_code() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["tui"]["runs"]["acme.tui/wait"]["ended"]["code"]))'; }
+# How many `vgsh-tui wait` processes the core holds for the wait script's
+# key; the lending record names each as <key>|<run>.
+wait_waits() { lent tui.waits | python3 -c 'import json,sys; print(sum(1 for w in json.load(sys.stdin) or [] if w.split("|")[0] == "acme.tui/wait"))'; }
 active_class() { hypr -j activewindow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("class")))'; }
 rm -f -- "$tui_gate"
 expect "the wait script's state before any run" '[false, null, false]' wait_state
@@ -200,10 +204,10 @@ expect_poll "the tui fixture's service is built again" True record_exists acme.t
 expect_poll "the rebuilt instance reads the run the destroyed one started" '[false, 5, true]' wait_state
 expect "the rebuilt instance received no done" '[]' tui_done
 
-# Control: a presenter copy that writes no ended record leaves the run
-# live and fires no done. A request for the key is then refused busy, finds
-# no window and starts one reap, which ends the run with no code: the
-# `done` answers it vanished.
+# Control: a presenter copy that writes no ended record exits and leaves
+# only its running record. The run's `vgsh-tui wait` then finds the key's
+# lock free and no ended record, ends the run with no code, and the `done`
+# answers it vanished, with no request for the key.
 tui_real="$sandbox/vgsh-tui.real"
 cp -- "$repo/bin/vgsh-tui" "$tui_real"
 end_line='  if [[ $record_active == 1 ]]; then record_end "${ran_code:-$status}"; fi'
@@ -215,26 +219,23 @@ if [[ $(grep -c -F -- "$end_line" "$tui_real") == 1 ]]; then
   expect "a gated run under the unended control answers ok" ok tui run-done "wait|$tui_gate|6"
   expect_poll "the control's run is live" '[true, 5, true]' wait_state
   expect_poll "the control's window maps" 1 wait_window
-  touch -- "$tui_gate"
-  expect_poll "the control's presenter exits and its window closes" 0 wait_window
-  expect "the unended control fires no done" '[]' tui_done
-  expect "the unended control leaves the run live" '[true, 5, true]' wait_state
-  # Control for expect_run_end: the run this presenter copy leaves live
-  # never ends, so the row fails once the ceiling has passed. The row runs
-  # in a subshell whose failure count is its answer, and its lines are
-  # kept aside.
+  expect_poll "the live run has one wait" 1 wait_waits
+  # Control for expect_run_end: the gated run stays live while its gate is
+  # closed, so the row fails once the ceiling has passed. The row runs in a
+  # subshell whose failure count is its answer, and its lines are kept
+  # aside.
   never_ended() { (failures=0 behaviour_failures=0; expect_run_end "the never-ending run" acme.tui/wait >"$sandbox/run-end-control.log"; echo "$failures"); }
   expect "the run-end row fails a run that never ends, at its ceiling" 1 never_ended
   expect "the failed row names the ceiling it waited" 1 grep -c -F -- "latency_run_end_ms=over ceiling_ms=$run_end_ceiling_ms" "$sandbox/run-end-control.log"
   expect "the failed row prints the core's view of the live run" 1 grep -c -E -- '^ +core: pending=False running=[0-9]' "$sandbox/run-end-control.log"
+  expect "the live run's done has not fired" '[]' tui_done
+  touch -- "$tui_gate"
+  expect_poll "the control's presenter exits and its window closes" 0 wait_window
+  expect_run_end "the run's wait ends the unended run" acme.tui/wait
+  expect "the unended run's state has no code" '[false, null, true]' wait_state
+  expect "the unended run's done fires with no code" '[["wait",null,"vanished"]]' tui_done
+  expect_poll "no wait is left running for the key" 0 wait_waits
   cp -- "$tui_real" "$repo/bin/vgsh-tui.next" && mv -T -- "$repo/bin/vgsh-tui.next" "$repo/bin/vgsh-tui"
-  expected_errors+=('tui: focus=none tui=acme\.tui/wait')
-  expect "a request for the vanished run's key is refused busy" "refused: tui=wait reason=busy" tui run "wait|$tui_gate|0"
-  expect_log "the busy answer finds no window for the vanished run" 1 'tui: focus=none tui=acme\.tui/wait'
-  expect_run_end "the reap it started ends the vanished run" acme.tui/wait
-  expect "the vanished run's state has no code" '[false, null, true]' wait_state
-  expect "the vanished run's done fires with no code" '[["wait",null,"vanished"]]' tui_done
-  expect_poll "no reap is left running" false lent tui.reaping
 else
   fail "the unended control's line occurs once in bin/vgsh-tui"
 fi
