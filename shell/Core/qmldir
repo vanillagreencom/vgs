@@ -15,4 +15,5 @@ NotificationHub 1.0 NotificationHub.qml
 SessionLock 1.0 SessionLock.qml
 ThemeRunner 1.0 ThemeRunner.qml
 TuiRunner 1.0 TuiRunner.qml
+TuiRecords 1.0 TuiRecords.qml
 HyprlandLayer 1.0 HyprlandLayer.qml

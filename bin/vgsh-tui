@@ -12,6 +12,9 @@
 #       exit 0 when launch would find xdg-terminal-exec, else refuse as launch does
 #   vgsh-tui reap
 #       end the records of runs whose presenter is gone
+#   vgsh-tui wait --record <key> --run <run>
+#       wait for one run's presenter to release its key lock, then print the
+#       run's ended record
 #
 # launch runs `setsid -f xdg-terminal-exec --app-id=<app-id> --title="VGS ·
 # <text>" -- <this file> present ...`, with no shell between, so the
@@ -68,13 +71,18 @@
 #     "startedAt": <ISO 8601 UTC>, "endedAt": <ISO 8601 UTC> | null,
 #     "window": { "appId", "title" } }
 # code is the command's exit code, or present's own when the command never
-# ran to its end; null only in a record reap wrote. reap ends every running
-# record whose key's lock no process holds, since the kernel drops a lock
-# with its holder, with a null code, and prints `reaped=<key> run=<run>` per
-# record; a running record whose run already has its ended record it only
-# removes. The key is two segments of [a-z0-9.-], each starting with a letter
-# or digit, joined by one `/`, and the run [a-z0-9-] starting with one: the
-# shell judges both, and this file only keeps its file names safe.
+# ran to its end; null only in a record reap or wait wrote. reap ends every
+# running record whose key's lock no process holds, since the kernel drops a
+# lock with its holder, with a null code, and prints `reaped=<key> run=<run>`
+# per record; a running record whose run already has its ended record it only
+# removes. wait opens the key's lock, blocks in flock until the presenter
+# releases it, and then prints exactly one ended record line for the run. If
+# the run still has only a running record, wait ends it with the same null-code
+# record reap writes and prints that record. If the run has no running or ended
+# record, wait refuses with `vgsh-tui: refused: wait=<key> reason=gone`. The key
+# is two segments of [a-z0-9.-], each starting with a letter or digit, joined by
+# one `/`, and the run [a-z0-9-] starting with one: the shell judges both, and
+# this file only keeps its file names safe.
 #
 # bin/lib/logo.txt is the word VGS in the FIGlet font Delta Corps Priest 1 by
 # CoSMiC cHiLD, its V hand-adjusted to a point. Only the rendered text is in
@@ -92,7 +100,8 @@
 # the key's lock (`record=<key> reason=busy`), and 1 after refusing the
 # plugin copy, the script or the running record, a refusal it reports under
 # the same Done/Failed prompt. reap exits 0, or 1 on a record it could not
-# end (`reap=<file>`). docs/architecture/tui.md.
+# end (`reap=<file>`). wait exits 0 after printing one ended record, 1 on a
+# refused wait (`wait=<key>`), and 2 on a bad invocation. docs/architecture/tui.md.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -188,6 +197,27 @@ parse() { # VERB ARGS...
     esac
   done
   bad_invocation "separator=missing"
+}
+
+parse_wait() {
+  record_key="" record_run=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --record)
+        [[ $# -ge 2 ]] || bad_invocation "option=$1 value=missing"
+        record_key="$2"; shift 2
+        ;;
+      --run)
+        [[ $# -ge 2 ]] || bad_invocation "option=$1 value=missing"
+        record_run="$2"; shift 2
+        ;;
+      *) bad_invocation "argument=$1" ;;
+    esac
+  done
+  [[ -n $record_key ]] || bad_invocation "record=missing"
+  [[ -n $record_run ]] || bad_invocation "run=missing record=$record_key"
+  [[ $record_key =~ $record_key_rule ]] || bad_invocation "record=$record_key"
+  [[ $record_run =~ $record_run_rule ]] || bad_invocation "run=$record_run"
 }
 
 check_common() {
@@ -405,10 +435,34 @@ present() {
   exit "$code"
 }
 
+# Ends one running record as a record with a null code and the time it was
+# found. Sets ended_record_text to the record it wrote.
+end_running_record() { # FILE STEM RUN REFUSAL_KEY
+  local file="$1" stem="$2" run="$3" refusal_key="$4" text ended
+  ended_record_text=""
+  if ! text="$(cat -- "$file" 2>/dev/null)"; then
+    [[ ! -e $file ]] && return 2
+    printf 'vgsh-tui: refused: %s reason=unreadable\n' "$refusal_key" >&2
+    return 1
+  fi
+  ended="${text/\"state\":\"running\"/\"state\":\"ended\"}"
+  ended="${ended/\"endedAt\":null/\"endedAt\":\"$(record_now)\"}"
+  if [[ $ended != *'"state":"ended"'* || $ended == *'"endedAt":null'* || $ended == *'"state":"running"'* ]]; then
+    printf 'vgsh-tui: refused: %s reason=malformed\n' "$refusal_key" >&2
+    return 1
+  fi
+  if ! put_record "$record_dir" "$stem@$run.ended.json" "$ended"; then
+    printf 'vgsh-tui: refused: %s reason=unwritable\n' "$refusal_key" >&2
+    return 1
+  fi
+  rm -f -- "$file"
+  ended_record_text="$ended"
+}
+
 # Ends every running record whose key's lock no process holds, as a record
 # with a null code and the time it was found.
 reap() {
-  local file name stem run fd status text ended failed=0
+  local file name stem run fd status failed=0 ended_record_text
   for file in "$record_dir"/*.running.json; do
     [[ -e $file ]] || continue
     name="${file##*/}"
@@ -433,29 +487,44 @@ reap() {
       rm -f -- "$file"
       continue
     fi
-    if ! text="$(cat -- "$file" 2>/dev/null)"; then
-      # A presenter of the key that started since removed it.
-      [[ ! -e $file ]] && continue
-      printf 'vgsh-tui: refused: reap=%s reason=unreadable\n' "$file" >&2
-      failed=1
-      continue
-    fi
-    ended="${text/\"state\":\"running\"/\"state\":\"ended\"}"
-    ended="${ended/\"endedAt\":null/\"endedAt\":\"$(record_now)\"}"
-    if [[ $ended != *'"state":"ended"'* || $ended == *'"endedAt":null'* || $ended == *'"state":"running"'* ]]; then
-      printf 'vgsh-tui: refused: reap=%s reason=malformed\n' "$file" >&2
-      failed=1
-      continue
-    fi
-    if ! put_record "$record_dir" "$stem@$run.ended.json" "$ended"; then
-      printf 'vgsh-tui: refused: reap=%s reason=unwritable\n' "$file" >&2
-      failed=1
-      continue
-    fi
-    rm -f -- "$file"
+    status=0
+    end_running_record "$file" "$stem" "$run" "reap=$file" || status=$?
+    [[ $status == 2 ]] && continue
+    [[ $status == 0 ]] || { failed=1; continue; }
     printf 'reaped=%s run=%s\n' "${stem/@//}" "$run"
   done
   return "$failed"
+}
+
+wait_record() {
+  local stem="${record_key/\//@}" fd file ended status=0 ended_record_text
+  [[ -d $record_dir ]] || { printf 'vgsh-tui: refused: wait=%s reason=gone\n' "$record_key" >&2; return 1; }
+  if ! { exec {fd}>>"$record_dir/$stem.lock"; } 2>/dev/null; then
+    printf 'vgsh-tui: refused: wait=%s reason=lock-unopenable\n' "$record_key" >&2
+    return 1
+  fi
+  flock "$fd" || status=$?
+  if [[ $status -ne 0 ]]; then
+    exec {fd}>&-
+    printf 'vgsh-tui: refused: wait=%s reason=flock-failed\n' "$record_key" >&2
+    return 1
+  fi
+  ended="$record_dir/$stem@$record_run.ended.json"
+  file="$record_dir/$stem@$record_run.running.json"
+  if [[ -e $ended ]]; then
+    cat -- "$ended" || { exec {fd}>&-; printf 'vgsh-tui: refused: wait=%s reason=unreadable\n' "$record_key" >&2; return 1; }
+    exec {fd}>&-
+    return 0
+  fi
+  if [[ -e $file ]]; then
+    end_running_record "$file" "$stem" "$record_run" "wait=$record_key" || { exec {fd}>&-; return 1; }
+    printf '%s\n' "$ended_record_text"
+    exec {fd}>&-
+    return 0
+  fi
+  exec {fd}>&-
+  printf 'vgsh-tui: refused: wait=%s reason=gone\n' "$record_key" >&2
+  return 1
 }
 
 verb="${1:-}"
@@ -465,6 +534,7 @@ case "$verb" in
   present) parse "$verb" "$@"; check_common; check_window; present ;;
   check) [[ $# -eq 0 ]] || bad_invocation "argument=$1"; require_terminal ;;
   reap) [[ $# -eq 0 ]] || bad_invocation "argument=$1"; reap ;;
+  wait) parse_wait "$@"; wait_record ;;
   -h|--help|help) usage; exit 0 ;;
   *) bad_invocation "verb=${verb:-missing}" ;;
 esac

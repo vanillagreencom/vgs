@@ -1527,6 +1527,47 @@ function tuiRunDone(runs, run) {
     return { code: code, reason: code === null ? "vanished" : null };
 }
 
+// The runs that need a `vgsh-tui wait` process: every launch the launcher
+// handed to a terminal and that has no ended record yet, and every running
+// record already listed, as after a shell restart. The caller filters waits
+// already running or settled while the running record remains listed.
+function tuiWaitRuns(runs, launched) {
+    var wanted = {};
+    function add(key, run) {
+        var id = key + "|" + run;
+        wanted[id] = { key: key, run: run };
+    }
+    launched.forEach(function (row) {
+        if (!hasOwn(runs.runs, row.run) || runs.runs[row.run].state !== "ended")
+            add(row.key, row.run);
+    });
+    Object.keys(runs.keys).forEach(function (key) {
+        var running = runs.keys[key].running;
+        if (running !== null)
+            add(key, running.run);
+    });
+    return Object.keys(wanted).sort().map(function (id) { return wanted[id]; });
+}
+
+// The result of one `vgsh-tui wait --record KEY --run RUN`: either the ended
+// record it printed, or log lines that name why the result was not accepted.
+function tuiWaitOutcome(key, run, completion, stdout, stderr) {
+    var prefix = "tui: wait=" + tuiLabel(key) + " run=" + tuiLabel(run);
+    if (completion === null)
+        return { record: null, logs: [prefix + " reason=unstarted"] };
+    if (completion.status !== 0 || completion.code !== 0)
+        return { record: null, logs: [prefix + " reason=failed exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0]] };
+    var lines = String(stdout).split("\n").filter(function (line) { return line !== ""; });
+    if (lines.length !== 1)
+        return { record: null, logs: [prefix + " reason=stdout-lines count=" + lines.length] };
+    var judged = tuiRecord(lines[0]);
+    if (!judged.ok)
+        return { record: null, logs: [prefix + " reason=" + judged.error] };
+    if (judged.record.key !== key || judged.record.run !== run || judged.record.state !== "ended")
+        return { record: null, logs: [prefix + " reason=record-mismatch"] };
+    return { record: judged.record, logs: [] };
+}
+
 // The window of a run whose record carries WINDOW, { appId, title }, among
 // WINDOWS, each { address, appId, title } as the compositor reports it:
 // { state: "found", address } with a `0x` address for exactly one match,

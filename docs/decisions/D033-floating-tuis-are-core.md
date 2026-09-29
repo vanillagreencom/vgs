@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active (tui/ copy → [D042](D042-tui-scripts-run-from-a-copy-of-the-whole-snapshot.md))
+**Status**: Active (tui/ copy → [D042](D042-tui-scripts-run-from-a-copy-of-the-whole-snapshot.md); run ends → [D043](D043-tui-run-ends-by-lock-release.md))
 
 **Research**: [docs/plans/v2-platform-roadmap.md](../plans/v2-platform-roadmap.md) § 1
 

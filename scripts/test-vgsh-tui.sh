@@ -387,6 +387,40 @@ for _ in $(seq 1 100); do [[ -e $rdir/acme.tui@hello@2-1.ended.json ]] && break;
 check "the launched run ends its record with the command's code" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["code"], r["window"]["appId"])' "$rdir/acme.tui@hello@2-1.ended.json")" == "4 org.vgs.tui.wide"
 rm -f -- "$rdir"/*.json
 
+# wait: one process blocks on the key lock and exits as soon as the
+# presenter releases it. Ceiling: 1000 ms from presenter's exit to wait's
+# exit. Measured 0 ms on cachy x86_64 on 2026-09-29 with this row.
+wait_opts=(--record acme.tui/hello --run 10-1 --record-dir "$rdir" --app-id org.vgs.tui --window-title "$title_words")
+rm -f -- "$tmp/child" "$tmp/wait-out" "$tmp/wait-err"
+"${tui_env[@]}" "$subject" present --presentation plain "${wait_opts[@]}" -- waitint 1 </dev/null >/dev/null 2>&1 &
+present_pid=$!
+for _ in $(seq 1 100); do [[ -e $rdir/acme.tui@hello@10-1.running.json ]] && break; sleep 0.05; done
+"${tui_env[@]}" "$subject" wait --record acme.tui/hello --run 10-1 >"$tmp/wait-out" 2>"$tmp/wait-err" &
+wait_pid=$!
+sleep 0.1
+check "wait stays blocked while the presenter holds the lock" kill -0 "$wait_pid"
+present_status=0
+wait "$present_pid" || present_status=$?
+present_done="$(date +%s%N)"
+wait_status=0
+wait "$wait_pid" || wait_status=$?
+wait_done="$(date +%s%N)"
+wait_ms="$(python3 -c 'import sys; print((int(sys.argv[2]) - int(sys.argv[1])) // 1000000)' "$present_done" "$wait_done")"
+check "wait exits after the presenter exits" test "$present_status:$wait_status" == "0:0"
+check "wait prints the ended record once" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["key"], r["run"], r["state"], r["code"])' "$tmp/wait-out")" == "acme.tui/hello 10-1 ended 0"
+check "wait exits within the lock-release ceiling" test "$wait_ms" -le 1000
+rm -f -- "$rdir"/*.json "$tmp/wait-out" "$tmp/wait-err"
+
+printf '%s\n' '{"key":"core/doctor","run":"11-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@11-1.running.json"
+plain_run "$subject" wait --record core/doctor --run 11-1
+check "wait ends a dead presenter's run" test "$plain_status" == 0
+check "wait prints the dead run's ended record" test "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["state"], r["code"], r["endedAt"] is not None, r["startedAt"])' "$tmp/out")" == "ended None True 2026-09-29T07:00:00.000Z"
+check "wait removes the dead run's running record" test ! -e "$rdir/core@doctor@11-1.running.json"
+rm -f -- "$rdir"/*.json
+plain_run "$subject" wait --record core/doctor --run 12-1
+check "wait refuses a gone run" test "$plain_status" == 1
+check "wait names a gone run" test "$(err_first)" == "vgsh-tui: refused: wait=core/doctor reason=gone"
+
 # Refusals before any terminal opens.
 # Rows: exit | first stderr line | the command's words, space-delimited
 rows=(
@@ -418,6 +452,9 @@ rows=(
   "2|vgsh-tui: refused: app-id=org/vgs|$subject present --record a/b --run 1 --record-dir /x --app-id org/vgs -- exits 0"
   "2|vgsh-tui: refused: window-title=missing-or-control|$subject present --record a/b --run 1 --record-dir /x --app-id org.vgs.tui -- exits 0"
   "2|vgsh-tui: refused: argument=x|$subject reap x"
+  "2|vgsh-tui: refused: record=missing|$subject wait --run 1-1"
+  "2|vgsh-tui: refused: run=missing record=a/b|$subject wait --record a/b"
+  "2|vgsh-tui: refused: argument=x|$subject wait --record a/b --run 1-1 x"
   "2|vgsh-tui: refused: verb=frob|$subject frob"
   "2|vgsh-tui: refused: argument=x|$subject check x"
   "2|vgsh-tui: refused: verb=missing|$subject"
@@ -657,5 +694,20 @@ printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"running","code":null,"s
 printf '%s\n' '{"key":"core/doctor","run":"8-1","state":"ended","code":2,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":"2026-09-29T07:00:01.000Z","window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@8-1.ended.json"
 plain_run "$control_bin" reap
 check "the reap-ended mutant replaces a run's code with null" test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$rdir/core@doctor@8-1.ended.json")" == None
+rm -f -- "$rdir"/*.json
+control wait-unlocked vgsh-tui '  flock "$fd" || status=$?' '  :'
+printf '%s\n' '{"key":"core/doctor","run":"13-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@13-1.running.json"
+exec {held}>>"$rdir/core@doctor.lock"
+flock "$held"
+plain_run "$control_bin" wait --record core/doctor --run 13-1
+check "the wait-unlocked mutant returns before the presenter releases the lock" test "$plain_status" == 0
+check "the wait-unlocked mutant ends a live presenter's record" test -e "$rdir/core@doctor@13-1.ended.json"
+exec {held}>&-
+rm -f -- "$rdir"/*.json
+control wait-dead-run vgsh-tui '    end_running_record "$file" "$stem" "$record_run" "wait=$record_key" || { exec {fd}>&-; return 1; }' '    return 1'
+printf '%s\n' '{"key":"core/doctor","run":"14-1","state":"running","code":null,"startedAt":"2026-09-29T07:00:00.000Z","endedAt":null,"window":{"appId":"org.vgs.tui","title":"t"}}' >"$rdir/core@doctor@14-1.running.json"
+plain_run "$control_bin" wait --record core/doctor --run 14-1
+check "the wait-dead-run mutant does not end a dead presenter" test "$plain_status" == 1
+check "the wait-dead-run mutant writes no ended record" test ! -e "$rdir/core@doctor@14-1.ended.json"
 rm -f -- "$rdir"/*.json
 rows_done test-vgsh-tui

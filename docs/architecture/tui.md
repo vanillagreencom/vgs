@@ -6,13 +6,13 @@ A floating TUI is a themed terminal window that floats over the session and runs
 
 ## The parts
 
-- `bin/vgsh-tui` is the only file that knows terminals. `launch` opens the window and `present` runs inside it. Their options, exit codes and refusal keys are in the file's header.
+- `bin/vgsh-tui` is the only file that knows terminals. `launch` opens the window, `present` runs inside it, `wait` blocks on one run's lock until the presenter ends, and `reap` ends orphaned running records. Their options, exit codes and refusal keys are in the file's header.
 - `bin/lib/tui.sh` is the library a TUI script sources through `$VGS_TUI_LIB`: step and warning lines, a header box, gum questions, one sudo authorization per script, a lock, a log and a reboot check. Its header lists each function and its return codes.
 - A sudo session exports its script's pid as `VGS_TUI_SUDO_SESSION`. A session started in a command that script runs, while that pid is alive, joins it: it asks only when the credential lapsed, and it drops nothing when it ends. The Updates pipeline holds one session and runs `vgsh pkg run upgrade` inside it, so the password is asked once and the pipeline's later steps keep the credential. Omarchy's `OMARCHY_UPDATE_SUDO_SESSION` is the model (basecamp/omarchy `e332dc97`).
 - `bin/lib/logo.txt` is the wordmark `present` prints in the theme accent.
 - `vgsh tui present [--title T] [--size S] -- argv...` is the core's own entry: it hands argv to `vgsh-tui launch` with the full presentation and needs no shell running.
 - The manifest key `tui` and the capability `tui` let a plugin open the scripts it declares, and list and open any listed TUI: [tui-capability.md](tui-capability.md).
-- An exit record tells the core when a run started and ended and with which code, so a caller learns that its TUI ended and a second click raises the open window: [tui-capability.md § Exit records](tui-capability.md#exit-records).
+- An exit record tells the core when a run started and ended and with which code, so a caller learns that its TUI ended and a second click raises the open window. `wait` makes the end independent of directory change delivery: [tui-capability.md § Exit records](tui-capability.md#exit-records).
 - `vgsh sudo` is the core's time-boxed passwordless sudo grant, which the core TUI `core/sudo-grant` runs: [tui-sudo.md](tui-sudo.md).
 
 ## The window
@@ -82,6 +82,7 @@ On 2026-09-28, on the owner's machine, a one-off script sourced `scripts/smoke/h
 5. A Ctrl-C stops the command, and `present` exits 130 with no prompt and no plugin copy left. Enforced by `scripts/test-vgsh-tui.sh`, which types the interrupt byte on the pseudo-terminal while a command sleeps, with a control whose `present` ignores SIGINT.
 6. A sudo session drops the credential when it ends, when the script exits and when it is hung up or terminated, and leaves no keepalive. A nested session under a live owner drops nothing, and one whose owner is gone starts its own. A guard asks for nothing and drops the credential in the same cases. Enforced by `scripts/test-tui.sh` with a stand-in `sudo`, with a control that skips the final `sudo -k`, one that never joins, one that joins an owner that is gone and one whose guard sets no trap.
 7. `launch` forks the terminal into a session of its own and returns, and `check` answers with the terminal test `launch` uses. Enforced by `scripts/test-vgsh-tui.sh` with a stand-in `setsid`, with a control that execs `setsid` without `-f` and one whose `check` skips the test. Its terminal gets no `VGSH_RUNNER_PID`; a control keeps it.
+8. `wait` exits after the presenter's lock is released and writes a dead presenter's ended record with no polling. Enforced by `scripts/test-vgsh-tui.sh`, which measured 0 ms from presenter exit to wait exit on cachy x86_64 on 2026-09-29 and pins a 1000 ms ceiling, with controls that skip the lock and skip the dead-run end.
 
 ## Omarchy
 

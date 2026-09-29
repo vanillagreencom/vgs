@@ -264,6 +264,7 @@ mutations=(
   "a read asked from a result handler is lost|../Commons/WatchedFile.qml|Qt.callLater(reloadView);|reloadView();|tst_watched_file.qml"
   "a write asked from a result handler is lost|../Commons/WatchedFile.qml|Qt.callLater(() => view.setText(content));|view.setText(content);|tst_watched_file.qml"
   "an appearance never applies its light overrides|../Commons/Theme.qml|ThemeLogic.acceptAppearance(table, light, source.values)|ThemeLogic.acceptAppearance(table, light, Object.assign({}, source.values, { scheme: { mode: \"dark\" } }))|tst_appearance.qml"
+  "a TUI wait result never reaches the records|../Core/TuiRecords.qml|if (outcome.record !== null) {|if (false) {|tst_tui_records.qml"
 )
 
 copy="$tmp/ui"
@@ -278,11 +279,18 @@ for row in "${mutations[@]}"; do
   fresh "$copy"
   target="$copy/$file"
   commons_args=()
+  core_args=()
   if [[ $file == ../Commons/* ]]; then
     rm -rf -- "$tmp/commons"
     cp -R -- "$repo/shell/Commons" "$tmp/commons"
     target="$tmp/commons/${file#../Commons/}"
     commons_args=(--commons "$tmp/commons")
+  fi
+  if [[ $file == ../Core/* ]]; then
+    rm -rf -- "$tmp/core"
+    cp -R -- "$repo/shell/Core" "$tmp/core"
+    target="$tmp/core/${file#../Core/}"
+    core_args=(--core "$tmp/core")
   fi
   count="$(python3 - "$target" "$needle" <<'PY'
 import sys
@@ -296,7 +304,7 @@ path, needle, replacement = sys.argv[1:]
 text = open(path, encoding="utf-8").read()
 open(path, "w", encoding="utf-8").write(text.replace(needle, replacement))
 PY
-  if out="$("$runner" --ui "$copy" "${commons_args[@]}" "$repo/scripts/qml-tests/$test" 2>&1)"; then
+  if out="$("$runner" --ui "$copy" "${commons_args[@]}" "${core_args[@]}" "$repo/scripts/qml-tests/$test" 2>&1)"; then
     fail "$label: $test passed on the mutated copy"
   else
     ok "$label"

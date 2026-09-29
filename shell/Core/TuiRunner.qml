@@ -1,18 +1,18 @@
 import QtQuick
-import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
 import "PluginLogic.js" as Logic
 
 // Owns the `tui` capability's provider, the list of floating TUIs it
-// publishes, the launcher state, the runs the exit records describe and
-// every process it starts: one `bin/vgsh-tui launch` per accepted request,
-// at most one `bin/vgsh-tui check` probe and at most one `bin/vgsh-tui
-// reap` at a time. PluginLogic decides which TUI a request names, whether
+// publishes, the launcher state and every launch process it starts: one
+// `bin/vgsh-tui launch` per accepted request and at most one
+// `bin/vgsh-tui check` probe. TuiRecords owns the record listing, reaper and
+// one `bin/vgsh-tui wait` process per live run. PluginLogic decides which
+// TUI a request names, whether
 // its plugin is enabled, the arguments, whether the key is busy or the
 // launcher state refuses it, the launcher's argv, how each exit moves the
-// state, what the records say and what each `done` receives. The launcher
+// state, what the records say, which waits run and what each `done` receives. The launcher
 // forks the terminal into a session of its own and exits once the
 // presenter wrote its record, so a terminal outlives the shell that opened
 // it. Each run's `done` belongs to the lifetime of the instance that asked:
@@ -31,14 +31,6 @@ Scope {
     // One of PluginLogic.TUI_LAUNCHER_STATES: the first probe answers it,
     // and every later probe and launch moves it.
     property string launcher: "unknown"
-    // Each record file's path -> the record PluginLogic.tuiRecord accepted.
-    property var records: ({})
-    // Each listed record file's path -> the FileView that reads it once.
-    property var readers: ({})
-    // PluginLogic.tuiRuns of the records, replaced whole on every change.
-    property var runs: Logic.tuiRuns([])
-    // Each `done` waiting for its run: { id, run, done, release }.
-    property var waiters: []
     property int launches: 0
 
     // The directory bin/vgsh-tui writes the records in. `bin/vgsh run`
@@ -48,7 +40,7 @@ Scope {
     // The core's bin/ beside the shell directory, where a core TUI's command
     // lives: the shell's PATH need not hold it.
     readonly property string coreBin: Quickshell.shellDir + "/../bin"
-    readonly property bool recordsWatched: String(recordFiles.folder) === "file://" + recordDir
+    readonly property var runs: recordStore.runs
 
     // Every listed TUI: the core's and every enabled plugin's, as
     // PluginLogic.tuiEntries returns them.
@@ -56,12 +48,6 @@ Scope {
 
     Component.onCompleted: {
         probe();
-        reap();
-    }
-
-    onRecordsWatchedChanged: {
-        if (recordsWatched) syncReaders();
-        else console.error("tui: records=unwatched dir=" + recordDir + " folder=" + recordFiles.folder);
     }
 
     // Every enabled plugin id, read through Registry.isEnabled so a binding
@@ -153,29 +139,15 @@ Scope {
     // instance that asked, or kept for the shell's life when CTX is null,
     // the core's own request.
     function wait(ctx, run, done) {
-        const waiter = { id: ctx === null ? "core" : ctx.id, run: run, done: done, release: () => {} };
+        let release = () => {};
+        const waiter = recordStore.addWaiter(ctx === null ? "core" : ctx.id, run, result => {
+            release();
+            done(result);
+        });
         if (ctx !== null) {
-            waiter.release = ctx.onDispose(() => {
-                root.waiters = root.waiters.filter(w => w !== waiter);
-            });
+            release = ctx.onDispose(() => recordStore.releaseWaiter(waiter));
         }
-        waiters = waiters.concat([waiter]);
-    }
-
-    // Hands RESULT to every `done` still waiting for RUN, once.
-    function deliver(run, result) {
-        const due = waiters.filter(w => w.run === run);
-        if (due.length === 0) return;
-        waiters = waiters.filter(w => w.run !== run);
-        const shared = frozen(result);
-        for (const waiter of due) {
-            waiter.release();
-            try {
-                waiter.done(shared);
-            } catch (e) {
-                console.error("capabilities: tui done of " + waiter.id + " threw: " + e.message);
-            }
-        }
+        recordStore.deliverKnown(run);
     }
 
     function finish(process, stderr) {
@@ -186,7 +158,9 @@ Scope {
         const failed = Logic.tuiLaunchDone(process.completion);
         if (failed !== null) {
             pending = pending.filter(p => p.run !== process.run);
-            deliver(process.run, failed);
+            recordStore.deliver(process.run, failed);
+        } else {
+            recordStore.launched(process.key, process.run);
         }
         process.destroy();
     }
@@ -205,7 +179,7 @@ Scope {
             break;
         case "none":
             console.warn("tui: focus=none tui=" + key);
-            reap();
+            recordStore.reap();
             break;
         case "ambiguous":
             console.warn("tui: focus=ambiguous tui=" + key + " windows=" + found.count);
@@ -223,60 +197,8 @@ Scope {
         }));
     }
 
-    function recordLoaded(path, text) {
-        const judged = Logic.tuiRecord(text);
-        if (!judged.ok) {
-            console.error("tui: record=" + path + " refused: " + judged.error);
-            return;
-        }
-        const next = Object.assign({}, records);
-        next[path] = judged.record;
-        records = next;
-        refresh();
-    }
-
-    // One reader per listed file, kept while the file is listed. A record
-    // is never rewritten, so each file is read once, however often the
-    // listing's rows are rebuilt; a file read again could be removed between
-    // FileView's check and its open, which it logs whatever printErrors says.
-    function syncReaders() {
-        const listed = {};
-        for (let i = 0; i < recordFiles.count; i++) listed[recordFiles.get(i, "filePath")] = true;
-        const next = {};
-        for (const path of Object.keys(readers)) {
-            if (Object.prototype.hasOwnProperty.call(listed, path)) {
-                next[path] = readers[path];
-                continue;
-            }
-            readers[path].destroy();
-            recordGone(path);
-        }
-        for (const path of Object.keys(listed)) {
-            if (Object.prototype.hasOwnProperty.call(next, path)) continue;
-            const reader = readerComponent.createObject(root);
-            reader.path = path;
-            next[path] = reader;
-        }
-        readers = next;
-    }
-
-    function recordGone(path) {
-        if (!Object.prototype.hasOwnProperty.call(records, path)) return;
-        const next = Object.assign({}, records);
-        delete next[path];
-        records = next;
-        refresh();
-    }
-
-    // The runs the records now describe: a launch whose run has a record
-    // is no longer pending, and every run that ended answers its `done`.
-    function refresh() {
-        runs = Logic.tuiRuns(Object.keys(records).map(path => records[path]));
+    function recordsChanged() {
         pending = pending.filter(p => !Object.prototype.hasOwnProperty.call(runs.runs, p.run));
-        for (const run of waiters.map(w => w.run)) {
-            const result = Logic.tuiRunDone(runs, run);
-            if (result !== null) deliver(run, result);
-        }
     }
 
     // One probe at a time: a request refused while one runs starts none.
@@ -284,13 +206,6 @@ Scope {
         if (prober.running) return;
         prober.completion = null;
         prober.running = true;
-    }
-
-    // One reap at a time, for the same reason.
-    function reap() {
-        if (reaper.running) return;
-        reaper.completion = null;
-        reaper.running = true;
     }
 
     function frozen(value) {
@@ -302,53 +217,24 @@ Scope {
     // The launchers running, the launcher state, the runs and the waiting
     // callbacks, for the lending record.
     function record() {
-        const keys = {};
-        for (const key of Object.keys(runs.keys)) {
-            const slot = runs.keys[key];
-            keys[key] = {
-                running: slot.running === null ? null : slot.running.run,
-                ended: slot.ended === null ? null : { run: slot.ended.run, code: slot.ended.code }
-            };
-        }
+        const recordState = recordStore.record();
         return {
             launching: launching.map(p => p.key),
             pending: pending.map(p => p.key),
             launcher: launcher,
             probing: prober.running,
-            reaping: reaper.running,
-            runs: keys,
-            waiters: waiters.map(w => w.id)
+            reaping: recordState.reaping,
+            runs: recordState.runs,
+            waiters: recordState.waiters,
+            waits: recordState.waits
         };
     }
 
-    FolderListModel {
-        id: recordFiles
-        folder: "file://" + root.recordDir
-        nameFilters: ["*.json"]
-        showDirs: false
-        showDotAndDotDot: false
-        showHidden: false
-    }
-
-    Connections {
-        target: recordFiles
-        enabled: root.recordsWatched
-        function onModelReset() { root.syncReaders(); }
-        function onRowsInserted() { root.syncReaders(); }
-        function onRowsRemoved() { root.syncReaders(); }
-    }
-
-    Component {
-        id: readerComponent
-        FileView {
-            id: reader
-            printErrors: false
-            onLoaded: root.recordLoaded(reader.path, text())
-            onLoadFailed: error => {
-                // A record removed between the listing and the read.
-                if (error !== FileViewError.FileNotFound) console.error("tui: record=" + reader.path + " unreadable: error=" + error);
-            }
-        }
+    TuiRecords {
+        id: recordStore
+        recordDir: root.recordDir
+        coreBin: root.coreBin
+        onRunsChanged: root.recordsChanged()
     }
 
     // A command that fails to start emits only runningChanged, so the end
@@ -364,30 +250,6 @@ Scope {
             const line = Logic.tuiProbeOutcome(prober.completion, probeErrors.text);
             if (line !== "") console.error(line);
             root.launcher = Logic.tuiLauncherAfter(root.launcher, prober.completion);
-        }
-    }
-
-    Process {
-        id: reaper
-        property var completion: null
-        command: [root.coreBin + "/vgsh-tui", "reap"]
-        stdout: StdioCollector { id: reaped }
-        stderr: StdioCollector { id: reapErrors }
-        onExited: (code, status) => { reaper.completion = { code: code, status: status }; }
-        onRunningChanged: {
-            if (running) return;
-            for (const line of Logic.tuiReapOutcome(reaper.completion, reaped.text, reapErrors.text)) {
-                switch (line.level) {
-                case "info":
-                    console.info(line.text);
-                    break;
-                case "error":
-                    console.error(line.text);
-                    break;
-                default:
-                    throw new Error("tui: reap line level " + JSON.stringify(line.level) + " is not one of info, error");
-                }
-            }
         }
     }
 

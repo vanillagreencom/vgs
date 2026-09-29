@@ -3,10 +3,11 @@
 # qmltestrunner on the offscreen platform, against the shipped qs.Ui and
 # qs.Commons files. The tests need Qt and no Wayland session.
 #
-# Usage: scripts/qml-unit.sh [--ui DIR] [--commons DIR] [--tests DIR] [TEST...]
+# Usage: scripts/qml-unit.sh [--ui DIR] [--commons DIR] [--core DIR] [--tests DIR] [TEST...]
 #   --ui DIR       the qs.Ui module to test (default: shell/Ui); the control
 #                  points it at a mutated copy
 #   --commons DIR  the qs.Commons files (default: shell/Commons)
+#   --core DIR     the qs.Core files (default: shell/Core)
 #   --tests DIR    the test directory (default: scripts/qml-tests)
 #   TEST           one or more test files to run instead of the directory
 #
@@ -30,12 +31,14 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 ui="$repo/shell/Ui"
 commons="$repo/shell/Commons"
+core="$repo/shell/Core"
 tests="$repo/scripts/qml-tests"
 files=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ui) ui="$(readlink -f -- "$2")"; shift 2 ;;
     --commons) commons="$(readlink -f -- "$2")"; shift 2 ;;
+    --core) core="$(readlink -f -- "$2")"; shift 2 ;;
     --tests) tests="$(readlink -f -- "$2")"; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     -*) printf 'qml-unit: refused: argument=%s\n' "$1" >&2; exit 2 ;;
@@ -57,7 +60,7 @@ fi
 root="$(mktemp -d)"
 trap 'rm -rf -- "${root:?}"' EXIT
 imports="$root/imports"
-mkdir -p "$imports/qs/Commons" "$imports/qs/Unit" "$imports/Quickshell/Io" "$root/home" "$root/runtime"
+mkdir -p "$imports/qs/Commons" "$imports/qs/Core" "$imports/qs/Unit" "$imports/Quickshell/Io" "$imports/Qt/labs/folderlistmodel" "$root/home" "$root/runtime"
 chmod 700 "$root/runtime"
 ln -s -- "$ui" "$imports/qs/Ui"
 # Theme.qml resolves the bundled font relative to its own directory.
@@ -68,6 +71,11 @@ for file in Theme.qml Tokens.js ThemeLogic.js WatchedFile.qml; do
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
 printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
+for file in TuiRecords.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
+  [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
+  ln -s -- "$core/$file" "$imports/qs/Core/$file"
+done
+printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
 cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
@@ -76,8 +84,12 @@ for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qm
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
 done
 printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
-cp -- "$tests/stand-ins/FileView.qml" "$imports/Quickshell/Io/FileView.qml"
-printf 'module Quickshell.Io\nFileView 1.0 FileView.qml\n' >"$imports/Quickshell/Io/qmldir"
+for file in FileView.qml Process.qml StdioCollector.qml ProcessRegistry.qml FileViewError.qml; do
+  cp -- "$tests/stand-ins/$file" "$imports/Quickshell/Io/$file"
+done
+cp -- "$tests/stand-ins/FolderListModel.qml" "$tests/stand-ins/FolderListRegistry.qml" "$imports/Qt/labs/folderlistmodel/"
+printf 'module Quickshell.Io\nFileView 1.0 FileView.qml\nProcess 1.0 Process.qml\nStdioCollector 1.0 StdioCollector.qml\nsingleton ProcessRegistry 1.0 ProcessRegistry.qml\nsingleton FileViewError 1.0 FileViewError.qml\n' >"$imports/Quickshell/Io/qmldir"
+printf 'module Qt.labs.folderlistmodel\nFolderListModel 1.0 FolderListModel.qml\nsingleton FolderListRegistry 1.0 FolderListRegistry.qml\n' >"$imports/Qt/labs/folderlistmodel/qmldir"
 
 if [[ ${#files[@]} -eq 0 ]]; then
   mapfile -t files < <(find "$tests" -maxdepth 1 -name 'tst_*.qml' | sort)

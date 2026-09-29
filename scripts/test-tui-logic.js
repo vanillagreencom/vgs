@@ -442,6 +442,22 @@ function suite(ctx, check) {
     check("tuiRunDone: a running run answers nothing yet", ctx.tuiRunDone(runs, "2-1"), null);
     check("tuiRunDone: a run with no record answers nothing yet", ctx.tuiRunDone(runs, "9-1"), null);
 
+    // tuiWaitRuns and tuiWaitOutcome: the QML owner starts a wait for a
+    // launched run once the launcher exits 0, and for a running record read
+    // after restart. Only this judge accepts the wait's stdout as a record.
+    check("tuiWaitRuns: a launched run without an ended record gets a wait", ctx.tuiWaitRuns(runs, [{ key: "acme.tui/new", run: "9-1" }]), [{ key: "acme.tui/hello", run: "2-1" }, { key: "acme.tui/new", run: "9-1" }]);
+    check("tuiWaitRuns: a launched run that already ended gets no wait", ctx.tuiWaitRuns(runs, [{ key: "acme.tui/hello", run: "1-1" }]), [{ key: "acme.tui/hello", run: "2-1" }]);
+    check("tuiWaitRuns: a running record after restart gets a wait", ctx.tuiWaitRuns(runs, []), [{ key: "acme.tui/hello", run: "2-1" }]);
+    const waitEnded = JSON.stringify(rec("acme.tui/hello", "2-1", "ended", 7, "03", "08"));
+    check("tuiWaitOutcome: accepts one ended record for this run", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, waitEnded + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", 7, "03", "08"), logs: [] });
+    check("tuiWaitOutcome: a vanished record is accepted", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "ended", null, "03", "08")) + "\n", ""), { record: rec("acme.tui/hello", "2-1", "ended", null, "03", "08"), logs: [] });
+    check("tuiWaitOutcome: a failed wait is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 1, status: 0 }, "", "vgsh-tui: refused: wait=acme.tui/hello reason=gone\n"), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=failed exit=1 status=0 vgsh-tui: refused: wait=acme.tui/hello reason=gone"] });
+    check("tuiWaitOutcome: stdout must hold one line", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, waitEnded + "\n" + waitEnded + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=stdout-lines count=2"] });
+    check("tuiWaitOutcome: stdout must be a record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, "{ nope\n", "").logs[0].startsWith("tui: wait=acme.tui/hello run=2-1 reason=record is not JSON: "), true);
+    check("tuiWaitOutcome: stdout must be this run's ended record", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-2", "ended", 0, "03", "08")) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
+    check("tuiWaitOutcome: a running record is refused", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "running", null, "03", null)) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
+    check("tuiWaitOutcome: a wait that never started is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", null, "", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=unstarted"] });
+
     // tuiWindow: [name, windows, the result].
     const w = (address, appId, title) => ({ address: address, appId: appId, title: title });
     const windowRows = [
@@ -586,6 +602,10 @@ const CONTROLS = [
     ["state reads the end of the last ended run", "endedAt: slot.ended === null ? null : slot.ended.endedAt", "endedAt: null"],
     ["a running run's done waits", "if (!hasOwn(runs.runs, run) || runs.runs[run].state !== \"ended\")", "if (!hasOwn(runs.runs, run))"],
     ["a reaped run's done says vanished", "reason: code === null ? \"vanished\" : null", "reason: null"],
+    ["a launched run waits until it ended", "if (!hasOwn(runs.runs, row.run) || runs.runs[row.run].state !== \"ended\")", "if (false)"],
+    ["a listed running run waits after restart", "if (running !== null)\n            add(key, running.run);", "if (false)\n            add(key, running.run);"],
+    ["a wait prints exactly one record line", "if (lines.length !== 1)\n        return { record: null, logs: [prefix + \" reason=stdout-lines count=\" + lines.length] };", "if (false)\n        return { record: null, logs: [prefix + \" reason=stdout-lines count=\" + lines.length] };"],
+    ["a wait record is this run and ended", "if (judged.record.key !== key || judged.record.run !== run || judged.record.state !== \"ended\")", "if (false)"],
     ["a window matches the app-id", "        return w.appId === window.appId && ", "        return "],
     ["a window matches the title", "w.title === window.title && typeof w.address", "typeof w.address"],
     ["a window needs an address", " && typeof w.address === \"string\" && w.address !== \"\";", ";"],

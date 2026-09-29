@@ -24,6 +24,7 @@ QtObject {
     property int watchers: 0
     property string written: ""
     property string content: ""
+    property string armedPath: ""
 
     signal loaded()
     signal loadFailed(int error)
@@ -71,8 +72,17 @@ QtObject {
 
     function change() { fileChanged(); }
 
+    function armPath() {
+        if (path === "") return;
+        if (path === armedPath) return;
+        armedPath = path;
+        if (preload) start();
+        if (watchChanges) watchers += 1;
+    }
+
+    onPathChanged: armPath()
+
     Component.onCompleted: {
-        if (path !== "" && preload) start();
-        if (path !== "" && watchChanges) watchers += 1;
+        armPath();
     }
 }
