@@ -913,6 +913,7 @@ theme_source fern "$(doc fern)"
 theme_source slotty "$(doc slotty)" "$(slots_json '#nothex')"
 theme_source reserved "$(doc vgs)"
 theme_source targets "$(doc targets)"
+theme_source catalog "$(doc catalog)"
 theme_source spaced "$(doc 'My Theme')"
 theme_source typo "$(doc typo '{ "palette": { "acent": "#ffffff" } }')"
 theme_source bare ""
@@ -940,6 +941,7 @@ a package the judge refuses|slotty.git|package=$src/slotty.git reason=terminal-c
 a document the judge refuses|typo.git|package=$src/typo.git reason=unknown-token token=palette.acent
 the reserved name vgs|reserved.git|package=$src/reserved.git reason=reserved-name name=vgs
 the targets directory's name|targets.git|package=$src/targets.git reason=reserved-name name=targets
+the catalog directory's name|catalog.git|package=$src/catalog.git reason=reserved-name name=catalog
 a document name that is no directory name|spaced.git|package=$src/spaced.git reason=package-name got="My Theme"
 a source without theme.json|bare.git|package=$src/bare.git reason=absent file=theme.json
 an unreachable source|absent.git|clone=$src/absent.git
@@ -1007,6 +1009,12 @@ tinst "theme update refuses a shipped package" "$cfg" "$rt_empty" 1 "" "vgsh: re
 tinst "theme update refuses an unknown name" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=absent reason=unknown" theme update absent
 tinst "theme update refuses a name that is no directory name" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme="../moss" reason=malformed-name' theme update ../moss
 tinst "theme update refuses the targets directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=targets reason=reserved-name" theme update targets
+tinst "theme update refuses the catalog directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=catalog reason=reserved-name" theme update catalog
+# The must-fail control: a judge copy that reserves only targets takes the
+# catalog for an unknown package.
+judge_control catalog-unreserved 'if (logic.RESERVED_DIRECTORIES.includes(name)) refuse(' 'if (name === TARGETS) refuse('
+tinst "the catalog-unreserved mutant does not refuse the catalog as reserved" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=catalog reason=unknown" theme update catalog
+unset THEME_BIN
 tinst "theme update without a name is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: name=missing" theme update
 
 # The lock, held the way a running apply holds it: add, update and remove

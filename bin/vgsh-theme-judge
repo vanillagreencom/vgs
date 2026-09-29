@@ -11,6 +11,14 @@
 //       refused, 2 when DIR, a package or target directory or a required
 //       file cannot be read, or when targets exist and DIR holds no
 //       accepted `vgs` package with terminal slots.
+//   vgsh-theme-judge catalog-check [DIR]
+//       judge DIR/catalog (DIR default: the shipped themes/): its index.json
+//       and every package it names as the installed package it becomes,
+//       whose index mode and palette must be its own, with no curated file
+//       on a target under DIR/targets whose files run code, none no target
+//       writes, and no symlink. One line per entry. Exit 0 when the index
+//       and every entry are accepted, 1 when any is refused, 2 when the
+//       index or a file cannot be read.
 //   vgsh-theme-judge list <text|json> <config-dir> <state-dir>
 //       every shipped package and every package under <config-dir>/themes,
 //       and the state of <config-dir>/theme.json, `modified` read against
@@ -68,10 +76,11 @@
 // exits 3. A
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner and § Install, theme-apply.md,
-// theme-targets.md and theme-backgrounds.md hold the rules this file
-// implements; the target renderer is bin/lib/theme-render.js, the
-// background state bin/lib/theme-backgrounds.js, and the edit a target's
-// `select` keeps in its application's settings file bin/lib/theme-select.js.
+// theme-targets.md, theme-backgrounds.md and theme-catalog.md hold the
+// rules this file implements; the target renderer is
+// bin/lib/theme-render.js, the background state bin/lib/theme-backgrounds.js,
+// and the edit a target's `select` keeps in its application's settings file
+// bin/lib/theme-select.js.
 "use strict";
 const crypto = require("crypto");
 const fs = require("fs");
@@ -91,9 +100,12 @@ const select = require(path.join(__dirname, "lib", "theme-select.js"));
 
 const SHIPPED = path.join(repo, "themes");
 const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
-// The directory of a themes directory that holds targets; it is never a
-// package.
+// The directory of a themes directory that holds targets, and the one that
+// holds the catalog, with its index file. Neither is ever a package:
+// ThemeLogic.RESERVED_DIRECTORIES names both.
 const TARGETS = "targets";
+const CATALOG = "catalog";
+const CATALOG_INDEX = "index.json";
 const FORMATS = ["text", "json"];
 const LOCK_VERDICTS = ["held", "busy", "failed"];
 
@@ -119,10 +131,10 @@ function childDirs(base) {
 }
 
 // The package directory names under BASE, as childDirs answers them, less
-// the targets directory.
+// the targets and the catalog directory.
 function packageDirs(base) {
     const names = childDirs(base);
-    return names === null ? null : names.filter(name => name !== TARGETS);
+    return names === null ? null : names.filter(name => !logic.RESERVED_DIRECTORIES.includes(name));
 }
 
 // The bytes of FILE, or undefined when it is absent; any other failure
@@ -295,6 +307,128 @@ function checkTargets(base, defaults) {
         refused += 1;
     }
     return refused;
+}
+
+// --- catalog
+
+// Every destination a target under BASE writes, mapped to its target's name
+// and `runsCode`, and the number of targets acceptTarget refused, each
+// printed as `packages` prints it. An absent BASE holds no target. Any read
+// failure is unreadable.
+function targetDestinations(base) {
+    let names;
+    try {
+        names = childDirs(base);
+    } catch (e) {
+        unreadable(base, e.code);
+    }
+    const destinations = new Map();
+    let refused = 0;
+    for (const name of names || []) {
+        const dir = path.join(base, name);
+        let verdict;
+        try {
+            verdict = readTarget(dir).verdict;
+        } catch (e) {
+            unreadable(e.path || dir, e.code);
+        }
+        if (!verdict.ok) {
+            console.log("refused  " + dir + ": " + render.refusalLine(name, verdict));
+            refused += 1;
+            continue;
+        }
+        for (const file of verdict.target.files) destinations.set(file.destination, { name, runsCode: verdict.target.runsCode });
+    }
+    return { destinations, refused };
+}
+
+// The judge's refusal of the curated files in DIR/targets, or null: a
+// catalogued package becomes an installed one, whose curated file on a
+// `runsCode` target apply drops, so the catalog carries none there, nor one
+// no target writes, nor a symlink. Any read failure throws the fs error.
+function curatedRefusal(dir, destinations) {
+    const base = path.join(dir, TARGETS);
+    const stat = fs.lstatSync(base, { throwIfNoEntry: false });
+    if (stat === undefined) return null;
+    if (stat.isSymbolicLink()) return logic.refusal("symlink", "", "file=" + TARGETS);
+    if (!stat.isDirectory()) return logic.refusal("curated-file", "", "file=" + TARGETS);
+    for (const entry of fs.readdirSync(base, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : 1)) {
+        const file = TARGETS + "/" + entry.name;
+        if (entry.isSymbolicLink()) return logic.refusal("symlink", "", "file=" + file);
+        if (!entry.isFile()) return logic.refusal("curated-file", "", "file=" + file);
+        const target = destinations.get(entry.name);
+        if (target === undefined) return logic.refusal("curated-unknown", "", "file=" + file);
+        if (target.runsCode) return logic.refusal("curated-code", "", "file=" + file + " target=" + target.name);
+    }
+    return null;
+}
+
+// The judge's verdict on catalogued package ENTRY in CATALOG_DIR: its
+// package files through ThemeLogic.acceptCatalogEntry, its curated files,
+// and its thumbnail, which must be a file in the catalog reached through no
+// symlink. Any read failure throws the fs error.
+function catalogVerdict(catalogDir, entry, destinations) {
+    const dir = path.join(catalogDir, entry.name);
+    const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+    if (stat === undefined) return logic.refusal("absent", "", "file=" + entry.name);
+    if (stat.isSymbolicLink()) return logic.refusal("symlink", "", "file=" + entry.name);
+    const read = packageFiles(dir);
+    if (read.linked !== null) return logic.refusal("symlink", "", "file=" + entry.name + "/" + read.linked);
+    if (read.files.theme === undefined) return logic.refusal("absent", "", "file=" + entry.name + "/theme.json");
+    const verdict = logic.acceptCatalogEntry(tokens, entry, { themeJson: text(read.files.theme), terminalJson: text(read.files.terminal) });
+    if (!verdict.ok) return verdict;
+    const curated = curatedRefusal(dir, destinations);
+    if (curated !== null) return curated;
+    if (entry.thumbnail !== null) {
+        const thumbnail = packageFile(catalogDir, entry.thumbnail);
+        if (thumbnail.state === "linked") return logic.refusal("symlink", "", "file=" + entry.thumbnail);
+        if (thumbnail.state === "absent") return logic.refusal("absent", "", "file=" + entry.thumbnail);
+    }
+    return verdict;
+}
+
+// Judge DIR/catalog, DIR a themes directory (default: the shipped themes/):
+// its index through ThemeLogic.acceptCatalogIndex, then every entry against
+// the targets under DIR/targets. One line per entry; exit 0 when the index
+// and every entry are accepted, 1 when any is refused, 2 when the index or
+// a file cannot be read.
+function checkCatalog(dirArg) {
+    const base = path.resolve(dirArg || SHIPPED);
+    const catalogDir = path.join(base, CATALOG);
+    const indexFile = path.join(catalogDir, CATALOG_INDEX);
+    let indexText;
+    try {
+        indexText = fs.readFileSync(indexFile, "utf8");
+    } catch (e) {
+        unreadable(indexFile, e.code);
+    }
+    const index = logic.acceptCatalogIndex(tokens, indexText);
+    if (!index.ok) {
+        console.log("refused  " + indexFile + ": " + logic.refusalLine(index));
+        console.log("vgsh-theme-judge: refused=1");
+        process.exit(1);
+    }
+    const { destinations, refused: targetsRefused } = targetDestinations(path.join(base, TARGETS));
+    let refused = targetsRefused;
+    for (const entry of index.entries) {
+        let verdict;
+        try {
+            verdict = catalogVerdict(catalogDir, entry, destinations);
+        } catch (e) {
+            unreadable(e.path || path.join(catalogDir, entry.name), e.code);
+        }
+        if (verdict.ok) {
+            console.log("ok       " + CATALOG + "/" + entry.name);
+            continue;
+        }
+        console.log("refused  " + path.join(catalogDir, entry.name) + ": " + logic.refusalLine(verdict));
+        refused += 1;
+    }
+    if (refused > 0) {
+        console.log("vgsh-theme-judge: refused=" + refused);
+        process.exit(1);
+    }
+    console.log("vgsh-theme-judge: ok");
 }
 
 // --- the package set list and apply share
@@ -1527,9 +1661,9 @@ function backgroundCall(args) {
 // The judge's verdict on the package in DIR as an installed package named
 // NAME, or named by its document when NAME is undefined. The document's
 // name is ThemeLogic.accept's reading of it; acceptPackage then judges the
-// package under that name, the `vgs` reservation included. `targets` holds
-// a themes directory's targets and is never read as a package, so no
-// package lands under it.
+// package under that name, the `vgs`, `targets` and `catalog`
+// reservations included, so no package lands under a directory a themes
+// directory's walk skips.
 function acceptInstall(dir, name) {
     // Files are named relative to DIR: add judges a staging directory the
     // user never sees.
@@ -1548,7 +1682,6 @@ function acceptInstall(dir, name) {
         if (!document.ok) return document;
         name = document.name;
     }
-    if (name === TARGETS) return logic.refusal("reserved-name", "", "name=" + TARGETS);
     return logic.acceptPackage(tokens, { directoryName: name, themeJson: theme, terminalJson: terminal, shipped: false });
 }
 
@@ -1563,13 +1696,13 @@ function acceptCommand(dir, name) {
 
 // The resolved directory of installed package NAME. Update and remove act
 // only on a directory `add` could have landed: a name the package judge
-// refuses, `targets`, a name no installed package has, a symlink and
-// anything but a directory are refused, and a name only a shipped package
-// has is refused as shipped.
+// refuses, `targets`, `catalog`, a name no installed package has, a symlink
+// and anything but a directory are refused, and a name only a shipped
+// package has is refused as shipped.
 function installed(configDir, name) {
     if (!logic.isPackageName(name)) refuse("theme=" + JSON.stringify(name) + " reason=malformed-name", "malformed-name");
     const key = "theme=" + name + " reason";
-    if (name === TARGETS) refuse(key + "=reserved-name", "reserved-name");
+    if (logic.RESERVED_DIRECTORIES.includes(name)) refuse(key + "=reserved-name", "reserved-name");
     const dir = path.join(configDir, "themes", name);
     let stat;
     try {
@@ -1602,6 +1735,10 @@ main(() => {
     case "packages":
         if (args.length > 1) usage("arguments=" + command);
         checkPackages(args[0]);
+        break;
+    case "catalog-check":
+        if (args.length > 1) usage("arguments=" + command);
+        checkCatalog(args[0]);
         break;
     case "list":
         if (args.length !== 3 || !FORMATS.includes(args[0])) usage("arguments=" + command);

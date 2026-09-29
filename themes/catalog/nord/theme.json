@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "nord",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#2e3440",
+      "foreground": "#d8dee9",
+      "accent": "#81a1c1",
+      "success": "#a3be8c",
+      "warning": "#ebcb8b",
+      "danger": "#bf616a",
+      "info": "#81a1c1"
+    }
+  }
+}

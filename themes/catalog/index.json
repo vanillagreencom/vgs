@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "name": "nord",
+      "mode": "dark",
+      "thumbnail": null,
+      "palette": {
+        "background": "#2e3440",
+        "foreground": "#d8dee9",
+        "accent": "#81a1c1",
+        "success": "#a3be8c",
+        "warning": "#ebcb8b",
+        "danger": "#bf616a",
+        "info": "#81a1c1"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-nord-r2.tar.gz",
+        "size": 11511835,
+        "sha256": "8ccd005c0b5c428c3d78e7ad632e49a0f407b2618c2997970869d6201d11eae2"
+      }
+    }
+  ]
+}

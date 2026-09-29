@@ -289,6 +289,79 @@ const BAD_TABLES = [
     [{ motion: { scale: { type: "length", value: 1 } } }, "motion.scale must be a number token"]
 ];
 
+// The catalog index. CATALOG_ENTRY is valid; each refused row plants one
+// defect in a copy of it, by the key path it names. The palette names are
+// the table's palette group, written out here, not read from the table.
+const CATALOG_PALETTE = { background: "#000000", foreground: "#ffffff", accent: "#fff", success: "#00ff00", warning: "#ffff00", danger: "#ff0000", info: "#0000ff" };
+const CATALOG_IMAGERY = { repo: "https://github.com/vanillagreencom/vgs-themes", release: "themes-v1", archive: "vgs-theme-probe-r1.tar.gz", size: 1, sha256: "0123456789abcdef".repeat(4) };
+const CATALOG_ENTRY = { name: "probe", mode: "dark", thumbnail: "probe/thumbnail.jpg", palette: CATALOG_PALETTE, imagery: CATALOG_IMAGERY };
+const catalog = entries => JSON.stringify({ schemaVersion: 1, entries });
+// CATALOG_ENTRY with the value at dotted KEY set to VALUE, or removed when
+// VALUE is REMOVED.
+const REMOVED = Symbol("removed");
+function entryWith(key, value) {
+    const entry = JSON.parse(JSON.stringify(CATALOG_ENTRY));
+    const parts = key.split(".");
+    const parent = parts.slice(0, -1).reduce((node, part) => node[part], entry);
+    if (value === REMOVED) delete parent[parts[parts.length - 1]];
+    else parent[parts[parts.length - 1]] = value;
+    return entry;
+}
+// [label, index text, reason, token, detail or undefined]
+const CATALOG_REFUSED = [
+    ["not JSON", "{", "catalog-json", ""],
+    ["null document", "null", "catalog-document", "", "got=null"],
+    ["array document", "[]", "catalog-document", "", "got=[]"],
+    ["unknown document key", JSON.stringify({ schemaVersion: 1, entries: [], themes: [] }), "catalog-document", "", "key=themes"],
+    ["missing schema version", JSON.stringify({ entries: [] }), "catalog-document", "", "key=schemaVersion"],
+    ["schema version", JSON.stringify({ schemaVersion: 2, entries: [] }), "catalog-schema-version", ""],
+    ["entries not a list", JSON.stringify({ schemaVersion: 1, entries: { probe: CATALOG_ENTRY } }), "catalog-entries", ""],
+    ["entry not an object", catalog(["probe"]), "catalog-entry", "entries.0", 'got="probe"'],
+    ["unknown entry key", catalog([entryWith("pair", "")]), "catalog-entry", "entries.0", "key=pair"],
+    ["missing entry key", catalog([entryWith("imagery", REMOVED)]), "catalog-entry", "entries.0", "key=imagery"],
+    ["name with a space", catalog([entryWith("name", "my theme")]), "package-name", "entries.0.name"],
+    ["name leaving the directory", catalog([entryWith("name", "../probe")]), "package-name", "entries.0.name"],
+    ["reserved vgs", catalog([entryWith("name", "vgs")]), "reserved-name", "entries.0.name", "name=vgs"],
+    ["reserved targets", catalog([entryWith("name", "targets")]), "reserved-name", "entries.0.name", "name=targets"],
+    ["reserved catalog", catalog([entryWith("name", "catalog")]), "reserved-name", "entries.0.name", "name=catalog"],
+    ["duplicate name", catalog([CATALOG_ENTRY, entryWith("mode", "light")]), "duplicate-name", "entries.1.name", "name=probe"],
+    ["unknown mode", catalog([entryWith("mode", "dim")]), "catalog-mode", "entries.0.mode"],
+    ["thumbnail leaving the catalog", catalog([entryWith("thumbnail", "../probe.jpg")]), "catalog-thumbnail", "entries.0.thumbnail"],
+    ["absolute thumbnail", catalog([entryWith("thumbnail", "/probe.jpg")]), "catalog-thumbnail", "entries.0.thumbnail"],
+    ["empty thumbnail segment", catalog([entryWith("thumbnail", "probe//thumbnail.jpg")]), "catalog-thumbnail", "entries.0.thumbnail"],
+    ["thumbnail not a string", catalog([entryWith("thumbnail", 7)]), "catalog-thumbnail", "entries.0.thumbnail"],
+    ["palette not an object", catalog([entryWith("palette", null)]), "catalog-palette", "entries.0.palette", "got=null"],
+    ["missing palette colour", catalog([entryWith("palette.info", REMOVED)]), "catalog-palette", "entries.0.palette", "key=info"],
+    ["unknown palette colour", catalog([entryWith("palette.accent2", "#000000")]), "catalog-palette", "entries.0.palette", "key=accent2"],
+    ["palette colour syntax", catalog([entryWith("palette.accent", "red")]), "catalog-palette", "entries.0.palette.accent"],
+    ["palette colour type", catalog([entryWith("palette.accent", 7)]), "catalog-palette", "entries.0.palette.accent"],
+    ["imagery not an object", catalog([entryWith("imagery", "themes-v1")]), "catalog-imagery", "entries.0.imagery", 'got="themes-v1"'],
+    ["missing imagery key", catalog([entryWith("imagery.sha256", REMOVED)]), "catalog-imagery", "entries.0.imagery", "key=sha256"],
+    ["unknown imagery key", catalog([entryWith("imagery.rev", 1)]), "catalog-imagery", "entries.0.imagery", "key=rev"],
+    ["http repo", catalog([entryWith("imagery.repo", "http://github.com/vanillagreencom/vgs-themes")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["file repo", catalog([entryWith("imagery.repo", "file:///srv/vgs-themes")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["owner/name repo", catalog([entryWith("imagery.repo", "vanillagreencom/vgs-themes")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo without a path", catalog([entryWith("imagery.repo", "https://github.com")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo with credentials", catalog([entryWith("imagery.repo", "https://user@github.com/vanillagreencom/vgs-themes")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo with a port", catalog([entryWith("imagery.repo", "https://github.com:8443/vanillagreencom/vgs-themes")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo with a trailing slash", catalog([entryWith("imagery.repo", "https://github.com/vanillagreencom/vgs-themes/")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo with a query", catalog([entryWith("imagery.repo", "https://github.com/vanillagreencom/vgs-themes?x=1")]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo not a string", catalog([entryWith("imagery.repo", null)]), "catalog-repo", "entries.0.imagery.repo"],
+    ["repo a list that reads as a URL", catalog([entryWith("imagery.repo", ["https://github.com/vanillagreencom/vgs-themes"])]), "catalog-repo", "entries.0.imagery.repo"],
+    ["release leaving the path", catalog([entryWith("imagery.release", "../themes-v1")]), "catalog-imagery", "entries.0.imagery.release"],
+    ["archive with a separator", catalog([entryWith("imagery.archive", "a/vgs-theme-probe-r1.tar.gz")]), "catalog-imagery", "entries.0.imagery.archive"],
+    ["zero size", catalog([entryWith("imagery.size", 0)]), "catalog-size", "entries.0.imagery.size"],
+    ["negative size", catalog([entryWith("imagery.size", -1)]), "catalog-size", "entries.0.imagery.size"],
+    ["fractional size", catalog([entryWith("imagery.size", 1.5)]), "catalog-size", "entries.0.imagery.size"],
+    ["size as text", catalog([entryWith("imagery.size", "1")]), "catalog-size", "entries.0.imagery.size"],
+    ["upper-case sha256", catalog([entryWith("imagery.sha256", "0123456789ABCDEF".repeat(4))]), "catalog-sha256", "entries.0.imagery.sha256"],
+    ["short sha256", catalog([entryWith("imagery.sha256", "0".repeat(63))]), "catalog-sha256", "entries.0.imagery.sha256"],
+    ["sha256 not a string", catalog([entryWith("imagery.sha256", 1)]), "catalog-sha256", "entries.0.imagery.sha256"]
+];
+// A package a catalog entry names: theme.json with MODE and ACCENT over
+// CATALOG_PALETTE, under NAME.
+const catalogTheme = (name, mode, accent) => JSON.stringify({ schemaVersion: 1, name, tokens: { scheme: { mode }, palette: Object.assign({}, CATALOG_PALETTE, { accent }) } });
+
 function verify(judge) {
     assert.equal(judge.tableError(TOKENS), "");
     for (const [table, start] of BAD_TABLES)
@@ -374,6 +447,66 @@ function verify(judge) {
         assert.equal(result.token, token, JSON.stringify(files));
     }
 
+    for (const name of ["targets", "catalog"]) {
+        const result = judge.acceptPackage(TOKENS, { directoryName: name, themeJson: JSON.stringify({ schemaVersion: 1, name, tokens: {} }), shipped: true });
+        assert.equal(result.ok, false, name);
+        assert.equal(result.reason, "reserved-name", name);
+        assert.equal(result.detail, "name=" + name, name);
+    }
+
+    const index = judge.acceptCatalogIndex(TOKENS, catalog([CATALOG_ENTRY, entryWith("name", "bare")].map((entry, i) => i === 0 ? entry : Object.assign(entry, { mode: "light", thumbnail: null, imagery: null }))));
+    assert.equal(index.ok, true, index.ok ? "" : judge.refusalLine(index));
+    // The judge runs in its own context, so its objects compare as JSON.
+    const plain = value => JSON.parse(JSON.stringify(value));
+    assert.deepEqual(plain(index.entries), [
+        { name: "probe", mode: "dark", thumbnail: "probe/thumbnail.jpg", palette: { background: "#000000ff", foreground: "#ffffffff", accent: "#ffffffff", success: "#00ff00ff", warning: "#ffff00ff", danger: "#ff0000ff", info: "#0000ffff" }, imagery: CATALOG_IMAGERY },
+        { name: "bare", mode: "light", thumbnail: null, palette: { background: "#000000ff", foreground: "#ffffffff", accent: "#ffffffff", success: "#00ff00ff", warning: "#ffff00ff", danger: "#ff0000ff", info: "#0000ffff" }, imagery: null }
+    ]);
+    assert.deepEqual(plain(judge.acceptCatalogIndex(TOKENS, catalog([]))), { ok: true, entries: [] });
+    for (const [label, text, reason, token, detail] of CATALOG_REFUSED) {
+        let result;
+        assert.doesNotThrow(() => { result = judge.acceptCatalogIndex(TOKENS, text); }, label);
+        assert.equal(result.ok, false, label);
+        assert.equal(result.reason, reason, label);
+        assert.equal(result.token, token, label);
+        if (detail !== undefined) assert.equal(result.detail, detail, label);
+    }
+
+    // A catalogued package is judged as the installed package it becomes,
+    // and the index states its own mode and palette.
+    const probe = index.entries[0];
+    const accepted = judge.acceptCatalogEntry(TOKENS, probe, { themeJson: catalogTheme("probe", "dark", "#ffffff") });
+    assert.equal(accepted.ok, true, accepted.ok ? "" : judge.refusalLine(accepted));
+    assert.equal(accepted.name, "probe");
+    const entryRefusals = [
+        ["name mismatch", probe, { themeJson: catalogTheme("other", "dark", "#ffffff") }, "name-mismatch", ""],
+        ["mode mismatch", probe, { themeJson: catalogTheme("probe", "light", "#ffffff") }, "catalog-mode-mismatch", "scheme.mode"],
+        ["palette mismatch", probe, { themeJson: catalogTheme("probe", "dark", "#fffffe") }, "catalog-palette-mismatch", "palette.accent"],
+        ["bad terminal", probe, { themeJson: catalogTheme("probe", "dark", "#ffffff"), terminalJson: JSON.stringify({ schemaVersion: 1, slots: Object.assign({}, TERMINAL_SLOTS, { color3: "red" }) }) }, "terminal-colour", "terminal.color3"],
+        ["installed vgs", Object.assign({}, probe, { name: "vgs" }), { themeJson: catalogTheme("vgs", "dark", "#ffffff") }, "reserved-name", ""],
+        ["files not an object", probe, null, "package", ""]
+    ];
+    for (const [label, entry, files, reason, token] of entryRefusals) {
+        const result = judge.acceptCatalogEntry(TOKENS, entry, files);
+        assert.equal(result.ok, false, label);
+        assert.equal(result.reason, reason, label);
+        assert.equal(result.token, token, label);
+    }
+
+    // The shipped catalog: its index and every package it names pass.
+    const catalogDir = path.join(repo, "themes", "catalog");
+    const shipped = judge.acceptCatalogIndex(TOKENS, fs.readFileSync(path.join(catalogDir, "index.json"), "utf8"));
+    assert.equal(shipped.ok, true, shipped.ok ? "" : judge.refusalLine(shipped));
+    assert.ok(shipped.entries.some(entry => entry.name === "nord"), "the shipped catalog lists nord");
+    for (const entry of shipped.entries) {
+        const terminal = path.join(catalogDir, entry.name, "terminal.json");
+        const result = judge.acceptCatalogEntry(TOKENS, entry, {
+            themeJson: fs.readFileSync(path.join(catalogDir, entry.name, "theme.json"), "utf8"),
+            terminalJson: fs.existsSync(terminal) ? fs.readFileSync(terminal, "utf8") : undefined
+        });
+        assert.equal(result.ok, true, `${entry.name}: ${result.ok ? "" : judge.refusalLine(result)}`);
+    }
+
     for (const name of ["vgs", "tokyo-night", "Nord2", "a.b_c"])
         assert.equal(judge.isPackageName(name), true, name);
     for (const name of ["", ".", "..", "../x", "a/b", "a b", "-x", ".x", "x\n", 7, undefined])
@@ -440,9 +573,43 @@ const CONTROLS = [
     ["package name", "if (!isPackageName(files.directoryName))", "if (false)"],
     ["package name pattern", "PACKAGE_NAME_PATTERN.test(name)", "true"],
     ["package reserved name", "if (files.directoryName === DEFAULT_NAME && files.shipped !== true)", "if (false)"],
+    ["package reserved directory", "if (RESERVED_DIRECTORIES.indexOf(files.directoryName) !== -1)", "if (false)"],
+    ["catalog document", "if (!isPlainObject(document))\n        return refusal(\"catalog-document\"", "if (false)\n        return refusal(\"catalog-document\""],
+    ["catalog document keys", "if (defect !== \"\")\n        return refusal(\"catalog-document\"", "if (false)\n        return refusal(\"catalog-document\""],
+    ["catalog unknown key", "if (keys.indexOf(own[i]) === -1)", "if (false)"],
+    ["catalog missing key", "if (!hasOwn(value, keys[i]))", "if (false)"],
+    ["catalog schema version", "if (document.schemaVersion !== CATALOG_SCHEMA_VERSION)", "if (false)"],
+    ["catalog entries list", "if (!Array.isArray(document.entries))", "if (false)"],
+    ["catalog entry object", "if (!isPlainObject(entry))", "if (false)"],
+    ["catalog entry keys", "if (defect !== \"\")\n        return refusal(\"catalog-entry\"", "if (false)\n        return refusal(\"catalog-entry\""],
+    ["catalog name", "if (!isPackageName(entry.name))", "if (false)"],
+    ["catalog reserved vgs", "entry.name === DEFAULT_NAME || ", ""],
+    ["catalog reserved directory", " || RESERVED_DIRECTORIES.indexOf(entry.name) !== -1", ""],
+    ["catalog duplicate name", "if (hasOwn(seen, judged.entry.name))", "if (false)"],
+    ["catalog mode", "if (nodeAt(tokens, SCHEME_MODE).options.indexOf(entry.mode) === -1)", "if (false)"],
+    ["catalog thumbnail", "if (entry.thumbnail !== null && !isCatalogPath(entry.thumbnail))", "if (false)"],
+    ["catalog thumbnail segments", "text.split(\"/\").every(isPackageName)", "true"],
+    ["catalog palette object", "if (!isPlainObject(entry.palette))", "if (false)"],
+    ["catalog palette keys", "if (defect !== \"\")\n        return refusal(\"catalog-palette\"", "if (false)\n        return refusal(\"catalog-palette\""],
+    ["catalog palette colour", "if (colour === null)\n            return refusal(\"catalog-palette\"", "if (false)\n            return refusal(\"catalog-palette\""],
+    ["catalog palette resolved form", "palette[names[j]] = formatColor(colour);", "palette[names[j]] = entry.palette[names[j]];"],
+    ["catalog imagery object", "if (!isPlainObject(imagery))", "if (false)"],
+    ["catalog imagery keys", "if (defect !== \"\")\n            return refusal(\"catalog-imagery\"", "if (false)\n            return refusal(\"catalog-imagery\""],
+    ["catalog repo type", "if (typeof imagery.repo !== \"string\" || ", "if ("],
+    ["catalog repo pattern", "!CATALOG_REPO_PATTERN.test(imagery.repo)", "false"],
+    ["catalog release", "if (!isPackageName(imagery.release))", "if (false)"],
+    ["catalog archive", "if (!isPackageName(imagery.archive))", "if (false)"],
+    ["catalog size integer", "!Number.isSafeInteger(imagery.size) || ", ""],
+    ["catalog size positive", " || imagery.size <= 0", ""],
+    ["catalog sha256", "if (typeof imagery.sha256 !== \"string\" || !SHA256_PATTERN.test(imagery.sha256))", "if (false)"],
+    ["catalog entry files", "if (!isPlainObject(files))\n        return refusal(\"package\", \"\", \"got=\" + JSON.stringify(files));\n    var accepted", "if (false)\n        return refusal(\"package\", \"\", \"got=\" + JSON.stringify(files));\n    var accepted"],
+    ["catalog entry installed", "terminalJson: files.terminalJson, shipped: false });", "terminalJson: files.terminalJson, shipped: true });"],
+    ["catalog entry package verdict", "if (!accepted.ok)\n        return accepted;", "if (false)\n        return accepted;"],
+    ["catalog mode mismatch", "if (accepted.values.scheme.mode !== entry.mode)", "if (false)"],
+    ["catalog palette mismatch", "if (accepted.values.palette[names[i]] !== entry.palette[names[i]])", "if (false)"],
     ["package name mismatch", "if (shell.name !== files.directoryName)", "if (false)"],
     ["terminal slot name", "if (!hasOwn(expected, keys[i]))", "if (false)"],
-    ["terminal colour syntax", "if (colour === null)", "if (false)"],
+    ["terminal colour syntax", "if (colour === null)\n            return refusal(\"terminal-colour\"", "if (false)\n            return refusal(\"terminal-colour\""],
     ["appearance table", "if (defect !== \"\")\n        return refusal(\"appearance-table\"", "if (false)\n        return refusal(\"appearance-table\""],
     ["appearance palette", 'if (!isLeaf(accent) || accent.type !== "color" || Object.keys(palette).length !== 1)', "if (!isLeaf(accent))"],
     ["appearance light tree", "if (!isPlainObject(light))", "if (false)"],

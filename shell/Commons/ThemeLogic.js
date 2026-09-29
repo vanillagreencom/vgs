@@ -571,6 +571,11 @@ function isPackageName(name) {
     return typeof name === "string" && PACKAGE_NAME_PATTERN.test(name);
 }
 
+// The directories of a themes directory that hold no package: the targets
+// and the catalog. A walk of a themes directory skips them, so no package
+// of any source takes either name.
+var RESERVED_DIRECTORIES = ["targets", "catalog"];
+
 var TERMINAL_SCHEMA_VERSION = 1;
 var TERMINAL_SLOT_PREFIX = "color";
 var TERMINAL_SLOT_COUNT = 16;
@@ -635,6 +640,8 @@ function acceptPackage(tokens, files) {
         return refusal("package", "", "got=" + JSON.stringify(files));
     if (!isPackageName(files.directoryName))
         return refusal("package-name", "", "got=" + JSON.stringify(files.directoryName));
+    if (RESERVED_DIRECTORIES.indexOf(files.directoryName) !== -1)
+        return refusal("reserved-name", "", "name=" + files.directoryName);
     if (files.directoryName === DEFAULT_NAME && files.shipped !== true)
         return refusal("reserved-name", "", "name=" + DEFAULT_NAME);
     if (typeof files.themeJson !== "string")
@@ -648,6 +655,150 @@ function acceptPackage(tokens, files) {
     if (!terminal.ok)
         return terminal;
     return { ok: true, name: shell.name, values: shell.values, terminal: terminal.slots };
+}
+
+// --- the theme catalog
+
+// themes/catalog/index.json: `{ schemaVersion, entries }`, one entry per
+// catalogued package, each with exactly these keys. `imagery` is null for a
+// theme without wallpapers, or the pin of its release archive.
+var CATALOG_SCHEMA_VERSION = 1;
+var CATALOG_KEYS = ["schemaVersion", "entries"];
+var CATALOG_ENTRY_KEYS = ["name", "mode", "thumbnail", "palette", "imagery"];
+var CATALOG_IMAGERY_KEYS = ["repo", "release", "archive", "size", "sha256"];
+
+// The repository an archive downloads from: an https URL of a host and one
+// or more path segments, with no credentials, port, query, fragment or
+// trailing slash, so the release and archive segments join it into one URL.
+var CATALOG_REPO_PATTERN = /^https:\/\/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(\/[A-Za-z0-9][A-Za-z0-9._-]*)+$/;
+var SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+// The first key of VALUE that KEYS does not name, or the first of KEYS that
+// VALUE lacks, as `key=<name>`; "" when VALUE holds exactly KEYS.
+function keyDefect(value, keys) {
+    var own = Object.keys(value);
+    for (var i = 0; i < own.length; i++)
+        if (keys.indexOf(own[i]) === -1)
+            return "key=" + own[i];
+    for (i = 0; i < keys.length; i++)
+        if (!hasOwn(value, keys[i]))
+            return "key=" + keys[i];
+    return "";
+}
+
+// A thumbnail path, relative to the catalog directory: `/`-separated
+// segments, each a package name, so no segment is empty, `.` or `..` and
+// the path cannot leave the catalog.
+function isCatalogPath(text) {
+    return typeof text === "string" && text.split("/").every(isPackageName);
+}
+
+// Judge one index entry at position I; answer the entry with its palette
+// colours in resolved form, or one refusal whose token is `entries.<i>`
+// and the key it names.
+function catalogEntry(tokens, entry, i) {
+    var at = "entries." + i;
+    if (!isPlainObject(entry))
+        return refusal("catalog-entry", at, "got=" + JSON.stringify(entry));
+    var defect = keyDefect(entry, CATALOG_ENTRY_KEYS);
+    if (defect !== "")
+        return refusal("catalog-entry", at, defect);
+    if (!isPackageName(entry.name))
+        return refusal("package-name", at + ".name", "got=" + JSON.stringify(entry.name));
+    if (entry.name === DEFAULT_NAME || RESERVED_DIRECTORIES.indexOf(entry.name) !== -1)
+        return refusal("reserved-name", at + ".name", "name=" + entry.name);
+    if (nodeAt(tokens, SCHEME_MODE).options.indexOf(entry.mode) === -1)
+        return refusal("catalog-mode", at + ".mode", "got=" + JSON.stringify(entry.mode));
+    if (entry.thumbnail !== null && !isCatalogPath(entry.thumbnail))
+        return refusal("catalog-thumbnail", at + ".thumbnail", "got=" + JSON.stringify(entry.thumbnail));
+    if (!isPlainObject(entry.palette))
+        return refusal("catalog-palette", at + ".palette", "got=" + JSON.stringify(entry.palette));
+    var names = Object.keys(nodeAt(tokens, "palette"));
+    defect = keyDefect(entry.palette, names);
+    if (defect !== "")
+        return refusal("catalog-palette", at + ".palette", defect);
+    var palette = {};
+    for (var j = 0; j < names.length; j++) {
+        var colour = typeof entry.palette[names[j]] === "string" ? parseColor(entry.palette[names[j]]) : null;
+        if (colour === null)
+            return refusal("catalog-palette", at + ".palette." + names[j], "value=" + JSON.stringify(entry.palette[names[j]]));
+        palette[names[j]] = formatColor(colour);
+    }
+    var imagery = entry.imagery;
+    if (imagery !== null) {
+        if (!isPlainObject(imagery))
+            return refusal("catalog-imagery", at + ".imagery", "got=" + JSON.stringify(imagery));
+        defect = keyDefect(imagery, CATALOG_IMAGERY_KEYS);
+        if (defect !== "")
+            return refusal("catalog-imagery", at + ".imagery", defect);
+        if (typeof imagery.repo !== "string" || !CATALOG_REPO_PATTERN.test(imagery.repo))
+            return refusal("catalog-repo", at + ".imagery.repo", "got=" + JSON.stringify(imagery.repo));
+        if (!isPackageName(imagery.release))
+            return refusal("catalog-imagery", at + ".imagery.release", "got=" + JSON.stringify(imagery.release));
+        if (!isPackageName(imagery.archive))
+            return refusal("catalog-imagery", at + ".imagery.archive", "got=" + JSON.stringify(imagery.archive));
+        if (!Number.isSafeInteger(imagery.size) || imagery.size <= 0)
+            return refusal("catalog-size", at + ".imagery.size", "got=" + JSON.stringify(imagery.size));
+        if (typeof imagery.sha256 !== "string" || !SHA256_PATTERN.test(imagery.sha256))
+            return refusal("catalog-sha256", at + ".imagery.sha256", "got=" + JSON.stringify(imagery.sha256));
+        imagery = { repo: imagery.repo, release: imagery.release, archive: imagery.archive, size: imagery.size, sha256: imagery.sha256 };
+    }
+    return { ok: true, entry: { name: entry.name, mode: entry.mode, thumbnail: entry.thumbnail, palette: palette, imagery: imagery } };
+}
+
+// Judge the text of themes/catalog/index.json. The package each entry names
+// is judged apart, by acceptCatalogEntry, because its files are the
+// caller's to read. Answers { ok: true, entries } in index order, each
+// entry's palette in resolved colour form, or one refusal whose reason
+// starts `catalog-` or is a name rule's.
+function acceptCatalogIndex(tokens, text) {
+    var document;
+    try {
+        document = JSON.parse(text);
+    } catch (e) {
+        return refusal("catalog-json", "", e.message);
+    }
+    if (!isPlainObject(document))
+        return refusal("catalog-document", "", "got=" + JSON.stringify(document));
+    var defect = keyDefect(document, CATALOG_KEYS);
+    if (defect !== "")
+        return refusal("catalog-document", "", defect);
+    if (document.schemaVersion !== CATALOG_SCHEMA_VERSION)
+        return refusal("catalog-schema-version", "", "want=" + CATALOG_SCHEMA_VERSION + " got=" + JSON.stringify(document.schemaVersion));
+    if (!Array.isArray(document.entries))
+        return refusal("catalog-entries", "", "got=" + JSON.stringify(document.entries));
+    var entries = [];
+    var seen = {};
+    for (var i = 0; i < document.entries.length; i++) {
+        var judged = catalogEntry(tokens, document.entries[i], i);
+        if (!judged.ok)
+            return judged;
+        if (hasOwn(seen, judged.entry.name))
+            return refusal("duplicate-name", "entries." + i + ".name", "name=" + judged.entry.name);
+        seen[judged.entry.name] = true;
+        entries.push(judged.entry);
+    }
+    return { ok: true, entries: entries };
+}
+
+// Judge one catalogued package against ENTRY, an entry acceptCatalogIndex
+// answered: acceptPackage judges it as the installed package it becomes,
+// under the entry's name, and the index's mode and palette must be the
+// package's own resolved `scheme.mode` and palette group. `files` carries
+// the `theme.json` text and the optional `terminal.json` text.
+function acceptCatalogEntry(tokens, entry, files) {
+    if (!isPlainObject(files))
+        return refusal("package", "", "got=" + JSON.stringify(files));
+    var accepted = acceptPackage(tokens, { directoryName: entry.name, themeJson: files.themeJson, terminalJson: files.terminalJson, shipped: false });
+    if (!accepted.ok)
+        return accepted;
+    if (accepted.values.scheme.mode !== entry.mode)
+        return refusal("catalog-mode-mismatch", SCHEME_MODE, "index=" + entry.mode + " package=" + accepted.values.scheme.mode);
+    var names = Object.keys(entry.palette);
+    for (var i = 0; i < names.length; i++)
+        if (accepted.values.palette[names[i]] !== entry.palette[names[i]])
+            return refusal("catalog-palette-mismatch", "palette." + names[i], "index=" + entry.palette[names[i]] + " package=" + accepted.values.palette[names[i]]);
+    return accepted;
 }
 
 // The table's defaults resolved, as accept answers a document. The table
