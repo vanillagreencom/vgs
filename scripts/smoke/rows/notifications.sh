@@ -438,7 +438,7 @@ path = sys.argv[1]
 text = open(path).read()
 needle = "return Logic.slackEmojiFor(slackPhotos.emoji,"
 assert text.count(needle) == 1, "the lookup to plant a run in occurs once"
-open(path, "w").write(text.replace(needle, "slackPhotos.load(); " + needle))
+open(path, "w").write(text.replace(needle, "Qt.callLater(slackPhotos.load); " + needle))
 PY
 expect "a rescan builds the run-per-card copy" ok ipc shell rescanPlugins
 expect_poll "the run-per-card copy is built" True record_exists vgs.notifications

@@ -154,6 +154,7 @@ f share/vgs/shell/plugins/vgs.devtools/tui/remove.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/update.sh
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
+f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml
 f share/vgs/shell/plugins/vgs.launcher/Appearance.js
 f share/vgs/shell/plugins/vgs.launcher/Caret.qml

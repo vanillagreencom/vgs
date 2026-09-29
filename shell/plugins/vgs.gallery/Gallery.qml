@@ -63,6 +63,17 @@ Item {
                     Label { required property string modelData; role: modelData; text: modelData }
                 }
             }
+            // Text with a local image inline, as a chat's custom emoji draws,
+            // cut at a whole word or image on its second line.
+            ImageText {
+                width: parent.width
+                maximumLineCount: 2
+                segments: [
+                    { markup: "An image sits in the line at the text's height " },
+                    { image: Qt.resolvedUrl("sample-emoji.png"), alt: ":sample:" },
+                    { markup: " and a text too long for its lines ends at a whole word or image with one ellipsis, however many more words follow it here." }
+                ]
+            }
 
             SectionHeader { text: "Buttons"; description: "Five variants, three sizes, checked and disabled" }
             Flow {

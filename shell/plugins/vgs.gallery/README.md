@@ -10,7 +10,7 @@
 
 - A Hyprland window titled Gallery, of class `org.vgs.shell`. It opens floating and centred at the theme's `size.panel.lg` by `size.panel.maxHeight`, and takes the keyboard. Hyprland draws its border and moves, resizes, tiles and closes it like any other window: click another window to type there, and use your own keys to move it or tile it. To tile the shell's windows by default, add `hl.window_rule({ name = "vgs:window", enabled = false })` to `hyprland.lua` after the line that loads the VGS layer.
 - Escape closes it while it has the keyboard, unless a control in it takes the key first, as an open menu or select does. Your close key closes it too.
-- One section per group of components: the surface levels, the text roles, buttons, choices, inputs, feedback, dialogs, cards, the carousel, titles and scrolling, and lists. Every example follows the applied theme, so applying another theme restyles the whole window at once.
+- One section per group of components: the surface levels, the text roles with a text holding an inline image, buttons, choices, inputs, feedback, dialogs, cards, the carousel, titles and scrolling, and lists. Every example follows the applied theme, so applying another theme restyles the whole window at once.
 - Show a toast raises a real toast through the core. It is built only while it is open, so a closed gallery costs nothing.
 
 ## Validation
