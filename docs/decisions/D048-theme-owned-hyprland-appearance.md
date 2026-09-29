@@ -23,10 +23,11 @@ The core does not name `vgs.themes`. Among enabled plugin sections that declare 
 
 - A manifest declaration keeps the core's plugin boundary intact. The boundary check rejects core literals that name a `vgs.*` plugin id.
 - A core `shell.json` key would need bespoke Settings UI. Manifest schema already draws plugin settings, per [D032](D032-settings-plugin-and-manifest-settings-convention.md).
-- Hyprland window radius is its own token, `hyprland.window.radius`, with default `{radius.md}`. Panels and windows match by default, and a theme can separate them. The token is bounded from 0 to 32 because Hyprland accepts large rounding values but desktop windows above that range stop reading as the shell's medium panel radius.
+- Hyprland window radius is its own token, `hyprland.window.radius`, with default `{radius.md}`. Panels and windows match by default, and a theme can separate them. The token is bounded from 0 to 32 because Hyprland accepts large rounding values but desktop windows above that range stop reading as the shell's medium panel radius. A theme that sets `radius.md` above 32 is refused on `hyprland.window.radius` unless it also sets `hyprland.window.radius` within 0 to 32. The refusal is loud because clamping would silently make shell panels and Hyprland windows disagree while the theme file appears accepted.
 - Grouped-window tabs use the window radius times the highest Hyprland monitor scale, bounded 0 to 20. Hyprland scales window corners per monitor but not group bar tabs, so one generated tab value must fit the highest-scale monitor.
 - Motion presets keep raw bezier text out of theme files. The theme chooses a judged enum, and the core formats numbers and names every curve with a `vgs` prefix so a user curve cannot collide with it.
 - `motion.scale` multiplies Hyprland speeds. A scale of 0 acts as `none`.
+- A disabled group writes no `hl.*` call. Hyprland resets options to defaults before each Lua reload, then reruns the user's file, so an omitted group returns to the user's setting after the VGS include line, or Hyprland's default when the user sets none.
 
 ## Motion presets
 

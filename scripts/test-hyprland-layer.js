@@ -202,6 +202,7 @@ function verify(logic, layer, shellText) {
     assert.ok(!switchedLines.some(line => line.indexOf("border_size = 4") !== -1), "a disabled border group writes no border size");
     assert.ok(!switchedLines.some(line => line.indexOf("rounding = 8") !== -1), "a disabled radius group writes no radius");
     assert.ok(switchedLines.includes("-- Theme appearance: borders left to the user's config; setWindowBorders is off."), "a disabled border group names its switch");
+    assert.ok(!switchedLines.some(line => line.indexOf("hl.config({") !== -1 && switchedLines.indexOf(line) < switchedLines.indexOf("-- Theme appearance: window animations.")), "disabled border and radius groups write no config call");
     assert.ok(switchedLines.includes("hl.curve(\"vgsSnappy\", { type = \"bezier\", points = { { 0.15, 0 }, { 0.1, 1 } } })"), "motion writes the preset curves");
     assert.ok(switchedLines.includes("hl.animation({ leaf = \"windows\", enabled = true, speed = 3.6, bezier = \"vgsSnappy\" })"), "motion scales speeds by motion.scale");
     const switchOn = layer.render([section("vgs.themes", [], [], "1.0.0", { borders: { setting: "setWindowBorders", enabled: true }, radius: { setting: "setCornerRadius", enabled: false }, motion: { setting: "setWindowAnimations", enabled: false } })], theme, "vgs", 1);

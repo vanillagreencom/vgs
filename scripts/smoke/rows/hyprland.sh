@@ -34,7 +34,31 @@ config_errors() { hypr -j configerrors | python3 -c 'import json,sys; print(json
 hypr_gradient() { hypr -j getoption "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gradient"])'; }
 gradient_of() { python3 -c 'import sys; h = sys.argv[1][1:]; print(format(int(h[6:8] + h[:6], 16), "x") + " 0deg")' "$1"; }
 hypr_option() { hypr -j getoption "$1" | python3 -c 'import json,sys; v=json.load(sys.stdin); print(v.get("int", v.get("float", v.get("str", v.get("set", v)))))'; }
+animation_leaf() { hypr -j animations | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+rows = data[0] if data and isinstance(data[0], list) else data
+row = next((r for r in rows if r.get("name") == sys.argv[1]), None)
+if row is None:
+    print("absent")
+else:
+    print(json.dumps({"bezier": row.get("bezier", ""), "enabled": row.get("enabled"), "overridden": row.get("overridden"), "speed": round(float(row.get("speed", 0)), 2), "style": row.get("style", "")}, sort_keys=True))
+' "$1"; }
+animation_curve() { hypr -j animations | python3 -c '
+import json, sys
+def rows(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from rows(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from rows(value)
+data = json.load(sys.stdin)
+print("yes" if any(r.get("name") == sys.argv[1] for r in rows(data)) else "no")
+' "$1"; }
 layer_has() { if grep -qxF -- "$1" "$hypr_layer"; then echo yes; else echo no; fi; }
+layer_matches() { if grep -Eq -- "$1" "$hypr_layer"; then echo yes; else echo no; fi; }
 section_of() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print("-- " + m["id"] + " " + m["version"] + ": binds and layer rules from its manifest")' "$repo/shell/plugins/$1/manifest.json"; }
 # How many plugin sections the layer holds. grep -c exits 1 on a count of
 # 0, which is an answer, and 2 on a file it cannot read, which is not.
@@ -102,6 +126,7 @@ print("centred" if abs(at_x - area_x) <= 1 and abs(at_y - area_y) <= 1 else "cen
 }
 # listPlugins' Hyprland problems, sorted.
 hypr_problems() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps(sorted(e["error"] for e in json.load(sys.stdin)["errors"] if e["error"].startswith("hyprland: "))))'; }
+theme_switches() { ipc shell listShellConfig | python3 -c 'import json,sys; row=next((r for r in json.load(sys.stdin).get("plugins", []) if r.get("id") == "vgs.themes"), {}); print(json.dumps({k: row.get(k) for k in ("setWindowBorders", "setCornerRadius", "setWindowAnimations")}, sort_keys=True))'; }
 inbox_mode() { ipc smoke readInstance service vgs.notifications panelMode; }
 press_super() { type_keys -M logo -k "$1" -m logo; }
 # Give plugins rows the `keys` JSON maps: { id: keys }, replaced whole.
@@ -157,8 +182,10 @@ expect "the nested configuration, the floating TUIs' window rules included, hold
 border_before="$(hypr_option general:border_size)" || fail "the nested border_size is readable"
 radius_before="$(hypr_option decoration:rounding)" || fail "the nested rounding is readable"
 cp -- "$user_config" "$sandbox/shell-before-appearance.json"
-mkdir -p "$repo/themes/hyprland-probe"
-cat >"$repo/themes/hyprland-probe/theme.json" <<'JSON'
+expect "enabling the themes plugin for the appearance switch rows is allowed" ok ipc shell setPluginEnabled vgs.themes true
+probe_theme="$home/.config/vgs/themes/hyprland-probe"
+mkdir -p "$probe_theme"
+cat >"$probe_theme/theme.json" <<'JSON'
 {
   "schemaVersion": 1,
   "name": "hyprland-probe",
@@ -171,25 +198,50 @@ cat >"$repo/themes/hyprland-probe/theme.json" <<'JSON'
   }
 }
 JSON
+set_theme_switches false false false
+expect "the shell reloads the probe theme switches off for the baseline" ok ipc shell reloadConfig
+expect_poll "the effective config has the probe theme switches off for the baseline" '{"setCornerRadius": false, "setWindowAnimations": false, "setWindowBorders": false}' theme_switches
+expect_poll "with switches off the layer writes no border size" no layer_matches '^[[:space:]]*border_size ='
+expect_poll "with switches off the layer writes no window rounding" no layer_matches '^[[:space:]]*rounding ='
+border_before="$(hypr_option general:border_size)" || fail "the nested border_size baseline is readable"
+radius_before="$(hypr_option decoration:rounding)" || fail "the nested rounding baseline is readable"
+expect "the switch-off border baseline is Hyprland's default" 1 printf '%s\n' "$border_before"
+expect "the switch-off radius baseline is Hyprland's default" 0 printf '%s\n' "$radius_before"
+motion_before="$(animation_leaf windows)" || fail "the nested windows animation baseline is readable"
+expect "the switch-off motion baseline has no VGS curve" no animation_curve vgsSnappy
+expect "the switch-off appearance baseline holds no configuration error" '[]' config_errors
 set_theme_switches true true false
+expect "the shell reloads the probe border and radius switches on" ok ipc shell reloadConfig
+expect_poll "the effective config has the probe border and radius switches on" '{"setCornerRadius": true, "setWindowAnimations": false, "setWindowBorders": true}' theme_switches
 expect "the Hyprland probe package applies" "ok theme=hyprland-probe" applied hyprland-probe
 expect_poll "the theme border size reaches Hyprland" 4 hypr_option general:border_size
 expect_poll "the theme corner radius reaches Hyprland" 8 hypr_option decoration:rounding
 expect "the theme border and radius hold no configuration error" '[]' config_errors
-cat >>"$hypr_lua" <<LUA
-hl.config({ general = { border_size = $border_before }, decoration = { rounding = $radius_before } })
-LUA
-expect "the nested instance reloads with harness border and radius overrides" ok hypr reload config-only
 set_theme_switches false false false
+expect "the shell reloads the probe theme switches off" ok ipc shell reloadConfig
+expect_poll "the effective config has the probe theme switches off" '{"setCornerRadius": false, "setWindowAnimations": false, "setWindowBorders": false}' theme_switches
+# Control run on 2026-09-29: a source_tree copy of the shell whose
+# HyprlandLayer.js forced borders and radius enabled after these switches
+# failed the two restore rows below, reading 4 and 8 instead of 1 and 0.
+expect_poll "turning the border switch off removes the border size line" no layer_matches '^[[:space:]]*border_size ='
+expect_poll "turning the radius switch off removes the window rounding line" no layer_matches '^[[:space:]]*rounding ='
 expect_poll "turning the border switch off leaves Hyprland's own border size" "$border_before" hypr_option general:border_size
 expect_poll "turning the radius switch off leaves Hyprland's own rounding" "$radius_before" hypr_option decoration:rounding
 expect "the switched-off theme appearance holds no configuration error" '[]' config_errors
 set_theme_switches false false true
-expect_poll "turning the motion switch on enables Hyprland animations" True hypr_option animations:enabled
+expect "the shell reloads the probe motion switch on" ok ipc shell reloadConfig
+expect_poll "the effective config has the probe motion switch on" '{"setCornerRadius": false, "setWindowAnimations": true, "setWindowBorders": false}' theme_switches
+expect_poll "turning the motion switch on writes the VGS snappy curve" yes animation_curve vgsSnappy
+expect_poll "turning the motion switch on writes the windows preset" '{"bezier": "vgsSnappy", "enabled": true, "overridden": true, "speed": 1.8, "style": ""}' animation_leaf windows
 expect "the motion preset holds no configuration error" '[]' config_errors
+set_theme_switches false false false
+expect "the shell reloads the probe motion switch off" ok ipc shell reloadConfig
+expect_poll "turning the motion switch off removes the windows animation line" no layer_matches '^hl\.animation\(\{ leaf = "windows"'
+expect_poll "turning the motion switch off restores the windows animation leaf" "$motion_before" animation_leaf windows
 cp -- "$sandbox/shell-before-appearance.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
 expect "the shell reloads the restored theme settings" ok ipc shell reloadConfig
 expect "vgs applies after the Hyprland appearance probe" "ok theme=vgs" applied vgs
+rm -rf -- "$probe_theme"
 
 # The floating TUIs' window rules: a window of each class floats, at its
 # class's size, centred on the work area.

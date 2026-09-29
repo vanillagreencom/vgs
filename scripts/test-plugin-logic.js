@@ -5,6 +5,7 @@
 // row or control fails.
 "use strict";
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -617,8 +618,7 @@ const CONTROLS = [
     ["a requirement the scan missed is reported missing", "missing.indexOf(entry.command) === -1 ? \"present\" : \"missing\"", "\"present\""],
 ];
 
-fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
-const temp = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "plugin-logic-control-"));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });

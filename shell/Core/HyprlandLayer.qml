@@ -7,13 +7,15 @@ import "PluginLogic.js" as Logic
 import "HyprlandLayer.js" as Layer
 
 // The one writer of the Hyprland layer: HyprlandLayer.js renders the theme's
-// border colours, the floating TUIs' window rules and every enabled
-// plugin's `hyprland` manifest data, and this writes the text to
+// Hyprland appearance groups, the floating TUIs' window rules and every
+// enabled plugin's `hyprland` manifest data, and this writes the text to
 // `<stateDir>/hypr/vgs.lua`, only when its bytes change, then runs
-// `hyprctl reload config-only`. It renders again whenever
-// the plugin set, the configuration or the theme changes, which covers
-// enable, disable, rescan, a shell.json edit and a theme apply. When the
-// first read finds no file, the first write also runs `vgsh hypr wire`
+// `hyprctl reload config-only`. The radius group gets the highest monitor
+// scale here, so grouped-window tab rounding can match scaled window corners.
+// It renders again whenever the plugin set, the configuration, the monitors
+// or the theme changes, which covers enable, disable, rescan, a shell.json
+// edit and a theme apply. When the first read finds no file, the first write
+// also runs `vgsh hypr wire`
 // once, which keeps the loading line in hyprland.lua if that file exists;
 // the file then exists, so a later start never wires again after an
 // unwire. No plugin writes the file. shell.qml builds this only in the

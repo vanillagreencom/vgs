@@ -25,7 +25,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 ## Read next
 
 - `docs/architecture/overview.md`: before structural work.
-- `docs/architecture/plugins.md`: before writing a plugin or a host.
+- `docs/architecture/plugins.md` and `docs/architecture/plugin-manifest.md`: before writing a plugin or a host.
 - `docs/architecture/surfaces.md`: before choosing between an application window and an overlay, or touching the summon host.
 - `docs/architecture/manager.md`: before touching enablement, install, update, remove or the manager's panel.
 - `docs/architecture/configuration.md`: before touching the configuration files or their judge.
