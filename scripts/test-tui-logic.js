@@ -458,6 +458,23 @@ function suite(ctx, check) {
     check("tuiWaitOutcome: a running record is refused", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", { code: 0, status: 0 }, JSON.stringify(rec("acme.tui/hello", "2-1", "running", null, "03", null)) + "\n", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=record-mismatch"] });
     check("tuiWaitOutcome: a wait that never started is logged", ctx.tuiWaitOutcome("acme.tui/hello", "2-1", null, "", ""), { record: null, logs: ["tui: wait=acme.tui/hello run=2-1 reason=unstarted"] });
 
+    // tuiWaitRecordsKept: [name, listed, waited, the runs kept]. A1 and A2
+    // are two runs of one key, A1 started first; B1 is another key's.
+    const a1Running = rec("acme.tui/hello", "20-1", "running", null, "01", null);
+    const a1Ended = rec("acme.tui/hello", "20-1", "ended", 0, "01", "02");
+    const a2Ended = rec("acme.tui/hello", "21-1", "ended", 3, "03", "04");
+    const b1Ended = rec("acme.tui/other", "22-1", "ended", 1, "02", "05");
+    const keptRows = [
+        ["a stale running record keeps its run's wait record beside a later run's", [a1Running], [a1Ended, a2Ended], ["20-1", "21-1"]],
+        ["an older run the listing no longer holds is dropped", [], [a1Ended, a2Ended], ["21-1"]],
+        ["a run whose ended record is listed is dropped", [a1Running, a1Ended], [a1Ended], []],
+        ["the latest of each key is kept", [], [a2Ended, b1Ended], ["21-1", "22-1"]],
+        ["no wait records keep nothing", [a1Running], [], []]
+    ];
+    for (const [name, listed, waited, want] of keptRows)
+        check("tuiWaitRecordsKept: " + name, ctx.tuiWaitRecordsKept(listed, waited).map(r => r.run), want);
+    check("tuiWaitRecordsKept: the stale run stays ended beside a later run", ctx.tuiRuns([a1Running].concat(ctx.tuiWaitRecordsKept([a1Running], [a1Ended, a2Ended]))).keys["acme.tui/hello"].running, null);
+
     // tuiWindow: [name, windows, the result].
     const w = (address, appId, title) => ({ address: address, appId: appId, title: title });
     const windowRows = [
@@ -606,6 +623,9 @@ const CONTROLS = [
     ["a listed running run waits after restart", "if (running !== null)\n            add(key, running.run);", "if (false)\n            add(key, running.run);"],
     ["a wait prints exactly one record line", "if (lines.length !== 1)\n        return { record: null, logs: [prefix + \" reason=stdout-lines count=\" + lines.length] };", "if (false)\n        return { record: null, logs: [prefix + \" reason=stdout-lines count=\" + lines.length] };"],
     ["a wait record is this run and ended", "if (judged.record.key !== key || judged.record.run !== run || judged.record.state !== \"ended\")", "if (false)"],
+    ["a stale listed running record keeps its run's wait record", "return hasOwn(listedRunning, record.run) || latest[record.key] === record;", "return latest[record.key] === record;"],
+    ["a listed ended record drops the wait record", "if (hasOwn(listedEnded, record.run))\n            return false;", "if (false)\n            return false;"],
+    ["the latest wait record of a key is kept", "return hasOwn(listedRunning, record.run) || latest[record.key] === record;", "return hasOwn(listedRunning, record.run);"],
     ["a window matches the app-id", "        return w.appId === window.appId && ", "        return "],
     ["a window matches the title", "w.title === window.title && typeof w.address", "typeof w.address"],
     ["a window needs an address", " && typeof w.address === \"string\" && w.address !== \"\";", ";"],

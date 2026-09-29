@@ -265,6 +265,7 @@ mutations=(
   "a write asked from a result handler is lost|../Commons/WatchedFile.qml|Qt.callLater(() => view.setText(content));|view.setText(content);|tst_watched_file.qml"
   "an appearance never applies its light overrides|../Commons/Theme.qml|ThemeLogic.acceptAppearance(table, light, source.values)|ThemeLogic.acceptAppearance(table, light, Object.assign({}, source.values, { scheme: { mode: \"dark\" } }))|tst_appearance.qml"
   "a TUI wait result never reaches the records|../Core/TuiRecords.qml|if (outcome.record !== null) {|if (false) {|tst_tui_records.qml"
+  "a later run's wait record replaces an earlier run's of the key|../Core/TuiRecords.qml|waitRecords.filter(record => record.run !== outcome.record.run)|waitRecords.filter(record => record.key !== outcome.record.key)|tst_tui_records.qml"
 )
 
 copy="$tmp/ui"

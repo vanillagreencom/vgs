@@ -126,5 +126,26 @@ Item {
             compare(JSON.stringify(events), JSON.stringify([{ code: 9, reason: null }]));
             compare(records.runs.keys[key].ended.run, run);
         }
+
+        // The listing keeps the first run's running record through a second
+        // run of the key: the second run's wait record must not bring the
+        // first run back to running, nor start another wait for it.
+        function test_a_stale_listing_across_two_runs_keeps_the_first_ended() {
+            addDone();
+            listRunning();
+            model.setFiles([runningPath, endedPath], "drop");
+            finishWait(7);
+            const second = Object.assign(record("ended", 4), { run: "2-1", startedAt: "2026-09-29T07:00:02.000Z", endedAt: "2026-09-29T07:00:03.000Z" });
+            const secondEvents = [];
+            records.addWaiter("core", "2-1", result => secondEvents.push(result));
+            records.launched(key, "2-1");
+            const waits = waitProcesses();
+            compare(waits.length, 1);
+            waits[0].finish(0, 0, JSON.stringify(second) + "\n", "");
+            compare(JSON.stringify(secondEvents), JSON.stringify([{ code: 4, reason: null }]));
+            compare(records.runs.keys[key].running, null);
+            compare(records.runs.keys[key].ended.run, "2-1");
+            compare(waitProcesses().length, 0);
+        }
     }
 }

@@ -1568,6 +1568,34 @@ function tuiWaitOutcome(key, run, completion, stdout, stderr) {
     return { record: judged.record, logs: [] };
 }
 
+// The ended records from `vgsh-tui wait` still needed beside LISTED, the
+// records the listing holds, out of WAITED, the wait records held so far.
+// One is kept while the listing holds its run's running record and not its
+// ended one, so a listing that stays stale across later runs of the key
+// cannot show that run running again, and the latest of each key is kept
+// for the key's state. Every other is dropped: the kept set is bounded by
+// the listed running records plus one per key.
+function tuiWaitRecordsKept(listed, waited) {
+    var listedEnded = {};
+    var listedRunning = {};
+    listed.forEach(function (record) {
+        if (record.state === "ended")
+            listedEnded[record.run] = true;
+        else
+            listedRunning[record.run] = true;
+    });
+    var latest = {};
+    waited.forEach(function (record) {
+        if (!hasOwn(latest, record.key) || record.startedAt > latest[record.key].startedAt)
+            latest[record.key] = record;
+    });
+    return waited.filter(function (record) {
+        if (hasOwn(listedEnded, record.run))
+            return false;
+        return hasOwn(listedRunning, record.run) || latest[record.key] === record;
+    });
+}
+
 // The window of a run whose record carries WINDOW, { appId, title }, among
 // WINDOWS, each { address, appId, title } as the compositor reports it:
 // { state: "found", address } with a `0x` address for exactly one match,

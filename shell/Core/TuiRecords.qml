@@ -19,9 +19,10 @@ Scope {
     property string coreBin: ""
     // Each listed record file's path -> the record PluginLogic accepted.
     property var fileRecords: ({})
-    // Each key -> the last ended record accepted from `vgsh-tui wait`, so
-    // memory is bounded by the number of keys, not by runs.
-    property var waitRecords: ({})
+    // The ended records accepted from `vgsh-tui wait` that
+    // PluginLogic.tuiWaitRecordsKept still keeps beside the listing: bounded
+    // by the listed running records plus one per key.
+    property var waitRecords: []
     // Each listed record file's path -> the FileView that reads it once.
     property var readers: ({})
     // PluginLogic.tuiRuns of the file and wait records.
@@ -103,7 +104,9 @@ Scope {
     }
 
     function refresh() {
-        runs = Logic.tuiRuns(Object.keys(fileRecords).map(path => fileRecords[path]).concat(Object.keys(waitRecords).map(key => waitRecords[key])));
+        const listed = Object.keys(fileRecords).map(path => fileRecords[path]);
+        waitRecords = Logic.tuiWaitRecordsKept(listed, waitRecords);
+        runs = Logic.tuiRuns(listed.concat(waitRecords));
         reconcileWaits();
         for (const run of waiters.map(w => w.run)) deliverKnown(run);
     }
@@ -151,9 +154,7 @@ Scope {
         nextSettled[id] = true;
         settled = nextSettled;
         if (outcome.record !== null) {
-            const nextRecords = Object.assign({}, waitRecords);
-            nextRecords[outcome.record.key] = outcome.record;
-            waitRecords = nextRecords;
+            waitRecords = waitRecords.filter(record => record.run !== outcome.record.run).concat([outcome.record]);
             refresh();
         } else {
             reconcileWaits();
