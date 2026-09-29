@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "catppuccin-frappe",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#303446",
+      "foreground": "#c6d0f5",
+      "accent": "#ca9ee6",
+      "success": "#a6d189",
+      "warning": "#e5c890",
+      "danger": "#e78284",
+      "info": "#8caaee"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.24)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.15)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.02)"
+    }
+  }
+}

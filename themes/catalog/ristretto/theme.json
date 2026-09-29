@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "ristretto",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#2c2525",
+      "foreground": "#e6d9db",
+      "accent": "#f38d70",
+      "success": "#adda78",
+      "warning": "#f9cc6c",
+      "danger": "#fd6883",
+      "info": "#f38d70"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.35)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.03)"
+    }
+  }
+}

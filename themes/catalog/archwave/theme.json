@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "archwave",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1a0d2e",
+      "foreground": "#d4a5ff",
+      "accent": "#ff6ec7",
+      "success": "#5ffbf1",
+      "warning": "#f9f871",
+      "danger": "#ff6ec7",
+      "info": "#8b9aff"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.30)"
+    }
+  }
+}

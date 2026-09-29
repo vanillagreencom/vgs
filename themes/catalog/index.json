@@ -2,6 +2,993 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "name": "akane",
+      "mode": "dark",
+      "thumbnail": "thumbnails/akane.jpg",
+      "palette": {
+        "background": "#0e1e36",
+        "foreground": "#f4b999",
+        "accent": "#9279aa",
+        "success": "#be6f76",
+        "warning": "#f4b999",
+        "danger": "#d2495b",
+        "info": "#574f72"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-akane-r6.tar.gz",
+        "size": 41617647,
+        "sha256": "78c294931e377f589face7e77d296e9293dc71c56d588d267039989de3c6ece5"
+      }
+    },
+    {
+      "name": "amberbyte",
+      "mode": "dark",
+      "thumbnail": "thumbnails/amberbyte.jpg",
+      "palette": {
+        "background": "#1b1112",
+        "foreground": "#f2e8e8",
+        "accent": "#b44a4a",
+        "success": "#c05a5a",
+        "warning": "#d66b6b",
+        "danger": "#b44a4a",
+        "info": "#d66b6b"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-amberbyte-r2.tar.gz",
+        "size": 4035032,
+        "sha256": "2d76d3f7bf04eb81c0698bb93227fc16743bfa30d1d047a7691912575ce0c3d3"
+      }
+    },
+    {
+      "name": "arc-blueberry",
+      "mode": "dark",
+      "thumbnail": "thumbnails/arc-blueberry.jpg",
+      "palette": {
+        "background": "#111422",
+        "foreground": "#bcc1dc",
+        "accent": "#f38cec",
+        "success": "#3cec85",
+        "warning": "#eacd61",
+        "danger": "#e35535",
+        "info": "#69c3ff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-arc-blueberry-r2.tar.gz",
+        "size": 10569984,
+        "sha256": "ff08370ea1f13a49b665e084f56627533722d01d6e8fe6836ede1ad287660df1"
+      }
+    },
+    {
+      "name": "arc-raiders",
+      "mode": "dark",
+      "thumbnail": "thumbnails/arc-raiders.jpg",
+      "palette": {
+        "background": "#0c060d",
+        "foreground": "#fafafa",
+        "accent": "#0c060d",
+        "success": "#b0413b",
+        "warning": "#dca23e",
+        "danger": "#6a5457",
+        "info": "#3f57a1"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-arc-raiders-r4.tar.gz",
+        "size": 4827513,
+        "sha256": "b49a6a3188e3ff6567aebd74d3a557b876481000a0c0f3cf88effc2e0caea317"
+      }
+    },
+    {
+      "name": "archwave",
+      "mode": "dark",
+      "thumbnail": "thumbnails/archwave.jpg",
+      "palette": {
+        "background": "#1a0d2e",
+        "foreground": "#d4a5ff",
+        "accent": "#ff6ec7",
+        "success": "#5ffbf1",
+        "warning": "#f9f871",
+        "danger": "#ff6ec7",
+        "info": "#8b9aff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-archwave-r4.tar.gz",
+        "size": 10242150,
+        "sha256": "dab2a3faadd6d257202bff09cb9d08da8a87858fac85bc78f93157525abd66e2"
+      }
+    },
+    {
+      "name": "artzen",
+      "mode": "dark",
+      "thumbnail": "thumbnails/artzen.jpg",
+      "palette": {
+        "background": "#181c1f",
+        "foreground": "#fdf9f8",
+        "accent": "#ed333b",
+        "success": "#9f6769",
+        "warning": "#bb6d6c",
+        "danger": "#9b584d",
+        "info": "#b97670"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-artzen-r2.tar.gz",
+        "size": 16501638,
+        "sha256": "861ea3f05beacca96a62cd77a0b7712361e135b113aae1c440fd7db9f79061b0"
+      }
+    },
+    {
+      "name": "ayu",
+      "mode": "dark",
+      "thumbnail": "thumbnails/ayu.jpg",
+      "palette": {
+        "background": "#0b0e14",
+        "foreground": "#bfbdb6",
+        "accent": "#e6b450",
+        "success": "#70bf56",
+        "warning": "#fdb04c",
+        "danger": "#f06b73",
+        "info": "#4fbfff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-ayu-r2.tar.gz",
+        "size": 6221600,
+        "sha256": "921de1b7d1e0c2445f28223ca5b22966c27012cb028ae8972d98b973ce3259ba"
+      }
+    },
+    {
+      "name": "bauhaus",
+      "mode": "dark",
+      "thumbnail": "thumbnails/bauhaus.jpg",
+      "palette": {
+        "background": "#101318",
+        "foreground": "#eaeff5",
+        "accent": "#e37b66",
+        "success": "#6f999c",
+        "warning": "#e7a46f",
+        "danger": "#c0704f",
+        "info": "#5e738b"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-bauhaus-r2.tar.gz",
+        "size": 9671614,
+        "sha256": "50d3d4eb37244123aa0017c38d126d6f71216d1dc772b25b99a5a6d3633a02c1"
+      }
+    },
+    {
+      "name": "biscuit-de-mar",
+      "mode": "dark",
+      "thumbnail": "thumbnails/biscuit-de-mar.jpg",
+      "palette": {
+        "background": "#1a1515",
+        "foreground": "#dcc9bc",
+        "accent": "#ae3f82",
+        "success": "#959a6b",
+        "warning": "#e39c45",
+        "danger": "#f07342",
+        "info": "#756d94"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-biscuit-de-mar-r3.tar.gz",
+        "size": 21310082,
+        "sha256": "392fa88590492533c083b1a71849a052d00708a2f9da1c8dfd385fdb028b1a11"
+      }
+    },
+    {
+      "name": "brutalism",
+      "mode": "dark",
+      "thumbnail": "thumbnails/brutalism.jpg",
+      "palette": {
+        "background": "#121212",
+        "foreground": "#ded3d3",
+        "accent": "#940404",
+        "success": "#630a0a",
+        "warning": "#cc7a7a",
+        "danger": "#450404",
+        "info": "#ce5757"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-brutalism-r2.tar.gz",
+        "size": 13512448,
+        "sha256": "371985a2a70f8361ba69c13a670c682d150f113f3852468cd9fbb06c2545f1bd"
+      }
+    },
+    {
+      "name": "catppuccin",
+      "mode": "dark",
+      "thumbnail": "thumbnails/catppuccin.jpg",
+      "palette": {
+        "background": "#1e1e2e",
+        "foreground": "#cdd6f4",
+        "accent": "#89b4fa",
+        "success": "#a6e3a1",
+        "warning": "#f9e2af",
+        "danger": "#f38ba8",
+        "info": "#89b4fa"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-catppuccin-r2.tar.gz",
+        "size": 12611113,
+        "sha256": "56da71ac2e5666fcc0ad36cb1ec8fd40821d60e048ae99992321c35ec9059d5c"
+      }
+    },
+    {
+      "name": "catppuccin-frappe",
+      "mode": "dark",
+      "thumbnail": "thumbnails/catppuccin-frappe.jpg",
+      "palette": {
+        "background": "#303446",
+        "foreground": "#c6d0f5",
+        "accent": "#ca9ee6",
+        "success": "#a6d189",
+        "warning": "#e5c890",
+        "danger": "#e78284",
+        "info": "#8caaee"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-catppuccin-frappe-r2.tar.gz",
+        "size": 14889202,
+        "sha256": "0517864c3c8295a2948f0814467d93a154bc5cfb7e4165ded266c38d852e9117"
+      }
+    },
+    {
+      "name": "catppuccin-macchiato",
+      "mode": "dark",
+      "thumbnail": "thumbnails/catppuccin-macchiato.jpg",
+      "palette": {
+        "background": "#24273a",
+        "foreground": "#cad3f5",
+        "accent": "#c6a0f6",
+        "success": "#a6da95",
+        "warning": "#eed49f",
+        "danger": "#ed8796",
+        "info": "#8aadf4"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-catppuccin-macchiato-r2.tar.gz",
+        "size": 19683427,
+        "sha256": "f29477e19799648a6259f748e03d630fd936c56ad0b97e0142b7f6f2ad7fa69c"
+      }
+    },
+    {
+      "name": "coppernight",
+      "mode": "dark",
+      "thumbnail": "thumbnails/coppernight.jpg",
+      "palette": {
+        "background": "#11111b",
+        "foreground": "#cdd6f4",
+        "accent": "#fab387",
+        "success": "#a6e3a1",
+        "warning": "#f9e2af",
+        "danger": "#f38ba8",
+        "info": "#89b4fa"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-coppernight-r2.tar.gz",
+        "size": 18637787,
+        "sha256": "c44d2af54170d9010b7d4af0d9365058be325e4d11a994746f6d56b1b818e227"
+      }
+    },
+    {
+      "name": "cpunk",
+      "mode": "dark",
+      "thumbnail": "thumbnails/cpunk.jpg",
+      "palette": {
+        "background": "#040303",
+        "foreground": "#ffffff",
+        "accent": "#aaacac",
+        "success": "#d1d2d1",
+        "warning": "#fef348",
+        "danger": "#f82a2a",
+        "info": "#aaacac"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-cpunk-r4.tar.gz",
+        "size": 25395414,
+        "sha256": "573d66f6f4703fbe0c8c588df39d3aec257c8e029ed2220ad1ce5ec22d1ce41c"
+      }
+    },
+    {
+      "name": "delorean",
+      "mode": "dark",
+      "thumbnail": "thumbnails/delorean.jpg",
+      "palette": {
+        "background": "#0d0221",
+        "foreground": "#f9f9f9",
+        "accent": "#ff2a6d",
+        "success": "#05ffa1",
+        "warning": "#fffb96",
+        "danger": "#ff2a6d",
+        "info": "#01cdfe"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-delorean-r2.tar.gz",
+        "size": 14298944,
+        "sha256": "1394275581c265b6c17014aa6aaf615a768bab1f6e7f3f28dccaea6a7a1da7c4"
+      }
+    },
+    {
+      "name": "dracula",
+      "mode": "dark",
+      "thumbnail": "thumbnails/dracula.jpg",
+      "palette": {
+        "background": "#282a36",
+        "foreground": "#f8f8f2",
+        "accent": "#bd93f9",
+        "success": "#50fa7b",
+        "warning": "#f1fa8c",
+        "danger": "#ff5555",
+        "info": "#bd93f9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-dracula-r2.tar.gz",
+        "size": 12375585,
+        "sha256": "013f20e7af051b02ed72c81824eff3d60a23f2213373eb1db31ac50c31c3e34c"
+      }
+    },
+    {
+      "name": "eldritch",
+      "mode": "dark",
+      "thumbnail": "thumbnails/eldritch.jpg",
+      "palette": {
+        "background": "#212337",
+        "foreground": "#ebfafa",
+        "accent": "#37f499",
+        "success": "#37f499",
+        "warning": "#e9f941",
+        "danger": "#f9515d",
+        "info": "#9071f4"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-eldritch-r2.tar.gz",
+        "size": 12707832,
+        "sha256": "3ae043dddd68a0b6e09e09baee265e9388c50322307c6872c60a273094c7b3a4"
+      }
+    },
+    {
+      "name": "ember-n-ash",
+      "mode": "dark",
+      "thumbnail": "thumbnails/ember-n-ash.jpg",
+      "palette": {
+        "background": "#1a1a1a",
+        "foreground": "#e5d6c6",
+        "accent": "#ff6f3c",
+        "success": "#9e8f70",
+        "warning": "#d9a066",
+        "danger": "#d45d4c",
+        "info": "#6c5b4c"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-ember-n-ash-r3.tar.gz",
+        "size": 16328146,
+        "sha256": "7cbad2e2d7762263cb6685acbef8a87afa6aea57643a1ad5b775f9f86b9f91a0"
+      }
+    },
+    {
+      "name": "ethereal",
+      "mode": "dark",
+      "thumbnail": "thumbnails/ethereal.jpg",
+      "palette": {
+        "background": "#060b1e",
+        "foreground": "#ffcead",
+        "accent": "#7d82d9",
+        "success": "#92a593",
+        "warning": "#e9bb4f",
+        "danger": "#ed5b5a",
+        "info": "#7d82d9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-ethereal-r5.tar.gz",
+        "size": 4593837,
+        "sha256": "39c5499b9ac6239b0a92aa7662b4627fad9e3c0a44e978627508923e0bcca3d4"
+      }
+    },
+    {
+      "name": "event-horizon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/event-horizon.jpg",
+      "palette": {
+        "background": "#1c1e26",
+        "foreground": "#fadad1",
+        "accent": "#26bbd9",
+        "success": "#29d398",
+        "warning": "#fab795",
+        "danger": "#e95678",
+        "info": "#26bbd9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-event-horizon-r2.tar.gz",
+        "size": 18283164,
+        "sha256": "15b95d1eac5c9c91b868cbf30ed33b24d00b1e46a858fc409633d7dc3efb71e9"
+      }
+    },
+    {
+      "name": "fireside",
+      "mode": "dark",
+      "thumbnail": "thumbnails/fireside.jpg",
+      "palette": {
+        "background": "#0a1220",
+        "foreground": "#f0f2f5",
+        "accent": "#b8b8b6",
+        "success": "#889889",
+        "warning": "#b8b5a2",
+        "danger": "#e06b58",
+        "info": "#b8b8b6"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-fireside-r2.tar.gz",
+        "size": 2853174,
+        "sha256": "052918c76ce82c65003d16b5860a74aa4ddcd88cd11c765e3ad5bc0d130b6c3b"
+      }
+    },
+    {
+      "name": "flexoki-light",
+      "mode": "light",
+      "thumbnail": "thumbnails/flexoki-light.jpg",
+      "palette": {
+        "background": "#fffcf0",
+        "foreground": "#100f0f",
+        "accent": "#205ea6",
+        "success": "#879a39",
+        "warning": "#d0a215",
+        "danger": "#d14d41",
+        "info": "#205ea6"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-flexoki-light-r4.tar.gz",
+        "size": 1662588,
+        "sha256": "07c8c0fe8bc1fad9930636787f9db871c289fe102437f9756964f024d814e4d4"
+      }
+    },
+    {
+      "name": "frankenstein",
+      "mode": "dark",
+      "thumbnail": "thumbnails/frankenstein.jpg",
+      "palette": {
+        "background": "#313132",
+        "foreground": "#8dffd5",
+        "accent": "#849be3",
+        "success": "#47ae83",
+        "warning": "#46b287",
+        "danger": "#d68679",
+        "info": "#849be3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-frankenstein-r5.tar.gz",
+        "size": 11850789,
+        "sha256": "67c0e9ea72718d7c360d3ab1473cb92da5698dc9b5a57608e47abde1c6f21034"
+      }
+    },
+    {
+      "name": "ghost-pastel",
+      "mode": "dark",
+      "thumbnail": "thumbnails/ghost-pastel.jpg",
+      "palette": {
+        "background": "#070506",
+        "foreground": "#ffffff",
+        "accent": "#979fec",
+        "success": "#648ed0",
+        "warning": "#e095b5",
+        "danger": "#b37580",
+        "info": "#979fec"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-ghost-pastel-r2.tar.gz",
+        "size": 4265351,
+        "sha256": "50f916696ef668085c4265967a4c5ae56277a8d6118a0ab46a6ade5fd9a7afa8"
+      }
+    },
+    {
+      "name": "greek-noir",
+      "mode": "dark",
+      "thumbnail": "thumbnails/greek-noir.jpg",
+      "palette": {
+        "background": "#171717",
+        "foreground": "#ccd0cf",
+        "accent": "#f25623",
+        "success": "#f25623",
+        "warning": "#757864",
+        "danger": "#aeab94",
+        "info": "#88a57d"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-greek-noir-r4.tar.gz",
+        "size": 2101318,
+        "sha256": "3fa474a61131d2438152d00d3014080ba1794a89860b8834e997cc39d87fa10e"
+      }
+    },
+    {
+      "name": "gruvbox",
+      "mode": "dark",
+      "thumbnail": "thumbnails/gruvbox.jpg",
+      "palette": {
+        "background": "#282828",
+        "foreground": "#d4be98",
+        "accent": "#7daea3",
+        "success": "#a9b665",
+        "warning": "#d8a657",
+        "danger": "#ea6962",
+        "info": "#7daea3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-gruvbox-r2.tar.gz",
+        "size": 26777568,
+        "sha256": "bdbcbf27be41f0c9196b9625b13fab484291ac0e5a7aece91ec3cf1d47b7dc2d"
+      }
+    },
+    {
+      "name": "gruvy-glass",
+      "mode": "dark",
+      "thumbnail": "thumbnails/gruvy-glass.jpg",
+      "palette": {
+        "background": "#282828",
+        "foreground": "#d4be98",
+        "accent": "#7daea3",
+        "success": "#a9b665",
+        "warning": "#d8a657",
+        "danger": "#ea6962",
+        "info": "#7daea3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-gruvy-glass-r2.tar.gz",
+        "size": 49323048,
+        "sha256": "6495b3ece656435e88b5b15961818f0ef0e85e87b4915fe8c0e10ffebe8a07fe"
+      }
+    },
+    {
+      "name": "hackerman",
+      "mode": "dark",
+      "thumbnail": "thumbnails/hackerman.jpg",
+      "palette": {
+        "background": "#0b0c16",
+        "foreground": "#ddf7ff",
+        "accent": "#82fb9c",
+        "success": "#4fe88f",
+        "warning": "#50f7d4",
+        "danger": "#50f872",
+        "info": "#829dd4"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-hackerman-r5.tar.gz",
+        "size": 7243492,
+        "sha256": "cb6f2b1c7fdd2a8950b9034734043663e78d96e46833668df9f0c5478c6037ee"
+      }
+    },
+    {
+      "name": "harbordark",
+      "mode": "dark",
+      "thumbnail": "thumbnails/harbordark.jpg",
+      "palette": {
+        "background": "#1b1b1b",
+        "foreground": "#efebdc",
+        "accent": "#e75a50",
+        "success": "#e75a50",
+        "warning": "#a99b7a",
+        "danger": "#f44336",
+        "info": "#e58980"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-harbordark-r4.tar.gz",
+        "size": 7797459,
+        "sha256": "1322157ab7bcd02a6389fa9d791083796e5178d224211bbec2c46743269e434f"
+      }
+    },
+    {
+      "name": "horizon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/horizon.jpg",
+      "palette": {
+        "background": "#1c1e26",
+        "foreground": "#d5d8da",
+        "accent": "#fab795",
+        "success": "#29d398",
+        "warning": "#fab795",
+        "danger": "#e95678",
+        "info": "#26bbd9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-horizon-r6.tar.gz",
+        "size": 10069233,
+        "sha256": "c7f861993ed685f06ad96d3ca23532c01577bcaf5313713cca026632f07df316"
+      }
+    },
+    {
+      "name": "horizon-light",
+      "mode": "light",
+      "thumbnail": "thumbnails/horizon-light.jpg",
+      "palette": {
+        "background": "#fdf0ed",
+        "foreground": "#06060c",
+        "accent": "#da103f",
+        "success": "#1eb980",
+        "warning": "#af5427",
+        "danger": "#da103f",
+        "info": "#8a31b9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-horizon-light-r8.tar.gz",
+        "size": 7572391,
+        "sha256": "6753fe77f52f03b0d78b3b49234b06697f7c65f768f4630fdcc5f029689d6c2e"
+      }
+    },
+    {
+      "name": "inkypinky",
+      "mode": "dark",
+      "thumbnail": "thumbnails/inkypinky.jpg",
+      "palette": {
+        "background": "#13131d",
+        "foreground": "#c8c8c8",
+        "accent": "#7c7ca8",
+        "success": "#a6b2c7",
+        "warning": "#d18ba2",
+        "danger": "#ea90a8",
+        "info": "#7c7ca8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-inkypinky-r2.tar.gz",
+        "size": 7846301,
+        "sha256": "9b5f96bdd7d06728f9a4e3c93e6a82ff65b2b360114cab12799db51c00adc55b"
+      }
+    },
+    {
+      "name": "kanagawa",
+      "mode": "dark",
+      "thumbnail": "thumbnails/kanagawa.jpg",
+      "palette": {
+        "background": "#1f1f28",
+        "foreground": "#dcd7ba",
+        "accent": "#7e9cd8",
+        "success": "#76946a",
+        "warning": "#c0a36e",
+        "danger": "#c34043",
+        "info": "#7e9cd8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-kanagawa-r2.tar.gz",
+        "size": 4293718,
+        "sha256": "da021356ef50f27efff19739202f269a54e5103b07aff3d72445eef8eb186132"
+      }
+    },
+    {
+      "name": "kanagawa-dragon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/kanagawa-dragon.jpg",
+      "palette": {
+        "background": "#181616",
+        "foreground": "#c5c9c5",
+        "accent": "#8ba4b0",
+        "success": "#8a9a7b",
+        "warning": "#c4b28a",
+        "danger": "#c4746e",
+        "info": "#8ba4b0"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-kanagawa-dragon-r4.tar.gz",
+        "size": 9091641,
+        "sha256": "7d3b3a6f913bb7132ddcd885c71cb4b5d203cc2f371b8aba23d2ca5c2e933a29"
+      }
+    },
+    {
+      "name": "kurayami",
+      "mode": "dark",
+      "thumbnail": "thumbnails/kurayami.jpg",
+      "palette": {
+        "background": "#2c2e27",
+        "foreground": "#fdfefd",
+        "accent": "#c6d0b6",
+        "success": "#d2dfc1",
+        "warning": "#dfdfb9",
+        "danger": "#d9bc87",
+        "info": "#c6d0b6"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-kurayami-r3.tar.gz",
+        "size": 7093648,
+        "sha256": "e5631303e58f2b5d9fadbe7292ac268436556421a78de5c07024141822d6e623"
+      }
+    },
+    {
+      "name": "last-horizon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/last-horizon.jpg",
+      "palette": {
+        "background": "#0c0b0c",
+        "foreground": "#fafcfb",
+        "accent": "#b59790",
+        "success": "#87a9b0",
+        "warning": "#6b5e73",
+        "danger": "#c38b7b",
+        "info": "#b59790"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-last-horizon-r2.tar.gz",
+        "size": 6352163,
+        "sha256": "0648a82559374b487286b8d1737d09b3a77d98e318cd8677065a3df0948a205d"
+      }
+    },
+    {
+      "name": "lowlight",
+      "mode": "dark",
+      "thumbnail": "thumbnails/lowlight.jpg",
+      "palette": {
+        "background": "#292323",
+        "foreground": "#dcd7d6",
+        "accent": "#cb8c6d",
+        "success": "#af8a79",
+        "warning": "#a88373",
+        "danger": "#a48484",
+        "info": "#a39eb8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-lowlight-r4.tar.gz",
+        "size": 3225395,
+        "sha256": "1acb0409c017327c1ebf0afddc7b99c2667477739f1049bfc795f44307682ddc"
+      }
+    },
+    {
+      "name": "lumon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/lumon.jpg",
+      "palette": {
+        "background": "#16242d",
+        "foreground": "#d6e2ee",
+        "accent": "#8bc9eb",
+        "success": "#5e95bc",
+        "warning": "#6fa4c9",
+        "danger": "#4d86b0",
+        "info": "#6fb8e3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-lumon-r2.tar.gz",
+        "size": 1917601,
+        "sha256": "4d74f0c4e1cc45e32c98c078d569b37372ea8b01a7e5b177e287ad3ac3f2e881"
+      }
+    },
+    {
+      "name": "lunar",
+      "mode": "dark",
+      "thumbnail": "thumbnails/lunar.jpg",
+      "palette": {
+        "background": "#181c1f",
+        "foreground": "#e1e4e8",
+        "accent": "#ffffff",
+        "success": "#79b8ff",
+        "warning": "#ffdf5d",
+        "danger": "#ea4a5a",
+        "info": "#ffdf5d"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-lunar-r2.tar.gz",
+        "size": 6851697,
+        "sha256": "25e8a6cd0bf278027df8aadca0526c2738481a0acf959d73774a2625513ad18c"
+      }
+    },
+    {
+      "name": "matte-black",
+      "mode": "dark",
+      "thumbnail": "thumbnails/matte-black.jpg",
+      "palette": {
+        "background": "#121212",
+        "foreground": "#bebebe",
+        "accent": "#e68e0d",
+        "success": "#ffc107",
+        "warning": "#b91c1c",
+        "danger": "#d35f5f",
+        "info": "#e68e0d"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-matte-black-r3.tar.gz",
+        "size": 7569118,
+        "sha256": "4b0dedc7004e90d6a970732e22c0004a174227f62f10881cd618c4b7a8e4cccf"
+      }
+    },
+    {
+      "name": "mechanoonna",
+      "mode": "dark",
+      "thumbnail": "thumbnails/mechanoonna.jpg",
+      "palette": {
+        "background": "#1c1b19",
+        "foreground": "#f0e4c5",
+        "accent": "#706e6b",
+        "success": "#a89984",
+        "warning": "#ebdbb2",
+        "danger": "#c5564a",
+        "info": "#908d88"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-mechanoonna-r4.tar.gz",
+        "size": 7157500,
+        "sha256": "1528b18cea6474af64ee8d8a049b33278873f4e119ccf7e52b544c8678a400f5"
+      }
+    },
+    {
+      "name": "miasma",
+      "mode": "dark",
+      "thumbnail": "thumbnails/miasma.jpg",
+      "palette": {
+        "background": "#222222",
+        "foreground": "#c2c2b0",
+        "accent": "#78824b",
+        "success": "#5f875f",
+        "warning": "#b36d43",
+        "danger": "#685742",
+        "info": "#78824b"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-miasma-r3.tar.gz",
+        "size": 12801430,
+        "sha256": "adb2ed9091069b6ed67102095830c4b192e7fe07479bc22935eeeb12eb70bd93"
+      }
+    },
+    {
+      "name": "monokai",
+      "mode": "dark",
+      "thumbnail": "thumbnails/monokai.jpg",
+      "palette": {
+        "background": "#0a1220",
+        "foreground": "#f0f2f5",
+        "accent": "#aba0f2",
+        "success": "#b2d977",
+        "warning": "#f2c063",
+        "danger": "#f25e86",
+        "info": "#78dce8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-monokai-r2.tar.gz",
+        "size": 4310118,
+        "sha256": "09d5b13fe946f9b78619857dd8706442f8466f93fae1ea98ff1d668fc0b00a38"
+      }
+    },
+    {
+      "name": "nagai-twilight",
+      "mode": "dark",
+      "thumbnail": "thumbnails/nagai-twilight.jpg",
+      "palette": {
+        "background": "#1f1a2e",
+        "foreground": "#e9e4f5",
+        "accent": "#bd93f9",
+        "success": "#6fb3a8",
+        "warning": "#eadda6",
+        "danger": "#ff5555",
+        "info": "#5b8fb9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-nagai-twilight-r2.tar.gz",
+        "size": 12111633,
+        "sha256": "001cb076ea7728488a1ebc864ea23d521a0fdfa55632ec15a9396c1f0f3ed3d2"
+      }
+    },
+    {
+      "name": "nebulite",
+      "mode": "dark",
+      "thumbnail": "thumbnails/nebulite.jpg",
+      "palette": {
+        "background": "#232529",
+        "foreground": "#dcd6d6",
+        "accent": "#4c566a",
+        "success": "#98b398",
+        "warning": "#bab292",
+        "danger": "#b18786",
+        "info": "#9e9eb8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-nebulite-r3.tar.gz",
+        "size": 8473651,
+        "sha256": "d6db82a3fd0d60c12eff8ee2969f70d3d2100d7e5647b6740194fbd657f03272"
+      }
+    },
+    {
+      "name": "noctalia",
+      "mode": "dark",
+      "thumbnail": "thumbnails/noctalia.jpg",
+      "palette": {
+        "background": "#070722",
+        "foreground": "#f3edf7",
+        "accent": "#fff59b",
+        "success": "#9bfece",
+        "warning": "#fff59b",
+        "danger": "#fd4663",
+        "info": "#a9aefe"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-noctalia-r2.tar.gz",
+        "size": 23663492,
+        "sha256": "c3fb026b8528015bab4e097cd46b1f23b3098849bf33a0d2a73ffe3689ba5bc3"
+      }
+    },
+    {
       "name": "nord",
       "mode": "dark",
       "thumbnail": "thumbnails/nord.jpg",
@@ -20,6 +1007,615 @@
         "archive": "vgs-theme-nord-r2.tar.gz",
         "size": 11511835,
         "sha256": "8ccd005c0b5c428c3d78e7ad632e49a0f407b2618c2997970869d6201d11eae2"
+      }
+    },
+    {
+      "name": "osaka-jade",
+      "mode": "dark",
+      "thumbnail": "thumbnails/osaka-jade.jpg",
+      "palette": {
+        "background": "#111c18",
+        "foreground": "#c1c497",
+        "accent": "#509475",
+        "success": "#549e6a",
+        "warning": "#459451",
+        "danger": "#ff5345",
+        "info": "#509475"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-osaka-jade-r2.tar.gz",
+        "size": 8377770,
+        "sha256": "def77a5832dd7aa03667fff9b28257813cdf688fb44c717c02acbd09e60bbb4e"
+      }
+    },
+    {
+      "name": "oxford",
+      "mode": "dark",
+      "thumbnail": "thumbnails/oxford.jpg",
+      "palette": {
+        "background": "#292b31",
+        "foreground": "#d6d1c9",
+        "accent": "#bda07f",
+        "success": "#76856a",
+        "warning": "#f3e9bd",
+        "danger": "#dd5544",
+        "info": "#bda07f"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-oxford-r4.tar.gz",
+        "size": 11923554,
+        "sha256": "388bd9125c71278852fe52622e91d55039a5efa81580cefe4c5d5e02f94b5328"
+      }
+    },
+    {
+      "name": "pmndrs",
+      "mode": "dark",
+      "thumbnail": "thumbnails/pmndrs.jpg",
+      "palette": {
+        "background": "#1b1e28",
+        "foreground": "#a6accd",
+        "accent": "#add7ff",
+        "success": "#5de4c7",
+        "warning": "#fffac2",
+        "danger": "#d0679d",
+        "info": "#89ddff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-pmndrs-r2.tar.gz",
+        "size": 6526484,
+        "sha256": "7d1f261259f5c0baa8279f39e4871e31a76527e140e1c8fec0c27c6b6c5788a0"
+      }
+    },
+    {
+      "name": "reddcs",
+      "mode": "dark",
+      "thumbnail": "thumbnails/reddcs.jpg",
+      "palette": {
+        "background": "#1c1213",
+        "foreground": "#e3a68c",
+        "accent": "#684c59",
+        "success": "#806c61",
+        "warning": "#f28171",
+        "danger": "#c24f57",
+        "info": "#684c59"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-reddcs-r6.tar.gz",
+        "size": 24432023,
+        "sha256": "fff4115404ad98ad028afb7676b96bd312054a938c91a1ad630a6710464e91c8"
+      }
+    },
+    {
+      "name": "retro-82",
+      "mode": "dark",
+      "thumbnail": "thumbnails/retro-82.jpg",
+      "palette": {
+        "background": "#00172e",
+        "foreground": "#f6dcac",
+        "accent": "#faa968",
+        "success": "#028391",
+        "warning": "#e97b3c",
+        "danger": "#f85525",
+        "info": "#faa968"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-retro-82-r2.tar.gz",
+        "size": 40800216,
+        "sha256": "c7e212f511d66baac2a81483dcc6da8b72e134c2e4a0312948ea6c2a3de9fa23"
+      }
+    },
+    {
+      "name": "reverie",
+      "mode": "dark",
+      "thumbnail": "thumbnails/reverie.jpg",
+      "palette": {
+        "background": "#101c38",
+        "foreground": "#d8e0f2",
+        "accent": "#587ea8",
+        "success": "#6ca994",
+        "warning": "#f4a261",
+        "danger": "#e56b6f",
+        "info": "#587ea8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-reverie-r2.tar.gz",
+        "size": 4173569,
+        "sha256": "91c1a87ed3128ea984ea2fc67bc73ac7b10e9943e8332bacf7333fc1a512b7d1"
+      }
+    },
+    {
+      "name": "ristretto",
+      "mode": "dark",
+      "thumbnail": "thumbnails/ristretto.jpg",
+      "palette": {
+        "background": "#2c2525",
+        "foreground": "#e6d9db",
+        "accent": "#f38d70",
+        "success": "#adda78",
+        "warning": "#f9cc6c",
+        "danger": "#fd6883",
+        "info": "#f38d70"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-ristretto-r2.tar.gz",
+        "size": 6110685,
+        "sha256": "ea51fe10a11cb3e768d1d7279a5cd123028691d323d19f7058427f2fe62b8361"
+      }
+    },
+    {
+      "name": "rose-pine-main",
+      "mode": "dark",
+      "thumbnail": "thumbnails/rose-pine-main.jpg",
+      "palette": {
+        "background": "#191724",
+        "foreground": "#e0def4",
+        "accent": "#ebbcba",
+        "success": "#31748f",
+        "warning": "#f6c177",
+        "danger": "#eb6f92",
+        "info": "#9ccfd8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-rose-pine-main-r2.tar.gz",
+        "size": 15770469,
+        "sha256": "c811a9a66bbc9494505395d4376d7bea772bf54b5ee3acd404e6da45a7b93a10"
+      }
+    },
+    {
+      "name": "rose-pine-moon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/rose-pine-moon.jpg",
+      "palette": {
+        "background": "#232136",
+        "foreground": "#e0def4",
+        "accent": "#ea9a97",
+        "success": "#3e8fb0",
+        "warning": "#f6c177",
+        "danger": "#eb6f92",
+        "info": "#9ccfd8"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-rose-pine-moon-r2.tar.gz",
+        "size": 21205503,
+        "sha256": "a3cbae1a7c2cbd85fdd6c94aae0aabc325b368854e55b6160ea0c24d3af60ba0"
+      }
+    },
+    {
+      "name": "roseofdune",
+      "mode": "light",
+      "thumbnail": "thumbnails/roseofdune.jpg",
+      "palette": {
+        "background": "#f5e6d3",
+        "foreground": "#35302a",
+        "accent": "#9e4f5b",
+        "success": "#9e4f5b",
+        "warning": "#644535",
+        "danger": "#a02b16",
+        "info": "#76634c"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-roseofdune-r3.tar.gz",
+        "size": 16935484,
+        "sha256": "e9e56c4359b28669885d3a537025decfd20c87104c65b299d9d209682beea873"
+      }
+    },
+    {
+      "name": "saga",
+      "mode": "dark",
+      "thumbnail": "thumbnails/saga.jpg",
+      "palette": {
+        "background": "#05080a",
+        "foreground": "#fff6ff",
+        "accent": "#b2fff3",
+        "success": "#baf7b5",
+        "warning": "#fff6c3",
+        "danger": "#ff9fbc",
+        "info": "#b2fff3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-saga-r2.tar.gz",
+        "size": 13318129,
+        "sha256": "b88ea38c27a6e0e2703eaf2589b6ad1f2665d274d38717ddc5f9a9839d6dde03"
+      }
+    },
+    {
+      "name": "sapphire",
+      "mode": "dark",
+      "thumbnail": "thumbnails/sapphire.jpg",
+      "palette": {
+        "background": "#060d1f",
+        "foreground": "#e0f7fa",
+        "accent": "#f7c3c6",
+        "success": "#6488ea",
+        "warning": "#d5edeb",
+        "danger": "#e95c4b",
+        "info": "#f7c3c6"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-sapphire-r2.tar.gz",
+        "size": 13271510,
+        "sha256": "30c8041820e228e38dc2cff627c47b2dae5aa23ec4abbd87783ad1f595262ce4"
+      }
+    },
+    {
+      "name": "snow",
+      "mode": "dark",
+      "thumbnail": "thumbnails/snow.jpg",
+      "palette": {
+        "background": "#1a1b1f",
+        "foreground": "#eff2f5",
+        "accent": "#7b8da3",
+        "success": "#9eafc0",
+        "warning": "#a8b6c4",
+        "danger": "#7a92ae",
+        "info": "#7b8da3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-snow-r2.tar.gz",
+        "size": 5725893,
+        "sha256": "35e45f922aaeeb0718a531c4de0c6b4493a46461ca5f0a6f480e061d6d7ca70a"
+      }
+    },
+    {
+      "name": "soho",
+      "mode": "dark",
+      "thumbnail": "thumbnails/soho.jpg",
+      "palette": {
+        "background": "#1a1721",
+        "foreground": "#d0cbd8",
+        "accent": "#e89bc1",
+        "success": "#7cc9a0",
+        "warning": "#d9b464",
+        "danger": "#e87b97",
+        "info": "#7ba5dd"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-soho-r2.tar.gz",
+        "size": 9132712,
+        "sha256": "4beba4dbe6170717a76c379934fa92112db176163d8a560d5cf527613b859022"
+      }
+    },
+    {
+      "name": "solitude",
+      "mode": "dark",
+      "thumbnail": "thumbnails/solitude.jpg",
+      "palette": {
+        "background": "#101315",
+        "foreground": "#cacccc",
+        "accent": "#798186",
+        "success": "#9fa5a9",
+        "warning": "#d9dbdc",
+        "danger": "#565d60",
+        "info": "#798186"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-solitude-r2.tar.gz",
+        "size": 43064984,
+        "sha256": "3596fca487135c9e07f78e97d937890a8aa083e459453bafa01792db25ce0749"
+      }
+    },
+    {
+      "name": "synthwave84",
+      "mode": "dark",
+      "thumbnail": "thumbnails/synthwave84.jpg",
+      "palette": {
+        "background": "#240037",
+        "foreground": "#ffffff",
+        "accent": "#f97e72",
+        "success": "#72f1b8",
+        "warning": "#f3e70f",
+        "danger": "#fe4450",
+        "info": "#03edf9"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-synthwave84-r3.tar.gz",
+        "size": 19122755,
+        "sha256": "4ed603cab6fb89ecc06433a4f62f2ed384c17fea285ecacee716740bc6592c09"
+      }
+    },
+    {
+      "name": "thegreek",
+      "mode": "light",
+      "thumbnail": "thumbnails/thegreek.jpg",
+      "palette": {
+        "background": "#d0d0c8",
+        "foreground": "#242424",
+        "accent": "#de6a41",
+        "success": "#2e3125",
+        "warning": "#51573b",
+        "danger": "#db0030",
+        "info": "#de6a41"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-thegreek-r7.tar.gz",
+        "size": 3753953,
+        "sha256": "39324502a13b65c3f23c472d3a60d9379787ca0b39189d21acfd4c9d49d58ef4"
+      }
+    },
+    {
+      "name": "tokyo-night",
+      "mode": "dark",
+      "thumbnail": "thumbnails/tokyo-night.jpg",
+      "palette": {
+        "background": "#1a1b26",
+        "foreground": "#a9b1d6",
+        "accent": "#7aa2f7",
+        "success": "#9ece6a",
+        "warning": "#e0af68",
+        "danger": "#f7768e",
+        "info": "#7aa2f7"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-tokyo-night-r2.tar.gz",
+        "size": 15046592,
+        "sha256": "5e050efb9721d29d76ae2bba83552af4a2910e0464b59b01ac21e6b865211ae7"
+      }
+    },
+    {
+      "name": "tokyo-night-moon",
+      "mode": "dark",
+      "thumbnail": "thumbnails/tokyo-night-moon.jpg",
+      "palette": {
+        "background": "#222436",
+        "foreground": "#c8d3f5",
+        "accent": "#82aaff",
+        "success": "#c3e88d",
+        "warning": "#ffc777",
+        "danger": "#ff757f",
+        "info": "#82aaff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-tokyo-night-moon-r2.tar.gz",
+        "size": 25819318,
+        "sha256": "27654cfc508aacd7fcdb7a28573c0292829dcec74f90d833c9f4f1928edb843d"
+      }
+    },
+    {
+      "name": "tokyo-night-storm",
+      "mode": "dark",
+      "thumbnail": "thumbnails/tokyo-night-storm.jpg",
+      "palette": {
+        "background": "#24283b",
+        "foreground": "#c0caf5",
+        "accent": "#7aa2f7",
+        "success": "#9ece6a",
+        "warning": "#e0af68",
+        "danger": "#f7768e",
+        "info": "#7aa2f7"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-tokyo-night-storm-r2.tar.gz",
+        "size": 21213791,
+        "sha256": "fcaafa4eedee334a5229e0ebfd1b54f793eaef1830079027a11fee2e26a1fbc5"
+      }
+    },
+    {
+      "name": "tycho",
+      "mode": "dark",
+      "thumbnail": "thumbnails/tycho.jpg",
+      "palette": {
+        "background": "#1e2125",
+        "foreground": "#f0e9ec",
+        "accent": "#b4756b",
+        "success": "#b4756b",
+        "warning": "#c17a6a",
+        "danger": "#976870",
+        "info": "#9b826b"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-tycho-r4.tar.gz",
+        "size": 964520,
+        "sha256": "c2baf2c150dfe2e97cb244c24af839c407b3a5de2ce510edcb05888c5730b985"
+      }
+    },
+    {
+      "name": "untitled",
+      "mode": "dark",
+      "thumbnail": "thumbnails/untitled.jpg",
+      "palette": {
+        "background": "#241d22",
+        "foreground": "#f0ecc5",
+        "accent": "#a3baca",
+        "success": "#83c483",
+        "warning": "#c1ba86",
+        "danger": "#a58386",
+        "info": "#a3baca"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-untitled-r2.tar.gz",
+        "size": 51814365,
+        "sha256": "70fd0d4f1a38eb25a4c2b758b90d702ff7f79bcc0339eaa5b4d1ab3976f8550e"
+      }
+    },
+    {
+      "name": "vantablack",
+      "mode": "dark",
+      "thumbnail": "thumbnails/vantablack.jpg",
+      "palette": {
+        "background": "#000000",
+        "foreground": "#ffffff",
+        "accent": "#8d8d8d",
+        "success": "#b6b6b6",
+        "warning": "#cecece",
+        "danger": "#a4a4a4",
+        "info": "#8d8d8d"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-vantablack-r2.tar.gz",
+        "size": 3015998,
+        "sha256": "021af870f319ad8de7043a03d138cfa194dc9b3bc1ba5de8a434665b3e0b36cf"
+      }
+    },
+    {
+      "name": "vengeance",
+      "mode": "dark",
+      "thumbnail": "thumbnails/vengeance.jpg",
+      "palette": {
+        "background": "#110e0e",
+        "foreground": "#faf9f9",
+        "accent": "#e46867",
+        "success": "#eec8aa",
+        "warning": "#e6c6b2",
+        "danger": "#e46767",
+        "info": "#e4676d"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-vengeance-r4.tar.gz",
+        "size": 7095423,
+        "sha256": "fe40ade653bb193e6485bf887c2ef826a914bbe0b12a531494d49bd78879e16b"
+      }
+    },
+    {
+      "name": "vice-city",
+      "mode": "dark",
+      "thumbnail": "thumbnails/vice-city.jpg",
+      "palette": {
+        "background": "#0a0a14",
+        "foreground": "#f793d9",
+        "accent": "#f793d9",
+        "success": "#00ff88",
+        "warning": "#ffff00",
+        "danger": "#ff004d",
+        "info": "#00a8ff"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-vice-city-r4.tar.gz",
+        "size": 6202765,
+        "sha256": "99a4be52d63231ff250bb70474677f425d410d80a9f192212aab903e018b2804"
+      }
+    },
+    {
+      "name": "void",
+      "mode": "dark",
+      "thumbnail": "thumbnails/void.jpg",
+      "palette": {
+        "background": "#05010c",
+        "foreground": "#ffffff",
+        "accent": "#bb9af7",
+        "success": "#c2b8ff",
+        "warning": "#ddccff",
+        "danger": "#f07178",
+        "info": "#bb9af7"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-void-r2.tar.gz",
+        "size": 7280156,
+        "sha256": "793704c12a0229bbde7c11a3a227ca68c5db8cbfb8592e4621ce78c0fbbb3ef0"
+      }
+    },
+    {
+      "name": "vurple",
+      "mode": "dark",
+      "thumbnail": "thumbnails/vurple.jpg",
+      "palette": {
+        "background": "#050111",
+        "foreground": "#c9ffff",
+        "accent": "#450090",
+        "success": "#4efaff",
+        "warning": "#46d6fd",
+        "danger": "#9f34f3",
+        "info": "#7d7bdb"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-vurple-r2.tar.gz",
+        "size": 6435775,
+        "sha256": "31ba327c6fe96cfdab0a22875606a326b71ca775442bd7f8fa91fa4d5ae43630"
+      }
+    },
+    {
+      "name": "white",
+      "mode": "light",
+      "thumbnail": "thumbnails/white.jpg",
+      "palette": {
+        "background": "#ffffff",
+        "foreground": "#000000",
+        "accent": "#6e6e6e",
+        "success": "#3a3a3a",
+        "warning": "#4a4a4a",
+        "danger": "#2a2a2a",
+        "info": "#1a1a1a"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-white-r4.tar.gz",
+        "size": 2682159,
+        "sha256": "1002f17dd541b915ce1bed27810aeaa8435e53418fd357ee81ef81cd1b62c427"
+      }
+    },
+    {
+      "name": "x-1632",
+      "mode": "dark",
+      "thumbnail": "thumbnails/x-1632.jpg",
+      "palette": {
+        "background": "#2f3138",
+        "foreground": "#c7c6c1",
+        "accent": "#4a5a70",
+        "success": "#8b8e76",
+        "warning": "#d6c8ba",
+        "danger": "#a07d7d",
+        "info": "#7f8da1"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-x-1632-r4.tar.gz",
+        "size": 18757002,
+        "sha256": "47778666e96f7cc2a199a05975fcaf914c0728cd11bd0d00de950afcb49a9713"
       }
     }
   ]

@@ -8,7 +8,6 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -389,6 +388,10 @@ const CATALOG_REFUSED = [
 // A package a catalog entry names: theme.json with MODE and ACCENT over
 // CATALOG_PALETTE, under NAME.
 const catalogTheme = (name, mode, accent) => JSON.stringify({ schemaVersion: 1, name, tokens: { scheme: { mode }, palette: Object.assign({}, CATALOG_PALETTE, { accent }) } });
+const READABILITY_ROLES = ["color.text", "color.textHeading", "color.textMuted", "color.textFaint", "color.success", "color.warning", "color.danger", "color.info"];
+const READABILITY_SURFACES = ["color.background", "color.surface", "color.surfaceRaised", "color.surfaceSunken"];
+const truncateRatio = value => Math.floor(value * 100) / 100;
+const plain = value => JSON.parse(JSON.stringify(value));
 
 function verify(judge) {
     assert.equal(judge.tableError(TOKENS), "");
@@ -401,6 +404,29 @@ function verify(judge) {
     assert.equal(defaults.name, "vgs");
     for (const [token, want] of DEFAULTS)
         assert.deepEqual(at(defaults.values, token), want, token);
+
+    assert.deepEqual(plain(judge.READABILITY_TEXT_ROLES), READABILITY_ROLES);
+    assert.deepEqual(plain(judge.READABILITY_SURFACES), READABILITY_SURFACES);
+    assert.equal(judge.READABILITY_FLOOR, 4.5);
+    assert.equal(judge.contrastRatio(judge.parseColor("#000000"), judge.parseColor("#ffffff")), 21);
+    assert.deepEqual(plain(judge.readabilityShortfalls(defaults.values)), [], "default vgs readability");
+    const lightText = fs.readFileSync(path.join(repo, "themes", "light", "theme.json"), "utf8");
+    const light = judge.accept(TOKENS, lightText);
+    assert.equal(light.ok, true, light.ok ? "" : judge.refusalLine(light));
+    assert.deepEqual(plain(judge.readabilityShortfalls(light.values)), [], "default light readability");
+    const faintFailure = judge.accept(TOKENS, document({ color: { textFaint: "#111111" } }));
+    assert.equal(faintFailure.ok, true, faintFailure.ok ? "" : judge.refusalLine(faintFailure));
+    const faintShortfalls = judge.readabilityShortfalls(faintFailure.values);
+    assert.deepEqual(
+        Object.assign({}, faintShortfalls[0], { ratio: truncateRatio(faintShortfalls[0].ratio) }),
+        { text: "color.textFaint", surface: "color.background", ratio: 1.11, floor: 4.5 }
+    );
+    const statusFailure = judge.accept(TOKENS, document({ color: { success: "#111111" } }));
+    assert.equal(statusFailure.ok, true, statusFailure.ok ? "" : judge.refusalLine(statusFailure));
+    assert.equal(judge.readabilityShortfalls(statusFailure.values).some(row => row.text === "color.success" && row.surface === "color.background"), true);
+    const translucentFailure = judge.accept(TOKENS, document({ color: { textFaint: "alpha({palette.foreground}, 0.5)" } }));
+    assert.equal(translucentFailure.ok, true, translucentFailure.ok ? "" : judge.refusalLine(translucentFailure));
+    assert.deepEqual(plain(judge.readabilityShortfalls(translucentFailure.values)[0]), { text: "color.textFaint", surface: "color.background", ratio: null, floor: 4.5 });
 
     // The resolved tree holds exactly the table's tokens, each with a value
     // of its type's portable form.
@@ -485,7 +511,6 @@ function verify(judge) {
     const index = judge.acceptCatalogIndex(TOKENS, catalog([CATALOG_ENTRY, entryWith("name", "bare")].map((entry, i) => i === 0 ? entry : Object.assign(entry, { mode: "light", thumbnail: null, imagery: null }))));
     assert.equal(index.ok, true, index.ok ? "" : judge.refusalLine(index));
     // The judge runs in its own context, so its objects compare as JSON.
-    const plain = value => JSON.parse(JSON.stringify(value));
     assert.deepEqual(plain(index.entries), [
         { name: "probe", mode: "dark", thumbnail: "probe/thumbnail.jpg", palette: { background: "#000000ff", foreground: "#ffffffff", accent: "#ffffffff", success: "#00ff00ff", warning: "#ffff00ff", danger: "#ff0000ff", info: "#0000ffff" }, imagery: CATALOG_IMAGERY },
         { name: "bare", mode: "light", thumbnail: null, palette: { background: "#000000ff", foreground: "#ffffffff", accent: "#ffffffff", success: "#00ff00ff", warning: "#ffff00ff", danger: "#ff0000ff", info: "#0000ffff" }, imagery: null }
@@ -646,11 +671,17 @@ const CONTROLS = [
     ["appearance mode", 'var overrides = mode === "light" ? stated.overrides : {};', "var overrides = stated.overrides;"],
     ["appearance theme mode", 'if (typeof mode !== "string")', "if (false)"],
     ["appearance theme input", "if (value === undefined)\n            return refusal(\"appearance-theme\"", "if (false)\n            return refusal(\"appearance-theme\""],
-    ["appearance inputs applied", "overrides[APPEARANCE_INPUTS[j]] = value;", ""]
+    ["appearance inputs applied", "overrides[APPEARANCE_INPUTS[j]] = value;", ""],
+    ["readability contrast ratio", "return (light + 0.05) / (dark + 0.05);", "return 1;"],
+    ["readability text roles", "    \"color.success\",\n", ""],
+    ["readability surfaces", "    \"color.surfaceRaised\",\n", ""],
+    ["readability floor", "var READABILITY_FLOOR = 4.5;", "var READABILITY_FLOOR = 1;"],
+    ["readability translucency", "var ratio = text === null || surface === null || text.a < 1 || surface.a < 1\n                ? null\n                : contrastRatio(text, surface);", "var ratio = contrastRatio(text, surface);"]
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "theme-logic-control-"));
+fs.mkdirSync(path.join(repo, "tmp"), { recursive: true });
+const temp = fs.mkdtempSync(path.join(repo, "tmp", "theme-logic-control-"));
 try {
     for (const [label, needle, replacement] of CONTROLS) {
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "matte-black",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#121212",
+      "foreground": "#bebebe",
+      "accent": "#e68e0d",
+      "success": "#ffc107",
+      "warning": "#b91c1c",
+      "danger": "#d35f5f",
+      "info": "#e68e0d"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.32)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.33)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.03)"
+    }
+  }
+}

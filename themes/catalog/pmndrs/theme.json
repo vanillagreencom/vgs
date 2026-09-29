@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "pmndrs",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1b1e28",
+      "foreground": "#a6accd",
+      "accent": "#add7ff",
+      "success": "#5de4c7",
+      "warning": "#fffac2",
+      "danger": "#d0679d",
+      "info": "#89ddff"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.21)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.05)"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "rose-pine-main",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#191724",
+      "foreground": "#e0def4",
+      "accent": "#ebbcba",
+      "success": "#31748f",
+      "warning": "#f6c177",
+      "danger": "#eb6f92",
+      "info": "#9ccfd8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.24)"
+    }
+  }
+}

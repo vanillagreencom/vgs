@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "dracula",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#282a36",
+      "foreground": "#f8f8f2",
+      "accent": "#bd93f9",
+      "success": "#50fa7b",
+      "warning": "#f1fa8c",
+      "danger": "#ff5555",
+      "info": "#bd93f9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.22)"
+    }
+  }
+}

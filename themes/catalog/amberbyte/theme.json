@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "amberbyte",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1b1112",
+      "foreground": "#f2e8e8",
+      "accent": "#b44a4a",
+      "success": "#c05a5a",
+      "warning": "#d66b6b",
+      "danger": "#b44a4a",
+      "info": "#d66b6b"
+    },
+    "color": {
+      "success": "mix({palette.success}, contrast({palette.background}), 0.14)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.23)"
+    }
+  }
+}

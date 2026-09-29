@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "thegreek",
+  "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
+    "palette": {
+      "background": "#d0d0c8",
+      "foreground": "#242424",
+      "accent": "#de6a41",
+      "success": "#2e3125",
+      "warning": "#51573b",
+      "danger": "#db0030",
+      "info": "#de6a41"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.25)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.05)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.25)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.42)"
+    }
+  }
+}

@@ -99,6 +99,8 @@ rows=(
   "logic|theme judge table|node scripts/test-theme-logic.js|shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js themes/*"
   "logic|shipped theme packages and targets|bin/vgsh-theme-judge packages themes|themes/* bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js"
   "logic|theme catalog|bin/vgsh-theme-judge catalog-check themes|themes/catalog/* themes/targets/* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js"
+  "logic|theme contrast|node scripts/check-theme-contrast.js|themes/* themes/catalog/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js scripts/check-theme-contrast.js"
+  "logic|theme contrast controls|node scripts/test-check-theme-contrast.js|themes/* themes/catalog/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js scripts/check-theme-contrast.js scripts/test-check-theme-contrast.js"
   "logic|theme target renderer|node scripts/test-theme-render.js|bin/lib/theme-render.js themes/targets/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "logic|theme selection edit|node scripts/test-theme-select.js|bin/lib/theme-select.js bin/lib/theme-render.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"
   "logic|theme catalog marker|node scripts/test-theme-catalog.js|bin/lib/theme-catalog.js shell/Commons/ThemeLogic.js shell/Commons/Tokens.js bin/lib/qml-library.js"

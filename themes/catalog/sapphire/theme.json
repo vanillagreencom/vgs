@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "sapphire",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#060d1f",
+      "foreground": "#e0f7fa",
+      "accent": "#f7c3c6",
+      "success": "#6488ea",
+      "warning": "#d5edeb",
+      "danger": "#e95c4b",
+      "info": "#f7c3c6"
+    }
+  }
+}

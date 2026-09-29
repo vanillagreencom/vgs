@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "bauhaus",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#101318",
+      "foreground": "#eaeff5",
+      "accent": "#e37b66",
+      "success": "#6f999c",
+      "warning": "#e7a46f",
+      "danger": "#c0704f",
+      "info": "#5e738b"
+    },
+    "color": {
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.05)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.18)"
+    }
+  }
+}

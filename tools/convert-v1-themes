@@ -45,6 +45,9 @@ const PALETTE_FROM_COLORS = [
     ["danger", "color1"],
     ["info", "color4"]
 ];
+const COLOR_OVERRIDE_ORDER = ["textFaint", "success", "warning", "danger", "info"];
+const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.map(role => `color.${role}`));
+const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
 const REPO_HOST = "https://github.com/";
 
@@ -189,6 +192,96 @@ function pinFromV1(theme, catalog, lock) {
     };
 }
 
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function truncateRatio(value) {
+    return Math.floor(value * 100) / 100;
+}
+
+function ratioText(shortfall) {
+    return shortfall.ratio === null ? "translucent" : truncateRatio(shortfall.ratio).toFixed(2);
+}
+
+function roleShortfall(shortfalls, role) {
+    return shortfalls.find(shortfall => shortfall.text === `color.${role}`);
+}
+
+function resolvedShell(theme, shell) {
+    const result = logic.accept(tokens, writeJson(shell));
+    if (!result.ok) refuse(theme, "theme.json", logic.refusalLine(result));
+    return result;
+}
+
+function shortfallsFor(theme, shell) {
+    return logic.readabilityShortfalls(resolvedShell(theme, shell).values);
+}
+
+function withColorOverride(shell, role, expression) {
+    const candidate = cloneJson(shell);
+    candidate.tokens.color = candidate.tokens.color || {};
+    candidate.tokens.color[role] = expression;
+    return candidate;
+}
+
+function textFaintExpression(step) {
+    return `mix({palette.foreground}, {palette.background}, ${(step / 100).toFixed(2)})`;
+}
+
+function statusExpression(role, step) {
+    return `mix({palette.${role}}, contrast({palette.background}), ${(step / 100).toFixed(2)})`;
+}
+
+function addReadabilityOverrides(theme, shell) {
+    let fixed = cloneJson(shell);
+    const initialShortfalls = shortfallsFor(theme, fixed);
+    const firstUnfixable = initialShortfalls.find(shortfall => !FIXABLE_READABILITY.has(shortfall.text));
+    if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };
+
+    const overrides = [];
+    if (roleShortfall(initialShortfalls, "textFaint") !== undefined) {
+        let chosen = null;
+        for (let step = 99; step >= 0; step--) {
+            const candidate = withColorOverride(fixed, "textFaint", textFaintExpression(step));
+            if (roleShortfall(shortfallsFor(theme, candidate), "textFaint") === undefined) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "textFaint") };
+        fixed = chosen;
+        overrides.push("color.textFaint");
+    }
+
+    for (const role of STATUS_ROLES) {
+        const pathName = `color.${role}`;
+        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;
+        let chosen = null;
+        for (let step = 1; step <= 100; step++) {
+            const candidate = withColorOverride(fixed, role, statusExpression(role, step));
+            if (roleShortfall(shortfallsFor(theme, candidate), role) === undefined) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, role) };
+        fixed = chosen;
+        overrides.push(pathName);
+    }
+
+    const finalShortfalls = shortfallsFor(theme, fixed);
+    if (finalShortfalls.length > 0) return { held: true, shortfall: finalShortfalls[0] };
+    if (fixed.tokens.color !== undefined) {
+        const ordered = {};
+        for (const role of COLOR_OVERRIDE_ORDER) {
+            if (Object.hasOwn(fixed.tokens.color, role)) ordered[role] = fixed.tokens.color[role];
+        }
+        fixed.tokens.color = ordered;
+    }
+    return { held: false, shell: fixed, overrides };
+}
+
 function convertTheme(theme, v1ThemesDir, catalog, lock) {
     if (!logic.isPackageName(theme) || theme === logic.DEFAULT_NAME || logic.RESERVED_DIRECTORIES.includes(theme)) refuse(theme, "name", "reason=reserved-or-malformed");
     const dir = path.join(v1ThemesDir, theme);
@@ -212,9 +305,11 @@ function convertTheme(theme, v1ThemesDir, catalog, lock) {
         }
     };
     const terminal = { schemaVersion: 1, slots };
+    const readability = addReadabilityOverrides(theme, shell);
+    if (readability.held) return { theme, held: true, shortfall: readability.shortfall };
     const imagery = pinFromV1(theme, catalog, lock);
     const entry = { name: theme, mode: themeJson.mode, thumbnail: `thumbnails/${theme}.jpg`, palette, imagery };
-    return { theme, shell, terminal, entry };
+    return { theme, held: false, shell: readability.shell, terminal, entry, overrides: readability.overrides };
 }
 
 // A refusal of bin/lib/theme-download.js as this converter's line. A
@@ -324,9 +419,10 @@ function readExistingIndex(catalogDir) {
     return readJson(file);
 }
 
-function buildIndex(existing, converted) {
+function buildIndex(existing, converted, heldBack) {
     const byName = new Map();
     for (const entry of existing.entries || []) byName.set(entry.name, entry);
+    for (const item of heldBack) byName.delete(item.theme);
     for (const item of converted) byName.set(item.theme, item.entry);
     return { schemaVersion: 1, entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name)) };
 }
@@ -352,7 +448,11 @@ function judgeOutput(catalogDir, finalIndex, converted) {
     }
 }
 
-function land(catalogDir, finalIndex, converted, thumbnails) {
+function land(catalogDir, finalIndex, converted, heldBack, thumbnails) {
+    for (const item of heldBack) {
+        fs.rmSync(path.join(catalogDir, item.theme), { recursive: true, force: true });
+        fs.rmSync(path.join(catalogDir, "thumbnails", `${item.theme}.jpg`), { force: true });
+    }
     for (const item of converted) {
         const dir = path.join(catalogDir, item.theme);
         replaceFile(path.join(dir, "theme.json"), writeJson(item.shell), "convert-v1-themes");
@@ -375,7 +475,9 @@ async function main() {
         if (seen.has(theme)) refuse(theme, "selection", "reason=duplicate");
         seen.add(theme);
     }
-    const converted = themes.map(theme => convertTheme(theme, v1ThemesDir, catalog, lock));
+    const results = themes.map(theme => convertTheme(theme, v1ThemesDir, catalog, lock));
+    const converted = results.filter(item => !item.held);
+    const heldBack = results.filter(item => item.held);
     const scratch = scratchRoot();
     const thumbnails = new Map();
     try {
@@ -384,12 +486,17 @@ async function main() {
             thumbnails.set(item.theme, await makeThumbnail(item.theme, archive, scratch, args.thumbnailBudget));
         }
         const existing = readExistingIndex(args.catalogDir);
-        const finalIndex = buildIndex(existing, converted);
+        const finalIndex = buildIndex(existing, converted, heldBack);
         judgeOutput(args.catalogDir, finalIndex, converted);
-        land(args.catalogDir, finalIndex, converted, thumbnails);
+        land(args.catalogDir, finalIndex, converted, heldBack, thumbnails);
+        for (const item of heldBack) {
+            const shortfall = item.shortfall;
+            console.log(`held-back theme=${item.theme} text=${shortfall.text} surface=${shortfall.surface} ratio=${ratioText(shortfall)} floor=${shortfall.floor}`);
+        }
         for (const item of converted) {
             const thumb = thumbnails.get(item.theme);
-            console.log(`ok theme=${item.theme} thumbnail=${item.entry.thumbnail} bytes=${thumb.bytes} source=${thumb.source} budget=${args.thumbnailBudget}`);
+            const overrides = item.overrides.length === 0 ? "none" : item.overrides.join(",");
+            console.log(`ok theme=${item.theme} thumbnail=${item.entry.thumbnail} bytes=${thumb.bytes} source=${thumb.source} budget=${args.thumbnailBudget} overrides=${overrides}`);
         }
         console.log("convert-v1-themes: ok");
     } finally {

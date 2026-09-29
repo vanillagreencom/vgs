@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "kanagawa",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1f1f28",
+      "foreground": "#dcd7ba",
+      "accent": "#7e9cd8",
+      "success": "#76946a",
+      "warning": "#c0a36e",
+      "danger": "#c34043",
+      "info": "#7e9cd8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.36)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.08)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.31)"
+    }
+  }
+}

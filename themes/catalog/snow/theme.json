@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "snow",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1a1b1f",
+      "foreground": "#eff2f5",
+      "accent": "#7b8da3",
+      "success": "#9eafc0",
+      "warning": "#a8b6c4",
+      "danger": "#7a92ae",
+      "info": "#7b8da3"
+    },
+    "color": {
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.02)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.05)"
+    }
+  }
+}

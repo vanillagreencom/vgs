@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "synthwave84",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#240037",
+      "foreground": "#ffffff",
+      "accent": "#f97e72",
+      "success": "#72f1b8",
+      "warning": "#f3e70f",
+      "danger": "#fe4450",
+      "info": "#03edf9"
+    }
+  }
+}

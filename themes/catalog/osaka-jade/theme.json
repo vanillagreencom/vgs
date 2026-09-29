@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "osaka-jade",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#111c18",
+      "foreground": "#c1c497",
+      "accent": "#509475",
+      "success": "#549e6a",
+      "warning": "#459451",
+      "danger": "#ff5345",
+      "info": "#509475"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.31)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.08)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.06)"
+    }
+  }
+}

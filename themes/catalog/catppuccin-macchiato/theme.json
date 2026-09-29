@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "catppuccin-macchiato",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#24273a",
+      "foreground": "#cad3f5",
+      "accent": "#c6a0f6",
+      "success": "#a6da95",
+      "warning": "#eed49f",
+      "danger": "#ed8796",
+      "info": "#8aadf4"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.32)"
+    }
+  }
+}

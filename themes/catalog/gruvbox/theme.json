@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "gruvbox",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#282828",
+      "foreground": "#d4be98",
+      "accent": "#7daea3",
+      "success": "#a9b665",
+      "warning": "#d8a657",
+      "danger": "#ea6962",
+      "info": "#7daea3"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.25)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.11)"
+    }
+  }
+}

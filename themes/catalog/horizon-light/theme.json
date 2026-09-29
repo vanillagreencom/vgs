@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "horizon-light",
+  "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
+    "palette": {
+      "background": "#fdf0ed",
+      "foreground": "#06060c",
+      "accent": "#da103f",
+      "success": "#1eb980",
+      "warning": "#af5427",
+      "danger": "#da103f",
+      "info": "#8a31b9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.39)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.39)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.09)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.09)"
+    }
+  }
+}

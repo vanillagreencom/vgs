@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "ghost-pastel",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#070506",
+      "foreground": "#ffffff",
+      "accent": "#979fec",
+      "success": "#648ed0",
+      "warning": "#e095b5",
+      "danger": "#b37580",
+      "info": "#979fec"
+    }
+  }
+}

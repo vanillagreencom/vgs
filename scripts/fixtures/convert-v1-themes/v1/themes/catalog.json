@@ -6,8 +6,8 @@
     "ref": "fixture",
     "baseUrl": "https://example.invalid/releases/download"
   },
-  "count": 2,
-  "totalSize": 841,
+  "count": 3,
+  "totalSize": 964,
   "themes": [
     {
       "name": "alpha",
@@ -35,6 +35,20 @@
         "rev": 1,
         "size": 404,
         "sha256": "e24f434db290e22c0a7ad1c3f4995a5b6c56ee7f54a12776769a0bcfabca0d23"
+      }
+    },
+    {
+      "name": "body",
+      "mode": "dark",
+      "pair": "",
+      "source": "curated",
+      "size": 123,
+      "assets": {
+        "release": "themes-v1",
+        "archive": "vgs-theme-body-r1.tar.gz",
+        "rev": 1,
+        "size": 123,
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
       }
     }
   ]

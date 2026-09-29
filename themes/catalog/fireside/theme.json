@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "fireside",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0a1220",
+      "foreground": "#f0f2f5",
+      "accent": "#b8b8b6",
+      "success": "#889889",
+      "warning": "#b8b5a2",
+      "danger": "#e06b58",
+      "info": "#b8b8b6"
+    }
+  }
+}

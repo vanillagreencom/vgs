@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "void",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#05010c",
+      "foreground": "#ffffff",
+      "accent": "#bb9af7",
+      "success": "#c2b8ff",
+      "warning": "#ddccff",
+      "danger": "#f07178",
+      "info": "#bb9af7"
+    }
+  }
+}

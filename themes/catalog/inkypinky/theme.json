@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "inkypinky",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#13131d",
+      "foreground": "#c8c8c8",
+      "accent": "#7c7ca8",
+      "success": "#a6b2c7",
+      "warning": "#d18ba2",
+      "danger": "#ea90a8",
+      "info": "#7c7ca8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.35)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.07)"
+    }
+  }
+}

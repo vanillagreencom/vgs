@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "kurayami",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#2c2e27",
+      "foreground": "#fdfefd",
+      "accent": "#c6d0b6",
+      "success": "#d2dfc1",
+      "warning": "#dfdfb9",
+      "danger": "#d9bc87",
+      "info": "#c6d0b6"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)"
+    }
+  }
+}

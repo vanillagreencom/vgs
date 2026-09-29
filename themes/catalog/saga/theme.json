@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "saga",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#05080a",
+      "foreground": "#fff6ff",
+      "accent": "#b2fff3",
+      "success": "#baf7b5",
+      "warning": "#fff6c3",
+      "danger": "#ff9fbc",
+      "info": "#b2fff3"
+    }
+  }
+}

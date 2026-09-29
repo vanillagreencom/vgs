@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "lunar",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#181c1f",
+      "foreground": "#e1e4e8",
+      "accent": "#ffffff",
+      "success": "#79b8ff",
+      "warning": "#ffdf5d",
+      "danger": "#ea4a5a",
+      "info": "#ffdf5d"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.14)"
+    }
+  }
+}

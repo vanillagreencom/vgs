@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "soho",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1a1721",
+      "foreground": "#d0cbd8",
+      "accent": "#e89bc1",
+      "success": "#7cc9a0",
+      "warning": "#d9b464",
+      "danger": "#e87b97",
+      "info": "#7ba5dd"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.35)"
+    }
+  }
+}

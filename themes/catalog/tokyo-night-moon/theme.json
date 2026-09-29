@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "tokyo-night-moon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#222436",
+      "foreground": "#c8d3f5",
+      "accent": "#82aaff",
+      "success": "#c3e88d",
+      "warning": "#ffc777",
+      "danger": "#ff757f",
+      "info": "#82aaff"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.33)"
+    }
+  }
+}

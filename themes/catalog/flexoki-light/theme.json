@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "flexoki-light",
+  "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
+    "palette": {
+      "background": "#fffcf0",
+      "foreground": "#100f0f",
+      "accent": "#205ea6",
+      "success": "#879a39",
+      "warning": "#d0a215",
+      "danger": "#d14d41",
+      "info": "#205ea6"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.38)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.28)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.37)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.13)"
+    }
+  }
+}

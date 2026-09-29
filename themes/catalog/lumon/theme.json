@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "lumon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#16242d",
+      "foreground": "#d6e2ee",
+      "accent": "#8bc9eb",
+      "success": "#5e95bc",
+      "warning": "#6fa4c9",
+      "danger": "#4d86b0",
+      "info": "#6fb8e3"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.38)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.08)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.19)"
+    }
+  }
+}

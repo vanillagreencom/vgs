@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "rose-pine-moon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#232136",
+      "foreground": "#e0def4",
+      "accent": "#ea9a97",
+      "success": "#3e8fb0",
+      "warning": "#f6c177",
+      "danger": "#eb6f92",
+      "info": "#9ccfd8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.38)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.16)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.02)"
+    }
+  }
+}

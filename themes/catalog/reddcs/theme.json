@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "reddcs",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1c1213",
+      "foreground": "#e3a68c",
+      "accent": "#684c59",
+      "success": "#806c61",
+      "warning": "#f28171",
+      "danger": "#c24f57",
+      "info": "#684c59"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.28)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.16)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.16)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.30)"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "hackerman",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0b0c16",
+      "foreground": "#ddf7ff",
+      "accent": "#82fb9c",
+      "success": "#4fe88f",
+      "warning": "#50f7d4",
+      "danger": "#50f872",
+      "info": "#829dd4"
+    }
+  }
+}

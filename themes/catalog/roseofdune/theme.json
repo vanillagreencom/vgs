@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "roseofdune",
+  "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
+    "palette": {
+      "background": "#f5e6d3",
+      "foreground": "#35302a",
+      "accent": "#9e4f5b",
+      "success": "#9e4f5b",
+      "warning": "#644535",
+      "danger": "#a02b16",
+      "info": "#76634c"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.25)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.07)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.06)"
+    }
+  }
+}

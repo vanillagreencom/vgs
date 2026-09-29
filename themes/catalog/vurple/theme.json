@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "vurple",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#050111",
+      "foreground": "#c9ffff",
+      "accent": "#450090",
+      "success": "#4efaff",
+      "warning": "#46d6fd",
+      "danger": "#9f34f3",
+      "info": "#7d7bdb"
+    },
+    "color": {
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.14)"
+    }
+  }
+}

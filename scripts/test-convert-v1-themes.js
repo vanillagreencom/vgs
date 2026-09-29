@@ -18,6 +18,7 @@ const repo = path.join(__dirname, "..");
 const FIXTURE = path.join(repo, "scripts", "fixtures", "convert-v1-themes");
 const CONVERTER = path.join(repo, "tools", "convert-v1-themes");
 const JUDGE = path.join(repo, "bin", "vgsh-theme-judge");
+const CONTRAST = path.join(repo, "scripts", "check-theme-contrast.js");
 const NODE = process.execPath;
 const MAGICK = findOnPath("magick");
 const FLOCK = findOnPath("flock");
@@ -285,6 +286,11 @@ try {
         compareDirs(path.join(dir, "themes", "catalog"), path.join(FIXTURE, "expected", "catalog"));
         const judged = spawnSync(NODE, [JUDGE, "catalog-check", path.join(dir, "themes")], { encoding: "utf8", env: env(dir) });
         assert.equal(judged.status, 0, judged.stdout + judged.stderr);
+        const contrast = spawnSync(NODE, [CONTRAST, path.join(dir, "themes")], { encoding: "utf8", env: env(dir) });
+        assert.equal(contrast.status, 0, contrast.stdout + contrast.stderr);
+        const beta = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "beta", "theme.json"), "utf8"));
+        assert.equal(beta.tokens.color.textFaint, "mix({palette.foreground}, {palette.background}, 0.37)");
+        assert.equal(beta.tokens.color.success, "mix({palette.success}, contrast({palette.background}), 0.28)");
         const before = digestDir(path.join(dir, "themes", "catalog"));
         const again = runWithRoot(dir);
         assert.equal(again.status, 0, again.stdout + again.stderr);
@@ -301,6 +307,26 @@ try {
             failed = true;
         }
         assert.equal(failed, true, "mutant that drops existing entries preserved them");
+    });
+
+
+    row("held-back body text removes stale output", dir => {
+        freshRoot(dir);
+        fs.mkdirSync(path.join(dir, "themes", "catalog", "body"), { recursive: true });
+        fs.mkdirSync(path.join(dir, "themes", "catalog", "thumbnails"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "themes", "catalog", "body", "theme.json"), "stale\n");
+        fs.writeFileSync(path.join(dir, "themes", "catalog", "thumbnails", "body.jpg"), "stale\n");
+        fs.writeFileSync(path.join(dir, "themes", "catalog", "index.json"), JSON.stringify({
+            schemaVersion: 1,
+            entries: [{ name: "body", mode: "dark", thumbnail: "thumbnails/body.jpg", palette: { background: "#888888", foreground: "#777777", accent: "#777777", success: "#777777", warning: "#777777", danger: "#777777", info: "#777777" }, imagery: null }]
+        }, null, 2) + "\n");
+        const proc = runThemes(dir, ["body"]);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /held-back theme=body text=color\.text surface=color\.background ratio=1\.26 floor=4\.5/);
+        assert.equal(fs.existsSync(path.join(dir, "themes", "catalog", "body")), false, "stale package remains");
+        assert.equal(fs.existsSync(path.join(dir, "themes", "catalog", "thumbnails", "body.jpg")), false, "stale thumbnail remains");
+        const index = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "index.json"), "utf8"));
+        assert.deepEqual(index.entries, []);
     });
 
     const refusals = [
@@ -430,6 +456,26 @@ try {
     row("terminal overlay control", dir => assertMutantFails(dir, "terminal overlay", "slots[slot] = terminalOverrides[slot] || colors[slot];", "slots[slot] = colors[slot];"));
     row("first image control", dir => assertMutantFails(dir, "first image", "const first = backgrounds.firstImageName(entries);", "const first = entries.map(entry => entry.name).sort().pop() || null;"));
     row("deterministic index control", dir => assertMutantFails(dir, "deterministic index", "entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name))", "entries: Array.from(byName.values())"));
+    row("override only on failure control", dir => assertMutantFails(dir, "override only on failure", "if (roleShortfall(initialShortfalls, \"textFaint\") !== undefined) {", "if (true) {"));
+    row("largest textFaint control", dir => assertMutantFails(dir, "largest textFaint", "for (let step = 99; step >= 0; step--)", "for (let step = 0; step <= 99; step++)"));
+    row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (let step = 1; step <= 100; step++)", "for (let step = 100; step >= 1; step--)"));
+    row("unfixable hold-back control", dir => {
+        freshRoot(dir);
+        const copy = converterCopy(dir, "if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };", "if (false) return { held: true, shortfall: firstUnfixable };");
+        const proc = runThemes(dir, ["body"], [], copy);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /held-back theme=body/, "mutant stopped holding the theme back before reporting a reason");
+        assert.doesNotMatch(proc.stdout, /text=color\.text surface=color\.background/, "mutant still reported the unfixable role first");
+    });
+    row("held-back removal control", dir => {
+        freshRoot(dir);
+        const copy = converterCopy(dir, "fs.rmSync(path.join(catalogDir, item.theme), { recursive: true, force: true });", "");
+        fs.mkdirSync(path.join(dir, "themes", "catalog", "body"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "themes", "catalog", "body", "theme.json"), "stale\n");
+        const proc = runThemes(dir, ["body"], [], copy);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.equal(fs.existsSync(path.join(dir, "themes", "catalog", "body")), true, "mutant removed stale package");
+    });
 } finally {
     rmTree(root);
 }

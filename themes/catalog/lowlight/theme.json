@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "lowlight",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#292323",
+      "foreground": "#dcd7d6",
+      "accent": "#cb8c6d",
+      "success": "#af8a79",
+      "warning": "#a88373",
+      "danger": "#a48484",
+      "info": "#a39eb8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.34)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.07)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.13)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.12)"
+    }
+  }
+}

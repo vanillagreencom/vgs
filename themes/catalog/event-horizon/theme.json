@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "event-horizon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1c1e26",
+      "foreground": "#fadad1",
+      "accent": "#26bbd9",
+      "success": "#29d398",
+      "warning": "#fab795",
+      "danger": "#e95678",
+      "info": "#26bbd9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.39)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.11)"
+    }
+  }
+}

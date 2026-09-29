@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "eldritch",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#212337",
+      "foreground": "#ebfafa",
+      "accent": "#37f499",
+      "success": "#37f499",
+      "warning": "#e9f941",
+      "danger": "#f9515d",
+      "info": "#9071f4"
+    },
+    "color": {
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.17)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.18)"
+    }
+  }
+}

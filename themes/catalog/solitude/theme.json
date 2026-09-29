@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "solitude",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#101315",
+      "foreground": "#cacccc",
+      "accent": "#798186",
+      "success": "#9fa5a9",
+      "warning": "#d9dbdc",
+      "danger": "#565d60",
+      "info": "#798186"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.37)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.27)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.06)"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "brutalism",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#121212",
+      "foreground": "#ded3d3",
+      "accent": "#940404",
+      "success": "#630a0a",
+      "warning": "#cc7a7a",
+      "danger": "#450404",
+      "info": "#ce5757"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.40)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.46)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.49)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.09)"
+    }
+  }
+}

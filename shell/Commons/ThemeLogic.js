@@ -185,6 +185,60 @@ function luminance(color) {
     return 0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b);
 }
 
+function contrastRatio(a, b) {
+    var first = luminance(a);
+    var second = luminance(b);
+    var light = Math.max(first, second);
+    var dark = Math.min(first, second);
+    return (light + 0.05) / (dark + 0.05);
+}
+
+// Text drawn at rest must meet WCAG 2.2 SC 1.4.3 AA for normal-size text
+// on each resting surface. Inactive controls and hover surfaces are exempt.
+var READABILITY_TEXT_ROLES = [
+    "color.text",
+    "color.textHeading",
+    "color.textMuted",
+    "color.textFaint",
+    "color.success",
+    "color.warning",
+    "color.danger",
+    "color.info"
+];
+var READABILITY_SURFACES = [
+    "color.background",
+    "color.surface",
+    "color.surfaceRaised",
+    "color.surfaceSunken"
+];
+var READABILITY_FLOOR = 4.5;
+
+function valueAt(values, path) {
+    var node = values;
+    var parts = path.split(".");
+    for (var i = 0; i < parts.length; i++)
+        node = isPlainObject(node) && hasOwn(node, parts[i]) ? node[parts[i]] : undefined;
+    return node;
+}
+
+function readabilityShortfalls(values) {
+    var out = [];
+    for (var i = 0; i < READABILITY_TEXT_ROLES.length; i++) {
+        var textPath = READABILITY_TEXT_ROLES[i];
+        var text = parseColor(valueAt(values, textPath));
+        for (var j = 0; j < READABILITY_SURFACES.length; j++) {
+            var surfacePath = READABILITY_SURFACES[j];
+            var surface = parseColor(valueAt(values, surfacePath));
+            var ratio = text === null || surface === null || text.a < 1 || surface.a < 1
+                ? null
+                : contrastRatio(text, surface);
+            if (ratio === null || ratio < READABILITY_FLOOR)
+                out.push({ text: textPath, surface: surfacePath, ratio: ratio, floor: READABILITY_FLOOR });
+        }
+    }
+    return out;
+}
+
 // --- expressions
 
 // Parse one expression into a tree of

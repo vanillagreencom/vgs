@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "ayu",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0b0e14",
+      "foreground": "#bfbdb6",
+      "accent": "#e6b450",
+      "success": "#70bf56",
+      "warning": "#fdb04c",
+      "danger": "#f06b73",
+      "info": "#4fbfff"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.33)"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "nebulite",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#232529",
+      "foreground": "#dcd6d6",
+      "accent": "#4c566a",
+      "success": "#98b398",
+      "warning": "#bab292",
+      "danger": "#b18786",
+      "info": "#9e9eb8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.34)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.08)"
+    }
+  }
+}

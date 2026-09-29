@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "untitled",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#241d22",
+      "foreground": "#f0ecc5",
+      "accent": "#a3baca",
+      "success": "#83c483",
+      "warning": "#c1ba86",
+      "danger": "#a58386",
+      "info": "#a3baca"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.09)"
+    }
+  }
+}

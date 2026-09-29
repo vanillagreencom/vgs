@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "mechanoonna",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1c1b19",
+      "foreground": "#f0e4c5",
+      "accent": "#706e6b",
+      "success": "#a89984",
+      "warning": "#ebdbb2",
+      "danger": "#c5564a",
+      "info": "#908d88"
+    },
+    "color": {
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.20)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.03)"
+    }
+  }
+}

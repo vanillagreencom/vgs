@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "ethereal",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#060b1e",
+      "foreground": "#ffcead",
+      "accent": "#7d82d9",
+      "success": "#92a593",
+      "warning": "#e9bb4f",
+      "danger": "#ed5b5a",
+      "info": "#7d82d9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)"
+    }
+  }
+}

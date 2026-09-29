@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "nagai-twilight",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1f1a2e",
+      "foreground": "#e9e4f5",
+      "accent": "#bd93f9",
+      "success": "#6fb3a8",
+      "warning": "#eadda6",
+      "danger": "#ff5555",
+      "info": "#5b8fb9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.02)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.08)"
+    }
+  }
+}

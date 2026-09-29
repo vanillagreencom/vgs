@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "ember-n-ash",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1a1a1a",
+      "foreground": "#e5d6c6",
+      "accent": "#ff6f3c",
+      "success": "#9e8f70",
+      "warning": "#d9a066",
+      "danger": "#d45d4c",
+      "info": "#6c5b4c"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.39)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.12)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.31)"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "horizon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1c1e26",
+      "foreground": "#d5d8da",
+      "accent": "#fab795",
+      "success": "#29d398",
+      "warning": "#fab795",
+      "danger": "#e95678",
+      "info": "#26bbd9"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.37)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.10)"
+    }
+  }
+}

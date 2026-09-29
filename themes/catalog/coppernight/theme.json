@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "coppernight",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#11111b",
+      "foreground": "#cdd6f4",
+      "accent": "#fab387",
+      "success": "#a6e3a1",
+      "warning": "#f9e2af",
+      "danger": "#f38ba8",
+      "info": "#89b4fa"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.40)"
+    }
+  }
+}

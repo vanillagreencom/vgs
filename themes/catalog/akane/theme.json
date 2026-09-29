@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "akane",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0e1e36",
+      "foreground": "#f4b999",
+      "accent": "#9279aa",
+      "success": "#be6f76",
+      "warning": "#f4b999",
+      "danger": "#d2495b",
+      "info": "#574f72"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.31)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.10)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.21)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.35)"
+    }
+  }
+}

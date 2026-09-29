@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "vantablack",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#000000",
+      "foreground": "#ffffff",
+      "accent": "#8d8d8d",
+      "success": "#b6b6b6",
+      "warning": "#cecece",
+      "danger": "#a4a4a4",
+      "info": "#8d8d8d"
+    }
+  }
+}

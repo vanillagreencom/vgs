@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "tokyo-night-storm",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#24283b",
+      "foreground": "#c0caf5",
+      "accent": "#7aa2f7",
+      "success": "#9ece6a",
+      "warning": "#e0af68",
+      "danger": "#f7768e",
+      "info": "#7aa2f7"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.28)"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "monokai",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0a1220",
+      "foreground": "#f0f2f5",
+      "accent": "#aba0f2",
+      "success": "#b2d977",
+      "warning": "#f2c063",
+      "danger": "#f25e86",
+      "info": "#78dce8"
+    }
+  }
+}

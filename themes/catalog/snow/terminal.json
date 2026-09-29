@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "slots": {
+    "color0": "#1a1b1f",
+    "color1": "#7a92ae",
+    "color2": "#9eafc0",
+    "color3": "#a8b6c4",
+    "color4": "#7b8da3",
+    "color5": "#a6b1bf",
+    "color6": "#aabaca",
+    "color7": "#b8c4d0",
+    "color8": "#8a8c94",
+    "color9": "#b2c1d2",
+    "color10": "#d5dde5",
+    "color11": "#dee4ea",
+    "color12": "#b0bcca",
+    "color13": "#dbe0e6",
+    "color14": "#e2e8ee",
+    "color15": "#eff2f5"
+  }
+}

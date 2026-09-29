@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "oxford",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#292b31",
+      "foreground": "#d6d1c9",
+      "accent": "#bda07f",
+      "success": "#76856a",
+      "warning": "#f3e9bd",
+      "danger": "#dd5544",
+      "info": "#bda07f"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.30)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.25)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.28)"
+    }
+  }
+}

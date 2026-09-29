@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "reverie",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#101c38",
+      "foreground": "#d8e0f2",
+      "accent": "#587ea8",
+      "success": "#6ca994",
+      "warning": "#f4a261",
+      "danger": "#e56b6f",
+      "info": "#587ea8"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.40)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.02)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.18)"
+    }
+  }
+}

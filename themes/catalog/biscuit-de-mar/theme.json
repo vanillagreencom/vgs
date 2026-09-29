@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "biscuit-de-mar",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#1a1515",
+      "foreground": "#dcc9bc",
+      "accent": "#ae3f82",
+      "success": "#959a6b",
+      "warning": "#e39c45",
+      "danger": "#f07342",
+      "info": "#756d94"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.36)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.18)"
+    }
+  }
+}

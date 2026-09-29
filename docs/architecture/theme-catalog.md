@@ -1,6 +1,6 @@
 # Theme catalog
 
-Covers: themes/catalog/**, tools/convert-v1-themes, scripts/test-convert-v1-themes.js, scripts/fixtures/convert-v1-themes/**, bin/lib/theme-catalog.js, scripts/test-theme-catalog.js, scripts/test-vgsh-catalog.sh
+Covers: themes/catalog/**, tools/convert-v1-themes, scripts/check-theme-contrast.js, scripts/test-check-theme-contrast.js, scripts/test-convert-v1-themes.js, scripts/fixtures/convert-v1-themes/**, bin/lib/theme-catalog.js, scripts/test-theme-catalog.js, scripts/test-vgsh-catalog.sh
 
 The catalog holds the first-party theme packages VGS offers beside the shipped ones. It lives in this repository under `themes/catalog/`, and offline validation judges every entry as the installed package it becomes, so a catalog package passes the judge a shipped package passes before it reaches the repository. [D038](../decisions/D038-judged-theme-catalog.md) records the choice.
 
@@ -13,6 +13,8 @@ The catalog holds the first-party theme packages VGS offers beside the shipped o
 | `themes/catalog/<name>/terminal.json` | no | The package's terminal slots. |
 | `themes/catalog/<name>/targets/<destination>` | no | A curated file for a target whose files run no code: [§ Trust](#trust). |
 | `themes/catalog/thumbnails/<name>.jpg` | no | A generated catalog thumbnail from the theme archive's first background image. |
+| `themes/catalog/BACKGROUNDS-ATTRIBUTION.md` | yes | Wallpaper provenance and the thumbnail source image for each converted theme. |
+| `themes/catalog/THEMES-ATTRIBUTION.md` | yes | Upstream theme repository and license provenance for converted palettes. |
 
 A themes directory's walk skips `catalog/` as it skips `targets/` and `thumbnails/`, and no package of any source takes these names: `ThemeLogic.RESERVED_DIRECTORIES`. Only an index entry reaches a package directory.
 
@@ -80,7 +82,7 @@ The converter writes `themes/catalog/<name>/theme.json`, `themes/catalog/<name>/
 | `terminal.json` `color0` to `color15` | `colors.toml` `color0` to `color15`, overlaid by the same key in `terminal-colors.toml`. |
 | `imagery` | Matching pins in `catalog.json` and `asset-lock.json`. |
 
-The converter does not carry `apps/`. Catalog packages may not carry curated files for targets that run code, and v1 app files include such targets. It does not carry `ui-roles.toml`, because this issue adds no v2 token mapping for those derived tones. It does not carry `preview.jpg`, because the v2 thumbnail comes from the first wallpaper. It does not carry `contrastShortfalls`, because contrast fixes belong to the later catalog conversion issue.
+The converter does not carry `apps/`. Catalog packages may not carry curated files for targets that run code, and v1 app files include such targets. It does not carry `ui-roles.toml`, because this issue adds no v2 token mapping for those derived tones. It does not carry `preview.jpg`, because the v2 thumbnail comes from the first wallpaper. It does not carry `contrastShortfalls`, because the v2 readability judge recomputes contrast from the resolved token tree and writes v2 token overrides.
 
 The converter refuses a color line it cannot parse, a missing mapped key, a bad mode, a missing pin, and a pin disagreement between `catalog.json` and `asset-lock.json`. It judges the merged index with `ThemeLogic.acceptCatalogIndex`, and judges each converted package with `ThemeLogic.acceptCatalogEntry`, before it writes the catalog output.
 
@@ -88,17 +90,36 @@ The thumbnail step downloads each pinned archive through `bin/lib/theme-download
 
 The thumbnail source is the first direct regular image entry under `backgrounds/` in the archive, using `bin/lib/theme-backgrounds.js` for the same image-name rule that `vgsh theme background list` uses. The archive reader is the one [theme-wallpapers.md § Fetch and read](theme-wallpapers.md#fetch-and-read) describes. The converter's own member rule skips nested files and every member outside `backgrounds/`, and refuses symbolic links, hard links and unsupported member types under `backgrounds/`. ImageMagick writes a 480 px wide JPEG with metadata stripped, fixed sampling and fixed quality.
 
-The per-thumbnail budget is 120000 bytes. The 81-theme budget is 9720000 bytes. `tools/convert-v1-themes /home/method/dev/.worktrees/vgs/v1 --theme nord --asset-cache tmp/theme-assets` on 2026-09-28 produced `themes/catalog/thumbnails/nord.jpg` at 25445 bytes.
+The per-thumbnail budget is 120000 bytes. The 81-theme budget is 9720000 bytes. `tools/convert-v1-themes /home/method/dev/.worktrees/vgs/v1 --asset-cache tmp/theme-assets` on 2026-09-28 converted 77 themes, held back 4 themes, and produced 1370551 thumbnail bytes.
 
-Reruns are deterministic. The converter replaces the same package files and index entry with the same bytes, and the nord measurement run changed no output bytes on its second pass.
+The same run wrote readability overrides to 63 themes: 53 themes changed `color.textFaint`, and 50 themes changed at least one status colour. The largest status mix amount was 0.49. That value is the largest hue loss the converter needed to pass the readability check.
+
+Reruns are deterministic. The converter replaces the same package files and index entry with the same bytes, and `scripts/test-convert-v1-themes.js` runs the fixture conversion twice and compares the catalog digest.
 
 Omarchy ships theme directories with backgrounds and a preview image, and it has no v1-to-v2 converter. VGS differs because its first-party catalog is judged offline and its thumbnail must match the first wallpaper the browser later shows.
+
+
+## Readability
+
+`ThemeLogic.readabilityShortfalls` checks the text roles drawn at rest on the resting surfaces. The roles are `color.text`, `color.textHeading`, `color.textMuted`, `color.textFaint`, `color.success`, `color.warning`, `color.danger` and `color.info`. The surfaces are `color.background`, `color.surface`, `color.surfaceRaised` and `color.surfaceSunken`. The floor is 4.5:1, the WCAG 2.2 SC 1.4.3 AA threshold for normal-size text. `color.surfaceHover` is excluded because hover is transient. `color.textDisabled` is excluded because inactive controls are exempt.
+
+The converter fixes only the roles that have one v2 override family. `color.textFaint` searches `mix({palette.foreground}, {palette.background}, t)` from `t = 0.99` down to `0.00` and takes the largest passing value. Each status role searches `mix({palette.<role>}, contrast({palette.background}), t)` from `t = 0.01` up to `1.00` and takes the smallest passing value. Each candidate is resolved through `ThemeLogic.accept`, so 8-bit colour rounding is part of the decision.
+
+A theme is held back when `color.text`, `color.textHeading` or `color.textMuted` fails, or when no value in an override family makes its role pass. Held-back themes are removed from `themes/catalog/index.json`, and stale package and thumbnail files for that theme are removed from the catalog.
+
+| Theme | Failing pair | Ratio |
+|---|---|---|
+| `catppuccin-latte` | `color.textMuted` on `color.background` | 4.25 |
+| `everforest` | `color.textMuted` on `color.surfaceRaised` | 4.46 |
+| `moon-orbit` | `color.text` on `color.surfaceRaised` | 4.33 |
+| `rose-pine` | `color.textMuted` on `color.background` | 4.07 |
 
 ## Invariants
 
 1. The index judge refuses a breach of every rule in [§ Index entry](#index-entry), and the shipped index and every package it names pass it and `acceptCatalogEntry`. Enforced by `scripts/test-theme-logic.js`, with a judge copy per rule as its controls.
 2. `bin/vgsh-theme-judge catalog-check themes` accepts the shipped catalog, selected by `scripts/validate` for `themes/catalog/*` changes. The check refuses a curated file on a `runsCode` target, one no target writes, one of a shape apply would not take, a symlink, an absent package, `theme.json` or thumbnail, a package the judge refuses, a refused index and a refused target. Enforced by `scripts/test-vgsh-theme-judge.js`, with a judge copy per rule as its controls.
 3. The package walk skips `catalog/` and `thumbnails/`, and add and update refuse both names. Enforced by `scripts/test-vgsh-theme-judge.js` and `scripts/test-vgsh.sh`, each with a judge copy that reserves `targets` alone as its control, and by `scripts/test-theme-logic.js` for `acceptPackage`.
-4. The v1 converter maps the required v1 fields, preserves unselected catalog entries, overlays terminal-only ANSI slots, refuses malformed pins, unsafe archive names, bad archive headers, unsafe archive member types and non-HTTPS redirects, reads pax path and GNU long-name background members, skips nested background files, chooses the first direct background image, enforces the thumbnail byte budget, and writes deterministic output. Enforced by `scripts/test-convert-v1-themes.js`, with refused fixture rows for each guard and converter-copy controls for the preservation, overlay, first-image, nested-background and index-order rules.
+4. The v1 converter maps the required v1 fields, preserves unselected catalog entries, overlays terminal-only ANSI slots, refuses malformed pins, unsafe archive names, bad archive headers, unsafe archive member types and non-HTTPS redirects, reads pax path and GNU long-name background members, skips nested background files, chooses the first direct background image, enforces the thumbnail byte budget, writes deterministic output, writes readability overrides only when the resolved theme fails, takes the largest passing faint-text mix and the smallest passing status mix, and holds back unreadable themes while removing stale output. Enforced by `scripts/test-convert-v1-themes.js`, with refused fixture rows for each guard and converter-copy controls for the preservation, overlay, first-image, nested-background, index-order, override, search and hold-back rules.
 5. Install copies the package byte for byte with its marker and leaves no staging directory. It refuses a reinstall, a package the judge refuses, a name the index lacks and an occupied name, and is refused busy while the theme lock is held. Update replaces a changed definition, keeps `backgrounds/` and the marker's `imagery`, and follows the applied, unedited package. It refuses a hand edit and a version the judge refuses. An update ended after either of its renames leaves the package in its backup, and the next install, update or remove restores it or completes the swap byte for byte. `catalog` and `outdated` report the install's state, and remove deletes it. Enforced by `scripts/test-vgsh-catalog.sh`, with judge copies that skip the judge, write no marker, keep no background, ignore a hand edit, drop the imagery pin and keep the backup in the staging directory, and `bin/vgsh` copies whose install takes no lock and whose verbs skip the recovery, as its controls.
 6. The marker judge refuses every defect of [§ Install](#install)'s marker shape, and the install state follows the marker and the index. Enforced by `scripts/test-theme-catalog.js`, with a library copy per rule as its controls.
+7. Every shipped package and catalog entry keeps resting text readable on resting surfaces. Enforced by `scripts/check-theme-contrast.js` and `scripts/test-check-theme-contrast.js`, with failing package, catalog, translucent, refused and unreadable controls. The shared readability table is enforced by `scripts/test-theme-logic.js`, with judge-copy controls for the table, floor, ratio and translucent rules.

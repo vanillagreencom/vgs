@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "last-horizon",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#0c0b0c",
+      "foreground": "#fafcfb",
+      "accent": "#b59790",
+      "success": "#87a9b0",
+      "warning": "#6b5e73",
+      "danger": "#c38b7b",
+      "info": "#b59790"
+    },
+    "color": {
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.22)"
+    }
+  }
+}

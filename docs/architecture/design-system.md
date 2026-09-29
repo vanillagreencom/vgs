@@ -42,6 +42,10 @@ The token list is `Tokens.js`; no document copies it. A theme that sets the seve
 
 A value is a literal, a reference `{group.token}` to a token of the same type, or one call: `mix(a, b, t)` moves each channel of colour `a` toward `b` by `t` in sRGB; `alpha(c, a)` sets the alpha; `contrast(c)` is black or white, whichever has the higher WCAG contrast against an opaque `c`; `mul(n, k)` scales a number, length or duration. Calls nest to a depth of 8 and an expression holds at most 256 characters. The judge evaluates no JavaScript from a document.
 
+## Readability
+
+`ThemeLogic.readabilityShortfalls` owns the contrast table for resting text on resting surfaces. `scripts/check-theme-contrast.js` runs that table over the shipped `vgs` and `light` packages and every catalog entry, so a token default or converted theme that makes text unreadable fails offline validation. The table excludes hover surfaces and disabled text for the reasons in [theme-catalog.md § Readability](theme-catalog.md#readability).
+
 ## Components
 
 What each component of `qs.Ui` guarantees is in [components.md](components.md).

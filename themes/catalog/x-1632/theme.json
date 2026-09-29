@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "x-1632",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#2f3138",
+      "foreground": "#c7c6c1",
+      "accent": "#4a5a70",
+      "success": "#8b8e76",
+      "warning": "#d6c8ba",
+      "danger": "#a07d7d",
+      "info": "#7f8da1"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.21)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.23)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.27)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.23)"
+    }
+  }
+}

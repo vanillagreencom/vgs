@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "arc-blueberry",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#111422",
+      "foreground": "#bcc1dc",
+      "accent": "#f38cec",
+      "success": "#3cec85",
+      "warning": "#eacd61",
+      "danger": "#e35535",
+      "info": "#69c3ff"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.33)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.05)"
+    }
+  }
+}

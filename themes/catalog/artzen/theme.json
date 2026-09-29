@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "artzen",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#181c1f",
+      "foreground": "#fdf9f8",
+      "accent": "#ed333b",
+      "success": "#9f6769",
+      "warning": "#bb6d6c",
+      "danger": "#9b584d",
+      "info": "#b97670"
+    },
+    "color": {
+      "success": "mix({palette.success}, contrast({palette.background}), 0.22)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.14)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.29)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.10)"
+    }
+  }
+}

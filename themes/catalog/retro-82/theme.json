@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "retro-82",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#00172e",
+      "foreground": "#f6dcac",
+      "accent": "#faa968",
+      "success": "#028391",
+      "warning": "#e97b3c",
+      "danger": "#f85525",
+      "info": "#faa968"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.41)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.17)"
+    }
+  }
+}

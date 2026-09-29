@@ -13,6 +13,11 @@
       "warning": "#aaaa00",
       "danger": "#aa0000",
       "info": "#0000aa"
+    },
+    "color": {
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.37)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.28)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.36)"
     }
   }
 }
