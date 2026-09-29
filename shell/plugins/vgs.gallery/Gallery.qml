@@ -200,6 +200,30 @@ Item {
                     Label { role: "itemCode"; text: "xdg-terminal-exec" }
                 }
 
+                SectionHeader { text: "Cards"; description: "Angled cards over a scrim: the middle one selected, the others dimmed" }
+                Item {
+                    width: parent.width
+                    height: Theme.size.panel.sm / 2
+
+                    Scrim {}
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: Theme.space.sm
+                        Repeater {
+                            model: ["info", "success", "warning"]
+                            AngledCard {
+                                id: card
+                                required property string modelData
+                                required property int index
+                                width: Theme.size.panel.sm / 2
+                                height: Theme.size.panel.sm / 2 - 2 * Theme.space.md
+                                selected: index === 1
+                                Rectangle { anchors.fill: parent; color: Theme.color[card.modelData] }
+                            }
+                        }
+                    }
+                }
+
                 SectionHeader { text: "Titles and scrolling"; description: "A title that opens a long menu, the current choice checked; a scroll area and its bar" }
                 Flow {
                     width: parent.width

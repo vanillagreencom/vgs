@@ -124,7 +124,17 @@ const DEFAULTS = [
     ["dialog.actionGap", 6],
     ["dialog.background", "#101010ff"],
     ["dialog.titleRole", "h3"],
-    ["dialog.bodyRole", "body"]
+    ["dialog.bodyRole", "body"],
+    // The angled card: Omarchy's 28 pixel lean and 3 pixel selected
+    // outline; its outline is borderStrong, mix(#000000, #d7d7d9, 0.27):
+    // 215 * 0.27 = 58.05, 217 * 0.27 = 58.59; its wash the background at
+    // 0.42: 255 * 0.42 = 107.1.
+    ["angledCard.skew", 28],
+    ["angledCard.border", "#3a3a3bff"],
+    ["angledCard.borderWidth", 1],
+    ["angledCard.selectedBorder", "#ff5a36ff"],
+    ["angledCard.selectedBorderWidth", 3],
+    ["angledCard.dim", "#0000006b"]
 ];
 
 // A document that is accepted, and the values it must resolve to.

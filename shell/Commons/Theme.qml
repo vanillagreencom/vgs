@@ -66,6 +66,7 @@ Singleton {
     readonly property var select: published.select
     readonly property var toast: published.toast
     readonly property var dialog: published.dialog
+    readonly property var angledCard: published.angledCard
     readonly property var bar: published.bar
 
     // The accepted values converted once, as one frozen tree. It follows

@@ -554,6 +554,19 @@ var TOKENS = {
         bodyRole: textRole("body")
     },
 
+    // A card whose content is clipped to a parallelogram, its top edge
+    // `skew` pixels right of its bottom edge. Its outline is `borderWidth`
+    // of `border`, or `selectedBorderWidth` of `selectedBorder` while
+    // selected, and `dim` washes the content of a dimmed card.
+    angledCard: {
+        skew: length(28),
+        border: color("{color.borderStrong}"),
+        borderWidth: length("{border.thin}"),
+        selectedBorder: color("{color.accent}"),
+        selectedBorderWidth: length(3),
+        dim: color("alpha({palette.background}, 0.42)")
+    },
+
     // The embedded bar: `barWidth` thick, `barInset` from the area's edge,
     // inside a `gutter` the content leaves free while it overflows; a thumb
     // never shorter than `minThumb`. It shows while hovered or scrolling

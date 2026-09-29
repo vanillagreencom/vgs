@@ -5,6 +5,7 @@ Icon 1.0 foundation/Icon.qml
 Surface 1.0 foundation/Surface.qml
 Divider 1.0 foundation/Divider.qml
 FocusRing 1.0 foundation/FocusRing.qml
+Scrim 1.0 foundation/Scrim.qml
 Button 1.0 controls/Button.qml
 IconButton 1.0 controls/IconButton.qml
 ToggleButton 1.0 controls/ToggleButton.qml
@@ -23,6 +24,7 @@ ScrollArea 1.0 layout/ScrollArea.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
 SectionHeader 1.0 layout/SectionHeader.qml
+AngledCard 1.0 layout/AngledCard.qml
 Select 1.0 controls/Select.qml
 Toast 1.0 feedback/Toast.qml
 Dialog 1.0 feedback/Dialog.qml
