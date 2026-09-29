@@ -29,7 +29,7 @@ A progress `state` is `downloading`, `verifying` or `unpacking`, and `bytes` cou
 
 Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 75 when either lock is busy.
 
-The `theme` capability runs `--json` on its download lane and reads the progress lines into `last.downloading`: [theme-capability.md](theme-capability.md).
+The `theme` capability runs `--json`, with `--update` for its update form, on its download lane and reads the progress lines into `last.downloading`: [theme-capability.md](theme-capability.md).
 
 ## Refusals
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Controls for a theme package's backgrounds: what `vgsh theme apply` makes
 # the current background, what `vgsh theme background next` and `previous`
-# move to, what `set` takes, for every screen or one output, and what
-# `list` names.
+# move to, what `set` takes, for every screen, one output or every screen
+# with each output's own image cleared, and what `list` names.
 # Each row pins an exit status, the last stdout line, the keyed stderr line,
 # the state directory's `background` symlink and backgrounds.json. The
 # image files are bytes no row decodes: the judge reads only their names.
@@ -158,6 +158,7 @@ tinst "set of an absent image is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused
 tinst "set of a directory with an image name is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: background=set reason=not-a-file path=$images/d.png" theme background set "$images/d.png"
 tinst "set with a malformed output name is refused" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: background=set reason=malformed-screen screen="../x"' theme background set "$user/u.png" --screen ../x
 tinst "set under --json prints its refusal as the result" "$cfg" "$rt_empty" 1 '{"state":"failed","background":null,"theme":null,"path":null,"screen":null,"reason":"malformed-screen"}' 'vgsh: refused: background=set reason=malformed-screen screen="../x"' theme background --json set "$user/u.png" --screen ../x
+tinst "set --screen with the every-screen name is refused" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: background=set reason=malformed-screen screen="*"' theme background set "$user/u.png" --screen '*'
 check "refused sets leave the link" links_at "$user/u.png"
 
 tinst "dusk applies for the set rows" "$cfg" "$rt_empty" 0 "ok theme=dusk state=applied shell=applied" "" theme apply dusk
@@ -180,6 +181,12 @@ tinst "list names the applied package's images" "$cfg" "$rt_empty" 0 "background
 tinst "list under --json prints the applied package's images" "$cfg" "$rt_empty" 0 "{\"state\":\"ok\",\"images\":[$dusk_images],\"reason\":null}" "" theme background --json list
 tinst "an apply beside screen images is accepted" "$cfg" "$rt_empty" 0 "ok theme=dusk state=unchanged shell=unchanged" "" theme apply dusk
 check "the apply shows the remembered image and clears every screen's" doc_is "$(at a.JPG)" '{"dusk":"a.JPG"}'
+tinst "set --screen before --every-screen is accepted" "$cfg" "$rt_empty" 0 "$(set_line c.png dusk "$images/c.png" DP-1)" "" theme background set "$images/c.png" --screen DP-1
+tinst "set --every-screen of a user-folder image is accepted" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png" '*')" "" theme background set "$user/u.png" --every-screen
+check "set --every-screen links the image" links_at "$user/u.png"
+check "set --every-screen makes it current, clears every screen's and remembers no user-folder image" doc_is "$(uat u.png)" '{"dusk":"a.JPG"}'
+tinst "set --every-screen under --json prints its result" "$cfg" "$rt_empty" 0 "{\"state\":\"ok\",\"background\":\"c.png\",\"theme\":\"dusk\",\"path\":\"$images/c.png\",\"screen\":\"*\",\"reason\":null}" "" theme background --json set "$images/c.png" --every-screen
+check "set --every-screen remembers the applied package's image" doc_is "$(at c.png)" '{"dusk":"c.png"}'
 rm -- "$doc"
 tinst "nord applies for the screen-only rows" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 tinst "set --screen with no current image is accepted" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png" DP-1)" "" theme background set "$user/u.png" --screen DP-1
@@ -243,6 +250,8 @@ tinst "next with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: 
 tinst "set without a path is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: path=missing" theme background set
 tinst "set --screen without an output is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: screen=missing" theme background set "$user/u.png" --screen
 tinst "set with a second path is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=x.png" theme background set "$user/u.png" x.png
+tinst "set --screen with --every-screen is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--every-screen" theme background set "$user/u.png" --screen DP-1 --every-screen
+tinst "set --every-screen with --screen is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--screen" theme background set "$user/u.png" --every-screen --screen DP-1
 tinst "list with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=dusk" theme background list dusk
 tinst "list --all with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=dusk" theme background list --all dusk
 tinst "previous with an argument is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=dusk" theme background previous dusk
@@ -254,6 +263,7 @@ tinst "next while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 
 check "a busy next leaves the link" links_to a.JPG
 tinst "previous under --json while the lock is held prints the busy result" "$cfg" "$rt_empty" 75 "$(json_line failed null null null '"busy"')" "vgsh: refused: background=previous reason=busy" theme background --json previous
 tinst "set while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: background=set reason=busy" theme background set "$images/c.png"
+tinst "set --every-screen while the theme lock is held is refused as busy" "$cfg" "$rt_empty" 75 "" "vgsh: refused: background=set reason=busy" theme background set "$images/c.png" --every-screen
 check "a busy set leaves the link" links_to a.JPG
 judge_control busy 'if (lock === "busy") refuse(key + "=busy", "busy", 75);' ''
 tinst "the busy mutant moves on under the held lock" "$cfg" "$rt_empty" 0 "$(step_line b.png)" "" theme background next
@@ -317,7 +327,7 @@ printf '{ "schemaVersion": 1, "current": null, "stamp": null, "themes": {}, "scr
 bg_control screens 'Object.entries(doc.screens).every(isScreen)' 'true'
 tinst "the screens mutant applies over an output name no output has" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply nord
 reset_dusk "output control"
-judge_control output 'if (screen !== null && !logic.isOutputName(screen))' 'if (false)'
+judge_control output 'if (target.kind === "screen" && !logic.isOutputName(target.name))' 'if (false)'
 tinst "the output mutant sets an image for a malformed output name" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png" ../x)" "" theme background set "$user/u.png" --screen ../x
 reset_dusk "screens key control"
 bg_control screens-key 'if (Object.keys(state.screens).length > 0) doc.screens' 'if (true) doc.screens'
@@ -345,7 +355,7 @@ tinst "the user-remember mutant sets u.png before any apply" "$cfg" "$rt_empty" 
 check "the user-remember mutant remembers the user image under a package named null" doc_is "$(uat u.png)" '{"null":"u.png"}'
 mv -- "$state/theme.name.ok" "$state/theme.name"
 reset_dusk "screen-only control"
-judge_control screen-only 'const after = screen === null' 'const after = true'
+judge_control screen-only 'after = { current: shown.current, themes: shown.themes, screens: Object.assign' 'after = { current: image, themes: shown.themes, screens: Object.assign'
 tinst "the screen-only mutant sets b.png for DP-1" "$cfg" "$rt_empty" 0 "$(set_line b.png dusk "$images/b.png" DP-1)" "" theme background set "$images/b.png" --screen DP-1
 check "the screen-only mutant moves the link to the screen's image" links_to b.png
 reset_dusk "clear control"
@@ -353,6 +363,11 @@ tinst "the clear control sets b.png for DP-1" "$cfg" "$rt_empty" 0 "$(set_line b
 judge_control clear '{ current: background, themes: shown.themes, screens: {} }' '{ current: background, themes: shown.themes, screens: shown.screens }'
 tinst "the clear mutant applies dusk" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
 check "the clear mutant keeps the screen image through an apply" doc_is "$(at a.JPG)" '{}' "{\"DP-1\":\"$images/b.png\"}"
+reset_dusk "every-screen control"
+tinst "the every-screen control sets b.png for DP-1" "$cfg" "$rt_empty" 0 "$(set_line b.png dusk "$images/b.png" DP-1)" "" theme background set "$images/b.png" --screen DP-1
+judge_control every-screen 'after = { current: image, themes: themes, screens: {} };' 'after = { current: image, themes: themes, screens: shown.screens };'
+tinst "the every-screen mutant sets u.png on every screen" "$cfg" "$rt_empty" 0 "$(set_line u.png - "$user/u.png" '*')" "" theme background set "$user/u.png" --every-screen
+check "the every-screen mutant keeps the screen image" doc_is "$(uat u.png)" '{}' "{\"DP-1\":\"$images/b.png\"}"
 reset_dusk "keep control"
 tinst "the keep control sets b.png for DP-1" "$cfg" "$rt_empty" 0 "$(set_line b.png dusk "$images/b.png" DP-1)" "" theme background set "$images/b.png" --screen DP-1
 judge_control keep '{ [name]: chosen }), screens: shown.screens }' '{ [name]: chosen }), screens: {} }'

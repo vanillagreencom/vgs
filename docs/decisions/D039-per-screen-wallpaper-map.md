@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active
+**Status**: Revisited
 
 **Research**: VGS-544, [docs/plans/v2-platform-roadmap.md § vgs.themes](../plans/v2-platform-roadmap.md#vgsthemes-catalog-per-screen-wallpaper-browsers-issues-29-41)
 
@@ -54,3 +54,7 @@ VGS takes Omarchy's single link for `current` and its per-theme memory. It diffe
 **Verification**: `scripts/test-vgsh-backgrounds.sh` covers `set` with and without `--screen`, each refusal, `list` and `list --all`, an apply that clears `screens`, steps that keep it, the writer that omits an empty map, and the refusal of a malformed map. Each rule has a must-fail control on a tree copy.
 
 **References**: [D031](D031-installed-themes-render-code-targets.md), [theme-backgrounds.md](../architecture/theme-backgrounds.md), VGS-545 (drawing each screen's image), VGS-546 (the `theme` capability's `images` and `set`)
+
+## Revisit Outcome (2026-09-29, VGS-550)
+
+The decision holds. The wallpaper browser's All monitors choice must show one image on every screen, and `set` without `--screen` keeps each screen's own image, so the choice would not do what its label says. `vgsh theme background set <path> --every-screen` clears `screens`, then sets `current` as `set` without `--screen` does, under the same theme lock and judge; it excludes `--screen`, and its result names the screen `*`, which no output name can be ([theme-backgrounds.md § Commands](../architecture/theme-backgrounds.md#commands)). The theme capability's `set(path, "*", done)` runs it. The map stays additive with no mode flag: every screen showing `current` is still the absence of entries, and `--every-screen` returns to that state in one write. `scripts/test-vgsh-backgrounds.sh` covers it, with a judge copy that keeps `screens` as its control.

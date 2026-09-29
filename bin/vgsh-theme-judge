@@ -45,12 +45,13 @@
 //       package, under the same lock verdict; prints `ok background=<file>
 //       theme=<name> path=<image>`, or under `json` the result
 //       `{ state, background, theme, path, reason }`.
-//   vgsh-theme-judge background <text|json> set <config-dir> <state-dir> <held|busy|failed> <path> [<output>]
+//   vgsh-theme-judge background <text|json> set <config-dir> <state-dir> <held|busy|failed> <path> [--screen <output> | --every-screen]
 //       make the image at PATH, in an accepted package's backgrounds/ or
 //       the user folder <config-dir>/backgrounds, the current background,
-//       or with OUTPUT that screen's own, under the same lock verdict;
-//       prints `ok background=<file> theme=<name|-> path=<image>[
-//       screen=<output>]`, or under `json` `{ state, background, theme,
+//       with --screen that screen's own, or with --every-screen the current
+//       background with every screen's own cleared, under the same lock
+//       verdict; prints `ok background=<file> theme=<name|-> path=<image>[
+//       screen=<output|*>]`, or under `json` `{ state, background, theme,
 //       path, screen, reason }`.
 //   vgsh-theme-judge background <text|json> list <config-dir> <state-dir> <applied|all>
 //       the applied package's images, or with `all` every accepted
@@ -1714,15 +1715,26 @@ function stepBackground(result, step, configDir, stateDir, lock) {
     result.state = "ok";
 }
 
+// Where `background set` shows its image, from the arguments after the
+// path: `current` for none, `screen` with its NAME for `--screen <output>`,
+// `every` for `--every-screen`; null for any other arguments.
+function setTarget(tail) {
+    if (tail.length === 0) return { kind: "current" };
+    if (tail.length === 2 && tail[0] === "--screen") return { kind: "screen", name: tail[1] };
+    if (tail.length === 1 && tail[0] === "--every-screen") return { kind: "every" };
+    return null;
+}
+
 // Set ARGUMENT, a path `backgrounds.locate` finds among the sources, as
-// the current image, or as SCREEN's own when SCREEN is given. The current
-// image of the applied package is remembered for it, as a step's is; an
-// image of another package or of the user folder, and a screen's image,
-// are remembered for none.
-function setBackground(result, argument, screen, configDir, stateDir, lock) {
+// the current image for TARGET `current`, as the current image with every
+// screen's own cleared for `every`, or as one screen's own for `screen`.
+// The current image of the applied package is remembered for it, as a
+// step's is; an image of another package or of the user folder, and a
+// screen's image, are remembered for none.
+function setBackground(result, argument, target, configDir, stateDir, lock) {
     const key = "background=set reason";
-    if (screen !== null && !logic.isOutputName(screen)) refuse(key + "=malformed-screen screen=" + JSON.stringify(screen), "malformed-screen");
-    result.screen = screen;
+    if (target.kind === "screen" && !logic.isOutputName(target.name)) refuse(key + "=malformed-screen screen=" + JSON.stringify(target.name), "malformed-screen");
+    result.screen = target.kind === "screen" ? target.name : target.kind === "every" ? logic.EVERY_SCREEN : null;
     themeLock(key, lock, configDir);
     const shown = backgrounds.read(logic, stateDir, key);
     const applied = appliedName(stateDir, key);
@@ -1731,9 +1743,21 @@ function setBackground(result, argument, screen, configDir, stateDir, lock) {
     result.background = background;
     const image = backgrounds.stamped(source.dir, background, key);
     const remembered = source.theme !== null && source.theme === applied;
-    const after = screen === null
-        ? { current: image, themes: remembered ? Object.assign({}, shown.themes, { [applied]: background }) : shown.themes, screens: shown.screens }
-        : { current: shown.current, themes: shown.themes, screens: Object.assign({}, shown.screens, { [screen]: image }) };
+    const themes = remembered ? Object.assign({}, shown.themes, { [applied]: background }) : shown.themes;
+    let after;
+    switch (target.kind) {
+    case "current":
+        after = { current: image, themes: themes, screens: shown.screens };
+        break;
+    case "every":
+        after = { current: image, themes: themes, screens: {} };
+        break;
+    case "screen":
+        after = { current: shown.current, themes: shown.themes, screens: Object.assign({}, shown.screens, { [target.name]: image }) };
+        break;
+    default:
+        throw new Error("background set: unreachable target kind=" + target.kind);
+    }
     backgrounds.land(stateDir, after, shown, key);
     result.path = image.path;
     result.state = "ok";
@@ -1788,7 +1812,7 @@ function background(format, verb, configDir, stateDir, rest) {
     switch (verb) {
     case "set": {
         const result = { state: "failed", background: null, theme: null, path: null, screen: null, reason: null };
-        resultReport(format, result, () => setBackground(result, rest[1], rest.length === 3 ? rest[2] : null, configDir, stateDir, rest[0]),
+        resultReport(format, result, () => setBackground(result, rest[1], setTarget(rest.slice(2)), configDir, stateDir, rest[0]),
             r => ["ok " + imageFields(r.background, r.theme, r.path) + (r.screen === null ? "" : " screen=" + r.screen)]);
         return;
     }
@@ -1810,7 +1834,7 @@ function backgroundCall(args) {
     const [format, verb, , , ...rest] = args;
     if (args.length < 5 || !FORMATS.includes(format)) return false;
     if (Object.hasOwn(BACKGROUND_STEPS, verb)) return rest.length === 1 && LOCK_VERDICTS.includes(rest[0]);
-    if (verb === "set") return (rest.length === 2 || rest.length === 3) && LOCK_VERDICTS.includes(rest[0]);
+    if (verb === "set") return rest.length >= 2 && LOCK_VERDICTS.includes(rest[0]) && setTarget(rest.slice(2)) !== null;
     if (verb === "list") return rest.length === 1 && BACKGROUND_SCOPES.includes(rest[0]);
     return false;
 }

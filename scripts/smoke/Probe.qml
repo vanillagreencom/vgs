@@ -30,6 +30,19 @@ Scope {
     property var runnerAnswers: ({})
     readonly property var runnerContext: ({ id: "smoke-runner-copy", onDispose: () => () => {} })
 
+    // Call the copy's member VERB with ARGS, then `done`, then any EXTRA,
+    // its answers kept by verb; the member's reply, `ok` for none.
+    function callRunner(verb, args, ...extra) {
+        if (root.runnerCopy === null) return "absent";
+        const done = result => {
+            const next = Object.assign({}, root.runnerAnswers);
+            next[verb] = { count: (verb in root.runnerAnswers ? root.runnerAnswers[verb].count : 0) + 1, result: result };
+            root.runnerAnswers = next;
+        };
+        const reply = root.runnerCopy[verb](root.runnerContext, ...args, done, ...extra);
+        return reply === undefined ? "ok" : String(reply);
+    }
+
     Connections {
         target: Plugins
         function onBuiltChanged() {
@@ -619,14 +632,12 @@ Scope {
         // Call the copy's member VERB with ARG as a capability call would,
         // its answers kept by verb; the member's reply, `ok` for none.
         function runnerCall(verb: string, arg: string): string {
-            if (root.runnerCopy === null) return "absent";
-            const done = result => {
-                const next = Object.assign({}, root.runnerAnswers);
-                next[verb] = { count: (verb in root.runnerAnswers ? root.runnerAnswers[verb].count : 0) + 1, result: result };
-                root.runnerAnswers = next;
-            };
-            const reply = root.runnerCopy[verb](root.runnerContext, arg, done);
-            return reply === undefined ? "ok" : String(reply);
+            return root.callRunner(verb, [arg]);
+        }
+        // runnerCall with OPTIONS, a JSON value, after `done`, as
+        // `wallpapers(name, done, options)` takes it.
+        function runnerCallWith(verb: string, arg: string, options: string): string {
+            return root.callRunner(verb, [arg], JSON.parse(options));
         }
         // How many times the copy answered VERB.
         function runnerAnswered(verb: string): int {

@@ -4,7 +4,7 @@
   "name": "Themes",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A bar button that opens a panel listing every theme package and the wallpaper, and a full-screen theme browser on SUPER+T that lists every shipped, installed and catalog theme, installs and applies one, and offers its wallpapers; the applied theme's wallpaper is drawn under every window.",
+  "description": "A bar button that opens a panel listing every theme package and the wallpaper, and a full-screen theme browser on SUPER+T that lists every shipped, installed and catalog theme, installs and applies one, and offers its wallpapers, and a full-screen wallpaper browser on SUPER+W that sets the applied theme's or any wallpaper on every monitor or on one; the applied theme's wallpaper is drawn under every window.",
   "license": "MIT",
   "icon": "palette",
   "kinds": [
@@ -22,6 +22,7 @@
     "service": "Service.qml"
   },
   "capabilities": [
+    "screens",
     "shortcut",
     "surfaces",
     "theme"
@@ -40,7 +41,8 @@
   },
   "hyprland": {
     "binds": [
-      { "shortcut": "themes", "key": "SUPER+T" }
+      { "shortcut": "themes", "key": "SUPER+T" },
+      { "shortcut": "wallpapers", "key": "SUPER+W" }
     ]
   }
 }

@@ -1,11 +1,12 @@
 # The theme capability's members for the theme and wallpaper browsers:
 # catalog, install, images, set and wallpapers, driven through the fixture
 # service and read back from what its callbacks received, from `last` and
-# from the core's lending record. catalog, install, images and set run the
-# sandbox's real runner on the shipped catalog and on an installed package
-# with two images. wallpapers runs on the download lane: the real runner
-# for a refusal, and a stand-in for a slow download, since the sandbox
-# reaches no network. The stand-in prints two progress lines, then polls
+# from the core's lending record. catalog, install, images and set, one
+# screen's and every screen's included, run the sandbox's real runner on
+# the shipped catalog and on an installed package with two images.
+# wallpapers runs on the download lane: the real runner for a refusal, a
+# stand-in for a slow download, since the sandbox reaches no network, and
+# a stand-in that records the arguments of the update form. The stand-in prints two progress lines, then polls
 # its gate every 50 ms for at most 30 s, long enough for an apply and a
 # rebuild of the fixture to finish behind it. rows/themes.sh defines the
 # helpers used here and leaves vgs applied, no current wallpaper and the
@@ -25,6 +26,8 @@ images_of() { read_service themeAnswers | python3 -c 'import json,sys; r=json.lo
 image_count() { read_service themeAnswers | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["images"]["result"]["images"]))'; }
 # The download lane's job in the lending record: [verb, name, waiters], or
 # null.
+# The state file's `screens` map as JSON, {} for a file without it.
+bg_screens() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("screens", {})))' "$bg_state/backgrounds.json"; }
 theme_download() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin)["theme"]["download"]; print("null" if d is None else json.dumps([d["verb"], d["name"], d["waiters"]]))'; }
 
 expect "enabling the fixture for the browse rows is allowed" ok ipc shell setPluginEnabled acme.probe true
@@ -65,8 +68,12 @@ expect "the set made b.jpg current" "\"$browse/backgrounds/b.jpg\"" bg_current
 expect "the fixture sets a.jpg on the first screen" ok probe theme-set "$browse/backgrounds/a.jpg|$screen_name"
 expect_poll "the screen's set reaches the fixture" '[2, "ok", "a.jpg", "'"$screen_name"'", null]' answer set state background screen reason
 expect "a set for one screen keeps the current image" "\"$browse/backgrounds/b.jpg\"" bg_current
+expect "the fixture sets a.jpg on every screen" ok probe theme-set "$browse/backgrounds/a.jpg|*"
+expect_poll "the every-screen set reaches the fixture" '[3, "ok", "a.jpg", "*", null]' answer set state background screen reason
+expect "an every-screen set makes a.jpg current" "\"$browse/backgrounds/a.jpg\"" bg_current
+expect "an every-screen set clears the screen's own image" '{}' bg_screens
 expect "a path no source holds is accepted" ok probe theme-set /nowhere/a.jpg
-expect_poll "the runner's refusal reaches the fixture as the result" '[3, "failed", "outside"]' answer set state reason
+expect_poll "the runner's refusal reaches the fixture as the result" '[4, "failed", "outside"]' answer set state reason
 rm -- "$bg_state/backgrounds.json" "$bg_state/background"
 
 # wallpapers on the download lane: a real refusal, then a slow download
@@ -125,15 +132,26 @@ expect_poll "the download completes without its instance" null theme_download
 expect "last holds no download once it ends" null last_part downloading
 expect "the rebuilt instance received no download callback" none answer wallpapers state
 
-# Control: a sandbox copy of the runner whose wallpapers member queues the
-# download on the queue, built beside the core's runner by the smoke probe
-# and driven through the same row, holds its apply behind the download.
+# Controls: two sandbox copies of the runner, built beside the core's
+# runner by the smoke probe. Both are written before the first is built:
+# the engine refuses a file written into a directory after it listed it
+# (runtime-qml.md). The second is the update form's control, below.
 runner_qml="$repo/shell/Core/ThemeRunner.qml"
+update_copy="$repo/shell/Core/ThemeRunnerNoUpdate.qml"
+update_argv='return ["wallpapers", "--json", name].concat(extra);'
+if [[ $(grep -c -F -- "$update_argv" "$runner_qml") == 1 ]]; then
+  python3 -c 'import sys; p, q, old, new = sys.argv[1:]; t = open(p).read(); open(q, "w").write(t.replace(old, new))' \
+    "$runner_qml" "$update_copy" "$update_argv" 'return ["wallpapers", "--json", name];'
+else
+  fail "the no-update control's text occurs once in $runner_qml"
+fi
+# Control: a copy whose wallpapers member queues the download on the
+# queue, driven through the same row, holds its apply behind the download.
 runner_copy="$repo/shell/Core/ThemeRunnerQueuedDownloads.qml"
-lane_call='startDownload(newJob(ctx, "wallpapers", name, done));'
+lane_call='startDownload(newJob(ctx, "wallpapers", name, done, extra));'
 if [[ $(grep -c -F -- "$lane_call" "$runner_qml") == 1 ]]; then
   python3 -c 'import sys; p, q, old, new = sys.argv[1:]; t = open(p).read(); open(q, "w").write(t.replace(old, new))' \
-    "$runner_qml" "$runner_copy" "$lane_call" 'enqueue(newJob(ctx, "wallpapers", name, done));'
+    "$runner_qml" "$runner_copy" "$lane_call" 'enqueue(newJob(ctx, "wallpapers", name, done, extra));'
   copy_applies() { ipc smoke runnerAnswered apply; }
   copy_downloads() { ipc smoke runnerAnswered wallpapers; }
   rm -- "$download_gate"
@@ -150,6 +168,36 @@ if [[ $(grep -c -F -- "$lane_call" "$runner_qml") == 1 ]]; then
 else
   fail "the queued-downloads control's text occurs once in $runner_qml"
 fi
+
+# The update form: `{ update: true }` after the callback reaches the runner
+# as --update, and options no runner call can take are refused at once. A
+# stand-in records each download's arguments and answers at once.
+download_argv="$sandbox/download-argv"
+stand_in_vgsh "if [[ \${2:-} == wallpapers ]]; then
+  printf '%s\n' \"\$*\" >$(printf %q "$download_argv")
+  printf '{\"state\":\"ok\",\"theme\":\"%s\",\"wallpapers\":\"updated\",\"images\":2,\"sha256\":null,\"reason\":null}\n' \"\$4\"
+  exit 0
+fi"
+expect "malformed download options are refused at once" 'refused: wallpapers={"update":"yes"} reason=malformed-options' probe theme-wallpapers-with 'nord|{"update":"yes"}'
+expect "the update form is accepted" ok probe theme-wallpapers-with 'nord|{"update":true}'
+expect_poll "the update's result reaches the fixture" '[1, "ok", "updated"]' answer wallpapers state wallpapers
+expect "the update form runs the runner with --update" "theme wallpapers --json nord --update" cat "$download_argv"
+expect "the form without update is accepted" ok probe theme-wallpapers-with 'nord|{}'
+expect_poll "the plain download's result reaches the fixture" '[2, "ok"]' answer wallpapers state
+expect "the form without update runs the runner without --update" "theme wallpapers --json nord" cat "$download_argv"
+# Control: the copy of the runner whose wallpapers command drops its
+# options' arguments runs the update form without --update.
+if [[ -f $update_copy ]]; then
+  rm -f -- "$download_argv"
+  expect "the no-update copy differs from the runner" 1 bash -c 'cmp -s -- "$1" "$2"; echo $?' _ "$runner_qml" "$update_copy"
+  expect "the smoke probe builds the no-update copy" ok ipc smoke runnerLoad "$update_copy"
+  expect "the no-update copy accepts the update form" ok ipc smoke runnerCallWith wallpapers nord '{"update":true}'
+  expect_poll "the no-update copy's download ends" 1 ipc smoke runnerAnswered wallpapers
+  expect "the no-update copy runs the update form without --update" "theme wallpapers --json nord" cat "$download_argv"
+  expect "the smoke probe drops the no-update copy" ok ipc smoke runnerDrop
+  rm -- "$update_copy"
+fi
+rm -f -- "$download_argv"
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 
 # A runner that prints no result answers each member as a failure of its

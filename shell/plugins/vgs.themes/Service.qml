@@ -7,6 +7,7 @@ import "BrowserLogic.js" as BrowserLogic
 // disposer is the core's, so disabling the plugin releases them.
 //   shortcut vgs.themes:themes              SUPER+T from the manifest's
 //                                            `hyprland` binds (README)
+//   shortcut vgs.themes:wallpapers          SUPER+W, the same way
 // A shortcut summons rather than toggles: the overlay's `open` closes it
 // when it already shows that view and switches to the view otherwise, so a
 // second view's key moves an open browser to it instead of closing it.

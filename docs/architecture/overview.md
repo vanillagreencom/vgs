@@ -69,6 +69,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-wallpapers.md](theme-wallpapers.md): read before touching `vgsh theme wallpapers`, the theme-asset cache or `bin/lib/theme-download.js`.
 - [theme-install.md](theme-install.md): read before touching `vgsh theme add`, `update`, `remove` or `outdated`.
 - [theme-capability.md](theme-capability.md): read before touching `ThemeRunner` or the `theme` capability.
+- [theme-overlay.md](theme-overlay.md): read before touching the `vgs.themes` browser, its views or `BrowserLogic.js`.
 - [theme-targets.md](theme-targets.md): read before touching a theme target, a template or an encoder.
 - [theme-wiring.md](theme-wiring.md): read before touching the wiring text, the profile wiring or the entry form's links.
 - [theme-editors.md](theme-editors.md): read before touching an editor's target or its one-time step.

@@ -10,8 +10,9 @@ import "BrowserLogic.js" as BrowserLogic
 // to it. A payload BrowserLogic refuses throws, and the host refuses the
 // summon. Escape, a click on the scrim and the view's own close all go
 // through `dismiss`, which holds the browser open while the view runs a
-// step whose next step it starts itself: the apply after an install, the
-// offer after an apply, the apply after a download.
+// step: the theme view's install, apply and download, whose next step it
+// starts itself, and the wallpaper view's set, download and the apply
+// after it.
 Item {
     id: root
 

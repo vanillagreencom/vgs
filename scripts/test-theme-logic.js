@@ -573,6 +573,29 @@ function verify(judge) {
     for (const name of ["", "-DP", "_DP", "DP 1", "DP.1", "DP/1", "DP-1\n", null, 1])
         assert.equal(judge.isOutputName(name), false, JSON.stringify(name));
 
+    // The theme capability's set screen and download options, as argv.
+    for (const [screen, want] of [
+        [null, []],
+        [undefined, []],
+        ["*", ["--every-screen"]],
+        ["DP-1", ["--screen", "DP-1"]],
+        ["../x", null],
+        ["", null],
+        ["**", null],
+        [1, null]
+    ]) assert.deepEqual(JSON.parse(JSON.stringify(judge.setScreenArguments(screen))), want, "set screen " + JSON.stringify(screen));
+    for (const [options, want] of [
+        [undefined, []],
+        [{}, []],
+        [{ update: false }, []],
+        [{ update: true }, ["--update"]],
+        [null, null],
+        [true, null],
+        [[], null],
+        [{ update: "yes" }, null],
+        [{ update: true, force: true }, null]
+    ]) assert.deepEqual(JSON.parse(JSON.stringify(judge.wallpaperArguments(options))), want, "wallpapers options " + JSON.stringify(options));
+
     for (const text of ["/a", "/home/u/.config/vgs/themes/x/backgrounds/a.png", "/a b/.c"])
         assert.equal(judge.isAbsolutePath(text), true, text);
     for (const text of ["", "/", "a.png", "./a.png", "~/a.png", "//a", "/a//b", "/a/", "/a/./b", "/a/../b", "/..", "/a\u0000b", null, ["/a"]])
@@ -639,6 +662,12 @@ const CONTROLS = [
     ["package name", "if (!isPackageName(files.directoryName))", "if (false)"],
     ["package name pattern", "PACKAGE_NAME_PATTERN.test(name)", "true"],
     ["output name pattern", "OUTPUT_NAME_PATTERN.test(name)", "true"],
+    ["set every screen", 'return ["--every-screen"];', 'return ["--screen", screen];'],
+    ["set output name", 'return isOutputName(screen) ? ["--screen", screen] : null;', 'return ["--screen", screen];'],
+    ["wallpapers options object", "if (!isPlainObject(options))\n        return null;", "if (false)\n        return null;"],
+    ["wallpapers options keys", 'if (keys[i] !== "update")', "if (false)"],
+    ["wallpapers update boolean", 'if (typeof options.update !== "boolean")', "if (false)"],
+    ["wallpapers update flag", 'return options.update ? ["--update"] : [];', "return [];"],
     ["absolute path leading slash", 'text.charAt(0) !== "/" || ', ""],
     ["absolute path NUL", ' || text.indexOf("\\u0000") !== -1', ""],
     ["absolute path segments", 'if (segments[i] === "" || segments[i] === "." || segments[i] === "..")', "if (false)"],

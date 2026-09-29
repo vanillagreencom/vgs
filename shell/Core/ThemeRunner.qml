@@ -67,7 +67,7 @@ Scope {
             background: (step, done) => root.background(ctx, step, done),
             catalog: done => root.catalog(ctx, done),
             install: (name, done) => root.install(ctx, name, done),
-            wallpapers: (name, done) => root.wallpapers(ctx, name, done),
+            wallpapers: (name, done, options) => root.wallpapers(ctx, name, done, options),
             images: (scope, done) => root.images(ctx, scope, done),
             set: (path, screen, done) => root.set(ctx, path, screen, done),
             swatch: name => root.swatch(name),
@@ -134,27 +134,33 @@ Scope {
     }
 
     // set: `ok` once the image at PATH is queued to become the current
-    // one, or with SCREEN, an output name, that screen's own; an immediate
-    // refusal for a path that is not absolute and an output name no
-    // output can carry; `done` receives `{ state, background, theme, path,
-    // screen, reason }`, every other refusal included.
+    // one, with SCREEN, an output name, that screen's own, and with SCREEN
+    // `*` the current one on every screen, each screen's own cleared; an
+    // immediate refusal for a path that is not absolute and a screen
+    // ThemeLogic.setScreenArguments refuses; `done` receives `{ state,
+    // background, theme, path, screen, reason }`, every other refusal
+    // included.
     function set(ctx, path, screen, done) {
         if (!ThemeLogic.isAbsolutePath(path)) return "refused: set=" + JSON.stringify(path) + " reason=malformed-path";
-        const toScreen = screen !== null && screen !== undefined;
-        if (toScreen && !ThemeLogic.isOutputName(screen)) return "refused: set=" + JSON.stringify(screen) + " reason=malformed-screen";
-        enqueue(newJob(ctx, "set", path, done, toScreen ? ["--screen", screen] : []));
+        const extra = ThemeLogic.setScreenArguments(screen);
+        if (extra === null) return "refused: set=" + JSON.stringify(screen) + " reason=malformed-screen";
+        enqueue(newJob(ctx, "set", path, done, extra));
         return "ok";
     }
 
     // wallpapers: `ok` once the download of catalog install NAME's
-    // wallpapers starts on the download lane, or an immediate refusal for
-    // a name no package can carry and while a download runs; `done`
-    // receives `{ state, theme, wallpapers, images, sha256, reason }`,
-    // every other refusal included. `last.downloading` follows it.
-    function wallpapers(ctx, name, done) {
+    // wallpapers starts on the download lane, with OPTIONS `{ update: true
+    // }` the update that replaces another archive's images, or an
+    // immediate refusal for a name no package can carry, for OPTIONS
+    // ThemeLogic.wallpaperArguments refuses and while a download runs;
+    // `done` receives `{ state, theme, wallpapers, images, sha256, reason
+    // }`, every other refusal included. `last.downloading` follows it.
+    function wallpapers(ctx, name, done, options) {
         if (!ThemeLogic.isPackageName(name)) return "refused: wallpapers=" + JSON.stringify(name) + " reason=malformed-name";
+        const extra = ThemeLogic.wallpaperArguments(options);
+        if (extra === null) return "refused: wallpapers=" + JSON.stringify(options) + " reason=malformed-options";
         if (download !== null) return "refused: wallpapers=" + name + " reason=busy";
-        startDownload(newJob(ctx, "wallpapers", name, done));
+        startDownload(newJob(ctx, "wallpapers", name, done, extra));
         return "ok";
     }
 
@@ -188,8 +194,9 @@ Scope {
             return [verb, "--json"];
         case "apply":
         case "install":
-        case "wallpapers":
             return [verb, "--json", name];
+        case "wallpapers":
+            return ["wallpapers", "--json", name].concat(extra);
         case "background":
             return ["background", "--json", name];
         case "images":

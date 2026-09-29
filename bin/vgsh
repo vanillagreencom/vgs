@@ -29,8 +29,8 @@
 #   vgsh theme follow [--json]     apply the applied package again when it changed and the theme file is unedited
 #   vgsh theme background [--json] next|previous
 #                                  show the applied package's next or previous background image and remember it
-#   vgsh theme background [--json] set <path> [--screen <output>]
-#                                  show one package's or the user folder's image, or show it on one output only
+#   vgsh theme background [--json] set <path> [--screen <output> | --every-screen]
+#                                  show one package's or the user folder's image, on one output only, or on every output
 #   vgsh theme background [--json] list [--all]
 #                                  the applied package's background images, or every package's and the user folder's
 #   vgsh theme add [<git url>]     clone, judge and install one theme package; without a url, ask for it on a terminal
@@ -187,7 +187,8 @@
 # background set` holds it too and shows one image from a package's
 # backgrounds/ or from ${XDG_CONFIG_HOME:-~/.config}/vgs/backgrounds/, a
 # regular file never reached through a symlink below that folder; with
-# --screen it is that Hyprland output's own image. `theme background list`
+# --screen it is that Hyprland output's own image, and with --every-screen
+# every output's own image is cleared. `theme background list`
 # names the applied package's images, and with --all every package's and
 # the user folder's: docs/architecture/theme-backgrounds.md.
 # `--json` prints the list, the apply's result `{ state, shell, targets,
@@ -1486,8 +1487,11 @@ case "$cmd" in
             screen=()
             if [[ ${1:-} == --screen ]]; then
               if [[ -z ${2:-} ]]; then printf 'vgsh: refused: screen=missing\n' >&2; usage; exit 2; fi
-              screen=("$2")
+              screen=(--screen "$2")
               shift 2
+            elif [[ ${1:-} == --every-screen ]]; then
+              screen=(--every-screen)
+              shift
             fi
             if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
             theme_lock_verdict

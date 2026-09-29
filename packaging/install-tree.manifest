@@ -192,7 +192,9 @@ f share/vgs/shell/plugins/vgs.themes/ThemeCard.qml
 f share/vgs/shell/plugins/vgs.themes/ThemeRow.qml
 f share/vgs/shell/plugins/vgs.themes/ThemeView.qml
 f share/vgs/shell/plugins/vgs.themes/ThemesPanel.qml
+f share/vgs/shell/plugins/vgs.themes/WallpaperCard.qml
 f share/vgs/shell/plugins/vgs.themes/WallpaperState.qml
+f share/vgs/shell/plugins/vgs.themes/WallpaperView.qml
 f share/vgs/shell/plugins/vgs.themes/Widget.qml
 f share/vgs/shell/plugins/vgs.themes/manifest.json
 f share/vgs/shell/plugins/vgs.updates/NormalizeCheck.js

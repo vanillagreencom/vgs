@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// The theme browser's decisions, shell/plugins/vgs.themes/BrowserLogic.js,
-// and the plugin's file URLs, Files.js, under node: the payload and its
-// views, the cards merged from the list, the catalog and the images, the
-// filter, the selection, the download offer and the lines the browser
-// shows. Every expected value is written out by hand.
+// The browsers' decisions, shell/plugins/vgs.themes/BrowserLogic.js, and
+// the plugin's file URLs, Files.js, under node: the payload and its views;
+// the theme view's cards merged from the list, the catalog and the images,
+// the filter, the selection and the download offer; the wallpaper view's
+// sources, scopes, cards, download or update card, keys and selection; and
+// the lines the browsers show. Every expected value is written out by
+// hand, Qt's key codes from qnamespace.h.
 //
 // The controls at the end edit a copy of the logic, one rule at a time,
 // and require this suite to fail on each copy.
@@ -46,8 +48,10 @@ const EDITS = [
 
 function verify(logic, files) {
     // Views and payloads.
-    same(logic.VIEWS.map(v => [v.name, v.source]), [["themes", "ThemeView.qml"]]);
+    same(logic.VIEWS.map(v => [v.name, v.source]), [["themes", "ThemeView.qml"], ["wallpapers", "WallpaperView.qml"]]);
     assert.equal(logic.viewSource("themes"), "ThemeView.qml");
+    assert.equal(logic.viewSource("wallpapers"), "WallpaperView.qml");
+    same(logic.parsePayload(JSON.stringify({ view: "wallpapers" })), { view: "wallpapers" });
     assert.throws(() => logic.viewSource("fonts"), /view="fonts" unknown/);
     for (const view of logic.VIEWS) assert.ok(fs.existsSync(path.join(dir, view.source)), "view " + view.name + " names a file beside Browser.qml");
     same(logic.parsePayload("{}"), { view: "themes" }, "an empty payload opens the first view");
@@ -162,10 +166,122 @@ function verify(logic, files) {
     assert.equal(logic.problem("apply", "nord", { state: "failed", reason: "busy" }), "Applying Nord failed: busy");
     assert.equal(logic.problem("download", "nord", { state: "ok", reason: null }), "");
     assert.equal(logic.problem("download", "nord", { state: "failed", reason: "sha256" }), "Downloading the wallpapers for Nord failed: sha256");
+    assert.equal(logic.problem("update", "nord", { state: "ok", reason: null }), "");
+    assert.equal(logic.problem("update", "nord", { state: "failed", reason: "changed" }), "Updating the wallpapers for Nord failed: changed");
+    assert.equal(logic.problem("set", "a.jpg", { state: "ok", reason: null }), "");
+    assert.equal(logic.problem("set", "a.jpg", { state: "failed", reason: "outside" }), "Setting a.jpg failed: outside");
     assert.throws(() => logic.problem("remove", "nord", { state: "ok" }), /step="remove"/);
+
+    verifyWallpapers(logic);
 
     // File URLs encode each segment.
     assert.equal(files.fileUrl("/home/u/a b/#1?.jpg"), "file:///home/u/a%20b/%231%3F.jpg");
+}
+
+// Qt::Key codes, from qnamespace.h.
+const K = { Escape: 0x01000000, Tab: 0x01000001, Backtab: 0x01000002, Return: 0x01000004, Enter: 0x01000005, Home: 0x01000010, End: 0x01000011, Left: 0x01000012, Up: 0x01000013, Right: 0x01000014, Down: 0x01000015, A: 0x41, D: 0x44, S: 0x53, W: 0x57, Q: 0x51, Space: 0x20 };
+
+// Keys: [label, key, shift, chord, scoped, action].
+const WALLPAPER_KEYS = [
+    ["Left steps back", K.Left, false, false, false, "back"],
+    ["Up steps back", K.Up, false, false, false, "back"],
+    ["A steps back", K.A, false, false, false, "back"],
+    ["Right steps forward", K.Right, false, false, false, "forward"],
+    ["Down steps forward", K.Down, false, false, false, "forward"],
+    ["D steps forward", K.D, false, false, false, "forward"],
+    ["Home goes first", K.Home, false, false, false, "first"],
+    ["End goes last", K.End, false, false, false, "last"],
+    ["Return activates", K.Return, false, false, false, "activate"],
+    ["Enter activates", K.Enter, false, false, false, "activate"],
+    ["Escape closes", K.Escape, false, false, false, "close"],
+    ["S flips the source", K.S, false, false, false, "source"],
+    ["S flips the source beside the scope", K.S, false, false, true, "source"],
+    ["W does nothing without the scope", K.W, false, false, false, ""],
+    ["W flips the scope", K.W, false, false, true, "scope"],
+    ["Tab steps forward without the scope", K.Tab, false, false, false, "forward"],
+    ["Tab flips the scope", K.Tab, false, false, true, "scope"],
+    ["Backtab steps back without the scope", K.Backtab, true, false, false, "back"],
+    ["Backtab flips the scope", K.Backtab, true, false, true, "scope"],
+    ["Shift+Tab steps back without the scope", K.Tab, true, false, false, "back"],
+    ["Shift+Tab flips the scope", K.Tab, true, false, true, "scope"],
+    ["Left steps back beside the scope", K.Left, false, false, true, "back"],
+    ["a chord passes on", K.S, false, true, true, ""],
+    ["a chord on Enter passes on", K.Return, false, true, false, ""],
+    ["Q passes on", K.Q, false, false, true, ""],
+    ["Space passes on", K.Space, false, false, false, ""]
+];
+
+// The wallpaper view: sources, scopes, cards, the offer card, the keys
+// and the selection.
+function verifyWallpapers(logic) {
+    same(logic.WALLPAPER_SOURCES.map(s => [s.source, s.label]), [["theme", "Theme"], ["all", "All"]]);
+    same(logic.SCREEN_SCOPES.map(s => [s.scope, s.label]), [["every", "All monitors"], ["this", "This monitor"]]);
+
+    for (const [label, key, shift, chord, scoped, action] of WALLPAPER_KEYS)
+        assert.equal(logic.wallpaperAction(key, shift, chord, scoped), action, label);
+
+    for (const [count, want] of [[0, false], [1, false], [2, true], [3, true]])
+        assert.equal(logic.scopeShown(count), want, "scope shown with " + count + " screens");
+    assert.equal(logic.screenScope(1, 2), "this");
+    assert.equal(logic.screenScope(0, 2), "every");
+    assert.equal(logic.screenScope(1, 1), "every", "one screen leaves every screen");
+    assert.equal(logic.setScreen("every", "DP-1"), "*");
+    assert.equal(logic.setScreen("this", "DP-1"), "DP-1");
+    assert.throws(() => logic.setScreen("this", ""), /screen="" none/);
+    assert.throws(() => logic.setScreen("some", "DP-1"), /scope="some" want=every\|this/);
+    const own = { "DP-1": "/u/own.png" };
+    assert.equal(logic.shownPath("every", "/t/a.png", own, "DP-1"), "/t/a.png", "every screen shows the current image");
+    assert.equal(logic.shownPath("this", "/t/a.png", own, "DP-1"), "/u/own.png", "this screen shows its own image");
+    assert.equal(logic.shownPath("this", "/t/a.png", own, "HDMI-A-1"), "/t/a.png", "a screen without its own shows the current image");
+    assert.throws(() => logic.shownPath("some", "", {}, "DP-1"), /scope="some"/);
+
+    // The card rule: installed, pinned with bytes; not unpacked, or
+    // unpacked from another archive.
+    const catalog = (installed, imagery, imageryInstalled, imageryUpdate) => [Object.assign(entry("nord", installed, imagery, imageryInstalled), { imageryUpdate })];
+    for (const [label, entries, want] of [
+        ["missing wallpapers download", catalog(true, pin(4000000), false, false), "download"],
+        ["a newer archive updates", catalog(true, pin(4000000), true, true), "update"],
+        ["current wallpapers offer nothing", catalog(true, pin(4000000), true, false), null],
+        ["not installed offers nothing", catalog(false, pin(4000000), false, false), null],
+        ["no pin offers nothing", catalog(true, null, false, false), null],
+        ["an empty archive offers nothing", catalog(true, pin(0), false, false), null],
+        ["another package's entry offers nothing", [entry("akane", true, pin(9), false)], null],
+        ["a failed catalog offers nothing", null, null]
+    ]) assert.equal(logic.wallpaperOffer(entries, "nord"), want, label);
+
+    const images = [
+        { background: "a.jpg", theme: "akane", path: "/t/akane/backgrounds/a.jpg" },
+        { background: "u.jpg", theme: null, path: "/u/u.jpg" },
+        { background: "a.jpg", theme: "nord", path: "/t/nord/backgrounds/a.jpg" },
+        { background: "b.jpg", theme: "nord", path: "/t/nord/backgrounds/b.jpg" }
+    ];
+    const cardRow = c => [c.kind, c.key, c.path, c.label, c.sourceLabel];
+    same(logic.wallpaperCards(images, catalog(true, pin(4000000), true, false), "nord", "theme").map(cardRow), [
+        ["image", "/t/nord/backgrounds/a.jpg", "/t/nord/backgrounds/a.jpg", "a.jpg", "Nord"],
+        ["image", "/t/nord/backgrounds/b.jpg", "/t/nord/backgrounds/b.jpg", "b.jpg", "Nord"]
+    ], "theme lists the applied package's images");
+    const updating = logic.wallpaperCards(images, catalog(true, pin(4000000), true, true), "nord", "theme");
+    same(updating.map(cardRow).slice(2), [["update", "update", null, "Update the wallpapers", "Nord"]], "the update card comes last");
+    assert.equal(updating[2].size, 4000000);
+    same(logic.wallpaperCards([], catalog(true, pin(4000000), false, false), "nord", "theme").map(cardRow), [["download", "download", null, "Download the wallpapers", "Nord"]]);
+    same(logic.wallpaperCards(images, catalog(true, pin(4000000), true, true), "nord", "all").map(cardRow), [
+        ["image", "/t/akane/backgrounds/a.jpg", "/t/akane/backgrounds/a.jpg", "a.jpg", "Akane"],
+        ["image", "/t/nord/backgrounds/a.jpg", "/t/nord/backgrounds/a.jpg", "a.jpg", "Nord"],
+        ["image", "/t/nord/backgrounds/b.jpg", "/t/nord/backgrounds/b.jpg", "b.jpg", "Nord"],
+        ["image", "/u/u.jpg", "/u/u.jpg", "u.jpg", "User folder"]
+    ], "all lists every package's images, the user folder last, and no card");
+    same(logic.wallpaperCards(images, null, "vgs", "theme"), [], "a package with no images and no catalog has no card");
+    assert.throws(() => logic.wallpaperCards(images, null, "nord", "some"), /source="some" want=theme\|all/);
+
+    const list = logic.wallpaperCards(images, catalog(true, pin(4000000), true, true), "nord", "theme");
+    assert.equal(logic.wallpaperSelection(list, "/t/nord/backgrounds/b.jpg"), 1);
+    assert.equal(logic.wallpaperSelection(list, "update"), 2);
+    assert.equal(logic.wallpaperSelection(list, "/u/u.jpg"), 0, "an image the source lacks selects the first");
+    assert.equal(logic.wallpaperSelection([], ""), 0);
+
+    assert.equal(logic.wallpaperEmpty(false, "theme", "nord"), "Loading wallpapers");
+    assert.equal(logic.wallpaperEmpty(true, "theme", "tokyo-night"), "Tokyo Night has no wallpapers");
+    assert.equal(logic.wallpaperEmpty(true, "all", "nord"), "No wallpaper is installed");
 }
 
 const files = load(path.join(dir, "Files.js"));
@@ -187,7 +303,20 @@ const CONTROLS = [
     ["offer only when displayed", "card.installed && card.displayed && card.imagery", "card.installed && card.imagery"],
     ["offer only with bytes", "&& card.imagery.size > 0", ""],
     ["key holds the palette", "return JSON.stringify([card.name, card.label, card.image, card.palette]);", "return JSON.stringify([card.name, card.label, card.image]);"],
-    ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return']
+    ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return'],
+    ["wallpaper chords pass on", 'if (chord) return "";', ""],
+    ["wallpaper shift tab", "key === KEY.Tab && shift ? KEY.Backtab : key", "key"],
+    ["wallpaper scoped keys", 'return scoped && hasOwn(row, "scoped") ? row.scoped : row.action;', "return row.action;"],
+    ["wallpaper home-row back", "    { key: KEY.A, action: \"back\" },\n", ""],
+    ["scope needs two screens", "return screenCount >= 2;", "return screenCount >= 1;"],
+    ["hidden scope is every screen", "return scopeShown(screenCount) ? SCREEN_SCOPES[index].scope : SCREEN_SCOPES[0].scope;", "return SCREEN_SCOPES[index].scope;"],
+    ["this screen shows its own", "return hasOwn(screenPaths, name) ? screenPaths[name] : current;", "return current;"],
+    ["offer needs an install", "if (!e.installed || e.imagery === null", "if (e.imagery === null"],
+    ["offer needs bytes", " || !(e.imagery.size > 0)", ""],
+    ["update card", 'return e.imageryUpdate ? "update" : null;', "return null;"],
+    ["theme source is the applied package", "return i.theme === applied; }).map(card);", "return true; }).map(card);"],
+    ["user folder last", "return packaged.concat(user).map(card);", "return images.map(card);"],
+    ["user folder label", "image.theme === null ? USER_FOLDER_LABEL : label(image.theme)", "label(image.theme)"]
 ];
 
 const source = fs.readFileSync(file, "utf8");
@@ -210,4 +339,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-themes-browser: ok payloads=${PAYLOAD_REFUSED.length} edits=${EDITS.length} controls=${CONTROLS.length}`);
+console.log(`test-themes-browser: ok payloads=${PAYLOAD_REFUSED.length} edits=${EDITS.length} keys=${WALLPAPER_KEYS.length} controls=${CONTROLS.length}`);

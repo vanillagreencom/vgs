@@ -92,6 +92,12 @@ Item {
         shell.ipc.handle("theme-catalog", () => { root.shell.theme.catalog(root.themeAnswer("catalog")); return "ok"; });
         shell.ipc.handle("theme-install", name => root.shell.theme.install(name, root.themeAnswer("install")));
         shell.ipc.handle("theme-wallpapers", name => root.shell.theme.wallpapers(name, root.themeAnswer("wallpapers")));
+        // theme-wallpapers-with <name>|<options JSON> passes the options
+        // after the callback, as the update form takes them.
+        shell.ipc.handle("theme-wallpapers-with", arg => {
+            const at = arg.indexOf("|");
+            return root.shell.theme.wallpapers(arg.slice(0, at), root.themeAnswer("wallpapers"), JSON.parse(arg.slice(at + 1)));
+        });
         shell.ipc.handle("theme-images", scope => root.shell.theme.images(scope, root.themeAnswer("images")));
         shell.ipc.handle("theme-set", arg => {
             const at = arg.indexOf("|");

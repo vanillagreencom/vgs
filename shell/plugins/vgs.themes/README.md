@@ -1,6 +1,6 @@
 # Themes
 
-A bar button that opens a panel listing every theme package, and the applied theme's wallpaper on every screen, under every window. A click on a package applies it to the shell and to every application the theme targets.
+A bar button that opens a panel listing every theme package, a full-screen theme browser and wallpaper browser, and the applied theme's wallpaper on every screen, under every window. A click on a package applies it to the shell and to every application the theme targets.
 
 ## Features
 
@@ -14,14 +14,21 @@ A bar button that opens a panel listing every theme package, and the applied the
 - Closing the panel does not stop an apply. The panel shows the result when it opens again.
 - The applied package's wallpaper: `bin/vgsh theme apply <name>` shows the package's remembered image, else the first of its `backgrounds/` directory in name order. With a package without images nothing is drawn, so a wallpaper another program draws shows.
 - The image is cropped to fill each screen.
-- A monitor shows its own image once `bin/vgsh theme background set <path> --screen <output>` names it, and every other monitor keeps the current image. A monitor whose own image was deleted shows the current image. The next apply of a package clears every monitor's own image.
+- A full-screen wallpaper browser opens on `SUPER+W`. Theme lists the applied theme's wallpapers. All lists every theme's wallpapers and the user folder's, `~/.config/vgs/backgrounds/`, each badged with where it comes from. The browser starts on the image shown now. Press Enter, or click the selected card, to set the image.
+- With two or more monitors, the wallpaper browser shows All monitors and This monitor. Each open starts on All monitors, which sets the image on every monitor and clears each monitor's own image. This monitor sets it on the monitor the browser shows on alone.
+- When the applied catalog theme's wallpapers are missing, or the catalog has newer ones, Theme ends with a Download or Update card. Enter on it downloads them with progress, applies the theme again so its wallpaper shows, and keeps the browser open.
+- A monitor shows its own image once `bin/vgsh theme background set <path> --screen <output>` names it, and every other monitor keeps the current image. `--every-screen` in place of `--screen` shows the image on every monitor and clears each monitor's own image. A monitor whose own image was deleted shows the current image. The next apply of a package clears every monitor's own image.
 - A Wallpaper section in the panel names the current image, and its Previous and Next buttons show the package's previous or next image and remember it for the package, as `bin/vgsh theme background previous` and `next` do. Applying the package again shows the remembered image.
 - `~/.local/state/vgs/background` links to the same image, for a lock screen or any other application that draws it.
 - `bin/vgsh plugin disable vgs.themes` turns off the button, the panel and the wallpaper.
 
 ## Keys
 
-- `SUPER+T`: open or close the full-screen theme browser.
+- `SUPER+T`: open or close the full-screen theme browser. In the wallpaper browser, open the theme browser.
+- `SUPER+W`: open or close the full-screen wallpaper browser. In the theme browser, open the wallpaper browser.
+
+In the theme browser:
+
 - `Left`, `Right`, `Tab`, `Shift+Tab`, `Home`, `End` and the wheel: move through cards.
 - `Up` and `Down`: move through cards.
 - `Enter`: install when needed, then apply.
@@ -29,13 +36,23 @@ A bar button that opens a panel listing every theme package, and the applied the
 - Typing: filter by package name or label.
 - Click on a side card: select it. Click on the selected card: apply it. Click the scrim: close.
 
-The plugin declares the shortcut in its manifest. Remove the owner's old `SUPER+T` v1 theme-picker line from `~/.config/hypr/config/keybinds.lua` before using this key, because Hyprland fires every matching bind.
+In the wallpaper browser:
+
+- `Left`, `Up`, `A`, `Right`, `Down`, `D`, `Home`, `End` and the wheel: move through cards.
+- `S`: switch between Theme and All.
+- `W`, `Tab` and `Shift+Tab`: switch between All monitors and This monitor. With one monitor, `Tab` and `Shift+Tab` move through cards.
+- `Enter`: set the image, or run the Download or Update card.
+- `Esc`: close.
+- Click on a side card: select it. Click on the selected card: set it. Click the scrim: close.
+
+The plugin declares both shortcuts in its manifest. Remove the owner's old `SUPER+T` v1 theme-picker line and `SUPER+W` v1 wallpaper-picker line from `~/.config/hypr/config/keybinds.lua` before using these keys, because Hyprland fires every matching bind.
 
 ## Capabilities
 
-- `theme`: list packages, read the catalog, install a catalog package, apply a package, list images and download wallpapers.
+- `theme`: list packages, read the catalog, install a catalog package, apply a package, list and set images, and download or update wallpapers.
 - `surfaces`: open the panel and the full-screen browser, and close them from their own controls.
-- `shortcut`: register `vgs.themes:themes`, which the manifest binds to `SUPER+T`.
+- `shortcut`: register `vgs.themes:themes` and `vgs.themes:wallpapers`, which the manifest binds to `SUPER+T` and `SUPER+W`.
+- `screens`: count the monitors for the wallpaper browser's monitor choice, and name the monitor it shows on.
 
 ## Settings
 
