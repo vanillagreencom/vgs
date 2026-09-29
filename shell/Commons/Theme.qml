@@ -82,6 +82,9 @@ Singleton {
         return "#" + text.slice(7, 9) + text.slice(1, 7);
     }
 
+    // Human-readable byte size for download prompts and catalog rows.
+    function formatBytes(bytes) { return ThemeLogic.formatBytes(bytes); }
+
     // Every easing the judge accepts, by its QML enumerator. A name the
     // engine lacks is a defect of this file, not of a theme.
     readonly property var easings: {

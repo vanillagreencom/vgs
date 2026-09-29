@@ -25,7 +25,8 @@
     "screens",
     "shortcut",
     "surfaces",
-    "theme"
+    "theme",
+    "tui"
   ],
   "defaultSection": "right",
   "settings": {

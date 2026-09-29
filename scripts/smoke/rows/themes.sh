@@ -265,6 +265,7 @@ expect "disabling the fixture after the theme rows is allowed" ok ipc shell setP
 # for the wallpaper block after it, which disables the plugin.
 layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
 theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
+words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 # The rows whose name is NAME, in tree order.
 theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
 # The swatch of the one row named NAME whose secondary line is SECONDARY:
@@ -287,6 +288,18 @@ click_row() {
 # Whether the panel draws a label reading TEXT: True or False.
 panel_label() { ipc smoke itemTexts panel vgs.themes Label | python3 -c 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
 panel_open() { [[ $(ipc smoke readInstance panel vgs.themes packages) != absent ]] && echo open || echo closed; }
+scroll_themes() { ipc smoke scrollTo panel vgs.themes "$1" >/dev/null; }
+# click_button TEXT: one click on the centre of the enabled button TEXT.
+click_button() {
+  local rect=absent
+  for _ in $(seq 1 25); do
+    rect="$(ipc smoke itemGeometry panel vgs.themes Button "$1")" && [[ $rect != absent ]] && break
+    sleep 0.2
+  done
+  [[ $rect != absent ]] || return 1
+  read -r cx cy < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$rect")
+  click "$cx" "$cy"
+}
 # A click the panel does not cover: the lower-left quarter of the screen,
 # away from the right section the panel opens under.
 click_outside() { click "$((mon_w / 4))" "$((mon_h * 3 / 4))"; }
@@ -301,15 +314,118 @@ expect "vgsh plugin enable places the themes widget" ok "${shell_env[@]}" "$repo
 expect_poll "the themes widget lands in its default section" right layout_section_of vgs.themes
 themes_key="$(bar_key)"
 expect_poll "the themes widget is built on the bar" '"vgs.themes"' ipc smoke readInstance "$themes_key" vgs.themes moduleName
+# Every vgs.themes instance a rescan rebuilds with the panel closed: the
+# background and the placed widget on every screen, and the service.
+themes_instances=$((2 * monitors + 1))
 
+themes_tui_record="$sandbox/themes-tui-argv"
+cat >"$shim/xdg-terminal-exec" <<EOF
+#!/bin/sh
+: >"$themes_tui_record.next"
+for a; do printf '%s\n' "\$a" >>"$themes_tui_record.next"; done
+mv -f -- "$themes_tui_record.next" "$themes_tui_record"
+EOF
+chmod 755 "$shim/xdg-terminal-exec"
+themes_tui_recorded() { python3 -c 'import json,os,sys; print(json.dumps(open(sys.argv[1]).read().split("\n")[:-1]) if os.path.exists(sys.argv[1]) else "absent")' "$themes_tui_record"; }
+themes_forget_tui_record() { rm -f -- "$themes_tui_record"; }
+expect_poll "the themes TUI probe is not running" false lent tui.probing
+if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
+  expect "a setup theme-add open answers launcher-missing" "refused: tui=core/theme-add reason=launcher-missing" ipc shell openTui core/theme-add
+fi
+expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
+
+cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
+catalog_installed="$sandbox/catalog-smoke-installed"
+catalog_wallpapers="$sandbox/catalog-smoke-wallpapers"
+catalog_installed_state() { [[ -e $catalog_installed ]] && echo installed || echo absent; }
+catalog_wallpapers_state() { [[ -e $catalog_wallpapers ]] && echo installed || echo absent; }
+wait_catalog_installed() { local _; for _ in $(seq 1 100); do [[ $(catalog_installed_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_installed_state; }
+wait_catalog_wallpapers() { local _; for _ in $(seq 1 100); do [[ $(catalog_wallpapers_state) == installed ]] && { echo installed; return; }; sleep 0.2; done; catalog_wallpapers_state; }
+stand_in_vgsh "
+case \${2:-} in
+  catalog)
+    installed=false; imagery=false
+    [[ -e $(printf %q "$catalog_installed") ]] && installed=true
+    [[ -e $(printf %q "$catalog_wallpapers") ]] && imagery=true
+    printf '{\"entries\":[{\"name\":\"catalog-smoke\",\"mode\":\"dark\",\"thumbnail\":null,\"palette\":{\"background\":\"#101010ff\",\"foreground\":\"#eeeeeeff\",\"accent\":\"#3366ffff\",\"success\":\"#22aa22ff\",\"warning\":\"#ddaa00ff\",\"danger\":\"#cc2222ff\",\"info\":\"#3399ccff\"},\"imagery\":{\"repo\":\"https://example.invalid/themes\",\"release\":\"themes-v1\",\"archive\":\"catalog-smoke.tar.gz\",\"size\":12582912,\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},\"installed\":%s,\"imageryInstalled\":%s,\"imageryUpdate\":false,\"definitionUpdate\":false}]}\n' \"\$installed\" \"\$imagery\"
+    exit 0
+    ;;
+  install)
+    if [[ \${4:-} == catalog-smoke ]]; then
+      touch -- $(printf %q "$catalog_installed")
+      printf '{\"state\":\"ok\",\"theme\":\"catalog-smoke\",\"path\":\"%s\",\"shadows\":null,\"reason\":null}\n' $(printf %q "$installed/catalog-smoke")
+      exit 0
+    fi
+    ;;
+  wallpapers)
+    if [[ \${4:-} == catalog-smoke ]]; then
+      touch -- $(printf %q "$catalog_wallpapers")
+      printf '{\"state\":\"ok\",\"theme\":\"catalog-smoke\",\"wallpapers\":\"installed\",\"images\":1,\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"reason\":null}\n'
+      exit 0
+    fi
+    ;;
+esac"
 mkdir -p -- "$installed/light"
 cp -- "$repo/themes/light/theme.json" "$repo/themes/light/terminal.json" "$installed/light/"
 click_centre "$themes_key" vgs.themes || fail "the click on the themes widget failed"
 expect_poll "a click on the widget opens the themes panel" open panel_open
-expect_poll "the panel lists every package with its source and badges" '[["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
+expect_poll "the panel lists every package with its source and badges" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
 expect "an accepted package's row draws its palette" '[7, true]' theme_swatch smoke installed '#12ab34ff'
 expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, name-mismatch" '#12ab34ff'
 expect "a shadowed package's row draws no swatch" '[0, false]' theme_swatch light shipped '#12ab34ff'
+expect_poll "the panel lists a catalog row with its mode, wallpaper size and install action" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"]]' theme_row catalog-smoke
+expect "the catalog row draws its palette" '[7, true]' theme_swatch catalog-smoke "dark, wallpapers 12.6 MB" '#3366ffff'
+
+panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
+cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"
+# panel_source LABEL FILE: close the panel, install FILE as its source,
+# rescan, and open the panel the rescan built; false when any step failed.
+panel_source() {
+  local before
+  click_outside || { fail "$1: the click closing the themes panel failed"; return 1; }
+  expect_poll "the themes panel closes before $1" closed panel_open
+  cp -p -- "$2" "$panel_qml.tmp" && mv -T -- "$panel_qml.tmp" "$panel_qml" || { fail "$1: $2 could not be installed"; return 1; }
+  before="$(builds)" || { fail "$1: buildCount unreadable"; return 1; }
+  expect "a rescan builds $1" ok ipc shell rescanPlugins
+  expect_poll "$1 rebuilds every vgs.themes instance" "$((before + themes_instances))" builds
+  expect "the follow the rescan for $1 queued ends" idle theme_idle
+  click_centre "$themes_key" vgs.themes || { fail "$1: the click opening the themes panel failed"; return 1; }
+  expect_poll "$1 opens" open panel_open
+}
+install_call='const reply = shell.theme.install(name, result => {'
+if [[ $(grep -c -F -- "$install_call" "$panel_qml") == 1 ]]; then
+  if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "const reply = \"ok\"; if (false) shell.theme.install(name, result => {"))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.catalog-mutant" "$install_call"; then
+    panel_source "the catalog install control" "$sandbox/ThemesPanel.qml.catalog-mutant" \
+      && scroll_themes 10000 \
+      && click_button "Install" \
+      && expect "the catalog install control leaves the catalog uninstalled" absent catalog_installed_state
+    panel_source "the restored catalog install action" "$sandbox/ThemesPanel.qml.real" \
+      && expect_poll "the restored catalog install action lists the row" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Install"]]' theme_row catalog-smoke
+  else
+    fail "the catalog install control could not be written"
+  fi
+else
+  fail "the catalog install control's text occurs once in $panel_qml"
+fi
+
+scroll_themes 10000
+click_button "Install" || fail "the click on the catalog Install button failed"
+expect "the catalog Install button reaches the theme capability" installed wait_catalog_installed
+expect_poll "the panel is open after catalog install" open panel_open
+expect_poll "the catalog install changes the row to an installed catalog theme without wallpapers" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+scroll_themes 10000
+click_button "Download wallpapers" || fail "the click on the catalog wallpaper button failed"
+expect "the catalog Download wallpapers button reaches the theme capability" installed wait_catalog_wallpapers
+expect_poll "the panel is open after catalog wallpaper download" open panel_open
+expect_poll "the catalog wallpaper download removes the download action" '[["catalog-smoke", "dark, wallpapers 12.6 MB", "Installed"]]' theme_row catalog-smoke
+scroll_themes 0
+themes_forget_tui_record
+click_button "Add from URL" || fail "the click on Add from URL failed"
+themes_tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
+themes_core_add="$(dirname -- "$(dirname -- "$themes_tui_self")")/shell/../bin/vgsh"
+expect_poll "Add from URL opens the core theme add TUI" \
+  "$(words --app-id=org.vgs.tui "--title=VGS · Add theme" -- "$themes_tui_self" present --presentation full -- "$themes_core_add" theme add)" themes_tui_recorded
+mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 
 fixture_target smoke-fails 'accent=@{palette.nope}'
 click_row smoke || fail "the click on the smoke row failed"
@@ -319,6 +435,7 @@ expect_poll "the applied row is displayed and shows its failed target" '[["smoke
 expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' theme_row vgs
 rm -r -- "$fixture_targets/smoke-fails"
 click_row smoke || fail "the second click on the smoke row failed"
+expect "the second smoke apply ends" idle theme_idle
 expect_poll "a later apply of that package that succeeds clears its failed target" '[["smoke", "installed", "Displayed"]]' theme_row smoke
 
 # Control: click_item aimed at the vgs row's centre, a stand-in for a
@@ -342,31 +459,13 @@ fixture_target smoke-drop 'accent=@{palette.accent}' true
 mkdir -p -- "$installed/smoke/targets"
 printf 'accent=hand\n' >"$installed/smoke/targets/smoke-drop.conf"
 click_row smoke || fail "the click applying the smoke row with a dropped file failed"
+expect "the dropped-file smoke apply ends" idle theme_idle
 expect_poll "the row names the file its apply dropped" '[["smoke", "installed", "Displayed", "smoke-drop dropped smoke-drop.conf"]]' theme_row smoke
 
 # Control: a sandbox copy of the panel that reads no `dropped` names no
 # file for the same result, which a panel built after the apply reads from
 # `last`; the restored panel names it again.
-# Every vgs.themes instance a rescan rebuilds with the panel closed: the
-# background and the placed widget on every screen, and the service.
-themes_instances=$((2 * monitors + 1))
-panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
 drop_read='target.dropped === undefined ? [] : target.dropped'
-cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"
-# panel_source LABEL FILE: close the panel, install FILE as its source,
-# rescan, and open the panel the rescan built; false when any step failed.
-panel_source() {
-  local before
-  click_outside || { fail "$1: the click closing the themes panel failed"; return 1; }
-  expect_poll "the themes panel closes before $1" closed panel_open
-  cp -p -- "$2" "$panel_qml.tmp" && mv -T -- "$panel_qml.tmp" "$panel_qml" || { fail "$1: $2 could not be installed"; return 1; }
-  before="$(builds)" || { fail "$1: buildCount unreadable"; return 1; }
-  expect "a rescan builds $1" ok ipc shell rescanPlugins
-  expect_poll "$1 rebuilds every vgs.themes instance" "$((before + themes_instances))" builds
-  expect "the follow the rescan for $1 queued ends" idle theme_idle
-  click_centre "$themes_key" vgs.themes || { fail "$1: the click opening the themes panel failed"; return 1; }
-  expect_poll "$1 opens" open panel_open
-}
 if [[ $(grep -c -F -- "$drop_read" "$panel_qml") == 1 ]]; then
   if python3 -c 'import sys; p, q, old = sys.argv[1:]; open(q, "w").write(open(p).read().replace(old, "[]"))' "$sandbox/ThemesPanel.qml.real" "$sandbox/ThemesPanel.qml.mutant" "$drop_read"; then
     panel_source "the dropless control" "$sandbox/ThemesPanel.qml.mutant" \
@@ -381,6 +480,7 @@ else
 fi
 rm -r -- "$fixture_targets/smoke-drop" "$installed/smoke/targets"
 click_row smoke || fail "the click applying the smoke row with nothing dropped failed"
+expect "the no-drop smoke apply ends" idle theme_idle
 expect_poll "a later apply that drops nothing clears the line" '[["smoke", "installed", "Displayed"]]' theme_row smoke
 # A hand edit that keeps the package's name marks its row Modified while
 # the panel stays open, and a click on the row applies the package again
@@ -723,6 +823,8 @@ if [[ $(grep -c -F 'readonly property bool shown: drawn' -- "$plugin_qml") == 1 
   cp -p -- "$sandbox/Background.qml.real" "$plugin_qml.tmp" && mv -T -- "$plugin_qml.tmp" "$plugin_qml"
   expect "a rescan restores the plugin after the always-shown control" ok ipc shell rescanPlugins
   expect_poll "the restored plugin maps no surface with no image" 0 layer_count vgs:background
+  # A rescan queues follow; the read-only prefix row applies vgs next and can meet the theme lock while follow still runs.
+  expect "the follow after the restored plugin rescan queued ends" idle theme_idle
 else
   fail "the always-shown control's text occurs once in $plugin_qml"
 fi
@@ -730,5 +832,7 @@ fi
 expect "no current wallpaper is left for later rows" null bg_current
 expect "vgsh plugin disable takes the themes widget and the background away" ok "${shell_env[@]}" "$repo/bin/vgsh" plugin disable vgs.themes
 expect_poll "every vgs.themes instance is gone" False record_exists vgs.themes
+# Disabling the plugin queues a scan and follow; the next row's apply must not race that theme lock.
+expect "the follow after disabling the themes plugin ends" idle theme_idle
 rm -r -- "$scenic"
 # ---- end vgs.themes wallpaper -----------------------------------------------

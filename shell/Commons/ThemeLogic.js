@@ -177,6 +177,19 @@ function formatColor(color) {
     return "#" + channel(color.r) + channel(color.g) + channel(color.b) + channel(color.a);
 }
 
+// Human-readable byte size for catalog wallpaper archives. Values under
+// one decimal megabyte stay exact. Larger values are rounded to one decimal
+// place and trailing `.0` is dropped.
+function formatBytes(bytes) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0)
+        return "";
+    var mb = 1000 * 1000;
+    if (bytes < mb)
+        return bytes + " B";
+    var rounded = Math.round(bytes / 100000) / 10;
+    return (rounded % 1 === 0 ? String(rounded.toFixed(0)) : String(rounded)) + " MB";
+}
+
 // WCAG relative luminance of an opaque colour.
 function luminance(color) {
     var linear = function (value) {

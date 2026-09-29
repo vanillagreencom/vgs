@@ -22,10 +22,14 @@ Item {
     property var file: null
     // Why the last list failed, "" when it did not.
     property string listReason: ""
+    // The catalog entries, [] before they arrive or after the read failed.
+    property var catalogEntries: []
+    // Why the last catalog read failed, "" when it did not.
+    property string catalogReason: ""
     // `shell.theme.last` as last read: the apply running and the last
     // result. The capability's member is not a binding, so the panel reads
     // it again whenever an answer arrives.
-    property var last: ({ applying: null, result: null })
+    property var last: ({ applying: null, result: null, downloading: null })
     // The package a click asked for and the refusal `apply` answered at
     // once, or null; shown on its row until the next click.
     property var refusal: null
@@ -36,6 +40,14 @@ Item {
     // Why the last wallpaper step failed, "" when it did not; shown until
     // the next click.
     property string stepProblem: ""
+    // The catalog action this instance asked for, "" while none runs.
+    property string catalogAction: ""
+    // The catalog action kind: "install", "wallpapers" or "".
+    property string catalogActionKind: ""
+    // The last catalog action problem, or null. Shown on its catalog row.
+    property var catalogProblem: null
+    // A refused Add from URL TUI launch, "" when the last launch started.
+    property string tuiProblem: ""
     readonly property bool canStep: wallpaper.path !== "" && !stepping
 
     // The panel takes no payload; what a summoner passes is ignored.
@@ -51,6 +63,11 @@ Item {
             root.listReason = result.reason === null ? "" : result.reason;
             root.packages = result.reason === null ? result.packages : [];
             root.file = result.file;
+            root.readLast();
+        });
+        shell.theme.catalog(result => {
+            root.catalogReason = result.reason === null ? "" : result.reason;
+            root.catalogEntries = result.reason === null ? result.entries : [];
             root.readLast();
         });
     }
@@ -80,6 +97,85 @@ Item {
             return reply;
         }
         stepping = true;
+        return reply;
+    }
+
+    function addFromUrl() {
+        const reply = shell.tui.open("core/theme-add");
+        tuiProblem = reply === "ok" ? "" : reply;
+        if (reply !== "ok") console.warn("themes panel: " + reply);
+        return reply;
+    }
+
+    function catalogSwatch(entry) {
+        const out = {};
+        for (const key of Object.keys(entry.palette)) out[key] = Theme.toColor(entry.palette[key]);
+        return out;
+    }
+
+    function wallpaperText(entry) {
+        return entry.imagery === null ? "no wallpapers" : "wallpapers " + Theme.formatBytes(entry.imagery.size);
+    }
+
+    function catalogActionLabel(entry) {
+        if (!entry.installed) return "Install";
+        if (entry.imagery !== null && !entry.imageryInstalled) return "Download wallpapers";
+        return "";
+    }
+
+    function catalogLines(entry) {
+        const lines = [];
+        if (catalogProblem !== null && catalogProblem.name === entry.name) lines.push(catalogProblem.message);
+        return lines;
+    }
+
+    function catalogBusy(entry) {
+        return (catalogAction === entry.name && catalogActionKind !== "") || (last.downloading !== null && last.downloading.name === entry.name);
+    }
+
+    function catalogBusyLabel(entry) {
+        if (catalogAction === entry.name && catalogActionKind === "install") return "Installing";
+        if ((catalogAction === entry.name && catalogActionKind === "wallpapers") || (last.downloading !== null && last.downloading.name === entry.name)) return "Downloading wallpapers";
+        return "";
+    }
+
+    function installCatalog(name) {
+        catalogProblem = null;
+        catalogAction = name;
+        catalogActionKind = "install";
+        const reply = shell.theme.install(name, result => {
+            root.catalogAction = "";
+            root.catalogActionKind = "";
+            if (result.state !== "ok") root.catalogProblem = { name: name, message: "Install failed: " + result.reason };
+            root.refresh();
+        });
+        if (reply !== "ok") {
+            catalogAction = "";
+            catalogActionKind = "";
+            catalogProblem = { name: name, message: reply };
+            console.warn("themes panel: " + reply);
+        }
+        return reply;
+    }
+
+    function downloadCatalogWallpapers(name) {
+        catalogProblem = null;
+        catalogAction = name;
+        catalogActionKind = "wallpapers";
+        const reply = shell.theme.wallpapers(name, result => {
+            root.catalogAction = "";
+            root.catalogActionKind = "";
+            if (result.state !== "ok")
+                root.catalogProblem = { name: name, message: "Wallpaper download failed: " + result.reason };
+            root.refresh();
+        });
+        if (reply !== "ok") {
+            catalogAction = "";
+            catalogActionKind = "";
+            catalogProblem = { name: name, message: reply };
+            console.warn("themes panel: " + reply);
+        }
+        readLast();
         return reply;
     }
 
@@ -193,10 +289,29 @@ Item {
                 }
 
                 SectionHeader {
-                    text: "Themes"
+                    text: "Installed"
                     description: "Every theme package; a click applies one to the shell and every application target"
                     leftPadding: Theme.row.paddingX
                     rightPadding: Theme.row.paddingX
+                }
+
+                Row {
+                    x: Theme.row.paddingX
+                    spacing: Theme.space.sm
+                    Button {
+                        text: "Add from URL"
+                        iconName: "package-plus"
+                        variant: "secondary"
+                        onClicked: root.addFromUrl()
+                    }
+                    Label {
+                        role: "hint"
+                        text: root.tuiProblem
+                        color: Theme.color.danger
+                        visible: text !== ""
+                        wrapMode: Text.Wrap
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
 
                 Label {
@@ -245,6 +360,51 @@ Item {
                         applicable: modelData.state === "ok" && root.last.applying === null
                         lines: modelData.state === "shadowed" ? [] : root.linesFor(modelData.name)
                         onActivated: root.apply(modelData.name)
+                    }
+                }
+
+                SectionHeader {
+                    text: "Catalog"
+                    description: "Themes VGS ships in its catalog; install a definition first, then download its wallpapers"
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
+                }
+
+                Label {
+                    role: "hint"
+                    x: Theme.row.paddingX
+                    width: parent.width - 2 * Theme.row.paddingX
+                    visible: text !== ""
+                    text: root.catalogReason === "" ? "" : "The theme catalog failed: " + root.catalogReason
+                    color: Theme.color.danger
+                    wrapMode: Text.Wrap
+                }
+
+                Repeater {
+                    model: ScriptModel {
+                        values: root.catalogEntries.map(e => Object.assign({ key: e.name }, e))
+                        objectProp: "key"
+                    }
+
+                    ThemeRow {
+                        required property var modelData
+                        width: list.width
+                        name: modelData.name
+                        source: modelData.mode + ", " + root.wallpaperText(modelData)
+                        packageState: "catalog"
+                        swatch: root.catalogSwatch(modelData)
+                        installed: modelData.installed
+                        definitionUpdate: modelData.definitionUpdate
+                        imageryUpdate: modelData.imageryUpdate
+                        applicable: modelData.installed && root.last.applying === null
+                        applying: root.last.applying === modelData.name
+                        actionLabel: root.catalogActionLabel(modelData)
+                        actionIcon: modelData.installed ? "cloud-download" : "package-plus"
+                        actionEnabled: root.catalogAction === "" && root.last.applying === null
+                        lines: root.catalogLines(modelData)
+                        busyText: root.catalogBusyLabel(modelData)
+                        onActivated: root.apply(modelData.name)
+                        onActionRequested: modelData.installed ? root.downloadCatalogWallpapers(modelData.name) : root.installCatalog(modelData.name)
                     }
                 }
             }
