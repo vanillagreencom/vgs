@@ -53,6 +53,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D048 | VGS-585 | Theme-owned Hyprland appearance groups use manifest switches | Core names no plugin; settings stay manifest-drawn | A theme needs layout-affecting Hyprland values | Active | [Full](D048-theme-owned-hyprland-appearance.md) |
 | 2026-09-29 | D049 | VGS-589 | Slack custom emoji from Slack's cache and `emoji.list`, drawn inline by `ImageText` | No token needed, no work on the notification path, Qt elision misplaces images | Slack sends emoji images, or Qt fixes StyledText image loading and elision | Active | [Full](D049-slack-custom-emoji-from-the-cache-drawn-inline.md) |
 | 2026-09-29 | D050 | VGS-578 | Containers use one inset box, an inner scroll gutter and fitted popup height | One owner removes per-surface padding arithmetic and keeps bars inside the inset | A child needs to bleed outside the inset box, or Quickshell adds a matching primitive | Active | [Full](D050-container-layout-contract.md) |
+| 2026-09-29 | D050 | VGS-603 | Every notification action delivers, then one core `reveal` shows the sender's window; expired toasts stay deliverable | No activation token reaches senders; one helper, no double switch | Quickshell emits ActivationToken, or Hyprland focus stops revealing | Active | [Full](D050-notification-actions-reveal-the-sender.md) |
 
 ---
 
