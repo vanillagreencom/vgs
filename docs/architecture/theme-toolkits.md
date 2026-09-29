@@ -2,7 +2,7 @@
 
 Covers: themes/targets/color-scheme/**, themes/targets/gtk3/**, themes/targets/gtk4/**, themes/targets/icons/**, themes/targets/kcolorscheme/**, themes/targets/qt5ct/**, themes/targets/qt6ct/**, scripts/test-vgsh-toolkits.sh
 
-The shipped targets that colour GTK, Qt and KDE applications and select the icon theme and the light or dark mode. The target format, the encoders and the wiring forms are [theme-targets.md](theme-targets.md); when a hook runs is [theme-apply.md § Reload](theme-apply.md#reload).
+The shipped targets that colour GTK, Qt and KDE applications and select the icon theme and the light or dark mode. The target format, the encoders and the wiring forms are [theme-targets.md](theme-targets.md); when a hook runs is [theme-reload.md](theme-reload.md).
 
 | Target | Encoder | Detect | Wiring | Reload |
 |---|---|---|---|---|

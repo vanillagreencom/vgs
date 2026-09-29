@@ -21,4 +21,4 @@
 
 **Verification**: `scripts/validate all`; the smoke's resident-size ceiling names its measurement.
 
-**References**: `docs/architecture/runtime.md`, `docs/architecture/validation.md`
+**References**: `docs/architecture/runtime.md`, `docs/architecture/validation.md`, `docs/architecture/validation-smoke.md`

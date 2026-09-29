@@ -305,7 +305,7 @@
 # `core/sudo-grant` runs `vgsh sudo grant` in one. No grant exists until
 # the owner runs `sudo install`. On NixOS, every sudo verb writes nothing,
 # reports `skipped=nixos-config`, and `grant` prints the
-# `security.sudo.extraRules` snippet: docs/architecture/tui.md § sudo.
+# `security.sudo.extraRules` snippet: docs/architecture/tui-sudo.md.
 #
 # `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
 # with the full presentation, titled by --title or else by the command's

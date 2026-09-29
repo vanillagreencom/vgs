@@ -53,7 +53,7 @@
 # system directories alone; vgsh itself was already resolved from that PATH.
 # Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 from
 # __status and __disable when no grant is active, 130 when the question is
-# cancelled. docs/architecture/tui.md § sudo, docs/decisions/D036.
+# cancelled. docs/architecture/tui-sudo.md, docs/decisions/D036.
 #
 # /bin/bash -p rather than env: as root nothing here resolves through a
 # PATH, a startup file or a function a user chose.

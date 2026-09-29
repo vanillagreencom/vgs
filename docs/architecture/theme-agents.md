@@ -2,7 +2,7 @@
 
 Covers: themes/targets/claude/**, themes/targets/codex/**, themes/targets/gemini/**, themes/targets/hermes/**, themes/targets/omp/**, themes/targets/opencode/**, themes/targets/pi/**, bin/lib/theme-select.js, scripts/test-theme-select.js, scripts/test-vgsh-agents.sh
 
-The shipped targets for coding-agent terminal CLIs, and the `select` key that sets a CLI's theme by name in its own settings file. The target format, both wiring forms and the renderer are [theme-targets.md](theme-targets.md); when a target lands and when its hook runs is [theme-apply.md](theme-apply.md). [D024](../decisions/D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md) records why apply edits these settings files.
+The shipped targets for coding-agent terminal CLIs, and the `select` key that sets a CLI's theme by name in its own settings file. The target format, both wiring forms and the renderer are [theme-targets.md](theme-targets.md); when a target lands is [theme-apply.md](theme-apply.md), and when its hook runs [theme-reload.md](theme-reload.md). [D024](../decisions/D024-theme-apply-sets-one-theme-key-in-an-application-settings-file.md) records why apply edits these settings files.
 
 ## Targets
 

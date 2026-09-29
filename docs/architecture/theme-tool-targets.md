@@ -2,7 +2,7 @@
 
 Covers: themes/targets/vesktop/**, themes/targets/equibop/**, themes/targets/vencord/**, themes/targets/btop/**, themes/targets/fastfetch/**, themes/targets/tmux/**, themes/targets/oh-my-posh/**, themes/targets/obsidian/**, themes/targets/gum/**, scripts/test-vgsh-chat-tools.sh, scripts/test-theme-gum.js
 
-The shipped targets for chat clients and terminal tools. The target format, both wiring forms and the renderer are [theme-targets.md](theme-targets.md); when a target lands and when its hook runs is [theme-apply.md](theme-apply.md).
+The shipped targets for chat clients and terminal tools. The target format, both wiring forms and the renderer are [theme-targets.md](theme-targets.md); when a target lands is [theme-apply.md](theme-apply.md), and when its hook runs [theme-reload.md](theme-reload.md).
 
 ## Targets
 

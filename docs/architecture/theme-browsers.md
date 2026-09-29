@@ -2,7 +2,7 @@
 
 Covers: themes/targets/zen/**, themes/targets/pywalfox/**, themes/targets/chromium/**, bin/vgsh-browser-policy, scripts/test-vgsh-browsers.sh, scripts/test-vgsh-browser-policy.sh
 
-The browser targets, beside the others of [theme-targets.md § Targets](theme-targets.md#targets). The target format and the encoders are [theme-targets.md](theme-targets.md); when a hook runs is [theme-apply.md § Reload](theme-apply.md#reload).
+The browser targets, beside the others of [theme-targets.md § Targets](theme-targets.md#targets). The target format and the encoders are [theme-targets.md](theme-targets.md); when a hook runs is [theme-reload.md](theme-reload.md).
 
 | Target | Encoder | Detect | Wiring | Reload |
 |---|---|---|---|---|

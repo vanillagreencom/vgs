@@ -104,7 +104,7 @@ podman run --rm -e NIX_CONFIG='experimental-features = nix-command flakes' docke
   nix run github:vanillagreencom/vgs/vX.Y.Z -- --version
 ```
 
-Every command prints `vgs X.Y.Z`: an installed tree is not a checkout, so `vgs-git` prints its `VERSION` too. Then run `vgsh run` from each install inside the nested sandbox: [validation.md](architecture/validation.md).
+Every command prints `vgs X.Y.Z`: an installed tree is not a checkout, so `vgs-git` prints its `VERSION` too. Then run `vgsh run` from each install inside the nested sandbox: [validation-smoke.md](architecture/validation-smoke.md).
 
 ## Omarchy comparison
 

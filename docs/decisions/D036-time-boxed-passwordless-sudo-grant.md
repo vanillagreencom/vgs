@@ -18,7 +18,7 @@
 - The user half refuses a sudo without `-N` and an installed root half that differs from its own bytes.
 - On NixOS, detected through the package-manager table from [D034](D034-one-package-manager-table.md), every verb writes nothing and runs no sudo. `status`, `revoke`, `install` and `uninstall` report `skipped=nixos-config`. `grant` resolves the same account name, computes the same `NOTAFTER` deadline and prints a `security.sudo.extraRules` snippet for the user to add to the NixOS configuration. It uses a string command entry because the NixOS submodule command form has no `NOTAFTER` option, while the string form renders the sudoers command text as written.
 
-[tui.md § sudo](../architecture/tui.md#sudo) holds the contract.
+[tui-sudo.md](../architecture/tui-sudo.md) holds the contract.
 
 **Rationale**:
 
@@ -57,4 +57,4 @@ Copied: the 15 and 1440 minute bounds, the `NOTAFTER` rule, the dotted staging n
 
 **Verification**: `scripts/test-vgsh-sudo-grant.sh` runs `vgsh sudo` against a temporary prefix with stand-in `sudo`, `visudo`, `systemd-run`, `systemctl`, `getent` and `gum`, the root half under `unshare -r`. It covers the rule text, the bounds, the deadline, the timer, the toggle, each refusal and the root half's startup. It binds a NixOS os-release fixture for the `nix` row, asserts that NixOS rows make no sudo call and write nothing, and checks the printed `security.sudo.extraRules` deadline. Its controls include copies that skip `visudo`, accept 1441 minutes, skip the deadline, caller, startup, environment, boot cleanup, mode, owner, effect, toggle, unattended, expiry, account, stale-copy, `-N` and cold-credential checks, one whose uninstall keeps other accounts' grants, one whose NixOS branch writes the rule path, and one whose NixOS dispatch is removed. `scripts/test-tui-logic.js` judges the core TUI row, and `scripts/smoke/rows/tui.sh` opens `core/sudo-grant` in the nested sandbox.
 
-**References**: [D029](D029-chromium-policy-writer.md), [D033](D033-floating-tuis-are-core.md), [D003](D003-everything-is-a-plugin.md), [D007](D007-install-runs-no-plugin-code.md), [tui.md](../architecture/tui.md)
+**References**: [D029](D029-chromium-policy-writer.md), [D033](D033-floating-tuis-are-core.md), [D003](D003-everything-is-a-plugin.md), [D007](D007-install-runs-no-plugin-code.md), [tui-sudo.md](../architecture/tui-sudo.md)

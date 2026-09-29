@@ -46,7 +46,7 @@ A package is shipped under `themes/<name>/`, installed under the configuration h
 
 ## Apply
 
-`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md). Apply also makes one of the package's background images current, `vgsh theme background next` and `previous` move to the next or the previous one, `set` shows one chosen image on every screen or on one output, and `list` names the images: [theme-backgrounds.md](theme-backgrounds.md). `vgsh theme follow` applies the applied package again once it changed: [theme-follow.md](theme-follow.md).
+`vgsh theme apply` and `vgsh theme reload` land a package in the state directory, every enabled target and the shell, and run reload hooks: [theme-apply.md](theme-apply.md) and [theme-reload.md](theme-reload.md). Apply also makes one of the package's background images current, `vgsh theme background next` and `previous` move to the next or the previous one, `set` shows one chosen image on every screen or on one output, and `list` names the images: [theme-backgrounds.md](theme-backgrounds.md). `vgsh theme follow` applies the applied package again once it changed: [theme-follow.md](theme-follow.md).
 
 ## Trust
 
@@ -61,7 +61,7 @@ A curated target file is written verbatim into a path an application includes. O
 5. The list reports a refused package with its reason and the theme file's state from disk; apply refuses a refused package. Enforced by `scripts/test-vgsh.sh`. `modified` is false for the file's package bytes and for the bytes `applied.json` records for it, and true for a hand edit. Enforced by `scripts/test-vgsh-follow.sh`, with a judge copy that ignores the record as its control.
 6. A second apply is refused with `reason=busy` while the lock is held. Enforced by `scripts/test-vgsh.sh`, with a lockless `bin/vgsh` copy as its control.
 7. The target and template rules: [theme-targets.md § Invariants](theme-targets.md#invariants), the editor targets': [theme-editors.md § Invariants](theme-editors.md#invariants), and the browser targets': [theme-browsers.md § Invariants](theme-browsers.md#invariants).
-8. The apply and reload rules: [theme-apply.md § Invariants](theme-apply.md#invariants), and the follow rules: [theme-follow.md § Invariants](theme-follow.md#invariants).
+8. The apply and reload rules: [theme-apply.md § Invariants](theme-apply.md#invariants) and [theme-reload.md § Invariants](theme-reload.md#invariants), and the follow rules: [theme-follow.md § Invariants](theme-follow.md#invariants).
 9. The `theme` capability rules: [theme-capability.md § Invariants](theme-capability.md#invariants).
 10. The background rules: [theme-backgrounds.md § Invariants](theme-backgrounds.md#invariants).
 11. An installed package's curated `neovim.lua`, `kitty.conf` and `alacritty.toml` are dropped and named on their rows, in JSON and in text, and the drop stays on a row whose wiring or reload fails; a shipped package's `neovim.lua` lands byte for byte; a target without `runsCode` fails with `missing=runsCode`. Enforced by `scripts/test-vgsh-targets.sh`, with judge copies that take every package as shipped, report no drop in JSON or in text and lose the drop on a failed reload or wiring, and a renderer copy that does not require the key, as its controls. The renderer's drop rules are [theme-targets.md § Invariants](theme-targets.md#invariants).

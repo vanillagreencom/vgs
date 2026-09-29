@@ -42,4 +42,4 @@ The Quickshell and Qt facts the QML rests on are in [runtime-qml.md](runtime-qml
 
 ## Validation
 
-The checks, the nested sandbox, its harness and the smoke's verdicts are in [validation.md](validation.md).
+The checks are in [validation.md](validation.md), and the nested sandbox, its harness and the smoke's verdicts in [validation-smoke.md](validation-smoke.md).

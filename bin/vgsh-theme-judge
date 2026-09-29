@@ -131,7 +131,7 @@
 // exits 3. A
 // malformed invocation exits 2.
 // docs/architecture/themes.md § Runner, theme-install.md, theme-apply.md,
-// theme-targets.md, theme-backgrounds.md, theme-catalog.md and
+// theme-reload.md, theme-targets.md, theme-backgrounds.md, theme-catalog.md and
 // theme-wallpapers.md hold the
 // rules this file implements; the catalog marker is
 // bin/lib/theme-catalog.js, the wallpaper fetch and archive reader

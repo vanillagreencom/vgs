@@ -62,7 +62,7 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
 - [components.md](components.md): read before adding or changing a component of `qs.Ui`.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
-- [theme-apply.md](theme-apply.md): read before touching the apply, a reload hook or `vgsh theme reload`.
+- [theme-apply.md](theme-apply.md) and [theme-reload.md](theme-reload.md): read before touching the apply, a reload hook or `vgsh theme reload`.
 - [theme-follow.md](theme-follow.md): read before touching `applied.json`, `vgsh theme follow` or the `modified` flag.
 - [theme-catalog.md](theme-catalog.md): read before touching `themes/catalog/`, its index, `vgsh-theme-judge catalog-check` or a catalog install.
 - [theme-conversion.md](theme-conversion.md): read before touching the v1 theme converter or the catalog readability check.
@@ -78,14 +78,9 @@ One line per decision record is in [decisions.md](decisions.md); the full log is
 - [theme-agents.md](theme-agents.md): read before touching an agent CLI's target or a target's `select` key.
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
 - [requirements.md](requirements.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe or the `missing` lines.
-- [tui.md](tui.md): read before touching a floating TUI.
+- [tui.md](tui.md), [tui-capability.md](tui-capability.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
-- [validation.md](validation.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
-- [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version`, the shared install tree or the recipe check.
-- [distribution-methods.md](distribution-methods.md): read before touching `vgsh self status`, `vgsh self update` or `bin/lib/self.js`.
-- [distribution-curl.md](distribution-curl.md): read before touching `install.sh` or the curl layout.
-- [distribution-arch.md](distribution-arch.md): read before touching an Arch recipe or its AUR publication.
-- [distribution-fedora.md](distribution-fedora.md): read before touching a Fedora spec or COPR `vanillagreen/vgs`.
-- [distribution-nix.md](distribution-nix.md): read before touching the Nix flake.
+- [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
+- [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
 - [decisions.md](decisions.md): read for the one-line list of decisions, and add a line there with each new decision record.
