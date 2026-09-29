@@ -210,6 +210,8 @@ f share/vgs/themes/targets/gtk3/gtk3.css
 f share/vgs/themes/targets/gtk3/target.json
 f share/vgs/themes/targets/gtk4/gtk4.css
 f share/vgs/themes/targets/gtk4/target.json
+f share/vgs/themes/targets/gum/gum.env
+f share/vgs/themes/targets/gum/target.json
 f share/vgs/themes/targets/helix/helix.toml
 f share/vgs/themes/targets/helix/target.json
 f share/vgs/themes/targets/hermes/hermes.yaml
