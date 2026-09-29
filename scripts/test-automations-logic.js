@@ -317,6 +317,18 @@ function verify(logic) {
     assert.equal(logic.refreshDelay({ automations: [] }, 0), 24 * 60 * 60 * 1000, "at most a day");
     same(logic.changedKeys({ a: 1, b: { x: 1 } }, { a: 1, b: { x: 2 }, c: 3 }), ["b", "c"]);
 
+    // The Engine status: a failure stays until the same operation succeeds.
+    let failures = logic.withOutcome({}, "sync", "sync exit=1 Failed to reload");
+    failures = logic.withOutcome(failures, "list", "");
+    same(logic.engineProblem(failures), { tone: "danger", text: "sync exit=1 Failed to reload" }, "a list that succeeds keeps the sync failure");
+    failures = logic.withOutcome(failures, "prune", "prune exit=1 x");
+    same(logic.engineProblem(failures).text, "sync exit=1 Failed to reload", "the first operation's failure is named");
+    failures = logic.withOutcome(failures, "sync", "");
+    same(logic.engineProblem(failures), { tone: "danger", text: "prune exit=1 x" });
+    same(logic.engineProblem(logic.withOutcome(failures, "prune", "")), { tone: "ok", text: "None" });
+    same(logic.withOutcome({}, "list", "x".repeat(300)).list.length, 200);
+    assert.throws(() => logic.withOutcome({}, "run", ""), /is not one of sync, list, prune/);
+
     // Daylight saving, as systemd reads it: a skipped time does not occur
     // that day, and a repeated time occurs once, at its first instant.
     process.env.TZ = "America/Los_Angeles";
@@ -463,6 +475,9 @@ const CONTROLS = [
     ["the text follows --", "return args.concat([\"--\", n.summary, n.body]);", "return args.concat([n.summary, n.body]);"],
     ["a finish replaces the start", "if (isWhole(replaceId) && replaceId > 0) args.push(\"--replace-id=\" + replaceId);", ""],
     ["a paused automation has no next run", "nextRun: a.enabled && next.length > 0 ? next[0] : null,", "nextRun: next.length > 0 ? next[0] : null,"],
+    ["a success clears its own operation's failure alone", "if (failure === \"\") delete next[operation];", "if (failure === \"\") next = {};"],
+    ["a failure is kept until its operation succeeds", "else next[operation] = String(failure).slice(0, 200);", "else next = { list: String(failure) };"],
+    ["the Engine status names a failure", "if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: \"danger\", text: failures[ENGINE_OPERATIONS[i]] };", "if (false) return null;"],
     ["a failing last run is reported", "if (rows[i].lastRun !== null && OUTCOMES[rows[i].lastRun.outcome].error) failing.push(rows[i].name);", ""]
 ];
 

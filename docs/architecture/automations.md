@@ -8,14 +8,14 @@ How `vgs.automations` turns a recurrence into systemd user timers, runs a comman
 
 - `AutomationsLogic.js` makes every decision: the store's schema, the recurrence model and its presets, the compiled calendars, the occurrences, the guard, the unit and crontab text, the records, the history rows, pruning, the notifications and the status. `bin/automations`, `Service.qml` and the tests load it; the engine loads it through `bin/lib/qml-library.js`.
 - `bin/automations` owns the store, the units, the crontab block, the runner and the run files. Its header lists every verb, its output and its refusals.
-- `Service.qml` asks the engine, one call at a time: `sync` at start, `prune` at start, on a `historyDays` change and once a day, and `list --json` after each run file comes or goes and a second after the next run is due. It writes every status value.
+- `Service.qml` asks the engine, one call at a time: `sync` at start, `prune` at start, on a `historyDays` change and once a day, and `list --json` after each run file comes or goes, after each change to the store, which a `WatchedFile` on the path `list --json` names reports, and a second after the next run is due. It writes every status value. The Engine status keeps each operation's last failure until the same operation succeeds (`AutomationsLogic.withOutcome`), so a list that succeeds after a failed sync leaves the sync failure shown.
 - `tui/linger.sh` shows whether lingering is on and turns it on with `loginctl enable-linger` after the user answers yes.
 
 ## Files
 
 | Path | Holds | Writer |
 |---|---|---|
-| `$XDG_CONFIG_HOME/vgs/automations/automations.json` | The store: `{ version: 1, automations }` | the engine, under `locks/store.lock` |
+| `$XDG_CONFIG_HOME/vgs/automations/automations.json` | The store: `{ version: 1, automations }`; `list --json` makes its directory and names it, which the service watches | the engine, under `locks/store.lock` |
 | `$XDG_CONFIG_HOME/systemd/user/vgs-automation-<id>.timer`, `.service` | One pair per enabled automation | `sync` |
 | `$XDG_STATE_HOME/vgs/automations/runs/<id>@<run>.started.json`, `.ended.json`, `.log` | One run: its records and its transcript; `<run>` is `<start ms>-<runner pid>` | the runner |
 | `$XDG_STATE_HOME/vgs/automations/guard/<id>.json` | `{ handledThrough }`: the last occurrence the guard decided on | `add`, `enable` and the runner |
@@ -65,8 +65,8 @@ cron ORs a day with a weekday, so a week of the month is its weekday alone there
 A unit, a crontab line and Run now all start `flock -n -E 75 -o <lock> <node> <engine copy> --tree <tree> run --scheduled|--manual <id>`. flock holds the automation's lock for the runner's life and hands the runner no descriptor, so the command inherits no lock and a second run of the automation exits 75 at once.
 
 - The runner writes the started record, sends the start notification, then runs `<login shell> -l -c <command>` in the working directory, the home directory when none is set. The login shell is the user's own from the password database, so PATH is what the user's terminal sees. The command runs in a process group of its own with no stdin, and learns `VGS_AUTOMATION_ID` and `VGS_AUTOMATION_RUN`. Under cron, where no session bus is set, the runner points `DBUS_SESSION_BUS_ADDRESS` at `$XDG_RUNTIME_DIR/bus`.
-- At the timeout the runner sends SIGTERM to the command's group and SIGKILL 10 seconds later.
-- The transcript holds a header, one `HH:MM:SS.mmm out|err | <line>` line per line of output as it arrives, and a footer with the outcome and the duration. Past 1 MiB it writes one marker line and drops the rest; the footer is always written.
+- At the timeout the runner sends SIGTERM to the command's group and SIGKILL 10 seconds later. A timed-out run ends only once the whole group is gone, so a descendant that ignores SIGTERM and let go of the output pipes still meets the SIGKILL while the lock is held. A group still alive 30 seconds after SIGKILL, a process in uninterruptible sleep, ends the run with `group=survived` in its reason.
+- The transcript holds a header, one `HH:MM:SS.mmm out|err | <line>` line per line of output as it arrives, and a footer with the outcome and the duration. A line longer than 8192 characters, output with no line break included, arrives in pieces of that length, so the runner holds one piece of a stream at a time while both pipes drain. Past 1 MiB it writes one marker line and drops the rest; the footer is always written. The snippet keeps the last 20 lines of each stream, each cut to 400 characters.
 - The outcome is `succeeded` on exit 0, `failed` on another exit or a signal, `timeout`, or `failed-start` when the command never ran: a missing working directory or login shell, a spawn error, or a store or guard file the judge refuses.
 - After the ended record, the runner prunes its automation's history with the plugin's `historyDays`, read through `vgsh plugin settings`. A read that fails logs `automations: prune=skipped` and prunes nothing.
 
@@ -90,5 +90,6 @@ The hints are [notification-hints.md](notification-hints.md)'s. A `notify-send` 
 
 1. The preview, the units and the guard answer one question once: `scripts/test-automations-logic.js` compares every rule shape's next ten occurrences with `systemd-analyze calendar --iterations` under UTC and under a zone with daylight saving, and pins the guard, with a control per rule. Without `systemd-analyze` it exits 77.
 2. No test reaches the user's systemd manager, crontab or notification server: `scripts/test-automations-engine.js` runs every case in a scratch home with stand-ins and an allow-list of host tools, and the smoke row's commands resolve to stand-ins in the sandbox, whose runtime directory and buses are its own.
-3. A run's records land whole, the started one before the command; a timeout ends the command's whole group; the transcript keeps its cap and its footer; an error always notifies; prune keeps the window and a running run. Enforced by `scripts/test-automations-engine.js`, with a control per rule.
-4. The service lists after a run file lands. Enforced by `scripts/smoke/rows/automations.sh`, whose control is a copy of the service that does not.
+3. A run's records land whole, the started one before the command; a timeout ends the command's whole group, and the run waits for a descendant that ignores SIGTERM; a long line arrives in pieces; the transcript keeps its cap and its footer; an error always notifies; prune keeps the window and a running run. Enforced by `scripts/test-automations-engine.js`, with a control per rule.
+4. The service lists after a run file lands and after the store changes, and a failed sync stays its Engine status until a sync succeeds. Enforced by `scripts/smoke/rows/automations.sh`, whose control is a copy of the service that does not list on a change, and by `scripts/test-automations-logic.js` for the Engine status, with a control per rule.
+5. No row reaches the user's crontab: `scripts/smoke/harness.sh` stands `crontab` in the shell's stand-in directory for the whole run, and `scripts/smoke/rows/automations.sh` reads the resolution back, with the host's PATH as its control.

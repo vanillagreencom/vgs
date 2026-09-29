@@ -2,16 +2,20 @@
 # enables it over stand-ins it writes in the shell's own PATH directory: a
 # systemctl that answers show-environment and logs every other verb, a
 # systemd-run that logs its argv and runs the argv after `--`, a notify-send
-# that logs its argv and prints an id, and a loginctl that answers `no`. No
-# call can reach the host's systemd user manager: the sandbox's runtime
+# that logs its argv and prints an id, and a loginctl that answers `no`;
+# the harness's crontab stand-in serves the whole run. No call can reach the
+# host's systemd user manager or the user's crontab: the sandbox's runtime
 # directory and session bus are its own, and every command the plugin runs
 # resolves to a stand-in first. The row drives the engine, bin/automations,
 # as the shell's service runs it, with the shell's environment.
 #
 # Rows: the service publishes its declared status, and its start with no
-# automation runs no systemctl verb but show-environment; an automation the
-# engine adds writes its timer and service under the sandbox home and
-# enables the timer; the service counts it scheduled once asked to sync; a
+# automation runs no systemctl verb but show-environment; crontab resolves
+# to the stand-in, with a control reading the host's PATH; an automation the
+# engine adds writes its timer and service under the sandbox home, enables
+# the timer and reaches only the stand-in crontab; the service counts it
+# scheduled from the store change alone; a failed sync stays the Engine
+# status after a list succeeds and clears once a sync succeeds; a
 # failing Run now goes through systemd-run, sends the error notification
 # with the VGS hints and reaches the Last runs status through the service's
 # runs listing; the linger TUI opens through the stand-in terminal; and the
@@ -27,9 +31,12 @@ auto_names=(systemctl systemd-run notify-send loginctl)
 for name in "${auto_names[@]}"; do
   if [[ -e $shim/$name ]]; then mv -- "$shim/$name" "$auto_saved/$name"; fi
 done
+# The systemctl stand-in fails daemon-reload while $auto_stub/fail-reload
+# exists, so a row can make a sync fail.
 cat >"$shim/systemctl" <<EOF
 #!/usr/bin/env bash
 python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$auto_stub/systemctl.calls"
+if [[ \${2:-} == daemon-reload && -e "$auto_stub/fail-reload" ]]; then echo "Failed to reload daemon: stand-in" >&2; exit 1; fi
 exit 0
 EOF
 cat >"$shim/systemd-run" <<EOF
@@ -64,6 +71,15 @@ auto_verbs() { if [[ -f $auto_stub/systemctl.calls ]]; then python3 -c 'import j
 auto_units() { if [[ -d $home/.config/systemd/user ]]; then (cd -- "$home/.config/systemd/user" && ls | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))'); else echo '[]'; fi; }
 # The VGS hints of the last notification, as its x-vgs names and values.
 auto_hints() { if [[ -f $auto_stub/notify-send.calls ]]; then tail -n 1 -- "$auto_stub/notify-send.calls" | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps([h.split(":", 2)[1] + "=" + ("<path>" if h.split(":", 2)[1] == "x-vgs-open" else h.split(":", 2)[2]) for h in a if h.startswith("--hint=string:x-vgs-")]))'; else echo absent; fi; }
+# resolved COMMAND PATH_LIST: the file COMMAND runs from on PATH_LIST, or
+# none. The harness's crontab stand-in stays for the whole run, since
+# crontab picks the caller's own table by user, not by HOME.
+resolved() { PATH="$2" bash -c 'command -v "$1" || echo none' _ "$1"; }
+crontab_calls() { if [[ -f $sandbox/crontab.calls ]]; then python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read().splitlines()))' "$sandbox/crontab.calls"; else echo '[]'; fi; }
+: >"$sandbox/crontab.calls"
+# auto_problem: the Engine status as `<tone> <operation>` and the exit word,
+# or `ok None`.
+auto_problem() { auto_status problem | py_reply 'import json,sys; v=json.load(sys.stdin); print(" ".join([v["tone"]] + v["text"].split(" ")[:2]))'; }
 failing='{"name": "Nightly", "command": "echo nope >&2; exit 3", "schedule": {"frequency": "weekly", "interval": 2, "weekdays": ["mon"], "times": ["03:00"], "start": "2026-01-05", "end": {"type": "never"}}}'
 
 expect "the automations start disabled in the sandbox" False plugin_enabled vgs.automations
@@ -73,13 +89,29 @@ expect_poll "the scheduler reads the stand-in's systemd user manager" '{"tone": 
 expect_poll "lingering reads off" '{"tone": "warning", "text": "Automations run only while you are logged in"}' auto_status linger
 expect "a start with no automation runs no systemctl verb" '[]' auto_verbs
 expect "no unit is written with no automation" '[]' auto_units
+expect "the shell's PATH resolves crontab to the harness's stand-in" "$shim/crontab" resolved crontab "$shell_path"
+# The reader's control: the host's PATH alone resolves no stand-in, so the
+# reading above is the shell's PATH and not the reader.
+expect "the host's PATH alone resolves no stand-in crontab" True python3 -c 'import sys; print(sys.argv[1] != sys.argv[2])' "$(resolved crontab "$PATH")" "$shim/crontab"
 
 expect "the engine adds an automation" added=nightly auto_last add --definition "$failing"
 expect "its timer and service are under the sandbox home" '["vgs-automation-nightly.service", "vgs-automation-nightly.timer"]' auto_units
 expect "the add reloads the manager and enables the timer" '["daemon-reload", "enable"]' auto_verbs
-expect "the service syncs on request" ok ipc vgs.automations invoke sync ""
-expect_poll "the service counts it scheduled" 1 auto_status active
+expect "the add's sync looked for a fallback block in the stand-in crontab alone" '["-l"]' crontab_calls
+expect_poll "the service lists the engine's store change with no IPC call" 1 auto_status active
 expect_poll "no run has failed yet" '{"tone": "ok", "text": "No failures"}' auto_status lastRuns
+
+# A sync that fails stays the Engine status after the list that follows
+# it succeeds, until a sync succeeds. The missing timer gives sync work.
+: >"$auto_stub/fail-reload"
+unlink -- "$home/.config/systemd/user/vgs-automation-nightly.timer"
+expect "the service syncs on request" ok ipc vgs.automations invoke sync ""
+expect_poll "a failed sync is the Engine status after the list succeeds" "danger sync exit=1" auto_problem
+expect_poll "the list after the failed sync still counts it" 1 auto_status active
+unlink -- "$auto_stub/fail-reload"
+expect "the service syncs again" ok ipc vgs.automations invoke sync ""
+expect_poll "a sync that succeeds clears the Engine status" "ok None" auto_problem
+expect "the timer is written again" '["vgs-automation-nightly.service", "vgs-automation-nightly.timer"]' auto_units
 
 expect "Run now starts" started=nightly automations run-now nightly
 expect "Run now goes through systemd-run" '["--user", "--collect", "--quiet"]' python3 -c 'import json,sys; print(json.dumps(json.loads(open(sys.argv[1]).readline())[:3]))' "$auto_stub/systemd-run.calls"

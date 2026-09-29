@@ -168,6 +168,22 @@ chmod 755 "$shim/hyprctl.real" "$shim/hyprctl.unstartable"
 cp -- "$shim/hyprctl.real" "$shim/hyprctl"
 # Rows swap the stand-in whole, so the shell never sees a half-written file.
 shim_hyprctl() { cp -- "$shim/hyprctl.$1" "$shim/hyprctl.next" && mv -T -- "$shim/hyprctl.next" "$shim/hyprctl"; }
+# crontab chooses the table it reads and writes by the caller's user, not
+# by HOME, so a crontab the shell reached would be the user's own. The
+# stand-in keeps the sandbox's table in $sandbox/crontab.table and logs each
+# argv, one line of words, in $sandbox/crontab.calls; `crontab -l` without a
+# table answers as cronie does. It stays for the whole run, so no row and no
+# plugin the default set enables reaches the host's crontab.
+cat >"$shim/crontab" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$sandbox/crontab.calls"
+case "\${1:-}" in
+  -l) if [[ -f "$sandbox/crontab.table" ]]; then cat -- "$sandbox/crontab.table"; else echo "no crontab for \$(id -un)" >&2; exit 1; fi ;;
+  -) cat >"$sandbox/crontab.table" ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod 755 "$shim/crontab"
 
 # The test helpers, built from the repository into the sandbox, each with
 # the client code wayland-scanner generates from the one protocol file

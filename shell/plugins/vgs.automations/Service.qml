@@ -2,12 +2,14 @@ import QtQuick
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import "AutomationsLogic.js" as Logic
 
 // Owns vgs.automations' runtime side: it syncs the units with the store
 // when it starts, so they run the revision the shell runs, lists the
-// automations whenever a run file comes or goes and when the next run is
-// due, prunes the history with the plugin's historyDays setting at start,
+// automations whenever a run file comes or goes, the store changes, as the
+// engine's add, edit, enable, disable and remove change it from any caller,
+// and when the next run is due, prunes the history with the plugin's historyDays setting at start,
 // on a change and once a day, and writes every status value. Every
 // question goes to bin/automations, one call at a time, since the engine
 // owns the store, the units and the records.
@@ -27,11 +29,13 @@ Item {
     property var reported: ({})
     // `list --json`'s last document, null before the first.
     property var listed: null
-    property string problem: ""
+    // Each engine operation's last failure (AutomationsLogic.withOutcome).
+    property var failures: ({})
     readonly property string engine: String(Qt.resolvedUrl("bin/automations")).replace(/^file:\/\//, "")
     readonly property string tree: Quickshell.shellDir + "/.."
     readonly property int historyDays: shell === null ? Logic.HISTORY_DAYS_MAX : shell.settings.historyDays
     readonly property string runsFolder: listed === null ? "" : "file://" + listed.runsDir
+    readonly property string storeFile: listed === null ? "" : listed.storeFile
 
     onShellChanged: start()
     onHistoryDaysChanged: if (registered) request(["prune", "--days", String(historyDays)])
@@ -71,35 +75,42 @@ Item {
         cli.running = true;
     }
 
+    function fail(operation, line) {
+        console.warn("automations: " + line);
+        failures = Logic.withOutcome(failures, operation, line);
+        publish();
+    }
+
     function finished(args, done, stdoutText, stderrText) {
+        const operation = args[0];
         if (done === null || done.code !== 0) {
             const line = String(stderrText || "").split("\n").filter(l => l !== "")[0] || "no-output";
-            problem = (args[0] + " " + (done === null ? "start=failed" : "exit=" + done.code) + " " + line).slice(0, 200);
-            console.warn("automations: " + problem);
+            fail(operation, operation + " " + (done === null ? "start=failed" : "exit=" + done.code) + " " + line);
+            return;
+        }
+        if (operation !== "list") {
+            failures = Logic.withOutcome(failures, operation, "");
             publish();
             return;
         }
-        if (args[0] !== "list") return;
         let doc;
         try {
             doc = JSON.parse(stdoutText);
         } catch (e) {
-            problem = "list answer=not-json";
-            console.warn("automations: " + problem);
-            publish();
+            fail(operation, "list answer=not-json");
             return;
         }
         listed = doc;
-        problem = "";
+        failures = Logic.withOutcome(failures, operation, "");
         publish();
         refresh.interval = Logic.refreshDelay(doc, Date.now());
         refresh.restart();
     }
 
     function publish() {
-        if (shell === null || listed === null && problem === "") return;
+        if (shell === null) return;
         const values = listed === null ? {} : Logic.statusValues(listed);
-        values.problem = problem === "" ? { tone: "ok", text: "None" } : { tone: "danger", text: problem };
+        values.problem = Logic.engineProblem(failures);
         const next = Object.assign({}, reported);
         for (const key of Logic.changedKeys(reported, values)) {
             const reply = shell.status.set(key, values[key]);
@@ -136,6 +147,20 @@ Item {
         nameFilters: ["*.json"]
         showDirs: false
         onCountChanged: if (root.runsFolder !== "" && String(folder) === root.runsFolder) settle.restart()
+    }
+
+    // The store is an invalidation signal only: every change, and the first
+    // read, asks the engine to list, which reads and judges the store.
+    // WatchedFile raises `changed` while no read is in flight, and a change
+    // during a read makes the read report again, so no change is dropped.
+    LazyLoader {
+        active: root.storeFile !== ""
+        WatchedFile {
+            path: root.storeFile
+            onChanged: settle.restart()
+            onLoaded: content => settle.restart()
+            onLoadFailed: error => settle.restart()
+        }
     }
 
     Timer {

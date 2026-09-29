@@ -7,8 +7,8 @@
 //
 //   automations --tree <dir> list [--json]
 //       every automation with its summary, state, next run and last run;
-//       --json prints one line, { scheduler, linger, runsDir, automations },
-//       the rows AutomationsLogic.listRows makes. Text: one
+//       --json prints one line, { scheduler, linger, runsDir, storeFile,
+//       automations }, the rows AutomationsLogic.listRows makes. Text: one
 //       `<id>\t<state>\t<summary>` line each.
 //   automations --tree <dir> add --definition <json>
 //       adds one automation, the keys AutomationsLogic.automationError
@@ -494,10 +494,13 @@ function listVerb(words) {
     const store = readStore();
     const rows = Logic.listRows(store, history(null).rows, Date.now());
     if (words.indexOf("--json") !== -1) {
-        // The service lists the runs directory to learn of a run, so it
-        // exists before the first run does.
+        // The service lists the runs directory to learn of a run and watches
+        // the store for a change another caller made, and a watch sees
+        // nothing in a directory that did not exist when it began, so both
+        // directories exist before the first run or write does.
         fs.mkdirSync(runsDir, { recursive: true });
-        process.stdout.write(JSON.stringify({ scheduler: scheduler(), linger: lingerState(), runsDir: runsDir, automations: rows }) + "\n");
+        fs.mkdirSync(path.dirname(storeFile), { recursive: true });
+        process.stdout.write(JSON.stringify({ scheduler: scheduler(), linger: lingerState(), runsDir: runsDir, storeFile: storeFile, automations: rows }) + "\n");
         return;
     }
     for (const row of rows) process.stdout.write(row.id + "\t" + row.state + "\t" + row.summary + "\n");
@@ -691,17 +694,27 @@ function Transcript(file, header) {
     };
 }
 
-// Splits a stream into lines as they arrive; the last partial line is
-// flushed when the stream ends.
+// Splits a stream into lines as they arrive, and a line longer than
+// Logic.TRANSCRIPT_LINE_MAX characters into pieces of that length, so output
+// with no line break holds at most one piece in memory while the stream
+// drains; the last partial line is flushed when the stream ends.
 function lineReader(stream, onLine) {
     let pending = "";
+    const emit = line => {
+        for (let at = 0; at < line.length; at += Logic.TRANSCRIPT_LINE_MAX) onLine(line.slice(at, at + Logic.TRANSCRIPT_LINE_MAX));
+        if (line === "") onLine(line);
+    };
     stream.setEncoding("utf8");
     stream.on("data", chunk => {
         pending += chunk;
         let at;
         while ((at = pending.indexOf("\n")) !== -1) {
-            onLine(pending.slice(0, at).replace(/\r$/, ""));
+            emit(pending.slice(0, at).replace(/\r$/, ""));
             pending = pending.slice(at + 1);
+        }
+        while (pending.length > Logic.TRANSCRIPT_LINE_MAX) {
+            onLine(pending.slice(0, Logic.TRANSCRIPT_LINE_MAX));
+            pending = pending.slice(Logic.TRANSCRIPT_LINE_MAX);
         }
     });
     stream.on("end", () => {
@@ -785,8 +798,10 @@ function execute(automation, trigger, slot, startedAt, refusal) {
     ]);
     const stderrLines = [];
     const stdoutLines = [];
+    // The snippet's candidates: the last lines of each stream, each cut to
+    // what a snippet can show.
     const keep = (list, line) => {
-        list.push(line);
+        list.push(line.length > Logic.SNIPPET_CHARS ? line.slice(line.length - Logic.SNIPPET_CHARS) : line);
         if (list.length > Logic.SNIPPET_LINES * 4) list.shift();
     };
     const finish = ending => {
@@ -833,16 +848,47 @@ function execute(automation, trigger, slot, startedAt, refusal) {
             if (e.code !== "ESRCH") throw e;
         }
     };
+    // Whether any process of the command's group lives: kill(2) with signal
+    // 0 answers ESRCH once the group is empty.
+    const groupAlive = () => {
+        try {
+            process.kill(-child.pid, 0);
+            return true;
+        } catch (e) {
+            if (e.code === "ESRCH") return false;
+            throw e;
+        }
+    };
+    let killedAt = null;
     const timer = setTimeout(() => {
         timedOut = true;
         signalGroup("SIGTERM");
-        killer = setTimeout(() => signalGroup("SIGKILL"), Logic.KILL_GRACE_MS);
+        killer = setTimeout(() => {
+            killedAt = Date.now();
+            signalGroup("SIGKILL");
+        }, Logic.KILL_GRACE_MS);
     }, automation.timeoutSeconds * 1000);
+    // A timed-out run ends once its whole group is gone, since a process
+    // that ignores SIGTERM and let go of the output pipes outlives the
+    // shell: the lock stays held and the SIGKILL still comes. A group that
+    // outlives SIGKILL by Logic.KILL_WAIT_MS, a process in uninterruptible
+    // sleep, is named in the reason and the run ends.
+    const settle = ending => {
+        if (!timedOut) return finish(ending);
+        if (!groupAlive()) {
+            if (killer !== null) clearTimeout(killer);
+            return finish(ending);
+        }
+        if (killedAt !== null && Date.now() - killedAt > Logic.KILL_WAIT_MS) {
+            log("group=survived id=" + id + " run=" + runId);
+            return finish(Object.assign({}, ending, { reason: ending.reason + " group=survived" }));
+        }
+        setTimeout(() => settle(ending), 100);
+    };
     child.on("close", (code, signal) => {
         clearTimeout(timer);
-        if (killer !== null) clearTimeout(killer);
         if (spawnError !== null) return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: "spawn=" + (spawnError.code || "failed") });
-        finish({ started: true, timedOut: timedOut, exitCode: code, signal: signal, reason: timedOut ? "timeout=" + automation.timeoutSeconds + "s" : "" });
+        settle({ started: true, timedOut: timedOut, exitCode: code, signal: signal, reason: timedOut ? "timeout=" + automation.timeoutSeconds + "s" : "" });
     });
 }
 

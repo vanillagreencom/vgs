@@ -6,7 +6,12 @@
 // records it writes before and after the command), the notifications it
 // sends through a stand-in notify-send, run-now through a stand-in
 // systemd-run, the scheduled trigger's guard, history with a running and a
-// vanished run, clear and pruning with the plugin's historyDays setting.
+// vanished run, clear and pruning with the plugin's historyDays setting, a
+// timed-out run that waits for a descendant ignoring SIGTERM, and output
+// with no line break, which reaches the transcript in pieces. The snippet
+// keeps each candidate line cut to what a snippet shows; that bounds the
+// runner's memory alone and changes no snippet, so no case reddens without
+// it, and the snippet rows hold what a snippet shows.
 //
 // Every case runs in its own scratch home with a PATH of stand-ins and an
 // allow-list of host tools, and an XDG_RUNTIME_DIR of its own with no
@@ -307,6 +312,54 @@ const CASES = {
         assert.match(text, /\n# outcome: succeeded exit=0\n/, "the footer is written past the cap");
     },
 
+    "output with no line break reaches the transcript in pieces"(engine) {
+        const w = world();
+        // 20000 characters, one line break, then a short line: under the cap.
+        const long = add(w, engine, { name: "Long", command: "head -c 20000 /dev/zero | tr '\\0' y; echo; echo after" });
+        assert.equal(manual(w, engine, long).status, 0);
+        const rec = ended(w, long);
+        const text = fs.readFileSync(rec.transcript, "utf8");
+        const pieces = text.split("\n").filter(line => / out \| y+$/.test(line)).map(line => line.length - line.indexOf("| ") - 2);
+        same([rec.truncated, pieces], [false, [Logic.TRANSCRIPT_LINE_MAX, Logic.TRANSCRIPT_LINE_MAX, 20000 - 2 * Logic.TRANSCRIPT_LINE_MAX]], "a long line arrives as pieces of the line ceiling");
+        assert.match(text, / out \| after\n/, "the line after the long one follows it");
+        // 3 MB with no line break at all: the runner holds one piece at a
+        // time, so the transcript fills to its cap with pieces while the
+        // pipe drains. A runner that kept the line whole would write none of
+        // it, since the one line passes the cap.
+        const flat = add(w, engine, { name: "Flat", command: "head -c 3000000 /dev/zero | tr '\\0' x" });
+        assert.equal(manual(w, engine, flat).status, 0);
+        const cut = ended(w, flat);
+        const flatText = fs.readFileSync(cut.transcript, "utf8");
+        assert.equal(cut.truncated, true);
+        assert.match(flatText, new RegExp(" out \\| x{" + Logic.TRANSCRIPT_LINE_MAX + "}\\n"), "the first pieces are in the transcript");
+        assert.ok(Buffer.byteLength(flatText) < Logic.TRANSCRIPT_MAX_BYTES + 4096, "the transcript holds the cap");
+        assert.match(flatText, /\n# transcript cut at \d+ bytes; later output is not kept\n[^]*\n# outcome: succeeded exit=0\n/, "the marker and the footer follow the pieces");
+    },
+
+    "a timed-out run ends after a descendant that ignores SIGTERM"(engine) {
+        const w = world();
+        const pidFile = path.join(w.root, "stubborn.pid");
+        const script = path.join(w.root, "stubborn.sh");
+        // The descendant ignores SIGTERM and lets go of the output pipes, so
+        // the shell's end closes them while it lives on.
+        write(script, "#!/bin/sh\nsh -c 'trap \"\" TERM; exec </dev/null >/dev/null 2>&1; echo $$ >\"$1\"; exec sleep 60' sh \"$1\" &\nexec sleep 60\n", 0o755);
+        const id = add(w, engine, { command: "sh " + script + " " + pidFile, timeoutSeconds: 1 });
+        const started = Date.now();
+        assert.equal(manual(w, engine, id).status, 1);
+        const took = Date.now() - started;
+        const pid = Number(fs.readFileSync(pidFile, "utf8"));
+        let alive = true;
+        try {
+            process.kill(pid, 0);
+        } catch (_e) {
+            alive = false;
+        }
+        if (alive) process.kill(pid, "SIGKILL");
+        assert.equal(alive, false, "the SIGTERM-proof descendant was killed before the run ended");
+        assert.ok(took >= Logic.KILL_GRACE_MS, "the run waited for the SIGKILL: " + took + " ms");
+        same([ended(w, id).outcome, ended(w, id).reason], ["timeout", "timeout=1s"]);
+    },
+
     "a scheduled trigger runs only what the guard allows"(engine) {
         const w = world();
         const now = new Date();
@@ -469,6 +522,9 @@ const CONTROLS = [
     ["the finish replaces the start", "notifyEveryRun sends the start, then replaces it with the finish", "notify(Logic.notificationFor(\"end\", automation, ended), noticeId, env);", "notify(Logic.notificationFor(\"end\", automation, ended), null, env);"],
     ["the timeout signals the group", "a timeout ends the command's whole process group", "process.kill(-child.pid, sig);", "process.kill(child.pid, sig);"],
     ["the timeout fires", "a timeout ends the command's whole process group", "timedOut = true;\n        signalGroup(\"SIGTERM\");", "timedOut = true;"],
+    ["a timed-out run waits for its group", "a timed-out run ends after a descendant that ignores SIGTERM", "if (!timedOut) return finish(ending);", "return finish(ending);"],
+    ["a long line ending in a break is split too", "output with no line break reaches the transcript in pieces", "        for (let at = 0; at < line.length; at += Logic.TRANSCRIPT_LINE_MAX) onLine(line.slice(at, at + Logic.TRANSCRIPT_LINE_MAX));\n        if (line === \"\") onLine(line);", "        onLine(line);"],
+    ["a long line is split into pieces", "output with no line break reaches the transcript in pieces", "        while (pending.length > Logic.TRANSCRIPT_LINE_MAX) {", "        while (false) {"],
     ["a missing directory fails the start", "a missing working directory is a failed start", "return finish({ started: false, timedOut: false, exitCode: null, signal: null, reason: \"directory=\" + e.code + \" path=\" + directory });", "directory; // unchecked"],
     ["a refused store fails the start", "a refused store is a failed start the user is told of", "if (!judged.ok) return execute(standIn(id), trigger, null, now, \"store=\" + judged.error.replace(/\\s+/g, \"-\"));", "if (!judged.ok) process.exit(1);"],
     ["the transcript keeps its cap", "the transcript stops at its cap and the run goes on", "if (body + bytes > Logic.TRANSCRIPT_MAX_BYTES) {", "if (false) {"],

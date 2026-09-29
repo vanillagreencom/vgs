@@ -54,11 +54,17 @@ var LATE_GRACE_MS = 10 * 60 * 1000;
 var HISTORY_DAYS_MAX = 30;
 var DAY_MS = 24 * 60 * 60 * 1000;
 var TRANSCRIPT_MAX_BYTES = 1024 * 1024;
+// The longest line the runner holds: a longer one, output with no line
+// break included, reaches the transcript in pieces of this many characters.
+var TRANSCRIPT_LINE_MAX = 8192;
 var SNIPPET_LINES = 5;
 var SNIPPET_CHARS = 400;
 // SIGTERM to a timed-out command's process group, then SIGKILL this long
 // after it.
 var KILL_GRACE_MS = 10000;
+// How long the runner waits for a timed-out group to go after SIGKILL
+// before it records the run with the group named as surviving.
+var KILL_WAIT_MS = 30000;
 
 var UNIT_PREFIX = "vgs-automation-";
 var CRON_BEGIN = "# BEGIN vgs.automations: sync writes the lines to END; an edit between them is replaced";
@@ -1108,6 +1114,28 @@ function refreshDelay(listed, nowMs) {
     }
     if (next === null) return REFRESH_MAX_MS;
     return Math.max(1000, Math.min(REFRESH_MAX_MS, next - nowMs + 1000));
+}
+
+// The engine operations the service runs, in the order the Engine status
+// names a failure.
+var ENGINE_OPERATIONS = ["sync", "list", "prune"];
+
+// `failures` with OPERATION's last outcome: its failure line, or "" for a
+// success, which clears that operation's failure alone. A list that
+// succeeds after a failed sync therefore leaves the sync failure shown.
+function withOutcome(failures, operation, failure) {
+    if (ENGINE_OPERATIONS.indexOf(operation) === -1) throw new Error("automations: operation " + JSON.stringify(operation) + " is not one of " + ENGINE_OPERATIONS.join(", "));
+    var next = withKeys(failures, {});
+    if (failure === "") delete next[operation];
+    else next[operation] = String(failure).slice(0, 200);
+    return next;
+}
+
+// The Engine status value: the first operation's failure, else ok.
+function engineProblem(failures) {
+    for (var i = 0; i < ENGINE_OPERATIONS.length; i++)
+        if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: "danger", text: failures[ENGINE_OPERATIONS[i]] };
+    return { tone: "ok", text: "None" };
 }
 
 // The keys of `values` whose value differs from `reported`, the status
