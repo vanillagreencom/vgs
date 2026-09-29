@@ -106,6 +106,14 @@ function verify(logic, files) {
     same(logic.shown(built, "n", "all").map(c => c.name), ["akane", "broken", "mine", "nord", "plain"], "the filter keeps the order");
     same(logic.shown(built, "No", "installed").map(c => c.name), ["nord"]);
     assert.throws(() => logic.shown(built, "", "starred"), /scope="starred" want=all\|installed/);
+    const nordCard = built.find(c => c.name === "nord");
+    assert.equal(logic.cardKey(nordCard), logic.cardKey(Object.assign({}, nordCard, { displayed: false, imagery: null })), "state the card does not draw keeps its key");
+    for (const [label, change] of [
+        ["a palette", { palette: Object.assign({}, PALETTE, { accent: "#ff0000ff" }) }],
+        ["an image", { image: "/t/nord/backgrounds/b.jpg" }],
+        ["a label", { label: "Nord Two" }],
+        ["a name", { name: "nord-two" }]
+    ]) assert.notEqual(logic.cardKey(Object.assign({}, nordCard, change)), logic.cardKey(nordCard), label + " changes the key");
     assert.equal(logic.selection(built, "nord"), 4);
     assert.equal(logic.selection(built, "gone"), 0);
     assert.equal(logic.selection([], "nord"), 0);
@@ -178,6 +186,7 @@ const CONTROLS = [
     ["printable only", "return code >= 32 && code !== 127;", "return true;"],
     ["offer only when displayed", "card.installed && card.displayed && card.imagery", "card.installed && card.imagery"],
     ["offer only with bytes", "&& card.imagery.size > 0", ""],
+    ["key holds the palette", "return JSON.stringify([card.name, card.label, card.image, card.palette]);", "return JSON.stringify([card.name, card.label, card.image]);"],
     ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return']
 ];
 

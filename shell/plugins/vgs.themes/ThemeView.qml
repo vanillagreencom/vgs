@@ -108,10 +108,14 @@ FocusScope {
 
     function focusRail() { carousel.forceActiveFocus(); }
 
-    // End the running step with LINE, "" for none.
+    // End the running step with LINE, "" for none. A step that failed may
+    // still have changed what is on disk, an install before the apply after
+    // it failed, so the cards are read again and Enter retries the step
+    // that failed, not one that landed.
     function finish(line) {
         job = null;
         problem = line;
+        if (line !== "") refresh();
     }
 
     // Enter or a click on the selected card.
@@ -271,7 +275,7 @@ FocusScope {
         anchors.right: parent.right
         focus: true
         model: ScriptModel {
-            values: root.shownCards.map(card => Object.assign({ key: card.name + "\n" + card.image }, card))
+            values: root.shownCards.map(card => Object.assign({ key: BrowserLogic.cardKey(card) }, card))
             objectProp: "key"
         }
         delegate: ThemeCard {

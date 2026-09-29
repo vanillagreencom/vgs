@@ -20,6 +20,7 @@ has_card() { view_value shownCards | python3 -c 'import json,sys; print(sys.argv
 # The shown card at INDEX, or the last for -1.
 card_at() { view_value shownCards | python3 -c 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
 job_step() { view_value job | python3 -c 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"] + " " + j["name"])'; }
+selected_installed() { view_value selected | python3 -c 'import json,sys; print(json.load(sys.stdin)["installed"])'; }
 offer_name() { view_value offer | python3 -c 'import json,sys; o=json.load(sys.stdin); print("none" if o is None else o["name"])'; }
 badges() { ipc smoke itemTexts overlay vgs.themes Badge | python3 -c 'import json,sys; print(json.dumps(sorted(t[0] for t in json.load(sys.stdin) if t)))'; }
 dialog_has() { ipc smoke itemTexts overlay vgs.themes Dialog | python3 -c 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
@@ -56,8 +57,16 @@ with open(index + ".next", "w") as f:
 os.replace(index + ".next", index)
 PY
 wallpaper_gate="$sandbox/theme-wallpaper-gate"
+# The first apply of akane answers busy, as a runner holding the theme lock
+# does; the file records that it did.
+akane_refused="$sandbox/theme-akane-refused"
 cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 stand_in_vgsh "export VGS_THEME_ASSET_BASE=$(printf %q "file://$assets")
+if [[ \${2:-} == apply && \${4:-} == akane && ! -e $(printf %q "$akane_refused") ]]; then
+  touch -- $(printf %q "$akane_refused")
+  printf '%s\n' '{\"state\":\"failed\",\"shell\":\"failed\",\"targets\":[],\"theme\":\"akane\",\"reason\":\"busy\"}'
+  exit 75
+fi
 if [[ \${2:-} == wallpapers ]]; then
   printf '%s\n' '{\"state\":\"downloading\",\"bytes\":0,\"total\":4000000}' '{\"state\":\"downloading\",\"bytes\":2000000,\"total\":4000000}'
   for _ in \$(seq 1 600); do [[ -e $(printf %q "$wallpaper_gate") ]] && break; sleep 0.05; done
@@ -180,6 +189,26 @@ expect "a payload naming no view is refused" "refused: open-failed=vgs.themes" i
 expect "a payload with an unknown key is refused" "refused: open-failed=vgs.themes" ipc shell summon overlay vgs.themes '{"view":"themes","source":"all"}'
 expect_poll "a refused summon leaves no browser" 0 layer_count vgs:overlay
 
+# An install whose apply fails leaves the theme installed: the cards are
+# read again, so Enter retries the apply and not the install.
+press_themes || fail "typing SUPER+T for akane failed"
+expect_poll "SUPER+T opens the browser for akane" 1 layer_count vgs:overlay
+browser_focused
+type_keys "akane" || fail "typing akane failed"
+expect_poll "the filter selects akane" '"akane"' view_value selectedName
+type_keys -k Return || fail "sending Return for akane failed"
+expect_poll "the apply after the install fails with the runner's reason" '"Applying Akane failed: busy"' view_value problem
+expect "the install before the failed apply landed" True bash -c '[[ -f $1/akane/.vgs-catalog.json ]] && echo True' _ "$installed"
+expect_poll "the cards read akane installed after the failed apply" True selected_installed
+type_keys -k Return || fail "sending Return to retry akane failed"
+expect_poll "Enter retries the apply" '"akane"' ipc smoke themeName
+expect_poll "the retried apply offers akane's wallpapers" akane offer_name
+click_in vgs:overlay overlay vgs.themes Button "Not now" || fail "the click on Not now for akane failed"
+expect_poll "Not now withdraws akane's offer" none offer_name
+type_keys -k Escape || fail "sending Escape to clear akane's filter failed"
+type_keys -k Escape || fail "sending Escape to close after akane failed"
+expect_poll "Escape twice closes the browser after akane" 0 layer_count vgs:overlay
+
 # vgs applies from the browser, which closes it, since vgs offers nothing.
 press_themes || fail "typing SUPER+T for vgs failed"
 expect_poll "SUPER+T opens the browser for vgs" 1 layer_count vgs:overlay
@@ -197,5 +226,5 @@ cp -p -- "$sandbox/hyprland-before-browser.lua" "$hypr_lua.next" && mv -T -- "$h
 expect "the nested instance reloads the hyprland.lua the browser rows found" ok hypr reload config-only
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
 cp -p -- "$sandbox/catalog-index.json" "$index"
-rm -r -- "$installed/nord" "$assets" "$wallpaper_gate"
+rm -r -- "$installed/nord" "$installed/akane" "$assets" "$wallpaper_gate" "$akane_refused"
 rm -f -- "$bg_state/backgrounds.json" "$bg_state/background"

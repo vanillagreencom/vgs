@@ -153,6 +153,14 @@ function shown(list, text, scope) {
     return list.filter(function (card) { return (scope === "all" || card.installed) && matches(card, text); });
 }
 
+// The identity of CARD on the rail: everything its content draws. The
+// carousel hands a card's content its entry once, so a card whose label,
+// image or palette changed is rebuilt under a new key, and one whose drawn
+// inputs stayed is kept.
+function cardKey(card) {
+    return JSON.stringify([card.name, card.label, card.image, card.palette]);
+}
+
 // The index to select in LIST: the card named NAME, else the first.
 function selection(list, name) {
     for (var i = 0; i < list.length; i++)
