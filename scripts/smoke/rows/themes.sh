@@ -265,7 +265,6 @@ expect "disabling the fixture after the theme rows is allowed" ok ipc shell setP
 # for the wallpaper block after it, which disables the plugin.
 layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
 theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
-words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 # The rows whose name is NAME, in tree order.
 theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
 # The swatch of the one row named NAME whose secondary line is SECONDARY:
