@@ -9,18 +9,19 @@
 # registry.fedoraproject.org/fedora:44. Needs podman and the network; the
 # host's session, configuration and package manager are never touched.
 #
-# It clones HEAD into a scratch directory and, inside the container:
-# enables the repositories packaging/fedora/copr-project names; writes the
-# vgs-git source RPM through .copr/Makefile, as COPR does; tags the clone
-# v<VERSION>, packs the release tarball as scripts/release does and writes
-# the vgs source RPM from it; installs each source RPM's build dependencies
-# and rebuilds it as an unprivileged user, failing on any RPM warning;
-# installs vgs, checks that each floor's epoch is its installed provider's,
-# then checks
-# `vgsh --version`, the /usr/bin/vgsh link and the preflight; proves vgs-git
-# refuses to install beside vgs, replaces it with --allowerasing, provides
-# vgs at its own version, and passes the same checks; and proves vgs then
-# refuses to install beside vgs-git.
+# On the host it clones HEAD into a scratch directory, tags the clone
+# v<VERSION> and packs HEAD's release tarball with
+# scripts/lib/release-tarball.sh, the builder scripts/release calls. Inside
+# the container it enables the repositories packaging/fedora/copr-project
+# names; writes the vgs-git source RPM through .copr/Makefile, as COPR does;
+# writes the vgs source RPM from that tarball; installs each source RPM's
+# build dependencies and rebuilds it as an unprivileged user, failing on any
+# RPM warning; installs vgs, checks that each floor's epoch is its
+# installed provider's, then checks `vgsh --version`, the /usr/bin/vgsh
+# link and the preflight; proves vgs-git refuses to install beside vgs,
+# replaces it with --allowerasing, provides vgs at its own version, and
+# passes the same checks; and proves vgs then refuses to install beside
+# vgs-git.
 #
 # The preflight runs twice per package. `vgsh run` with no Hyprland must
 # refuse at hyprland alone, so the installed Quickshell met its floor. Then
@@ -74,10 +75,7 @@ inside() {
   [[ $git_version =~ ^[0-9]+\.[0-9]+\.[0-9]+\^[0-9]+\.git[0-9a-f]+$ ]] || fail "vgs-git version $git_version"
   step "vgs-git source RPM $git_version"
 
-  # The scratch clone's release tag, moved to HEAD, so the release package
-  # is built from this tree whether or not v<VERSION> exists upstream.
-  git tag -f "v$version" >/dev/null
-  git archive --format=tar --prefix="vgs-$version/" "v$version" | gzip -n >"/work/vgs-$version.tar.gz"
+  # The host tagged the clone and packed the tarball.
   logged srpm-vgs packaging/fedora/srpm.sh --spec packaging/fedora/vgs.spec --outdir /work/out --tarball "/work/vgs-$version.tar.gz"
   [[ $line =~ ^srpm:\ ok\ path=([^ ]+)\ version=$version$ ]] || fail "vgs srpm printed: $line"
   srpm_rel="${BASH_REMATCH[1]}"
@@ -162,7 +160,7 @@ fi
 image=registry.fedoraproject.org/fedora:44
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help) sed -n '2,32{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
+    -h|--help) sed -n '2,33{s/^# \{0,1\}//;p}' "$self"; exit 0 ;;
     --image)
       [[ $# -ge 2 && -n $2 ]] || { echo 'fedora-container: refused: argument=--image value=missing' >&2; exit 2; }
       image="$2"; shift 2 ;;
@@ -188,6 +186,12 @@ trap cleanup EXIT
 chmod 755 "$work"
 git clone -q --no-hardlinks -- "$repo" "$work/src"
 git -C "$work/src" checkout -q --detach "$head"
+# The clone's release tag, moved to HEAD, so the release package is built
+# from this tree whether or not v<VERSION> exists upstream.
+version="$(<"$repo/VERSION")"
+git -C "$work/src" tag -f "v$version" >/dev/null
+"$repo/scripts/lib/release-tarball.sh" "$head" "$version" "$work/vgs-$version.tar.gz" >/dev/null ||
+  { echo "fedora-container: fail: archive=failed commit=$head" >&2; exit 1; }
 cp -- "$self" "$work/run.sh"
 
 set +e

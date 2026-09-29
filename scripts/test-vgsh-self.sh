@@ -248,13 +248,12 @@ done
 # The must-fail controls: copies of the Nix tree whose self.js lacks one
 # rule, each shown to answer what the rows above refuse to accept.
 self_control() { # NAME NEEDLE REPLACEMENT: sets control_bin to the copy's vgsh
-  local copy="$tmp/nix/store/$1-vgs/share/vgs"
-  mkdir -p "$(dirname -- "$copy")"
-  cp -R -- "$nix_root" "$copy"
-  check "the $1 control's text occurs once in bin/lib/self.js" test "$(grep -c -F -- "$2" "$repo/bin/lib/self.js")" == 1
-  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/bin/lib/self.js" "$2" "$3"
-  check "the $1 mutant differs from bin/lib/self.js" test "$(cmp -s "$repo/bin/lib/self.js" "$copy/bin/lib/self.js"; echo $?)" == 1
-  control_bin="$copy/bin/vgsh"
+  local tree_copy="$tmp/nix/store/$1-vgs/share/vgs"
+  mkdir -p "$(dirname -- "$tree_copy")"
+  cp -R -- "$nix_root" "$tree_copy"
+  copy_with "self-$1" "$tree_copy/bin/lib/self.js" "$2" "$3"
+  cp -- "$copy" "$tree_copy/bin/lib/self.js"
+  control_bin="$tree_copy/bin/vgsh"
 }
 self_control everycheckout 'if (checkout) return ["checkout"' 'if (true) return ["checkout"'
 INST_BIN="$control_bin" inst "the every-tree-a-checkout mutant calls the Nix tree a checkout" "$cfg" "$rt_empty" 0 "$any_out" "$any_out" self status --json

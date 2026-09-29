@@ -130,7 +130,7 @@ rows=(
   "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*"
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
-  "cli|fedora source RPM controls|scripts/test-fedora-srpm.sh|packaging/fedora/* .copr/Makefile scripts/fedora-container.sh bin/vgsh VERSION"
+  "cli|fedora source RPM controls|scripts/test-fedora-srpm.sh|packaging/fedora/* .copr/Makefile scripts/fedora-container.sh scripts/lib/release-tarball.sh scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|packaging recipe check|node scripts/check-packaging.js|scripts/preflight-floor.js packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
   "cli|packaging recipe check controls|node scripts/test-check-packaging.js|scripts/check-packaging.js scripts/preflight-floor.js packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
   "cli|README install section check|node scripts/check-readme.js|README.md VERSION bin/vgsh bin/vgsh-scan install.sh docs/architecture/runtime.md packaging/arch/* shell/plugins/* scripts/preflight-floor.js"
@@ -140,7 +140,7 @@ rows=(
   "cli|requirement report controls|scripts/test-vgsh-requirements.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/vgsh-scan bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json config/requirements.json shell/plugins/*"
   "cli|self status and update controls|scripts/test-vgsh-self.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/shell.json"
   "cli|curl installer controls|scripts/test-install-sh.sh|install.sh scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/requirements.json config/shell.json"
-  "cli|release script controls|scripts/test-release.sh|scripts/release scripts/vgsh-rows.sh install.sh packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh VERSION"
+  "cli|release script controls|scripts/test-release.sh|scripts/release scripts/lib/release-tarball.sh scripts/arch-packages.sh scripts/fedora-container.sh packaging/arch/* scripts/vgsh-rows.sh install.sh packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh VERSION"
   "cli|AUR publisher controls|scripts/test-publish-aur.sh|scripts/publish-aur.sh scripts/vgsh-rows.sh scripts/check-packaging.js packaging/aur-known-hosts packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
   "cli|outdated controls|scripts/test-vgsh-outdated.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*"
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
@@ -190,7 +190,7 @@ rows=(
   "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/assets/* scripts/qml-tests/*"
   "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/*"
   "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
-  "package|Arch package build|scripts/arch-packages.sh|packaging/arch/* packaging/install-system.sh"
+  "package|Arch package build|scripts/arch-packages.sh|scripts/lib/release-tarball.sh packaging/arch/* packaging/install-system.sh"
   "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh"
 )
 

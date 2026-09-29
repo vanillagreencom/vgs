@@ -16,10 +16,11 @@
 # vgs-git.spec, main: the version is the RPM form of `vgsh version`'s
 # describe, X.Y.Z^<count>.git<hash> for X.Y.Z.r<count>.g<hash>, so the
 # package and `vgsh --version` in the checkout agree. The script packs HEAD
-# with git archive as vgs-<commit>.tar.gz and writes a spec copy that
-# defines vgs_version and vgs_commit ahead of the template and ends its
-# %changelog with one entry of the commit's author and UTC date. A shallow
-# clone is refused, since its commit count is short.
+# as vgs-<commit>.tar.gz with scripts/lib/release-tarball.sh, the release's
+# builder, and writes a spec copy that defines vgs_version and vgs_commit
+# ahead of the template and ends its %changelog with one entry of the
+# commit's author and UTC date. A shallow clone is refused, since its
+# commit count is short.
 #
 # Prints `srpm: ok path=<file> version=<version>`. Refusals exit 1 with one
 # keyed first line `srpm: refused: ...`; usage errors exit 2.
@@ -29,7 +30,7 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 root="$(cd -- "$(dirname -- "$self")/../.." && pwd -P)"
 version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 
-usage() { sed -n '2,25{s/^# \{0,1\}//;p}' "$self"; }
+usage() { sed -n '2,26{s/^# \{0,1\}//;p}' "$self"; }
 
 refuse() { # STATUS KEY [DETAIL...]
   local status="$1"
@@ -150,7 +151,7 @@ case "$package" in
     commit="$(git -C "$root" rev-parse --verify 'HEAD^{commit}')" || refuse 1 "git=rev-parse path=$root"
     [[ $commit == "$hash"* ]] || refuse 1 "describe=stale hash=$hash head=$commit"
     rpm_version="$tag_version^$count.git$hash"
-    git -C "$root" archive --format=tar --prefix="vgs-$commit/" "$commit" | gzip -n >"$sources/vgs-$commit.tar.gz" ||
+    "$root/scripts/lib/release-tarball.sh" "$commit" "$commit" "$sources/vgs-$commit.tar.gz" >/dev/null ||
       refuse 1 "git=archive commit=$commit"
     build_spec="$work/vgs-git.spec"
     # The entry's date, the commit's in UTC, is the build's

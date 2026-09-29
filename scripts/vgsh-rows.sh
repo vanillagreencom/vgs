@@ -135,15 +135,15 @@ target_json() { # NAME ENCODER DETECT_JSON WIRING_LINE CREATE [RELOAD_JSON]
 }
 
 # A must-fail control on a copy of the tree whose FILE, relative to the
-# tree, has NEEDLE, which must occur once, replaced by REPLACEMENT;
-# THEME_BIN then names the copy's vgsh until the caller unsets it.
+# tree, is copy_with's copy of it: NEEDLE, on one line, replaced once by
+# REPLACEMENT. THEME_BIN then names the copy's vgsh until the caller unsets
+# it.
 tree_control() { # NAME FILE NEEDLE REPLACEMENT
-  local copy="$tmp/tree-$1"
-  cp -R -- "$tree" "$copy"
-  check "the $1 control's text occurs once in $2" test "$(grep -c -F -- "$3" "$repo/$2")" == 1
-  python3 -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); open(p, "w").write(s.replace(a, b))' "$copy/$2" "$3" "$4"
-  check "the $1 mutant differs from $2" test "$(cmp -s "$repo/$2" "$copy/$2"; echo $?)" == 1
-  THEME_BIN="$copy/bin/vgsh"
+  local tree_copy="$tmp/tree-$1"
+  cp -R -- "$tree" "$tree_copy"
+  copy_with "tree-$1" "$tree_copy/$2" "$3" "$4"
+  cp -- "$copy" "$tree_copy/$2"
+  THEME_BIN="$tree_copy/bin/vgsh"
 }
 judge_control() { tree_control "$1" bin/vgsh-theme-judge "$2" "$3"; } # NAME NEEDLE REPLACEMENT
 

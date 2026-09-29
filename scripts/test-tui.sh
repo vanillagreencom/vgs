@@ -214,11 +214,7 @@ run_template_rows "$template" loud || true
 
 # Must-fail controls, each on a copy of the library missing one rule.
 control() { # NAME NEEDLE REPLACEMENT: LIB names the copy
-  local copy="$tmp/control-$1.sh"
-  check "the $1 control's text occurs once" \
-    python3 -c 'import sys; sys.exit(0 if open(sys.argv[1]).read().count(sys.argv[2]) == 1 else 1)' "$lib" "$2"
-  python3 -c 'import sys; p, o, a, b = sys.argv[1:]; open(o, "w").write(open(p).read().replace(a, b))' "$lib" "$copy" "$2" "$3"
-  check "the $1 mutant differs" test "$(cmp -s "$lib" "$copy"; echo $?)" == 1
+  copy_with "$1" "$lib" "$2" "$3"
   LIB="$copy"
 }
 control no-terminal-check ': 2>/dev/null <>/dev/tty ||' 'true ||'
@@ -235,9 +231,7 @@ check "the shared-lock mutant lets a second holder in" grep -qxF second=0 "$tmp/
 LIB="$lib"
 
 # The template's control: a copy that turns every confirm status into success.
-template_copy="$tmp/control-template.sh"
-python3 -c 'import sys; p, o = sys.argv[1:]; s = open(p).read(); a = "vgs_tui_confirm \"Continue?\" || status=$?"; assert s.count(a) == 1; open(o, "w").write(s.replace(a, "vgs_tui_confirm \"Continue?\" || exit 0"))' "$template" "$template_copy"
-check "the swallowed-confirm mutant differs" test "$(cmp -s "$template" "$template_copy"; echo $?)" == 1
-check "the swallowed-confirm mutant fails a template row" test "$(run_template_rows "$template_copy" quiet && echo green || echo red)" == red
+copy_with swallowed-confirm "$template" 'vgs_tui_confirm "Continue?" || status=$?' 'vgs_tui_confirm "Continue?" || exit 0'
+check "the swallowed-confirm mutant fails a template row" test "$(run_template_rows "$copy" quiet && echo green || echo red)" == red
 
 rows_done test-tui

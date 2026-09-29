@@ -207,10 +207,7 @@ run "install as root is refused" root 1 "vgs-browser-policy: install=root" insta
 
 # Must-fail controls, each on a copy of the helper missing one rule.
 control() { # NAME NEEDLE REPLACEMENT
-  local copy="$tmp/control-$1"
-  check "the $1 control's text occurs once" test "$(grep -c -F -- "$2" "$source_file")" == 1
-  python3 -c 'import sys; p, o, a, b = sys.argv[1:]; s = open(p).read(); open(o, "w").write(s.replace(a, b))' "$source_file" "$copy" "$2" "$3"
-  check "the $1 mutant differs" test "$(cmp -s "$source_file" "$copy"; echo $?)" == 1
+  copy_with "$1" "$source_file" "$2" "$3"
   place "$copy"
 }
 control wide-argument '! $1 =~ ^[0-9a-f]{6}$' '! $1 =~ ^#?[0-9a-fA-F]{6}$'

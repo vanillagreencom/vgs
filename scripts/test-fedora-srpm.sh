@@ -5,24 +5,16 @@
 # record their arguments; the real container run is
 # scripts/fedora-container.sh itself. Each row runs in a scratch git
 # repository holding the files these scripts read, and each refusal row
-# pins its exit status and keyed first line.
+# pins its exit status and keyed first line. The control at the end runs a
+# copy of srpm.sh that packs vgs-git another way.
 set -euo pipefail
 
-self="$(readlink -f -- "${BASH_SOURCE[0]}")"
-repo="$(cd -- "$(dirname -- "$self")/.." && pwd -P)"
-tmp="$(mktemp -d)" || { echo "test-fedora-srpm: scratch=mktemp-failed" >&2; exit 1; }
-[[ -d $tmp && ! -L $tmp ]] || { echo "test-fedora-srpm: scratch=not-a-directory value=[$tmp]" >&2; exit 1; }
-tmp="$(cd -- "$tmp" && pwd -P)"
-trap 'rm -rf -- "${tmp:?}"' EXIT
-failures=0
-ok() { printf '  ok    %s\n' "$*"; }
-fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
-check() { # NAME CMD...
-  local name="$1"; shift
-  if "$@"; then ok "$name"; else fail "$name"; fi
-}
+# shellcheck source=scripts/vgsh-rows.sh
+source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
+# srpm.sh names its spec by its resolved path.
+repo="$(cd -- "$repo" && pwd -P)"
 
-for tool in git gzip tar make; do
+for tool in git gzip tar make python3; do
   command -v "$tool" >/dev/null || { echo "test-fedora-srpm: status=not-measured missing=$tool"; exit 77; }
 done
 
@@ -97,8 +89,9 @@ while read -r name; do unset "$name"; done < <(compgen -v GIT_CONFIG_ | grep -E 
 # A scratch repository with the files the scripts read and COMMITS commits.
 fixture() { # DIR COMMITS
   local dir="$1" i
-  mkdir -p "$dir/bin" "$dir/packaging/fedora" "$dir/.copr" "$dir/scripts"
+  mkdir -p "$dir/bin" "$dir/packaging/fedora" "$dir/.copr" "$dir/scripts/lib"
   cp -- "$repo/bin/vgsh" "$dir/bin/"
+  cp -- "$repo/scripts/lib/release-tarball.sh" "$dir/scripts/lib/"
   cp -- "$repo/VERSION" "$dir/"
   cp -- "$repo/packaging/fedora/srpm.sh" "$repo/packaging/fedora/vgs.spec" "$repo/packaging/fedora/vgs-git.spec" "$dir/packaging/fedora/"
   cp -- "$repo/.copr/Makefile" "$dir/.copr/"
@@ -108,11 +101,12 @@ fixture() { # DIR COMMITS
   git -C "$dir" commit -q -m "commit 1"
   for ((i = 2; i <= $2; i++)); do git -C "$dir" commit -q --allow-empty -m "commit $i"; done
 }
-# The tarball scripts/release makes for VERSION at tag v<VERSION>.
+# The tarball scripts/release makes for VERSION at tag v<VERSION>, through
+# the builder it calls.
 release_tarball() { # DIR OUT
   local v
   v="$(<"$1/VERSION")"
-  git -C "$1" archive --format=tar --prefix="vgs-$v/" "v$v" | gzip -n >"$2"
+  "$1/scripts/lib/release-tarball.sh" "v$v" "$v" "$2" >/dev/null
 }
 
 # run DIR CMD...: status in $status, stdout in $out, first stderr line in $err.
@@ -131,6 +125,12 @@ refused() { # NAME WANT_STATUS WANT_ERR
   if [[ $status == "$2" && $err == "$3" ]]; then ok "$1"; else fail "$1: exit=$status want=$2 stderr=[$err] want=[$3]"; fi
 }
 tar_files() { tar -tzf "$1" | grep -v '/$' | LC_ALL=C sort; }
+# Whether the last run's Source0 holds DIR's HEAD files under vgs-<commit>/.
+snapshot_files() { # DIR
+  local h
+  h="$(git -C "$1" rev-parse HEAD)" || return 1
+  cmp -s <(tar_files "$record/vgs-$h.tar.gz") <(git -C "$1" ls-tree -r --name-only HEAD | sed "s|^|vgs-$h/|" | LC_ALL=C sort)
+}
 
 version="$(<"$repo/VERSION")"
 
@@ -150,7 +150,7 @@ check "the build spec holds the template after the two definitions" cmp -s <(tai
 check "the changelog entry carries the commit's author and UTC date" test "$(tail -n 2 "$record/built.spec" | head -n 1)" = "* Mon Sep 28 2026 Ada Packager <ada@example.org> - $want-1"
 check "the changelog entry names the commit" test "$(tail -n 1 "$record/built.spec")" = "- Snapshot of commit $head"
 check "Source0 is the commit's tarball alone" test "$(cat "$record/sources")" = "vgs-$head.tar.gz"
-check "the tarball is the commit's files under vgs-<commit>/" cmp -s <(tar_files "$record/vgs-$head.tar.gz") <(git -C "$fx" ls-tree -r --name-only HEAD | sed "s|^|vgs-$head/|" | LC_ALL=C sort)
+check "the tarball is the commit's files under vgs-<commit>/" snapshot_files "$fx"
 cp -- "$record/vgs-$head.tar.gz" "$tmp/first.tar.gz"
 run "$fx" packaging/fedora/srpm.sh --spec packaging/fedora/vgs-git.spec --outdir "$tmp/out"
 check "one commit packs the same tarball bytes twice" cmp -s "$tmp/first.tar.gz" "$record/vgs-$head.tar.gz"
@@ -270,6 +270,20 @@ refused "a podman error is not measured" 77 "fedora-container: status=not-measur
 STUB_PODMAN_EXIT=1 run "$cf" scripts/fedora-container.sh
 check "a failed check inside the container fails the run" test "$status" = 1
 check "the container runner removes its scratch clone" test -z "$(find "$tmp" -maxdepth 1 -name 'vgs-fedora.*')"
+
+# --- control ---------------------------------------------------------------
+# A copy of srpm.sh that packs vgs-git under the release's directory, not
+# the commit's: the tarball row must fail on it.
+copy_with snapshot-directory "$repo/packaging/fedora/srpm.sh" '"$commit" "$commit" "$sources/vgs-$commit.tar.gz"' '"$commit" "$version" "$sources/vgs-$commit.tar.gz"'
+ctl="$tmp/control-snapshot"
+fixture "$ctl" 1
+cp -- "$copy" "$ctl/packaging/fedora/srpm.sh"
+run "$ctl" packaging/fedora/srpm.sh --spec packaging/fedora/vgs-git.spec --outdir "$tmp/out"
+if [[ $status == 0 ]] && ! snapshot_files "$ctl"; then
+  ok "control: the tarball row fails on a srpm.sh that packs vgs-git under vgs-<VERSION>/"
+else
+  fail "control: snapshot-directory: exit=$status, or the tarball row passed on the copy"
+fi
 
 if ((failures > 0)); then
   echo "test-fedora-srpm: failures=$failures"

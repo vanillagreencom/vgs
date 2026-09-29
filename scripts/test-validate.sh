@@ -189,7 +189,8 @@ version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fe
 # offline.
 recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-publish-aur.sh\n'"$repo_plan"
 # An Arch recipe is also the README's source for the AUR commands.
-arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-publish-aur.sh\n'"$repo_plan"
+# The release suite's parity rows build the Arch recipes' host side.
+arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"$'\ndoc_limits_check'
   "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"$'\ndoc_limits_check'

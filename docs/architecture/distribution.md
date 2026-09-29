@@ -1,8 +1,8 @@
 # Distribution
 
-Covers: LICENSE, VERSION, README.md, packaging/install-system.sh, packaging/install-tree.manifest, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh, scripts/check-packaging.js, scripts/test-check-packaging.js, scripts/release, scripts/test-release.sh
+Covers: LICENSE, VERSION, README.md, packaging/install-system.sh, packaging/install-tree.manifest, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh, scripts/check-packaging.js, scripts/test-check-packaging.js, scripts/release, scripts/lib/release-tarball.sh, scripts/test-release.sh
 
-This file holds how VGS is licensed and versioned, the install tree every channel shares and the check every package recipe passes. Each channel and the install-method judge have their own file:
+This file holds how VGS is licensed and versioned, the install tree every channel shares, the release tarball every channel builds from and the check every package recipe passes. Each channel and the install-method judge have their own file:
 
 - [distribution-methods.md](distribution-methods.md): `vgsh self status` and `vgsh self update`, and how an install knows it is behind.
 - [distribution-curl.md](distribution-curl.md): `install.sh` and the curl layout.
@@ -39,6 +39,14 @@ This file holds how VGS is licensed and versioned, the install tree every channe
 - `scripts/check-install-tree.sh DESTDIR PREFIX` compares the installed files and symlinks with `packaging/install-tree.manifest`. Missing entries and extra entries fail with keyed lines. After a legitimate shipped file is added, install into a scratch `DESTDIR`, then run `scripts/check-install-tree.sh --write DESTDIR PREFIX` and commit the manifest update.
 - `scripts/test-install-tree.sh` proves the installer, the manifest checker, the `vgsh` symlink, the markdown drop, target freshness and the `--write` path. Its controls plant missing, extra, wrong-link, stale-target, enumerator-failure and shell-markdown defects.
 - The nested smoke's `read-only-prefix` row installs into its sandbox, verifies the pristine tree against the manifest, replaces installed `themes/targets` with the sandbox's fixture targets, runs `chmod -R a-w` on the staged prefix, restarts the shell from `$PREFIX/bin/vgsh`, runs `vgsh theme apply vgs` from the installed command, checks the installed shell log, and compares the installed tree before and after. A root-owned prefix is not available in the test, so a user-owned non-writable tree is the stand-in. Any attempted write either fails on mode bits or changes the snapshot.
+
+## Release tarball
+
+- `scripts/lib/release-tarball.sh COMMIT VERSION OUT` is the one builder of a VGS source tarball. `scripts/release`, `scripts/arch-packages.sh`, `scripts/fedora-container.sh` and `packaging/fedora/srpm.sh` call it. It prints the tarball's sha256.
+- The tarball is `git archive --prefix=vgs-VERSION/` of the commit through `gzip -n -9`. Its bytes depend only on the commit and `VERSION`. So a channel test that packs the commit a release tags packs the release asset, whose sha256 the `vgs` recipe pins.
+- The builder packs a commit, never the working tree. `scripts/arch-packages.sh` writes uncommitted files as a commit first, and `scripts/fedora-container.sh` refuses a dirty tree. Both pack on the host, so a container's `gzip` cannot change the bytes.
+- The `vgs-git` source RPM passes the commit id as `VERSION`, so its tarball unpacks to `vgs-<commit>/`.
+- `scripts/test-release.sh` holds the parity rows. For one commit, the tarball each container build hands its container must be the release asset, byte for byte, and the Arch recipe copy must pin its sha256. Its controls hand each channel a builder copy with another prefix or another compression, and a channel copy that passes another version. Each parity row must fail on each of them.
 
 ## Recipe check
 

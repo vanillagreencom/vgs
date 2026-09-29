@@ -12,9 +12,9 @@
 #
 # What is built is the working tree as `git add -A` would commit it: HEAD
 # when the tree is clean, else a commit object over HEAD that no ref names.
-# From that commit the host makes the release tarball the way the release
-# does (`git archive --prefix=vgs-<VERSION>/ | gzip -n`) and a bare
-# repository holding it and every tag. Copies of the recipes take the
+# From that commit the host makes the release tarball with
+# scripts/lib/release-tarball.sh, the builder scripts/release calls, and a
+# bare repository holding it and every tag. Copies of the recipes take the
 # tarball's sha256 (vgs) and `git+file://` of that commit (vgs-git); each
 # substitution must match exactly once. A stand-in `vgs-shell` package that
 # owns /usr/bin/vshell, v1's command, proves the conflicts replace v1.
@@ -89,11 +89,8 @@ else
 fi
 echo "arch-packages: commit=$commit dirty=$([[ -n $status_out ]] && echo true || echo false)"
 
-tarball="$scratch/in/vgs/vgs-$version.tar.gz"
-git -C "$repo" archive --format=tar --prefix="vgs-$version/" "$commit" | gzip -n >"$tarball" ||
+sum="$("$repo/scripts/lib/release-tarball.sh" "$commit" "$version" "$scratch/in/vgs/vgs-$version.tar.gz")" ||
   refuse 1 "archive=failed commit=$commit"
-sum="$(sha256sum -- "$tarball")" || refuse 1 "sha256sum=failed path=$tarball"
-sum="${sum%% *}"
 
 git init -q --bare "$scratch/in/srcrepo.git" || refuse 1 "git=init path=$scratch/in/srcrepo.git"
 git -C "$repo" push -q "$scratch/in/srcrepo.git" "$commit:refs/heads/main" 'refs/tags/*:refs/tags/*' ||
