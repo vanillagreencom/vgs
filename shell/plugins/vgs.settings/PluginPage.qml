@@ -181,8 +181,14 @@ FocusScope {
                 }
             }
 
+            // Keyed models keep each section, field and key row while the
+            // manager's rows are replaced, so an edit in progress survives
+            // an unrelated change.
             Repeater {
-                model: page.sections
+                model: ScriptModel {
+                    values: page.sections
+                    objectProp: "group"
+                }
                 Column {
                     id: section
                     required property var modelData
@@ -196,7 +202,9 @@ FocusScope {
                     }
 
                     Repeater {
-                        model: section.modelData.keys
+                        model: ScriptModel {
+                            values: section.modelData.keys
+                        }
                         SettingField {
                             required property string modelData
                             width: section.width
@@ -227,7 +235,10 @@ FocusScope {
                 }
 
                 Repeater {
-                    model: page.row === null ? [] : page.row.binds
+                    model: ScriptModel {
+                        values: page.row === null ? [] : page.row.binds
+                        objectProp: "shortcut"
+                    }
                     KeyField {
                         required property var modelData
                         width: body.width

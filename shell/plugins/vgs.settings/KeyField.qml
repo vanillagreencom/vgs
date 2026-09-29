@@ -3,8 +3,9 @@ import qs.Commons
 import qs.Ui
 
 // One row of a plugin's Keys section, from one bind the manager lists:
-// the shortcut's description beside a text field holding the key in
-// effect, written `MOD+KEY`. Editing the field sends that key, an emptied
+// the shortcut's name beside a text field holding the key in effect,
+// written `MOD+KEY`, with the description the plugin registered and the
+// manifest's key under it. Editing the field sends that key, an emptied
 // field sends null, which unbinds it, and the reset button sends
 // undefined, which removes the shell.json entry so the manifest's key
 // applies; the unbind and reset buttons show only where they change
@@ -21,8 +22,8 @@ Field {
 
     readonly property string shown: bind.key === null || bind.key === undefined ? "" : String(bind.key)
 
-    label: bind.description ? String(bind.description) : String(bind.shortcut)
-    hint: bind.key === bind["default"] ? "The manifest's key" : "Default " + bind["default"]
+    label: String(bind.shortcut)
+    hint: (bind.description ? String(bind.description) + ". " : "") + (bind.key === bind["default"] ? "The manifest's key." : "The manifest's key is " + bind["default"] + ".")
     inline: true
 
     TextField {

@@ -104,7 +104,7 @@ Field {
             }
             Label {
                 id: shown
-                role: "code"
+                role: "label"
                 text: String(bar.value)
                 width: Math.max(implicitWidth, Theme.size.control.lg)
                 horizontalAlignment: Text.AlignRight
