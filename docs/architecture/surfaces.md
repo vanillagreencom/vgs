@@ -1,6 +1,6 @@
 # Surfaces
 
-Covers: shell/Hosts/SummonHost.qml, shell/Hosts/SummonPopup.qml, shell/Hosts/AppWindow.qml, scripts/smoke/rows/surfaces.sh, scripts/smoke/rows/windows.sh, scripts/smoke/fixtures/plugins/acme.surfaces/**
+Covers: shell/Hosts/SummonHost.qml, shell/Hosts/SummonPopup.qml, shell/Hosts/AppWindow.qml, scripts/smoke/app-window.sh, scripts/smoke/rows/surfaces.sh, scripts/smoke/rows/windows.sh, scripts/smoke/fixtures/plugins/acme.surfaces/**
 
 What a summoned plugin is drawn in, and how each surface behaves. The kinds and their hosts are in [plugins.md § Kinds](plugins.md#kinds); the popups of `qs.Ui` are in [components.md](components.md).
 
@@ -13,7 +13,7 @@ Every surface a user sees is one of two classes, [D044](../decisions/D044-applic
 | Application window | kind `window` | A Hyprland window. Hyprland draws its border, in the active colour while it is focused and the inactive colour while it is not, gives it the keyboard when it is focused and takes the keyboard to any other window the user focuses, and moves, resizes, floats, tiles and closes it on the user's keys and rules. |
 | Transient overlay | the launcher (`overlay`), the notifications and toasts, the requirement notice, a summon under an anchor (a widget's flyout) and the popups of `qs.Ui` | Not a window: it never tiles, moves or floats. A flyout and a popup close on a click outside them and hold the keyboard only while they are open; the launcher holds the keyboard while it is open. |
 
-An unanchored `panel` or `menu` is a layer surface. `vgs.devtools` and `vgs.gallery` are unanchored panels that are application windows by the rule above; they move to `window` in a later change.
+An unanchored `panel` or `menu` is a layer surface. The shipped application windows are `vgs.settings`, `vgs.devtools` and `vgs.gallery`.
 
 ## Summoning
 
@@ -26,12 +26,12 @@ An unanchored `panel` or `menu` is a layer surface. `vgs.devtools` and `vgs.gall
 - **Identity.** The title is the plugin's manifest `name`. The class is the shell's one app-id, `org.vgs.shell`, which the `//@ pragma AppId` line of `shell.qml` sets and `HyprlandLayer.APP_WINDOW` holds ([runtime-qml.md](runtime-qml.md) says why a window has no app-id of its own). A user rule finds one window by its class and its title.
 - **Place and size.** The Hyprland layer's `vgs:window` rule floats every window of the class and centres it on the work area of its monitor ([hyprland.md](hyprland.md)). The window asks for the size of its instance's `implicitWidth` and `implicitHeight` once, when it maps, and the plugin fills whatever size Hyprland gives it after. Hyprland maps a new window on the focused monitor, so an anchor and the `placement` setting do not apply to a window; a click on a bar moves the pointer there first, which focuses that bar's monitor ([runtime.md § Hyprland](runtime.md#hyprland)).
 - **Frame.** The window draws no border and no radius of its own. Its background is `surface.level.raised.background`.
-- **Close.** A close through Hyprland, such as the user's close key, hides the window: the host calls `close()` and destroys it, as `hide` does.
+- **Close.** A close through Hyprland, such as the user's close key, hides the window: the host calls `close()` and destroys it, as `hide` does. So does Escape while the window has the keyboard, unless the plugin takes the key first: the host's slot holds the focus the plugin takes none of, and an Escape no item of the plugin accepts reaches the slot. A plugin that uses Escape for a step of its own, such as the Settings page's pop, accepts it for that step and leaves it unaccepted otherwise.
 
 ## Invariants
 
 1. A `window` summon maps one window of the shell's class, titled with the plugin's name, at the instance's size whatever its `placement`, and no layer surface; an anchored summon maps a window too; summoning an open window hands it the payload and builds nothing; `hide`, a toggle and a close through Hyprland each call `close()` and leave no window. Enforced by `scripts/smoke/rows/surfaces.sh` on the `acme.surfaces` fixture.
-2. The Settings window floats, centred on the work area, from the `vgs:window` rule, and tiles once the rule is disabled; its border is `general:border_size` wide in the active colour while it is focused and in the inactive colour while another window is; dispatches move it, tile it, float it, focus it and close it; and the keyboard reaches only the focused window. Enforced by `scripts/smoke/rows/windows.sh`, which reads the nested instance's clients, focused window and pixels and the harness's toplevel helper's keyboard log. The gallery, a layer panel, is the control of each reading: it is no client, its edge shows no border colour and a move aimed at it moves nothing.
+2. Each shipped application window, Settings, Dev Tools and the Gallery, is one client of the shell's class titled with its plugin's name, floats centred on the work area and takes the focus when it maps; its border is `general:border_size` wide in the active colour while it is focused and in the inactive colour while another window is; a dispatch moves it and focuses it; an Escape typed while it has the keyboard closes it, and one typed while another window has the keyboard reaches that window and leaves it open. Enforced by `app_window_rows` in `scripts/smoke/app-window.sh`, which `scripts/smoke/rows/windows.sh`, `scripts/smoke/rows/devtools.sh` and `scripts/smoke/rows/gallery.sh` run on their window and which reads the nested instance's clients, focused window and pixels and the harness's toplevel helper's keyboard log. The Settings window also tiles once the `vgs:window` rule is disabled, tiles and floats on float toggles, keeps the keys typed while the helper is focused out of its search field and closes on a close dispatch, under `scripts/smoke/rows/windows.sh`. The themes panel, a layer panel, is the control of the class, the border and the move there: it is no client, its edge shows no border colour and a move aimed at it moves nothing.
 3. An anchored summon closes on a click outside it. Enforced by `scripts/smoke/rows/surfaces.sh`, whose control is a `SummonPopup` copy without the focus grab that the same click leaves open. The popups of `qs.Ui` hold the same rule in [components.md](components.md).
 
 ## Decisions

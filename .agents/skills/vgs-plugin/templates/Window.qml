@@ -8,7 +8,8 @@ import qs.Ui
 // tiles and closes it like any other window; the plugin never creates a
 // window and draws no frame of its own. The implicit size is the first size
 // the window asks for; the content fills whatever size Hyprland gives it
-// after. A close through Hyprland reaches close() like a hide.
+// after. A close through Hyprland reaches close() like a hide, and so does
+// an Escape no item here accepts while the window has the keyboard.
 FocusScope {
     id: root
 

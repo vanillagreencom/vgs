@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.devtools/catalog.json, shell/plugins/vgs.devtools/CatalogLogic.js, shell/plugins/vgs.devtools/Appearance.js, scripts/check-devtools-catalog.js, scripts/test-check-devtools-catalog.js
 
-The format of the `vgs.devtools` catalog and the rules its judge holds it to. The plugin's [README](../../shell/plugins/vgs.devtools/README.md) holds the engine, the panel, the service and the launchers.
+The format of the `vgs.devtools` catalog and the rules its judge holds it to. The plugin's [README](../../shell/plugins/vgs.devtools/README.md) holds the engine, the window, the service and the launchers.
 
 ## Sections
 
