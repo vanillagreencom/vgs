@@ -3,13 +3,14 @@ import qs.Commons
 import qs.Ui
 
 // One read-only Status row of a plugin's page, drawn from one entry of its
-// manager row's `status` (PluginLogic.statusRows): the label beside the
-// value, the manifest's hint under it, and the manifest's command, when it
-// names one, in a CodeLine the reader copies and the page never runs. A
+// manager row's `status` (PluginLogic.statusRows) as StatusLines: the
+// entry's label beside its value, the manifest's hint and command. A
 // presence or a state draws as a Badge in the tone the entry carries; a
 // text, a count or a time as one line of text; an entry the plugin has not
-// published, or published while disabled, as "Not reported". Nothing here
-// writes.
+// published, or published while disabled, as "Not reported". A presence
+// list draws its label and hint alone, "None detected" while the list is
+// empty, then one line per item: the item's label beside a Badge of its
+// presence, its hint and its command. Nothing here writes.
 Column {
     id: row
 
@@ -18,15 +19,22 @@ Column {
     required property var entry
 
     readonly property var presenceWords: ({ present: "Present", absent: "Absent", locked: "Locked", unavailable: "Unavailable", unsafe: "Unsafe" })
-    // What the row draws: { label, hint, command, tone, text, reported },
-    // `tone` "" for a value drawn as text.
+    // What the row draws: { label, hint, command, tone, text, muted, items },
+    // `tone` "" for a value drawn as text and `items` a presence list's
+    // items, each { label, value, hint, command, tone }.
     readonly property var view: {
-        if (entry === null) return { label: "", hint: "", command: "", tone: "", text: "", reported: false };
-        const out = { label: entry.label, hint: entry.hint, command: entry.command, tone: "", text: "Not reported", reported: entry.report === "reported" };
-        if (!out.reported) return out;
+        if (entry === null) return { label: "", hint: "", command: "", tone: "", text: "", muted: true, items: [] };
+        const out = { label: entry.label, hint: entry.hint, command: entry.command, tone: "", text: "Not reported", muted: true, items: [] };
+        if (entry.report !== "reported") return out;
+        out.muted = false;
         out.tone = entry.tone;
         switch (entry.type) {
         case "presence": out.text = presenceWords[entry.value]; return out;
+        case "presenceList":
+            out.items = entry.value;
+            out.text = entry.value.length === 0 ? "None detected" : "";
+            out.muted = true;
+            return out;
         case "state": out.text = entry.value.text; return out;
         case "text": out.text = entry.value; return out;
         case "count": out.text = String(entry.value); return out;
@@ -38,41 +46,30 @@ Column {
     }
 
     visible: entry !== null
-    spacing: Theme.field.gap
+    // The rhythm of the rows in a Status section, between the entry's line
+    // and each item's.
+    spacing: Theme.space.xs
 
-    Field {
+    StatusLine {
         width: row.width
         label: row.view.label
-        inline: true
         hint: row.view.hint
-        Loader {
-            width: parent.width
-            sourceComponent: row.view.tone !== "" ? badge : line
-        }
+        command: row.view.command
+        tone: row.view.tone
+        text: row.view.text
+        muted: row.view.muted
     }
 
-    CodeLine {
-        x: Theme.field.paddingX
-        width: row.width - 2 * Theme.field.paddingX
-        visible: row.view.command !== ""
-        text: row.view.command
-        copyLabel: "Copy the command"
-    }
-
-    Component {
-        id: badge
-        Item {
-            implicitHeight: chip.height
-            Badge { id: chip; text: row.view.text; tone: row.view.tone }
-        }
-    }
-
-    Component {
-        id: line
-        Label {
-            role: row.view.reported ? "item" : "itemHint"
-            text: row.view.text
-            elide: Text.ElideRight
+    Repeater {
+        model: row.view.items
+        StatusLine {
+            required property var modelData
+            width: row.width
+            label: modelData.label
+            hint: modelData.hint
+            command: modelData.command
+            tone: modelData.tone
+            text: row.presenceWords[modelData.value]
         }
     }
 }

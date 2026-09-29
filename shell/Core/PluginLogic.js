@@ -77,7 +77,7 @@ var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
 // capability, each declared in the manifest's `status` key with one of these
 // types. `data` is structured JSON only the plugin's own instances read; the
 // Settings window draws every other type unless the entry is `hidden`.
-var STATUS_TYPES = ["presence", "state", "text", "count", "time", "data"];
+var STATUS_TYPES = ["presence", "presenceList", "state", "text", "count", "time", "data"];
 var STATUS_ENTRY_KEYS = ["type", "label", "group", "hint", "command", "hidden"];
 // A status key names a value in `shell.status.values`, so it is a plain
 // identifier.
@@ -101,6 +101,11 @@ var STATUS_PRESENCE_TONES = { present: "success", absent: "warning", locked: "in
 var STATUS_STATE_TONES = { ok: "success", info: "info", warning: "warning", danger: "danger" };
 // The keys a `state` value carries.
 var STATUS_STATE_KEYS = ["tone", "text"];
+// A `presenceList` value is a list of at most STATUS_LIST_MAX items, each
+// carrying these keys: a printable `label` and a `presence` value, with an
+// optional printable `hint` and `command`, of the declaration's lengths.
+var STATUS_LIST_MAX = 32;
+var STATUS_LIST_ITEM_KEYS = ["label", "value", "hint", "command"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, the name a manifest's Hyprland bind gives its shortcut, and the name
@@ -382,12 +387,19 @@ function isPlainJson(value) {
 }
 
 // Whether `value` fits a status entry of type `type`: `presence` a key of
-// STATUS_PRESENCE_TONES; `state` { tone, text } with a tone of
+// STATUS_PRESENCE_TONES; `presenceList` a list statusListItemFits admits
+// item by item, at most STATUS_LIST_MAX long; `state` { tone, text } with a tone of
 // STATUS_STATE_TONES and a printable text; `text` a printable line; `count`
 // a whole number from 0; `time` a whole number of milliseconds since the
 // Unix epoch, from 0; `data` plain JSON.
 function statusValueFits(type, value) {
     if (type === "presence") return typeof value === "string" && hasOwn(STATUS_PRESENCE_TONES, value);
+    if (type === "presenceList") {
+        if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;
+        for (var n = 0; n < value.length; n++)
+            if (!statusListItemFits(value[n])) return false;
+        return true;
+    }
     if (type === "state") {
         if (!isPlainObject(value) || !isPlainJson(value)) return false;
         var keys = Object.keys(value);
@@ -399,6 +411,22 @@ function statusValueFits(type, value) {
     if (type === "count" || type === "time") return typeof value === "number" && isFinite(value) && value >= 0 && Math.floor(value) === value && value <= Number.MAX_SAFE_INTEGER;
     if (type === "data") return isPlainJson(value);
     throw new Error("statusValueFits: status type " + JSON.stringify(type) + " passed validation but has no rule");
+}
+
+// Whether `item` is one item of a `presenceList` value: plain JSON holding
+// only STATUS_LIST_ITEM_KEYS, a printable `label` of at most
+// STATUS_LABEL_MAX characters, a `value` of STATUS_PRESENCE_TONES, and when
+// present a printable `hint` of at most STATUS_HINT_MAX and a printable
+// `command` of at most STATUS_COMMAND_MAX, as a declaration's are.
+function statusListItemFits(item) {
+    if (!isPlainObject(item) || !isPlainJson(item)) return false;
+    var keys = Object.keys(item);
+    for (var i = 0; i < keys.length; i++)
+        if (STATUS_LIST_ITEM_KEYS.indexOf(keys[i]) === -1) return false;
+    return isPrintableLine(item.label, STATUS_LABEL_MAX)
+        && typeof item.value === "string" && hasOwn(STATUS_PRESENCE_TONES, item.value)
+        && (item.hint === undefined || isPrintableLine(item.hint, STATUS_HINT_MAX))
+        && (item.command === undefined || isPrintableLine(item.command, STATUS_COMMAND_MAX));
 }
 
 // The number of UTF-8 bytes that encode `text`. A lone surrogate counts as
@@ -470,19 +498,38 @@ function statusDisplayable(entry) {
 }
 
 // The badge tone Settings draws a reported status value with: the
-// presence's or the state's tone, "" for a type drawn as text.
+// presence's or the state's tone, "" for a type drawn as text and for a
+// `presenceList`, whose items carry their own (statusRowValue).
 function statusTone(type, value) {
     if (type === "presence") return STATUS_PRESENCE_TONES[value];
     if (type === "state") return STATUS_STATE_TONES[value.tone];
     return "";
 }
 
+// A reported value as a Status row carries it: a `presenceList`'s items
+// each as { label, value, hint, command, tone }, `hint` and `command` ""
+// when the item omits them and `tone` its presence's; any other value as
+// published.
+function statusRowValue(type, value) {
+    if (type !== "presenceList") return value;
+    return value.map(function (item) {
+        return {
+            label: item.label,
+            value: item.value,
+            hint: item.hint === undefined ? "" : item.hint,
+            command: item.command === undefined ? "" : item.command,
+            tone: STATUS_PRESENCE_TONES[item.value]
+        };
+    });
+}
+
 // The Status rows the plugin manager shows for a plugin: one per entry
 // statusDisplayable admits, in manifest key order, as { key, type, label,
 // group, hint, command, report, value, tone }. `group`, `hint` and
 // `command` are "" when the manifest omits them. `report` is `reported`
-// with the published `value` and its `tone`, or `unreported` with `value`
-// null and `tone` "" while `values` holds nothing for the key.
+// with the published `value` (statusRowValue) and its `tone`, or
+// `unreported` with `value` null and `tone` "" while `values` holds nothing
+// for the key.
 function statusRows(manifest, values) {
     return Object.keys(manifest.status).filter(function (key) {
         return statusDisplayable(manifest.status[key]);
@@ -497,7 +544,7 @@ function statusRows(manifest, values) {
             hint: entry.hint === undefined ? "" : entry.hint,
             command: entry.command === undefined ? "" : entry.command,
             report: reported ? "reported" : "unreported",
-            value: reported ? values[key] : null,
+            value: reported ? statusRowValue(entry.type, values[key]) : null,
             tone: reported ? statusTone(entry.type, values[key]) : ""
         };
     });

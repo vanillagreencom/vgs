@@ -30,6 +30,7 @@ function suite(ctx, check) {
         kinds: ["service"], entryPoints: { service: "S.qml" }, capabilities: ["status"],
         status: {
             token: { type: "presence", label: "Token", group: "Keys", hint: "Needed", command: "secret-tool store x" },
+            tokens: { type: "presenceList", label: "Tokens", group: "Keys", hint: "One per workspace" },
             check: { type: "state", label: "Check" },
             note: { type: "text", label: "Note" },
             pending: { type: "count", label: "Pending" },
@@ -52,6 +53,25 @@ function suite(ctx, check) {
         ["a presence value outside the set", "token", "stored", "refused: status=token reason=type"],
         ["a presence value that is a boolean", "token", true, "refused: status=token reason=type"],
         ["a presence value that is an inherited key", "token", "toString", "refused: status=token reason=type"],
+        ["a presence list", "tokens", [{ label: "Acme (acme)", value: "present", hint: "h", command: "secret-tool store y" }, { label: "Globex", value: "locked" }], "ok"],
+        ["an empty presence list", "tokens", [], "ok"],
+        ["a presence list of 32 items", "tokens", Array.from({ length: 32 }, (_, i) => ({ label: "w" + i, value: "absent" })), "ok"],
+        ["a presence list of 33 items", "tokens", Array.from({ length: 33 }, (_, i) => ({ label: "w" + i, value: "absent" })), "refused: status=tokens reason=type"],
+        ["a presence list that is an object", "tokens", { label: "A", value: "present" }, "refused: status=tokens reason=type"],
+        ["a presence list item that is a string", "tokens", ["present"], "refused: status=tokens reason=type"],
+        ["a presence list item outside the presence set", "tokens", [{ label: "A", value: "stored" }], "refused: status=tokens reason=type"],
+        ["a presence list item without a value", "tokens", [{ label: "A" }], "refused: status=tokens reason=type"],
+        ["a presence list item without a label", "tokens", [{ value: "present" }], "refused: status=tokens reason=type"],
+        ["a presence list item label of 60 characters", "tokens", [{ label: "x".repeat(60), value: "present" }], "ok"],
+        ["a presence list item label of 61 characters", "tokens", [{ label: "x".repeat(61), value: "present" }], "refused: status=tokens reason=type"],
+        ["a presence list item label with a newline", "tokens", [{ label: "A\nB", value: "present" }], "refused: status=tokens reason=type"],
+        ["a presence list item hint of 201 characters", "tokens", [{ label: "A", value: "present", hint: "x".repeat(201) }], "refused: status=tokens reason=type"],
+        ["a presence list item with an empty hint", "tokens", [{ label: "A", value: "present", hint: "" }], "refused: status=tokens reason=type"],
+        ["a presence list item command of 300 characters", "tokens", [{ label: "A", value: "present", command: "x".repeat(300) }], "ok"],
+        ["a presence list item command of 301 characters", "tokens", [{ label: "A", value: "present", command: "x".repeat(301) }], "refused: status=tokens reason=type"],
+        ["a presence list item with a key of its own", "tokens", [{ label: "A", value: "present", tone: "success" }], "refused: status=tokens reason=type"],
+        ["a presence list item holding a function", "tokens", [{ label: "A", value: "present", hint: function () {} }], "refused: status=tokens reason=type"],
+        ["a presence list item that is a class instance", "tokens", [new (class Item { constructor() { this.label = "A"; this.value = "present"; } })()], "refused: status=tokens reason=type"],
         ["a state value", "check", { tone: "warning", text: "Two sources failed" }, "ok"],
         ["a state tone outside the set", "check", { tone: "success", text: "t" }, "refused: status=check reason=type"],
         ["a state without text", "check", { tone: "ok" }, "refused: status=check reason=type"],
@@ -125,12 +145,23 @@ function suite(ctx, check) {
     // hidden entries left out.
     const values = ctx.statusWrite(m, ctx.statusWrite(m, ctx.statusWrite(m, {}, "token", "locked").values, "check", { tone: "ok", text: "Up to date" }).values, "pending", 0).values;
     const rows = ctx.statusRows(m, values);
-    check("statusRows: one row per displayable entry, in manifest order", rows.map(r => r.key), ["token", "check", "note", "pending", "lastCheck"]);
+    check("statusRows: one row per displayable entry, in manifest order", rows.map(r => r.key), ["token", "tokens", "check", "note", "pending", "lastCheck"]);
     check("statusRows: a reported presence carries its tone and the declaration", rows[0], { key: "token", type: "presence", label: "Token", group: "Keys", hint: "Needed", command: "secret-tool store x", report: "reported", value: "locked", tone: "info" });
-    check("statusRows: a reported state carries its tone", [rows[1].report, rows[1].value, rows[1].tone], ["reported", { tone: "ok", text: "Up to date" }, "success"]);
-    check("statusRows: an unreported entry has no value and no tone", rows[2], { key: "note", type: "text", label: "Note", group: "", hint: "", command: "", report: "unreported", value: null, tone: "" });
-    check("statusRows: a reported count of 0 is reported, drawn without a tone", [rows[3].report, rows[3].value, rows[3].tone], ["reported", 0, ""]);
-    check("statusRows: nothing published leaves every row unreported", ctx.statusRows(m, {}).map(r => r.report), ["unreported", "unreported", "unreported", "unreported", "unreported"]);
+    check("statusRows: a reported state carries its tone", [rows[2].report, rows[2].value, rows[2].tone], ["reported", { tone: "ok", text: "Up to date" }, "success"]);
+    check("statusRows: an unreported entry has no value and no tone", rows[3], { key: "note", type: "text", label: "Note", group: "", hint: "", command: "", report: "unreported", value: null, tone: "" });
+    check("statusRows: a reported count of 0 is reported, drawn without a tone", [rows[4].report, rows[4].value, rows[4].tone], ["reported", 0, ""]);
+    check("statusRows: nothing published leaves every row unreported", ctx.statusRows(m, {}).map(r => r.report), ["unreported", "unreported", "unreported", "unreported", "unreported", "unreported"]);
+    // A presence list's row carries each item with its own tone, an omitted
+    // hint or command as "", and no tone of its own.
+    const listed = ctx.statusRows(m, ctx.statusWrite(m, {}, "tokens", [{ label: "Acme (acme)", value: "present", command: "secret-tool store y" }, { label: "Globex", value: "locked", hint: "Served elsewhere" }, { label: "Initech", value: "absent" }, { label: "Hooli", value: "unavailable" }, { label: "Umbrella", value: "unsafe" }]).values)[1];
+    check("statusRows: a presence list carries each item with its tone", [listed.report, listed.tone, listed.value], ["reported", "", [
+        { label: "Acme (acme)", value: "present", hint: "", command: "secret-tool store y", tone: "success" },
+        { label: "Globex", value: "locked", hint: "Served elsewhere", command: "", tone: "info" },
+        { label: "Initech", value: "absent", hint: "", command: "", tone: "warning" },
+        { label: "Hooli", value: "unavailable", hint: "", command: "", tone: "neutral" },
+        { label: "Umbrella", value: "unsafe", hint: "", command: "", tone: "danger" }
+    ]]);
+    check("statusRows: an empty presence list is reported empty", ctx.statusRows(m, ctx.statusWrite(m, {}, "tokens", []).values)[1].value, []);
     const noStatus = ctx.validateManifest({ schemaVersion: 1, id: "acme.none", name: "N", version: "1", author: "a", description: "d", kinds: ["service"], entryPoints: { service: "S.qml" } }, "/p").manifest;
     check("statusRows: a plugin without a status key has none", ctx.statusRows(noStatus, {}), []);
 
@@ -141,7 +172,9 @@ function suite(ctx, check) {
     check("statusTone: state tones", ["ok", "info", "warning", "danger"].map(t => ctx.statusTone("state", { tone: t, text: "t" })), ["success", "info", "warning", "danger"]);
     check("statusTone: every tone is a badge tone", Object.values(ctx.STATUS_PRESENCE_TONES).concat(Object.values(ctx.STATUS_STATE_TONES)).every(t => badges.indexOf(t) !== -1), true);
     check("statusTone: a text type has none", ["text", "count", "time"].map(t => ctx.statusTone(t, 1)), ["", "", ""]);
-    check("STATUS_TYPES", ctx.STATUS_TYPES, ["presence", "state", "text", "count", "time", "data"]);
+    check("statusTone: a presence list has none of its own", ctx.statusTone("presenceList", [{ label: "A", value: "present" }]), "");
+    check("STATUS_TYPES", ctx.STATUS_TYPES, ["presence", "presenceList", "state", "text", "count", "time", "data"]);
+    check("STATUS_LIST_MAX", ctx.STATUS_LIST_MAX, 32);
 }
 
 suite(load(LOGIC), report);
@@ -154,6 +187,18 @@ const CONTROLS = [
     ["a write fits the size ceiling", "if (bytes > STATUS_MAX_BYTES)", "if (false)"],
     ["a malformed key is named as JSON", "STATUS_KEY_PATTERN.test(key) ? key : JSON.stringify(String(key));", "STATUS_KEY_PATTERN.test(key) ? key : String(key);"],
     ["a presence is one of the set", "if (type === \"presence\") return typeof value === \"string\" && hasOwn(STATUS_PRESENCE_TONES, value);", "if (type === \"presence\") return typeof value === \"string\";"],
+    ["a presence list is a list", "if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;", "if (value.length > STATUS_LIST_MAX) return false;"],
+    ["a presence list has at most STATUS_LIST_MAX items", "if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;", "if (!Array.isArray(value)) return false;"],
+    ["a presence list judges every item", "if (!statusListItemFits(value[n])) return false;", ""],
+    ["a presence list item is plain JSON", "if (!isPlainObject(item) || !isPlainJson(item)) return false;", "if (!isPlainObject(item)) return false;"],
+    ["a presence list item has only its keys", "if (STATUS_LIST_ITEM_KEYS.indexOf(keys[i]) === -1) return false;", ""],
+    ["a presence list item label is a printable line", "return isPrintableLine(item.label, STATUS_LABEL_MAX)\n        && typeof item.value", "return typeof item.value"],
+    ["a presence list item value is a presence", "&& typeof item.value === \"string\" && hasOwn(STATUS_PRESENCE_TONES, item.value)", "&& typeof item.value === \"string\""],
+    ["a presence list item hint is a printable line", "(item.hint === undefined || isPrintableLine(item.hint, STATUS_HINT_MAX))", "true"],
+    ["a presence list item command is a printable line", "(item.command === undefined || isPrintableLine(item.command, STATUS_COMMAND_MAX))", "true"],
+    ["a presence list row item has its tone", "tone: STATUS_PRESENCE_TONES[item.value]", "tone: \"neutral\""],
+    ["a presence list row item omits no hint", "hint: item.hint === undefined ? \"\" : item.hint,", "hint: item.hint,"],
+    ["a presence list row carries its items", "value: reported ? statusRowValue(entry.type, values[key]) : null,", "value: reported ? values[key] : null,"],
     ["a state tone is one of the set", "typeof value.tone === \"string\" && hasOwn(STATUS_STATE_TONES, value.tone) &&", ""],
     ["a state has only its keys", "if (STATUS_STATE_KEYS.indexOf(keys[i]) === -1) return false;", ""],
     ["a state text is a printable line", "&& isPrintableLine(value.text, STATUS_TEXT_MAX);", ";"],
