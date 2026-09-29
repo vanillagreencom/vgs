@@ -48,6 +48,12 @@
 #                                  print the argv of each step the action takes; runs nothing
 #   vgsh pkg check [--json] [--source <manager>]
 #                                  count each manager's pending updates without root
+#   vgsh sudo status               whether a passwordless sudo grant is active, until when, and its root half's state
+#   vgsh sudo grant [minutes]      warn, ask and grant passwordless sudo for 1 to 1440 minutes, 15 when absent;
+#                                  while a grant is active it revokes that grant instead
+#   vgsh sudo revoke               end the active grant now
+#   vgsh sudo install              install the grant's root half and its boot cleanup, once; sudo asks for the password
+#   vgsh sudo uninstall            revoke, then remove the root half and its boot cleanup
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind
@@ -252,6 +258,13 @@
 # through bin/vgsh-pkg, which states its output and refusals. It needs no
 # running shell, and no `pkg` command elevates or changes a package:
 # docs/architecture/packages.md.
+#
+# `sudo` runs bin/vgsh-sudo-grant, which states its output and refusals.
+# `status`, `grant` and `revoke` reach its root half through `sudo -N`,
+# which asks for the password unless a grant is active, and `grant` asks
+# one question, so each needs a terminal; the core floating TUI
+# `core/sudo-grant` runs `vgsh sudo grant` in one. No grant exists until
+# the owner runs `sudo install`: docs/architecture/tui.md § sudo.
 #
 # `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
 # with the full presentation, titled by --title or else by the command's
@@ -1417,6 +1430,12 @@ case "$cmd" in
     ;;
   pkg)
     exec node "$root/bin/vgsh-pkg" "$@"
+    ;;
+  sudo)
+    case "${1:-}" in
+      status|grant|revoke|install|uninstall) exec "$root/bin/vgsh-sudo-grant" "$@" ;;
+      *) printf 'vgsh: refused: sudo-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2 ;;
+    esac
     ;;
   tui)
     sub="${1:-}"

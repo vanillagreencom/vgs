@@ -11,6 +11,7 @@ f share/vgs/bin/lib/theme-catalog.js
 f share/vgs/bin/lib/theme-download.js
 f share/vgs/bin/lib/theme-render.js
 f share/vgs/bin/lib/theme-select.js
+f share/vgs/bin/lib/tmpfiles.d/vgs-sudo-grant.conf
 f share/vgs/bin/lib/tui.sh
 f share/vgs/bin/vgsh
 f share/vgs/bin/vgsh-browser-policy
@@ -18,6 +19,7 @@ f share/vgs/bin/vgsh-hypr-judge
 f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan
+f share/vgs/bin/vgsh-sudo-grant
 f share/vgs/bin/vgsh-theme-judge
 f share/vgs/bin/vgsh-tui
 f share/vgs/config/requirements.json

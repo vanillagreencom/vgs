@@ -1,0 +1,464 @@
+#!/bin/bash -p
+# vgsh-sudo-grant: the time-boxed passwordless sudo grant, both halves.
+#
+#   vgsh-sudo-grant status            whether a grant is active, until when, and the root half's state
+#   vgsh-sudo-grant grant [minutes]   warn, ask, and grant passwordless sudo for 1 to 1440 minutes, 15 when
+#                                     absent; while a grant is active it revokes that grant instead
+#   vgsh-sudo-grant revoke            end the active grant now
+#   vgsh-sudo-grant install           install the root half and its boot cleanup, once; sudo asks
+#   vgsh-sudo-grant uninstall         revoke, then remove the root half and its boot cleanup; sudo asks
+#
+# Run as the user, from the checkout through `vgsh sudo`, the file is the
+# user half and takes those five verbs. `install` prints what it places,
+# then through sudo copies bin/lib/tmpfiles.d/vgs-sudo-grant.conf to
+# /etc/tmpfiles.d/vgs-sudo-grant.conf, whose `r!` line removes every grant
+# at boot, and then this file to /usr/local/bin/vgs-sudo-grant, both
+# root:root, so the root half is never in place without its boot cleanup.
+# `uninstall` revokes the user's grant, then removes the two in the
+# opposite order.
+#
+# Run as root, the file is the root half: the installed copy, which the user
+# half reaches only through `sudo -N` after `sudo -k`, so every root action
+# asks for the password unless a grant is active, and no sudo timestamp
+# outlives the command. It runs under `bash -p`, runs itself again with an
+# environment of PATH, LC_ALL and SUDO_UID alone, holds /run/vgs-sudo-grant.lock,
+# and takes three actions, each for SUDO_UID's own account and nothing else:
+#
+#   __status <uid>             print `active deadline=<YYYYMMDDHHMMSS>Z` and exit 0, or `inactive` and exit 3
+#   __enable <uid> <minutes>   write the rule, arm its expiry, publish it; print as __status
+#   __disable <uid>            stop the expiry and remove the rule; print `revoked`, or `inactive` and exit 3
+#
+# The grant is one file, /etc/sudoers.d/99-vgs-nopasswd-<uid>, holding
+# `<user> ALL=(ALL) NOTAFTER=<UTC deadline> NOPASSWD: ALL`: sudo itself
+# refuses it after the deadline, suspend included. __enable writes it to a
+# dotted name sudo ignores, checks it with `visudo -cf`, arms the transient
+# timer vgs-sudo-grant-expire-<uid> that removes it at the deadline, then
+# renames it into place. It refuses while a grant is active, an existing
+# rule it cannot read as its own, a deadline `date` did not give in sudo's
+# form, and a boot cleanup file that is absent, not root's or not exactly
+# the one line. An expired rule is removed as found. After the user half
+# enables a grant it runs `sudo -n -N /usr/bin/true`; a sudo that does not
+# honour the rule has it revoked again.
+#
+# Every refusal prints one keyed line first: `vgs-sudo-grant: refused: <key>=<value>`.
+# Exit 0 on success, 1 on a refusal, 2 on a bad invocation, 3 from
+# __status and __disable when no grant is active, 130 when the question is
+# cancelled. docs/architecture/tui.md § sudo, docs/decisions/D036.
+#
+# /bin/bash -p rather than env: as root nothing here resolves through a
+# PATH, a startup file or a function a user chose.
+set -euo pipefail
+
+# Every system path below derives from prefix, empty in production.
+prefix=
+safe_path="$prefix/usr/local/sbin:$prefix/usr/local/bin:$prefix/usr/sbin:$prefix/usr/bin:$prefix/sbin:$prefix/bin"
+# In either half a bare command resolves in the system directories alone,
+# so no checkout or user-writable directory supplies sudo, gum or visudo.
+export PATH="$safe_path"
+umask 022
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+lib_dir="${self%/*}/lib"
+installed="$prefix/usr/local/bin/vgs-sudo-grant"
+sudoers_d="$prefix/etc/sudoers.d"
+tmpfiles_d="$prefix/etc/tmpfiles.d"
+boot_file="$tmpfiles_d/vgs-sudo-grant.conf"
+# The boot cleanup's one active line, as systemd-tmpfiles reads it: remove
+# every grant's file at boot only, since the expiry timer does not survive
+# a reboot.
+boot_rule='r! /etc/sudoers.d/99-vgs-nopasswd-*'
+lock_file="$prefix/run/vgs-sudo-grant.lock"
+default_minutes=15
+max_minutes=1440
+status_inactive=3
+# Digit classes spelled out: a range follows the collation of the locale
+# the user half keeps.
+digit='[0123456789]'
+nonzero='[123456789]'
+
+say() { printf 'vgs-sudo-grant: %s\n' "$@" >&2; }
+refuse() { # STATUS FIRST_LINE [ENGLISH...]
+  local status="$1"
+  printf 'vgs-sudo-grant: refused: %s\n' "$2" >&2
+  shift 2
+  (($# == 0)) || printf '%s\n' "$@" >&2
+  exit "$status"
+}
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$self" >&2; }
+bad_invocation() { # FIRST_LINE
+  printf 'vgs-sudo-grant: refused: %s\n' "$1" >&2
+  usage
+  exit 2
+}
+
+# Whether MINUTES is a whole number from 1 to max_minutes.
+minutes_valid() { # MINUTES
+  [[ $1 =~ ^0*$nonzero$digit{0,3}$ ]] && ((10#$1 <= max_minutes))
+}
+
+# The active lines of a tmpfiles file: every line that is not blank or a comment.
+boot_lines() { # FILE
+  awk '!/^[[:space:]]*(#|$)/ { print }' "$1"
+}
+
+rule_path() { printf '%s/99-vgs-nopasswd-%s' "$sudoers_d" "$1"; }
+timer_unit() { printf 'vgs-sudo-grant-expire-%s' "$1"; }
+
+# The UTC deadline D, YYYYMMDDHHMMSSZ, as ISO 8601.
+iso() { # D
+  printf '%s-%s-%sT%s:%s:%sZ' "${1:0:4}" "${1:4:2}" "${1:6:2}" "${1:8:2}" "${1:10:2}" "${1:12:2}"
+}
+
+# ---------------------------------------------------------------- root half
+
+# Runs this file again under an environment of PATH, LC_ALL and SUDO_UID
+# alone, unless the environment it was started with holds nothing else.
+# bash -p ignores BASH_ENV and exported functions itself; visudo,
+# systemd-run and every other child would still receive them.
+sanitize() { # ARGS...
+  local entry
+  local -a entries
+  mapfile -d '' -t entries <"/proc/$$/environ" || refuse 1 "environment=unreadable"
+  for entry in "${entries[@]}"; do
+    case "${entry%%=*}" in
+      PATH|LC_ALL|SUDO_UID) ;;
+      *) exec env -i PATH="$safe_path" LC_ALL=C SUDO_UID="${SUDO_UID:-}" "$BASH" -p -- "$self" "$@" ;;
+    esac
+  done
+}
+
+# Whether PATH is a real directory or regular file root owns that only root can write.
+trusted() { # PATH
+  local info
+  [[ (-d $1 || -f $1) && ! -L $1 ]] || return 1
+  info="$(stat -c '%u %a' -- "$1")" || return 1
+  [[ $info == "0 "* ]] && (((8#${info#* } & 8#022) == 0))
+}
+
+# The uid the root half acts for: a uid other than root's, and the one sudo
+# names as its caller, so a user can grant or revoke only for themselves.
+caller() { # UID
+  [[ $1 =~ ^$nonzero$digit{0,9}$ ]] && (($1 <= 4294967294)) || bad_invocation "uid=$(printf '%q' "$1")"
+  [[ ${SUDO_UID:-} == "$1" ]] || refuse 1 "caller=mismatch uid=$1 sudo-uid=${SUDO_UID:-none}" "the root half acts only for the user who ran sudo"
+}
+
+# Sets account to UID's login name. sudoers reads an upper-case word as an
+# alias and gives meaning to many other characters, so only a lower-case
+# portable name is written into a rule.
+resolve_account() { # UID
+  local entry name uid_field
+  entry="$(getent passwd "$1")" || refuse 1 "account=unknown uid=$1"
+  IFS=: read -r name _ uid_field _ <<<"$entry"
+  [[ $uid_field == "$1" ]] || refuse 1 "account=mismatch uid=$1"
+  [[ $name =~ ^[a-z_][a-z0-9_-]{0,31}\$?$ ]] || refuse 1 "account=unsupported name=$(printf '%q' "$name")" "a grant is written only for a lower-case portable login name"
+  account="$name"
+}
+
+with_lock() { # FUNCTION ARGS...
+  trusted "$prefix/run" || refuse 1 "untrusted=$prefix/run"
+  exec 9>>"$lock_file" || refuse 1 "lock=open path=$lock_file"
+  flock -w 60 9 || refuse 1 "lock=busy path=$lock_file" "another grant action held the lock for 60 s"
+  "$@"
+}
+
+# Stops UNIT's timer and service; one that is not loaded counts as stopped.
+stop_unit() { # UNIT
+  local part status
+  for part in timer service; do
+    status=0
+    systemctl stop "$1.$part" >/dev/null 2>&1 || status=$?
+    ((status == 0 || status == 5)) || return 1
+  done
+}
+
+# Reads UID's rule: returns 0 with grant_deadline set while it is active,
+# status_inactive when there is none or it expired, which removes it, and 1
+# for a rule that is not a root-owned file of this file's one form for
+# account.
+read_grant() { # UID
+  local file contents now
+  file="$(rule_path "$1")"
+  [[ -e $file || -L $file ]] || return "$status_inactive"
+  trusted "$file" && [[ -f $file ]] || return 1
+  contents="$(<"$file")" || return 1
+  [[ $contents =~ ^([a-z_][a-z0-9_-]*\$?)\ ALL=\(ALL\)\ NOTAFTER=([0-9]{14}Z)\ NOPASSWD:\ ALL$ ]] || return 1
+  [[ ${BASH_REMATCH[1]} == "$account" ]] || return 1
+  grant_deadline="${BASH_REMATCH[2]}"
+  now="$(date -u +%Y%m%d%H%M%SZ)" || return 1
+  [[ $now =~ ^[0-9]{14}Z$ ]] || return 1
+  [[ $now < $grant_deadline ]] && return 0
+  rm -f -- "$file" || return 1
+  return "$status_inactive"
+}
+
+grant_state() { # UID: prints the status line and exits as __status does
+  local status=0
+  read_grant "$1" || status=$?
+  case "$status" in
+    0) printf 'active deadline=%s\n' "$grant_deadline" ;;
+    "$status_inactive") printf 'inactive\n'; exit "$status_inactive" ;;
+    *) refuse 1 "grant=malformed path=$(rule_path "$1")" "vgsh sudo revoke removes it" ;;
+  esac
+}
+
+root_status() { # UID
+  resolve_account "$1"
+  grant_state "$1"
+}
+
+# Undoes what an __enable that stops early set up: the staged file, a rule
+# it published and the timer it armed.
+enable_undo() {
+  local status=$?
+  trap - EXIT
+  [[ -z $enable_staged ]] || rm -f -- "$enable_staged" || say "cleanup=failed path=$enable_staged"
+  [[ -z $enable_file ]] || rm -f -- "$enable_file" || say "cleanup=failed path=$enable_file" "the timer still removes it at the deadline"
+  [[ -z $enable_unit ]] || stop_unit "$enable_unit" || say "cleanup=failed unit=$enable_unit"
+  exit "$status"
+}
+
+root_enable() { # UID MINUTES
+  local uid="$1" minutes=$((10#$2)) status=0 now expires deadline file unit
+  resolve_account "$uid"
+  trusted "$tmpfiles_d" && trusted "$boot_file" && [[ $(boot_lines "$boot_file") == "$boot_rule" ]] ||
+    refuse 1 "boot-cleanup=absent path=$boot_file" "vgsh sudo install places it"
+  trusted "$sudoers_d" || refuse 1 "untrusted=$sudoers_d"
+  file="$(rule_path "$uid")"
+  unit="$(timer_unit "$uid")"
+  read_grant "$uid" || status=$?
+  case "$status" in
+    0) refuse 1 "grant=active deadline=$grant_deadline" "vgsh sudo revoke ends it first" ;;
+    "$status_inactive") ;;
+    *) refuse 1 "grant=malformed path=$file" "vgsh sudo revoke removes it" ;;
+  esac
+  now="$(date +%s)" || refuse 1 "clock=unreadable"
+  [[ $now =~ ^[0-9]+$ ]] || refuse 1 "clock=malformed value=$(printf '%q' "$now")"
+  expires=$((now + minutes * 60))
+  deadline="$(date -u -d "@$expires" +%Y%m%d%H%M%SZ)" || refuse 1 "deadline=unreadable"
+  [[ $deadline =~ ^[0-9]{14}Z$ ]] || refuse 1 "deadline=malformed value=$(printf '%q' "$deadline")" "sudo reads NOTAFTER as YYYYMMDDHHMMSSZ"
+  enable_staged="" enable_file="" enable_unit=""
+  trap enable_undo EXIT
+  # The dot keeps sudo from reading the file before the rename publishes it whole.
+  enable_staged="$(mktemp -- "$sudoers_d/.vgs-nopasswd.XXXXXX")" || refuse 1 "staging=$sudoers_d"
+  printf '%s ALL=(ALL) NOTAFTER=%s NOPASSWD: ALL\n' "$account" "$deadline" >"$enable_staged" || refuse 1 "write=$enable_staged"
+  { chown root:root -- "$enable_staged" && chmod 0440 -- "$enable_staged"; } || refuse 1 "mode=$enable_staged"
+  visudo -cqf "$enable_staged" >/dev/null || refuse 1 "rule=refused" "visudo rejected the rule; nothing was published"
+  stop_unit "$unit" || refuse 1 "timer=stop-failed unit=$unit"
+  enable_unit="$unit"
+  systemd-run --quiet --collect --on-calendar="@$expires" --timer-property=AccuracySec=1s \
+    --unit="$unit" -- "$prefix/usr/bin/rm" -f -- "$file" >/dev/null || refuse 1 "timer=arm-failed unit=$unit"
+  systemctl is-active --quiet "$unit.timer" || refuse 1 "timer=inactive unit=$unit"
+  mv -fT -- "$enable_staged" "$file" || refuse 1 "publish=$file"
+  enable_staged="" enable_file="$file"
+  now="$(date +%s)" && ((now < expires)) || refuse 1 "deadline=passed" "the grant expired while it was written"
+  enable_file="" enable_unit=""
+  trap - EXIT
+  printf 'active deadline=%s\n' "$deadline"
+}
+
+root_disable() { # UID
+  local file unit
+  file="$(rule_path "$1")"
+  unit="$(timer_unit "$1")"
+  stop_unit "$unit" || refuse 1 "timer=stop-failed unit=$unit"
+  if [[ ! -e $file && ! -L $file ]]; then
+    printf 'inactive\n'
+    exit "$status_inactive"
+  fi
+  [[ ! -d $file || -L $file ]] || refuse 1 "grant=not-a-file path=$file"
+  rm -f -- "$file" || refuse 1 "remove=$file"
+  printf 'revoked\n'
+}
+
+root_main() {
+  [[ $- == *p* ]] || refuse 2 "startup=unprivileged" "the root half runs as #!/bin/bash -p"
+  sanitize "$@"
+  export LC_ALL=C
+  case "${1:-}:$#" in
+    __status:2) caller "$2"; with_lock root_status "$2" ;;
+    __enable:3)
+      caller "$2"
+      minutes_valid "$3" || bad_invocation "minutes=$(printf '%q' "$3")"
+      with_lock root_enable "$2" "$3"
+      ;;
+    __disable:2) caller "$2"; with_lock root_disable "$2" ;;
+    status:*|grant:*|revoke:*|install:*|uninstall:*)
+      refuse 1 "root=$1" "run vgsh sudo $1 as your own user; sudo asks for the password"
+      ;;
+    *) bad_invocation "argument=$(printf '%q' "${1-}") count=$#" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- user half
+
+# Drops any cached sudo credential now and again when this command ends.
+cold_sudo() {
+  sudo -k || refuse 1 "sudo=reset-failed"
+  trap 'sudo -k || say "sudo=revoke-failed" "the sudo credential may still be cached; run sudo -k"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+# The root half runs through `sudo -N`, which leaves no timestamp behind.
+needs_no_update() {
+  local help
+  help="$(LC_ALL=C sudo -h 2>&1)" || refuse 1 "sudo=help-failed"
+  grep -Eq '^usage: sudo .*\[[^]]*N[^]]*\]' <<<"$help" ||
+    refuse 1 "sudo=no-update-unsupported" "this sudo has no -N (--no-update), which the grant needs"
+}
+
+requires_installed() {
+  [[ -x $installed ]] || refuse 1 "root-half=absent path=$installed" "vgsh sudo install places it"
+}
+
+# `current` when the installed root half is this file byte for byte, else `stale`.
+root_half_state() {
+  local status=0
+  cmp -s -- "$self" "$installed" || status=$?
+  case "$status" in
+    0) echo current ;;
+    1) echo stale ;;
+    *) refuse 1 "root-half=unreadable path=$installed" ;;
+  esac
+}
+
+# Runs one root-half action through sudo -N. Sets reply to its stdout and
+# reply_status to its exit status.
+root_half() { # ACTION ARGS...
+  reply_status=0
+  reply="$(sudo -N -- "$installed" "$@" </dev/null)" || reply_status=$?
+}
+
+# Sets deadline from an `active` reply, refusing any other reply.
+active_reply() { # ACTION
+  [[ $reply_status == 0 && $reply =~ ^active\ deadline=($digit{14})Z$ ]] ||
+    refuse 1 "$1=failed exit=$reply_status reply=$(printf '%q' "$reply")"
+  deadline="${BASH_REMATCH[1]}Z"
+}
+
+# Sets state to active or inactive, and deadline when active.
+read_state() {
+  root_half __status "$uid"
+  if [[ $reply_status == "$status_inactive" && $reply == inactive ]]; then
+    state=inactive
+  else
+    active_reply status
+    state=active
+  fi
+}
+
+user_status() {
+  local half
+  if [[ ! -e $installed && ! -L $installed ]]; then
+    printf 'sudo-grant=inactive root-half=absent\n'
+    return
+  fi
+  requires_installed
+  half="$(root_half_state)"
+  needs_no_update
+  cold_sudo
+  read_state
+  case "$state" in
+    active) printf 'sudo-grant=active until=%s root-half=%s\n' "$(iso "$deadline")" "$half" ;;
+    inactive) printf 'sudo-grant=inactive root-half=%s\n' "$half" ;;
+  esac
+}
+
+user_revoke() {
+  requires_installed
+  needs_no_update
+  cold_sudo
+  root_half __disable "$uid"
+  case "$reply_status:$reply" in
+    0:revoked) printf 'ok sudo-grant=revoked\n' ;;
+    "$status_inactive:inactive") printf 'ok sudo-grant=inactive\n' ;;
+    *) refuse 1 "revoke=failed exit=$reply_status reply=$(printf '%q' "$reply")" ;;
+  esac
+}
+
+user_grant() { # [MINUTES]
+  local minutes="$default_minutes" answer=0 user
+  (($# == 0)) || minutes="$1"
+  minutes_valid "$minutes" || bad_invocation "minutes=$(printf '%q' "$minutes")"
+  minutes=$((10#$minutes))
+  requires_installed
+  [[ $(root_half_state) == current ]] ||
+    refuse 1 "root-half=stale path=$installed" "vgsh sudo install replaces it with this version"
+  needs_no_update
+  # shellcheck source=lib/tui.sh
+  source "$lib_dir/tui.sh" || refuse 1 "library=missing path=$lib_dir/tui.sh"
+  user="$(id -un)" || refuse 1 "user=unknown"
+  cold_sudo
+  read_state
+  if [[ $state == active ]]; then
+    vgs_tui_step "Revoking passwordless sudo"
+    root_half __disable "$uid"
+    [[ $reply_status == 0 && $reply == revoked ]] || refuse 1 "revoke=failed exit=$reply_status reply=$(printf '%q' "$reply")"
+    printf 'ok sudo-grant=revoked\n'
+    printf 'Sudo asks for your password again.\n'
+    return
+  fi
+  vgs_tui_warn "WARNING: for the next $minutes minutes, ANY process running as $user can run"
+  vgs_tui_warn "ANY command as root WITHOUT a password. Anything with access to your"
+  vgs_tui_warn "account gets full root for that time."
+  vgs_tui_warn "The grant ends by itself after $minutes minutes, and at the next boot if the"
+  vgs_tui_warn "machine restarts first. Run this again, or vgsh sudo revoke, to end it early."
+  # A root grant is never answered for the user, unattended or not.
+  VGS_TUI_UNATTENDED='' vgs_tui_confirm "Enable passwordless sudo for $minutes minutes? This is a significant security risk!" --default=false || answer=$?
+  case "$answer" in
+    0) ;;
+    1) refuse 1 "declined=grant" "No change made." ;;
+    *) exit "$answer" ;;
+  esac
+  root_half __enable "$uid" "$minutes"
+  active_reply enable
+  if ! sudo -n -N -- /usr/bin/true </dev/null >/dev/null 2>&1; then
+    root_half __disable "$uid"
+    refuse 1 "grant=not-effective revoke-exit=$reply_status" "sudo did not honour the rule; its configuration may not read /etc/sudoers.d"
+  fi
+  printf 'ok sudo-grant=enabled minutes=%s until=%s\n' "$minutes" "$(iso "$deadline")"
+  printf 'Passwordless sudo is on until %s. Run this again, or vgsh sudo revoke, to end it early.\n' \
+    "$(date -d "$(iso "$deadline")" '+%H:%M %Z')"
+}
+
+user_install() {
+  local template="$lib_dir/tmpfiles.d/vgs-sudo-grant.conf"
+  [[ -f $template ]] || refuse 1 "template=missing path=$template"
+  [[ $(boot_lines "$template") == "$boot_rule" ]] || refuse 1 "template=malformed path=$template"
+  printf 'vgsh sudo install places, as root:\n'
+  printf '  %s  the boot cleanup: %s\n' "$boot_file" "$boot_rule"
+  printf '  %s  the root half vgsh sudo grant runs through sudo\n' "$installed"
+  printf 'sudo asks for your password.\n'
+  trap 'sudo -k || say "sudo=revoke-failed"' EXIT
+  sudo install -m 0644 -o root -g root -T -- "$template" "$boot_file" </dev/null || refuse 1 "install=boot-cleanup path=$boot_file"
+  sudo install -m 0755 -o root -g root -T -- "$self" "$installed" </dev/null || refuse 1 "install=root-half path=$installed"
+  printf 'ok sudo-grant=installed root-half=%s boot-cleanup=%s\n' "$installed" "$boot_file"
+}
+
+user_uninstall() {
+  trap 'sudo -k || say "sudo=revoke-failed"' EXIT
+  if [[ -e $installed || -L $installed ]]; then
+    reply_status=0
+    reply="$(sudo -- "$installed" __disable "$uid" </dev/null)" || reply_status=$?
+    [[ $reply_status == 0 || $reply_status == "$status_inactive" ]] ||
+      refuse 1 "revoke=failed exit=$reply_status" "the root half stays until the grant is revoked"
+    sudo rm -f -- "$installed" </dev/null || refuse 1 "uninstall=root-half path=$installed"
+  fi
+  sudo rm -f -- "$boot_file" </dev/null || refuse 1 "uninstall=boot-cleanup path=$boot_file"
+  printf 'ok sudo-grant=uninstalled\n'
+}
+
+user_main() {
+  local verb="${1:-}"
+  (($# == 0)) || shift
+  case "$verb" in
+    status|revoke|install|uninstall) (($# == 0)) || bad_invocation "argument=$(printf '%q' "$1")" ;;
+    grant) (($# <= 1)) || bad_invocation "argument=$(printf '%q' "$2")" ;;
+    *) bad_invocation "verb=$(printf '%q' "$verb")" ;;
+  esac
+  uid="$(id -u)" || refuse 1 "user=unknown"
+  "user_$verb" "$@"
+}
+
+if ((EUID == 0)); then root_main "$@"; else user_main "$@"; fi
