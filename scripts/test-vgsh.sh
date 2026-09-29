@@ -889,6 +889,7 @@ theme_source slotty "$(doc slotty)" "$(slots_json '#nothex')"
 theme_source reserved "$(doc vgs)"
 theme_source targets "$(doc targets)"
 theme_source catalog "$(doc catalog)"
+theme_source thumbnails "$(doc thumbnails)"
 theme_source spaced "$(doc 'My Theme')"
 theme_source typo "$(doc typo '{ "palette": { "acent": "#ffffff" } }')"
 theme_source bare ""
@@ -917,6 +918,7 @@ a document the judge refuses|typo.git|package=$src/typo.git reason=unknown-token
 the reserved name vgs|reserved.git|package=$src/reserved.git reason=reserved-name name=vgs
 the targets directory's name|targets.git|package=$src/targets.git reason=reserved-name name=targets
 the catalog directory's name|catalog.git|package=$src/catalog.git reason=reserved-name name=catalog
+the thumbnails directory's name|thumbnails.git|package=$src/thumbnails.git reason=reserved-name name=thumbnails
 a document name that is no directory name|spaced.git|package=$src/spaced.git reason=package-name got="My Theme"
 a source without theme.json|bare.git|package=$src/bare.git reason=absent file=theme.json
 an unreachable source|absent.git|clone=$src/absent.git
@@ -985,6 +987,7 @@ tinst "theme update refuses an unknown name" "$cfg" "$rt_empty" 1 "" "vgsh: refu
 tinst "theme update refuses a name that is no directory name" "$cfg" "$rt_empty" 1 "" 'vgsh: refused: theme="../moss" reason=malformed-name' theme update ../moss
 tinst "theme update refuses the targets directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=targets reason=reserved-name" theme update targets
 tinst "theme update refuses the catalog directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=catalog reason=reserved-name" theme update catalog
+tinst "theme update refuses the thumbnails directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: theme=thumbnails reason=reserved-name" theme update thumbnails
 # The must-fail control: a judge copy that reserves only targets takes the
 # catalog for an unknown package.
 judge_control catalog-unreserved 'if (logic.RESERVED_DIRECTORIES.includes(name)) refuse(' 'if (name === TARGETS) refuse('

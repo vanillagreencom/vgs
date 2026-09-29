@@ -571,10 +571,11 @@ function isPackageName(name) {
     return typeof name === "string" && PACKAGE_NAME_PATTERN.test(name);
 }
 
-// The directories of a themes directory that hold no package: the targets
-// and the catalog. A walk of a themes directory skips them, so no package
-// of any source takes either name.
-var RESERVED_DIRECTORIES = ["targets", "catalog"];
+// The directories of a themes directory or the catalog that hold no
+// package: the targets, the catalog and generated thumbnails. A walk of a
+// themes directory skips them, so no package of any source takes these
+// names.
+var RESERVED_DIRECTORIES = ["targets", "catalog", "thumbnails"];
 
 var TERMINAL_SCHEMA_VERSION = 1;
 var TERMINAL_SLOT_PREFIX = "color";

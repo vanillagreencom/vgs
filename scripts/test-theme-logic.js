@@ -334,6 +334,7 @@ const CATALOG_REFUSED = [
     ["reserved vgs", catalog([entryWith("name", "vgs")]), "reserved-name", "entries.0.name", "name=vgs"],
     ["reserved targets", catalog([entryWith("name", "targets")]), "reserved-name", "entries.0.name", "name=targets"],
     ["reserved catalog", catalog([entryWith("name", "catalog")]), "reserved-name", "entries.0.name", "name=catalog"],
+    ["reserved thumbnails", catalog([entryWith("name", "thumbnails")]), "reserved-name", "entries.0.name", "name=thumbnails"],
     ["duplicate name", catalog([CATALOG_ENTRY, entryWith("mode", "light")]), "duplicate-name", "entries.1.name", "name=probe"],
     ["unknown mode", catalog([entryWith("mode", "dim")]), "catalog-mode", "entries.0.mode"],
     ["thumbnail leaving the catalog", catalog([entryWith("thumbnail", "../probe.jpg")]), "catalog-thumbnail", "entries.0.thumbnail"],
@@ -457,7 +458,7 @@ function verify(judge) {
         assert.equal(result.token, token, JSON.stringify(files));
     }
 
-    for (const name of ["targets", "catalog"]) {
+    for (const name of ["targets", "catalog", "thumbnails"]) {
         const result = judge.acceptPackage(TOKENS, { directoryName: name, themeJson: JSON.stringify({ schemaVersion: 1, name, tokens: {} }), shipped: true });
         assert.equal(result.ok, false, name);
         assert.equal(result.reason, "reserved-name", name);

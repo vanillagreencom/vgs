@@ -4,7 +4,7 @@
     {
       "name": "nord",
       "mode": "dark",
-      "thumbnail": null,
+      "thumbnail": "thumbnails/nord.jpg",
       "palette": {
         "background": "#2e3440",
         "foreground": "#d8dee9",

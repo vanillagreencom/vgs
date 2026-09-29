@@ -55,6 +55,17 @@ function entryKind(name, stat) {
     return stat.isFile() ? "image" : "not-a-file";
 }
 
+// The first image among ENTRIES, as readdir's Dirent objects or any object
+// with a `name`, `isFile()` and `isSymbolicLink()`. Archive readers use the
+// same rule as a package directory without copying it.
+function firstImageName(entries) {
+    const names = entries
+        .filter(entry => entryKind(entry.name, entry) === "image")
+        .map(entry => entry.name)
+        .sort();
+    return names.length === 0 ? null : names[0];
+}
+
 // The lstat of FILE, or null when it or a directory above it is absent;
 // KEY leads the refusal for any other failure.
 function lstatOrNull(file, key) {
@@ -238,4 +249,4 @@ function land(stateDir, after, before, key) {
     else replaceFile(state, doc + "\n", key);
 }
 
-module.exports = { DIR, STATE_FILE, LINK, isOutputName, images, imagePath, locate, stamped, read, choose, land };
+module.exports = { DIR, STATE_FILE, LINK, isImageName, entryKind, firstImageName, isOutputName, images, imagePath, locate, stamped, read, choose, land };

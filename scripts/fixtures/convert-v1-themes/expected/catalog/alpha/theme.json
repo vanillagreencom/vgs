@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "alpha",
+  "tokens": {
+    "scheme": {
+      "mode": "dark"
+    },
+    "palette": {
+      "background": "#101010",
+      "foreground": "#eeeeee",
+      "accent": "#123456",
+      "success": "#001100",
+      "warning": "#111100",
+      "danger": "#110000",
+      "info": "#000011"
+    }
+  }
+}

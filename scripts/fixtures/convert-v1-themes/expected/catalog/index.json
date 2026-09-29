@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "name": "alpha",
+      "mode": "dark",
+      "thumbnail": "thumbnails/alpha.jpg",
+      "palette": {
+        "background": "#101010",
+        "foreground": "#eeeeee",
+        "accent": "#123456",
+        "success": "#001100",
+        "warning": "#111100",
+        "danger": "#110000",
+        "info": "#000011"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-alpha-r1.tar.gz",
+        "size": 437,
+        "sha256": "d62835ad81369b74c57df61d143af28918e757531c1f2f1d362f9bd8ba6d3191"
+      }
+    },
+    {
+      "name": "beta",
+      "mode": "light",
+      "thumbnail": "thumbnails/beta.jpg",
+      "palette": {
+        "background": "#fafafa",
+        "foreground": "#111111",
+        "accent": "#abcdef",
+        "success": "#00aa00",
+        "warning": "#aaaa00",
+        "danger": "#aa0000",
+        "info": "#0000aa"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-beta-r1.tar.gz",
+        "size": 404,
+        "sha256": "e24f434db290e22c0a7ad1c3f4995a5b6c56ee7f54a12776769a0bcfabca0d23"
+      }
+    }
+  ]
+}

@@ -1,0 +1,475 @@
+#!/usr/bin/env node
+// Convert v1 theme packages into the judged v2 catalog.
+//
+// Usage:
+//   tools/convert-v1-themes <v1-tree> [--theme NAME ...]
+//       [--catalog-dir themes/catalog] [--asset-cache DIR]
+//       [--asset-base URL] [--allow-file-base]
+//       [--thumbnail-budget BYTES]
+//
+// The v1 tree is read only. Output packages are written below the catalog
+// directory, with thumbnails in catalog/thumbnails/. Archives download once
+// into the content-addressed cache `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/theme-assets/<sha256>.tar.gz` unless --asset-cache names another directory.
+// --asset-base overrides v1 catalog.json's source.baseUrl. HTTPS is the only
+// normal transport; file:// is accepted only with --allow-file-base for tests.
+// Exit 0: converted. Exit 1: refused input or output. Exit 2: unreadable or
+// I/O failure.
+"use strict";
+
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const { fileURLToPath } = require("node:url");
+const zlib = require("node:zlib");
+
+const repo = path.join(__dirname, "..");
+const { load } = require(path.join(repo, "bin", "lib", "qml-library.js"));
+const logic = load(path.join(repo, "shell", "Commons", "ThemeLogic.js"));
+const tokens = load(path.join(repo, "shell", "Commons", "Tokens.js")).TOKENS;
+const { Refusal, replaceFile } = require(path.join(repo, "bin", "lib", "judge-files.js"));
+const backgrounds = require(path.join(repo, "bin", "lib", "theme-backgrounds.js"));
+
+const THUMBNAIL_WIDTH = 480;
+const DEFAULT_THUMBNAIL_BUDGET = 120000;
+const EXIT_REFUSED = 1;
+const EXIT_IO = 2;
+const REQUIRED_COLORS = ["accent", "foreground", "background", ...Array.from({ length: 16 }, (_, index) => `color${index}`)];
+const PALETTE_FROM_COLORS = [
+    ["background", "background"],
+    ["foreground", "foreground"],
+    ["accent", "accent"],
+    ["success", "color2"],
+    ["warning", "color3"],
+    ["danger", "color1"],
+    ["info", "color4"]
+];
+const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
+const REPO_HOST = "https://github.com/";
+
+class ConvertExit extends Error {
+    constructor(status, line) {
+        super(line);
+        this.status = status;
+        this.line = line;
+    }
+}
+
+function message(kind, detail) {
+    return `convert-v1-themes: ${kind}: ${detail}`;
+}
+
+function refuse(theme, key, detail) {
+    throw new ConvertExit(EXIT_REFUSED, message("refused", `theme=${theme} key=${key}${detail === "" ? "" : " " + detail}`));
+}
+
+function refuseGlobal(key, detail) {
+    throw new ConvertExit(EXIT_REFUSED, message("refused", `${key}${detail === "" ? "" : " " + detail}`));
+}
+
+function unreadable(file, cause) {
+    throw new ConvertExit(EXIT_IO, message("unreadable", `path=${file} error=${cause}`));
+}
+
+function usage(detail) {
+    throw new ConvertExit(EXIT_IO, message("refused", detail));
+}
+
+function readFile(file, encoding = "utf8") {
+    try {
+        return fs.readFileSync(file, encoding);
+    } catch (e) {
+        unreadable(file, e.code || e.message);
+    }
+}
+
+function readJson(file) {
+    const text = readFile(file, "utf8");
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        unreadable(file, "unparseable");
+    }
+}
+
+function writeJson(value) {
+    return JSON.stringify(value, null, 2) + "\n";
+}
+
+function parseArgs(argv) {
+    const args = {
+        v1Tree: null,
+        themes: [],
+        catalogDir: path.join(repo, "themes", "catalog"),
+        assetCache: null,
+        assetBase: null,
+        allowFileBase: false,
+        thumbnailBudget: DEFAULT_THUMBNAIL_BUDGET
+    };
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        const value = () => {
+            if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) usage(`argument=${arg} reason=missing-value`);
+            i += 1;
+            return argv[i];
+        };
+        if (arg === "--theme") args.themes.push(value());
+        else if (arg === "--catalog-dir") args.catalogDir = path.resolve(value());
+        else if (arg === "--asset-cache") args.assetCache = path.resolve(value());
+        else if (arg === "--asset-base") args.assetBase = value().replace(/\/+$/, "");
+        else if (arg === "--allow-file-base") args.allowFileBase = true;
+        else if (arg === "--thumbnail-budget") {
+            const raw = value();
+            const budget = Number(raw);
+            if (!Number.isSafeInteger(budget) || budget <= 0) usage(`thumbnail-budget=${raw} reason=invalid`);
+            args.thumbnailBudget = budget;
+        } else if (arg === "--help") {
+            process.stdout.write(readFile(__filename, "utf8").split("\n").slice(0, 16).join("\n") + "\n");
+            process.exit(0);
+        } else if (arg.startsWith("--")) usage(`argument=${arg}`);
+        else if (args.v1Tree === null) args.v1Tree = path.resolve(arg);
+        else usage(`argument=${arg}`);
+    }
+    if (args.v1Tree === null) usage("v1-tree=missing");
+    args.assetCache = args.assetCache || defaultCacheDir();
+    return args;
+}
+
+function defaultCacheDir() {
+    const base = process.env.XDG_CACHE_HOME || path.join(process.env.HOME || os.homedir(), ".cache");
+    return path.join(base, "vgs", "theme-assets");
+}
+
+function parseTomlColors(theme, file, required, colorKeysOnly) {
+    const out = {};
+    const lines = readFile(file, "utf8").split(/\r?\n/);
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (/^\s*(#.*)?$/.test(line)) continue;
+        const match = /^([A-Za-z0-9_]+)\s*=\s*"(#[0-9A-Fa-f]{6})"\s*$/.exec(line);
+        if (match === null) refuse(theme, `${path.basename(file)}:${index + 1}`, `line=${JSON.stringify(line)}`);
+        const key = match[1];
+        if (colorKeysOnly && !/^color([0-9]|1[0-5])$/.test(key)) refuse(theme, `${path.basename(file)}.${key}`, "reason=unknown-key");
+        if (Object.hasOwn(out, key)) refuse(theme, `${path.basename(file)}.${key}`, "reason=duplicate");
+        out[key] = match[2].toLowerCase();
+    }
+    for (const key of required) {
+        if (!Object.hasOwn(out, key)) refuse(theme, `${path.basename(file)}.${key}`, "reason=missing");
+    }
+    return out;
+}
+
+function modeOptions() {
+    return logic.nodeAt(tokens, "scheme.mode").options;
+}
+
+function repoUrl(repoName) {
+    if (typeof repoName !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoName)) refuseGlobal("catalog.source.repo", `value=${JSON.stringify(repoName)}`);
+    return REPO_HOST + repoName;
+}
+
+function pinFromV1(theme, catalog, lock) {
+    if (!catalog || catalog.version !== 2 || !catalog.source || !Array.isArray(catalog.themes)) refuseGlobal("catalog.json", "reason=malformed");
+    if (!lock || lock.version !== 2 || !lock.themes) refuseGlobal("asset-lock.json", "reason=malformed");
+    const catalogTheme = catalog.themes.find(entry => entry && entry.name === theme);
+    if (catalogTheme === undefined || catalogTheme.assets === undefined) refuse(theme, "catalog.json", "reason=missing-pin");
+    const locked = lock.themes[theme];
+    if (locked === undefined) refuse(theme, "asset-lock.json", "reason=missing-pin");
+    const keys = ["release", "archive", "rev", "size", "sha256"];
+    for (const key of keys) {
+        if (catalogTheme.assets[key] !== locked[key]) refuse(theme, `pin.${key}`, `catalog=${JSON.stringify(catalogTheme.assets[key])} lock=${JSON.stringify(locked[key])}`);
+    }
+    if (catalog.source.repo !== lock.repo) refuse(theme, "pin.repo", `catalog=${JSON.stringify(catalog.source.repo)} lock=${JSON.stringify(lock.repo)}`);
+    return {
+        repo: repoUrl(lock.repo),
+        release: locked.release,
+        archive: locked.archive,
+        size: locked.size,
+        sha256: locked.sha256
+    };
+}
+
+function convertTheme(theme, v1ThemesDir, catalog, lock) {
+    if (!logic.isPackageName(theme) || theme === logic.DEFAULT_NAME || logic.RESERVED_DIRECTORIES.includes(theme)) refuse(theme, "name", "reason=reserved-or-malformed");
+    const dir = path.join(v1ThemesDir, theme);
+    const colors = parseTomlColors(theme, path.join(dir, "colors.toml"), REQUIRED_COLORS, false);
+    const terminalOverrides = fs.existsSync(path.join(dir, "terminal-colors.toml"))
+        ? parseTomlColors(theme, path.join(dir, "terminal-colors.toml"), [], true)
+        : {};
+    const themeJson = readJson(path.join(dir, "theme.json"));
+    if (themeJson.name !== theme) refuse(theme, "theme.json.name", `value=${JSON.stringify(themeJson.name)}`);
+    if (modeOptions().indexOf(themeJson.mode) === -1) refuse(theme, "theme.json.mode", `value=${JSON.stringify(themeJson.mode)}`);
+    const palette = {};
+    for (const [target, source] of PALETTE_FROM_COLORS) palette[target] = colors[source];
+    const slots = {};
+    for (const slot of TERMINAL_SLOTS) slots[slot] = terminalOverrides[slot] || colors[slot];
+    const shell = {
+        schemaVersion: 1,
+        name: theme,
+        tokens: {
+            scheme: { mode: themeJson.mode },
+            palette
+        }
+    };
+    const terminal = { schemaVersion: 1, slots };
+    const imagery = pinFromV1(theme, catalog, lock);
+    const entry = { name: theme, mode: themeJson.mode, thumbnail: `thumbnails/${theme}.jpg`, palette, imagery };
+    return { theme, shell, terminal, entry };
+}
+
+function verifiedCachePath(pin, args) {
+    return path.join(args.assetCache, `${pin.sha256}.tar.gz`);
+}
+
+function sha256File(file) {
+    const hash = crypto.createHash("sha256");
+    hash.update(readFile(file, null));
+    return hash.digest("hex");
+}
+
+function verifyCached(file, pin) {
+    let stat;
+    try {
+        stat = fs.statSync(file);
+    } catch (e) {
+        if (e.code === "ENOENT") return false;
+        unreadable(file, e.code || e.message);
+    }
+    if (!stat.isFile()) refuseGlobal("asset-cache", `path=${file} reason=not-file`);
+    if (stat.size !== pin.size) refuseGlobal("asset-size", `path=${file} got=${stat.size} want=${pin.size}`);
+    const actual = sha256File(file);
+    if (actual !== pin.sha256) refuseGlobal("asset-sha256", `path=${file} got=${actual} want=${pin.sha256}`);
+    return true;
+}
+
+function assetUrl(pin, args, catalog) {
+    const base = args.assetBase || catalog.source.baseUrl;
+    if (typeof base !== "string" || base === "") refuseGlobal("asset-base", "reason=missing");
+    const url = `${base.replace(/\/+$/, "")}/${pin.release}/${pin.archive}`;
+    if (url.startsWith("file://")) {
+        if (!args.allowFileBase) refuseGlobal("asset-base", "reason=file-url-without-flag");
+        return url;
+    }
+    if (!url.startsWith("https://")) refuseGlobal("asset-base", `reason=not-https url=${JSON.stringify(url)}`);
+    return url;
+}
+
+function copyFileUrl(url, target, expectedSize) {
+    const source = fileURLToPath(url);
+    const stat = fs.statSync(source);
+    if (!stat.isFile()) refuseGlobal("asset-url", `path=${source} reason=not-file`);
+    if (stat.size !== expectedSize) refuseGlobal("asset-size", `url=${url} got=${stat.size} want=${expectedSize}`);
+    fs.copyFileSync(source, target);
+}
+
+function downloadUrl(url, target) {
+    const result = spawnSync(process.execPath, ["-e", `
+const fs = require('node:fs');
+const out = fs.createWriteStream(${JSON.stringify(target)}, { flags: 'wx' });
+function get(url, redirects) {
+  const client = require(url.startsWith('https://') ? 'node:https' : 'node:http');
+  const req = client.get(url, res => {
+    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+      res.resume();
+      get(new URL(res.headers.location, url).toString(), redirects - 1);
+      return;
+    }
+    if (res.statusCode !== 200) { console.error('status=' + res.statusCode); process.exit(3); }
+    res.pipe(out);
+    out.on('finish', () => out.close(() => process.exit(0)));
+  });
+  req.on('error', err => { console.error(err.code || err.message); process.exit(2); });
+}
+out.on('error', err => { console.error(err.code || err.message); process.exit(2); });
+get(${JSON.stringify(url)}, 5);
+`], { encoding: "utf8" });
+    if (result.status !== 0) refuseGlobal("asset-download", `url=${url} error=${JSON.stringify((result.stderr || result.stdout).trim())}`);
+}
+
+function ensureArchive(pin, args, catalog) {
+    const file = verifiedCachePath(pin, args);
+    if (verifyCached(file, pin)) return file;
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+    } catch (e) {
+        unreadable(path.dirname(file), e.code || e.message);
+    }
+    const tmp = `${file}.download-${process.pid}`;
+    try { fs.rmSync(tmp, { force: true }); } catch (_) {}
+    const url = assetUrl(pin, args, catalog);
+    try {
+        if (url.startsWith("file://")) copyFileUrl(url, tmp, pin.size);
+        else downloadUrl(url, tmp);
+        const stat = fs.statSync(tmp);
+        if (stat.size !== pin.size) refuseGlobal("asset-size", `url=${url} got=${stat.size} want=${pin.size}`);
+        const actual = sha256File(tmp);
+        if (actual !== pin.sha256) refuseGlobal("asset-sha256", `url=${url} got=${actual} want=${pin.sha256}`);
+        fs.renameSync(tmp, file);
+    } catch (e) {
+        try { fs.rmSync(tmp, { force: true }); } catch (_) {}
+        if (e instanceof Refusal || e instanceof ConvertExit) throw e;
+        unreadable(file, e.code || e.message);
+    }
+    return file;
+}
+
+function tarString(buffer, start, length) {
+    return buffer.subarray(start, start + length).toString("utf8").replace(/\0.*$/, "");
+}
+
+function tarSize(buffer, start) {
+    const raw = tarString(buffer, start, 12).trim();
+    return raw === "" ? 0 : parseInt(raw, 8);
+}
+
+function safeTarName(theme, name) {
+    let trimmed = name.replace(/\/+$/, "");
+    while (trimmed.startsWith("./")) trimmed = trimmed.slice(2);
+    const parts = trimmed.split("/");
+    if (name.startsWith("/") || parts.some(part => part === "" || part === "." || part === "..")) refuse(theme, "archive.member", `name=${JSON.stringify(name)}`);
+    return trimmed;
+}
+
+function readTarEntries(theme, archive) {
+    let data;
+    try {
+        data = zlib.gunzipSync(readFile(archive, null));
+    } catch (e) {
+        refuse(theme, "archive", `reason=unreadable-gzip error=${e.code || e.message}`);
+    }
+    const entries = [];
+    for (let offset = 0; offset + 512 <= data.length;) {
+        const header = data.subarray(offset, offset + 512);
+        if (header.every(byte => byte === 0)) break;
+        const namePart = tarString(header, 0, 100);
+        const prefix = tarString(header, 345, 155);
+        const rawName = prefix === "" ? namePart : `${prefix}/${namePart}`;
+        const name = safeTarName(theme, rawName);
+        const size = tarSize(header, 124);
+        const type = tarString(header, 156, 1) || "0";
+        const body = offset + 512;
+        if (type === "2" && (name === backgrounds.DIR || name.startsWith(`${backgrounds.DIR}/`))) refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=symlink`);
+        if ((type === "0" || type === "\0") && name.startsWith(`${backgrounds.DIR}/`)) {
+            const fileName = name.slice(backgrounds.DIR.length + 1);
+            entries.push({ name: fileName, data: data.subarray(body, body + size), isFile: () => true, isSymbolicLink: () => false });
+        }
+        offset = body + Math.ceil(size / 512) * 512;
+    }
+    return entries;
+}
+
+function scratchRoot() {
+    const root = path.join(repo, "tmp", `convert-v1-themes-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(root, { recursive: true });
+    return root;
+}
+
+function makeThumbnail(theme, archive, scratch, budget) {
+    const entries = readTarEntries(theme, archive);
+    const first = backgrounds.firstImageName(entries);
+    if (first === null) refuse(theme, "archive.backgrounds", "reason=no-image");
+    const entry = entries.find(candidate => candidate.name === first);
+    const ext = path.extname(first).toLowerCase() || ".jpg";
+    const input = path.join(scratch, `${theme}-input${ext}`);
+    const output = path.join(scratch, `${theme}.jpg`);
+    fs.writeFileSync(input, entry.data);
+    const proc = spawnSync("magick", [input, "-auto-orient", "-resize", `${THUMBNAIL_WIDTH}x`, "-strip", "-sampling-factor", "4:2:0", "-quality", "82", `jpeg:${output}`], { encoding: "utf8" });
+    if (proc.status !== 0) refuse(theme, "thumbnail", `reason=magick status=${proc.status} stderr=${JSON.stringify(proc.stderr.trim())}`);
+    const bytes = fs.statSync(output).size;
+    if (bytes > budget) refuse(theme, "thumbnail", `reason=over-budget bytes=${bytes} budget=${budget}`);
+    return { path: output, bytes, source: first };
+}
+
+function readExistingIndex(catalogDir) {
+    const file = path.join(catalogDir, "index.json");
+    if (!fs.existsSync(file)) return { schemaVersion: 1, entries: [] };
+    return readJson(file);
+}
+
+function buildIndex(existing, converted) {
+    const byName = new Map();
+    for (const entry of existing.entries || []) byName.set(entry.name, entry);
+    for (const item of converted) byName.set(item.theme, item.entry);
+    return { schemaVersion: 1, entries: Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+function readPackageFilesForIndex(catalogDir, convertedByName, entry) {
+    const converted = convertedByName.get(entry.name);
+    if (converted !== undefined) return { themeJson: writeJson(converted.shell), terminalJson: writeJson(converted.terminal) };
+    const dir = path.join(catalogDir, entry.name);
+    return {
+        themeJson: readFile(path.join(dir, "theme.json"), "utf8"),
+        terminalJson: fs.existsSync(path.join(dir, "terminal.json")) ? readFile(path.join(dir, "terminal.json"), "utf8") : undefined
+    };
+}
+
+function judgeOutput(catalogDir, finalIndex, converted) {
+    const indexText = writeJson(finalIndex);
+    const judgedIndex = logic.acceptCatalogIndex(tokens, indexText);
+    if (!judgedIndex.ok) refuseGlobal("index", logic.refusalLine(judgedIndex));
+    const convertedByName = new Map(converted.map(item => [item.theme, item]));
+    for (const entry of judgedIndex.entries) {
+        const verdict = logic.acceptCatalogEntry(tokens, entry, readPackageFilesForIndex(catalogDir, convertedByName, entry));
+        if (!verdict.ok) refuseGlobal(`entry=${entry.name}`, logic.refusalLine(verdict));
+    }
+}
+
+function land(catalogDir, finalIndex, converted, thumbnails) {
+    for (const item of converted) {
+        const dir = path.join(catalogDir, item.theme);
+        replaceFile(path.join(dir, "theme.json"), writeJson(item.shell), "convert-v1-themes");
+        replaceFile(path.join(dir, "terminal.json"), writeJson(item.terminal), "convert-v1-themes");
+    }
+    for (const [theme, thumbnail] of thumbnails) {
+        replaceFile(path.join(catalogDir, "thumbnails", `${theme}.jpg`), readFile(thumbnail.path, null), "convert-v1-themes");
+    }
+    replaceFile(path.join(catalogDir, "index.json"), writeJson(finalIndex), "convert-v1-themes");
+}
+
+function main() {
+    const args = parseArgs(process.argv.slice(2));
+    const v1ThemesDir = path.join(args.v1Tree, "themes");
+    const catalog = readJson(path.join(v1ThemesDir, "catalog.json"));
+    const lock = readJson(path.join(v1ThemesDir, "asset-lock.json"));
+    const themes = args.themes.length === 0 ? catalog.themes.map(entry => entry.name).sort() : args.themes;
+    const seen = new Set();
+    for (const theme of themes) {
+        if (seen.has(theme)) refuse(theme, "selection", "reason=duplicate");
+        seen.add(theme);
+    }
+    const converted = themes.map(theme => convertTheme(theme, v1ThemesDir, catalog, lock));
+    const scratch = scratchRoot();
+    const thumbnails = new Map();
+    try {
+        for (const item of converted) {
+            const archive = ensureArchive(item.entry.imagery, args, catalog);
+            thumbnails.set(item.theme, makeThumbnail(item.theme, archive, scratch, args.thumbnailBudget));
+        }
+        const existing = readExistingIndex(args.catalogDir);
+        const finalIndex = buildIndex(existing, converted);
+        judgeOutput(args.catalogDir, finalIndex, converted);
+        land(args.catalogDir, finalIndex, converted, thumbnails);
+        for (const item of converted) {
+            const thumb = thumbnails.get(item.theme);
+            console.log(`ok theme=${item.theme} thumbnail=${item.entry.thumbnail} bytes=${thumb.bytes} source=${thumb.source} budget=${args.thumbnailBudget}`);
+        }
+        console.log("convert-v1-themes: ok");
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+}
+
+try {
+    main();
+} catch (e) {
+    if (e instanceof ConvertExit) {
+        console.error(e.line);
+        process.exit(e.status);
+    }
+    if (e instanceof Refusal) {
+        console.error(message("unreadable", e.first));
+        process.exit(EXIT_IO);
+    }
+    throw e;
+}

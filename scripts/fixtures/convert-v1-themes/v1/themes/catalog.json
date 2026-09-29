@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "source": {
+    "type": "github-release",
+    "repo": "vanillagreencom/vgs-themes",
+    "ref": "fixture",
+    "baseUrl": "https://example.invalid/releases/download"
+  },
+  "count": 2,
+  "totalSize": 841,
+  "themes": [
+    {
+      "name": "alpha",
+      "mode": "dark",
+      "pair": "",
+      "source": "curated",
+      "size": 437,
+      "assets": {
+        "release": "themes-v1",
+        "archive": "vgs-theme-alpha-r1.tar.gz",
+        "rev": 1,
+        "size": 437,
+        "sha256": "d62835ad81369b74c57df61d143af28918e757531c1f2f1d362f9bd8ba6d3191"
+      }
+    },
+    {
+      "name": "beta",
+      "mode": "light",
+      "pair": "",
+      "source": "curated",
+      "size": 404,
+      "assets": {
+        "release": "themes-v1",
+        "archive": "vgs-theme-beta-r1.tar.gz",
+        "rev": 1,
+        "size": 404,
+        "sha256": "e24f434db290e22c0a7ad1c3f4995a5b6c56ee7f54a12776769a0bcfabca0d23"
+      }
+    }
+  ]
+}
