@@ -9,19 +9,35 @@ set -euo pipefail
 note_state="$home/.local/state/vgs/notifications/state.json"
 note_images="$home/.local/state/vgs/notifications/images"
 notes() { ipc vgs.notifications invoke "$1" "${2:-}"; }
-note_status() { notes status | python3 -c 'import json,sys; v=json.load(sys.stdin)
+note_status() { notes status | py_reply 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v[k]
 print(json.dumps(v))' "$1"; }
 read_notes() { ipc smoke readInstance service vgs.notifications "$1"; }
 # The rows the service holds, as [summary, origin, leaving] triples, newest first.
-note_rows() { ipc smoke modelRows vgs.notifications rows summary,origin,leaving | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[2] == ""]))'; }
-row_summaries() { note_rows | python3 -c 'import json,sys; print(json.dumps([r[0] for r in json.load(sys.stdin) if r[1] == sys.argv[1]]))' "$1"; }
-state_at() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))
-for k in sys.argv[2].split("."): v=v[int(k)] if isinstance(v, list) else v[k]
-print(json.dumps(v))' "$note_state" "$1"; }
-history_summaries() { python3 -c 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["history"]]))' "$note_state"; }
-history_count() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["history"]))' "$note_state"; }
-live_summaries() { python3 -c 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["live"]]))' "$note_state"; }
+note_rows() { ipc smoke modelRows vgs.notifications rows summary,origin,leaving | py_reply 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[2] == ""]))'; }
+row_summaries() { note_rows | py_reply 'import json,sys; print(json.dumps([r[0] for r in json.load(sys.stdin) if r[1] == sys.argv[1]]))' "$1"; }
+# The store writes its state file whole through FileView's atomicWrites, a
+# temporary file renamed over it, so a file that exists is complete.
+# note_state_py PROGRAM [ARG...]: python3 -c PROGRAM with the file's path
+# as sys.argv[1], then ARG...; `absent` before the store's first save.
+note_state_py() { # PROGRAM [ARG...]
+  if [[ -e $note_state ]]; then python3 -c "$1" "$note_state" "${@:2}"; else echo absent; fi
+}
+# The stored value at a dotted path such as history.0.summary; `missing`
+# when a key or an index on the path is not there, as in an emptied
+# history.
+state_at() { note_state_py 'import json,sys; v=json.load(open(sys.argv[1]))
+for k in sys.argv[2].split("."):
+    if isinstance(v, list):
+        if not -len(v) <= int(k) < len(v): print("missing"); sys.exit()
+        v = v[int(k)]
+    else:
+        if k not in v: print("missing"); sys.exit()
+        v = v[k]
+print(json.dumps(v))' "$1"; }
+history_summaries() { note_state_py 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["history"]]))'; }
+history_count() { note_state_py 'import json,sys; print(len(json.load(open(sys.argv[1]))["history"]))'; }
+live_summaries() { note_state_py 'import json,sys; print(json.dumps([e["summary"] for e in json.load(open(sys.argv[1]))["live"]]))'; }
 # One notification on the sandbox bus: APP REPLACES SUMMARY BODY ACTIONS HINTS
 # TIMEOUT, the last three in gdbus's GVariant text; prints its id.
 notify() {
@@ -31,6 +47,25 @@ notify() {
 close_note() { "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.CloseNotification "$1" >/dev/null; }
 lent_notes() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.notifications")], [t for t in d["ipcTargets"] if t == "vgs.notifications"], [s for s in d["subscribers"] if s == "vgs.notifications"], [l["plugin"] for l in d["layers"] if l["plugin"] == "vgs.notifications"]]))'; }
 note_shortcuts() { hypr globalshortcuts | python3 -c 'import sys; print(sum(1 for line in sys.stdin if "vgs.notifications:inbox" in line))'; }
+
+# Controls for the state readers, pointed at planted files: with no file,
+# as before the store's first save, each answers absent; a path past the
+# end of a list, as in an emptied history, or through a key the file
+# lacks answers missing.
+with_state() { # FILE CMD...: CMD with the state readers reading FILE
+  local note_state="$1"
+  shift
+  "$@"
+}
+state_readers=("live_summaries" "history_summaries" "history_count" "state_at dnd" "stored_clock k" "stored_image k")
+for reader in "${state_readers[@]}"; do
+  read -r -a reader_words <<<"$reader"
+  expect "with no state file $reader answers absent" absent with_state "$sandbox/no-notifications-state.json" "${reader_words[@]}"
+done
+printf '%s\n' '{"dnd": false, "live": [], "history": []}' >"$sandbox/empty-notifications-state.json"
+expect "state_at past the end of an empty history answers missing" missing with_state "$sandbox/empty-notifications-state.json" state_at history.0.summary
+expect "state_at through a key the file lacks answers missing" missing with_state "$sandbox/empty-notifications-state.json" state_at readBefore
+expect "state_at reads a value the file holds" false with_state "$sandbox/empty-notifications-state.json" state_at dnd
 
 expect "the notifications start disabled in the sandbox" False plugin_enabled vgs.notifications
 # A synthetic Slack under the sandbox's configuration, in place before the
@@ -126,8 +161,8 @@ edge_shaders_ok() { ipc smoke layerShaders vgs.notifications | python3 -c 'impor
 edges = [(u, ok) for _, u, ok in json.load(sys.stdin) if u.endswith("/edgelight.frag.qsb")]
 print(len(edges) >= 1 and all(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", u) for u, _ in edges) and any(ok for _, ok in edges))'; }
 render expect_poll "the edge light's shader compiled from the published revision" True edge_shaders_ok
-key_of() { ipc smoke modelRows vgs.notifications rows key,summary | python3 -c 'import json,sys; print(next((k for k, s in json.load(sys.stdin) if s == sys.argv[1]), "none"))' "$1"; }
-clock_of() { read_notes clocks | python3 -c 'import json,sys; c=json.load(sys.stdin).get(sys.argv[1]); print("none" if c is None else ("running" if c["since"] is not None else "paused") + " " + str(c["remaining"]))' "$1"; }
+key_of() { ipc smoke modelRows vgs.notifications rows key,summary | py_reply 'import json,sys; print(next((k for k, s in json.load(sys.stdin) if s == sys.argv[1]), "none"))' "$1"; }
+clock_of() { read_notes clocks | py_reply 'import json,sys; c=json.load(sys.stdin).get(sys.argv[1]); print("none" if c is None else ("running" if c["since"] is not None else "paused") + " " + str(c["remaining"]))' "$1"; }
 # A card's centre on the screen: its rectangle in its window plus the
 # window's origin from the compositor.
 card_centre() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; y0=int(sys.argv[2])
@@ -140,9 +175,9 @@ pill_centre() { ipc smoke layerItems vgs.notifications PillButton text,visible |
 for screen, (x, y, w, h), v in json.load(sys.stdin):
     if v["text"] == sys.argv[1]: print(x + w // 2, y0 + y + h // 2); break' "$1" "$bar_reserved"; }
 shown_pills() { ipc smoke layerItems vgs.notifications CardSlot summary,actions | python3 -c 'import json,sys; print(json.dumps(next(([a["label"] for a in v["actions"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
-has_row() { row_summaries "$1" | python3 -c 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$2"; }
+has_row() { row_summaries "$1" | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$2"; }
 in_history() { history_summaries | python3 -c 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$1"; }
-panel_count() { row_summaries panel | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+panel_count() { row_summaries panel | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
 clock_state() { clock_of "$(key_of "$1")" | cut -d' ' -f1; }
 test_file() { if [[ -f $1 ]]; then echo True; else echo False; fi; }
 # wait_for LABEL WANT SECONDS CMD...: expect_poll with its own bound, for a
@@ -160,14 +195,17 @@ wait_for() {
   done
   fail "$label: got $got want $want"
 }
-toast_centred() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; x,y,w,h=json.load(sys.stdin)[0][1]; print(abs(x + w / 2 - int(sys.argv[1]) / 2) <= 1 and 0 < y < 40)' "$mon_w"; }
+# Whether the first card is centred at the top; `no-card` before it is laid out.
+toast_centred() { ipc smoke layerItems vgs.notifications NotificationCard summary | python3 -c 'import json,sys; c=json.load(sys.stdin)
+if not c: print("no-card"); sys.exit()
+x,y,w,h=c[0][1]; print(abs(x + w / 2 - int(sys.argv[1]) / 2) <= 1 and 0 < y < 40)' "$mon_w"; }
 geometry expect_poll "the toast is centred at the top of the screen under the bar" True toast_centred
 geometry expect_poll "the layer covers the screen below the bar" "[[0, $bar_reserved, $mon_w, $((mon_h - bar_reserved))]]" layers_of vgs:layer
 
 # A sender's timeout is milliseconds, held to the urgency's floor and ceiling.
 notify smoke-app 0 "Timed" "" '[]' '{}' 12000 >/dev/null
 expect_poll "a timed toast shows" True has_row live "Timed"
-timed_clock() { clock_of "$(key_of Timed)" | python3 -c 'import sys; state, left = sys.stdin.read().split(); print(state == "running" and 12000 <= float(left) <= 13500)'; }
+timed_clock() { clock_of "$(key_of Timed)" | py_reply 'import sys; state, left = sys.stdin.read().split(); print(state == "running" and 12000 <= float(left) <= 13500)'; }
 expect "its clock holds the sender's twelve seconds" True timed_clock
 
 # Replacement keeps the toast and its identity; the sender's close ends it.
@@ -191,7 +229,7 @@ read -r hx hy < <(card_centre Held) || fail "the held toast has no card"
 hover "$hx" "$hy" || fail "the hover over the held toast failed"
 held_key="$(key_of Held)"
 expect_poll "the pointer on a toast pauses its clock" paused clock_state Held
-stored_clock() { python3 -c 'import json,sys; e=next((e for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), {}); print(" ".join(k for k in ("deadline", "remaining") if k in e) or "none")' "$note_state" "$1"; }
+stored_clock() { note_state_py 'import json,sys; e=next((e for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), {}); print(" ".join(k for k in ("deadline", "remaining") if k in e) or "none")' "$1"; }
 expect_poll "the state file keeps the paused toast's time left" remaining stored_clock "$held_key"
 sleep 6
 expect "a paused toast outlives its lifetime" "$held_key" key_of Held
@@ -283,7 +321,7 @@ notify smoke-chat 0 "Pictured" "" '[]' "{\"image-path\": <\"$home/avatar.png\">}
 expect_poll "a toast with an image shows" True has_row live "Pictured"
 pictured_key="$(key_of Pictured)"
 expect_poll "the sender's image was copied for the stored entry" True test_file "$note_images/$pictured_key-image"
-stored_image() { python3 -c 'import json,sys; print(json.dumps(next((e["image"] for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), None)))' "$note_state" "$1"; }
+stored_image() { note_state_py 'import json,sys; print(json.dumps(next((e["image"] for e in json.load(open(sys.argv[1]))["live"] if e["key"] == sys.argv[2]), None)))' "$1"; }
 expect_poll "the stored entry points at its copy" "\"file://$note_images/$pictured_key-image\"" stored_image "$pictured_key"
 expected_errors+=('NotificationCard\.qml.*Cannot open: file://.*/missing\.png')
 notify smoke-chat 0 "Unpictured" "" '[]' "{\"image-path\": <\"$home/missing.png\">}" 0 >/dev/null
@@ -430,7 +468,7 @@ expect_poll "the panel's rows went with it" '[]' row_summaries panel
 expect_poll "the stack lets presses through again once the panel is closed" '[False]' input_all
 expect "dismissing the toast held through the panel is allowed" ok notes dismiss-all
 expect_poll "no toast is left before the inbox opens again" 0 on_screen
-all_rows() { ipc smoke modelRows vgs.notifications rows key | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+all_rows() { ipc smoke modelRows vgs.notifications rows key | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
 expect_poll "every exit has played before the inbox opens again" 0 all_rows
 expect "the inbox opens again" ok notes inbox
 expect_poll "an inbox after Mark read is caught up" '"All caught up"' read_notes panelSubtitle
@@ -500,7 +538,7 @@ expect_poll "a toast to survive the rebuild shows" True has_row live "Survivor"
 notes silence on >/dev/null
 printf '\n' >>"$repo/shell/plugins/vgs.notifications/README.md"
 expect "a rescan after editing the plugin answers ok" ok ipc shell rescanPlugins
-restored_sorted() { row_summaries restored | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
+restored_sorted() { row_summaries restored | py_reply 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
 expect_poll "the rebuilt service restored the toasts on screen" '["Survivor", "Urgent CLI"]' restored_sorted
 expect "a rebuild keeps Silence" true note_status silence
 sleep 1
@@ -566,7 +604,7 @@ expect "the toast outlived the removed monitor" True has_row live "Everywhere"
 # alone.
 theme="$home/.config/vgs/theme.json"
 write_theme() { printf '%s\n' "$1" >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"; }
-look_at() { read_notes look | python3 -c 'import json,sys; v=json.load(sys.stdin)
+look_at() { read_notes look | py_reply 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v[k]
 print(json.dumps(v))' "$1"; }
 edge_values() { ipc smoke layerItems vgs.notifications EdgeLight "$1" | python3 -c 'import json,sys; print(json.dumps(sorted(set(json.dumps(v[sys.argv[1]]) for s, r, v in json.load(sys.stdin)))))' "$1"; }
@@ -601,8 +639,8 @@ expect_poll "the last toast's exit has played" 0 layer_count vgs:layer
 # states is read after a disable and an enable. No state here makes the
 # photo helper call Slack.
 token_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
-token_row() { ipc smoke readInstance window vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["tone"], s["command"], s["value"]] for s in r]))'; }
-drawn_token_row() { ipc smoke itemTexts window vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+token_row() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["tone"], s["command"], s["value"]] for s in r]))'; }
+drawn_token_row() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 # want_rows rows|drawn ITEMS: the manager row, or the texts the page draws,
 # for ITEMS, `;`-separated `<account>,<state>[,served]` items, `served`
 # naming a workspace the single-workspace token serves.

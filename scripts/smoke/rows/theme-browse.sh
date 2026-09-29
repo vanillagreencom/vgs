@@ -16,9 +16,9 @@ browse="$installed/browse"
 # What VERB's callback last received, as JSON: its call count, then the
 # result's value of each KEY; `none` before the first call.
 answer() { # VERB KEY...
-  read_service themeAnswers | python3 -c 'import json,sys; a=json.load(sys.stdin).get(sys.argv[1]); print("none" if a is None else json.dumps([a["count"]] + [a["result"][k] for k in sys.argv[2:]]))' "$@"
+  read_service themeAnswers | py_reply 'import json,sys; a=json.load(sys.stdin).get(sys.argv[1]); print("none" if a is None else json.dumps([a["count"]] + [a["result"][k] for k in sys.argv[2:]]))' "$@"
 }
-answers() { read_service themeAnswers | python3 -c 'import json,sys; a=json.load(sys.stdin).get(sys.argv[1]); print(0 if a is None else a["count"])' "$1"; }
+answers() { read_service themeAnswers | py_reply 'import json,sys; a=json.load(sys.stdin).get(sys.argv[1]); print(0 if a is None else a["count"])' "$1"; }
 # The last catalog's entry NAME: [installed, imageryInstalled].
 catalog_entry() { read_service themeAnswers | python3 -c 'import json,sys; e=[e for e in json.load(sys.stdin)["catalog"]["result"]["entries"] if e["name"]==sys.argv[1]]; print(json.dumps([e[0]["installed"], e[0]["imageryInstalled"]]) if len(e)==1 else "entries=%d" % len(e))' "$1"; }
 # The last image list's images of package NAME: [background, path] rows.

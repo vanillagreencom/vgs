@@ -45,7 +45,7 @@ pkg_stub() { # DETECT_JSON, or "" for a detection that fails
 pkg_stub '{"primary":{"id":"pacman","binary":"pacman"},"overlays":[{"id":"aur","binary":"paru"}],"sources":[]}'
 
 notice_resting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["resting"]))'; }
-drawn() { ipc smoke noticeDrawn | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[sys.argv[1]]))' "$1"; }
+drawn() { ipc smoke noticeDrawn | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[sys.argv[1]]))' "$1"; }
 needs() { ipc acme.needs invoke "$1" "${2:-}"; }
 # `centred` when the notice's one surface sits in the middle of the focused
 # monitor, to within a pixel; else the two rectangles.

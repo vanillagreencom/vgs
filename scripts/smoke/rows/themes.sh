@@ -12,7 +12,7 @@ set -euo pipefail
 installed="$home/.config/vgs/themes"
 # What the fixture's last apply callback received: state, shell, theme and
 # reason, a null reason printed as None.
-applied() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["shell"], r["theme"], r["reason"])'; }
+applied() { read_service themeApplied | py_reply 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["shell"], r["theme"], r["reason"])'; }
 # The [name, state, reason] rows of that result's targets whose name starts
 # with PREFIX.
 applied_targets() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(json.dumps([[t["name"], t["state"], t["reason"]] for t in r["targets"] if t["name"].startswith(sys.argv[1])]))' "$1"; }
@@ -20,7 +20,7 @@ applied_targets() { read_service themeApplied | python3 -c 'import json,sys; r=j
 # [name, source, state, reason] rows, `current` the rows marked current,
 # `file` its state, name and modified flag, `reason` the list's own.
 listed() {
-  read_service themeListed | python3 -c '
+  read_service themeListed | py_reply '
 import json, sys
 r = json.loads(json.load(sys.stdin))
 part = sys.argv[1]
@@ -264,9 +264,9 @@ expect "disabling the fixture after the theme rows is allowed" ok ipc shell setP
 # nowhere. The block leaves vgs applied and the widget placed
 # for the wallpaper block after it, which disables the plugin.
 layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
-theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
+theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | py_reply 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
 # The rows whose name is NAME, in tree order.
-theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
+theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | py_reply 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
 # The swatch of the one row named NAME whose secondary line is SECONDARY:
 # its chip count and whether a chip draws COLOUR, as `#rrggbbaa`.
 theme_swatch() {
@@ -285,7 +285,7 @@ click_row() {
   click_item panel vgs.themes ListItem "$1"
 }
 # Whether the panel draws a label reading TEXT: True or False.
-panel_label() { ipc smoke itemTexts panel vgs.themes Label | python3 -c 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
+panel_label() { ipc smoke itemTexts panel vgs.themes Label | py_reply 'import json,sys; print([sys.argv[1]] in json.load(sys.stdin))' "$1"; }
 panel_open() { [[ $(ipc smoke readInstance panel vgs.themes packages) != absent ]] && echo open || echo closed; }
 scroll_themes() { ipc smoke scrollTo panel vgs.themes "$1" >/dev/null; }
 # click_button TEXT: one click_item on the enabled button TEXT, which is
@@ -617,14 +617,15 @@ vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
 # What the first screen's background draws: `<path> <status>`, `-` for no
 # image. background_covers: whether the image decoded to cover its box and
 # smaller than the 4000x2000 file.
-background_image_on() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
+background_image_on() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print(" ".join([r[0][0] or "-", r[0][1]]) if len(r)==1 else "images=%d" % len(r))'; }
 background_image() { background_image_on "$screen_name"; }
 background_covers() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; _,_,box,size,*_=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
 background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
-# The drawn image's decoded width over its height, to one decimal place.
-background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; size=json.load(sys.stdin)[0][3]; print("%.1f" % (size[0] / size[1]))'; }
-background_source_size() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
-background_device_size() { ipc smoke images "background:$1" vgs.themes | python3 -c 'import json,math,sys; r=json.load(sys.stdin); box=r[0][2]; print("%dx%d" % (math.ceil(box[0] * float(sys.argv[1])), math.ceil(box[1] * float(sys.argv[1]))))' "$2"; }
+# The drawn image's decoded width over its height, to one decimal place;
+# `images=<n>` while the background draws other than one image.
+background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%.1f" % (r[0][3][0] / r[0][3][1]) if len(r)==1 else "images=%d" % len(r))'; }
+background_source_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%dx%d" % tuple(int(v) for v in r[0][4]) if len(r)==1 else "images=%d" % len(r))'; }
+background_device_size() { ipc smoke images "background:$1" vgs.themes | py_reply 'import json,math,sys; r=json.load(sys.stdin); box=r[0][2]; print("%dx%d" % (math.ceil(box[0] * float(sys.argv[1])), math.ceil(box[1] * float(sys.argv[1]))))' "$2"; }
 screen_listed() { hypr -j monitors | python3 -c 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
 # Replace the state file whole with one naming image PATH.
 bg_state_names() { printf '{"schemaVersion":1,"current":"%s","stamp":"row","themes":{}}\n' "$1" >"$bg_state/backgrounds.json.tmp" && mv -T -- "$bg_state/backgrounds.json.tmp" "$bg_state/backgrounds.json"; }

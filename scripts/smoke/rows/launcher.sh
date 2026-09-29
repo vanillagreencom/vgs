@@ -11,16 +11,16 @@
 set -euo pipefail
 launcher() { ipc vgs.launcher invoke "$1" "${2:-}"; }
 read_launcher() { ipc smoke readInstance overlay vgs.launcher "$1"; }
-launcher_rows() { ipc smoke launcherRows overlay vgs.launcher | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.dumps(json.loads(t)) if t.startswith("[") else t.strip())'; }
+launcher_rows() { ipc smoke launcherRows overlay vgs.launcher | py_reply 'import json,sys; t=sys.stdin.read(); print(json.dumps(json.loads(t)) if t.startswith("[") else t.strip())'; }
 # The launcher's rows whose kind is $1, as [label, detail] pairs.
-rows_of() { launcher_rows | python3 -c 'import json,sys; print(json.dumps([[l, d] for k, l, d in json.load(sys.stdin) if k == sys.argv[1]]))' "$1"; }
-has_row() { launcher_rows | python3 -c 'import json,sys; print(any(r[0] == sys.argv[1] and r[1] == sys.argv[2] for r in json.load(sys.stdin)))' "$1" "$2"; }
-first_row() { launcher_rows | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0][:2]) if r else "none")'; }
+rows_of() { launcher_rows | py_reply 'import json,sys; print(json.dumps([[l, d] for k, l, d in json.load(sys.stdin) if k == sys.argv[1]]))' "$1"; }
+has_row() { launcher_rows | py_reply 'import json,sys; print(any(r[0] == sys.argv[1] and r[1] == sys.argv[2] for r in json.load(sys.stdin)))' "$1" "$2"; }
+first_row() { launcher_rows | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0][:2]) if r else "none")'; }
 lent_launcher() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.launcher")], [t for t in d["ipcTargets"] if t == "vgs.launcher"]]))'; }
 file_text() { if [[ -f $1 ]]; then python3 -c 'import sys; print(repr(open(sys.argv[1]).read()))' "$1"; else echo absent; fi; }
 file_search_children() { ps -e -o ppid=,args= | python3 -c 'import sys; print(sum(1 for l in sys.stdin if l.split(None, 1)[0] == sys.argv[1] and "file-search.sh" in l))' "$shell_qs_pid"; }
 # The launcher's own look as the running instance holds it, one path.
-look_at() { read_launcher look | python3 -c 'import json,sys; v=json.load(sys.stdin)
+look_at() { read_launcher look | py_reply 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v[k]
 print(json.dumps(v))' "$1"; }
 theme="$home/.config/vgs/theme.json"
@@ -57,7 +57,7 @@ expect_poll "the launcher is open" true read_launcher opened
 focused "the open launcher holds the keyboard"
 expect "the launcher opens as a bare search field" '[]' launcher_rows
 expect "the bare field shows no list" 0 read_launcher visibleRowsHeight
-shader_ok() { ipc smoke launcherShader overlay vgs.launcher | python3 -c 'import json,re,sys; d=json.loads(sys.stdin.read()); print(bool(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", d["url"])) and d["compiled"])'; }
+shader_ok() { ipc smoke launcherShader overlay vgs.launcher | py_reply 'import json,re,sys; d=json.loads(sys.stdin.read()); print(bool(re.search(r"/vgsh-sources-[0-9]+/[0-9a-f]+/shaders/edgelight\.frag\.qsb$", d["url"])) and d["compiled"])'; }
 render expect_poll "the edge light's shader compiled from the published revision" True shader_ok
 
 # Typing searches every row and application; Enter launches the first.
@@ -98,7 +98,7 @@ expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
 # the Update group, the fixture acme.tui's while it is enabled, and hides
 # while it is disabled, as tui.sh left it and as this block leaves it.
 # The index of the launcher's row of kind $1 and label $2, or none.
-row_index() { launcher_rows | python3 -c 'import json,sys; r=[i for i, x in enumerate(json.load(sys.stdin)) if x[0] == sys.argv[1] and x[1] == sys.argv[2]]; print(r[0] if r else "none")' "$1" "$2"; }
+row_index() { launcher_rows | py_reply 'import json,sys; r=[i for i, x in enumerate(json.load(sys.stdin)) if x[0] == sys.argv[1] and x[1] == sys.argv[2]]; print(r[0] if r else "none")' "$1" "$2"; }
 # categories LABEL: summon the launcher and show its categories.
 categories() {
   expect "the launcher summons for $1" ok ipc shell summon overlay vgs.launcher '{}'
@@ -202,7 +202,7 @@ expect "the launcher summons with the categories" ok ipc shell summon overlay vg
 focused
 type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
 expect_poll "the user's label replaced the shipped one" True has_row menu Power
-missing_row() { rows_of unavailable | python3 -c 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0] == "Smoke missing"]))'; }
+missing_row() { rows_of unavailable | py_reply 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0] == "Smoke missing"]))'; }
 expect_poll "a row with a missing command is unavailable and names it" '[["Smoke missing", "needs no-such-command-smoke"]]' missing_row
 expected_errors+=('launcher: menu refused: file=.*/launcher/menu\.json items\.bad-item has unknown key "action"')
 write_menu '{ "schemaVersion": 1, "items": { "bad-item": { "action": "omarchy-menu" } } }'

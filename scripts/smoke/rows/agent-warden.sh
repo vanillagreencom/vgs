@@ -75,7 +75,7 @@ warden_value() { warden_values | python3 -c 'import json,sys; print(json.dumps(j
 # The published detail's state and reason, and each item's kind and level.
 warden_state() { warden_values | python3 -c 'import json,sys; d=json.load(sys.stdin).get("detail"); print("unpublished" if d is None else json.dumps([d["state"], d["reason"], d["issues"], [[i["kind"], i["level"]] for i in d["items"]]]))'; }
 warden_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.agent-warden"); print(json.dumps(r if r is None else r["keys"]))'; }
-warden_rows() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.agent-warden"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
+warden_rows() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.agent-warden"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
 # The answer the scan gives for vsys on the sandbox PATH.
 vsys_on_path() { if "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" bash -c 'command -v vsys' >/dev/null; then echo '"present"'; else echo '"absent"'; fi; }
 # A notify-send stand-in in the shell's own PATH directory, written before
@@ -289,7 +289,7 @@ PY
 }
 warden_panel_shown() { [[ $(ipc smoke readInstance panel vgs.agent-warden detail) != absent ]] && echo shown || echo hidden; }
 # Every text the panel draws, or `absent`.
-warden_panel() { ipc smoke itemTexts panel vgs.agent-warden Panel | python3 -c '
+warden_panel() { ipc smoke itemTexts panel vgs.agent-warden Panel | py_reply '
 import json, re, sys
 t = sys.stdin.read().strip()
 rows = [] if t == "absent" else json.loads(t)
@@ -341,7 +341,7 @@ warden_open() {
 }
 warden_line='vsys sees one thing worth a look on this computer.'
 # Whether the panel draws the stand-in summary's line: True or False.
-warden_panel_has_line() { warden_panel | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t != "absent" and sys.argv[1] in json.loads(t))' "$warden_line"; }
+warden_panel_has_line() { warden_panel | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(t != "absent" and sys.argv[1] in json.loads(t))' "$warden_line"; }
 # warden_resummon LABEL: the open panel summoned again runs the summary
 # once more, as the core calls open() on a panel already shown.
 warden_resummon() {

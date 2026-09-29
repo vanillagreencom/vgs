@@ -149,7 +149,7 @@ updates_listed() { updates_values | python3 -c 'import json,sys; r=[s for s in j
 # SOURCE's [count, packages] in status.json on disk.
 updates_cached() { python3 -c 'import json,sys; r=[s for s in json.load(open(sys.argv[1]))["sources"] if s["source"]==sys.argv[2]]; print(json.dumps([r[0]["count"], len(r[0]["packages"])] if r else None))' "$home/.local/state/vgs/updates/status.json" "$1"; }
 updates_idle() { [[ $(updates_state_text) == Checking ]] && echo checking || echo idle; }
-updates_status_rows() { settings_rows | python3 -c 'import json,sys; rows=[p for p in json.load(sys.stdin) if p["id"]=="vgs.updates"][0]["status"]; print(json.dumps([[r["key"], r["report"]] for r in rows]))'; }
+updates_status_rows() { settings_rows | py_reply 'import json,sys; rows=[p for p in json.load(sys.stdin) if p["id"]=="vgs.updates"][0]["status"]; print(json.dumps([[r["key"], r["report"]] for r in rows]))'; }
 updates_widget_section() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]=="vgs.updates" for e in l.get(s,[]))] + ["none"])[0])'; }
 updates_tui_running() { lent tui.runs | python3 -c 'import json,sys; r=(json.load(sys.stdin) or {}).get("vgs.updates/finish"); print(json.dumps(r is not None and r.get("running") is not None))'; }
 # Runs of one stand-in, from the log every stand-in appends to.
@@ -249,7 +249,7 @@ widget_key="$(bar_key)"
 expect "the updates widget is placed in its default section" right updates_widget_section
 expect_poll "the updates widget is built on the bar" '"vgs.updates"' ipc smoke readInstance "$widget_key" vgs.updates moduleName
 # The widget as it judges itself: [state, icon, tone, badge, badge tone].
-widget_view() { ipc smoke readInstance "$widget_key" vgs.updates view | python3 -c 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["state"], v["icon"], v["tone"], v["badge"], v["badgeTone"]]))'; }
+widget_view() { ipc smoke readInstance "$widget_key" vgs.updates view | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["state"], v["icon"], v["tone"], v["badge"], v["badgeTone"]]))'; }
 # The widget as drawn: [the icon it shows, or `spinner`, the tone its
 # colour is, the badge it shows, or ""]. A colour is read as the theme
 # writes it and matched against the three the widget draws with.
@@ -290,9 +290,9 @@ entries[0]["hideWhenCurrent"] = want
 open(path + ".next", "w").write(json.dumps(doc))
 os.replace(path + ".next", path)' "$home/.config/vgs/shell.json" "$1"
 }
-widget_setting() { ipc smoke readInstance "$widget_key" vgs.updates settings | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("hideWhenCurrent")))'; }
-flyout_rows() { ipc smoke itemTexts panel vgs.updates Disclosure | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False))'; }
-flyout_row() { flyout_rows | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1])], ensure_ascii=False))' "$1"; }
+widget_setting() { ipc smoke readInstance "$widget_key" vgs.updates settings | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).get("hideWhenCurrent")))'; }
+flyout_rows() { ipc smoke itemTexts panel vgs.updates Disclosure | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False))'; }
+flyout_row() { flyout_rows | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1])], ensure_ascii=False))' "$1"; }
 flyout_open() { [[ $(ipc smoke readInstance panel vgs.updates rows) != absent ]] && echo open || echo closed; }
 # Open the flyout with a click on the widget, unless it is open: a TUI's
 # window takes the focus, which closes the popup.
@@ -304,10 +304,8 @@ open_flyout() {
 # The words after the presenter's `--`, the last `--` in the record: the
 # script's file name and its arguments, as JSON; `absent` before a record
 # exists, and `partial` for a record with no `--` or nothing after it.
-launched() { recorded | python3 -c 'import json,os,sys
-t=sys.stdin.read().strip()
-if t == "absent": print(t); sys.exit()
-w=json.loads(t)
+launched() { recorded | py_reply 'import json,os,sys
+w=json.load(sys.stdin)
 a=w[len(w) - w[::-1].index("--"):] if "--" in w else []
 if not a: print("partial"); sys.exit()
 print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }

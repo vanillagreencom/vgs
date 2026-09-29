@@ -54,10 +54,10 @@ dev_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin
 window_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent ]] && echo shown || echo hidden; }
 section_titles() { ipc smoke itemTexts window vgs.devtools SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
 # The texts the first row drawing NAME draws, as JSON, or null.
-row_texts() { ipc smoke itemTexts window vgs.devtools ToolRow | python3 -c 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
+row_texts() { ipc smoke itemTexts window vgs.devtools ToolRow | py_reply 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
 # The VGS row's texts with its error line, which names the sandbox's
 # path, read as `error=<key>`.
-vgs_texts() { row_texts VGS | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(None if r is None else [t if not t.startswith("method=") else "error=" + t.split(" ")[0] for t in r], ensure_ascii=False))'; }
+vgs_texts() { row_texts VGS | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(None if r is None else [t if not t.startswith("method=") else "error=" + t.split(" ")[0] for t in r], ensure_ascii=False))'; }
 # The ended record the presenter of KEY's last run wrote, by file name, or
 # `none`: the presenter writes it when it exits and keeps only the newest.
 ended_record() { local stem="${1/\//@}" f found=none; for f in "$rt_dir/vgs/tui/$stem@"*.ended.json; do [[ -e $f ]] && found="${f##*/}"; done; echo "$found"; }
@@ -126,7 +126,7 @@ expect_poll "turning launchers off removes it" absent launcher_state "$agent_com
 # raises the core's notice for it, which Escape closes.
 expect "a refresh answers ok" ok devtools refresh
 expect "enabling the requirement fixture is allowed" ok ipc shell setPluginEnabled acme.requires true
-has_fixture_missing() { ipc smoke doctorMissing service vgs.devtools | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.requires"), "core" in d]))'; }
+has_fixture_missing() { ipc smoke doctorMissing service vgs.devtools | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d.get("acme.requires"), "core" in d]))'; }
 expect_poll "the doctor capability reports the fixture's missing command and the core's list" '[["vgs-smoke-devtool"], true]' has_fixture_missing
 expect_poll "the VGS section lists the fixture's missing requirement with Install" \
   "$(texts vgs-smoke-devtool "acme.requires · A command no sandbox has, which a package names" Missing Optional Install)" row_texts vgs-smoke-devtool

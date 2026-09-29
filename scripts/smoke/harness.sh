@@ -526,6 +526,26 @@ expect_cursor_at() { # LABEL SHAPE X Y
 ipc() {
   "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
+# py_reply PROGRAM [ARG...]: python3 -c PROGRAM ARG... over the reply on
+# stdin, or the reply itself when it is a state word such as `absent`,
+# which the smoke probe answers in place of JSON while the instance,
+# surface or item it reads is not built, and `recorded` before the
+# terminal stand-in writes its record, or a count word such as `areas=0`
+# that an upstream reader answers. A poll over such a reply reads
+# through this, so it retries on the word rather than raising on it. A
+# word is lower-case letters joined by hyphens, with an optional `=N`;
+# true, false and null are JSON and parsed. An empty reply, what a failed
+# ipc call prints, is a failed read.
+py_reply() { # PROGRAM [ARG...]
+  local reply
+  reply="$(cat)" || return
+  [[ -n $reply ]] || return 1
+  if [[ $reply =~ ^[a-z]+(-[a-z]+)*(=[0-9]+)?$ && $reply != true && $reply != false && $reply != null ]]; then
+    printf '%s\n' "$reply"
+    return 0
+  fi
+  python3 -c "$1" "${@:2}" <<<"$reply"
+}
 
 # The theme runner's jobs as [verb, name, waiters] rows, from the lending
 # record of the shell IPC_FN reaches (default ipc).
@@ -708,17 +728,19 @@ service_release() {
 # a reader defect, never a state to retry past. reader_stderr LABEL
 # ERR_FILE: when ERR_FILE, a reader's stderr, holds a traceback, the row
 # LABEL fails with the traceback printed under it, and it returns 1;
-# otherwise the file's text goes on to stderr and it returns 0. The file
-# is removed either way. The pollers below send each read's stderr to a
+# otherwise the file's text goes on to stderr and it returns 0. The pollers below send each read's stderr to a
 # file named for the process that reads, since a row can nest a poller
 # inside another's command substitution.
 reader_stderr() { # LABEL ERR_FILE
   local label="$1" err="$2" status=0
-  if grep -q -s -F -e 'Traceback (most recent call last):' -- "$err"; then
+  # The common read writes no stderr and costs no fork here; its empty
+  # file stays for the next read to truncate.
+  [[ -s $err ]] || return 0
+  if grep -q -F -e 'Traceback (most recent call last):' -- "$err"; then
     fail "$label: the reader raised a Python traceback"
     sed 's/^/        /' -- "$err"
     status=1
-  elif [[ -s $err ]]; then
+  else
     cat -- "$err" >&2
   fi
   rm -f -- "$err"
@@ -998,10 +1020,8 @@ words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 # The key the recorded run carries, then the recorded argv from the script
 # on, as JSON; `absent` before a record exists, and `partial` for a record
 # with no `--record` or no `--` after it.
-recorded_tail() { recorded | python3 -c 'import json,sys
-t=sys.stdin.read().strip()
-if t == "absent": print(t); sys.exit()
-w=json.loads(t)
+recorded_tail() { recorded | py_reply 'import json,sys
+w=json.load(sys.stdin)
 at=w.index("--record") if "--record" in w else -1
 if at < 0 or at + 1 >= len(w) or "--" not in w[at + 1:]: print("partial"); sys.exit()
 print(json.dumps([w[at + 1]] + w[w.index("--", at) + 1:]))'; }
@@ -1057,8 +1077,8 @@ expect_within() { # LABEL READING WANT CEILING_MS CMD...
   while :; do
     matched=false
     if got="$("$@" 2>"$err")" && [[ $got == "$want" ]]; then matched=true; fi
-    reader_stderr "$label" "$err" || return 0
     elapsed=$(( $(now_ms) - start ))
+    reader_stderr "$label" "$err" || return 0
     if [[ $matched == true && $elapsed -le $ceiling_ms ]]; then
       printf '  latency_%s_ms=%d ceiling_ms=%d\n' "$reading" "$elapsed" "$ceiling_ms"
       ok "$label"

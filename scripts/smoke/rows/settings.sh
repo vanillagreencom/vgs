@@ -63,8 +63,8 @@ fi
 # which rows/status.sh left disabled, publishes; the notifications, which
 # the harness starts disabled, have published nothing.
 fixture_command="secret-tool store --label='acme token' service acme account token"
-status_of() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
-drawn_status() { ipc smoke itemTexts window vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+status_of() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
+drawn_status() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 page_fields_of() { ipc smoke drawnFields window vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
 # The drawn rows with the `Last check` value replaced by `time` when it
 # draws the fixture's moment as a local date and time: it names that
@@ -72,7 +72,7 @@ page_fields_of() { ipc smoke drawnFields window vgs.settings | python3 -c 'impor
 # raw milliseconds. A row then compares the rows whatever the locale's date
 # order, and a page that draws the number itself fails.
 fixture_time=1790650695194
-drawn_status_timeless() { drawn_status | python3 -c '
+drawn_status_timeless() { drawn_status | py_reply '
 import datetime, json, sys
 moment = datetime.datetime.fromtimestamp(int(sys.argv[1]) / 1000)
 clocks = ("%02d:%02d" % (moment.hour, moment.minute), "%d:%02d" % ((moment.hour - 1) % 12 + 1, moment.minute))

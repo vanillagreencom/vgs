@@ -5,7 +5,7 @@
 set -euo pipefail
 theme="$home/.config/vgs/theme.json"
 # A QML color reads back as its channel object; the row compares its hex.
-bar_foreground() { ipc smoke readInstance "$(bar_key)" vgs.bar foreground | python3 -c 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
+bar_foreground() { ipc smoke readInstance "$(bar_key)" vgs.bar foreground | py_reply 'import json,sys; c=json.load(sys.stdin); print("#%02x%02x%02x" % tuple(round(c[k] * 255) for k in "rgb"))'; }
 theme_value() { ipc smoke themeValue "$1"; }
 write_theme() { printf '%s\n' "$1" >"$theme.tmp" && mv -T -- "$theme.tmp" "$theme"; }
 

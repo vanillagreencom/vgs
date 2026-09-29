@@ -20,22 +20,22 @@
 # leaves all four so.
 set -euo pipefail
 view_value() { ipc smoke readDescendant overlay vgs.themes ThemeView "$1"; }
-view_names() { view_value shownCards | python3 -c 'import json,sys; print(json.dumps([c["name"] for c in json.load(sys.stdin)]))'; }
+view_names() { view_value shownCards | py_reply 'import json,sys; print(json.dumps([c["name"] for c in json.load(sys.stdin)]))'; }
 view_count() { view_value shownCards | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 has_card() { view_value shownCards | python3 -c 'import json,sys; print(sys.argv[1] in [c["name"] for c in json.load(sys.stdin)])' "$1"; }
 # The shown card at INDEX, or the last for -1.
-card_at() { view_value shownCards | python3 -c 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
-job_step() { view_value job | python3 -c 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"] + " " + j["name"])'; }
-selected_installed() { view_value selected | python3 -c 'import json,sys; print(json.load(sys.stdin)["installed"])'; }
-offer_name() { view_value offer | python3 -c 'import json,sys; o=json.load(sys.stdin); print("none" if o is None else o["name"])'; }
-badges() { ipc smoke itemTexts overlay vgs.themes Badge | python3 -c 'import json,sys; print(json.dumps(sorted(t[0] for t in json.load(sys.stdin) if t)))'; }
-dialog_has() { ipc smoke itemTexts overlay vgs.themes Dialog | python3 -c 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
+card_at() { view_value shownCards | py_reply 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
+job_step() { view_value job | py_reply 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"] + " " + j["name"])'; }
+selected_installed() { view_value selected | py_reply 'import json,sys; print(json.load(sys.stdin)["installed"])'; }
+offer_name() { view_value offer | py_reply 'import json,sys; o=json.load(sys.stdin); print("none" if o is None else o["name"])'; }
+badges() { ipc smoke itemTexts overlay vgs.themes Badge | py_reply 'import json,sys; print(json.dumps(sorted(t[0] for t in json.load(sys.stdin) if t)))'; }
+dialog_has() { ipc smoke itemTexts overlay vgs.themes Dialog | py_reply 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
 # The status of the card image drawing PATH, `none` when no card draws it.
-card_image() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[1] for i in json.load(sys.stdin) if i[0]==sys.argv[1]]; print(r[0] if r else "none")' "$1"; }
+card_image() { ipc smoke images overlay vgs.themes | py_reply 'import json,sys; r=[i[1] for i in json.load(sys.stdin) if i[0]==sys.argv[1]]; print(r[0] if r else "none")' "$1"; }
 # Whether a palette card names LABEL: a card with no image draws its
 # label, and one whose image shows draws none.
-palette_card() { ipc smoke itemTexts overlay vgs.themes ThemeCard | python3 -c 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
-has_badge() { ipc smoke itemTexts overlay vgs.themes Badge | python3 -c 'import json,sys,re; print(any(re.fullmatch(sys.argv[1], x) for t in json.load(sys.stdin) for x in t))' "$1"; }
+palette_card() { ipc smoke itemTexts overlay vgs.themes ThemeCard | py_reply 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
+has_badge() { ipc smoke itemTexts overlay vgs.themes Badge | py_reply 'import json,sys,re; print(any(re.fullmatch(sys.argv[1], x) for t in json.load(sys.stdin) for x in t))' "$1"; }
 lent_themes() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(sorted(s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("vgs.themes"))))'; }
 # The binds of shortcut NAME, `themes` by default, as [modmask, key].
 themes_bind() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:" + sys.argv[1]]))' "${1:-themes}"; }
@@ -232,11 +232,11 @@ expect_poll "an apply that offers nothing closes the browser" 0 layer_count vgs:
 # output. The browser opens on the focused output; the rows read which one
 # from the view and name the other.
 wall_value() { ipc smoke readDescendant overlay vgs.themes WallpaperView "$1"; }
-wall_keys() { wall_value cards | python3 -c 'import json,sys; print(json.dumps([c["key"] for c in json.load(sys.stdin)]))'; }
-wall_selected() { wall_value selected | python3 -c 'import json,sys; s=json.load(sys.stdin); print("none" if s is None else s["key"])'; }
+wall_keys() { wall_value cards | py_reply 'import json,sys; print(json.dumps([c["key"] for c in json.load(sys.stdin)]))'; }
+wall_selected() { wall_value selected | py_reply 'import json,sys; s=json.load(sys.stdin); print("none" if s is None else s["key"])'; }
 # Whether the cards hold every KEY.
-wall_has() { wall_value cards | python3 -c 'import json,sys; keys=[c["key"] for c in json.load(sys.stdin)]; print(all(k in keys for k in sys.argv[1:]))' "$@"; }
-wall_job() { wall_value job | python3 -c 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"])'; }
+wall_has() { wall_value cards | py_reply 'import json,sys; keys=[c["key"] for c in json.load(sys.stdin)]; print(all(k in keys for k in sys.argv[1:]))' "$@"; }
+wall_job() { wall_value job | py_reply 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"])'; }
 press_wallpapers() { type_keys -M logo -k w -m logo; }
 nord_a="$installed/nord/backgrounds/a.jpg"; nord_b="$installed/nord/backgrounds/b.jpg"; nord_c="$installed/nord/backgrounds/c.jpg"
 wall_output=SMOKE-WALL
@@ -258,7 +258,7 @@ while i < len(d):
     i += 2 + l
 PY
 }
-card_ratio() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[3] for i in json.load(sys.stdin) if i[0]==sys.argv[1] and i[1]=="ready"]; print("%.1f" % (r[0][0] / r[0][1]) if r else "none")' "$1"; }
+card_ratio() { ipc smoke images overlay vgs.themes | py_reply 'import json,sys; r=[i[3] for i in json.load(sys.stdin) if i[0]==sys.argv[1] and i[1]=="ready"]; print("%.1f" % (r[0][0] / r[0][1]) if r else "none")' "$1"; }
 # pin_nord ARCHIVE B_IMAGE: an archive holding b.jpg from B_IMAGE and a.jpg
 # and c.jpg from nord's thumbnail, pinned for nord in the sandbox copy's
 # catalog, which the update card then offers.
