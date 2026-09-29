@@ -66,17 +66,26 @@ fixture_command="secret-tool store --label='acme token' service acme account tok
 status_of() { settings_rows | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
 drawn_status() { ipc smoke itemTexts panel vgs.settings StatusRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 page_fields_of() { ipc smoke drawnFields panel vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
-# The drawn rows with each time value replaced by `time` when it is drawn
-# as a date, so a row compares the rows whatever the locale's format.
-drawn_status_timeless() { drawn_status | python3 -c 'import json,re,sys; print(json.dumps([[("time" if re.search(r"\d", t) and len(t) > 6 else t) for t in r] if r[0] == "Last check" else r for r in json.load(sys.stdin)]))'; }
+# The drawn rows with the `Last check` value replaced by `time` when it
+# draws the fixture's moment as a local date and time: it names that
+# moment's hour and minute, in the 24-hour or the 12-hour form, and not the
+# raw milliseconds. A row then compares the rows whatever the locale's date
+# order, and a page that draws the number itself fails.
+fixture_time=1790650695194
+drawn_status_timeless() { drawn_status | python3 -c '
+import datetime, json, sys
+moment = datetime.datetime.fromtimestamp(int(sys.argv[1]) / 1000)
+clocks = ("%02d:%02d" % (moment.hour, moment.minute), "%d:%02d" % ((moment.hour - 1) % 12 + 1, moment.minute))
+def shown(t): return "time" if sys.argv[1][:10] not in t and any(c in t for c in clocks) else t
+print(json.dumps([[shown(t) for t in r] if r[0] == "Last check" else r for r in json.load(sys.stdin)]))' "$fixture_time"; }
 expect "enabling the status fixture for its Status rows is allowed" ok ipc shell setPluginEnabled acme.status true
 expect_poll "the status fixture's service published its first value" '"ok"' ipc smoke readInstance service acme.status startReply
 expect "the fixture publishes a state" ok ipc acme.status invoke set 'check={"tone":"warning","text":"Two sources failed"}'
 expect "the fixture publishes a count" ok ipc acme.status invoke set 'pending=3'
-expect "the fixture publishes a time" ok ipc acme.status invoke set 'lastCheck=1790650695194'
+expect "the fixture publishes a time" ok ipc acme.status invoke set "lastCheck=$fixture_time"
 expect "the fixture publishes data" ok ipc acme.status invoke detail ''
 expect "the window opens the status fixture's page" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.status
-expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", 1790650695194, "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command")" status_of acme.status
+expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", int(sys.argv[2]), "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command" "$fixture_time")" status_of acme.status
 expect_poll "the page draws the ungrouped entries, then each group's, read-only" "$(python3 -c 'import json,sys; print(json.dumps([["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", sys.argv[1]], ["Pending", "3"]]))' "$fixture_command")" drawn_status_timeless
 expect_poll "the page heads the status sections before any other" '["Status", "Sync"]' section_names
 expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs panel vgs.settings
