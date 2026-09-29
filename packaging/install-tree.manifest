@@ -89,6 +89,7 @@ f share/vgs/shell/Ui/foundation/Surface.qml
 f share/vgs/shell/Ui/icons/LICENSE
 f share/vgs/shell/Ui/icons/Lucide.js
 f share/vgs/shell/Ui/layout/AngledCard.qml
+f share/vgs/shell/Ui/layout/CardCarousel.qml
 f share/vgs/shell/Ui/layout/ListItem.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
 f share/vgs/shell/Ui/layout/ScrollBar.qml
