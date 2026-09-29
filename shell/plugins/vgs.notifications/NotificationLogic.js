@@ -227,6 +227,19 @@ function readSlack(summary, body) {
     return { workspace: workspace, title: rest, people: people };
 }
 
+// The tints a face takes, the names of the Appearance face.tint group.
+var FACE_TINTS = ["coral", "amber", "green", "blue", "indigo", "magenta", "teal", "rose"];
+
+// The tint of a person's face: the same name, case folded, always takes
+// the same one. The hash is 31 times the running value plus each UTF-16
+// code unit, modulo 65521.
+function faceTint(name) {
+    var key = fold(name || "");
+    var hash = 0;
+    for (var i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) % 65521;
+    return FACE_TINTS[hash % FACE_TINTS.length];
+}
+
 // The one or two letters a face without an image shows: the first of the
 // first and the last word, a parenthesised part such as a pronoun or an
 // organisation left out.

@@ -18,6 +18,8 @@ const path = require("node:path");
 const { load } = require("./qml-library.js");
 
 const file = path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "NotificationLogic.js");
+// The plugin's look, whose face tints the logic names.
+const appearance = load(path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "Appearance.js"));
 const IMAGES = "/state/vgs/notifications/images";
 // The logic runs in its own context, whose arrays and objects are not this
 // one's; values are compared as JSON.
@@ -226,6 +228,11 @@ function verify(logic) {
         same(logic.enrich(app, entry, summary, body), want, "enrich: " + label);
     for (const [name, want] of [["Ada Lovelace", "AL"], ["ada", "A"], ["Ada (she/her)", "A"], ["Grace B. Hopper (Navy)", "GH"], ["@ada", "A"], ["\u{1F600} Bot", "\u{1F600}B"], ["", "?"], ["(x)", "?"]])
         assert.equal(logic.initialsOf(name), want, "initials of " + JSON.stringify(name));
+    // Face tints, as Python worked them out from the stated hash.
+    for (const [name, want] of [["ada", "magenta"], ["Ada", "magenta"], [" ada ", "magenta"], ["grace", "rose"], ["alan", "blue"], ["edsger", "teal"], ["barbara", "green"], ["", "coral"]])
+        assert.equal(logic.faceTint(name), want, "tint of " + JSON.stringify(name));
+    same(Object.keys(appearance.TOKENS.face.tint), ["coral", "amber", "green", "blue", "indigo", "magenta", "teal", "rose"], "the look holds every tint");
+    same(logic.FACE_TINTS, ["coral", "amber", "green", "blue", "indigo", "magenta", "teal", "rose"]);
     same(logic.workspaceRuleIds(), ["slack"]);
     assert.equal(logic.enricherById("slack").id, "slack");
     assert.equal(logic.enricherById("none"), null);
@@ -307,7 +314,9 @@ const CONTROLS = [
     ["larger icon first", "var urls = [icon.image_88, icon.image_68]", "var urls = [icon.image_68, icon.image_88]"],
     ["workspace limit", "for (var i = 0; i < ids.length && out.length < WORKSPACES_MAX; i++) {", "for (var i = 0; i < ids.length; i++) {"],
     ["first copied icon", "if (copied.indexOf(to) !== -1) file = \"file://\" + to;", "file = \"file://\" + to;"],
-    ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"]
+    ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"],
+    ["tint by the folded name", 'var key = fold(name || "");', 'var key = String(name || "");'],
+    ["tint by the hash", "return FACE_TINTS[hash % FACE_TINTS.length];", "return FACE_TINTS[0];"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

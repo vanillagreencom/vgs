@@ -235,7 +235,8 @@ scene_notifications() { # MODE
   ids+=("$(notify Slack "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '["default", "View"]' '{"desktop-entry": <"slack">}')")
   ids+=("$(notify Slack "[acme] from Ada Lovelace" "Did you see the notes?" '["default", "View"]' '{"desktop-entry": <"slack">}')")
   expect_poll "three Slack toasts are on screen" 3 on_screen
-  expect_poll "each Slack toast draws the workspace icon" '[true, true, true]' slack_badges
+  # An older revision's card has no workspace icon to read back.
+  [[ -n $rev ]] || expect_poll "each Slack toast draws the workspace icon" '[true, true, true]' slack_badges
   take "notifications-$1-slack"
   for id in "${ids[@]}"; do
     "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications \

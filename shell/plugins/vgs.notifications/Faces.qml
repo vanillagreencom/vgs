@@ -3,10 +3,12 @@ import Quickshell.Widgets
 import "NotificationLogic.js" as Logic
 
 // The people a notification names, as round faces overlapping left to
-// right, the first on top: the image the notification carries on the
-// first face, initials on the others and on the first when it carries
-// none, and a "+N" chip last for the people past them. One face alone is
-// the icon's size; several are smaller.
+// right, each laid over the one before it and ringed in the glass so it
+// cuts that one out: the image the notification carries on the first
+// face, initials on a tint picked from the name on the others and on the
+// first when it carries none, and a "+N" chip last, whole on top, for the
+// people past them. One face alone is the icon's size; several are
+// smaller.
 Item {
     id: faces
 
@@ -33,11 +35,11 @@ Item {
             required property int index
             readonly property bool chip: index >= faces.names.length
             x: index * faces.step
-            z: faces.count - index
+            z: face.index
             width: faces.size
             height: faces.size
             radius: faces.look.radius.full
-            color: chip ? faces.look.face.chip : faces.look.face.fill
+            color: chip ? faces.look.face.chip : faces.look.face.tint[Logic.faceTint(faces.names[face.index])]
             border.width: faces.single ? 0 : faces.look.face.ringWidth
             border.color: faces.look.face.ring
 

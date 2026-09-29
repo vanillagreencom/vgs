@@ -151,14 +151,29 @@ var TOKENS = {
 
     // The people a notification names, as overlapping round faces in the
     // icon slot: one alone at the icon's size, several smaller, each ringed
-    // in the glass so the ones under it stay apart, and a "+N" chip last.
+    // in the glass and laid over the one before it, and a "+N" chip last,
+    // on top.
     face: {
         small: length(26),
         overlap: length(10),
         ring: color("{glass.base}"),
         ringWidth: length(2),
-        fill: ink(0.16),
-        chip: ink(0.26),
+        // Every face is opaque, so a face over another cuts it out rather
+        // than showing it through. A person's face takes one tint, picked
+        // by NotificationLogic.faceTint from the name; the chip is neutral.
+        // Each is mixed into the glass, so light mode lightens it and the
+        // foreground stays readable on it.
+        chip: color("mix({glass.base}, {text.foreground}, 0.26)"),
+        tint: {
+            coral: color("mix({glass.base}, #e8715a, 0.6)"),
+            amber: color("mix({glass.base}, #e0a23a, 0.6)"),
+            green: color("mix({glass.base}, #5fb36b, 0.6)"),
+            blue: color("mix({glass.base}, #4aa3c7, 0.6)"),
+            indigo: color("mix({glass.base}, #7a7ee0, 0.6)"),
+            magenta: color("mix({glass.base}, #c46fb4, 0.6)"),
+            teal: color("mix({glass.base}, #3fb8a6, 0.6)"),
+            rose: color("mix({glass.base}, #e06a8c, 0.6)")
+        },
         initials: { size: length(15), weight: weight(600) },
         initialsSmall: { size: length(10), weight: weight(600) }
     },
