@@ -16,7 +16,7 @@
 //       and every package it names as the installed package it becomes,
 //       whose index mode and palette must be its own, with no curated file
 //       on a target under DIR/targets whose files run code, none no target
-//       writes, and no symlink. One line per entry. Exit 0 when the index
+//       writes, none apply would not take, and no symlink. One line per entry. Exit 0 when the index
 //       and every entry are accepted, 1 when any is refused, 2 when the
 //       index or a file cannot be read.
 //   vgsh-theme-judge list <text|json> <config-dir> <state-dir>
@@ -311,8 +311,8 @@ function checkTargets(base, defaults) {
 
 // --- catalog
 
-// Every destination a target under BASE writes, mapped to its target's name
-// and `runsCode`, and the number of targets acceptTarget refused, each
+// Every destination a target under BASE writes, mapped to its target's name,
+// `runsCode` and accepted `files` entry, and the number of targets acceptTarget refused, each
 // printed as `packages` prints it. An absent BASE holds no target. Any read
 // failure is unreadable.
 function targetDestinations(base) {
@@ -337,7 +337,7 @@ function targetDestinations(base) {
             refused += 1;
             continue;
         }
-        for (const file of verdict.target.files) destinations.set(file.destination, { name, runsCode: verdict.target.runsCode });
+        for (const file of verdict.target.files) destinations.set(file.destination, { name, runsCode: verdict.target.runsCode, file });
     }
     return { destinations, refused };
 }
@@ -345,7 +345,9 @@ function targetDestinations(base) {
 // The judge's refusal of the curated files in DIR/targets, or null: a
 // catalogued package becomes an installed one, whose curated file on a
 // `runsCode` target apply drops, so the catalog carries none there, nor one
-// no target writes, nor a symlink. Any read failure throws the fs error.
+// no target writes, nor one of a shape apply would not take in place of the
+// render (render.curatedTaken), nor a symlink. Any read failure throws the
+// fs error.
 function curatedRefusal(dir, destinations) {
     const base = path.join(dir, TARGETS);
     const stat = fs.lstatSync(base, { throwIfNoEntry: false });
@@ -359,6 +361,7 @@ function curatedRefusal(dir, destinations) {
         const target = destinations.get(entry.name);
         if (target === undefined) return logic.refusal("curated-unknown", "", "file=" + file);
         if (target.runsCode) return logic.refusal("curated-code", "", "file=" + file + " target=" + target.name);
+        if (!render.curatedTaken(logic, target.file, fs.readFileSync(path.join(base, entry.name)))) return logic.refusal("curated-shape", "", "file=" + file + " target=" + target.name);
     }
     return null;
 }

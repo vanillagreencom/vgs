@@ -7,7 +7,8 @@
 // target.json or placeholder, and fails closed on an unreadable template or
 // a missing vgs package. The catalog check judges the index and every
 // package it names, refuses a curated file on a target whose files run
-// code, one no target writes and any symlink, and requires the thumbnail;
+// code, one no target writes, one apply would not take and any symlink,
+// and requires the thumbnail;
 // the package walk skips the catalog. Its controls at the end edit a copy
 // of the judge, one rule at a time, and require the catalog rows to fail on
 // each copy. Test directories live under repo tmp so the suite does not
@@ -53,11 +54,14 @@ const catalogEntry = name => ({ name, mode: "dark", thumbnail: name + "/thumbnai
 const catalogTheme = (name, palette = PALETTE) => JSON.stringify({ schemaVersion: 1, name, tokens: { scheme: { mode: "dark" }, palette } });
 
 // A themes directory at BASE holding a target that runs no code (`plain`),
-// one that does (`code`) and a catalog whose index lists `probe`, a valid
-// package with a thumbnail and a curated file for `plain`.
+// one that does (`code`), one that takes a curated file only as a JSON
+// object with a `colors` key (`keyed`), and a catalog whose index lists
+// `probe`, a valid package with a thumbnail and a curated file for `plain`
+// and for `keyed`.
 function writeCatalog(base) {
     writeTarget(base, "plain", Object.assign({}, target, { app: "Plain", files: [{ template: "plain.conf", destination: "plain.conf" }] }), { "plain.conf": "" });
     writeTarget(base, "code", Object.assign({}, target, { app: "Code", runsCode: true, files: [{ template: "code.conf", destination: "code.conf" }] }), { "code.conf": "" });
+    writeTarget(base, "keyed", Object.assign({}, target, { app: "Keyed", files: [{ template: "keyed.json", destination: "keyed.json", curatedKeys: ["colors"] }] }), { "keyed.json": "{}" });
     const dir = path.join(base, "catalog", "probe");
     fs.mkdirSync(path.join(dir, "targets"), { recursive: true });
     fs.writeFileSync(path.join(base, "catalog", "index.json"), JSON.stringify({ schemaVersion: 1, entries: [catalogEntry("probe")] }));
@@ -65,6 +69,7 @@ function writeCatalog(base) {
     fs.writeFileSync(path.join(dir, "terminal.json"), JSON.stringify({ schemaVersion: 1, slots }));
     fs.writeFileSync(path.join(dir, "thumbnail.jpg"), "jpeg");
     fs.writeFileSync(path.join(dir, "targets", "plain.conf"), "curated");
+    fs.writeFileSync(path.join(dir, "targets", "keyed.json"), JSON.stringify({ colors: {} }));
     return dir;
 }
 
@@ -85,6 +90,7 @@ function catalogRows(check, root) {
     // [label, the defect planted in the probe directory DIR, the refusal]
     const refused = [
         ["curated code", dir => fs.writeFileSync(path.join(dir, "targets", "code.conf"), "os.execute()"), "reason=curated-code file=targets/code.conf target=code"],
+        ["curated shape", dir => fs.writeFileSync(path.join(dir, "targets", "keyed.json"), JSON.stringify({ extension: "probe" })), "reason=curated-shape file=targets/keyed.json target=keyed"],
         ["curated unknown", dir => fs.writeFileSync(path.join(dir, "targets", "other.conf"), ""), "reason=curated-unknown file=targets/other.conf"],
         ["curated directory", dir => fs.mkdirSync(path.join(dir, "targets", "plain.d")), "reason=curated-file file=targets/plain.d"],
         ["curated symlink", dir => { fs.rmSync(path.join(dir, "targets", "plain.conf")); fs.symlinkSync("../theme.json", path.join(dir, "targets", "plain.conf")); }, "reason=symlink file=targets/plain.conf"],
@@ -158,6 +164,7 @@ function judgeCopy(dir, needle, replacement) {
 const CATALOG_CONTROLS = [
     ["curated code", "if (target.runsCode) return", "if (false) return"],
     ["curated unknown", "if (target === undefined) return", "if (false) return"],
+    ["curated shape", "if (!render.curatedTaken(logic, target.file, fs.readFileSync(path.join(base, entry.name)))) return", "if (false) return"],
     ["curated file kind", "if (!entry.isFile()) return", "if (false) return"],
     ["curated symlink", "if (entry.isSymbolicLink()) return", "if (false) return"],
     ["targets symlink", 'if (stat.isSymbolicLink()) return logic.refusal("symlink", "", "file=" + TARGETS);', ""],
