@@ -414,7 +414,7 @@ function readTarEntries(theme, archive) {
             if (underBackgrounds && type !== "0" && type !== "" && type !== "5") refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=unsupported-type type=${JSON.stringify(type)}`);
             if ((type === "0" || type === "") && name.startsWith(`${backgrounds.DIR}/`)) {
                 const fileName = name.slice(backgrounds.DIR.length + 1);
-                entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });
+                if (!fileName.includes("/")) entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });
             }
         }
         offset = body + Math.ceil(size / 512) * 512;

@@ -414,6 +414,24 @@ try {
         assert.match(proc.stdout, /source=a\.jpg/);
     });
 
+    row("nested backgrounds members are skipped", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        replaceArchive(dir, "alpha", [
+            { name: "backgrounds/0-sub/a.jpg", data: sampleImage() },
+            { name: "backgrounds/z-direct.jpg", data: sampleImage() }
+        ]);
+        const proc = runThemes(dir, ["alpha"]);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /source=z-direct\.jpg/);
+        const copy = converterCopy(path.join(dir, "control"),
+            'if (!fileName.includes("/")) entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });',
+            'entries.push({ name: path.basename(fileName), data: content, isFile: () => true, isSymbolicLink: () => false });');
+        const mutant = runThemes(dir, ["alpha"], [], copy);
+        assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
+        assert.doesNotMatch(mutant.stdout, /source=z-direct\.jpg/, "mutant still skipped nested member");
+    });
+
     row("https redirect to http is refused", dir => {
         freshRoot(dir);
         copyFixtureArchives(dir);
