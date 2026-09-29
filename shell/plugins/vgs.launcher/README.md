@@ -41,7 +41,7 @@ until [[ -s $done ]]; do sleep 0.05; done
 - `target`: a link to another menu. `provider`: `apps` for installed applications, `themes` for the theme packages.
 - `requires`: commands the row needs; a missing one shows the row as unavailable, naming it.
 - `unavailable`: why the shell cannot offer the row. It shows, and does nothing.
-- `tui`: the key of a floating TUI `shell.tui.entries` lists, `core/<name>` or `<plugin id>/<name>` ([tui.md § The capability](../../../docs/architecture/tui.md#the-capability)). Picking the row opens it and closes the launcher; a refusal other than `busy` stays in the list as a notice and is logged as `launcher: tui <key> <answer>`.
+- `tui`: the key of a floating TUI `shell.tui.entries` lists, `core/<name>` or `<plugin id>/<name>` ([tui-capability.md § The capability](../../../docs/architecture/tui-capability.md#the-capability)). Picking the row opens it and closes the launcher; a refusal other than `busy` stays in the list as a notice and is logged as `launcher: tui <key> <answer>`.
 - `tuiGroup`: a group of that list. The row opens the first listed entry of the group, in the list's key order, so it opens another plugin's TUI without naming the plugin.
 - `label`, `icon` (a Lucide name), `title`, `description`, `aliases`, `parent`.
 

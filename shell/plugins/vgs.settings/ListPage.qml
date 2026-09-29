@@ -4,7 +4,7 @@ import qs.Commons
 import qs.Ui
 
 // The root page: every plugin the manager lists, filtered by the search
-// field. A row shows the plugin's icon, name, version and source, a danger
+// field, under a heading with the Add plugin button. A row shows the plugin's icon, name, version and source, a danger
 // badge counting its errors, its enabled switch and a chevron; a click
 // opens its page. With the search field focused, Up and Down move the
 // highlighted row and Enter opens it. The heading, the search field and the
@@ -53,12 +53,29 @@ FocusScope {
         width: page.listWidth
         spacing: Theme.space.sm
 
-        Label {
-            role: "h2"
-            text: page.panel.title
-            x: Theme.row.paddingX
-            width: parent.width - 2 * Theme.row.paddingX
-            elide: Text.ElideRight
+        Item {
+            width: parent.width
+            height: Math.max(heading.height, add.height)
+
+            Label {
+                id: heading
+                role: "h2"
+                text: page.panel.title
+                x: Theme.row.paddingX
+                width: add.x - x - Theme.space.sm
+                elide: Text.ElideRight
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Button {
+                id: add
+                text: "Add plugin"
+                iconName: "circle-plus"
+                variant: "secondary"
+                size: "sm"
+                x: parent.width - width - Theme.row.paddingX
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: page.panel.addPlugin()
+            }
         }
         Label {
             role: "hint"

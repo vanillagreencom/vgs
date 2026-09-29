@@ -7,9 +7,10 @@ import qs.Ui
 // back button, which returns to the list, and the plugin's name as a title
 // whose menu lists every plugin, the current one checked, and opens the
 // chosen one's page. The body holds the description, the capabilities,
-// every error, the enabled switch, the listing metadata, the update and
-// remove commands of an installed plugin, one read-only status section per
-// status group (entries without a group first, under `Status`), one
+// every error, the enabled switch, the listing metadata, the Update and
+// Remove buttons of an installed plugin, one read-only status section per
+// status group (entries without a group first, under `Status`), the
+// Requirements section with an Install button while one is missing, one
 // settings section per schema group (entries without a group first, under
 // `Settings`) and the Keys section. A disabled plugin's fields are
 // read-only and say to enable it; its status rows say it has not reported.
@@ -25,6 +26,8 @@ FocusScope {
     property var row: null
 
     readonly property bool editable: row !== null && row.enabled
+    // Whether a requirement of the plugin was missing at the last scan.
+    readonly property bool requirementMissing: row !== null && row.requirements.some(r => r.state === "missing")
     readonly property bool isSelf: row !== null && panel.shell !== null && row.id === panel.shell.manifest.id
     readonly property alias scrollArea: scroll
     readonly property alias titleMenu: menu
@@ -196,15 +199,29 @@ FocusScope {
                 }
             }
 
-            Repeater {
-                model: page.row === null || page.row.source !== "installed" ? [] : [["Update", "vgsh plugin update " + page.row.id], ["Remove", "vgsh plugin remove " + page.row.id]]
-                Field {
-                    id: command
-                    required property var modelData
-                    width: body.width
-                    label: modelData[0]
-                    inline: true
-                    Label { role: "itemCode"; text: command.modelData[1]; width: parent.width; elide: Text.ElideRight }
+            // A bundled plugin is disabled, never updated or removed.
+            Field {
+                width: parent.width
+                label: "Manage"
+                inline: true
+                visible: page.row !== null && page.row.source === "installed"
+                hint: "Each opens a terminal that asks before it changes anything."
+                Row {
+                    spacing: Theme.space.sm
+                    Button {
+                        text: "Update"
+                        iconName: "refresh-cw"
+                        variant: "secondary"
+                        size: "sm"
+                        onClicked: page.panel.updatePlugin(page.row.id)
+                    }
+                    Button {
+                        text: "Remove"
+                        iconName: "trash"
+                        variant: "danger"
+                        size: "sm"
+                        onClicked: page.panel.removePlugin(page.row.id)
+                    }
                 }
             }
 
@@ -235,6 +252,46 @@ FocusScope {
                             width: statusSection.width
                             entry: page.statusEntry(modelData)
                         }
+                    }
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: Theme.space.xs
+                visible: page.row !== null && page.row.requirements.length > 0
+
+                SectionHeader {
+                    text: "Requirements"
+                    description: "Commands the plugin runs, looked up on PATH at the last scan"
+                    leftPadding: Theme.row.paddingX
+                    rightPadding: Theme.row.paddingX
+                }
+
+                Repeater {
+                    model: ScriptModel {
+                        values: page.row === null ? [] : page.row.requirements
+                        objectProp: "command"
+                    }
+                    RequirementRow {
+                        required property var modelData
+                        width: body.width
+                        requirement: modelData
+                    }
+                }
+
+                Field {
+                    width: parent.width
+                    label: "Missing"
+                    inline: true
+                    visible: page.requirementMissing
+                    hint: "Opens a terminal that names each package and asks before it installs them."
+                    Button {
+                        text: "Install"
+                        iconName: "download"
+                        variant: "primary"
+                        size: "sm"
+                        onClicked: page.panel.installRequirements(page.row.id)
                     }
                 }
             }

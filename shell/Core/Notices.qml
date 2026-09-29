@@ -6,9 +6,10 @@ import "PluginLogic.js" as Logic
 
 // The requirement notice: which plugins' missing commands the user is
 // shown, in what order, on which screen, and the install the shown notice
-// runs (requirement-notice.md). Three triggers raise a notice: the
+// runs (requirement-notice.md). Four triggers raise a notice: the
 // pluginInstalled IPC function `vgsh plugin add` calls, Plugins.setEnabled
-// turning a plugin on, and a plugin's own `requirements` capability.
+// turning a plugin on, a plugin's own `requirements` capability, and the
+// `manager` capability's installRequirements.
 // PluginLogic decides what each trigger asks for, whether it joins the
 // queue, and what the shown notice lists and installs; NoticeHost draws
 // it. The managers come from `bin/vgsh-pkg detect --json`, run when the
@@ -160,6 +161,15 @@ Singleton {
     // The `requirements` capability's offer, for the instance CTX belongs to.
     function offer(ctx, commands) {
         return raise(ctx.id, "offered", commands);
+    }
+
+    // The `manager` capability's installRequirements: plugin ID's notice
+    // with every missing command, the Settings window's Install. A plugin
+    // missing nothing raises no notice, so `satisfied` answers
+    // `refused: requirements=<id> reason=satisfied` for the page to show.
+    function requested(id) {
+        const answer = raise(id, "requested");
+        return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
     }
 
     // Install: the shown notice's first installable group through the core

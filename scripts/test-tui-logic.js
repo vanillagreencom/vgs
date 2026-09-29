@@ -159,7 +159,10 @@ function suite(ctx, check) {
     // tuiOpen and tuiEntries over two plugins, one disabled, and a core table.
     const other = Object.assign({ __revision: "r2" }, ctx.validateManifest(Object.assign(manifestWith({ fix: { script: "tui/fix.sh", title: "Fix", entry: { label: "Fix it", icon: "wrench", group: "Tools" } } }), { id: "acme.other" }), "/q").manifest);
     const manifests = { "acme.tui": running, "acme.other": other };
-    const core = { doctor: { argv: ["vgsh", "doctor"], title: "Doctor", size: "tall", presentation: "full", entry: { label: "Check the system", icon: "stethoscope", group: "System" } }, quiet: { argv: ["true"], title: "Quiet", size: "default", presentation: "plain", entry: null } };
+    const core = {
+        doctor: { argv: ["vgsh", "doctor"], title: "Doctor", size: "tall", presentation: "full", entry: { label: "Check the system", icon: "stethoscope", group: "System" } },
+        quiet: { argv: ["true"], title: "Quiet", size: "default", presentation: "plain", entry: null },
+    };
     const doctorArgv = ["launch", "--title", "Doctor", "--size", "tall", "--presentation", "full", "--record", "core/doctor", "--run", "7-1", "--", "/core/bin/vgsh", "doctor"];
     // tuiOpen: [name, enabled ids, launcher state, busy keys, key, argv, or
     // the answer and the action it asks for].
@@ -171,6 +174,7 @@ function suite(ctx, check) {
         ["an unknown plugin", ["acme.tui"], "present", [], "acme.none/fix", ["refused: tui=acme.none/fix reason=undeclared", "none"]],
         ["an unknown core TUI", [], "present", [], "core/none", ["refused: tui=core/none reason=undeclared", "none"]],
         ["a core name that is a prototype member", [], "present", [], "core/constructor", ["refused: tui=core/constructor reason=undeclared", "none"]],
+        ["a core TUI with no entry is not listed", [], "present", [], "core/quiet", ["refused: tui=core/quiet reason=undeclared", "none"]],
         ["a key with no slash", ["acme.tui"], "present", [], "acme.tui", ["refused: tui=acme.tui reason=undeclared", "none"]],
         ["a key with no owner", ["acme.tui"], "present", [], "/update", ["refused: tui=/update reason=undeclared", "none"]],
         ["a key that is not a string", ["acme.tui"], "present", [], null, ["refused: tui=null reason=undeclared", "none"]],
@@ -260,16 +264,60 @@ function suite(ctx, check) {
     check("coreTuiTable returns a judged table", thrown({ doctor: doctor }), "accepted");
     check("coreTuiTable throws on a row's first defect", thrown({ doctor: doctor, bad: without("argv") }), "tui: core/bad needs key argv");
 
-    // The shipped table: the package pickers and the passwordless sudo grant,
-    // each command a file of the core's bin/ its owner may run.
-    check("the core lists its package install picker", ctx.CORE_TUIS["pkg-install"], { argv: ["vgsh", "pkg", "install"], title: "Install packages", size: "default", presentation: "full", entry: { label: "Install packages", icon: "package-plus", group: "Packages" } });
-    check("the core lists its package remove picker", ctx.CORE_TUIS["pkg-remove"], { argv: ["vgsh", "pkg", "remove"], title: "Remove packages", size: "default", presentation: "full", entry: { label: "Remove packages", icon: "package-minus", group: "Packages" } });
-    check("the requirement notice's install is a core row nothing lists", ctx.CORE_TUIS["requirements-install"], { argv: ["vgsh", "pkg", "run", "install"], title: "Install requirements", size: "default", presentation: "full", entry: null });
-    check("the core lists its passwordless sudo grant", ctx.CORE_TUIS["sudo-grant"], { argv: ["vgsh", "sudo", "grant"], title: "Passwordless sudo", size: "default", presentation: "full", entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" } });
+    // The shipped table: the package pickers, the passwordless sudo grant,
+    // the requirement report, the plugin and theme adds, the requirement
+    // notice's install and the plugin manager's rows for one plugin, each
+    // command a file of the core's bin/ its owner may run.
+    const shipped = {
+        "pkg-install": { argv: ["vgsh", "pkg", "install"], title: "Install packages", size: "default", presentation: "full", entry: { label: "Install packages", icon: "package-plus", group: "Packages" } },
+        "pkg-remove": { argv: ["vgsh", "pkg", "remove"], title: "Remove packages", size: "default", presentation: "full", entry: { label: "Remove packages", icon: "package-minus", group: "Packages" } },
+        "sudo-grant": { argv: ["vgsh", "sudo", "grant"], title: "Passwordless sudo", size: "default", presentation: "full", entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" } },
+        "doctor": { argv: ["vgsh", "doctor"], title: "Requirements", size: "default", presentation: "full", entry: { label: "Check requirements", icon: "stethoscope", group: "System" } },
+        "plugin-add": { argv: ["vgsh", "plugin", "add"], title: "Add a plugin", size: "default", presentation: "full", entry: { label: "Add a plugin", icon: "circle-plus", group: "Plugins" } },
+        "theme-add": { argv: ["vgsh", "theme", "add"], title: "Add a theme", size: "default", presentation: "full", entry: { label: "Add a theme", icon: "palette", group: "Themes" } },
+        "requirements-install": { argv: ["vgsh", "pkg", "run", "install"], title: "Install requirements", size: "default", presentation: "full", entry: null },
+        "plugin-update": { argv: ["vgsh", "plugin", "update"], title: "Update a plugin", size: "wide", presentation: "full", entry: null },
+        "plugin-remove": { argv: ["vgsh", "plugin", "remove"], title: "Remove a plugin", size: "default", presentation: "full", entry: null },
+    };
+    check("the core's TUI table holds its rows and no other", Object.keys(ctx.CORE_TUIS).sort(), Object.keys(shipped).sort());
+    for (const name of Object.keys(shipped))
+        check("the core's TUI " + name, ctx.CORE_TUIS[name], shipped[name]);
     check("every core command is an executable file of bin/", Object.keys(ctx.CORE_TUIS).filter(n => {
         const file = path.join(BIN, ctx.CORE_TUIS[n].argv[0]);
         const stat = fs.lstatSync(file, { throwIfNoEntry: false });
         return stat === undefined || !stat.isFile() || (stat.mode & 0o100) === 0;
+    }), []);
+
+    // managerTui: [name, action, id, source, the core name and arguments,
+    // or the manager's reply].
+    const managerRows = [
+        ["update opens the plugin update for an installed plugin", "update", "acme.tui", "installed", ["plugin-update", ["acme.tui"]]],
+        ["remove opens the plugin remove for an installed plugin", "remove", "acme.tui", "installed", ["plugin-remove", ["acme.tui"]]],
+        ["update refuses a bundled plugin", "update", "vgs.bar", "bundled", "refused: bundled=vgs.bar"],
+        ["remove refuses a bundled plugin", "remove", "vgs.bar", "bundled", "refused: bundled=vgs.bar"],
+        ["an id no plugin has", "update", "acme.none", null, "unknown: acme.none"],
+        ["an id that is not a string", "remove", 7, null, "unknown: 7"],
+    ];
+    for (const [name, action, id, source, want] of managerRows) {
+        const r = ctx.managerTui(action, id, source);
+        check("managerTui: " + name, r.ok ? [r.name, r.args] : r.answer, want);
+    }
+    const managerThrown = (action, source) => { try { ctx.managerTui(action, "acme.tui", source); return "answered"; } catch (e) { return e.message; } };
+    check("managerTui throws on an action no row covers", managerThrown("add", "installed"), "manager: no TUI action \"add\", want one of update, remove");
+    check("managerTui throws on a source no rule covers", managerThrown("update", "linked"), "manager: plugin source \"linked\" is not one of bundled, installed");
+    // managerTuiAnswer: [name, core name, answer, the manager's answer].
+    const answerRows = [
+        ["a launch the runner started", "plugin-update", "ok", "ok"],
+        ["the live window of the same TUI the runner focused", "plugin-update", "refused: tui=core/plugin-update reason=busy", "ok"],
+        ["a busy key of another TUI", "plugin-update", "refused: tui=core/plugin-remove reason=busy", "refused: tui=core/plugin-remove reason=busy"],
+        ["no terminal", "plugin-add", "refused: tui=core/plugin-add reason=launcher-missing", "refused: tui=core/plugin-add reason=launcher-missing"],
+        ["refused arguments", "plugin-remove", "refused: tui=core/plugin-remove reason=args", "refused: tui=core/plugin-remove reason=args"],
+    ];
+    for (const [name, tuiName, answer, want] of answerRows)
+        check("managerTuiAnswer: " + name, ctx.managerTuiAnswer(tuiName, answer), want);
+    check("every manager TUI opens an unlisted core row", Object.keys(ctx.MANAGER_TUIS).filter(a => {
+        const row = ctx.CORE_TUIS[ctx.MANAGER_TUIS[a]];
+        return row === undefined || row.entry !== null;
     }), []);
 
     // tuiLaunchOutcome: [name, completion, stderr, log line].
@@ -457,13 +505,24 @@ const CONTROLS = [
     ["a core row may have no entry", "return row.entry === null ? \"\" : tuiEntryError(at, row.entry);", "return tuiEntryError(at, row.entry);", "tui: core/requirements-install.entry must be an object"],
     ["the core table throws on a defect", "if (error !== \"\")\n            throw new Error(\"tui: \" + error);", "if (false)\n            throw new Error(\"tui: \" + error);"],
     ["open resolves a core command under the core's bin/", "[coreBin + \"/\" + row.argv[0]]", "[row.argv[0]]"],
+    ["the manager's actions are a table", "if (!hasOwn(MANAGER_TUIS, action))", "if (false)"],
+    ["the manager refuses an unknown id", "if (typeof id !== \"string\" || source === null)", "if (false)"],
+    ["the plugin update asks before it fast-forwards", "argv: [\"vgsh\", \"plugin\", \"update\"],", "argv: [\"vgsh\", \"plugin\", \"update\", \"--yes\"],"],
+    ["the plugin remove asks before it deletes", "argv: [\"vgsh\", \"plugin\", \"remove\"],", "argv: [\"vgsh\", \"plugin\", \"remove\", \"--yes\"],"],
+    ["the manager answers ok for a focused live window", "return answer === tuiRefusal(\"core/\" + name, \"busy\").answer ? \"ok\" : answer;", "return answer;"],
+    ["the manager's busy answer is its own TUI's", "return answer === tuiRefusal(\"core/\" + name, \"busy\").answer ? \"ok\" : answer;", "return /reason=busy$/.test(answer) ? \"ok\" : answer;"],
+    ["the plugin update opens wide", "title: \"Update a plugin\",\n        size: \"wide\",", "title: \"Update a plugin\",\n        size: \"default\","],
+    ["the manager's sources are known", "    throw new Error(\"manager: plugin source \" + JSON.stringify(source)", "    return { ok: false, answer: \"refused: bundled=\" + id };\n    throw new Error(\"manager: plugin source \" + JSON.stringify(source)"],
+    ["the manager refuses a bundled plugin", "    case \"bundled\":\n        return { ok: false, answer: \"refused: bundled=\" + id };", "    case \"bundled\":"],
+    ["the manager's update opens the plugin update", "    update: \"plugin-update\",", "    update: \"plugin-remove\","],
+    ["the manager's remove opens the plugin remove", "    remove: \"plugin-remove\"\n", "    remove: \"plugin-update\"\n"],
     ["the manifest judge runs the tui judge", "var badTui = tuiError(raw.tui, capabilities);", "var badTui = \"\";"],
     ["the manifest carries its tui normalized", "manifest.tui = normalTui(raw.tui === undefined ? {} : raw.tui);", "manifest.tui = raw.tui;"],
     ["an absent size is default", "size: row.size === undefined ? \"default\" : row.size", "size: row.size"],
     ["an absent presentation is full", "presentation: row.presentation === undefined ? \"full\" : row.presentation", "presentation: row.presentation"],
     ["an absent entry is null", "entry: row.entry === undefined ? null : clone(row.entry)", "entry: row.entry"],
     ["at most sixteen arguments", "if (!Array.isArray(args) || args.length > TUI_ARGS_MAX)", "if (!Array.isArray(args))"],
-    ["arguments are a list", "if (!Array.isArray(args) || ", "if ("],
+    ["arguments are a list", "if (!Array.isArray(args) || args.length > TUI_ARGS_MAX)", "if (args.length > TUI_ARGS_MAX)"],
     ["an argument is a string", "typeof arg === \"string\" && arg.length > 0", "arg.length > 0"],
     ["an argument is not empty", "typeof arg === \"string\" && arg.length > 0 && ", "typeof arg === \"string\" && "],
     ["an argument is at most 256 characters", "Array.from(arg).length <= TUI_ARG_MAX && ", ""],
@@ -476,6 +535,7 @@ const CONTROLS = [
     ["open needs a key with a slash", "if (slash === -1)\n        return tuiRefusal(key, \"undeclared\");", "if (false)\n        return tuiRefusal(key, \"undeclared\");"],
     ["the core's install picker runs vgsh pkg install", "argv: [\"vgsh\", \"pkg\", \"install\"]", "argv: [\"vgsh\", \"pkg\", \"remove\"]"],
     ["a core TUI is found in the table by its own key", "if (typeof name !== \"string\" || !hasOwn(core, name))", "if (typeof name !== \"string\" || core[name] === undefined)"],
+    ["open lists only a core TUI with an entry", "if (!hasOwn(core, name) || core[name].entry === null)", "if (!hasOwn(core, name))"],
     ["open needs an entry", " || manifests[owner].tui[name].entry === null)", ")"],
     ["open refuses a disabled plugin", "if (enabledIds.indexOf(owner) === -1)", "if (false)"],
     ["entries skip a script without an entry", "if (row.entry === null)\n            return;", "if (false)\n            return;"],

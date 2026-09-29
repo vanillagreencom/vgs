@@ -641,7 +641,7 @@ check "a declined update runs no post-merge hook" test ! -e "$hooks/post-merge.m
 
 # The must-fail control: a copy of vgsh that never asks fast-forwards both
 # without a terminal and on a terminal that answers no.
-ask='      confirm_update "$label"'
+ask='      confirm_change update "$label" "the checkout stays at ${ff_old:0:12}"'
 check "the update asks once in bin/vgsh" test "$(grep -c -x -F -- "$ask" "$repo/bin/vgsh")" == 1
 noask="$tmp/noask"; mkdir -p "$noask/bin"
 grep -v -x -F -- "$ask" "$repo/bin/vgsh" >"$noask/bin/vgsh" || true
@@ -715,7 +715,7 @@ inst "update refuses a bundled id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: bundl
 inst "update refuses --yes after the id" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=--yes" plugin update acme.probe --yes
 inst "remove refuses an unknown id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: unknown=acme.absent" plugin remove acme.absent
 inst "remove refuses a path that leaves the plugin directory" "$cfg" "$rt_empty" 1 "" "vgsh: refused: outside=$cfg/vgs" plugin remove ..
-inst "remove deletes the installed plugin" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin remove acme.probe
+inst "remove deletes the installed plugin" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin remove --yes acme.probe
 check "remove leaves no plugin directory" test ! -e "$plugin"
 cfg="$tmp/cfg-link"; mkdir -p "$cfg/vgs/plugins" "$tmp/elsewhere/acme.probe"
 manifest acme.probe 0.1.0 >"$tmp/elsewhere/acme.probe/manifest.json"
@@ -733,7 +733,7 @@ manifest acme.other 0.1.0 >"$cfg/vgs/plugins/acme.probe/manifest.json"
 inst "remove refuses a directory whose manifest names another id" "$cfg" "$rt_empty" 1 "" "vgsh: refused: manifest-id=acme.other path=$cfg/vgs/plugins/acme.probe" plugin remove acme.probe
 check "a refused id mismatch leaves the directory" test -f "$cfg/vgs/plugins/acme.probe/manifest.json"
 cfg="$tmp/cfg-live"
-inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin remove acme.probe
+inst "remove rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin remove --yes acme.probe
 INST_REPLY=busy inst "add while a scan runs says the rescan is queued" "$cfg" "$rt_live" 0 "shell=rescan-queued" "" plugin add "$tmp/src/probe.git"
 
 # Theme list and apply, against the tree copy theme_tree makes, holding one

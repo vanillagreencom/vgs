@@ -6,8 +6,14 @@
 # per plugin whose settings, keys and enablement it writes through the
 # manager capability; the title's menu jumps between pages, the back button
 # and Escape return, a deep link opens one page, and the page's scroll bar
-# drags. rows/settings.sh continues with the same window and disables the
-# plugin again.
+# drags. An installed plugin's Update and Remove buttons, the list's Add
+# plugin button and a missing requirement's Install button each open the
+# manager's core floating TUI for that plugin, read back from the stand-in
+# terminal's recorded argv, which runs none of them, and hide the window,
+# which would cover that terminal; a bundled plugin's
+# page draws neither button, and each requirement row reads back with its
+# state and purpose. rows/settings.sh continues with the same window and
+# disables the plugin again.
 set -euo pipefail
 read -r mon_w mon_h bar_reserved < <(monitor_size)
 
@@ -284,6 +290,49 @@ else
   fail "the fixture's page scroll area is unreadable: ${area:-}"
 fi
 
+# Update and Remove: an installed plugin's buttons open the manager's core
+# TUIs for its id, the update wide for its diff and with no --yes, so each
+# question stays a question on the terminal, and the window, which sits on
+# the top layer over that terminal, hides. The stand-in terminal records
+# the argv and runs none of it, so the plugin stays installed.
+terminal_stand_in
+terminal_ready "Settings' TUIs"
+# settings_button TEXT: whether the window draws a shown Button TEXT.
+settings_button() { ipc smoke windowGeometry panel vgs.settings Button "$1" | python3 -c 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
+# settings_reopen PAGE: the gear opens the window again on its bar's
+# monitor, the one the pointer reaches, and a row opens PAGE, "" for the
+# list, whose slide has ended once the list's Add plugin button is hidden.
+# A summon over IPC would open it on the focused monitor, which a floating
+# terminal can have moved.
+settings_reopen() {
+  click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
+  expect_poll "the gear opens the window again for ${1:-the list}" 1 layer_count vgs:panel
+  expect_poll "the window shows the list first" '""' settings_page
+  [[ -n $1 ]] || return 0
+  expect "a row opens the page of $1" ok ipc smoke invokeInstance panel vgs.settings openPlugin "$1"
+  expect_poll "the window shows $1 again" "\"$1\"" settings_page
+  expect_poll "the page of $1 has slid in" absent settings_button "Add plugin"
+}
+# The rows above scrolled the page; a new window opens it at its top.
+expect "the scrolled window hides" ok ipc shell hide panel vgs.settings
+expect_poll "the scrolled window is gone" 0 layer_count vgs:panel
+settings_reopen acme.probe
+forget_record
+settings_click Button Update || fail "the click on Update failed"
+expect_poll "Update opens vgsh plugin update for the plugin in the wide floating TUI" \
+  "$(core_words core/plugin-update "Update a plugin" org.vgs.tui.wide plugin update acme.probe)" recorded
+expect_poll "Update hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the update's run ends" idle key_idle core/plugin-update
+settings_reopen acme.probe
+forget_record
+settings_click Button Remove || fail "the click on Remove failed"
+expect_poll "Remove opens vgsh plugin remove for the plugin in the floating TUI" \
+  "$(core_words core/plugin-remove "Remove a plugin" org.vgs.tui plugin remove acme.probe)" recorded
+expect_poll "Remove hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the remove's run ends" idle key_idle core/plugin-remove
+expect "the stand-in's run left the plugin installed" True plugin_known acme.probe
+settings_reopen acme.probe
+
 # The title's menu lists every plugin with the current one checked, scrolls
 # past its maximum height under its own bar, and typed letters then Enter
 # jump to another plugin's page.
@@ -301,6 +350,8 @@ type_keys set || fail "typing into the title's menu failed"
 expect_poll "typed letters highlight the plugin whose name starts with them" '["Settings"]' title_menu current
 type_keys -k Return || fail "sending Return to the title's menu failed"
 expect_poll "Enter jumps to that plugin's page" '"vgs.settings"' settings_page
+expect_poll "a bundled plugin's page draws no Update button" absent settings_button Update
+expect "a bundled plugin's page draws no Remove button" absent settings_button Remove
 geometry expect_poll "the Settings page's key row ends on the settings fields' right edge, its label on its field" '[]' page_alignment 0 1
 expect_poll "the jump closes the menu" '[false]' title_menu opened
 
@@ -357,6 +408,32 @@ expect_poll "Tab after the pop stays on the list" '["ListPage"]' focus_pages 12
 expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Bundled", "1"]]' settings_badge
 settings_keys_row '{}'
 expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
+
+# Add plugin: the list's button opens the core's plugin add, which asks for
+# the git URL on the terminal.
+forget_record
+settings_click Button "Add plugin" || fail "the click on Add plugin failed"
+expect_poll "Add plugin opens vgsh plugin add in the floating TUI" "$(core_words core/plugin-add "Add a plugin" org.vgs.tui plugin add)" recorded
+expect_poll "Add plugin hides the window over the terminal" 0 layer_count vgs:panel
+expect_poll "the add's run ends" idle key_idle core/plugin-add
+
+# Requirements: one row per requirement with its state from the scan and
+# its purpose, and Install, while one is missing, shows the core's
+# requirement notice for the plugin with every missing command, the
+# optional one included, and hides the window under it; Escape closes the
+# notice.
+settings_reopen acme.bare
+has_section() { ipc smoke itemTexts panel vgs.settings SectionHeader | python3 -c 'import json,sys; print(sys.argv[1] in [t[0] for t in json.load(sys.stdin) if t])' "$1"; }
+expect_poll "the page draws a Requirements section" True has_section Requirements
+requirement_texts() { ipc smoke itemTexts panel vgs.settings RequirementRow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+expect_poll "each requirement reads back with its state and purpose" '[["sh", "Present", "A command every sandbox has"], ["vgs-smoke-absent", "Missing, optional", "A command no sandbox has"]]' requirement_texts
+settings_click Button Install || fail "the click on Install failed"
+expect_poll "Install shows the requirement notice with the optional command" '["acme.bare", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
+expect_poll "Install hides the window under the notice" 0 layer_count vgs:panel
+expect_poll "the Settings request's notice holds the keyboard" true ipc smoke noticeFocused
+type_keys -k Escape || fail "sending Escape to the notice failed"
+expect_poll "Escape closes the Settings request's notice" null notice_shown
+settings_reopen ""
 expect "a row opens its page by name" ok ipc smoke invokeInstance panel vgs.settings openPlugin acme.probe
 expect_poll "the page is open again" '"acme.probe"' settings_page
 type_keys -k Escape || fail "sending Escape to the page failed"

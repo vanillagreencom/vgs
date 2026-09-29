@@ -707,8 +707,9 @@ var NOTICE_OFFER_REST_MS = 600000;
 var NOTICE_OFFER_MAX = 16;
 // What raises a notice: `installed`, the pluginInstalled IPC function
 // `vgsh plugin add` calls; `enabled`, setPluginEnabled turning a plugin on;
-// `offered`, the plugin's own `requirements` capability.
-var NOTICE_TRIGGERS = ["installed", "enabled", "offered"];
+// `offered`, the plugin's own `requirements` capability; `requested`, the
+// `manager` capability's installRequirements, the Settings window's Install.
+var NOTICE_TRIGGERS = ["installed", "enabled", "offered", "requested"];
 
 // The notice TRIGGER asks for plugin MANIFEST, whose commands MISSING the
 // last scan did not find: { answer, commands, required }, `commands` the
@@ -716,8 +717,10 @@ var NOTICE_TRIGGERS = ["installed", "enabled", "offered"];
 // open. `answer` is "ok", "satisfied" when `required` is empty and no
 // notice is due, or a refusal. The install and enable triggers list every
 // missing command and require those the plugin does not mark optional, so
-// a plugin missing only optional commands raises none. An offer lists and
-// requires each of COMMANDS still missing, and is refused as
+// a plugin missing only optional commands raises none. A request lists and
+// requires every missing command, optional ones included, since the user
+// asked to install them. An offer lists and requires each of COMMANDS
+// still missing, and is refused as
 // `refused: requirements=malformed` for anything but a list of 1 to
 // NOTICE_OFFER_MAX strings, then as `refused: requirement=<command>
 // reason=undeclared` for the first command MANIFEST does not declare, so a
@@ -729,8 +732,9 @@ function noticeRequest(manifest, missing, trigger, commands) {
     switch (trigger) {
     case "installed":
     case "enabled":
+    case "requested":
         listed = rows.filter(function (row) { return row.state === "missing"; });
-        required = listed.filter(function (row) { return !row.optional; });
+        required = trigger === "requested" ? listed : listed.filter(function (row) { return !row.optional; });
         break;
     case "offered":
         if (!Array.isArray(commands) || commands.length === 0 || commands.length > NOTICE_OFFER_MAX || !commands.every(function (c) { return typeof c === "string"; }))
@@ -872,7 +876,7 @@ var TUI_LAUNCHER_MISSING = 69;
 // TUI_LAUNCHER_MISSING. tuiLauncherAfter moves it.
 var TUI_LAUNCHER_STATES = ["unknown", "present", "missing"];
 // What a row of the core's own TUI table holds, and the command its argv
-// starts with: a file of the core's own bin/ directory, which tuiOpen
+// starts with: a file of the core's own bin/ directory, which tuiCore
 // resolves under the directory the shell hands it, since the shell's PATH
 // need not hold the core's commands.
 var CORE_TUI_KEYS = ["argv", "title", "size", "presentation", "entry"];
@@ -895,6 +899,9 @@ var TUI_RUN_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // size, the window Omarchy's floating terminal gives omarchy-pkg-install.
 // `requirements-install` is not listed: the requirement notice opens it
 // through tuiCore with the arguments PluginLogic.noticeView names.
+// `plugin-update` and `plugin-remove` are not listed either: the `manager`
+// capability opens them with one plugin id (MANAGER_TUIS). A plugin update
+// shows its incoming diff, so it opens wide.
 var CORE_TUIS = coreTuiTable({
     "pkg-install": {
         argv: ["vgsh", "pkg", "install"],
@@ -917,14 +924,87 @@ var CORE_TUIS = coreTuiTable({
         presentation: "full",
         entry: { label: "Passwordless sudo", icon: "shield-alert", group: "System" }
     },
+    "doctor": {
+        argv: ["vgsh", "doctor"],
+        title: "Requirements",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Check requirements", icon: "stethoscope", group: "System" }
+    },
+    "plugin-add": {
+        argv: ["vgsh", "plugin", "add"],
+        title: "Add a plugin",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Add a plugin", icon: "circle-plus", group: "Plugins" }
+    },
+    "theme-add": {
+        argv: ["vgsh", "theme", "add"],
+        title: "Add a theme",
+        size: "default",
+        presentation: "full",
+        entry: { label: "Add a theme", icon: "palette", group: "Themes" }
+    },
     "requirements-install": {
         argv: ["vgsh", "pkg", "run", "install"],
         title: "Install requirements",
         size: "default",
         presentation: "full",
         entry: null
+    },
+    "plugin-update": {
+        argv: ["vgsh", "plugin", "update"],
+        title: "Update a plugin",
+        size: "wide",
+        presentation: "full",
+        entry: null
+    },
+    "plugin-remove": {
+        argv: ["vgsh", "plugin", "remove"],
+        title: "Remove a plugin",
+        size: "default",
+        presentation: "full",
+        entry: null
     }
 });
+
+// The `manager` capability's TUI members, each with the CORE_TUIS row it
+// opens for one installed plugin's id. A bundled plugin is disabled, never
+// updated or removed.
+var MANAGER_TUIS = {
+    update: "plugin-update",
+    remove: "plugin-remove"
+};
+
+// The core TUI the `manager` capability's member ACTION, a key of
+// MANAGER_TUIS, opens for plugin ID, whose SOURCE is `bundled` or
+// `installed` as Registry.sourceOf names it, or null for an id no plugin
+// has: { ok: true, name, args } for tuiCore, or { ok: false, answer } with
+// the manager's replies, `unknown: <id>` for an id no plugin has and
+// `refused: bundled=<id>`, the refusal `vgsh plugin` prints, for a bundled
+// plugin.
+function managerTui(action, id, source) {
+    if (!hasOwn(MANAGER_TUIS, action))
+        throw new Error("manager: no TUI action " + JSON.stringify(action) + ", want one of " + Object.keys(MANAGER_TUIS).join(", "));
+    if (typeof id !== "string" || source === null)
+        return { ok: false, answer: "unknown: " + tuiLabel(id) };
+    switch (source) {
+    case "bundled":
+        return { ok: false, answer: "refused: bundled=" + id };
+    case "installed":
+        return { ok: true, name: MANAGER_TUIS[action], args: [id] };
+    }
+    throw new Error("manager: plugin source " + JSON.stringify(source) + " is not one of bundled, installed");
+}
+
+// The `manager` capability's answer for ANSWER, what opening the core TUI
+// NAME answered: `ok` when the launcher started, and when the key was busy,
+// since the runner then asks the compositor to focus the live run's window
+// and the caller hands the user to that terminal either way, as the
+// launcher's TUI rows do; any other refusal as it is.
+function managerTuiAnswer(name, answer) {
+    return answer === tuiRefusal("core/" + name, "busy").answer ? "ok" : answer;
+}
 
 // One printable line of 1 to TUI_TEXT_MAX characters.
 function tuiText(value) {

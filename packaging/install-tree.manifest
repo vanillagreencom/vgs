@@ -177,6 +177,7 @@ f share/vgs/shell/plugins/vgs.settings/ListPage.qml
 f share/vgs/shell/plugins/vgs.settings/Panel.qml
 f share/vgs/shell/plugins/vgs.settings/PluginPage.qml
 f share/vgs/shell/plugins/vgs.settings/Reply.js
+f share/vgs/shell/plugins/vgs.settings/RequirementRow.qml
 f share/vgs/shell/plugins/vgs.settings/Service.qml
 f share/vgs/shell/plugins/vgs.settings/SettingField.qml
 f share/vgs/shell/plugins/vgs.settings/StatusRow.qml

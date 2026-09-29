@@ -15,16 +15,17 @@ The payload is `{}` for the list, or `{"plugin":"<id>"}` for that plugin's page.
 ## The window
 
 - A window centred on the monitor, 600 pixels wide, or the monitor's width less a margin a side on a narrower one, and half the monitor's height tall. It takes the keyboard when it opens.
-- The list: a search field and one row per plugin with its icon, name, version, `Bundled` or `Installed`, a red badge counting its errors, its switch and a chevron. Up and Down in the search field move the highlighted row; Enter or a click opens its page.
+- The list: an Add plugin button, a search field and one row per plugin with its icon, name, version, `Bundled` or `Installed`, a red badge counting its errors, its switch and a chevron. Up and Down in the search field move the highlighted row; Enter or a click opens its page.
 - A plugin's page: a back button and the plugin's name as a title. A click on the title opens a menu of every plugin, the current one checked, that jumps to another plugin's page; typing letters there jumps to the plugin whose name starts with them.
-- The page shows the description, the capabilities, each error, the switch, the author, version, licence and source, and for an installed plugin its `vgsh plugin update` and `vgsh plugin remove` commands.
+- The page shows the description, the capabilities, each error, the switch, the author, version, licence and source, and for an installed plugin its Update and Remove buttons.
+- Requirements: one row per command the plugin runs, Present or Missing as the last scan found it, with what the plugin uses it for. While one is missing, Install shows the shell's requirement notice, which names the packages and installs them.
 - Status: what the plugin reports about itself, such as whether a token is stored, one read-only row per entry of its manifest's `status`, with a Copy button beside a command the row names. A disabled plugin's rows read Not reported.
 - Settings: one field per entry of the plugin's `schema`, grouped under the entry's `group`. A number with a `min` and a `max` is a slider.
 - Keys: one row per key the plugin's manifest binds. Type a key such as `SUPER+SHIFT+M`, empty the field or press the cross to unbind it, and press the arrow to go back to the manifest's key. The key is written to the plugin's `keys` in `~/.config/vgs/shell.json`.
 - A disabled plugin's fields are read-only until it is enabled again.
 - Escape goes back to the list, then closes the window.
 
-Install, update and remove stay `vgsh plugin` commands in a terminal.
+Add plugin, Update and Remove each open a floating terminal that runs the matching `vgsh plugin` command there: Add plugin asks for the plugin's git URL, Update shows the incoming changes and asks before it applies them, and Remove asks before it deletes. The same commands work in any terminal. The window closes while the terminal or the notice is open.
 
 ## Turning it off
 

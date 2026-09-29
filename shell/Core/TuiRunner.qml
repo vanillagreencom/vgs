@@ -139,7 +139,7 @@ Scope {
         process.run = launch.run;
         // Assigned after creation: a list handed to createObject crosses a
         // QVariant conversion (runtime-qml.md).
-        process.command = [Quickshell.shellDir + "/../bin/vgsh-tui"].concat(launch.argv);
+        process.command = [root.coreBin + "/vgsh-tui"].concat(launch.argv);
         if (done !== undefined) wait(ctx, launch.run, done);
         pending = pending.concat([{ key: launch.key, run: launch.run }]);
         launching = launching.concat([process]);
@@ -354,7 +354,7 @@ Scope {
     Process {
         id: prober
         property var completion: null
-        command: [Quickshell.shellDir + "/../bin/vgsh-tui", "check"]
+        command: [root.coreBin + "/vgsh-tui", "check"]
         stderr: StdioCollector { id: probeErrors }
         onExited: (code, status) => { prober.completion = { code: code, status: status }; }
         onRunningChanged: {
@@ -368,7 +368,7 @@ Scope {
     Process {
         id: reaper
         property var completion: null
-        command: [Quickshell.shellDir + "/../bin/vgsh-tui", "reap"]
+        command: [root.coreBin + "/vgsh-tui", "reap"]
         stdout: StdioCollector { id: reaped }
         stderr: StdioCollector { id: reapErrors }
         onExited: (code, status) => { reaper.completion = { code: code, status: status }; }

@@ -90,8 +90,9 @@ type_keys -k Escape -k Escape || fail "sending Escape failed"
 expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
 
 # TUI rows open their TUI through the tui capability. The argv reaches the
-# stand-in xdg-terminal-exec tui.sh wrote, read with that row's helpers
-# `words`, `recorded`, `forget_record` and `key_idle`. Install and Remove
+# stand-in xdg-terminal-exec harness.sh's terminal_stand_in wrote, read
+# with the harness's `words`, `core_words`, `recorded`, `forget_record` and
+# `key_idle`. Install and Remove
 # open the core's package pickers; Update opens the first listed entry of
 # the Update group, the fixture acme.tui's while it is enabled, and hides
 # while it is disabled, as tui.sh left it and as this block leaves it.
@@ -115,10 +116,6 @@ pick_tui() {
   expect_poll "the cursor rests on $1" "$index" read_launcher selectedIndex
   type_keys -k Return || fail "sending Return on $1 failed"
 }
-picker_words() {
-  words --app-id=org.vgs.tui "--title=VGS · $1" -- "$tui_self" present --presentation full \
-    --record "core/pkg-$2" --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · $1" -- "$core_vgsh" pkg "$2"
-}
 update_words() {
   words --app-id=org.vgs.tui "--title=VGS · Update" -- "$tui_self" present --presentation full --plugin acme.tui --dir "$snapshot" \
     --record acme.tui/update --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Update" -- tui/update.sh
@@ -128,7 +125,7 @@ for row in "Install|install|Install packages" "Remove|remove|Remove packages"; d
   forget_record
   categories "$label"
   pick_tui "$label"
-  expect_poll "$label hands the terminal the core's vgsh pkg $verb" "$(picker_words "$title" "$verb")" recorded
+  expect_poll "$label hands the terminal the core's vgsh pkg $verb" "$(core_words "core/pkg-$verb" "$title" org.vgs.tui pkg "$verb")" recorded
   expect_poll "$label closes the launcher" 0 layer_count vgs:overlay
   expect_poll "the $verb picker's run ends" idle key_idle "core/pkg-$verb"
 done

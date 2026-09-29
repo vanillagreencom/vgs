@@ -1,8 +1,8 @@
 # The requirement notice, raised for the fixture acme.needs, which misses
 # one command it needs and two optional ones. Runs after rows/tui.sh and
-# reuses its stand-in xdg-terminal-exec, which records the argv the core's
-# TUI launch hands the terminal and runs the core's command as `true`, and
-# its helpers. A stand-in bin/vgsh-pkg answers detection with pacman and
+# reuses the stand-in xdg-terminal-exec harness.sh's terminal_stand_in
+# wrote, which records the argv the core's TUI launch hands the terminal
+# and runs the core's command as `true`, and the harness's helpers. A stand-in bin/vgsh-pkg answers detection with pacman and
 # paru, whatever the host runs. The Settings plugin is disabled throughout:
 # the notice is the core's. Rows: `vgsh plugin add` raises the notice
 # through pluginInstalled, which maps one surface centred on the focused
@@ -44,8 +44,6 @@ pkg_stub() { # DETECT_JSON, or "" for a detection that fails
 }
 pkg_stub '{"primary":{"id":"pacman","binary":"pacman"},"overlays":[{"id":"aur","binary":"paru"}],"sources":[]}'
 
-# The shown notice as [plugin, commands, required, installing], or null.
-notice_shown() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else [s["plugin"], s["commands"], s["required"], s["installing"]]))'; }
 notice_resting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["resting"]))'; }
 drawn() { ipc smoke noticeDrawn | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[sys.argv[1]]))' "$1"; }
 needs() { ipc acme.needs invoke "$1" "${2:-}"; }
@@ -99,7 +97,8 @@ expect "the plugin landed disabled" False plugin_enabled acme.needs
 type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes the notice" null notice_shown
 expect_poll "the closed notice leaves no surface" 0 layer_count vgs:notice
-expect "the plugin's offers rest after Not now" '["acme.needs"]' notice_resting
+# acme.bare rests from the notice rows/manager.sh raised from Settings.
+expect "the plugin's offers rest after Not now" '["acme.bare", "acme.needs"]' notice_resting
 
 # setPluginEnabled: enabling the plugin raises the notice again, whatever
 # the rest, since the user asked.
@@ -123,7 +122,7 @@ expect "a refused offer raises no notice" 0 layer_count vgs:notice
 
 # Install: the primary's package through the core's TUI. While
 # $sandbox/core-hold exists the stand-in terminal holds the core run open
-# (rows/tui.sh), and the notice has no surface, so the terminal shows
+# (terminal_stand_in in harness.sh), and the notice has no surface, so the terminal shows
 # whole. The command stays missing after the run's rescan, so the notice
 # comes back with the keyboard.
 hold_core() { : >"$sandbox/core-hold"; }
@@ -191,7 +190,7 @@ type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes acme.other's notice" null notice_shown
 expect_poll "no notice leaves a surface" 0 layer_count vgs:notice
 expect "disabling acme.other is allowed" ok ipc shell setPluginEnabled acme.other false
-other_removed() { local out; out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin remove acme.other 2>>"$sandbox/ipc.log")" || return 1; printf '%s\n' "${out%%$'\n'*}"; }
+other_removed() { local out; out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin remove --yes acme.other 2>>"$sandbox/ipc.log")" || return 1; printf '%s\n' "${out%%$'\n'*}"; }
 expect "acme.other is removed" "ok removed=acme.other" other_removed
 expect_poll "acme.other leaves the list" False plugin_known acme.other
 rm -f -- "$shim/vgs-smoke-needs"
@@ -214,6 +213,6 @@ expect_poll "Escape closes the notice without an install" 0 layer_count vgs:noti
 
 cp -- "$pkg_real" "$repo/bin/vgsh-pkg.next" && mv -T -- "$repo/bin/vgsh-pkg.next" "$repo/bin/vgsh-pkg"
 expect "disabling the needs fixture is allowed" ok ipc shell setPluginEnabled acme.needs false
-remove_out() { local out; out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin remove acme.needs 2>>"$sandbox/ipc.log")" || return 1; printf '%s\n' "${out%%$'\n'*}"; }
+remove_out() { local out; out="$("${shell_env[@]}" "$repo/bin/vgsh" plugin remove --yes acme.needs 2>>"$sandbox/ipc.log")" || return 1; printf '%s\n' "${out%%$'\n'*}"; }
 expect "the needs fixture is removed" "ok removed=acme.needs" remove_out
 expect_poll "the removed fixture leaves the list" False plugin_known acme.needs

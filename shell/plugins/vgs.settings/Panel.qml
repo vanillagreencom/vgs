@@ -14,7 +14,11 @@ import "Reply.js" as Reply
 // hidden once the slide ends, so the keyboard reaches the shown page alone.
 // Escape pops a page, then hides the window. Enabling, disabling, a
 // setting and a key go through the manager capability; the rows come back
-// from the core, so the window shows what the configuration holds.
+// from the core, so the window shows what the configuration holds. Adding,
+// updating and removing a plugin open the manager's core TUIs, a floating
+// terminal where each question stays a question, and Install shows the
+// core's requirement notice; the window hides once the manager answers
+// `ok`, and the rows change once the command there ends.
 //
 // The payload is a JSON object: `{}` opens the list, `{"plugin":"<id>"}`
 // that plugin's page, and an id no plugin has opens the list with a notice
@@ -118,6 +122,32 @@ FocusScope {
     // reply.
     function writeSetting(id, key, value) {
         return keep(id, shell.manager.setSetting(id, key, value));
+    }
+
+    // Open the update of installed plugin `id` or its removal in a floating
+    // terminal, or the requirement notice for its missing commands, through
+    // the manager; each answers the manager's reply.
+    function updatePlugin(id) { return handOff(keep(id, shell.manager.update(id))); }
+    function removePlugin(id) { return handOff(keep(id, shell.manager.remove(id))); }
+    function installRequirements(id) { return handOff(keep(id, shell.manager.installRequirements(id))); }
+
+    // Open the add of a plugin from a git URL in a floating terminal through
+    // the manager; a refusal stays over the list until a later add opens.
+    function addPlugin() {
+        const reply = shell.manager.add();
+        notice = Reply.isOk(reply) ? "" : reply;
+        if (notice !== "") console.warn("settings: add " + reply);
+        return handOff(reply);
+    }
+
+    // The window sits on the top layer, over the floating terminal a manager
+    // TUI opened and the terminal the requirement notice's Install opens, so
+    // once the manager answers `ok` the window hides and the user answers
+    // the terminal or the notice; a refusal keeps the window open with the
+    // refusal on it. Answers REPLY.
+    function handOff(reply) {
+        if (Reply.isOk(reply)) shell.surfaces.hide("panel");
+        return reply;
     }
 
     // Set the key of shortcut `shortcut` of plugin `id`: a key string

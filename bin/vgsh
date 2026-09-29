@@ -14,11 +14,13 @@
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
-#   vgsh plugin add <git url>      clone, validate and install one plugin, disabled, then offer to install
-#                                  the packages of the commands it requires that are missing
+#   vgsh plugin add [<git url>]    clone, validate and install one plugin, disabled, then offer to install
+#                                  the packages of the commands it requires that are missing; without a
+#                                  url, ask for it on a terminal
 #   vgsh plugin update [--yes] <id>
 #                                  fetch, show the diff, ask, and fast-forward an installed plugin
-#   vgsh plugin remove <id>        delete an installed plugin's directory
+#   vgsh plugin remove [--yes] <id>
+#                                  ask, and delete an installed plugin's directory
 #   vgsh plugin outdated [--json]  fetch every installed plugin and report how far it is behind its upstream
 #   vgsh theme list [--json]       every theme package, its state and palette, and the theme file's state
 #   vgsh theme apply [--json] <name>
@@ -31,7 +33,7 @@
 #                                  show one package's or the user folder's image, or show it on one output only
 #   vgsh theme background [--json] list [--all]
 #                                  the applied package's background images, or every package's and the user folder's
-#   vgsh theme add <git url>       clone, judge and install one theme package
+#   vgsh theme add [<git url>]     clone, judge and install one theme package; without a url, ask for it on a terminal
 #   vgsh theme update [--yes] <name>
 #                                  fetch, show the diff, ask, and fast-forward an installed theme package, then follow it
 #   vgsh theme remove <name>       delete an installed theme package's directory
@@ -96,11 +98,17 @@
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
 # ${XDG_CONFIG_HOME:-~/.config}/vgs/plugins/<id>. add lands the plugin
-# disabled. update prints the incoming diff, then asks
+# disabled. Without a url, add asks for one with gum input when stdin is a
+# terminal, the prompt the core floating TUI `core/plugin-add` shows, and
+# otherwise refuses with url=missing and exit 2; an empty answer refuses
+# the same way, a cancelled prompt with cancelled=url and a system without
+# gum with gum=missing. update prints the incoming diff, then asks
 # `vgsh: update <id>? [y/N]` on stderr and fast-forwards only on y or yes;
-# any other answer refuses with declined=<id>. With no terminal on stdin it
+# remove asks `vgsh: remove <id>? [y/N]` before it deletes. Any other
+# answer refuses with declined=<id>. With no terminal on stdin either
 # refuses with no-terminal=<id> instead, unless --yes gives the answer.
-# Either refusal leaves the checkout at its old commit. Each ends with
+# Each refusal leaves the checkout at its old commit and the plugin
+# installed. Each ends with
 # `shell=rescan-started` or `shell=rescan-queued` when a shell runs (the
 # scan's result is in `vgsh plugin list`), or `shell=not-running` when none
 # does and the next start reads the change. `plugin rescan` prints the same
@@ -191,7 +199,8 @@
 # contact the shell: docs/architecture/theme-apply.md.
 #
 # `theme add`, `update` and `remove` follow the plugin rules above for
-# ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>: add stages the clone,
+# ${XDG_CONFIG_HOME:-~/.config}/vgs/themes/<name>, remove without a
+# question: add asks for a missing url as plugin add does, stages the clone,
 # lands it under its theme.json name once the theme judge accepts it and
 # refuses an occupied name and the reserved `vgs`; update asks, and takes
 # --yes, as plugin update does, refuses a modified checkout and rolls back
@@ -592,6 +601,31 @@ installed_dir() { # ID
   printf '%s\n' "$real"
 }
 
+# The git URL `plugin add` or `theme add` clones when the command line
+# names none: on a terminal, the line the user types into gum input, the
+# floating TUI's prompt, trimmed of surrounding blanks. With no terminal on
+# stdin it is the usage refusal url=missing, exit 2, as before any prompt
+# existed; an empty answer is url=missing too, a cancelled prompt
+# cancelled=url, and a system without gum gum=missing. KIND, `plugin` or
+# `theme`, names what the URL is of. Print the URL.
+ask_url() { # KIND
+  local url status=0
+  if [[ ! -t 0 ]]; then printf 'vgsh: refused: url=missing\n' >&2; usage; exit 2; fi
+  command -v gum >/dev/null || refuse 1 "gum=missing" "gum draws the prompt for the URL: install it (vgsh doctor names its package) or run vgsh $1 add <git url>"
+  # shellcheck source=lib/tui.sh
+  source "$root/bin/lib/tui.sh" || refuse 1 "library=missing path=$root/bin/lib/tui.sh"
+  url="$(vgs_tui_input --prompt "Git URL of the $1: " --placeholder "https://")" || status=$?
+  case "$status" in
+    0) ;;
+    130) refuse 1 "cancelled=url" ;;
+    *) refuse 1 "prompt=failed exit=$status" ;;
+  esac
+  url="${url#"${url%%[![:space:]]*}"}"
+  url="${url%"${url##*[![:space:]]}"}"
+  [[ -n $url ]] || refuse 2 "url=missing" "no URL was typed; nothing was cloned"
+  printf '%s\n' "$url"
+}
+
 plugin_add() { # URL
   local url="$1" verdict id target owners landed
   mkdir -p -- "$user_plugins"
@@ -653,21 +687,24 @@ rollback() { # DIR COMMIT
   git_or_refuse "rollback=failed path=$1 to=$2" -C "$1" reset --quiet --hard "$2"
 }
 
-# 1 when --yes stands for the answer to confirm_update's question.
+# 1 when --yes stands for the answer to confirm_change's question.
 assume_yes=0
 
-# The review step between the incoming diff and the fast-forward: new
-# plugin or package code runs as soon as it lands, so a person answers on
-# the terminal, or the caller passes --yes. LABEL names the checkout.
-confirm_update() { # LABEL
+# The question before a change a person must see: `update` between the
+# incoming diff and the fast-forward, since new plugin or package code runs
+# as soon as it lands, and `remove` before the plugin directory is deleted.
+# A person answers `vgsh: VERB LABEL? [y/N]` on the terminal, or the caller
+# passes --yes. LABEL names the checkout or plugin, and KEPT says what a
+# declined change leaves.
+confirm_change() { # VERB LABEL KEPT
   local answer=""
   [[ $assume_yes == 1 ]] && return 0
-  [[ -t 0 ]] || refuse 1 "no-terminal=$1" "no terminal on stdin to confirm the diff above; run on a terminal or pass --yes"
-  printf 'vgsh: update %s? [y/N] ' "$1" >&2
+  [[ -t 0 ]] || refuse 1 "no-terminal=$2" "no terminal on stdin to confirm the $1; run on a terminal or pass --yes"
+  printf 'vgsh: %s %s? [y/N] ' "$1" "$2" >&2
   read -r answer || answer=""
   case "$answer" in
     [yY] | [yY][eE][sS]) ;;
-    *) refuse 1 "declined=$1" "the checkout stays at ${ff_old:0:12}" ;;
+    *) refuse 1 "declined=$2" "$3" ;;
   esac
 }
 
@@ -708,7 +745,7 @@ fast_forward() { # DIR LABEL REVIEW
   case "$3" in
     review)
       git_or_refuse "git=diff path=$dir" -C "$dir" diff --no-ext-diff --no-textconv "$ff_old" "$ff_new"
-      confirm_update "$label"
+      confirm_change update "$label" "the checkout stays at ${ff_old:0:12}"
       ;;
     trusted) ;;
     *) refuse 1 "fast-forward=$3 reason=unknown-review" ;;
@@ -741,6 +778,7 @@ plugin_update() { # ID
 plugin_remove() { # ID
   local id="$1" dir
   dir="$(installed_dir "$id")" || exit $?
+  confirm_change remove "$id" "$dir stays installed"
   rm -rf -- "${dir:?}" || refuse 1 "remove=$dir"
   echo "ok removed=$id"
   rescan_if_running
@@ -1377,15 +1415,16 @@ case "$cmd" in
         esac
         ;;
       add)
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         url="${1:-}"
-        if [[ -z $url ]]; then printf 'vgsh: refused: url=missing\n' >&2; usage; exit 2; fi
+        if [[ -z $url ]]; then url="$(ask_url plugin)" || exit $?; fi
         plugin_add "$url"
         ;;
       update|remove)
-        if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
+        if [[ ${1:-} == --yes ]]; then assume_yes=1; shift; fi
         id="${1:-}"
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
-        if [[ $sub == update && $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         "plugin_$sub" "$id"
         ;;
       validate)
@@ -1484,12 +1523,10 @@ case "$cmd" in
       add|update|remove)
         [[ $format == json ]] && { printf 'vgsh: refused: argument=--json\n' >&2; usage; exit 2; }
         if [[ $sub == update && ${1:-} == --yes ]]; then assume_yes=1; shift; fi
-        arg="${1:-}"
-        if [[ -z $arg ]]; then
-          missing=name; [[ $sub == add ]] && missing=url
-          printf 'vgsh: refused: %s=missing\n' "$missing" >&2; usage; exit 2
-        fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        arg="${1:-}"
+        if [[ -z $arg && $sub == add ]]; then arg="$(ask_url theme)" || exit $?; fi
+        if [[ -z $arg ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
         "theme_$sub" "$arg"
         ;;
       outdated)

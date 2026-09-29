@@ -21,64 +21,11 @@ set -euo pipefail
 tui_dir="$home/.config/vgs/plugins/acme.tui"
 mkdir -p "$tui_dir"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tui/." "$tui_dir/"
-tui_record="$sandbox/tui-argv"
-# The argv is written whole and moved into place, so a row never reads half
-# a record. The window lives as long as the presenter. The presenter runs a
-# fixture script as it is and any other command as `true`, so no core
-# command, such as the sudo grant, runs in the sandbox. While the file
-# $sandbox/core-hold exists, a core command's `true` waits for it to go,
-# polled every 0.05 s, so a row can read the shell while a core run is live.
-# The wait ends after 2400 polls, 120 s, whatever the file does: a ceiling
-# well past the longest held section's polls, not a measurement, so a run
-# interrupted before its row removes the file leaves no presenter behind,
-# since bin/vgsh-tui starts the stand-in outside the harness's groups.
-cat >"$shim/xdg-terminal-exec" <<EOF
-#!/usr/bin/env bash
-: >"$tui_record.next"
-for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
-mv -f -- "$tui_record.next" "$tui_record"
-app_id="" title=""
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  case "\$1" in
-    --app-id=*) app_id="\${1#*=}" ;;
-    --title=*) title="\${1#*=}" ;;
-  esac
-  shift
-done
-shift
-presenter=() fixture=no
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  [[ \$1 == --plugin ]] && fixture=yes
-  presenter+=("\$1")
-  shift
-done
-if [[ \$fixture != yes ]]; then
-  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'n=0; while [ -e "\$1" ] && [ "\$n" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done' sh "$sandbox/core-hold"; else set -- -- true; fi
-fi
-"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
-window=\$!
-"\${presenter[@]}" "\$@" </dev/null >/dev/null 2>&1
-kill "\$window" 2>/dev/null
-wait "\$window"
-EOF
-chmod 755 "$shim/xdg-terminal-exec"
-tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
+terminal_stand_in
 tui() { ipc acme.tui invoke "$1" "${2:-}"; }
-# The record, with the run id the core chose as RUN, and a list of words, as
-# one JSON line each.
-recorded() { python3 -c '
-import json, os, sys
-if not os.path.exists(sys.argv[1]):
-    print("absent"); sys.exit()
-words = open(sys.argv[1]).read().split("\n")[:-1]
-for i in range(len(words) - 1):
-    if words[i] == "--run": words[i + 1] = "RUN"
-print(json.dumps(words))' "$tui_record"; }
 # Whether acme.tui holds the tui capability; the probe fixture may hold it too.
 tui_held() { lent holders.tui | python3 -c 'import json,sys; print("acme.tui" in (json.load(sys.stdin) or []))'; }
-words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 respaced() { "$@" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
-forget_record() { rm -f -- "$sandbox/tui-argv"; }
 
 expect "rescan after adding the tui fixture answers ok" ok ipc shell rescanPlugins
 expect_poll "the tui fixture is discovered" True plugin_known acme.tui
@@ -86,7 +33,7 @@ expect "enabling the tui fixture is allowed" ok ipc shell setPluginEnabled acme.
 expect_poll "the tui fixture's service is built" True record_exists acme.tui
 expect_poll "the fixture holds the tui capability" True tui_held
 
-core_listed='{"key": "core/pkg-install", "plugin": "core", "name": "pkg-install", "title": "Install packages", "label": "Install packages", "icon": "package-plus", "group": "Packages"}, {"key": "core/pkg-remove", "plugin": "core", "name": "pkg-remove", "title": "Remove packages", "label": "Remove packages", "icon": "package-minus", "group": "Packages"}, {"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}'
+core_listed='{"key": "core/doctor", "plugin": "core", "name": "doctor", "title": "Requirements", "label": "Check requirements", "icon": "stethoscope", "group": "System"}, {"key": "core/pkg-install", "plugin": "core", "name": "pkg-install", "title": "Install packages", "label": "Install packages", "icon": "package-plus", "group": "Packages"}, {"key": "core/pkg-remove", "plugin": "core", "name": "pkg-remove", "title": "Remove packages", "label": "Remove packages", "icon": "package-minus", "group": "Packages"}, {"key": "core/plugin-add", "plugin": "core", "name": "plugin-add", "title": "Add a plugin", "label": "Add a plugin", "icon": "circle-plus", "group": "Plugins"}, {"key": "core/sudo-grant", "plugin": "core", "name": "sudo-grant", "title": "Passwordless sudo", "label": "Passwordless sudo", "icon": "shield-alert", "group": "System"}, {"key": "core/theme-add", "plugin": "core", "name": "theme-add", "title": "Add a theme", "label": "Add a theme", "icon": "palette", "group": "Themes"}'
 listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title": "Hello", "label": "Say hello", "icon": "terminal", "group": "Smoke"}, {"key": "acme.tui/update", "plugin": "acme.tui", "name": "update", "title": "Update", "label": "Update", "icon": "refresh-cw", "group": "Update"}, '"$core_listed"']'
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
@@ -97,13 +44,6 @@ check_snapshot() { [[ -x $snapshot/tui/hello.sh && ! -L $snapshot/tui/hello.sh ]
 # The words the terminal is handed for the fixture's hello script with
 # ARGS: the window, then present with the snapshot, the record and the
 # window it records.
-# `idle` once the core saw the last run of KEY end and holds no launch of
-# it, so the next request for it is not refused busy.
-key_idle() { ipc shell lent | python3 -c '
-import json, sys
-t, key = json.load(sys.stdin)["tui"], sys.argv[1]
-r = t["runs"].get(key)
-print("idle" if key not in t["pending"] and (r is None or r["running"] is None) else "busy")' "$1"; }
 hello_words() {
   words --app-id=org.vgs.tui.wide "--title=VGS · Hello" -- "$tui_self" present --presentation full --plugin acme.tui --dir "$snapshot" \
     --record acme.tui/hello --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui.wide --window-title "VGS · Hello" -- tui/hello.sh "$@"
@@ -111,7 +51,7 @@ hello_words() {
 expect "the fixture's snapshot holds its executable script" present check_snapshot
 
 # The core probes the launcher when it starts, against the host's PATH and
-# before this row wrote the stand-in. A host without xdg-terminal-exec leaves
+# before any row wrote the stand-in. A host without xdg-terminal-exec leaves
 # it missing; then one request answers launcher-missing, starts no launcher
 # and probes again, now against the stand-in. A present state takes no
 # request, so no setup launch can land its record over a later row's.
@@ -152,7 +92,6 @@ expect_poll "the hello run ends before the next request" idle key_idle acme.tui/
 
 # The core's own TUI: its command is the core's bin/vgsh beside the shell
 # directory, whatever the shell's PATH holds, with no plugin copy.
-core_vgsh="$(dirname -- "$(dirname -- "$tui_self")")/shell/../bin/vgsh"
 forget_record
 expect "openTui opens the core's sudo grant" ok ipc shell openTui core/sudo-grant
 expect_poll "the terminal is handed the core's vgsh sudo grant" \
@@ -174,6 +113,7 @@ expect "seventeen arguments are refused" "refused: tui=hello reason=args" tui ru
 expect "an empty argument is refused" "refused: tui=hello reason=args" tui run 'hello|'
 expect "an argument with a control character is refused" "refused: tui=hello reason=args" tui run $'hello|a\tb'
 expect "openTui refuses a key nothing lists" "refused: tui=acme.tui/nope reason=undeclared" ipc shell openTui acme.tui/nope
+expect "openTui refuses a core TUI that takes a plugin id" "refused: tui=core/plugin-update reason=undeclared" ipc shell openTui core/plugin-update
 expect "a refused request starts no launcher" '[]' lent tui.launching
 record_state() { [[ -e $sandbox/tui-argv ]] && echo recorded || echo none; }
 expect "a refused request reaches no terminal" none record_state

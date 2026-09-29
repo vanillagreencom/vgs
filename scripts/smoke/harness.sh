@@ -591,6 +591,104 @@ plugin_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(
 plugin_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; rows=[p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]==sys.argv[1]]; print(rows[0] if rows else "absent")' "$1"; }
 record_exists() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]==sys.argv[1] for rows in json.load(sys.stdin).values() for r in rows))' "$1"; }
 
+# Floating TUIs reach a stand-in xdg-terminal-exec in the shell's own PATH
+# directory, which terminal_stand_in writes: it records the argv it was
+# handed in $tui_record, maps the toplevel helper with the app-id and title
+# it was handed as the window, and runs the real presenter with no terminal
+# behind it, so the presenter writes its exit records and no terminal
+# starts. The argv is written whole and moved into place, so a row never
+# reads half a record. The window lives as long as the presenter. The
+# presenter runs a plugin's script as it is and any other command as
+# `true`, so no core command, such as the sudo grant or a plugin update,
+# runs in the sandbox. While the file $sandbox/core-hold exists, a core
+# command's `true` waits for it to go, polled every 0.05 s, so a row can
+# read the shell while a core run is live. The wait ends after 2400 polls,
+# 120 s, whatever the file does: a ceiling well past the longest held
+# section's polls, not a measurement, so a run interrupted before its row
+# removes the file leaves no presenter behind, since bin/vgsh-tui starts
+# the stand-in outside the harness's groups. Writing it again changes
+# nothing.
+tui_record="$sandbox/tui-argv"
+tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
+terminal_stand_in() {
+  cat >"$shim/xdg-terminal-exec" <<EOF
+#!/usr/bin/env bash
+: >"$tui_record.next"
+for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
+mv -f -- "$tui_record.next" "$tui_record"
+app_id="" title=""
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  case "\$1" in
+    --app-id=*) app_id="\${1#*=}" ;;
+    --title=*) title="\${1#*=}" ;;
+  esac
+  shift
+done
+shift
+presenter=() fixture=no
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  [[ \$1 == --plugin ]] && fixture=yes
+  presenter+=("\$1")
+  shift
+done
+if [[ \$fixture != yes ]]; then
+  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'n=0; while [ -e "\$1" ] && [ "\$n" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done' sh "$sandbox/core-hold"; else set -- -- true; fi
+fi
+"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
+window=\$!
+"\${presenter[@]}" "\$@" </dev/null >/dev/null 2>&1
+kill "\$window" 2>/dev/null
+wait "\$window"
+EOF
+  chmod 755 "$shim/xdg-terminal-exec"
+}
+# The record, with the run id the core chose as RUN, and a list of words, as
+# one JSON line each.
+recorded() { python3 -c '
+import json, os, sys
+if not os.path.exists(sys.argv[1]):
+    print("absent"); sys.exit()
+words = open(sys.argv[1]).read().split("\n")[:-1]
+for i in range(len(words) - 1):
+    if words[i] == "--run": words[i + 1] = "RUN"
+print(json.dumps(words))' "$tui_record"; }
+words() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
+forget_record() { rm -f -- "${tui_record:?}"; }
+# A core TUI's command is the core's bin/ beside the shell directory,
+# whatever the shell's PATH holds. core_words: the words the terminal is
+# handed for core TUI KEY titled TITLE in the window of APP_ID, running
+# the core's vgsh with ARGS, as recorded reads them.
+core_vgsh="$(dirname -- "$(dirname -- "$tui_self")")/shell/../bin/vgsh"
+core_words() { # KEY TITLE APP_ID ARGS...
+  local key="$1" title="$2" app="$3"
+  shift 3
+  words "--app-id=$app" "--title=VGS · $title" -- "$tui_self" present --presentation full \
+    --record "$key" --run RUN --record-dir "$rt_dir/vgs/tui" --app-id "$app" --window-title "VGS · $title" -- "$core_vgsh" "$@"
+}
+# The requirement notice the core shows as [plugin, commands, required,
+# installing], or null.
+notice_shown() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else [s["plugin"], s["commands"], s["required"], s["installing"]]))'; }
+# After terminal_stand_in: the launcher state present, so the next request
+# launches. The core probes when it starts, before any row wrote the
+# stand-in, so a host without xdg-terminal-exec leaves the state missing;
+# one request then answers launcher-missing, starts no launcher and probes
+# again, now against the stand-in. LABEL leads each row's name.
+terminal_ready() { # LABEL
+  expect_poll "$1: the launcher probe has answered" false lent tui.probing
+  if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
+    expect "$1: a request before the stand-in's probe answers launcher-missing" "refused: tui=core/doctor reason=launcher-missing" ipc shell openTui core/doctor
+  fi
+  expect_poll "$1: the launcher state is present" '"present"' lent tui.launcher
+  expect_poll "$1: no probe is left running" false lent tui.probing
+}
+# `idle` once the core saw the last run of KEY end and holds no launch of
+# it, so the next request for it is not refused busy.
+key_idle() { ipc shell lent | python3 -c '
+import json, sys
+t, key = json.load(sys.stdin)["tui"], sys.argv[1]
+r = t["runs"].get(key)
+print("idle" if key not in t["pending"] and (r is None or r["running"] is None) else "busy")' "$1"; }
+
 smoke_finish() {
 if [[ $failures -gt 0 ]]; then
   echo "--- instance log tail"; tail -n 40 "${instance_log:-$sandbox/qs.log}" 2>/dev/null || true

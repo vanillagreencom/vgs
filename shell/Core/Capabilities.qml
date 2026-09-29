@@ -116,7 +116,11 @@ Singleton {
             get plugins() { return Registry.managerRows; },
             setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
             setSetting: (id, key, value) => Plugins.setSetting(id, key, value),
-            setKey: (id, shortcut, key) => Plugins.setKey(id, shortcut, key)
+            setKey: (id, shortcut, key) => Plugins.setKey(id, shortcut, key),
+            update: id => root.managerTui("update", id),
+            remove: id => root.managerTui("remove", id),
+            installRequirements: id => Notices.requested(id),
+            add: () => Logic.managerTuiAnswer("plugin-add", tuis.openCore("plugin-add", []))
         }),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
@@ -143,6 +147,17 @@ Singleton {
             offer: commands => Notices.offer(ctx, commands)
         })
     })
+
+    // Every `manager` TUI member: opens the core TUI
+    // PluginLogic.managerTui picks for ACTION and plugin ID in a floating
+    // terminal, so a question such as update's review of the
+    // incoming diff stays a question (D007); answers as
+    // PluginLogic.managerTuiAnswer does.
+    function managerTui(action, id) {
+        const source = typeof id === "string" && Registry.has(id) ? Registry.sourceOf(Registry.manifests[id]) : null;
+        const request = Logic.managerTui(action, id, source);
+        return request.ok ? Logic.managerTuiAnswer(request.name, tuis.openCore(request.name, request.args)) : request.answer;
+    }
 
     // The compositor places anchored surfaces relative to the item's own
     // window. An instance without a screen uses the focused monitor.

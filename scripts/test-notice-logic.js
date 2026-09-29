@@ -56,6 +56,9 @@ function suite(ctx, check) {
         ["enabled asks as installed does", allMissing, "enabled", undefined, ["ok", ["vgs-one", "vgs-two", "vgs-bare", "vgs-nix"], ["vgs-one", "vgs-nix"]]],
         ["only optional commands missing raise no notice", ["vgs-two", "vgs-bare"], "enabled", undefined, ["satisfied", ["vgs-two", "vgs-bare"], []]],
         ["nothing missing raises no notice", [], "installed", undefined, ["satisfied", [], []]],
+        ["a request lists and requires every missing command, optional ones too", allMissing, "requested", undefined, ["ok", ["vgs-one", "vgs-two", "vgs-bare", "vgs-nix"], ["vgs-one", "vgs-two", "vgs-bare", "vgs-nix"]]],
+        ["a request with only optional commands missing raises the notice", ["vgs-two", "vgs-bare"], "requested", undefined, ["ok", ["vgs-two", "vgs-bare"], ["vgs-two", "vgs-bare"]]],
+        ["a request with nothing missing is satisfied", [], "requested", undefined, ["satisfied", [], []]],
         ["an offer lists and requires its missing commands, optional ones too", allMissing, "offered", ["vgs-two", "vgs-one"], ["ok", ["vgs-one", "vgs-two"], ["vgs-one", "vgs-two"]]],
         ["an offer of present commands is satisfied", allMissing, "offered", ["sh"], ["satisfied", [], []]],
         ["an offer of a command it did not declare", allMissing, "offered", ["vgs-one", "pacman"], ["refused: requirement=pacman reason=undeclared", [], []]],
@@ -70,7 +73,7 @@ function suite(ctx, check) {
         const r = ctx.noticeRequest(needs, missing, trigger, commands);
         check("noticeRequest: " + name, [r.answer, r.commands, r.required], want);
     }
-    check("noticeRequest throws on a trigger no rule covers", (() => { try { ctx.noticeRequest(needs, [], "asked", undefined); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered");
+    check("noticeRequest throws on a trigger no rule covers", (() => { try { ctx.noticeRequest(needs, [], "asked", undefined); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested");
 
     // noticeAdmit: [name, queue, rest, id, request commands and required,
     // trigger, want as [answer, queue as id: commands / required]].
@@ -85,6 +88,7 @@ function suite(ctx, check) {
         ["a rest that ended refuses nothing", [], { "acme.needs": 1000 }, "acme.needs", n("", ["a"], ["a"]), "offered", ["ok", ["acme.needs: a / a"]]],
         ["an install is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "installed", ["ok", ["acme.needs: a / a"]]],
         ["an enable is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "enabled", ["ok", ["acme.needs: a / a"]]],
+        ["a request is never refused for a rest", [], { "acme.needs": 1500 }, "acme.needs", n("", ["a"], ["a"]), "requested", ["ok", ["acme.needs: a / a"]]],
         ["another plugin's rest refuses nothing", [], { "acme.other": 1500 }, "acme.needs", n("", ["a"], ["a"]), "offered", ["ok", ["acme.needs: a / a"]]],
         ["a resting plugin's offer merges into its held notice", [n("acme.needs", ["a"], ["a"])], { "acme.needs": 1500 }, "acme.needs", n("", ["b"], ["b"]), "offered", ["ok", ["acme.needs: a,b / a,b"]]],
         ["a full queue refuses a ninth plugin", full, {}, "acme.needs", n("", ["a"], ["a"]), "installed", ["refused: notices=full limit=8", shown(full)]],
@@ -96,7 +100,7 @@ function suite(ctx, check) {
         check("noticeAdmit: " + name, [r.answer, shown(r.queue)], want);
         check("noticeAdmit leaves the queue it was handed alone: " + name, JSON.stringify(queue), before);
     }
-    check("noticeAdmit throws on a trigger no rule covers", (() => { try { ctx.noticeAdmit([], {}, "acme.needs", n("", ["a"], ["a"]), "asked", 0); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered");
+    check("noticeAdmit throws on a trigger no rule covers", (() => { try { ctx.noticeAdmit([], {}, "acme.needs", n("", ["a"], ["a"]), "asked", 0); return "answered"; } catch (e) { return e.message; } })(), "notices: trigger \"asked\" is not one of installed, enabled, offered, requested");
     check("the queue holds eight plugins and an offer names sixteen commands", [ctx.NOTICE_QUEUE_MAX, ctx.NOTICE_OFFER_MAX], [8, 16]);
     check("a plugin's offers rest ten minutes after Not now", ctx.NOTICE_OFFER_REST_MS, 600000);
 
@@ -167,7 +171,8 @@ suite(load(LOGIC), report);
 // around it; the suite must fail on every copy. The copy sits at the
 // judge's own place in a temporary tree, beside the files it imports.
 const CONTROLS = [
-    ["installed requires only the needed commands", "required = listed.filter(function (row) { return !row.optional; });", "required = listed;"],
+    ["installed requires only the needed commands", ": listed.filter(function (row) { return !row.optional; });", ": listed;"],
+    ["a request requires its optional commands", "required = trigger === \"requested\" ? listed : ", "required = "],
     ["installed lists only missing commands", "listed = rows.filter(function (row) { return row.state === \"missing\"; });", "listed = rows;"],
     ["an offer is a list", "if (!Array.isArray(commands) || commands.length === 0", "if (commands.length === 0"],
     ["an offer is not empty", " || commands.length === 0 || commands.length > NOTICE_OFFER_MAX", " || commands.length > NOTICE_OFFER_MAX"],

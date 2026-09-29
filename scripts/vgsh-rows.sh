@@ -74,13 +74,15 @@ has_prefix() { grep -q "^$1" "$tmp/out"; }
 # on_terminal ANSWER ARGS...: vgsh against $cfg on a pseudo-terminal that
 # script(1) opens, with ANSWER typed on it. Stdout and stderr together land
 # in $tmp/out and the exit status in $term_status. INST_BIN names the vgsh
-# under test, as for inst.
+# under test, and INST_PATH, when set, replaces the PATH base_env gives;
+# that PATH must hold script(1).
 on_terminal() {
-  local answer="$1"
+  local answer="$1" path=()
   shift
   command -v script >/dev/null || { echo "$(basename -- "$0" .sh): status=not-measured missing=script"; exit 77; }
+  [[ -z ${INST_PATH:-} ]] || path=(PATH="$INST_PATH")
   term_status=0
-  "${base_env[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" script -qec "$(printf '%q ' "${INST_BIN:-$repo/bin/vgsh}" "$@")" /dev/null <<<"$answer" >"$tmp/out" 2>&1 || term_status=$?
+  "${base_env[@]}" "${path[@]}" XDG_CONFIG_HOME="$cfg" XDG_RUNTIME_DIR="$rt_empty" script -qec "$(printf '%q ' "${INST_BIN:-$repo/bin/vgsh}" "$@")" /dev/null <<<"$answer" >"$tmp/out" 2>&1 || term_status=$?
 }
 
 # The theme commands read the shipped packages and targets beside bin/, so
