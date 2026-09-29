@@ -1,6 +1,6 @@
 # Background attribution
 
-Provenance for every wallpaper source used by the VGS theme catalog. Wallpapers are downloaded on demand from the `vanillagreencom/vgs-themes` release archives pinned in `themes/catalog/index.json`. The catalog ships only one 480 px thumbnail from each converted theme's first wallpaper. File-name suffixes encode origin: `-wh-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS-generated. Everything else is imported from Omarchy.
+Provenance for every wallpaper source used by the VGS theme catalog. Wallpapers are downloaded on demand from the `vanillagreencom/vgs-themes` release archives pinned in `themes/catalog/index.json`. The catalog ships only one 480 px thumbnail from each converted theme's first wallpaper. File-name suffixes encode origin: `-wh-<id>` or `wallhaven-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS-generated. Everything else is imported from Omarchy.
 
 ## Thumbnails
 
@@ -20,6 +20,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `brutalism` | `1-bg4.jpg` | no |
 | `catppuccin` | `1-totoro.png` | no |
 | `catppuccin-frappe` | `1-totoro.png` | no |
+| `catppuccin-latte` | `1-color-fade.png` | no |
 | `catppuccin-macchiato` | `1-totoro.png` | no |
 | `coppernight` | `1-itachi-uchiha.jpg` | no |
 | `cpunk` | `1-bxry2.jpg` | no |
@@ -29,6 +30,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `ember-n-ash` | `1-embernash.jpg` | no |
 | `ethereal` | `1-cosmic.jpg` | no |
 | `event-horizon` | `1-05-cosmic-fall.jpg` | no |
+| `everforest` | `1-tree-tops.jpg` | no |
 | `fireside` | `1-1.jpg` | no |
 | `flexoki-light` | `1-orb.png` | no |
 | `frankenstein` | `1-0-frankenstein.jpg` | no |
@@ -63,6 +65,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `retro-82` | `1-in-the-groove.jpg` | no |
 | `reverie` | `1-1.jpg` | no |
 | `ristretto` | `0-launch.png` | no |
+| `rose-pine` | `1-funky-shapes.jpg` | no |
 | `rose-pine-main` | `1-rpd-plants.jpg` | no |
 | `rose-pine-moon` | `1-rpd-plants.jpg` | no |
 | `roseofdune` | `1-bg6.jpg` | no |
@@ -86,7 +89,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `white` | `1-white.jpg` | no |
 | `x-1632` | `1-3-foundry-overhead.jpg` | no |
 
-Held-back themes have no shipped thumbnail in this catalog: `catppuccin-latte`, `everforest`, `moon-orbit`, `rose-pine`.
+Held-back themes have no shipped thumbnail in this catalog: `moon-orbit`.
 
 ## Omarchy — [basecamp/omarchy](https://github.com/basecamp/omarchy) (MIT, © 37signals)
 

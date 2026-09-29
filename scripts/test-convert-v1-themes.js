@@ -297,6 +297,42 @@ try {
         assert.equal(digestDir(path.join(dir, "themes", "catalog")), before, "rerun changed output");
     });
 
+    row("muted and faint overrides keep the fade hierarchy", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const proc = runThemes(dir, ["muted"]);
+        assert.equal(proc.status, 0, proc.stdout + proc.stderr);
+        assert.match(proc.stdout, /overrides=color\.textMuted,color\.textFaint/);
+        const theme = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "muted", "theme.json"), "utf8"));
+        assert.equal(theme.tokens.color.textMuted, "mix({palette.foreground}, {palette.background}, 0.05)");
+        assert.equal(theme.tokens.color.textFaint, "mix({palette.foreground}, {palette.background}, 0.11)");
+        const mutedAmount = Number(/, (0\.\d+)\)/.exec(theme.tokens.color.textMuted)[1]);
+        const faintAmount = Number(/, (0\.\d+)\)/.exec(theme.tokens.color.textFaint)[1]);
+        assert.ok(mutedAmount < faintAmount, `muted=${mutedAmount} faint=${faintAmount}`);
+        const contrast = spawnSync(NODE, [CONTRAST, path.join(dir, "themes")], { encoding: "utf8", env: env(dir) });
+        assert.equal(contrast.status, 0, contrast.stdout + contrast.stderr);
+
+        const copy = converterCopy(path.join(dir, "control"), "return Math.floor(faintAmount * (defaults.textMuted / defaults.textFaint) * 100) / 100;", "return defaults.textMuted;");
+        const mutantDir = path.join(dir, "mutant");
+        freshRoot(mutantDir);
+        copyFixtureArchives(mutantDir);
+        const mutant = runThemes(mutantDir, ["muted"], [], copy);
+        assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
+        const mutantTheme = JSON.parse(fs.readFileSync(path.join(dir, "mutant", "themes", "catalog", "muted", "theme.json"), "utf8"));
+        const mutantMuted = Number(/, (0\.\d+)\)/.exec(mutantTheme.tokens.color.textMuted)[1]);
+        const mutantFaint = Number(/, (0\.\d+)\)/.exec(mutantTheme.tokens.color.textFaint)[1]);
+        assert.ok(mutantMuted >= mutantFaint, `mutant kept hierarchy muted=${mutantMuted} faint=${mutantFaint}`);
+    });
+
+    row("fade default shape refusal names the token", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const copy = converterCopy(dir, "const value = logic.nodeAt(tokens, token).value;", "const value = token === \"color.textFaint\" ? \"{palette.foreground}\" : logic.nodeAt(tokens, token).value;");
+        const proc = runThemes(dir, ["beta"], [], copy);
+        assert.equal(proc.status, 1, proc.stdout + proc.stderr);
+        assert.match(proc.stderr, /convert-v1-themes: refused: token=color\.textFaint reason=fade-shape/);
+    });
+
     row("preserves unselected catalog entries", dir => {
         assertPreservesUnselected(dir);
         const copy = converterCopy(path.join(dir, "control"), "for (const entry of existing.entries || []) byName.set(entry.name, entry);", "");
@@ -457,7 +493,7 @@ try {
     row("first image control", dir => assertMutantFails(dir, "first image", "const first = backgrounds.firstImageName(entries);", "const first = entries.map(entry => entry.name).sort().pop() || null;"));
     row("deterministic index control", dir => assertMutantFails(dir, "deterministic index", "entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name))", "entries: Array.from(byName.values())"));
     row("override only on failure control", dir => assertMutantFails(dir, "override only on failure", "if (roleShortfall(initialShortfalls, \"textFaint\") !== undefined) {", "if (true) {"));
-    row("largest textFaint control", dir => assertMutantFails(dir, "largest textFaint", "for (let step = 99; step >= 0; step--)", "for (let step = 0; step <= 99; step++)"));
+    row("largest textFaint control", dir => assertMutantFails(dir, "largest textFaint", "for (let step = start; step >= 0; step--)", "for (let step = 0; step <= start; step++)"));
     row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (let step = 1; step <= 100; step++)", "for (let step = 100; step >= 1; step--)"));
     row("unfixable hold-back control", dir => {
         freshRoot(dir);

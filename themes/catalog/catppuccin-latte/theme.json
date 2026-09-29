@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "catppuccin-latte",
+  "tokens": {
+    "scheme": {
+      "mode": "light"
+    },
+    "palette": {
+      "background": "#eff1f5",
+      "foreground": "#4c4f69",
+      "accent": "#1e66f5",
+      "success": "#40a02b",
+      "warning": "#df8e1d",
+      "danger": "#d20f39",
+      "info": "#1e66f5"
+    },
+    "color": {
+      "textMuted": "mix({palette.foreground}, {palette.background}, 0.06)",
+      "textFaint": "mix({palette.foreground}, {palette.background}, 0.13)",
+      "success": "mix({palette.success}, contrast({palette.background}), 0.27)",
+      "warning": "mix({palette.warning}, contrast({palette.background}), 0.36)",
+      "danger": "mix({palette.danger}, contrast({palette.background}), 0.03)",
+      "info": "mix({palette.info}, contrast({palette.background}), 0.09)"
+    }
+  }
+}

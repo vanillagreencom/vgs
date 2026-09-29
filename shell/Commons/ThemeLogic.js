@@ -185,6 +185,7 @@ function luminance(color) {
     return 0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b);
 }
 
+// WCAG 2 contrast ratio, from 1 for equal colours to 21 for black on white.
 function contrastRatio(a, b) {
     var first = luminance(a);
     var second = luminance(b);
@@ -592,19 +593,12 @@ function acceptAppearance(table, light, theme) {
     for (var i = 0; i < APPEARANCE_INPUTS.length; i++)
         if (hasOwn(stated.overrides, APPEARANCE_INPUTS[i]))
             return refusal("appearance-input", APPEARANCE_INPUTS[i], "light sets an input");
-    var read = function (dotted) {
-        var node = theme;
-        var parts = dotted.split(".");
-        for (var p = 0; p < parts.length; p++)
-            node = isPlainObject(node) && hasOwn(node, parts[p]) ? node[parts[p]] : undefined;
-        return node;
-    };
-    var mode = read(SCHEME_MODE);
+    var mode = valueAt(theme, SCHEME_MODE);
     if (typeof mode !== "string")
         return refusal("appearance-theme", SCHEME_MODE, "got=" + JSON.stringify(mode));
     var overrides = mode === "light" ? stated.overrides : {};
     for (var j = 0; j < APPEARANCE_INPUTS.length; j++) {
-        var value = read(APPEARANCE_INPUTS[j]);
+        var value = valueAt(theme, APPEARANCE_INPUTS[j]);
         if (value === undefined)
             return refusal("appearance-theme", APPEARANCE_INPUTS[j], "got=undefined");
         overrides[APPEARANCE_INPUTS[j]] = value;

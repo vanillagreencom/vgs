@@ -254,6 +254,27 @@
       }
     },
     {
+      "name": "catppuccin-latte",
+      "mode": "light",
+      "thumbnail": "thumbnails/catppuccin-latte.jpg",
+      "palette": {
+        "background": "#eff1f5",
+        "foreground": "#4c4f69",
+        "accent": "#1e66f5",
+        "success": "#40a02b",
+        "warning": "#df8e1d",
+        "danger": "#d20f39",
+        "info": "#1e66f5"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-catppuccin-latte-r4.tar.gz",
+        "size": 2421541,
+        "sha256": "33b9899ed9be7f85c6df9618016dd56bcf3e17cded911f0cc5b7e2df8fcfdaa2"
+      }
+    },
+    {
       "name": "catppuccin-macchiato",
       "mode": "dark",
       "thumbnail": "thumbnails/catppuccin-macchiato.jpg",
@@ -440,6 +461,27 @@
         "archive": "vgs-theme-event-horizon-r2.tar.gz",
         "size": 18283164,
         "sha256": "15b95d1eac5c9c91b868cbf30ed33b24d00b1e46a858fc409633d7dc3efb71e9"
+      }
+    },
+    {
+      "name": "everforest",
+      "mode": "dark",
+      "thumbnail": "thumbnails/everforest.jpg",
+      "palette": {
+        "background": "#2d353b",
+        "foreground": "#d3c6aa",
+        "accent": "#7fbbb3",
+        "success": "#a7c080",
+        "warning": "#dbbc7f",
+        "danger": "#e67e80",
+        "info": "#7fbbb3"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-everforest-r2.tar.gz",
+        "size": 690394,
+        "sha256": "cc4ee7757bb888a696a09e849147f07e92c06f10e0f61f37f2691b9e55f25233"
       }
     },
     {
@@ -1154,6 +1196,27 @@
         "archive": "vgs-theme-ristretto-r2.tar.gz",
         "size": 6110685,
         "sha256": "ea51fe10a11cb3e768d1d7279a5cd123028691d323d19f7058427f2fe62b8361"
+      }
+    },
+    {
+      "name": "rose-pine",
+      "mode": "light",
+      "thumbnail": "thumbnails/rose-pine.jpg",
+      "palette": {
+        "background": "#faf4ed",
+        "foreground": "#575279",
+        "accent": "#56949f",
+        "success": "#286983",
+        "warning": "#ea9d34",
+        "danger": "#b4637a",
+        "info": "#56949f"
+      },
+      "imagery": {
+        "repo": "https://github.com/vanillagreencom/vgs-themes",
+        "release": "themes-v1",
+        "archive": "vgs-theme-rose-pine-r4.tar.gz",
+        "size": 12394016,
+        "sha256": "34b62272d46ad3639843f2ff763517690bb6ef5eae3862b0634f0cae128314bd"
       }
     },
     {

@@ -205,6 +205,8 @@ f share/vgs/themes/catalog/brutalism/terminal.json
 f share/vgs/themes/catalog/brutalism/theme.json
 f share/vgs/themes/catalog/catppuccin-frappe/terminal.json
 f share/vgs/themes/catalog/catppuccin-frappe/theme.json
+f share/vgs/themes/catalog/catppuccin-latte/terminal.json
+f share/vgs/themes/catalog/catppuccin-latte/theme.json
 f share/vgs/themes/catalog/catppuccin-macchiato/terminal.json
 f share/vgs/themes/catalog/catppuccin-macchiato/theme.json
 f share/vgs/themes/catalog/catppuccin/terminal.json
@@ -225,6 +227,8 @@ f share/vgs/themes/catalog/ethereal/terminal.json
 f share/vgs/themes/catalog/ethereal/theme.json
 f share/vgs/themes/catalog/event-horizon/terminal.json
 f share/vgs/themes/catalog/event-horizon/theme.json
+f share/vgs/themes/catalog/everforest/terminal.json
+f share/vgs/themes/catalog/everforest/theme.json
 f share/vgs/themes/catalog/fireside/terminal.json
 f share/vgs/themes/catalog/fireside/theme.json
 f share/vgs/themes/catalog/flexoki-light/terminal.json
@@ -298,6 +302,8 @@ f share/vgs/themes/catalog/rose-pine-main/terminal.json
 f share/vgs/themes/catalog/rose-pine-main/theme.json
 f share/vgs/themes/catalog/rose-pine-moon/terminal.json
 f share/vgs/themes/catalog/rose-pine-moon/theme.json
+f share/vgs/themes/catalog/rose-pine/terminal.json
+f share/vgs/themes/catalog/rose-pine/theme.json
 f share/vgs/themes/catalog/roseofdune/terminal.json
 f share/vgs/themes/catalog/roseofdune/theme.json
 f share/vgs/themes/catalog/saga/terminal.json
@@ -325,6 +331,7 @@ f share/vgs/themes/catalog/thumbnails/bauhaus.jpg
 f share/vgs/themes/catalog/thumbnails/biscuit-de-mar.jpg
 f share/vgs/themes/catalog/thumbnails/brutalism.jpg
 f share/vgs/themes/catalog/thumbnails/catppuccin-frappe.jpg
+f share/vgs/themes/catalog/thumbnails/catppuccin-latte.jpg
 f share/vgs/themes/catalog/thumbnails/catppuccin-macchiato.jpg
 f share/vgs/themes/catalog/thumbnails/catppuccin.jpg
 f share/vgs/themes/catalog/thumbnails/coppernight.jpg
@@ -335,6 +342,7 @@ f share/vgs/themes/catalog/thumbnails/eldritch.jpg
 f share/vgs/themes/catalog/thumbnails/ember-n-ash.jpg
 f share/vgs/themes/catalog/thumbnails/ethereal.jpg
 f share/vgs/themes/catalog/thumbnails/event-horizon.jpg
+f share/vgs/themes/catalog/thumbnails/everforest.jpg
 f share/vgs/themes/catalog/thumbnails/fireside.jpg
 f share/vgs/themes/catalog/thumbnails/flexoki-light.jpg
 f share/vgs/themes/catalog/thumbnails/frankenstein.jpg
@@ -371,6 +379,7 @@ f share/vgs/themes/catalog/thumbnails/reverie.jpg
 f share/vgs/themes/catalog/thumbnails/ristretto.jpg
 f share/vgs/themes/catalog/thumbnails/rose-pine-main.jpg
 f share/vgs/themes/catalog/thumbnails/rose-pine-moon.jpg
+f share/vgs/themes/catalog/thumbnails/rose-pine.jpg
 f share/vgs/themes/catalog/thumbnails/roseofdune.jpg
 f share/vgs/themes/catalog/thumbnails/saga.jpg
 f share/vgs/themes/catalog/thumbnails/sapphire.jpg

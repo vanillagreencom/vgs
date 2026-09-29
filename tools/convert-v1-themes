@@ -45,7 +45,7 @@ const PALETTE_FROM_COLORS = [
     ["danger", "color1"],
     ["info", "color4"]
 ];
-const COLOR_OVERRIDE_ORDER = ["textFaint", "success", "warning", "danger", "info"];
+const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "danger", "info"];
 const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.map(role => `color.${role}`));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
@@ -225,8 +225,31 @@ function withColorOverride(shell, role, expression) {
     return candidate;
 }
 
-function textFaintExpression(step) {
+function fadeExpression(step) {
     return `mix({palette.foreground}, {palette.background}, ${(step / 100).toFixed(2)})`;
+}
+
+function fadeDefaultAmount(token) {
+    const value = logic.nodeAt(tokens, token).value;
+    const parsed = typeof value === "string" ? logic.parseExpression(value) : { error: "not-expression" };
+    const valid = parsed.error === undefined && parsed.kind === "call" && parsed.name === "mix" && parsed.args.length === 3
+        && parsed.args[0].kind === "reference" && parsed.args[0].path === "palette.foreground"
+        && parsed.args[1].kind === "reference" && parsed.args[1].path === "palette.background"
+        && parsed.args[2].kind === "number" && parsed.args[2].value > 0 && parsed.args[2].value <= 1;
+    if (!valid) refuseGlobal(`token=${token}`, `reason=fade-shape value=${JSON.stringify(value)}`);
+    return parsed.args[2].value;
+}
+
+function fadeDefaults() {
+    return { textMuted: fadeDefaultAmount("color.textMuted"), textFaint: fadeDefaultAmount("color.textFaint") };
+}
+
+function stepBelow(amount) {
+    return Math.floor(amount * 100 + 0.0000001) - 1;
+}
+
+function proportionalMutedCap(defaults, faintAmount) {
+    return Math.floor(faintAmount * (defaults.textMuted / defaults.textFaint) * 100) / 100;
 }
 
 function statusExpression(role, step) {
@@ -235,23 +258,39 @@ function statusExpression(role, step) {
 
 function addReadabilityOverrides(theme, shell) {
     let fixed = cloneJson(shell);
+    const defaults = fadeDefaults();
     const initialShortfalls = shortfallsFor(theme, fixed);
     const firstUnfixable = initialShortfalls.find(shortfall => !FIXABLE_READABILITY.has(shortfall.text));
     if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };
 
-    const overrides = [];
+    let faintAmount = defaults.textFaint;
     if (roleShortfall(initialShortfalls, "textFaint") !== undefined) {
         let chosen = null;
-        for (let step = 99; step >= 0; step--) {
-            const candidate = withColorOverride(fixed, "textFaint", textFaintExpression(step));
+        const start = stepBelow(defaults.textFaint);
+        for (let step = start; step >= 0; step--) {
+            const candidate = withColorOverride(fixed, "textFaint", fadeExpression(step));
             if (roleShortfall(shortfallsFor(theme, candidate), "textFaint") === undefined) {
-                chosen = candidate;
+                chosen = { shell: candidate, amount: step / 100 };
                 break;
             }
         }
         if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "textFaint") };
+        fixed = chosen.shell;
+        faintAmount = chosen.amount;
+    }
+
+    if (roleShortfall(initialShortfalls, "textMuted") !== undefined) {
+        let chosen = null;
+        const cap = proportionalMutedCap(defaults, faintAmount);
+        for (let step = Math.floor(cap * 100 + 0.0000001); step >= 0; step--) {
+            const candidate = withColorOverride(fixed, "textMuted", fadeExpression(step));
+            if (roleShortfall(shortfallsFor(theme, candidate), "textMuted") === undefined) {
+                chosen = candidate;
+                break;
+            }
+        }
+        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "textMuted") };
         fixed = chosen;
-        overrides.push("color.textFaint");
     }
 
     for (const role of STATUS_ROLES) {
@@ -267,15 +306,18 @@ function addReadabilityOverrides(theme, shell) {
         }
         if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, role) };
         fixed = chosen;
-        overrides.push(pathName);
     }
 
     const finalShortfalls = shortfallsFor(theme, fixed);
     if (finalShortfalls.length > 0) return { held: true, shortfall: finalShortfalls[0] };
+    const overrides = [];
     if (fixed.tokens.color !== undefined) {
         const ordered = {};
         for (const role of COLOR_OVERRIDE_ORDER) {
-            if (Object.hasOwn(fixed.tokens.color, role)) ordered[role] = fixed.tokens.color[role];
+            if (Object.hasOwn(fixed.tokens.color, role)) {
+                ordered[role] = fixed.tokens.color[role];
+                overrides.push(`color.${role}`);
+            }
         }
         fixed.tokens.color = ordered;
     }
