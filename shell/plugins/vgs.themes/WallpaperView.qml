@@ -21,8 +21,8 @@ import "BrowserLogic.js" as BrowserLogic
 // and D forward, Home and End go to the first and the last card, Enter
 // sets the selected image or runs the selected card, Escape asks to close,
 // S flips the source, and W, Tab and Shift+Tab flip the scope while its
-// control shows; without it Tab and Shift+Tab step. The view holds the
-// keyboard itself and the rail never takes the focus, because the rail
+// control shows; without it Tab and Shift+Tab step. An item of the view
+// holds the keyboard and the rail never takes the focus, because the rail
 // takes Tab as a step.
 //
 // The view is built with each open and destroyed with the browser, so the
@@ -88,6 +88,53 @@ FocusScope {
 
     WallpaperState { id: wallpaper }
 
+    // The view's keyboard: it holds the focus and runs the key table. A
+    // FocusScope that takes the focus again hands it to the child that
+    // last held it, a clicked segmented control included, so the view
+    // takes the keyboard back through this item and not through itself.
+    // The table runs on the focused item itself because Qt moves the focus
+    // on a Tab that item leaves unaccepted before a parent's Keys see it
+    // (runtime-qml.md).
+    Item {
+        id: keyboard
+        focus: true
+        Keys.onPressed: event => {
+            const chord = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) !== 0;
+            const action = BrowserLogic.wallpaperAction(event.key, (event.modifiers & Qt.ShiftModifier) !== 0, chord, root.scoped);
+            switch (action) {
+            case "":
+                return;
+            case "back":
+                carousel.step(-1);
+                break;
+            case "forward":
+                carousel.step(1);
+                break;
+            case "first":
+                carousel.currentIndex = 0;
+                break;
+            case "last":
+                carousel.currentIndex = Math.max(0, root.cards.length - 1);
+                break;
+            case "activate":
+                root.activate();
+                break;
+            case "close":
+                root.closeRequested();
+                break;
+            case "source":
+                root.flipSource();
+                break;
+            case "scope":
+                root.flipScope();
+                break;
+            default:
+                throw new Error("themes: wallpaper action=" + action);
+            }
+            event.accepted = true;
+        }
+    }
+
     // Read every image and the catalog; each answer is kept as it arrives.
     function refresh() {
         let waiting = 2;
@@ -134,7 +181,7 @@ FocusScope {
         chooseScope((scopeIndex + 1) % BrowserLogic.SCREEN_SCOPES.length);
     }
 
-    function takeKeys() { root.forceActiveFocus(); }
+    function takeKeys() { keyboard.forceActiveFocus(); }
 
     function nextGeneration() {
         generation = Math.max(Date.now(), generation + 1);
@@ -234,42 +281,6 @@ FocusScope {
         repeat: true
         running: root.job !== null && (root.job.step === "download" || root.job.step === "update")
         onTriggered: root.downloading = root.shell.theme.last.downloading
-    }
-
-    Keys.onPressed: event => {
-        const chord = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) !== 0;
-        const action = BrowserLogic.wallpaperAction(event.key, (event.modifiers & Qt.ShiftModifier) !== 0, chord, root.scoped);
-        switch (action) {
-        case "":
-            return;
-        case "back":
-            carousel.step(-1);
-            break;
-        case "forward":
-            carousel.step(1);
-            break;
-        case "first":
-            carousel.currentIndex = 0;
-            break;
-        case "last":
-            carousel.currentIndex = Math.max(0, root.cards.length - 1);
-            break;
-        case "activate":
-            root.activate();
-            break;
-        case "close":
-            root.closeRequested();
-            break;
-        case "source":
-            root.flipSource();
-            break;
-        case "scope":
-            root.flipScope();
-            break;
-        default:
-            throw new Error("themes: wallpaper action=" + action);
-        }
-        event.accepted = true;
     }
 
     Row {

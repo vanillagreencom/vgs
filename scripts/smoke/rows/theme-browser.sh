@@ -259,17 +259,17 @@ while i < len(d):
 PY
 }
 card_ratio() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[3] for i in json.load(sys.stdin) if i[0]==sys.argv[1] and i[1]=="ready"]; print("%.1f" % (r[0][0] / r[0][1]) if r else "none")' "$1"; }
-# pin_nord ARCHIVE A_IMAGE: an archive holding a.jpg from A_IMAGE and b.jpg
+# pin_nord ARCHIVE B_IMAGE: an archive holding b.jpg from B_IMAGE and a.jpg
 # and c.jpg from nord's thumbnail, pinned for nord in the sandbox copy's
 # catalog, which the update card then offers.
 pin_nord() {
   python3 - "$assets/themes-v1/$1" "$2" "$thumbs/nord.jpg" "$index" <<'PY'
 import hashlib, json, os, sys, tarfile
-out, first, image, index = sys.argv[1:]
+out, second, image, index = sys.argv[1:]
 with tarfile.open(out, "w:gz") as tar:
-    tar.add(first, arcname="backgrounds/a.jpg")
-    for name in ("backgrounds/b.jpg", "backgrounds/c.jpg"):
-        tar.add(image, arcname=name)
+    tar.add(image, arcname="backgrounds/a.jpg")
+    tar.add(second, arcname="backgrounds/b.jpg")
+    tar.add(image, arcname="backgrounds/c.jpg")
 data = open(out, "rb").read()
 doc = json.load(open(index))
 nord = [e for e in doc["entries"] if e["name"] == "nord"][0]
@@ -434,36 +434,38 @@ type_keys -k Escape || fail "sending Escape to the theme focus control failed"
 expect_poll "Escape closes the theme focus control's browser" 0 layer_count vgs:overlay
 plugin_restore ThemeView.qml "theme focus"
 
-# The update card: the catalog pins a newer archive, which replaces a.jpg
+# The update card: the catalog pins a newer archive, which replaces b.jpg
 # under its name with an image of another shape and adds c.jpg. Enter on
 # it runs the update form on the download lane, applies nord again, reads
 # the lists again, loads every card's image again and stays open. Each
-# card image is read back by the ratio it decodes to. Control: a copy of
-# the view whose cards keep their identity across the update keeps
-# drawing the old a.jpg. It runs first, on the second archive; the real
-# view then reads that archive's a.jpg on a new open and the third
+# card image is read back by the ratio it decodes to. b.jpg sits next to
+# the selected card before and after the update, so the carousel decodes
+# it at one size throughout and only a new identity reloads it. Control:
+# a copy of the view whose cards keep their identity across the update
+# keeps drawing the old b.jpg. It runs first, on the second archive; the
+# real view then reads that archive's b.jpg on a new open and the third
 # archive's after its update.
 plugin_control WallpaperView.qml identity "BrowserLogic.railKey(card.key, root.generation)" "BrowserLogic.railKey(card.key, 0)"
 pin_nord vgs-theme-nord-smoke2.tar.gz "$thumbs/frankenstein.jpg"
 press_wallpapers || fail "typing SUPER+W for the identity control failed"
 expect_poll "SUPER+W opens the identity control's browser" 1 layer_count vgs:overlay
 expect_poll "the theme source ends with the update card" "[\"$nord_a\", \"$nord_b\", \"update\"]" wall_keys
-expect_poll "the identity control draws nord's a.jpg" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_a"
+expect_poll "the identity control draws nord's b.jpg" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_b"
 type_keys -k End || fail "sending End failed"
 expect_poll "End selects the update card" update wall_selected
 type_keys -k Return || fail "sending Return to the identity control's update card failed"
 expect_poll "the identity control's update, apply and lists end" none wall_job
 expect "the identity control's update left no problem" '""' wall_value problem
 expect_poll "the theme source lists the third image and no card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\"]" wall_keys
-expect "the update replaced a.jpg on disk" True bash -c 'cmp -s -- "$1" "$2" && echo True' _ "$thumbs/frankenstein.jpg" "$nord_a"
-expect "the identity control keeps drawing the replaced a.jpg's old picture" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_a"
+expect "the update replaced b.jpg on disk" True bash -c 'cmp -s -- "$1" "$2" && echo True' _ "$thumbs/frankenstein.jpg" "$nord_b"
+expect "the identity control keeps drawing the replaced b.jpg's old picture" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_b"
 type_keys -k Escape || fail "sending Escape to the identity control failed"
 expect_poll "Escape closes the identity control's browser" 0 layer_count vgs:overlay
 plugin_restore WallpaperView.qml identity
 pin_nord vgs-theme-nord-smoke3.tar.gz "$thumbs/biscuit-de-mar.jpg"
 press_wallpapers || fail "typing SUPER+W for the update failed"
 expect_poll "SUPER+W opens the browser for the update" 1 layer_count vgs:overlay
-expect_poll "a new open draws the a.jpg the last update replaced" "$(file_ratio "$thumbs/frankenstein.jpg")" card_ratio "$nord_a"
+expect_poll "a new open draws the b.jpg the last update replaced" "$(file_ratio "$thumbs/frankenstein.jpg")" card_ratio "$nord_b"
 expect_poll "the theme source ends with the next update card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\", \"update\"]" wall_keys
 type_keys -k End || fail "sending End for the update failed"
 expect_poll "End selects the next update card" update wall_selected
@@ -471,7 +473,7 @@ type_keys -k Return || fail "sending Return to the update card failed"
 expect_poll "the update, the apply after it and the lists end" none wall_job
 expect "the update left no problem" '""' wall_value problem
 expect "the update keeps the browser open" 1 layer_count vgs:overlay
-expect_poll "the rail draws the a.jpg the update replaced" "$(file_ratio "$thumbs/biscuit-de-mar.jpg")" card_ratio "$nord_a"
+expect_poll "the rail draws the b.jpg the update replaced" "$(file_ratio "$thumbs/biscuit-de-mar.jpg")" card_ratio "$nord_b"
 expect "the update unpacks the third image" True bash -c '[[ -f $1 ]] && echo True' _ "$nord_c"
 type_keys -k Escape || fail "sending Escape after the update failed"
 expect_poll "Escape closes the browser after the update" 0 layer_count vgs:overlay
