@@ -75,8 +75,9 @@
 //       marker and no `.git`, else `git`: what `vgsh theme update` and
 //       `outdated` do with it.
 //   vgsh-theme-judge catalog <text|json> <config-dir>
-//       every entry of the shipped catalog's index with its install state
-//       under <config-dir>/themes: `installed`, `definitionUpdate`,
+//       every entry of the shipped catalog's index with its thumbnail's
+//       absolute `thumbnailPath` and its install state under
+//       <config-dir>/themes: `installed`, `definitionUpdate`,
 //       `imageryInstalled` and `imageryUpdate`.
 //   vgsh-theme-judge install <text|json> <config-dir> <stage> <held|busy|failed> <name>
 //       under the theme lock verdict, after `recover`: copy catalog
@@ -2222,7 +2223,8 @@ function catalogList(format, configDir) {
         const { dir, key } = installedPath(configDir, entry.name);
         const marker = realDirectory(dir, key) ? installOrigin(dir, key).marker : null;
         const digest = marker === null ? null : packageDigest(catalogPackage(entry, key), key);
-        return Object.assign({}, entry, catalog.installState(entry, marker, digest));
+        const thumbnailPath = entry.thumbnail === null ? null : path.join(SHIPPED, CATALOG, entry.thumbnail);
+        return Object.assign({}, entry, { thumbnailPath }, catalog.installState(entry, marker, digest));
     });
     if (format === "json") {
         process.stdout.write(JSON.stringify({ entries: rows }) + "\n");

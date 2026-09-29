@@ -213,7 +213,7 @@
 # and remove first finish or undo a swap an interruption left, each with a
 # `vgsh: recovered: theme=<name> ...` line on stderr. `theme outdated` reports a
 # catalog install behind 1 when the catalog's package changed.
-# `theme catalog` prints each index entry with `installed`,
+# `theme catalog` prints each index entry with `thumbnailPath`, `installed`,
 # `definitionUpdate`, `imageryInstalled` and `imageryUpdate`, `--json` as
 # `{ entries: [...] }`: docs/architecture/theme-catalog.md § Install.
 #
