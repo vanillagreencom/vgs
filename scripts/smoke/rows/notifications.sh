@@ -319,9 +319,9 @@ expect_poll "a Slack direct message draws its workspace's icon" true card_value 
 expect "the icon is the copy out of Slack's cache" "$(file_url_json "$slack_icon")" card_value "[acme] from Ada Lovelace" workspaceIcon
 expect "the copy is the cached image's body" "370 89504e470d0a1a0a" bash -c 'printf "%s %s\n" "$(stat -c %s -- "$1")" "$(od -An -tx1 -N8 -- "$1" | tr -d " ")"' _ "$slack_icon"
 expect "the workspace's name gives way to its icon" '"from Ada Lovelace"' card_value "[acme] from Ada Lovelace" title
-expect "a direct message shows its sender's face" '{"rule": "slack", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
+expect "a direct message shows its sender's face" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "from Ada Lovelace", "faces": ["Ada Lovelace"], "more": 0}' card_value "[acme] from Ada Lovelace" enrichment
 notify Slack 0 "[acme] in ada, grace, alan, edsger, barbara" "alan: lunch at noon?" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
-expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
+expect_poll "a group message shows three faces, its sender first, and the rest as more" '{"rule": "slack", "source": "desktop", "workspace": "acme", "title": "in ada, grace, alan, edsger, barbara", "faces": ["alan", "ada", "grace"], "more": 2}' card_value "[acme] in ada, grace, alan, edsger, barbara" enrichment
 expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
 token_faces_loaded() { ipc smoke layerItems vgs.notifications Faces names,images | python3 -c 'import json,sys
 for _screen, _rect, value in json.load(sys.stdin):
