@@ -13,12 +13,11 @@ import "PluginLogic.js" as Logic
 // the key is busy or the launcher state refuses it, the launcher's argv, how
 // each exit moves the state, what the records say, which waits run and what
 // each `done` receives. The launcher forks the terminal into a session of its
-// own and exits once the
-// presenter wrote its record, so a terminal outlives the shell that opened
-// it. Each run's `done` belongs to the lifetime of the instance that asked:
-// a destroyed instance's callback is dropped and its run still ends. The
-// core's own request, through openCore, holds its `done` for the shell's
-// life.
+// own and exits once the presenter wrote its record, so a terminal outlives
+// the shell that opened it. Each run's `done` belongs to the lifetime of the
+// instance that asked: a destroyed instance's callback is dropped and its
+// run still ends. The core's own request, through openCore, holds its `done`
+// for the shell's life.
 Scope {
     id: root
 
