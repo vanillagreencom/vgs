@@ -92,11 +92,13 @@ t=sys.stdin.read().strip()
 if t == "absent": print(t); sys.exit()
 w=json.loads(t); at=w.index("--record")
 print(json.dumps([w[at + 1]] + w[w.index("--", at) + 1:]))'; }
-# The last ended run of KEY the lending record holds, as JSON.
-ended_run() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["tui"]["runs"].get(sys.argv[1]); print(json.dumps(None if r is None else r["ended"]))' "$1"; }
-# ended_after KEY BEFORE: `ended` once KEY's last ended run is another than
-# BEFORE and no run of it is live.
-ended_after() { [[ $(ended_run "$1") != "$2" && $(key_idle "$1") == idle ]] && echo ended || echo waiting; }
+# The ended record the presenter of KEY's last run wrote, by file name, or
+# `none`: the presenter writes it when it exits and keeps only the newest.
+ended_record() { local stem="${1/\//@}" f found=none; for f in "$rt_dir/vgs/tui/$stem@"*.ended.json; do [[ -e $f ]] && found="${f##*/}"; done; echo "$found"; }
+# ended_record_moved KEY BEFORE: `moved` once KEY's ended record is another
+# than BEFORE, so the presenter of the run a click started has exited and
+# expect_run_end times only the core's reading of it.
+ended_record_moved() { [[ $(ended_record "$1") != "$2" ]] && echo moved || echo waiting; }
 # reveal_row NAME: the panel scrolled so the first row drawing NAME sits
 # near its top, from where the row's box lies with the list at its start.
 reveal_row() {
@@ -130,12 +132,13 @@ expect_poll "the other mise tool draws its version and its actions" "$(texts git
 # read again when the run ends, so the key mise now holds shows.
 echo "$agent_key" >>"$dev_state/installed"
 expect "no list runs before a trigger" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"
-install_before="$(ended_run vgs.devtools/install)" || fail "the install TUI's runs are unreadable"
+install_before="$(ended_record vgs.devtools/install)"
 forget_record
 expect "the agent's row scrolls into view" revealed reveal_row "$agent_name"
 click_scoped_in vgs:panel panel vgs.devtools ToolRow "$agent_name" Button Install || fail "the click on the agent's Install failed"
 expect_poll "the click hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
-expect_poll "the install run ends" ended ended_after vgs.devtools/install "$install_before"
+expect_poll "the install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
+expect_run_end "the install run ends" vgs.devtools/install
 expect_poll "the list read after the run shows the agent installed" "$(texts "$agent_name" 1.0.0 mise Update Remove)" row_texts "$agent_name"
 
 # The panel's switch writes writeLaunchers; the service runs the launcher
@@ -214,12 +217,13 @@ if [[ $(grep -c -F -- "$relist_line" "$control_dir/Service.qml") == 1 && $(grep 
   expect "the control's summon answers ok" ok devtools open
   expect_poll "a refresh lists the agent absent again" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"
   echo "$agent_key" >>"$dev_state/installed"
-  install_before="$(ended_run vgs.devtools/install)" || fail "the install TUI's runs are unreadable"
+  install_before="$(ended_record vgs.devtools/install)"
   expect "the control's agent row scrolls into view" revealed reveal_row "$agent_name"
   forget_record
   click_scoped_in vgs:panel panel vgs.devtools ToolRow "$agent_name" Button Install || fail "the control's click on Install failed"
   expect_poll "the control's click hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
-  expect_poll "the control's install run ends" ended ended_after vgs.devtools/install "$install_before"
+  expect_poll "the control's install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
+  expect_run_end "the control's install run ends" vgs.devtools/install
   # expect_poll's own window, 5 s at 0.2 s: the shipped service's list
   # shows the agent installed within it.
   relisted=no
