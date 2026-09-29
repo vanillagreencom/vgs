@@ -111,9 +111,11 @@ function verify(logic) {
     assert.equal(logic.isEphemeral("app", true), true, "a transient notification is not kept");
     assert.equal(logic.isEphemeral("app", false), false);
 
-    // Lifetimes: [urgency, sender's timeout, milliseconds shown].
-    for (const [urgency, asked, want] of [[U.low, 0, 5000], [U.low, 7000, 7000], [U.normal, 0, 8000], [U.normal, 3000, 8000], [U.normal, 12000, 12000], [U.normal, 90000, 30000], [U.critical, 5000, 0], [U.normal, -1, 8000], [U.normal, NaN, 8000]])
-        assert.equal(logic.lifetimeFor(urgency, asked), want, `lifetime of urgency ${urgency} asking ${asked}`);
+    // Lifetimes: [urgency, sender's timeout, the duration setting in
+    // milliseconds, milliseconds shown].
+    for (const [urgency, asked, normal, want] of [[U.low, 0, 8000, 5000], [U.low, 7000, 8000, 7000], [U.normal, 0, 8000, 8000], [U.normal, 3000, 8000, 8000], [U.normal, 12000, 8000, 12000], [U.normal, 90000, 8000, 30000], [U.critical, 5000, 8000, 0], [U.normal, -1, 8000, 8000], [U.normal, NaN, 8000, 8000],
+        [U.normal, 0, 3000, 3000], [U.normal, 0, 20000, 20000], [U.normal, 12000, 20000, 20000], [U.low, 0, 3000, 3000], [U.low, 0, 20000, 5000], [U.critical, 0, 3000, 0]])
+        assert.equal(logic.lifetimeFor(urgency, asked, normal), want, `lifetime of urgency ${urgency} asking ${asked} under ${normal}`);
 
     // Entries.
     const fields = { id: 7, appName: "Chat", appIcon: "chat", summary: "Hi", body: "b", image: "image://icon//tmp/a.png", desktopEntry: "chat", urgency: U.critical, expireTimeout: 4000 };
@@ -162,7 +164,7 @@ function verify(logic) {
         stored(now - 60000, 4, { deadline: now + 500 }),
         stored(now - 1000, 5, { deadline: now - 1 }),
         stored(now - 60000, 6, { urgency: U.low, remaining: 2000 })
-    ], now);
+    ], now, 8000);
     same(plan.expired.map(e => e.key), [(now - 9000) + "-1", (now - 1000) + "-5"]);
     same(plan.show.map(e => [e.key, e.deadline === undefined ? null : e.deadline]), [[(now - 3000) + "-2", now + 8000], [(now - 60000) + "-3", null], [(now - 60000) + "-4", now + 8000], [(now - 60000) + "-6", now + 5000]], "a paused clock has not run out");
     assert.equal("remaining" in plan.show[3], false, "a toast shown again keeps no paused time");
@@ -286,6 +288,8 @@ const CONTROLS = [
     ["Silence exception", 'return String(appName || "") === "notify-send" && urgency === URGENCY.critical;', 'return String(appName || "") === "notify-send";'],
     ["critical stays", "if (urgency === URGENCY.critical) return 0;", ""],
     ["lifetime ceiling", "return Math.min(MAX_LIFETIME, Math.max(floor, Math.round(asked)));", "return Math.max(floor, Math.round(asked));"],
+    ["the duration setting is the normal floor", "var floor = urgency === URGENCY.low ? Math.min(LOW_LIFETIME, normal) : normal;", "var floor = urgency === URGENCY.low ? Math.min(LOW_LIFETIME, normal) : 8000;"],
+    ["a low toast stays no longer than the setting", "Math.min(LOW_LIFETIME, normal)", "LOW_LIFETIME"],
     ["key clash", "while (taken && taken(keyOf(at, id))) at += 1;", ""],
     ["summary limit", "summary: clip(f.summary, SUMMARY_MAX),", "summary: String(f.summary || \"\"),"],
     ["icon provider path", 'if (s.indexOf(ICON_PROVIDER) === 0 && s.charAt(ICON_PROVIDER.length) === "/") return s.slice(ICON_PROVIDER.length);', ""],

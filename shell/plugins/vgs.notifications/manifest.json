@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "vgs.notifications",
-  "name": "notifications",
+  "name": "Notifications",
   "version": "0.1.0",
   "author": "VanillaGreen",
   "description": "The desktop notification daemon: Spotlight glass toasts on every screen, an Inbox and History panel, and Silence. Toggle the panel with the vgs.notifications:inbox shortcut or IPC.",
   "license": "MIT",
+  "icon": "bell",
   "kinds": [
     "service"
   ],
@@ -19,7 +20,19 @@
     "notifications",
     "shortcut"
   ],
-  "settings": {},
+  "settings": {
+    "duration": 8
+  },
+  "schema": {
+    "duration": {
+      "type": "number",
+      "label": "Toast duration",
+      "description": "Seconds a normal toast stays on screen; a low-urgency one stays for at most 5",
+      "min": 2,
+      "max": 30,
+      "step": 1
+    }
+  },
   "appearance": "Appearance.js",
   "hyprland": {
     "binds": [

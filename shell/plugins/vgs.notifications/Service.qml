@@ -24,6 +24,10 @@ Item {
 
     // The core assigns the plugin's scoped shell object after creation.
     property var shell: null
+    // A normal toast's lifetime floor, from the `duration` setting in
+    // seconds; the manifest's default and the schema's bounds make it a
+    // number from 2 to 30.
+    readonly property int normalLifetime: shell === null ? 0 : shell.settings.duration * 1000
     readonly property var look: Theme.appearance(Appearance.TOKENS, Appearance.LIGHT)
     property bool registered: false
     property var layerRelease: null
@@ -239,7 +243,7 @@ Item {
         store.copy(stored.copies, null);
         store.putLive(stored.entry);
         rowModel.insert(0, rowOf(entry, "live"));
-        startClock(entry.key, Logic.lifetimeFor(entry.urgency, entry.expireTimeout));
+        startClock(entry.key, Logic.lifetimeFor(entry.urgency, entry.expireTimeout, root.normalLifetime));
         const onScreen = rowKeys(r => r.origin !== "panel");
         if (onScreen.length > Logic.LIVE_MAX) {
             const rowsOldestLast = onScreen.map(k => ({ key: k, urgency: rowModel.get(root.indexOf(k)).urgency }));
@@ -311,7 +315,7 @@ Item {
         store.copy(stored.copies, null);
         store.putLive(stored.entry);
         // New content deserves a whole look: the clock starts over.
-        if (row.leaving === "") startClock(key, Logic.lifetimeFor(updated.urgency, updated.expireTimeout));
+        if (row.leaving === "") startClock(key, Logic.lifetimeFor(updated.urgency, updated.expireTimeout, root.normalLifetime));
     }
 
     // A silenced notification goes straight into the history, held tracked
@@ -356,7 +360,7 @@ Item {
     // actions, and the ones whose time ran out meanwhile go into the history.
     function restore() {
         const now = Date.now();
-        const plan = Logic.restorePlan(store.live, now);
+        const plan = Logic.restorePlan(store.live, now, root.normalLifetime);
         for (const entry of plan.expired) store.dropLive(entry.key, false);
         for (const entry of plan.show) {
             store.putLive(entry);

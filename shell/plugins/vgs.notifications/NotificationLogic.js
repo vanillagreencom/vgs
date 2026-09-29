@@ -19,10 +19,10 @@ var LIVE_MAX = 20;
 // holds at most (HISTORY_MAX + LIVE_MAX) entries of bounded size.
 var SUMMARY_MAX = 512;
 var BODY_MAX = 4096;
-// On-screen lifetimes, in milliseconds: a floor per urgency and one ceiling
-// for what a sender asks; a critical notification stays until closed.
+// On-screen lifetimes, in milliseconds: the low urgency's floor and one
+// ceiling for what a sender asks; a normal toast's floor is the `duration`
+// setting, and a critical notification stays until closed.
 var LOW_LIFETIME = 5000;
-var NORMAL_LIFETIME = 8000;
 var MAX_LIFETIME = 30000;
 // The state file's format.
 var STATE_VERSION = 1;
@@ -338,14 +338,16 @@ function isEphemeral(appName, transient) {
 
 // ---------------------------------------------------------- lifetime
 
-// How long a toast shows, in milliseconds; 0 is until it is closed. A
+// How long a toast shows, in milliseconds; 0 is until it is closed.
+// `normal` is a normal toast's floor, the `duration` setting in
+// milliseconds; a low one's is the shorter of LOW_LIFETIME and `normal`. A
 // sender's timeout, in milliseconds, is held between the urgency's floor
 // and the ceiling.
-function lifetimeFor(urgency, expireTimeout) {
+function lifetimeFor(urgency, expireTimeout, normal) {
     if (urgency === URGENCY.critical) return 0;
     var asked = Number(expireTimeout || 0);
     if (!isFinite(asked) || asked <= 0) asked = 0;
-    var floor = urgency === URGENCY.low ? LOW_LIFETIME : NORMAL_LIFETIME;
+    var floor = urgency === URGENCY.low ? Math.min(LOW_LIFETIME, normal) : normal;
     return Math.min(MAX_LIFETIME, Math.max(floor, Math.round(asked)));
 }
 
@@ -558,13 +560,13 @@ function clockFields(clock) {
 // judged by its deadline and a paused one has not run out; a toast with no
 // clock stored is judged by when it arrived. A toast shown again restarts
 // with a whole lifetime, recorded as a deadline so a second restart judges
-// it by that clock and not by when it arrived.
-function restorePlan(live, now) {
+// it by that clock and not by when it arrived. `normal` is lifetimeFor's.
+function restorePlan(live, now, normal) {
     var show = [];
     var expired = [];
     for (var i = 0; i < live.length; i++) {
         var entry = live[i];
-        var lifetime = lifetimeFor(entry.urgency, entry.expireTimeout);
+        var lifetime = lifetimeFor(entry.urgency, entry.expireTimeout, normal);
         var over = entry.remaining !== undefined ? false
             : entry.deadline !== undefined ? now >= entry.deadline
             : lifetime > 0 && now - entry.timestamp >= lifetime;

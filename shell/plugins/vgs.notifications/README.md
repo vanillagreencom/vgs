@@ -1,4 +1,4 @@
-# notifications
+# Notifications
 
 `vgs.notifications`: the desktop notification daemon. Every notification an application sends shows as a Spotlight glass capsule at the top of every screen, and leaves into the history when it expires, is dismissed, is acted on, is closed by its sender or is let go by a full stack. An Inbox lists what arrived since the last Mark read and a History everything kept; Silence keeps notifications off the screen and records them. It is a port of the customised Spotlight notifications of the owner's Omarchy dotfiles, drawn and behaving as that one does, on this shell's plugin contract.
 
@@ -8,7 +8,7 @@ The core's notification server takes the `org.freedesktop.Notifications` name wh
 
 | Path | How |
 |---|---|
-| Shortcut | The service registers `vgs.notifications:inbox`, and the manifest binds it to `SUPER+N` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.notifications", "keys": { "inbox": "SUPER+SHIFT+N" } }`; `null` in place of the key unbinds it. |
+| Shortcut | The service registers `vgs.notifications:inbox`, and the manifest binds it to `SUPER+N` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, edit it under Keys on the plugin's Settings page, or give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.notifications", "keys": { "inbox": "SUPER+SHIFT+N" } }`; `null` in place of the key unbinds it. |
 | IPC | `vgsh ipc call vgs.notifications invoke <name> <arg>`, names below. |
 
 While a panel is open the toasts stay and do not expire, a press outside the stack closes it, and the header holds Silence, Mark read (the Inbox) or Clear history (the History), and the switch between the two. Mark read marks everything so far read and closes the panel; Clear history removes the kept notifications and leaves the panel open. The panel takes no keyboard.
@@ -27,7 +27,7 @@ While a panel is open the toasts stay and do not expire, a press outside the sta
 
 ## Toasts
 
-- A toast shows for at least 5 seconds at low urgency and 8 at normal, longer when the sender's timeout asks, up to 30 seconds. A critical toast stays until it is closed. The pointer on a toast, or an open panel, pauses its clock.
+- A toast shows for at least `duration` seconds at normal urgency, 8 by default, and for the shorter of 5 seconds and `duration` at low urgency, longer when the sender's timeout asks, up to 30 seconds. Set `duration` from 2 to 30 on the plugin's Settings page, or as `{ "id": "vgs.notifications", "duration": 12 }` in `plugins` in `~/.config/vgs/shell.json`. A critical toast stays until it is closed. The pointer on a toast, or an open panel, pauses its clock.
 - A sender replacing its notification updates the toast in place and starts its clock over; a sender closing it ends the toast.
 - Hovering a card reveals its actions: the sender's own while it is live, Show when it has none and one of its windows is open, and Dismiss. A click on the card runs the sender's default action, or shows its window, and a right click dismisses it.
 - The body renders the markup the server advertises, less every image tag, and a Chromium-family sender's leading site address. The summary is plain text.

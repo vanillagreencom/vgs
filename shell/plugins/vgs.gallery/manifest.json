@@ -6,6 +6,7 @@
   "author": "VanillaGreen",
   "description": "Every component of the design system in every variant and state, for previewing a theme. Summon it as a panel.",
   "license": "MIT",
+  "icon": "swatch-book",
   "kinds": [
     "panel"
   ],
@@ -17,5 +18,13 @@
   ],
   "settings": {
     "placement": "center"
+  },
+  "schema": {
+    "placement": {
+      "type": "enum",
+      "label": "Placement",
+      "description": "Where the gallery opens on its monitor when summoned",
+      "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
+    }
   }
 }

@@ -6,6 +6,7 @@
   "author": "VanillaGreen",
   "description": "A bar button that opens a panel listing every theme package and the wallpaper; a click applies a package or steps to the next or previous wallpaper, and the applied theme's wallpaper is drawn under every window.",
   "license": "MIT",
+  "icon": "palette",
   "kinds": [
     "bar-widget",
     "panel",
@@ -23,5 +24,13 @@
   "defaultSection": "right",
   "settings": {
     "placement": "top-right"
+  },
+  "schema": {
+    "placement": {
+      "type": "enum",
+      "label": "Placement",
+      "description": "Where the themes panel opens on its monitor when summoned without its bar button",
+      "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
+    }
   }
 }

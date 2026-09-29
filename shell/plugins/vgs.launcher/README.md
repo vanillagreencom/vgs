@@ -1,4 +1,4 @@
-# launcher
+# Launcher
 
 `vgs.launcher`: a Spotlight launcher. One glass search field opens over the screen; typing searches every menu row and installed application, `f:` searches files and `F:` folders, and Ctrl+B or the menu button shows the category tree. It is a port of the customised Spotlight launcher of the owner's Omarchy dotfiles, drawn and behaving as that one does, on this shell's plugin contract.
 
@@ -6,7 +6,7 @@
 
 | Path | How |
 |---|---|
-| Shortcut | The service registers `vgs.launcher:toggle`, and the manifest binds it to `SUPER+SPACE` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` in place of the key unbinds it. |
+| Shortcut | The service registers `vgs.launcher:toggle`, and the manifest binds it to `SUPER+SPACE` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, edit it under Keys on the plugin's Settings page, or give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` in place of the key unbinds it. |
 | Bar entry | `vgsh plugin enable vgs.launcher` places the magnifier in the bar's left section. A left click toggles the launcher on that screen; a right click runs `xdg-terminal-exec`. |
 | IPC | `vgsh ipc call vgs.launcher invoke toggle '<payload>'` or `... invoke summon '<payload>'`, or the host's own `vgsh ipc call shell summon overlay vgs.launcher '<payload>'`. |
 
