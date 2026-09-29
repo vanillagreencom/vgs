@@ -24,14 +24,14 @@ Scope {
         const item = loader.item === null ? null : loader.item.toastAt(index);
         if (item === null) return "absent";
         const button = item.closeButton;
-        const at = button.mapToGlobal(0, 0);
+        const at = button.mapToItem(null, 0, 0);
         return JSON.stringify([at.x, at.y, button.width, button.height]);
     }
 
-    function toastGeometry(index) {
+    function toastWindowGeometry(index) {
         const item = loader.item === null ? null : loader.item.toastAt(index);
         if (item === null) return "absent";
-        const at = item.mapToGlobal(0, 0);
+        const at = item.mapToItem(null, 0, 0);
         return JSON.stringify([at.x, at.y, item.width, item.height]);
     }
 

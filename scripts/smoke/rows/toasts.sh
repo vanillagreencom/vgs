@@ -52,30 +52,41 @@ note_toast_bar_geometry() {
   t="$(toast_bar_geometry)" || { fail "toast geometry unreadable"; return; }
   ok "toast geometry measured: $t"
 }
-toast_point_between_first_two() {
+toast_gap_rect_between_first_two() {
   local first second
-  first="$(ipc smoke toastGeometry 0)" || return
-  second="$(ipc smoke toastGeometry 1)" || return
+  first="$(ipc smoke toastWindowGeometry 0)" || return
+  second="$(ipc smoke toastWindowGeometry 1)" || return
   python3 - "$first" "$second" <<'PY'
 import json, sys
 first, second = [json.loads(v) for v in sys.argv[1:]]
 if not isinstance(first, list) or not isinstance(second, list):
     sys.exit(1)
-x = int(first[0] + first[2] / 2)
-y = int((first[1] + first[3] + second[1]) / 2)
-print(x, y)
+top = first[1] + first[3]
+height = second[1] - top
+if height <= 0:
+    sys.exit(1)
+print(json.dumps([first[0], top, first[2], height]))
 PY
 }
-toast_point_inside_first() {
+toast_card_rect_first() {
   local first
-  first="$(ipc smoke toastGeometry 0)" || return
-  python3 - "$first" <<'PY'
-import json, sys
-first = json.loads(sys.argv[1])
-if not isinstance(first, list):
-    sys.exit(1)
-print(int(first[0] + first[2] / 2), int(first[1] + first[3] / 2))
-PY
+  first="$(ipc smoke toastWindowGeometry 0)" || return
+  python3 -c 'import json,sys; first=json.loads(sys.argv[1]); print(json.dumps(first)) if isinstance(first, list) else sys.exit(1)' "$first"
+}
+point_in_layer() { # X Y
+  layers_of vgs:toast | python3 -c 'import json,sys
+layers = json.load(sys.stdin)
+x, y = map(int, sys.argv[1:3])
+print(any(l[0] <= x < l[0] + l[2] and l[1] <= y < l[1] + l[3] for l in layers))' "$1" "$2"
+}
+point_in_surface_rect() { # X Y RECT_JSON
+  local layer
+  layer="$(surface_box vgs:toast)" || return
+  python3 -c 'import json,sys
+layer, rect = json.loads(sys.argv[1]), json.loads(sys.argv[4])
+x, y = map(int, sys.argv[2:4])
+left, top = layer[0] + rect[0], layer[1] + rect[1]
+print(left <= x < left + rect[2] and top <= y < top + rect[3])' "$layer" "$1" "$2" "$3"
 }
 
 # An earlier row left the fixture disabled; its service is the consumer here.
@@ -111,11 +122,15 @@ note_toast_bar_geometry
 
 # The stack shows three; the fourth waits and shows when one ends.
 expect "a second toast shows" ok toast "Two|info|0"
-read -r gap_x gap_y < <(toast_point_between_first_two) || fail "the gap between two toasts was not measured"
+gap_rect="$(toast_gap_rect_between_first_two)" || fail "the gap between two toasts was not measured"
+read -r gap_x gap_y < <(at_centre vgs:toast "$gap_rect") || fail "the gap between two toasts was not translated"
+expect "the gap point is inside the toast layer" True point_in_layer "$gap_x" "$gap_y"
 presses="$(read_layers presses)"
 click "$gap_x" "$gap_y" || fail "the click in the gap between toasts failed"
 expect_poll "a click in the gap between two toasts reaches the layer below" "$((presses + 1))" read_layers presses
-read -r card_x card_y < <(toast_point_inside_first) || fail "the first toast was not measured"
+card_rect="$(toast_card_rect_first)" || fail "the first toast was not measured"
+read -r card_x card_y < <(at_centre vgs:toast "$card_rect") || fail "the first toast was not translated"
+expect "the card point is inside the first toast rectangle" True point_in_surface_rect "$card_x" "$card_y" "$card_rect"
 click "$card_x" "$card_y" || fail "the click inside a toast card failed"
 expect "control: a click inside a toast card does not reach the layer below" "$((presses + 1))" read_layers presses
 expect "a third toast shows" ok toast "Three|warning|0"

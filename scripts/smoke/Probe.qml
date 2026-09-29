@@ -347,7 +347,7 @@ Scope {
             return JSON.stringify(out);
         }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
-        function toastGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.toastGeometry(index); }
+        function toastWindowGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.toastWindowGeometry(index); }
         // The requirement notice's dialog: whether an item in it holds the
         // keyboard focus, and what it draws as { title, message, rows,
         // actions, busy }, `rows` the visible lines under the message.
