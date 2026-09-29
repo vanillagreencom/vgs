@@ -72,11 +72,12 @@ exit "$(cat "$ANSWERS/$n.status" 2>/dev/null || echo 0)"'
 log="$tmp/log"; answers="$tmp/answers"; cfg="$tmp/cfg"
 tree="$tmp/tree"
 # A tree holding bin/vgsh-pkg, bin/lib and shell/Core as copies, so a
-# control can rewrite any of them, and the repository's shell/Ui and
-# config/ linked.
+# control can rewrite any of them, the repository's shell/Ui and config/
+# linked, and bin/vgsh, whose `plugin rescan` a run ends with: with no lock
+# file in the rows' runtime directory it prints shell=not-running.
 make_tree() { # DIR
   mkdir -p "$1/bin" "$1/shell"
-  cp -- "$repo/bin/vgsh-pkg" "$1/bin/"
+  cp -- "$repo/bin/vgsh-pkg" "$repo/bin/vgsh" "$1/bin/"
   cp -R -- "$repo/bin/lib" "$1/bin/lib"
   cp -R -- "$repo/shell/Core" "$1/shell/Core"
   ln -s -- "$repo/shell/Ui" "$1/shell/Ui"

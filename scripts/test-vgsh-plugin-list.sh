@@ -105,7 +105,7 @@ detect_failure_row loud
 declare -a CONTROLS=(
   "a missing requirement is listed" 'if (r.state === "missing") missing.push' 'if (false) missing.push'
   "the package is this system's pick" 'logic.PackageManagers.packageFor(m.requirement.packages, found)' 'null'
-  "an optional requirement says so" '(m.requirement.optional ? " optional" : "")' '""'
+  "an optional requirement says so" '(optional ? " optional" : "")' '""'
   "a failed detection refuses" 'if (r.error !== undefined || r.status !== 0) {' 'if (false) {'
 )
 judge_src="$(<"$repo/bin/vgsh-plugin-judge")"

@@ -33,6 +33,7 @@ One row per manager: `pacman`, `aur`, `apt`, `dnf`, `xbps`, `emerge`, `nix`, `fl
 - **sudo.** A run through `sudo` holds one `vgs_tui_sudo_session` of `bin/lib/tui.sh` for all its steps: the password is asked once, before the first step, and the credential is dropped when the run ends, also after a failure or a Ctrl-C. A one-step run holds one too, so no run leaves a credential cached behind the window.
 - **doas and run0.** Neither has a command that refreshes a credential without running a program as root, so they get no keepalive. Each step asks as the system's rules say: `persist` in `doas.conf`, or polkit's `auth_admin_keep` for `run0`.
 - **The ending.** `run` prints no Done or Failed. `vgsh-tui present` prints the ending from the exit status.
+- **The rescan.** Once the steps end, however they end, `run` runs `vgsh plugin rescan`, so a running shell reports each requirement the change brought or took away ([requirements.md § Command line](requirements.md#command-line)). A run refused before its steps asks for none, and the exit status stays the steps'.
 
 ## Pickers
 

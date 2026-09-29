@@ -74,7 +74,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 - Everything is a plugin. A plugin is one directory with a manifest; the shell shows it on every surface it declares.
 - One manifest format, judged once, with every field in [docs/architecture/plugins.md](docs/architecture/plugins.md).
 - A Settings window, `SUPER+M` or the gear in the bar: every plugin with a page of its details, its settings and its keys, and a switch to turn it on or off.
-- A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it.
+- A plugin manager on the command line: `bin/vgsh plugin list`, `enable`, `disable`, `validate`, `requirements`, and `add <git url>`, `update` and `remove`. Install runs no code from the plugin and leaves it disabled until you enable it. It names the commands the plugin needs that are missing and, on a terminal, offers to install their packages. `bin/vgsh doctor` lists what VGS itself and every enabled plugin need, and what is missing.
 - Plugins never depend on each other. When the surface a plugin draws on is absent, that part is hidden and the rest keeps working.
 - A validation sandbox that runs the whole shell inside a nested compositor and never touches your session.
 - Hyprland keys and blur from plugins, and window borders in the theme's colours. Hyprland is configured in Lua only: the shell writes one Lua file, and one line in your `hyprland.lua` loads it. A classic `hyprland.conf` is not supported.

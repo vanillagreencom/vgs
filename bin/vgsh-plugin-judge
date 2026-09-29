@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// The decisions `vgsh plugin list`, `add`, `update` and `remove` need, made
-// by the shell's own judge, shell/Core/PluginLogic.js, loaded here under
-// node.
+// The decisions `vgsh plugin list`, `add`, `update`, `remove` and
+// `requirements` and `vgsh doctor` need, made by the shell's own judge,
+// shell/Core/PluginLogic.js, loaded here under node.
 //
 //   vgsh-plugin-judge list
 //       read the shell's `listPlugins` reply on stdin and print it as
@@ -28,6 +28,37 @@
 //       when the configuration would enable the plugin, list it in the user
 //       file's disabledPlugins; print `written` or `unchanged`. Either file
 //       that PluginLogic.configError refuses is refused as `malformed`.
+//   vgsh-plugin-judge requirements text|json <id>
+//       read `bin/vgsh-scan` JSON on stdin and print the requirements of
+//       plugin <id>, the one the shell's registry would hold under it:
+//       with text one line per requirement,
+//       `<state> <command>[ (<package>)][ optional]: <purpose>`, and with
+//       json one line, a list of rows (below). An id no accepted manifest
+//       names is refused as `unknown=<id>`.
+//   vgsh-plugin-judge doctor text|json <shipped-config> <user-config> <core-requirements>
+//       read `bin/vgsh-scan` JSON on stdin and print the requirements of
+//       the core, <core-requirements>, and of every plugin the
+//       configuration enables: with text the requirement lines above, each
+//       led by `core` or the plugin's id; with json one line
+//       `{ core: [rows], plugins: { <id>: [rows] } }`, every enabled plugin
+//       keyed, in id order, one with no requirements by an empty list. The
+//       core's commands are looked up on PATH here; a plugin's are the
+//       scan's `missing`.
+//   vgsh-plugin-judge unmet <id>
+//       read `bin/vgsh-scan` JSON on stdin and print, for plugin <id>, one
+//       `requires <command>[ (<package>)][ optional]` line per requirement
+//       the scan did not find, then one `install <word>...` line per
+//       manager a missing requirement's package is picked from, in
+//       detection order: the words after `vgsh` that install those
+//       packages, `pkg run install [--manager <id>] <package>...`, with
+//       --manager for every manager but the primary, which `vgsh pkg run`
+//       takes by default.
+//
+// A requirement row is PluginLogic.requirementRows' row, `{ command,
+// packages, optional, purpose, state }`, with `package`, the
+// `{ manager, name }` PackageManagers.packageFor picks for this system, or
+// null. Detection runs once per command, and only when a requirement it
+// reports names a package.
 //
 // Every refusal is one line on stderr, `vgsh: refused: <key>=<value>`, and
 // exits 1. A scan element carrying an error exits 1 too: a directory that
@@ -41,7 +72,10 @@ const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const logic = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
-const { refuse, main, readJson, readConfig, replaceFile } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { refuse, main, readJson, readConfig, replaceFile, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
+
+// What detection answers on a system where no manager is looked for.
+const NO_MANAGERS = { primary: null, overlays: [], sources: [] };
 
 // The system's managers, `vgsh pkg detect --json`'s answer, from the
 // command that owns detection. Its refusal, when it printed one, follows
@@ -74,10 +108,133 @@ function listLines(reply) {
     const found = missing.some(m => Object.keys(m.requirement.packages).length > 0) ? detected() : null;
     for (const m of missing) {
         const pick = found === null ? null : logic.PackageManagers.packageFor(m.requirement.packages, found);
-        lines.push("missing " + m.id + " " + m.requirement.command + (pick === null ? "" : " (" + pick.name + ")") + (m.requirement.optional ? " optional" : ""));
+        lines.push("missing " + m.id + " " + requirementText(m.requirement.command, pick, m.requirement.optional));
     }
     if (reply.scanError) lines.push("scan-error " + reply.scanError);
     return lines;
+}
+
+// A requirement as every text report names it: the command, the package
+// PICK names when there is one, and whether it is OPTIONAL.
+function requirementText(command, pick, optional) {
+    return command + (pick === null ? "" : " (" + pick.name + ")") + (optional ? " optional" : "");
+}
+
+// detect's answer when a requirement of LISTS, normalized requirement
+// lists, names a package, else NO_MANAGERS: a system is asked for its
+// managers only when an answer can depend on them.
+function managersFor(lists) {
+    return lists.some(list => list.some(r => Object.keys(r.packages).length > 0)) ? detected() : NO_MANAGERS;
+}
+
+// The report rows of REQUIREMENTS, a normalized list, of which MISSING
+// names the commands not found: PluginLogic.requirementRows' rows with the
+// package FOUND, detect's answer, picks for each.
+function reportRows(requirements, missing, found) {
+    return logic.requirementRows({ requirements }, missing).map(row => Object.assign(row, { package: logic.PackageManagers.packageFor(row.packages, found) }));
+}
+
+function rowLine(row) {
+    return row.state + " " + requirementText(row.command, row.package, row.optional) + ": " + row.purpose;
+}
+
+function readScan() {
+    try {
+        return JSON.parse(fs.readFileSync(0, "utf8"));
+    } catch (e) {
+        refuse("scan=unparseable");
+    }
+}
+
+// The plugins the shell's registry would hold from ENTRIES, `bin/vgsh-scan`
+// output over the user plugin directory and then the bundled one, as a Map
+// from id to `{ manifest, missing }`: each manifest the judge accepts, the
+// first directory holding an id winning, as Registry.applyScan decides. An
+// element the scan could not read is refused, as for `owners`, since it may
+// hold an id.
+function registryOf(entries) {
+    const plugins = new Map();
+    for (const entry of entries) {
+        if (entry.error !== undefined) refuse("unreadable=" + entry.dir + " error=" + entry.error);
+        let raw;
+        try {
+            raw = JSON.parse(entry.text);
+        } catch (e) {
+            continue;
+        }
+        const r = logic.validateManifest(raw, entry.dir);
+        if (!r.ok || plugins.has(r.manifest.id)) continue;
+        if (!Array.isArray(entry.missing)) refuse("scan=malformed dir=" + entry.dir + " reason=missing-list");
+        plugins.set(r.manifest.id, { manifest: r.manifest, missing: entry.missing });
+    }
+    return plugins;
+}
+
+function pluginOf(plugins, id) {
+    if (!plugins.has(id)) refuse("unknown=" + id);
+    return plugins.get(id);
+}
+
+// The core's own requirements from FILE, judged as a manifest's are, with
+// the commands not found on PATH.
+function coreRequirements(file) {
+    const list = readJson(file, "core-requirements");
+    const error = logic.requirementsError(list);
+    if (error !== "") refuse("core-requirements=malformed path=" + file + " error=" + error);
+    const requirements = logic.normalRequirements(list);
+    return { requirements, missing: requirements.map(r => r.command).filter(command => !onPath(command)) };
+}
+
+// `vgsh doctor`'s report: the core's rows and every enabled plugin's, in
+// id order, under the configuration SHIPPED and USER make effective.
+function doctorReport(plugins, shipped, user, core) {
+    const effective = logic.effectiveConfig(shipped, user);
+    const defaultBarId = logic.activeBarId(shipped, "");
+    const enabled = Array.from(plugins.keys()).sort().filter(id => logic.isEnabled(effective, plugins.get(id).manifest, defaultBarId));
+    const found = managersFor([core.requirements].concat(enabled.map(id => plugins.get(id).manifest.requirements)));
+    const report = { core: reportRows(core.requirements, core.missing, found), plugins: {} };
+    for (const id of enabled) report.plugins[id] = reportRows(plugins.get(id).manifest.requirements, plugins.get(id).missing, found);
+    return report;
+}
+
+function doctorLines(report) {
+    const lines = report.core.map(row => "core " + rowLine(row));
+    for (const id of Object.keys(report.plugins))
+        for (const row of report.plugins[id]) lines.push(id + " " + rowLine(row));
+    return lines;
+}
+
+// `unmet`'s lines for PLUGIN: its missing requirements, then the commands
+// that install their packages, one per manager in detection order.
+function unmetLines(plugin) {
+    const missing = logic.requirementRows(plugin.manifest, plugin.missing).filter(row => row.state === "missing");
+    const found = managersFor([missing]);
+    const lines = [];
+    const names = new Map();
+    for (const row of missing) {
+        const pick = logic.PackageManagers.packageFor(row.packages, found);
+        lines.push("requires " + requirementText(row.command, pick, row.optional));
+        if (pick === null) continue;
+        if (!names.has(pick.manager)) names.set(pick.manager, []);
+        if (!names.get(pick.manager).includes(pick.name)) names.get(pick.manager).push(pick.name);
+    }
+    const order = (found.primary === null ? [] : [found.primary]).concat(found.overlays, found.sources);
+    for (const manager of order) {
+        if (!names.has(manager.id)) continue;
+        const words = ["pkg", "run", "install"];
+        if (manager !== found.primary) words.push("--manager", manager.id);
+        lines.push("install " + words.concat(names.get(manager.id)).join(" "));
+    }
+    return lines;
+}
+
+function print(lines) {
+    if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");
+}
+
+function format(value) {
+    if (value !== "text" && value !== "json") refuse("format=" + value);
+    return value;
 }
 
 // `vgsh tui list`'s lines for ENTRIES, the parsed `listTuis` reply.
@@ -162,6 +319,30 @@ main(() => {
         }
         replaceFile(userPath, JSON.stringify(logic.withEnabled(user, manifest, false, effective), null, 2) + "\n", "user-config");
         console.log("written");
+        break;
+    }
+    case "requirements": {
+        const [form, id] = args;
+        const json = format(form) === "json";
+        const plugin = pluginOf(registryOf(readScan()), id);
+        const rows = reportRows(plugin.manifest.requirements, plugin.missing, managersFor([plugin.manifest.requirements]));
+        if (json) process.stdout.write(JSON.stringify(rows) + "\n");
+        else print(rows.map(rowLine));
+        break;
+    }
+    case "doctor": {
+        const [form, shippedPath, userPath, corePath] = args;
+        const json = format(form) === "json";
+        const shipped = readConfig(logic, shippedPath, "shipped-config");
+        const user = readConfig(logic, userPath, "user-config", true);
+        const core = coreRequirements(corePath);
+        const report = doctorReport(registryOf(readScan()), shipped, user, core);
+        if (json) process.stdout.write(JSON.stringify(report) + "\n");
+        else print(doctorLines(report));
+        break;
+    }
+    case "unmet": {
+        print(unmetLines(pluginOf(registryOf(readScan()), args[0])));
         break;
     }
     default:

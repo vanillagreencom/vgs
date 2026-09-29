@@ -44,7 +44,10 @@
 //       bin/lib/pkg-run.sh, whose header states the sudo session and how
 //       each step is shown; the exit status is the
 //       first failing step's, or 0. A run prints no Done or Failed:
-//       `vgsh-tui present` owns the ending.
+//       `vgsh-tui present` owns the ending. Once the steps end, however
+//       they end, it runs `vgsh plugin rescan`, whose `shell=` line follows
+//       them, so a running shell reports the requirements the change
+//       brought or took away; the exit status stays the steps'.
 //   vgsh-pkg install|remove [--manager <id>] [names...]
 //       with names, `run install|remove` with them. Without, fzf lists the
 //       manager's packages, available for install and explicitly installed
@@ -351,9 +354,20 @@ function run(action, manager, names) {
         process.on("SIGTERM", () => child.kill("SIGTERM"));
         child.on("error", e => reject(new Refusal("runner=failed error=" + e.code)));
         child.on("close", (status, signal) => {
+            rescanShell();
             process.exit(status !== null ? status : 128 + os.constants.signals[signal]);
         });
     });
+}
+
+// Once a run's steps have ended, however they ended, a running shell scans
+// the plugin directories again, so each requirement a package change
+// brought or took away is reported by its new state: `vgsh plugin rescan`,
+// whose line follows the steps. The run's exit status stays the steps'; a
+// rescan that could not start prints its refusal and changes nothing else.
+function rescanShell() {
+    const r = childProcess.spawnSync(path.join(__dirname, "vgsh"), ["plugin", "rescan"], { stdio: ["ignore", "inherit", "inherit"] });
+    if (r.error !== undefined) process.stderr.write("vgsh: refused: rescan=failed error=" + r.error.code + "\n");
 }
 
 // One word as a POSIX shell reads it back: single-quoted, each quote

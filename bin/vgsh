@@ -8,10 +8,14 @@
 #   vgsh log <qs log args...>      read the running shell's log
 #   vgsh plugin list               every discovered plugin with its enabled state, each configured id no plugin has,
 #                                  and each requirement the last scan did not find as `missing <id> <command> (<package>)`
+#   vgsh plugin requirements [--json] <id>
+#                                  one plugin's requirements, each with its state and this system's package
+#   vgsh plugin rescan             have a running shell scan the plugin directories again
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
 #   vgsh plugin validate <dir>     validate a plugin directory's manifest offline
-#   vgsh plugin add <git url>      clone, validate and install one plugin, disabled
+#   vgsh plugin add <git url>      clone, validate and install one plugin, disabled, then offer to install
+#                                  the packages of the commands it requires that are missing
 #   vgsh plugin update [--yes] <id>
 #                                  fetch, show the diff, ask, and fast-forward an installed plugin
 #   vgsh plugin remove <id>        delete an installed plugin's directory
@@ -52,6 +56,7 @@
 #                                  run the plan in this terminal, elevating through sudo, doas or run0
 #   vgsh pkg install|remove [--manager <id>] [names...]
 #                                  run install or remove; without names, pick them in fzf
+#   vgsh doctor [--json]           the core's and every enabled plugin's requirements, each with its state and package
 #   vgsh sudo status               whether a passwordless sudo grant is active, until when, and its root half's state
 #   vgsh sudo grant [minutes]      warn, ask and grant passwordless sudo for 1 to 1440 minutes, 15 when absent;
 #                                  while a grant is active it revokes that grant instead; on NixOS, print
@@ -78,8 +83,8 @@
 # $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
 # command that contacts the shell addresses that instance alone, so a shell
 # started any other way is never reached. `plugin validate`, `plugin add`,
-# `plugin update`, `plugin remove` and `plugin outdated` work with no shell
-# running.
+# `plugin update`, `plugin remove`, `plugin outdated`, `plugin requirements`
+# and `doctor` work with no shell running.
 #
 # `restart` checks the same floor first, so below it restart refuses as run
 # does and leaves the running shell alone. It refuses while the session is
@@ -98,7 +103,32 @@
 # Either refusal leaves the checkout at its old commit. Each ends with
 # `shell=rescan-started` or `shell=rescan-queued` when a shell runs (the
 # scan's result is in `vgsh plugin list`), or `shell=not-running` when none
-# does and the next start reads the change.
+# does and the next start reads the change. `plugin rescan` prints the same
+# line alone.
+#
+# After that line add prints `requires <command> (<package>)` for each
+# requirement of the new plugin whose command is not on PATH, the package
+# being this system's pick as `plugin list` names it, then one
+# `install: vgsh pkg run install [--manager <id>] <package>...` line per
+# manager those packages come from. On a terminal it then asks
+# `Install now? [y/N]` on stderr and on y or yes runs each command in turn,
+# its exit status the first failing one's; any other answer, or no
+# terminal on stdin, leaves the commands printed for the user. The report
+# reads the manifest and PATH only, so add still runs no plugin code.
+# `vgsh pkg run` asks a running shell to rescan once its steps end, so the
+# shell reports the installed commands present.
+#
+# `plugin requirements` prints one line per requirement of the plugin the
+# shell would hold under <id>, enabled or not:
+# `<state> <command>[ (<package>)][ optional]: <purpose>`, state `present`
+# or `missing`. `doctor` prints the same lines, each led by `core` or the
+# plugin's id, for config/requirements.json and every plugin the
+# configuration enables. --json prints the rows as one JSON line, each
+# `{ command, packages, optional, purpose, state, package }` with package
+# `{ manager, name }` or null: a list for `plugin requirements`, and
+# `{ core: [rows], plugins: { <id>: [rows] } }` for `doctor`. Both read
+# the plugin directories and PATH as the shell's scan does, and change
+# nothing: docs/architecture/requirements.md.
 #
 # `plugin outdated` and `theme outdated` fetch every installed checkout
 # with no hook, no prompt and no askpass dialog, each fetch ended at 10 s,
@@ -436,10 +466,16 @@ git_or_refuse() { # KEY GIT_ARGS...
 # checks every entry point exists. Prints its verdict lines.
 manifest_check="$root/bin/lib/check-manifests.js"
 
+# bin/vgsh-scan's JSON over the user plugin directory, then the bundled
+# one: the order the shell's registry reads them in.
+plugin_scan() {
+  "$root/bin/vgsh-scan" "$user_plugins" "$shell_dir/plugins" || refuse 1 "scan=failed"
+}
+
 # Plugin directories whose manifest the judge accepts with ID, one per line.
 owners_of() { # ID
   local scan
-  scan="$("$root/bin/vgsh-scan" "$user_plugins" "$shell_dir/plugins")" || refuse 1 "scan=failed"
+  scan="$(plugin_scan)" || exit 1
   node "$judge" owners "$1" <<<"$scan"
 }
 
@@ -567,6 +603,42 @@ plugin_add() { # URL
   mv -T -- "$stage/plugin" "$target" || refuse 1 "move=$target"
   echo "ok added=$id path=$target config=$landed"
   rescan_if_running
+  offer_requirements "$id"
+}
+
+# After add: the requirements of plugin ID the scan did not find on PATH,
+# the `vgsh pkg run install` commands that install their packages, and on
+# a terminal the question whether to run them now. The judge reads the
+# manifest and the scan reads PATH; no plugin code runs (D007).
+offer_requirements() { # ID
+  local scan report line answer
+  local -a installs=() words
+  scan="$(plugin_scan)" || exit 1
+  report="$(node "$judge" unmet "$1" <<<"$scan")" || exit 1
+  while IFS= read -r line; do
+    case "$line" in
+      "install "*) installs+=("${line#install }") ;;
+      ?*) printf '%s\n' "$line" ;;
+    esac
+  done <<<"$report"
+  [[ ${#installs[@]} -gt 0 ]] || return 0
+  # Quoted as the shell reads them back: a package name is any printable
+  # word, so a copied line never runs more than vgsh.
+  for line in "${installs[@]}"; do
+    read -ra words <<<"$line"
+    printf 'install:%s\n' "$(printf ' %q' vgsh "${words[@]}")"
+  done
+  [[ -t 0 ]] || return 0
+  printf 'Install now? [y/N] ' >&2
+  read -r answer || answer=""
+  case "$answer" in
+    [yY] | [yY][eE][sS]) ;;
+    *) return 0 ;;
+  esac
+  for line in "${installs[@]}"; do
+    read -ra words <<<"$line"
+    "$self" "${words[@]}" || exit $?
+  done
 }
 
 rollback() { # DIR COMMIT
@@ -1272,6 +1344,19 @@ case "$cmd" in
         reply="$(ipc shell listPlugins)" || exit $?
         node "$judge" list <<<"$reply"
         ;;
+      requirements)
+        format=text
+        if [[ ${1:-} == --json ]]; then format=json; shift; fi
+        id="${1:-}"
+        if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        scan="$(plugin_scan)" || exit 1
+        node "$judge" requirements "$format" "$id" <<<"$scan"
+        ;;
+      rescan)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        rescan_if_running
+        ;;
       enable|disable)
         id="${1:-}"
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
@@ -1441,6 +1526,13 @@ case "$cmd" in
     ;;
   pkg)
     exec node "$root/bin/vgsh-pkg" "$@"
+    ;;
+  doctor)
+    format=text
+    if [[ ${1:-} == --json ]]; then format=json; shift; fi
+    if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+    scan="$(plugin_scan)" || exit 1
+    node "$judge" doctor "$format" "$root/config/shell.json" "$config_home/vgs/shell.json" "$root/config/requirements.json" <<<"$scan"
     ;;
   sudo)
     case "${1:-}" in

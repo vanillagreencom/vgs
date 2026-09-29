@@ -201,7 +201,7 @@ cases=(
   "recipe|packaging/arch/vgs/PKGBUILD|offline|$arch_recipe_plan"
   "recipe-all|packaging/arch/vgs-git/.SRCINFO|all|$arch_recipe_plan"$'\nscripts/arch-packages.sh'
   "recipe-package|packaging/arch/vgs/PKGBUILD|package|scripts/arch-packages.sh"
-  "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-install-sh.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
+  "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-vgsh-requirements.sh\nscripts/test-install-sh.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
   "install-manifest|packaging/install-tree.manifest|offline|scripts/test-install-tree.sh"$'\nscripts/test-release.sh\n'"$repo_plan"
   "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$recipe_plan"
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
