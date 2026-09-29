@@ -89,7 +89,29 @@ const DEFAULTS = [
     ["field.paddingX", 12],
     ["field.labelWidth", 130],
     ["field.labelGap", 12],
-    ["bar.item.iconGap", 7]
+    ["bar.item.iconGap", 7],
+    // A window-like panel: 600 px wide, half its monitor tall, mul(4, 3) =
+    // 12 from a narrower monitor's sides.
+    ["size.window.width", 600],
+    ["size.window.heightShare", 0.5],
+    ["size.window.gutter", 12],
+    // Nine 30 px entries before a menu scrolls: mul(30, 9) = 270.
+    ["menu.maxHeight", 270],
+    ["menu.typeahead", 1000],
+    ["menu.item.check", "#ff5a36ff"],
+    // The scroll bar: 4 px thick, 2 px in, inside an 8 px gutter, a thumb
+    // of at least 24 px, faded out 800 ms after the last scroll.
+    ["scrollArea.barWidth", 4],
+    ["scrollArea.barInset", 2],
+    ["scrollArea.gutter", 8],
+    ["scrollArea.minThumb", 24],
+    ["scrollArea.idleOpacity", 0],
+    ["scrollArea.fadeDelay", 800],
+    ["scrollArea.fade", 250],
+    ["titleButton.gap", 4],
+    ["titleButton.underline", 1],
+    ["titleButton.underlineGap", 2],
+    ["titleButton.hover", "#ff5a36ff"]
 ];
 
 // A document that is accepted, and the values it must resolve to.

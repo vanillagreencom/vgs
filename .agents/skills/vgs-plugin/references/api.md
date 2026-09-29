@@ -132,14 +132,15 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Field` | `Column` | `label`, `hint`, `error`, `inline`; the control as its child |
 | `Spinner`, `ProgressBar` | `Item`, `T.ProgressBar` | `running`; `value`, `indeterminate` |
 | `Badge`, `Kbd` | `Rectangle` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text` |
-| `ScrollArea` | `Flickable` | its children |
+| `ScrollArea` | `Flickable` | its children; `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |
 | `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted` |
 | `SectionHeader` | `Column` | `text`, `description`; `leftPadding` and `rightPadding` inset both lines |
-| `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; the list opens in its own surface |
+| `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; the list opens in its own surface and scrolls under the embedded bar |
 | `Popover` | `Item` | its content as children, `width`; `open()`, `close()`, `opened`; a surface under the item it is declared in |
 | `Tooltip` | `Item` | `text`; opens on hover of the item it is declared in |
-| `Menu`, `MenuItem` | `Item`, `T.MenuItem` | `MenuItem` children with `text`, `iconName`, `shortcut`, `triggered`; `open()`, `close()` |
+| `Menu`, `MenuItem` | `Item`, `T.MenuItem` | `MenuItem` children with `text`, `iconName`, `shortcut`, `checked` (a check mark), `triggered`; `maxHeight`; `open()`, `close()`, `toggle()`; typed letters jump to an entry |
+| `TitleButton` | `T.AbstractButton` | `text`, `role` (a group of `Theme.text`, `h3` by default), `menu`: a `Menu` declared inside it, which a click, Enter or Down opens |
 | `Toast` | `Rectangle` | `title`, `message`, `tone`, `iconName`, `dismissed`; the core's toast host draws it, a plugin shows one through `shell.toasts` |
 
 A name a component does not know is logged and drawn as the default. A control's `background`, `contentItem`, `indicator` or `handle` may be replaced on one instance to restyle it.

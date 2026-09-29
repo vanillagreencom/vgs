@@ -184,6 +184,14 @@ var TOKENS = {
             md: length(360),
             lg: length(480),
             maxHeight: length(600)
+        },
+        // A window-like panel centred on its monitor: `width` wide, never
+        // closer than `gutter` to either side of a narrower monitor, and
+        // `heightShare` of the monitor's height tall.
+        window: {
+            width: length(600),
+            heightShare: share(0.5),
+            gutter: length("{space.lg}")
         }
     },
 
@@ -469,8 +477,13 @@ var TOKENS = {
         foreground: color("contrast({tooltip.background})")
     },
 
+    // `maxHeight` is the height the entries take before the menu scrolls,
+    // nine entries; `typeahead` the milliseconds the letters typed to jump
+    // to an entry are kept.
     menu: {
         minWidth: length(160),
+        maxHeight: length("mul({size.control.md}, 9)"),
+        typeahead: number(1000, 0, 5000),
         radius: length("{radius.md}"),
         padding: length("{space.xxs}"),
         gap: length("{space.xs}"),
@@ -483,7 +496,8 @@ var TOKENS = {
             radius: length("{radius.sm}"),
             hover: color("{color.surfaceHover}"),
             foreground: color("{color.text}"),
-            shortcut: color("{color.textFaint}")
+            shortcut: color("{color.textFaint}"),
+            check: color("{color.accent}")
         }
     },
 
@@ -510,11 +524,34 @@ var TOKENS = {
         border: color("{color.borderStrong}")
     },
 
+    // The embedded bar: `barWidth` thick, `barInset` from the area's edge,
+    // inside a `gutter` the content leaves free while it overflows; a thumb
+    // never shorter than `minThumb`. It shows while hovered or scrolling
+    // and fades to `idleOpacity` `fadeDelay` milliseconds after, over
+    // `fade`.
     scrollArea: {
         barWidth: length("{space.xs}"),
+        barInset: length("{space.xxs}"),
+        gutter: length("mul({space.xs}, 2)"),
+        minThumb: length("{size.control.sm}"),
         barRadius: length("{radius.full}"),
         bar: color("{color.borderStrong}"),
-        barHover: color("{color.textFaint}")
+        barHover: color("{color.textFaint}"),
+        idleOpacity: share(0),
+        fadeDelay: number(800, 0, 5000),
+        fade: duration("{motion.duration.slow}")
+    },
+
+    // A title that opens a menu of choices: its text over an underline
+    // `underlineGap` below it, and a caret `gap` after it.
+    titleButton: {
+        gap: length("{space.xs}"),
+        underline: length("{border.thin}"),
+        underlineGap: length("{space.xxs}"),
+        foreground: color("{color.textHeading}"),
+        hover: color("{color.accent}"),
+        underlineColor: color("{color.borderStrong}"),
+        caret: color("{color.textMuted}")
     },
 
     bar: {

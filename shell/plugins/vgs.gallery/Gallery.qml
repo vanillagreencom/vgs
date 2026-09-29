@@ -175,6 +175,43 @@ Item {
                 }
                 Toast { title: "Update available"; message: "io.github.example.deck is 42 commits behind"; tone: "info"; iconName: "download"; width: parent.width }
 
+                SectionHeader { text: "Titles and scrolling"; description: "A title that opens a long menu, the current choice checked; a scroll area and its bar" }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.space.xl
+                    TitleButton {
+                        id: title
+                        property string chosen: "Notifications"
+                        text: chosen
+                        menu: titleMenu
+                        Menu {
+                            id: titleMenu
+                            Repeater {
+                                model: ["Bar", "Gallery", "Launcher", "Notifications", "Settings", "Themes", "Clock", "Weather", "Workspaces", "Battery", "Network", "Volume"]
+                                MenuItem {
+                                    required property string modelData
+                                    text: modelData
+                                    iconName: "package"
+                                    checked: modelData === title.chosen
+                                    onTriggered: title.chosen = modelData
+                                }
+                            }
+                        }
+                    }
+                    TitleButton { text: "Disabled"; enabled: false }
+                }
+                ScrollArea {
+                    width: parent.width
+                    height: Theme.size.panel.sm / 2
+                    Column {
+                        width: parent.width
+                        Repeater {
+                            model: 12
+                            ListItem { required property int index; text: "Row " + (index + 1); iconName: "list"; width: parent.width }
+                        }
+                    }
+                }
+
                 SectionHeader { text: "Lists"; description: "Tabs, list items and dividers" }
                 Tabs { model: ["Installed", "Available", "Updates"] }
                 Column {
@@ -185,6 +222,7 @@ Item {
                     ListItem { text: "Clock"; iconName: "clock"; width: parent.width; trailing: [ Switch { checked: true } ] }
                     Divider { width: parent.width }
                     MenuItem { text: "A menu entry, as the menu draws it"; iconName: "check"; shortcut: "Enter" }
+                    MenuItem { text: "The checked entry of a menu"; iconName: "palette"; checked: true }
                 }
             }
         }

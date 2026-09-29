@@ -6,7 +6,11 @@ import qs.Ui
 // A menu of MenuItem entries under the item it is declared in, in its own
 // surface. Up and Down move the highlight, Enter triggers the highlighted
 // entry, a click triggers an entry, and any trigger closes the menu; a
-// press outside and Escape close it too. It follows its anchor when that
+// press outside and Escape close it too. Typing letters highlights the
+// first reachable entry whose text starts with them, the letters kept for
+// `menu.typeahead` milliseconds. Entries taller than `maxHeight` scroll
+// inside the menu, and the highlighted entry is kept in view; opening
+// shows the top and highlights the first checked entry, in view. It follows its anchor when that
 // moves and closes when it hides. The declaring item is an invisible,
 // sizeless member of its parent.
 Item {
@@ -16,6 +20,12 @@ Item {
     readonly property bool opened: window.visible
     readonly property Item anchorItem: parent
     property int currentIndex: -1
+    // The height the entries take before the menu scrolls.
+    property real maxHeight: Theme.menu.maxHeight
+    // The letters typed so far toward an entry, cleared after
+    // `menu.typeahead` milliseconds without one.
+    property string typed: ""
+    readonly property alias scrollArea: scroll
 
     visible: false
 
@@ -33,9 +43,12 @@ Item {
     function reachable(item) { return item.enabled && item.visible; }
 
     function open() {
-        currentIndex = -1;
+        typed = "";
+        currentIndex = items().findIndex(item => reachable(item) && item.checked);
         window.visible = true;
         scope.forceActiveFocus();
+        scroll.contentY = 0;
+        reveal();
     }
     function close() { window.visible = false; }
     function toggle() { if (opened) close(); else open(); }
@@ -56,6 +69,33 @@ Item {
         if (currentIndex >= 0 && currentIndex < all.length && reachable(all[currentIndex])) all[currentIndex].triggered();
     }
 
+    // Add `letter` to the typed letters and highlight the first reachable
+    // entry whose text starts with them; when none does, start again from
+    // `letter` alone. Answers whether an entry matched.
+    function typeAhead(letter) {
+        const all = items();
+        const find = prefix => all.findIndex(item => reachable(item) && String(item.text).toLowerCase().indexOf(prefix) === 0);
+        let wanted = typed + letter.toLowerCase();
+        let found = find(wanted);
+        if (found === -1) {
+            wanted = letter.toLowerCase();
+            found = find(wanted);
+        }
+        typed = wanted;
+        typing.restart();
+        if (found !== -1) currentIndex = found;
+        return found !== -1;
+    }
+
+    // Scroll the highlighted entry into view.
+    function reveal() {
+        const all = items();
+        if (currentIndex < 0 || currentIndex >= all.length) return;
+        const item = all[currentIndex];
+        if (item.y < scroll.contentY) scroll.contentY = item.y;
+        else if (item.y + item.height > scroll.contentY + scroll.height) scroll.contentY = item.y + item.height - scroll.height;
+    }
+
     // The widest entry by its own content, before the column sets every
     // entry's width.
     readonly property real widest: {
@@ -64,7 +104,12 @@ Item {
         return width;
     }
 
-    onCurrentIndexChanged: items().forEach((item, index) => { item.highlighted = index === currentIndex; })
+    onCurrentIndexChanged: {
+        items().forEach((item, index) => { item.highlighted = index === currentIndex; });
+        reveal();
+    }
+
+    Timer { id: typing; interval: Theme.menu.typeahead; onTriggered: root.typed = "" }
 
     // Every entry's trigger closes the menu, by click or by key.
     readonly property Instantiator closers: Instantiator {
@@ -87,8 +132,8 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding)
-        implicitHeight: Math.max(1, column.implicitHeight + 2 * Theme.menu.padding)
+        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding + (scroll.overflowing ? Theme.scrollArea.gutter : 0))
+        implicitHeight: Math.max(1, Math.min(column.implicitHeight, root.maxHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 
         FocusScope {
@@ -100,6 +145,13 @@ Item {
             Keys.onDownPressed: root.move(1)
             Keys.onReturnPressed: root.triggerCurrent()
             Keys.onEnterPressed: root.triggerCurrent()
+            // A printable letter without a modifier jumps; every other key
+            // goes on to the handlers above.
+            Keys.onPressed: event => {
+                const code = event.text.length === 1 ? event.text.charCodeAt(0) : 0;
+                const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier));
+                event.accepted = code > 32 && code !== 127 && plain ? root.typeAhead(event.text) : false;
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -109,11 +161,17 @@ Item {
                 border.color: Theme.menu.border
             }
 
-            Column {
-                id: column
+            ScrollArea {
+                id: scroll
                 x: Theme.menu.padding
                 y: Theme.menu.padding
                 width: parent.width - 2 * Theme.menu.padding
+                height: parent.height - 2 * Theme.menu.padding
+
+                Column {
+                    id: column
+                    width: scroll.contentWidth
+                }
             }
         }
     }

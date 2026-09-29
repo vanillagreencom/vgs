@@ -8,8 +8,11 @@ import qs.Unit
 // closes and counts in OverlayState, a menu moves its highlight and
 // triggers by key and closes on a trigger, a select chooses by index and
 // reads its text role, a tooltip opens after the delay while the pointer
-// rests and not under an open overlay, and a toast draws its tone. The
-// nested sandbox proves placement, real keys and dismissal.
+// rests and not under an open overlay, and a toast draws its tone. A menu
+// taller than its maximum scrolls with the highlight kept in view, jumps
+// to the entry whose text starts with the letters typed, opens on its
+// checked entry and draws its mark. The nested sandbox proves placement,
+// real keys and dismissal.
 Item {
     id: root
     width: 300
@@ -24,7 +27,14 @@ Item {
             MenuItem { id: wide; text: "An entry far wider than the menu's minimum width, with a shortcut"; shortcut: "Ctrl+Shift+W" }
         }
         Tooltip { id: tip; text: "hint" }
+        Menu { id: long
+            Repeater {
+                model: ["Bar", "Gallery", "Launcher", "Notifications", "Settings", "Themes", "Beta", "Clock", "Dock", "Echo", "Files", "Grid", "Help", "Inbox", "Jobs"]
+                MenuItem { required property string modelData; required property int index; text: modelData; checked: index === root.chosen }
+            }
+        }
     }
+    property int chosen: 4
     Select { id: select; y: 40; model: ["one", "two", "three"] }
     Select { id: roled; y: 80; textRole: "name"; model: [{ name: "alpha" }, { name: "beta" }] }
     property int wanted: 0
@@ -114,6 +124,80 @@ Item {
             verify(window.width + 1 >= wide.implicitWidth + 2 * Theme.menu.padding, "the window holds the widest entry: " + window.width + " for " + wide.implicitWidth);
             compare(wide.width, window.width - 2 * Theme.menu.padding);
             menu.close();
+        }
+
+        function longWindow() {
+            for (let i = 0; i < long.resources.length; i++)
+                if (long.resources[i].anchor !== undefined) return long.resources[i];
+            return null;
+        }
+
+        function test_a_long_menu_scrolls_inside_its_maximum() {
+            compare(UnitTheme.override({ menu: { maxHeight: 90 } }), "ok");
+            long.open();
+            const window = longWindow();
+            compare(window.height, 90 + 2 * Theme.menu.padding);
+            compare(long.scrollArea.overflowing, true);
+            compare(long.scrollArea.bar.visible, true);
+            // The entries leave the bar its gutter.
+            compare(long.items()[0].width, long.scrollArea.width - Theme.scrollArea.gutter);
+            long.close();
+        }
+
+        function test_the_highlight_is_kept_in_view() {
+            compare(UnitTheme.override({ menu: { maxHeight: 90 } }), "ok");
+            root.chosen = -1;
+            long.open();
+            compare(long.scrollArea.contentY, 0);
+            for (let i = 0; i < 10; i++) long.move(1);
+            const item = long.items()[long.currentIndex];
+            verify(item.y + item.height <= long.scrollArea.contentY + long.scrollArea.height, "the highlighted entry's bottom is in view");
+            verify(item.y >= long.scrollArea.contentY, "the highlighted entry's top is in view");
+            long.move(1);
+            long.currentIndex = 0;
+            compare(long.scrollArea.contentY, 0, "going back up scrolls the first entry into view");
+            long.close();
+            root.chosen = 4;
+        }
+
+        function test_opening_highlights_the_checked_entry_and_draws_its_mark() {
+            compare(UnitTheme.override({ menu: { maxHeight: 90 } }), "ok");
+            root.chosen = 12;
+            long.open();
+            compare(long.currentIndex, 12);
+            const item = long.items()[12];
+            verify(item.y + item.height <= long.scrollArea.contentY + long.scrollArea.height && item.y >= long.scrollArea.contentY, "the checked entry opens in view");
+            compare(item.indicator.visible, true);
+            compare(item.indicator.name, "check");
+            compare(item.rightPadding, Theme.menu.item.paddingX + Theme.icon.size.sm + item.spacing);
+            compare(long.items()[0].indicator.visible, false);
+            compare(long.items()[0].rightPadding, Theme.menu.item.paddingX);
+            long.close();
+            root.chosen = -1;
+            long.open();
+            compare(long.currentIndex, -1, "with no checked entry nothing is highlighted");
+            long.close();
+            root.chosen = 4;
+        }
+
+        function test_typing_jumps_to_the_entry_starting_with_the_letters() {
+            compare(UnitTheme.override({ menu: { typeahead: 200 } }), "ok");
+            root.chosen = -1;
+            long.open();
+            compare(long.typeAhead("e"), true);
+            compare(long.items()[long.currentIndex].text, "Echo", "the first entry that starts with e, not one that holds it");
+            compare(long.typeAhead("T"), true, "no entry starts with et, so t starts a new prefix");
+            compare(long.items()[long.currentIndex].text, "Themes");
+            compare(long.typeAhead("h"), true);
+            compare(long.items()[long.currentIndex].text, "Themes");
+            compare(long.typed, "th");
+            tryCompare(long, "typed", "", 2000);
+            compare(long.typeAhead("b"), true);
+            compare(long.items()[long.currentIndex].text, "Bar", "after the pause the letters start again");
+            compare(long.typeAhead("e"), true);
+            compare(long.items()[long.currentIndex].text, "Beta", "two letters narrow the jump");
+            long.close();
+            root.chosen = 4;
         }
 
         function test_destroyed_overlay_releases_its_count() {

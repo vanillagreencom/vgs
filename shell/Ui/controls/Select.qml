@@ -9,8 +9,10 @@ import qs.Ui
 // or Enter opens the list in its own surface under the control; Up and
 // Down move the highlight there and Enter chooses, a click chooses, and a
 // press outside or Escape closes it. With the list closed, Up and Down on
-// the focused control move the choice. The control draws like a text
-// field; the template owns its click, hover and focus.
+// the focused control move the choice. A list taller than
+// `select.maxHeight` scrolls under the module's embedded bar, which its
+// entries leave a gutter for. The control draws like a text field; the
+// template owns its click, hover and focus.
 T.AbstractButton {
     id: root
 
@@ -132,6 +134,7 @@ T.AbstractButton {
             keyNavigationWraps: false
             boundsBehavior: Flickable.StopAtBounds
             highlightMoveDuration: Theme.motion.duration.fast
+            readonly property bool overflowing: contentHeight > height
             Keys.onReturnPressed: root.choose(currentIndex)
             Keys.onEnterPressed: root.choose(currentIndex)
             Keys.onEscapePressed: list.visible = false
@@ -141,7 +144,7 @@ T.AbstractButton {
                 required property int index
                 readonly property bool chosen: index === root.currentIndex
 
-                width: ListView.view.width
+                width: ListView.view.width - (entries.overflowing ? Theme.scrollArea.gutter : 0)
                 implicitHeight: Theme.menu.item.height
                 leftPadding: Theme.menu.item.paddingX
                 rightPadding: Theme.menu.item.paddingX
@@ -164,6 +167,13 @@ T.AbstractButton {
                     radius: Theme.menu.item.radius
                     color: entry.chosen ? Theme.select.selected : entry.highlighted ? Theme.select.highlight : "transparent"
                 }
+            }
+
+            HoverHandler { id: listHover }
+
+            ScrollBar {
+                flickable: entries
+                hovered: listHover.hovered
             }
         }
     }

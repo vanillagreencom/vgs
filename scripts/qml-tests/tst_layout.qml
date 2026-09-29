@@ -33,11 +33,9 @@ Item {
         function test_scroll_area_follows_its_content() {
             compare(scroll.contentHeight, 200);
             verify(scroll.contentHeight > scroll.height, "the content overflows");
-            const bar = scroll.children.find(child => child.hasOwnProperty("policy"));
-            verify(bar !== undefined, "the scroll area holds a bar");
-            verify(bar.size < 1, "the bar shows the overflow");
-            compare(bar.contentItem.visible, true);
-            compare(bar.width, Theme.scrollArea.barWidth);
+            compare(scroll.bar.parent, scroll);
+            compare(scroll.bar.visible, true);
+            compare(scroll.bar.width, Theme.scrollArea.barWidth);
         }
 
         function test_tabs_open_on_click() {

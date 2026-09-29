@@ -29,5 +29,7 @@ Popover 1.0 overlay/Popover.qml
 Tooltip 1.0 overlay/Tooltip.qml
 Menu 1.0 overlay/Menu.qml
 MenuItem 1.0 overlay/MenuItem.qml
+TitleButton 1.0 controls/TitleButton.qml
 internal AnchorTracker overlay/AnchorTracker.qml
+internal ScrollBar layout/ScrollBar.qml
 singleton OverlayState 1.0 overlay/OverlayState.qml
