@@ -3,10 +3,12 @@ f share/licenses/vgs/LICENSE
 f share/vgs/VERSION
 f share/vgs/bin/lib/check-manifests.js
 f share/vgs/bin/lib/judge-files.js
+f share/vgs/bin/lib/logo.txt
 f share/vgs/bin/lib/qml-library.js
 f share/vgs/bin/lib/theme-backgrounds.js
 f share/vgs/bin/lib/theme-render.js
 f share/vgs/bin/lib/theme-select.js
+f share/vgs/bin/lib/tui.sh
 f share/vgs/bin/vgsh
 f share/vgs/bin/vgsh-browser-policy
 f share/vgs/bin/vgsh-hypr-judge
@@ -14,6 +16,8 @@ f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan
 f share/vgs/bin/vgsh-theme-judge
+f share/vgs/bin/vgsh-tui
+f share/vgs/config/requirements.json
 f share/vgs/config/shell.json
 f share/vgs/shell/Commons/Paths.qml
 f share/vgs/shell/Commons/Theme.qml
@@ -36,6 +40,7 @@ f share/vgs/shell/Core/Lifetime.js
 f share/vgs/shell/Core/NotificationHub.qml
 f share/vgs/shell/Core/PackageManagers.js
 f share/vgs/shell/Core/PluginLogic.js
+f share/vgs/shell/Core/PluginStatus.qml
 f share/vgs/shell/Core/Plugins.qml
 f share/vgs/shell/Core/Registry.qml
 f share/vgs/shell/Core/SessionLock.qml
@@ -67,6 +72,7 @@ f share/vgs/shell/Ui/controls/TextField.qml
 f share/vgs/shell/Ui/controls/TitleButton.qml
 f share/vgs/shell/Ui/controls/ToggleButton.qml
 f share/vgs/shell/Ui/feedback/Badge.qml
+f share/vgs/shell/Ui/feedback/CodeLine.qml
 f share/vgs/shell/Ui/feedback/Dialog.qml
 f share/vgs/shell/Ui/feedback/Kbd.qml
 f share/vgs/shell/Ui/feedback/ProgressBar.qml
@@ -76,9 +82,11 @@ f share/vgs/shell/Ui/foundation/Divider.qml
 f share/vgs/shell/Ui/foundation/FocusRing.qml
 f share/vgs/shell/Ui/foundation/Icon.qml
 f share/vgs/shell/Ui/foundation/Label.qml
+f share/vgs/shell/Ui/foundation/Scrim.qml
 f share/vgs/shell/Ui/foundation/Surface.qml
 f share/vgs/shell/Ui/icons/LICENSE
 f share/vgs/shell/Ui/icons/Lucide.js
+f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/ListItem.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
 f share/vgs/shell/Ui/layout/ScrollBar.qml
@@ -100,6 +108,9 @@ f share/vgs/shell/plugins/vgs.bar/Builtin.qml
 f share/vgs/shell/plugins/vgs.bar/Clock.qml
 f share/vgs/shell/plugins/vgs.bar/Workspaces.qml
 f share/vgs/shell/plugins/vgs.bar/manifest.json
+f share/vgs/shell/plugins/vgs.devtools/Appearance.js
+f share/vgs/shell/plugins/vgs.devtools/CatalogLogic.js
+f share/vgs/shell/plugins/vgs.devtools/catalog.json
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml
@@ -148,6 +159,7 @@ f share/vgs/shell/plugins/vgs.notifications/manifest.json
 f share/vgs/shell/plugins/vgs.notifications/shaders/edgelight.frag
 f share/vgs/shell/plugins/vgs.notifications/shaders/edgelight.frag.qsb
 f share/vgs/shell/plugins/vgs.notifications/slack-photos.js
+f share/vgs/shell/plugins/vgs.notifications/token-status.sh
 f share/vgs/shell/plugins/vgs.settings/KeyField.qml
 f share/vgs/shell/plugins/vgs.settings/ListPage.qml
 f share/vgs/shell/plugins/vgs.settings/Panel.qml
@@ -155,6 +167,7 @@ f share/vgs/shell/plugins/vgs.settings/PluginPage.qml
 f share/vgs/shell/plugins/vgs.settings/Reply.js
 f share/vgs/shell/plugins/vgs.settings/Service.qml
 f share/vgs/shell/plugins/vgs.settings/SettingField.qml
+f share/vgs/shell/plugins/vgs.settings/StatusRow.qml
 f share/vgs/shell/plugins/vgs.settings/Widget.qml
 f share/vgs/shell/plugins/vgs.settings/manifest.json
 f share/vgs/shell/plugins/vgs.themes/Background.qml
@@ -164,6 +177,9 @@ f share/vgs/shell/plugins/vgs.themes/WallpaperState.qml
 f share/vgs/shell/plugins/vgs.themes/Widget.qml
 f share/vgs/shell/plugins/vgs.themes/manifest.json
 f share/vgs/shell/shell.qml
+f share/vgs/themes/catalog/index.json
+f share/vgs/themes/catalog/nord/terminal.json
+f share/vgs/themes/catalog/nord/theme.json
 f share/vgs/themes/light/terminal.json
 f share/vgs/themes/light/theme.json
 f share/vgs/themes/targets/alacritty/alacritty.toml
