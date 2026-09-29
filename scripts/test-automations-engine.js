@@ -314,8 +314,10 @@ const CASES = {
 
     "output with no line break reaches the transcript in pieces"(engine) {
         const w = world();
-        // 20000 characters, one line break, then a short line: under the cap.
-        const long = add(w, engine, { name: "Long", command: "head -c 20000 /dev/zero | tr '\\0' y; echo; echo after" });
+        // 20000 characters, one line break, then a short line, under the
+        // cap, in one write(2) to the pipe, so the runner reads the long
+        // line whole with its break and must split it itself.
+        const long = add(w, engine, { name: "Long", command: "python3 -c 'import os; os.write(1, b\"y\" * 20000 + b\"\\nafter\\n\")'" });
         assert.equal(manual(w, engine, long).status, 0);
         const rec = ended(w, long);
         const text = fs.readFileSync(rec.transcript, "utf8");
