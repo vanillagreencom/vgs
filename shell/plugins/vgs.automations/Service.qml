@@ -146,7 +146,7 @@ Item {
         folder: root.runsFolder
         nameFilters: ["*.json"]
         showDirs: false
-        onCountChanged: if (root.runsFolder !== "" && String(folder) === root.runsFolder) settle.restart()
+        onCountChanged: if (root.runsFolder !== "" && String(folder) === root.runsFolder) listSoon.restart()
     }
 
     // The store is an invalidation signal only: every change, and the first
@@ -157,14 +157,14 @@ Item {
         active: root.storeFile !== ""
         WatchedFile {
             path: root.storeFile
-            onChanged: settle.restart()
-            onLoaded: content => settle.restart()
-            onLoadFailed: error => settle.restart()
+            onChanged: listSoon.restart()
+            onLoaded: content => listSoon.restart()
+            onLoadFailed: error => listSoon.restart()
         }
     }
 
     Timer {
-        id: settle
+        id: listSoon
         interval: 250
         onTriggered: root.request(["list", "--json"])
     }

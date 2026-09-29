@@ -19,8 +19,10 @@
 # failing Run now goes through systemd-run, sends the error notification
 # with the VGS hints and reaches the Last runs status through the service's
 # runs listing; the linger TUI opens through the stand-in terminal; and the
-# control, a copy of the plugin whose service does not list after a run
-# file lands, leaves Last runs as it was after the next failing run. The
+# control, a copy of the plugin whose service lists neither after a run
+# file lands nor after the store changes, leaves the count as it was after
+# the engine pauses the automation and Last runs as it was after the next
+# failing run. The
 # row ends with the plugin disabled, its stand-ins removed and the shim
 # files they covered restored.
 set -euo pipefail
@@ -104,6 +106,7 @@ expect_poll "no run has failed yet" '{"tone": "ok", "text": "No failures"}' auto
 # A sync that fails stays the Engine status after the list that follows
 # it succeeds, until a sync succeeds. The missing timer gives sync work.
 : >"$auto_stub/fail-reload"
+expected_errors+=('automations: sync exit=1 automations: refused: systemctl=failed args=daemon-reload exit=1')
 unlink -- "$home/.config/systemd/user/vgs-automation-nightly.timer"
 expect "the service syncs on request" ok ipc vgs.automations invoke sync ""
 expect_poll "a failed sync is the Engine status after the list succeeds" "danger sync exit=1" auto_problem
@@ -122,9 +125,12 @@ forget_record
 expect "the linger IPC opens its TUI" ok ipc vgs.automations invoke linger ""
 expect_poll "the terminal is handed the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
 
-# The control: a copy whose service does not list after a run file lands.
-# The engine clears the history first, so the copy's own start reads no
-# failure, and the next failing run leaves Last runs as it was.
+# The control: a copy whose service lists neither after a run file lands
+# nor after the store changes, the one timer both watchers restart. It
+# carries a marker the row waits on, so every reading is the copy's. The
+# engine clears the history first, so the copy's own start reads no
+# failure; an engine change to the store and the next failing run then
+# leave its status as it was.
 expect "the history is cleared before the control" cleared=1 automations clear --all
 auto_copy="$home/.config/vgs/plugins/vgs.automations"
 mkdir -p "$auto_copy"
@@ -135,19 +141,27 @@ import sys
 path = sys.argv[1]
 text = open(path).read()
 needle = "        onTriggered: root.request([\"list\", \"--json\"])\n    }\n\n    Timer {\n        id: refresh"
-assert text.count(needle) == 1, "the settle timer's list must occur once"
-open(path, "w").write(text.replace(needle, "        onTriggered: {}\n    }\n\n    Timer {\n        id: refresh", 1))
+assert text.count(needle) == 1, "the listSoon timer's list must occur once"
+text = text.replace(needle, "        onTriggered: {}\n    }\n\n    Timer {\n        id: refresh", 1)
+marker = "    id: root\n"
+assert text.count(marker) == 1, "the root id must occur once"
+open(path, "w").write(text.replace(marker, marker + "    property bool smokeControl: true\n", 1))
 PY
 expect "the control copy is scanned" ok ipc shell rescanPlugins
+expect_poll "the control copy's service is built" true ipc smoke readInstance service vgs.automations smokeControl
 expect_poll "the control copy's start reads no failure" '{"tone": "ok", "text": "No failures"}' auto_status lastRuns
+expect_poll "the control copy's start counts the automation" 1 auto_status active
+expect "the engine pauses the automation under the control" disabled=nightly auto_last disable nightly
 expect "Run now starts under the control" started=nightly automations run-now nightly
-# The shipped service lists 250 ms after a run file lands, then waits on
-# one engine call; two seconds is past both, so the reading below is the
-# copy's settled answer and not a race.
+# The shipped service lists 250 ms after a run file lands or the store
+# changes, then waits on one engine call; two seconds is past both, so the
+# readings below are the copy's settled answer and not a race.
 sleep 2
+expect "the control's count misses the store change" 1 auto_status active
 expect "the control's Last runs misses the run" '{"tone": "ok", "text": "No failures"}' auto_status lastRuns
 rm -r -- "$auto_copy"
 expect "the shipped plugin is scanned again" ok ipc shell rescanPlugins
+expect_poll "the shipped service lists the paused automation" 0 auto_status active
 
 expect "the engine removes the automation" removed=nightly auto_last remove nightly
 expect "its units are gone" '[]' auto_units
