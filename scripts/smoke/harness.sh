@@ -116,12 +116,16 @@ repo="$sandbox/repo"
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 hl.monitor({ output = "SMOKE-HIDPI", mode = "1280x720", position = "auto", scale = 2 })
--- Logs on: the cursor rows read each cursor shape the compositor takes
--- from the shell through `hyprctl rollinglog`, which is empty without them.
+-- Logs stay off while the startup latencies are read, since logging every
+-- surface slows the first bar; compositor_logs_on creates this file and
+-- reloads, and the cursor rows then read each cursor shape the compositor
+-- takes from the shell through `hyprctl rollinglog`.
+local logs = io.open(os.getenv("XDG_RUNTIME_DIR") .. "/compositor-logs")
+if logs then logs:close() end
 hl.config({
     misc = { disable_hyprland_logo = true, disable_splash_rendering = true, disable_autoreload = true },
     animations = { enabled = false },
-    debug = { disable_logs = false },
+    debug = { disable_logs = logs == nil },
 })
 -- Empty workspaces the compositor keeps alive, so the bar draws more than
 -- one workspace pill and one whose label is wider than the pill's floor.
@@ -312,6 +316,19 @@ click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/n
 hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
 drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
+# compositor_logs_on: the nested compositor logs from here to the end of
+# the run. The configuration turns its logs on once the flag file exists,
+# and a reload reads it again; `hyprctl eval` would set the option without
+# the reload that applies it, and a reload drops what eval set. Returns 1
+# unless the reload added lines to the rolling log, which holds only the
+# lines logged before the configuration first loaded until then.
+compositor_logs_on() {
+  local before
+  before="$(hypr rollinglog)" || return 1
+  : >"$rt_dir/compositor-logs" || return 1
+  [[ $(hypr reload config-only) == ok ]] || return 1
+  [[ $(hypr rollinglog) != "$before" ]]
+}
 # rest_pointer: the pointer moved to the monitor's bottom-left corner, off
 # every surface a row maps, so a list a later row opens never finds it
 # resting over an entry: the launcher selects the row under the pointer.

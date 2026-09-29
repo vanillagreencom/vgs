@@ -64,6 +64,8 @@ source "$repo/scripts/smoke/harness.sh"
 
 # These rows share one sandbox and run in dependency order.
 source "$repo/scripts/smoke/rows/bar.sh"
+# bar.sh read the startup latencies; the cursor rows need the log.
+if compositor_logs_on; then ok "the nested compositor logs from here on"; else fail "the nested compositor's logs did not turn on"; fi
 source "$repo/scripts/smoke/rows/plugins.sh"
 source "$repo/scripts/smoke/rows/sources.sh"
 source "$repo/scripts/smoke/rows/capabilities.sh"
