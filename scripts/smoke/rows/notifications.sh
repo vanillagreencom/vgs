@@ -130,6 +130,10 @@ team("T0GLOBEX", ["globex", "Globex"], "slack", (200, 120, 20), [
     ("UEDSGER", ["edsger"], (60, 60, 200)),
 ])
 (root / "accounts.json").write_text(json.dumps({"slack:T0ACME": {}, "slack": {"team": "T0GLOBEX", "resolvedAt": now}}) + "\n")
+# A fresh emoji.list answer for each team, so the custom emoji come from the
+# synthetic disk cache alone and no run asks Slack for the list.
+for id in ("T0ACME", "T0GLOBEX"):
+    (root / id / "emoji.json").write_text(json.dumps({"team": id, "map": {}, "sources": {}, "list": {"at": now, "failedAt": 0, "error": "", "names": {}}}) + "\n")
 PY
 }
 seed_slack_photos
@@ -393,6 +397,63 @@ expect_poll "the browser card gives way to it" False has_row live "New message i
 expect "the browser card left no history entry" False in_history "New message in design"
 expect "the log says the desktop copy stayed twice" 2 duplicate_count
 expect "the status counts the copies kept" '{"keptDesktop": 2, "keptBrowser": 0}' note_status duplicates
+
+# Custom emoji. The synthetic cache holds acme's :smoke-party:, which the
+# helper made into a normalized image at start. A card in acme draws it
+# inline, in the body's text at the body's height and at full strength;
+# a shortcode acme lacks, and a card in globex, keep the text. The cards
+# read the emoji from memory and start no helper run; a copy of the
+# service that asks for a run from each card's lookup makes the same
+# notifications count runs, so the count reads the rule, not a quiet
+# helper.
+emoji_count() { note_status slack.emoji.teams | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], 0))' "$1"; }
+expect_poll "the helper made acme's custom emoji at start" 1 emoji_count T0ACME
+party_url() { python3 -c 'import json,sys; h=json.load(open(sys.argv[1] + "/T0ACME/emoji.json"))["map"]["smoke-party"]; print("file://%s/T0ACME/emoji/%s.png?v=%s" % (sys.argv[1], h, h))' "$slack_photos"; }
+party="$(party_url)"
+expect "the emoji image is a 48 px PNG" "PNG 48 48" python3 -c 'import struct,sys; b=open(sys.argv[1].split("?")[0][7:], "rb").read(24); print(b[1:4].decode(), *struct.unpack(">II", b[16:24]))' "$party"
+# The drawn body texts that name an image, and the ImageText items' fade.
+drawn_images() { ipc smoke layerItems vgs.notifications QQuickText text,visible | python3 -c 'import json,sys; print(sum(1 for s, r, v in json.load(sys.stdin) if v["visible"] and ("<img src=\"" + sys.argv[1] + "\"") in v["text"]))' "$1"; }
+body_fade() { ipc smoke layerItems vgs.notifications ImageText opacity,color | python3 -c 'import json,sys; print(json.dumps(sorted(set((v["opacity"], str(v["color"])) for s, r, v in json.load(sys.stdin)))))'; }
+expect "dismissing the Slack cards before the emoji is allowed" ok notes dismiss-all
+expect_poll "no card is left before the emoji" 0 note_status onScreen
+expect_poll "the helper is idle before the emoji cards" true note_status slack.idle
+runs_before="$(note_status slack.runs)"
+notify Slack 0 "[acme] in launch" "ada: ship it :smoke-party: and :no-such-emoji:" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "a known custom emoji draws as an image in its body" "$monitors" drawn_images "$party"
+expect "its segments hold the image and keep the unknown shortcode as text" "[{\"markup\": \"ada: ship it \"}, {\"image\": \"$party\", \"alt\": \":smoke-party:\"}, {\"markup\": \" and :no-such-emoji:\"}]" card_value "[acme] in launch" bodySegments
+expect "the body fades by its colour, so the emoji draws at full strength" '[[1, "#80e8e8e8"]]' body_fade
+notify Slack 0 "[globex] in launch" "edsger: ship it :smoke-party:" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+expect_poll "another workspace's card keeps the shortcode as text" '[{"markup": "edsger: ship it :smoke-party:"}]' card_value "[globex] in launch" bodySegments
+for i in 1 2 3; do notify Slack 0 "[acme] in party $i" ":smoke-party: $i :smoke-party:" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null; done
+expect_poll "every emoji card draws its images" "$((monitors * 4))" drawn_images "$party"
+expect "cards with custom emoji start no helper run" "$runs_before" note_status slack.runs
+expect "dismissing the emoji cards is allowed" ok notes dismiss-all
+expect_poll "no card is left before the run-per-card copy" 0 note_status onScreen
+# The control: a copy of the service whose card lookup runs the helper.
+service_qml="$repo/shell/plugins/vgs.notifications/Service.qml"
+cp -- "$service_qml" "$sandbox/Service.qml.kept"
+python3 - "$service_qml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = "return Logic.slackEmojiFor(slackPhotos.emoji,"
+assert text.count(needle) == 1, "the lookup to plant a run in occurs once"
+open(path, "w").write(text.replace(needle, "slackPhotos.load(); " + needle))
+PY
+expect "a rescan builds the run-per-card copy" ok ipc shell rescanPlugins
+expect_poll "the run-per-card copy is built" True record_exists vgs.notifications
+expect_poll "the run-per-card copy made acme's emoji" 1 emoji_count T0ACME
+expect_poll "the run-per-card copy's helper is idle" true note_status slack.idle
+copy_runs="$(note_status slack.runs)"
+notify Slack 0 "[acme] in control" ":smoke-party:" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+more_runs() { python3 -c 'import sys; print(int(sys.argv[1]) > int(sys.argv[2]))' "$(note_status slack.runs)" "$copy_runs"; }
+expect_poll "the run count sees the copy run the helper for a card" True more_runs
+cp -- "$sandbox/Service.qml.kept" "$service_qml"
+expect "a rescan restores the service" ok ipc shell rescanPlugins
+expect_poll "the restored service is built" True record_exists vgs.notifications
+expect_poll "the restored service made acme's emoji" 1 emoji_count T0ACME
+expect "dismissing the control card is allowed" ok notes dismiss-all
+expect_poll "no card is left after the emoji" 0 note_status onScreen
 
 # The space around a card's text, from the card's rectangle and its visible
 # title and body items, as `top=<px> bottom=<px> left=<px> right=<px>

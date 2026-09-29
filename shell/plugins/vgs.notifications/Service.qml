@@ -102,6 +102,7 @@ Item {
         id: slackPhotos
         workspaces: root.slackSource === null ? [] : root.slackSource.known
         listed: root.slackSource !== null && root.slackSource.listRead
+        emojiEnabled: root.shell !== null && root.shell.settings.customEmoji === true
         onTokenStatesChanged: root.publishTokens()
         onTeamsChanged: root.publishTokens()
         onWorkspacesChanged: root.publishTokens()
@@ -140,6 +141,13 @@ Item {
 
     function faceImages(enrichment, carriedImage, workspace) {
         return slackPhotos.faceImages(enrichment, carriedImage, workspace);
+    }
+
+    // The custom emoji lookup of a card in `workspace`, or null
+    // (NotificationLogic.slackEmojiFor). It reads what the last helper run
+    // left in memory and nothing else.
+    function emojiFor(enrichment, workspace) {
+        return Logic.slackEmojiFor(slackPhotos.emoji, enrichment, slackPhotos.workspaces, slackPhotos.teams, workspace);
     }
 
     // A notification arrived or changed: a workspace its rule does not yet
@@ -736,7 +744,8 @@ Item {
             onScreen: rowKeys(r => r.origin !== "panel").length,
             history: store.history.length,
             readBefore: store.readBefore,
-            duplicates: duplicates
+            duplicates: duplicates,
+            slack: { runs: slackPhotos.runs, idle: !slackPhotos.loading && !slackPhotos.loadPending, emoji: { on: slackPhotos.emojiEnabled, swaps: slackPhotos.emojiSwaps, teams: slackPhotos.emojiCounts() } }
         });
     }
 

@@ -152,6 +152,7 @@ Item {
         workspace: slot.service !== null ? slot.service.workspaceOf(card.enrichment) : ""
         workspaceIcon: slot.service !== null && card.enrichment !== null ? slot.service.workspaceIcon(card.enrichment.rule, card.workspace) : ""
         faceImages: slot.service !== null && card.enrichment !== null ? slot.service.faceImages(card.enrichment, slot.image, card.workspace) : []
+        emoji: slot.service !== null ? slot.service.emojiFor(card.enrichment, card.workspace) : null
         actions: slot.actions
         showActions: card.hovered && slot.leaving === ""
         onActionTriggered: id => slot.service.runAction(slot.key, id)

@@ -321,14 +321,14 @@ function verify(logic) {
             account: "slack"
         }]
     };
-    same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", generatedAt: 0, downloadFailed: 0, stale: false, teams: photoCache.teams }, "a Slack photo cache is accepted");
-    same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", generatedAt: 0, downloadFailed: 0, stale: false, teams: [] }, "no token leaves no cache");
+    same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", generatedAt: 0, downloadFailed: 0, stale: false, teams: photoCache.teams, emoji: null }, "a Slack photo cache is accepted");
+    same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", generatedAt: 0, downloadFailed: 0, stale: false, teams: [], emoji: null }, "no token leaves no cache");
     same(logic.slackPhotos("{"), { ok: false, error: "not-json" });
     same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [], account: "slack" }] })), { ok: false, error: "teams.0.id want=safe" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" }, "a team names the account that served it");
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [], account: "slack:../x" }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" });
-    same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }], account: "slack" }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }], account: "slack" }] }, "a non-file photo is ignored");
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }], account: "slack" }] })), { ok: true, status: "loaded", generatedAt: 123, downloadFailed: 2, stale: true, teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }], account: "slack" }], emoji: null }, "a non-file photo is ignored");
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "file:///cache/T1/workspace.png", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }], account: "slack" }] })).teams, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }], account: "slack" }], "an unversioned file URL is ignored");
     const teams = photoCache.teams;
     const group = logic.enrich("Slack", "slack", "", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
@@ -426,6 +426,83 @@ function verify(logic) {
         ["a day already over", loaded({ generatedAt: NOW - 2 * DAY }), listedTwo, 1000]
     ])
         assert.equal(logic.slackPhotoDelay(read, listed, NOW), want, "next photo run with " + label);
+
+    // With custom emoji on: pending emoji bring the run within a minute,
+    // and the cache is read again within the hour.
+    const MINUTE = 60 * 1000, HOUR = 60 * MINUTE;
+    for (const [label, read, want] of [
+        ["emoji waiting to be converted", loaded({ emoji: [{ team: "T1", map: {}, pending: 3 }] }), MINUTE],
+        ["every emoji converted", loaded({ emoji: [{ team: "T1", map: {}, pending: 0 }] }), HOUR],
+        ["a photo retry sooner than the rescan", loaded({ stale: true, emoji: [] }), RETRY],
+        ["a refused answer", { ok: false, error: "not-json" }, RETRY]
+    ])
+        assert.equal(logic.slackPhotoDelay(read, listedTwo, NOW, true), want, "next run with emoji on and " + label);
+    assert.equal(logic.slackPhotoDelay(loaded({ emoji: [{ team: "T1", map: {}, pending: 3 }] }), listedTwo, NOW, false), DAY - 1000, "emoji off leave the photos' day");
+
+    // The helper's emoji list, and its refusals: [label, emoji, error].
+    const HEX = "0123456789abcdef";
+    const emojiOut = { status: "absent", emoji: [{ team: "T1", map: { party: HEX, __proto__x: HEX }, count: 2, pending: 0 }] };
+    same(logic.slackPhotos(JSON.stringify(emojiOut)).emoji, [{ team: "T1", map: { party: HEX, __proto__x: HEX }, pending: 0 }], "a run's emoji are read");
+    const objectNames = JSON.parse("{\"team\":\"T1\",\"pending\":0,\"map\":{\"__proto__\":\"" + HEX + "\",\"constructor\":\"" + HEX + "\",\"tostring\":\"" + HEX + "\"}}");
+    const read = logic.slackEmojiTeams([objectNames]);
+    assert.equal(read.ok, true);
+    assert.deepEqual(Object.keys(read.teams[0].map).sort(), ["__proto__", "constructor", "tostring"], "names like Object's members are own names");
+    assert.equal(Object.getPrototypeOf(read.teams[0].map), null);
+    for (const [label, emoji, error] of [
+        ["not a list", {}, "emoji want=list"],
+        ["a team that is not safe", [{ team: "../x", map: {}, pending: 0 }], "emoji.0.team want=safe"],
+        ["a name outside the rule", [{ team: "T1", map: { "Party": HEX }, pending: 0 }], "emoji.0.map name want=^[a-z0-9_+-]{1,100}$"],
+        ["a name with markup", [{ team: "T1", map: { "<b>": HEX }, pending: 0 }], "emoji.0.map name want=^[a-z0-9_+-]{1,100}$"],
+        ["a file that is not hex", [{ team: "T1", map: { party: "../../x" }, pending: 0 }], "emoji.0.map.party want=hex16"],
+        ["no pending count", [{ team: "T1", map: {} }], "emoji.0.pending want=count"]
+    ]) {
+        same(logic.slackEmojiTeams(emoji), { ok: false, error }, "emoji refused: " + label);
+        same(logic.slackPhotos(JSON.stringify({ status: "absent", emoji })), { ok: false, error }, "a run with refused emoji is refused: " + label);
+    }
+    // JSON.parse makes `__proto__` an own name, as the helper's output does.
+    const lookups = logic.slackEmojiLookups(logic.slackEmojiTeams(JSON.parse(JSON.stringify([
+        { team: "T1", map: { party: HEX, proto: HEX }, pending: 0 },
+        { team: "T2", map: { globex: "fedcba9876543210" }, pending: 0 }
+    ]).replace("\"proto\"", "\"__proto__\""))).teams, "/cache/slack-photos");
+    assert.equal(lookups.T1.party, "file:///cache/slack-photos/T1/emoji/" + HEX + ".png?v=" + HEX, "a name's file URL");
+    assert.equal(Object.isFrozen(lookups.T1) && Object.getPrototypeOf(lookups.T1) === null, true, "a lookup is frozen, with no prototype");
+    const slackCard = { rule: "slack", faces: [] };
+    const listedTeams = [{ id: "T1", names: ["acme", "Acme Corp"] }];
+    for (const [label, enrichment, workspace, want] of [
+        ["a workspace's domain", slackCard, "acme", "T1"],
+        ["a workspace's name, case folded", slackCard, "ACME corp", "T1"],
+        ["a photo team", slackCard, "globex", "T2"],
+        ["a workspace nobody lists", slackCard, "initech", null],
+        ["no workspace", slackCard, "", null],
+        ["another rule's card", { rule: "other", faces: [] }, "acme", null]
+    ]) {
+        const got = logic.slackEmojiFor(lookups, enrichment, listedTeams, [{ id: "T2", names: ["globex"] }], workspace);
+        assert.equal(got === null ? null : Object.keys(got).sort().join(","), want === null ? null : Object.keys(lookups[want]).sort().join(","), "emoji of " + label);
+    }
+
+    // A body as segments: [label, body, lookup, segments]. The body goes
+    // through styledBody first, as the card's does.
+    const T1 = lookups.T1;
+    const PARTY = T1.party;
+    const plainLookup = { party: PARTY };
+    const flood = Array.from({ length: 70 }, () => ":party:").join("");
+    for (const [label, body, lookup, want] of [
+        ["a known custom emoji", "hi :party:!", T1, [{ markup: "hi " }, { image: PARTY, alt: ":party:" }, { markup: "!" }]],
+        ["an unknown shortcode", "hi :nope:", T1, [{ markup: "hi :nope:" }]],
+        ["another workspace's emoji", "hi :globex:", T1, [{ markup: "hi :globex:" }]],
+        ["no lookup", "hi :party:", null, [{ markup: "hi :party:" }]],
+        ["escaped markup stays escaped", "&lt;img src=x&gt; :party:", T1, [{ markup: "&lt;img src=x&gt; " }, { image: PARTY, alt: ":party:" }]],
+        ["a sender's image tag is stripped", "<img src=\"http://h/x.png\">:party:", T1, [{ image: PARTY, alt: ":party:" }]],
+        ["a shortcode inside a tag's attribute", "<a href=\":party:\">go</a>", T1, [{ markup: "<a href=\":party:\">go</a>" }]],
+        ["a shortcode inside a link's text", "<a href=\"x\">:party:</a>", T1, [{ markup: "<a href=\"x\">" }, { image: PARTY, alt: ":party:" }, { markup: "</a>" }]],
+        ["a shortcode across a tag", ":par<b>ty:</b>", T1, [{ markup: ":par<b>ty:</b>" }]],
+        ["a time before a shortcode", "10:30:party:", T1, [{ markup: "10:30" }, { image: PARTY, alt: ":party:" }]],
+        ["Object's members are not emoji", ":toString: :constructor: :hasOwnProperty:", plainLookup, [{ markup: ":toString: :constructor: :hasOwnProperty:" }]],
+        ["a name like __proto__ the team holds", ":__proto__:", T1, [{ image: T1.__proto__, alt: ":__proto__:" }]],
+        ["a line break", "a\n:party:", T1, [{ markup: "a<br/>" }, { image: PARTY, alt: ":party:" }]],
+        ["past the cap", flood, T1, Array.from({ length: 64 }, () => ({ image: PARTY, alt: ":party:" })).concat([{ markup: ":party:".repeat(6) }])]
+    ])
+        same(logic.emojiSegments(logic.styledBody(body, "Slack", ""), lookup), want, "segments of " + label);
 
     // One message from Slack's own client and from its web client: [label,
     // the first copy, the second, whether they are one message].
@@ -570,6 +647,14 @@ const CONTROLS = [
     ["copies share their markup-free text", ".replace(/<[^>]*>/g, \" \").replace(/\\s+/g, \" \").trim(),", ","],
     ["the desktop copy replaces a browser card on screen", "return message.source === \"desktop\" && priorOnScreen ? \"message\" : \"prior\";", "return \"prior\";"],
     ["the remembered messages are capped", ".concat([message]).slice(-DUPLICATES_MAX);", ".concat([message]);"],
+    ["a shortcode is read only between tags", "var run = open === -1 ? text.slice(i) : text.slice(i, open);", "var run = text.slice(i);"],
+    ["a shortcode resolves by an own name alone", "if (count >= EMOJI_PER_BODY || !hasOwn(lookup, found[1])) {", "if (count >= EMOJI_PER_BODY || !lookup[found[1]]) {"],
+    ["a body's substitutions are capped", "if (count >= EMOJI_PER_BODY || !hasOwn", "if (!hasOwn"],
+    ["a card takes its own workspace's emoji alone", "return id !== \"\" && hasOwn(lookups, id) ? lookups[id] : null;", "return id !== \"\" ? Object.assign.apply(null, [{}].concat(Object.keys(lookups).map(function (k) { return lookups[k]; }))) : null;"],
+    ["pending emoji bring the run within a minute", "return Math.min(photos, pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN);", "return Math.min(photos, SLACK_EMOJI_RESCAN);"],
+    ["an emoji name is judged", "if (!EMOJI_NAME.test(names[n])) return", "if (false) return"],
+    ["an emoji file is sixteen hex digits", "if (typeof hex !== \"string\" || !/^[0-9a-f]{16}$/.test(hex)) return", "if (false) return"],
+    ["an emoji lookup has no prototype", "var lookup = Object.create(null);", "var lookup = {};"],
     ["the remembered messages keep the window", "return message.at - r.at <= DUPLICATE_WINDOW; }).concat(", "return true; }).concat("]
 ];
 

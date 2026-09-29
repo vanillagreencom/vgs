@@ -13,12 +13,23 @@ import "NotificationLogic.js" as Logic
 // has been read, again when the list names other workspaces, the probe
 // after each helper run, and the helper at
 // NotificationLogic.slackPhotoDelay.
+//
+// With `emojiEnabled`, the same run builds each listed team's custom emoji
+// from Slack's disk cache and emoji.list (slack-emoji.js), and the shell
+// takes the run's map in one swap: `emoji` becomes a new object, which is
+// what every card's binding follows, so the cards on screen resolve their
+// shortcodes again once. A card's lookup is an own-property read with no
+// I/O, and no notification starts a run. A run is stamped with the team
+// set and the setting it was asked with, and a run asked with others does
+// not swap its emoji in.
 Scope {
     id: photos
 
     readonly property string dir: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/vgs/notifications/slack-photos"
     readonly property string script: String(Qt.resolvedUrl("slack-photos.js")).replace(/^file:\/\//, "")
     readonly property string tokenScript: String(Qt.resolvedUrl("token-status.sh")).replace(/^file:\/\//, "")
+    // Slack's disk cache, the one WorkspaceIcons reads its icons from.
+    readonly property string slackCache: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/" + Logic.enricherById("slack").workspaces.cache
     // Slack's workspace list as NotificationLogic.slackWorkspaces reads it,
     // and whether it has been read once.
     property var workspaces: []
@@ -33,6 +44,15 @@ Scope {
     property bool tokenCheckPending: false
     // The team ids the running probe was asked about.
     property var probed: []
+    property bool emojiEnabled: false
+    // Team id -> name -> file URL (NotificationLogic.slackEmojiLookups).
+    property var emoji: Logic.slackEmojiLookups([], dir)
+    // The emoji list last swapped in, as JSON, and how many swaps and
+    // helper runs there have been, which `status` reports.
+    property string emojiKey: "[]"
+    property int emojiSwaps: 0
+    property int runs: 0
+    readonly property string generation: teamKey + "|" + emojiEnabled
 
     function teamIds() {
         return workspaces.map(w => w.id);
@@ -47,6 +67,26 @@ Scope {
     // The list's first read changes both at once; one start follows.
     onListedChanged: Qt.callLater(start)
     onTeamKeyChanged: Qt.callLater(start)
+    // Off clears the cards' emoji at once; the run then empties the index.
+    onEmojiEnabledChanged: {
+        if (!emojiEnabled) swapEmoji([]);
+        if (listed) Qt.callLater(load);
+    }
+
+    function swapEmoji(teams) {
+        const key = JSON.stringify(teams);
+        if (key === emojiKey) return;
+        emoji = Logic.slackEmojiLookups(teams, dir);
+        emojiKey = key;
+        emojiSwaps += 1;
+    }
+
+    // The emoji of each team, counted, never named.
+    function emojiCounts() {
+        const out = {};
+        for (const id of Object.keys(emoji)) out[id] = Object.keys(emoji[id]).length;
+        return out;
+    }
 
     function checkToken() {
         if (tokenProbe.running) { tokenCheckPending = true; return; }
@@ -59,7 +99,9 @@ Scope {
         if (loading) { loadPending = true; return; }
         retry.stop();
         loading = true;
-        helper.command = ["node", script, "refresh", dir].concat(teamIds());
+        runs += 1;
+        helper.generation = generation;
+        helper.command = ["node", script, "refresh", dir].concat(emojiEnabled ? ["--emoji", slackCache] : [], teamIds());
         helper.running = true;
     }
 
@@ -97,6 +139,7 @@ Scope {
     Process {
         id: helper
         property var completion: null
+        property string generation: ""
         stdout: StdioCollector { id: helperOut }
         stderr: StdioCollector { id: helperErr }
         onExited: (code, status) => { completion = { code: code, status: status }; }
@@ -116,13 +159,14 @@ Scope {
                 else if (lines !== "") photos.logProblem(lines);
                 else photos.logRecovery(read);
                 photos.teams = read.teams;
+                if (read.emoji !== null && helper.generation === photos.generation) photos.swapEmoji(read.emoji);
             }
             if (photos.loadPending) {
                 photos.loadPending = false;
                 photos.load();
                 return;
             }
-            photos.schedule(Logic.slackPhotoDelay(read, photos.workspaces, Date.now()));
+            photos.schedule(Logic.slackPhotoDelay(read, photos.workspaces, Date.now(), photos.emojiEnabled));
         }
     }
 

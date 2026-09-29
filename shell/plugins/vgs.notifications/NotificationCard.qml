@@ -32,6 +32,9 @@ Item {
     property string workspaceIcon: ""
     // One file URL per face, from the optional Slack token cache.
     property var faceImages: []
+    // The custom emoji of the card's workspace, name -> file URL, or null
+    // (NotificationLogic.slackEmojiFor).
+    property var emoji: null
     // The slot fades the content during its morph. The content keeps its
     // full-size layout and stays centred while the card is narrower, so the
     // text never reflows.
@@ -53,6 +56,10 @@ Item {
     readonly property real horizontalInset: contentInset.inset
     readonly property string iconSource: image.length > 0 ? image : iconPath(appIcon)
     readonly property string sanitizedBody: Logic.sanitizeBody(body, app, appIcon)
+    // The body as ImageText segments: StyledText with every image tag
+    // stripped (NotificationLogic.styledBody), and the workspace's custom
+    // emoji as images (emojiSegments).
+    readonly property var bodySegments: Logic.emojiSegments(Logic.styledBody(body, app, appIcon), emoji)
     readonly property bool singleLine: sanitizedBody.length === 0
     readonly property bool iconInSummary: singleLine && Logic.summaryStartsWithGlyph(summary)
     readonly property bool showsIcon: !iconInSummary && iconSource.length > 0 && iconImage.status !== Image.Error
@@ -213,7 +220,7 @@ Item {
                 }
             }
 
-            Text {
+            ImageText {
                 id: bodyText
                 objectName: "notificationBodyText"
                 // The height left for the body under maxHeight, and so the
@@ -222,16 +229,12 @@ Item {
                 Layout.fillWidth: true
                 Layout.topMargin: card.look.card.lineGap
                 visible: !card.singleLine
-                // StyledText, since the server advertises body markup;
-                // NotificationLogic strips every image tag first.
-                text: Logic.styledBody(card.body, card.app, card.appIcon)
-                textFormat: Text.StyledText
-                color: card.look.text.foreground
-                opacity: card.look.text.subtitle.opacity
-                font.family: card.look.font.family
-                font.pixelSize: card.look.text.subtitle.size
-                wrapMode: Text.WordWrap
-                elide: Text.ElideRight
+                // StyledText, since the server advertises body markup. The
+                // body's fade is its colour's alpha, so an emoji draws at
+                // full strength.
+                segments: card.bodySegments
+                color: card.look.text.subtitle.color
+                font: Qt.font({ family: card.look.font.family, pixelSize: card.look.text.subtitle.size })
                 maximumLineCount: Math.max(1, Math.floor(room / bodyMetrics.height))
             }
 

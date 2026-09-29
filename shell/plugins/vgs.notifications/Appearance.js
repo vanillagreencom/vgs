@@ -76,7 +76,9 @@ var TOKENS = {
         shadow: color("alpha(#000000, 0.45)"),
         summaryShadow: color("alpha(#000000, 0.4)"),
         title: { size: length(14), weight: weight(700) },
-        subtitle: { size: length(11), opacity: share(0.5) },
+        // The body's colour is the foreground at the subtitle's opacity, so
+        // an image inline in the body draws at full strength.
+        subtitle: { size: length(11), opacity: share(0.5), color: color("alpha({text.foreground}, {text.subtitle.opacity})") },
         label: { size: length(11), weight: weight(500), opacity: share(0.7) }
     },
 

@@ -8,8 +8,8 @@
 // the Inbox shows, which toast a full stack lets go, which actions a card
 // offers, the paused and running clocks of the toasts on screen, the
 // per-application rules that read a sender's workspace and people, the
-// Slack token rows and photo lookups, and which two notifications are one
-// message sent twice.
+// Slack token rows, photo and custom emoji lookups, and which two
+// notifications are one message sent twice.
 
 // The history keeps the newest HISTORY_MAX notifications; the Inbox and the
 // History panel show at most PANEL_ROWS_MAX of them. LIVE_MAX toasts show at
@@ -471,10 +471,23 @@ function slackTokenRows(workspaces, states, teams) {
 // How long the photo helper waits before its next run, in milliseconds:
 // SLACK_PHOTO_RETRY while a token is missing, an account failed, a download
 // failed, or a listed workspace has no photos, so a token stored for it is
-// read within that; otherwise until the oldest team's day is over.
+// read within that; otherwise until the oldest team's day is over. With
+// custom emoji on, SLACK_EMOJI_PENDING while a team's emoji wait to be
+// converted, and at most SLACK_EMOJI_RESCAN, which reads Slack's cache again
+// for the emoji it has shown since; the photos of a run in between are
+// served from their cache while fresh.
 var SLACK_PHOTO_RETRY = 15 * 60 * 1000;
 var SLACK_PHOTO_DAY = 24 * 60 * 60 * 1000;
-function slackPhotoDelay(read, workspaces, now) {
+var SLACK_EMOJI_PENDING = 60 * 1000;
+var SLACK_EMOJI_RESCAN = 60 * 60 * 1000;
+function slackPhotoDelay(read, workspaces, now, emojiOn) {
+    var photos = slackPhotoOnlyDelay(read, workspaces, now);
+    if (!emojiOn) return photos;
+    var pending = read.ok && read.emoji !== null && read.emoji.some(function (t) { return t.pending > 0; });
+    return Math.min(photos, pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN);
+}
+
+function slackPhotoOnlyDelay(read, workspaces, now) {
     if (!read.ok || read.status !== "loaded" || read.stale || read.downloadFailed > 0) return SLACK_PHOTO_RETRY;
     for (var i = 0; i < workspaces.length; i++)
         if (!read.teams.some(function (t) { return t.id === workspaces[i].id; })) return SLACK_PHOTO_RETRY;
@@ -484,7 +497,8 @@ function slackPhotoDelay(read, workspaces, now) {
 
 // Slack photos cache data, as slack-photos.js prints and stores it, reduced
 // to the fields the card needs. Names are matched case-folded the same way
-// initials and Slack sender parsing key them.
+// initials and Slack sender parsing key them. `emoji` is slackEmojiTeams'
+// reading of the run's custom emoji, or null for a run with emoji off.
 function slackPhotos(text) {
     var parsed;
     try {
@@ -493,7 +507,13 @@ function slackPhotos(text) {
         return { ok: false, error: "not-json" };
     }
     if (!isPlainObject(parsed)) return { ok: false, error: "not-object" };
-    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [], generatedAt: 0, downloadFailed: 0, stale: false };
+    var emoji = null;
+    if (hasOwn(parsed, "emoji")) {
+        var read = slackEmojiTeams(parsed.emoji);
+        if (!read.ok) return { ok: false, error: read.error };
+        emoji = read.teams;
+    }
+    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [], generatedAt: 0, downloadFailed: 0, stale: false, emoji: emoji };
     if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };
     if (!Array.isArray(parsed.teams)) return { ok: false, error: "teams want=list" };
     var teams = [];
@@ -525,8 +545,125 @@ function slackPhotos(text) {
         generatedAt: typeof parsed.generatedAt === "number" && isFinite(parsed.generatedAt) ? parsed.generatedAt : 0,
         downloadFailed: typeof parsed.downloadFailed === "number" && isFinite(parsed.downloadFailed) && parsed.downloadFailed > 0 ? Math.floor(parsed.downloadFailed) : 0,
         stale: parsed.stale === true,
-        teams: teams
+        teams: teams,
+        emoji: emoji
     };
+}
+
+// ------------------------------------------------------- custom emoji
+
+// A custom emoji name the card substitutes, `:name:` in a Slack body, as
+// slack-emoji.js admits it; and the most one body substitutes, so a body
+// cannot ask for thousands of images.
+var EMOJI_NAME = /^[a-z0-9_+-]{1,100}$/;
+var EMOJI_PER_BODY = 64;
+
+// The helper's `emoji` list, [{ team, map, count, pending }] with `map`
+// name -> the 16 hex digits of the image's file: { ok: true, teams:
+// [{ team, map, pending }] }, each map an object with no prototype, or
+// { ok: false, error } naming the first entry the helper never prints.
+function slackEmojiTeams(value) {
+    if (!Array.isArray(value)) return { ok: false, error: "emoji want=list" };
+    var teams = [];
+    for (var t = 0; t < value.length; t++) {
+        var entry = value[t];
+        var at = "emoji." + t;
+        if (!isPlainObject(entry)) return { ok: false, error: at + " want=object" };
+        if (typeof entry.team !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(entry.team)) return { ok: false, error: at + ".team want=safe" };
+        if (!isPlainObject(entry.map)) return { ok: false, error: at + ".map want=object" };
+        if (typeof entry.pending !== "number" || !isFinite(entry.pending) || entry.pending < 0) return { ok: false, error: at + ".pending want=count" };
+        var map = Object.create(null);
+        var names = Object.keys(entry.map);
+        for (var n = 0; n < names.length; n++) {
+            var hex = entry.map[names[n]];
+            if (!EMOJI_NAME.test(names[n])) return { ok: false, error: at + ".map name want=" + EMOJI_NAME.source };
+            if (typeof hex !== "string" || !/^[0-9a-f]{16}$/.test(hex)) return { ok: false, error: at + ".map." + names[n] + " want=hex16" };
+            map[names[n]] = hex;
+        }
+        teams.push({ team: entry.team, map: map, pending: entry.pending });
+    }
+    return { ok: true, teams: teams };
+}
+
+// Team id -> a frozen lookup, name -> the file URL of its image under the
+// helper's root `dir`, built once when the shell takes a run's emoji, so a
+// card's lookup is one own-property read.
+function slackEmojiLookups(teams, dir) {
+    var out = Object.create(null);
+    for (var t = 0; t < teams.length; t++) {
+        var lookup = Object.create(null);
+        var names = Object.keys(teams[t].map);
+        for (var n = 0; n < names.length; n++) {
+            var hex = teams[t].map[names[n]];
+            lookup[names[n]] = "file://" + dir + "/" + teams[t].team + "/emoji/" + hex + ".png?v=" + hex;
+        }
+        out[teams[t].team] = Object.freeze(lookup);
+    }
+    return Object.freeze(out);
+}
+
+// The team id of the workspace a Slack card belongs to (slackWorkspaceFor),
+// from Slack's list and the photo teams, or "".
+function slackTeamIdFor(workspaces, teams, workspace) {
+    var wanted = fold(workspace);
+    if (wanted === "") return "";
+    var known = workspaces.concat(teams);
+    for (var i = 0; i < known.length; i++)
+        for (var n = 0; n < known[i].names.length; n++)
+            if (fold(known[i].names[n]) === wanted) return known[i].id;
+    return "";
+}
+
+// The emoji lookup of a card (enrich's reading) in `workspace`: that team's
+// alone, from slackEmojiLookups' `lookups`, or null for a card of another
+// rule or a workspace with no emoji, which draws its body as text.
+function slackEmojiFor(lookups, enrichment, workspaces, teams, workspace) {
+    if (enrichment === null || enrichment.rule !== "slack") return null;
+    var id = slackTeamIdFor(workspaces, teams, workspace);
+    return id !== "" && hasOwn(lookups, id) ? lookups[id] : null;
+}
+
+// A body as ImageText segments (shell/Ui/foundation/ImageTextLogic.js):
+// `styled`, styledBody's markup, with each `:name:` that `lookup`, one
+// team's emoji, holds drawn as that image, its alt text the shortcode. A
+// name is read only in the text between tags, never inside a tag or its
+// attributes and never across one; a name the lookup lacks, another team's
+// among them, stays text; at most EMOJI_PER_BODY are substituted. A null
+// lookup is a body with no emoji.
+function emojiSegments(styled, lookup) {
+    var text = String(styled);
+    if (lookup === null) return [{ markup: text }];
+    var segments = [];
+    var markup = "";
+    var count = 0;
+    var i = 0;
+    while (i < text.length) {
+        var open = text.indexOf("<", i);
+        var run = open === -1 ? text.slice(i) : text.slice(i, open);
+        var shortcode = /:([a-z0-9_+-]{1,100}):/g;
+        var from = 0;
+        var found;
+        while ((found = shortcode.exec(run)) !== null) {
+            if (count >= EMOJI_PER_BODY || !hasOwn(lookup, found[1])) {
+                // The closing colon may open the next shortcode.
+                shortcode.lastIndex = found.index + found[0].length - 1;
+                continue;
+            }
+            markup += run.slice(from, found.index);
+            if (markup !== "") segments.push({ markup: markup });
+            markup = "";
+            segments.push({ image: lookup[found[1]], alt: found[0] });
+            from = found.index + found[0].length;
+            count++;
+        }
+        markup += run.slice(from);
+        if (open === -1) break;
+        var close = text.indexOf(">", open);
+        markup += close === -1 ? text.slice(open) : text.slice(open, close + 1);
+        i = close === -1 ? text.length : close + 1;
+    }
+    if (markup !== "" || segments.length === 0) segments.push({ markup: markup });
+    return segments;
 }
 
 function slackPhotoFileUrl(value) {

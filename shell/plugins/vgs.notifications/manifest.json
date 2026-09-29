@@ -22,7 +22,8 @@
     "status"
   ],
   "settings": {
-    "duration": 8
+    "duration": 8,
+    "customEmoji": true
   },
   "schema": {
     "duration": {
@@ -32,6 +33,12 @@
       "min": 2,
       "max": 30,
       "step": 1
+    },
+    "customEmoji": {
+      "type": "boolean",
+      "label": "Slack custom emoji",
+      "description": "Draw each workspace's custom emoji in Slack notifications, read from Slack's own cache and, with a token that has emoji:read, from Slack's list; needs ImageMagick",
+      "group": "Slack"
     }
   },
   "status": {
