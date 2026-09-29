@@ -11,6 +11,7 @@ cleanup() { chmod -R u+rwx -- "$tmp" 2>/dev/null || true; rm -rf -- "$tmp"; }
 trap cleanup EXIT
 rm -rf -- "$tmp"
 mkdir -p -- "$tmp"
+export TMPDIR="$tmp"
 
 ok() { printf '  ok    %s\n' "$*"; }
 fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
@@ -74,6 +75,7 @@ run_capture "$tmp/enumerator.out" "$tmp/enumerator.err" status env PATH="$git_st
 check "a failing git enumerator is refused" test "$status" = 1
 check "the git enumerator refusal is keyed" grep_out "install-system: refused: enumerate=failed path=$repo" "$tmp/enumerator.err"
 check "a failing git enumerator prints no success line" test ! -s "$tmp/enumerator.out"
+check "a failing git enumerator creates no DESTDIR file" test ! -e "$enum_dest"
 
 archive_source="$tmp/archive-source"
 mkdir -p -- "$archive_source"
@@ -86,6 +88,7 @@ chmod 755 -- "$archive_source/shell/unreadable"
 check "a failing archive enumerator is refused" test "$status" = 1
 check "the archive enumerator refusal is keyed" grep_out "install-system: refused: enumerate=failed path=$archive_source" "$tmp/archive-enumerator.err"
 check "a failing archive enumerator prints no success line" test ! -s "$tmp/archive-enumerator.out"
+check "a failing archive enumerator creates no DESTDIR file" test ! -e "$tmp/archive-enumerator"
 
 readonly_source="$tmp/readonly-source"
 mkdir -p -- "$readonly_source"
@@ -167,7 +170,6 @@ check "the read-only prefix guard installs exactly the fixture targets" diff -r 
 mutant_dest="$tmp/target-mutant"
 run_capture "$tmp/target-mutant.out" "$tmp/target-mutant.err" status env DESTDIR="$mutant_dest" PREFIX=/usr "$repo/packaging/install-system.sh"
 check "the target mutant install succeeds" test "$status" = 0
-read_only_prefix_signal_path "$tmp/mutant-signal-shim"
 if diff -r -- "$fixture_tree/themes/targets" "$mutant_dest/usr/share/vgs/themes/targets" >/dev/null 2>&1; then
   fail "the guardless target mutant matched the fixture targets"
 else

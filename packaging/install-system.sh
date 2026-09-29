@@ -118,8 +118,8 @@ if [[ -e $bin_link || -L $bin_link ]]; then
   fi
 fi
 
-mkdir -p -- "$install_root"
-enumerate_errors="$install_root/.install-system-enumerate-errors.$$"
+enumerate_errors="$(mktemp "${TMPDIR:-/tmp}/vgs-install-enumerate.XXXXXX")" ||
+  refuse 1 "enumerate=temp TMPDIR=${TMPDIR:-/tmp}"
 cleanup() { rm -f -- "$enumerate_errors"; }
 trap cleanup EXIT
 if ! entries_text="$(enumerate_tree 2>"$enumerate_errors")"; then
