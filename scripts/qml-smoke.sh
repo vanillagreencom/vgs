@@ -91,5 +91,6 @@ source "$repo/scripts/smoke/rows/hyprland.sh"
 source "$repo/scripts/smoke/rows/instance-guard.sh"
 source "$repo/scripts/smoke/rows/diagnostics.sh"
 source "$repo/scripts/smoke/rows/read-only-prefix.sh"
+source "$repo/scripts/smoke/rows/notices-control.sh"
 
 smoke_finish

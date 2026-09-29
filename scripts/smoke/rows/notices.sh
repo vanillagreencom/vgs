@@ -14,7 +14,9 @@
 # terminal `vgsh pkg run install` with the primary's package, the notice
 # stays open while the rescan after the run still misses the command and
 # closes once a rescan finds it; a detection that fails shows the commands
-# alone with Close.
+# alone with Close. The enable trigger's control is
+# scripts/smoke/rows/notices-control.sh, the suite's last row: a shell copy
+# without the trigger raises no notice.
 set -euo pipefail
 needs_src="$sandbox/src/acme.needs"
 mkdir -p "$needs_src"
