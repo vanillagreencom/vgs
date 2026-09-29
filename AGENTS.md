@@ -34,6 +34,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell and Hyprland fact the code rests on.
 - `docs/architecture/validation.md`: before touching `scripts/validate` or one of its rows.
 - `docs/architecture/validation-smoke.md`: before touching the nested sandbox, its harness or a smoke row's verdict.
+- `docs/architecture/validation-latency.md`: before touching a latency the smoke reads or its budget.
 - `docs/architecture/runtime-qml.md`: before writing QML, for every Quickshell and Qt fact the QML rests on.
 - `shell/AGENTS.md`, `shell/plugins/AGENTS.md`, `scripts/AGENTS.md`: when working under that directory. Claude Code loads each through the `CLAUDE.md` shim beside it. Pi and Codex load only the root-to-cwd chain at launch, so an agent on those harnesses reads the nested file before working under the directory.
 

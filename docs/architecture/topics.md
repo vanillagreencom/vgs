@@ -33,6 +33,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
+- [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
 - [decisions.md](decisions.md): read for the one-line list of decisions, and add a line there with each new decision record.
