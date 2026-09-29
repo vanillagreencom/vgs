@@ -24,6 +24,8 @@ Item {
     property string desktopEntry: ""
     // The file URL of the icon of the workspace `enrichment` names, or "".
     property string workspaceIcon: ""
+    // One file URL per face, from the optional Slack token cache.
+    property var faceImages: []
     // The slot fades the content during its morph. The content keeps its
     // full-size layout and stays centred while the card is narrower, so the
     // text never reflows.
@@ -104,6 +106,7 @@ Item {
                 names: card.showsFaces ? card.enrichment.faces : []
                 more: card.showsFaces ? card.enrichment.more : 0
                 image: card.image
+                images: card.showsFaces ? card.faceImages : []
             }
 
             Image {

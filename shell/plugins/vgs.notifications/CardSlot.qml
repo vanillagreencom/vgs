@@ -150,6 +150,7 @@ Item {
         image: slot.image
         desktopEntry: slot.desktopEntry
         workspaceIcon: slot.service !== null && card.enrichment !== null ? slot.service.workspaceIcon(card.enrichment.rule, card.enrichment.workspace) : ""
+        faceImages: slot.service !== null && card.enrichment !== null ? slot.service.faceImages(card.enrichment, slot.image) : []
         actions: slot.actions
         showActions: card.hovered && slot.leaving === ""
         onActionTriggered: id => slot.service.runAction(slot.key, id)

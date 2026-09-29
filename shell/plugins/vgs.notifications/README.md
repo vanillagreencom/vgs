@@ -43,9 +43,33 @@ A per-application rule in `NotificationLogic.js` (`ENRICHERS`) reads who wrote a
 - **Faces.** The people a notification names show in the icon's place as round faces: the notification's own image on the first, the person's initials otherwise, on a tint the name always picks. One person fills the icon slot. A group shows at most three smaller faces overlapping, the sender first, each over the one before it, and a "+N" chip for the rest on top.
 - **Workspace icon.** A workspace the summary names gives way to that workspace's icon, a small rounded square before the rest of the summary. With no icon, the summary keeps the name as text.
 
-Slack is the one rule. Slack on Linux sends no image, so its faces are initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in. The workspace icons come from Slack's own client, read-only and with no credentials: the list of workspaces in `~/.config/Slack/storage/root-state.json`, and the icon images Slack's disk cache already holds, `~/.config/Slack/Cache/Cache_Data`. `images.sh cached` copies each icon out of the cache into `$XDG_CACHE_HOME/vgs/notifications/workspaces/slack/`, at most two for each of 16 workspaces. The service reads the list when it starts, and again when a notification names a workspace the list lacks or holds with no icon, at most once a minute. A workspace whose icon Slack has not cached keeps its name. The Flatpak build of Slack keeps its configuration elsewhere and is not read.
+Slack is the one rule. Slack on Linux sends no image, so the default face is initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in. The workspace icons come from Slack's own client, read-only and with no credentials: the list of workspaces in `~/.config/Slack/storage/root-state.json`, and the icon images Slack's disk cache already holds, `~/.config/Slack/Cache/Cache_Data`. `images.sh cached` copies each icon out of the cache into `$XDG_CACHE_HOME/vgs/notifications/workspaces/slack/`, at most two for each of 16 workspaces. The service reads the list when it starts, and again when a notification names a workspace the list lacks or holds with no icon, at most once a minute. A workspace whose icon Slack has not cached keeps its name unless the optional Slack token cache has a workspace icon. The Flatpak build of Slack keeps its configuration elsewhere and is not read.
 
-Real faces for Slack would need a Slack user token and its `users.info` call. That is not built.
+## Slack photos
+
+Slack photos are optional. With no token, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
+
+The token lives in libsecret under `service vgs-notifications` and `account slack`. Store it with:
+
+```bash
+secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack
+```
+
+Type the token at `secret-tool`'s prompt. Do not put the token on the command line.
+
+Remove it with:
+
+```bash
+secret-tool clear service vgs-notifications account slack
+```
+
+The Slack token needs only `users:read` and `team:read`. The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo. It does not read or store messages, channels, presence, email, profile text or tokens.
+
+The helper writes to `$XDG_CACHE_HOME/vgs/notifications/slack-photos/<team id>/`. It keeps `team.json`, `users.json`, `workspace.png` and one `<user id>.png` per cached user. It writes files through a sibling temporary file and rename. It refreshes at most once a day. After an API failure it waits 15 minutes before another network attempt. It keeps at most 512 users, accepts each image only up to 512 KiB and keeps one team's downloaded images within 10 MiB. Slack's `image_48` is already the card's face size; when ImageMagick is present the helper crops it to 48 by 48 pixels, otherwise it keeps Slack's 48-pixel image. Network or API failures keep initials in the card and write one `notifications-slack-photos:` log line without the token.
+
+Production image URLs must be HTTPS and must come from Slack's image hosts or `secure.gravatar.com`. Tests alone can set `VGS_NOTIFICATIONS_SLACK_TEST=1` and point `VGS_NOTIFICATIONS_SLACK_API_BASE` at `127.0.0.1`.
+
+Omarchy `main` has no `secret-tool`, `libsecret`, `gnome-keyring` or notification-avatar implementation in GitHub code search. VGS uses libsecret here because the issue requires a local secret store and because the token must not enter `shell.json`, argv, the repository or logs.
 
 ## State
 

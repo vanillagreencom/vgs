@@ -134,7 +134,6 @@ var WORKSPACES_MAX = 16;
 // A workspace the list does not name, or names with no icon, is looked up
 // again on a later notification at most this often, in milliseconds.
 var WORKSPACE_RELOAD_GAP = 60000;
-
 // The per-application rules that read who wrote and where from a sender's
 // own text. A rule matches a notification whose desktop entry or
 // application name, case folded, is one of its `names`. `read(summary,
@@ -318,6 +317,99 @@ function workspaceReload(map, workspace, loadedAt, now) {
     var key = fold(workspace);
     if (key === "" || (hasOwn(map, key) && map[key] !== "")) return false;
     return now - loadedAt >= WORKSPACE_RELOAD_GAP;
+}
+
+// Slack photos cache data, as slack-photos.js prints and stores it, reduced
+// to the fields the card needs. Names are matched case-folded the same way
+// initials and Slack sender parsing key them.
+function slackPhotos(text) {
+    var parsed;
+    try {
+        parsed = JSON.parse(String(text));
+    } catch (e) {
+        return { ok: false, error: "not-json" };
+    }
+    if (!isPlainObject(parsed)) return { ok: false, error: "not-object" };
+    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [] };
+    if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };
+    if (!Array.isArray(parsed.teams)) return { ok: false, error: "teams want=list" };
+    var teams = [];
+    for (var t = 0; t < parsed.teams.length; t++) {
+        var team = parsed.teams[t];
+        if (!isPlainObject(team)) return { ok: false, error: "teams." + t + " want=object" };
+        if (typeof team.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(team.id)) return { ok: false, error: "teams." + t + ".id want=safe" };
+        if (!Array.isArray(team.names)) return { ok: false, error: "teams." + t + ".names want=list" };
+        if (!Array.isArray(team.users)) return { ok: false, error: "teams." + t + ".users want=list" };
+        var names = uniqueNames(team.names);
+        if (names.length === 0) return { ok: false, error: "teams." + t + ".names want=non-empty" };
+        var users = [];
+        for (var u = 0; u < team.users.length; u++) {
+            var user = team.users[u];
+            if (!isPlainObject(user)) return { ok: false, error: "teams." + t + ".users." + u + " want=object" };
+            if (typeof user.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(user.id)) return { ok: false, error: "teams." + t + ".users." + u + ".id want=safe" };
+            var userNames = uniqueNames(user.names);
+            if (userNames.length === 0) continue;
+            var photo = typeof user.photo === "string" && /^file:\/\/\/[^\s]+$/.test(user.photo) ? user.photo : "";
+            users.push({ id: user.id, names: userNames, photo: photo });
+        }
+        var icon = typeof team.icon === "string" && /^file:\/\/\/[^\s]+$/.test(team.icon) ? team.icon : "";
+        teams.push({ id: team.id, names: names, icon: icon, users: users });
+    }
+    return { ok: true, status: "loaded", teams: teams };
+}
+
+function uniqueNames(names) {
+    var out = [];
+    var seen = {};
+    if (!Array.isArray(names)) return out;
+    for (var i = 0; i < names.length; i++) {
+        if (typeof names[i] !== "string") continue;
+        var name = names[i].trim();
+        var key = fold(name);
+        if (key === "" || hasOwn(seen, key)) continue;
+        seen[key] = true;
+        out.push(name);
+    }
+    return out;
+}
+
+function slackTeamFor(teams, workspace) {
+    var wanted = fold(workspace);
+    if (wanted === "") return teams.length === 1 ? teams[0] : null;
+    for (var t = 0; t < teams.length; t++)
+        for (var n = 0; n < teams[t].names.length; n++)
+            if (fold(teams[t].names[n]) === wanted) return teams[t];
+    return null;
+}
+
+function slackUserPhotoMap(team) {
+    var map = {};
+    if (team === null) return map;
+    for (var u = 0; u < team.users.length; u++) {
+        var photo = team.users[u].photo;
+        if (photo === "") continue;
+        for (var n = 0; n < team.users[u].names.length; n++) {
+            var key = fold(team.users[u].names[n]);
+            if (!hasOwn(map, key)) map[key] = photo;
+        }
+    }
+    return map;
+}
+
+function slackFaceImages(enrichment, teams, carriedImage) {
+    var images = [];
+    if (enrichment === null || enrichment.rule !== "slack") return images;
+    var map = slackUserPhotoMap(slackTeamFor(teams, enrichment.workspace));
+    for (var i = 0; i < enrichment.faces.length; i++) {
+        var key = fold(enrichment.faces[i]);
+        images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || "") : ""));
+    }
+    return images;
+}
+
+function slackWorkspaceIcon(teams, workspace) {
+    var team = slackTeamFor(teams, workspace);
+    return team === null ? "" : team.icon;
 }
 
 // ----------------------------------------------------------- Silence

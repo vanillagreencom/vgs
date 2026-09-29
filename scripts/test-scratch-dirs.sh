@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The scratch-directory guard at the top of the suites that remove their
 # scratch directory on exit: scripts/vgsh-rows.sh (sourced by every
-# scripts/test-vgsh*.sh) and the four suites below that make their own. A
+# scripts/test-vgsh*.sh) and the three suites below that use mktemp. A
 # stub mktemp first on PATH answers each way a failed or wrong mktemp can,
 # and each subject runs from a disposable caller directory inside this
 # suite's scratch. Each case pins exit 1 and the first stderr line, and
@@ -20,7 +20,9 @@ set -euo pipefail
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 
-tmp="$(mktemp -d)" || { echo "test-scratch-dirs: scratch=mktemp-failed" >&2; exit 1; }
+tmp="$repo/tmp/test-scratch-dirs-$$"
+rm -rf -- "$tmp"
+mkdir -p -- "$tmp" || { echo "test-scratch-dirs: scratch=mkdir-failed" >&2; exit 1; }
 [[ -d $tmp && ! -L $tmp ]] || { echo "test-scratch-dirs: scratch=not-a-directory value=[$tmp]" >&2; exit 1; }
 tmp="$(cd -- "$tmp" && pwd -P)"
 trap 'rm -rf -- "${tmp:?}"' EXIT
@@ -53,7 +55,6 @@ done
 subjects=(
   "vgsh-rows.sh|-c|source \"\$1\"|test-scratch-driver|$repo/scripts/vgsh-rows.sh"
   "test-launcher-file-search.sh|$repo/scripts/test-launcher-file-search.sh"
-  "test-notifications-images.sh|$repo/scripts/test-notifications-images.sh"
   "test-sandbox-shots.sh|$repo/scripts/test-sandbox-shots.sh"
   "test-smoke-verdict.sh|$repo/scripts/test-smoke-verdict.sh"
 )

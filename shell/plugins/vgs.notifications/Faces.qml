@@ -15,8 +15,11 @@ Item {
     required property var look
     property var names: []
     property int more: 0
-    // The carried image, drawn on the first face; "" or an image that does
-    // not load leaves its initials.
+    // The image for each face; "" or an image that does not load leaves its
+    // initials.
+    property var images: []
+    // The carried image, used on the first face when no per-person image is
+    // known.
     property string image: ""
 
     readonly property int count: names.length + (more > 0 ? 1 : 0)
@@ -26,6 +29,12 @@ Item {
 
     implicitWidth: count === 0 ? 0 : size + (count - 1) * step
     implicitHeight: count === 0 ? 0 : size
+
+    function imageFor(index) {
+        if (index >= names.length) return "";
+        if (index < images.length && images[index] !== "") return images[index];
+        return index === 0 ? image : "";
+    }
 
     Repeater {
         model: faces.count
@@ -57,7 +66,7 @@ Item {
             Image {
                 id: photo
                 anchors.fill: parent
-                source: face.index === 0 && !face.chip ? faces.image : ""
+                source: faces.imageFor(face.index)
                 visible: status === Image.Ready
                 sourceSize.width: faces.size * Screen.devicePixelRatio
                 sourceSize.height: faces.size * Screen.devicePixelRatio

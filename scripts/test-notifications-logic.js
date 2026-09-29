@@ -13,7 +13,6 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { load } = require("./qml-library.js");
 
@@ -276,6 +275,34 @@ function verify(logic) {
         ["no workspace", "", 0, 999999, false]
     ])
         assert.equal(logic.workspaceReload(icons, workspace, loadedAt, now), want, "reload for " + label);
+
+    const photoCache = {
+        status: "loaded",
+        teams: [{
+            id: "T1",
+            names: ["acme", "Acme Corp"],
+            icon: "file:///cache/T1/workspace.png",
+            users: [
+                { id: "U1", names: ["Ada Lovelace", "ada"], photo: "file:///cache/T1/U1.png" },
+                { id: "U2", names: ["Grace Hopper"], photo: "file:///cache/T1/U2.png" },
+                { id: "U3", names: ["No Photo"], photo: "" }
+            ]
+        }]
+    };
+    same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", teams: photoCache.teams }, "a Slack photo cache is accepted");
+    same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", teams: [] }, "no token leaves no cache");
+    same(logic.slackPhotos("{"), { ok: false, error: "not-json" });
+    same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.id want=safe" });
+    same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["acme"], users: [{ id: "U1", names: ["Ada"], photo: "https://example.test/a.png" }] }] })), { ok: true, status: "loaded", teams: [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "" }] }] }, "a non-file photo is ignored");
+    const group = logic.enrich("Slack", "slack", "[acme] in Ada Lovelace, Grace Hopper, No Photo", "Ada Lovelace: hi");
+    same(logic.slackFaceImages(group, photoCache.teams, "file:///sender.png"), ["file:///cache/T1/U1.png", "file:///cache/T1/U2.png", ""], "each Slack face takes its own photo");
+    same(logic.slackFaceImages(Object.assign({}, group, { workspace: "unknown" }), photoCache.teams, "file:///sender.png"), ["file:///sender.png", "", ""], "an unknown workspace has no photos");
+    const singleTeam = [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///cache/T1/U1.png" }] }];
+    const direct = logic.enrich("Slack", "slack", "New message from Ada", "hi");
+    same(logic.slackFaceImages(direct, singleTeam, ""), ["file:///cache/T1/U1.png"], "one workspace can match titles without a prefix");
+    same(logic.slackFaceImages(direct, [{ id: "T1", names: ["acme"], icon: "", users: [{ id: "U1", names: ["Ada"], photo: "file:///first.png" }, { id: "U2", names: ["ADA"], photo: "file:///second.png" }] }], ""), ["file:///first.png"], "the first duplicate name owns the photo");
+    assert.equal(logic.slackWorkspaceIcon(photoCache.teams, "acme"), "file:///cache/T1/workspace.png");
 }
 verify(load(file));
 
@@ -324,11 +351,19 @@ const CONTROLS = [
     ["first copied icon", "if (copied.indexOf(to) !== -1) file = \"file://\" + to;", "file = \"file://\" + to;"],
     ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"],
     ["tint by the folded name", 'var key = fold(name || "");', 'var key = String(name || "");'],
-    ["tint by the hash", "return FACE_TINTS[hash % FACE_TINTS.length];", "return FACE_TINTS[0];"]
+    ["tint by the hash", "return FACE_TINTS[hash % FACE_TINTS.length];", "return FACE_TINTS[0];"],
+    ["Slack photo cache status", 'if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };', 'if (false) return { ok: false, error: "status want=loaded|absent" };'],
+    ["Slack photo safe team id", 'if (typeof team.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(team.id)) return { ok: false, error: "teams." + t + ".id want=safe" };', 'if (false) return { ok: false, error: "teams." + t + ".id want=safe" };'],
+    ["Slack photo file URL only", 'var photo = typeof user.photo === "string" && /^file:\\/\\/\\/[^\\s]+$/.test(user.photo) ? user.photo : "";', 'var photo = typeof user.photo === "string" ? user.photo : "";'],
+    ["Slack photo workspace match", "if (fold(teams[t].names[n]) === wanted) return teams[t];", "if (false) return teams[t];"],
+    ["Slack photo first name wins", "if (!hasOwn(map, key)) map[key] = photo;", "map[key] = photo;"],
+    ["Slack photo per face", "images.push(hasOwn(map, key) ? map[key] : (i === 0 ? String(carriedImage || \"\") : \"\"));", "images.push(i === 0 ? String(carriedImage || \"\") : \"\");"]
 ];
 
 const source = fs.readFileSync(file, "utf8");
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "notifications-logic-control-"));
+const temp = path.join(__dirname, "..", "tmp", "notifications-logic-control-" + process.pid);
+fs.rmSync(temp, { recursive: true, force: true });
+fs.mkdirSync(temp, { recursive: true });
 try {
     for (const [label, needle, replacement] of CONTROLS) {
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);

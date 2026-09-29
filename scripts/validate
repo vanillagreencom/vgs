@@ -97,6 +97,7 @@ rows=(
   "cli|launcher file search helper|scripts/test-launcher-file-search.sh|shell/plugins/vgs.launcher/file-search.sh"
   "logic|notifications logic|node scripts/test-notifications-logic.js|shell/plugins/vgs.notifications/NotificationLogic.js shell/plugins/vgs.notifications/Appearance.js scripts/qml-library.js"
   "cli|notifications image helper|scripts/test-notifications-images.sh|shell/plugins/vgs.notifications/images.sh scripts/smoke/fixtures/slack/*"
+  "cli|notifications Slack photos helper|node scripts/test-notifications-slack-photos.js|shell/plugins/vgs.notifications/slack-photos.js"
   "manifests|bundled manifests|node scripts/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
   "manifests|smoke fixture manifests|node scripts/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|scripts/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js"
@@ -128,7 +129,7 @@ rows=(
   "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"
   "tools|sandbox shot controls|scripts/test-sandbox-shots.sh|scripts/smoke/shot.sh scripts/sandbox-shots.sh"
   "tools|scratch directory guard controls|scripts/test-scratch-dirs.sh|scripts/vgsh-rows.sh scripts/test-launcher-file-search.sh scripts/test-notifications-images.sh scripts/test-sandbox-shots.sh scripts/test-smoke-verdict.sh"
-  "repo|whitespace errors against the base|whitespace_check|"
+  "repo|whitespace errors against the base|whitespace_check|tools/doc-limits-excludes"
   "repo|every test file has a row|rows_cover_tests|"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh scripts/check-manifests.js scripts/test-check-manifests.js scripts/qml-library.js shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js bin/vgsh-scan scripts/smoke/fixtures/*"
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Ui/icons/Lucide.js scripts/qml-library.js themes/*"
@@ -281,7 +282,7 @@ if [[ -n $change_base ]]; then
       done
       if [[ $known == false ]]; then
         case "$path" in
-          *.md|*.markdown|docs/*|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
+          *.md|*.markdown|docs/*|tools/doc-limits-excludes|.gitignore|.kendex*|kendex*.toml|.claude/*|.codex/*|.pi/*|.github/*) ;;
           .agents/skills/vgs-plugin/*)
             printf 'validate: selection=full unknown-input=%q\n' "$path" >&2; full=true; break ;;
           .agents/*|.bot-instructions/*) ;;

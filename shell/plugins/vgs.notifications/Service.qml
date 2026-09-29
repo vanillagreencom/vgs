@@ -86,12 +86,24 @@ Item {
         WorkspaceIcons {}
     }
 
+    SlackPhotos {
+        id: slackPhotos
+    }
+
     // The icon file URL of a workspace a rule's sender named, or "".
     function workspaceIcon(ruleId, workspace) {
         if (workspace === "") return "";
-        for (const source of workspaceSources.instances)
-            if (source.ruleId === ruleId) return source.iconFor(workspace);
+        for (const source of workspaceSources.instances) {
+            if (source.ruleId !== ruleId) continue;
+            const icon = source.iconFor(workspace);
+            if (icon !== "") return icon;
+        }
+        if (ruleId === "slack") return slackPhotos.workspaceIcon(workspace);
         return "";
+    }
+
+    function faceImages(enrichment, carriedImage) {
+        return slackPhotos.faceImages(enrichment, carriedImage);
     }
 
     // A notification arrived or changed: a workspace its rule does not yet
