@@ -10,6 +10,7 @@
 #                                  and each requirement the last scan did not find as `missing <id> <command> (<package>)`
 #   vgsh plugin requirements [--json] <id>
 #                                  one plugin's requirements, each with its state and this system's package
+#   vgsh plugin settings <id>      the settings one plugin's service, panel and floating TUIs receive, as one JSON line
 #   vgsh plugin rescan             have a running shell scan the plugin directories again
 #   vgsh plugin enable <id>        enable one plugin; a bar becomes the active bar
 #   vgsh plugin disable <id>       disable one plugin; names the bar widgets it takes off screen
@@ -85,8 +86,8 @@
 # $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
 # command that contacts the shell addresses that instance alone, so a shell
 # started any other way is never reached. `plugin validate`, `plugin add`,
-# `plugin update`, `plugin remove`, `plugin outdated`, `plugin requirements`
-# and `doctor` work with no shell running.
+# `plugin update`, `plugin remove`, `plugin outdated`, `plugin requirements`,
+# `plugin settings` and `doctor` work with no shell running.
 #
 # `restart` checks the same floor first, so below it restart refuses as run
 # does and leaves the running shell alone. It refuses while the session is
@@ -140,6 +141,14 @@
 # `{ core: [rows], plugins: { <id>: [rows] } }` for `doctor`. Both read
 # the plugin directories and PATH as the shell's scan does, and change
 # nothing: docs/architecture/requirements.md.
+#
+# `plugin settings` prints the settings the plugin the shell would hold
+# under <id> hands its service, panel and floating TUIs: its manifest's
+# defaults under its plugins[] row in the shipped and user shell.json, as
+# one JSON object on one line. A value the plugin's schema refuses is
+# refused as setting=<key> want=<type> id=<id>, and an id no accepted
+# manifest names as unknown=<id>. It reads and changes nothing else:
+# docs/architecture/manager.md.
 #
 # `plugin outdated` and `theme outdated` fetch every installed checkout
 # with no hook, no prompt and no askpass dialog, each fetch ended at 10 s,
@@ -1484,6 +1493,13 @@ case "$cmd" in
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         scan="$(plugin_scan)" || exit 1
         node "$judge" requirements "$format" "$id" <<<"$scan"
+        ;;
+      settings)
+        id="${1:-}"
+        if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        scan="$(plugin_scan)" || exit 1
+        node "$judge" settings "$root/config/shell.json" "$config_home/vgs/shell.json" "$id" <<<"$scan"
         ;;
       rescan)
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi

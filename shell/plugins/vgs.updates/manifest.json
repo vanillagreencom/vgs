@@ -4,15 +4,21 @@
   "name": "Updates",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Checks system, VGS, plugin, theme and mise updates from one service and publishes their shared status.",
+  "description": "Checks system, VGS, plugin, theme and mise updates from one service, publishes their shared status and runs every update in one floating TUI.",
   "license": "MIT",
   "icon": "refresh-cw",
   "kinds": ["service"],
   "entryPoints": { "service": "Service.qml" },
   "capabilities": ["ipc", "status", "tui"],
   "requirements": [
-    { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" }
+    { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" },
+    { "command": "snapper", "packages": { "pacman": "snapper" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages" },
+    { "command": "timeshift", "packages": { "pacman": "timeshift" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages when snapper is absent" }
   ],
+  "tui": {
+    "update": { "script": "tui/update.sh", "title": "Update everything", "size": "tall", "entry": { "label": "Update everything", "icon": "refresh-cw", "group": "Update" } },
+    "update-source": { "script": "tui/update-source.sh", "title": "Update one source", "size": "tall" }
+  },
   "settings": {
     "intervalHours": 6,
     "hideWhenCurrent": false,
@@ -26,7 +32,7 @@
     "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the later bar widget when no source has updates", "group": "Display" },
     "aurCommand": { "type": "string", "label": "AUR command", "description": "Blank lets the update TUI choose paru -Sua or yay -Sua", "group": "Update TUI" },
     "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
-    "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the later update TUI pass --yes to plugin and theme updates", "group": "Update TUI" },
+    "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the update TUI pass --yes to plugin and theme updates, so it shows their diffs without asking", "group": "Update TUI" },
     "placement": { "type": "enum", "label": "Flyout placement", "description": "Default placement for the later updates panel", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
   },
   "status": {

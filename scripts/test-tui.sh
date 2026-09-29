@@ -125,6 +125,45 @@ rm -f -- "$tmp/sudo-deny"
 run 'vgs_tui_sudo_session begin'
 check "an unknown session step is refused" test "$status:$(err_first)" == "2:vgs-tui: refused: sudo-session=begin"
 
+# A nested run's session joins a live owner's: it drops nothing when it
+# ends or fails, so the owner's credential stays for its later steps, and
+# the owner's end drops it once. An owner pid naming no process starts a
+# session of its own. The nested run is a child bash sourcing the same
+# library, as bin/lib/pkg-run.sh is under the Updates pipeline.
+nested() { printf '%s -c %q %q' "$BASH" "source \"\$0\"; vgs_tui_sudo_session start; $1" "$LIB"; } # SNIPPET
+dead_pid="$(sh -c 'echo $$')"
+# nested_rows QUIET: every row against $LIB; prints ok and FAIL lines unless
+# QUIET is `quiet`; returns the number of failing rows. A row is a name, a
+# snippet and the sudo calls it makes, space-delimited; the rows are built
+# at each call, so a control's copy reaches the nested run too.
+nested_rows() {
+  local names=() snippets=() wants=() i got red=0
+  names+=("a nested session joins its owner's")
+  snippets+=("vgs_tui_sudo_session start; $(nested 'vgs_tui_sudo_session end'); vgs_tui_sudo_session end")
+  wants+=("-k /usr/bin/true /usr/bin/true -k")
+  names+=("a failing nested run keeps its owner's credential")
+  snippets+=("vgs_tui_sudo_session start; $(nested 'exit 3') || true; vgs_tui_sudo_session end")
+  wants+=("-k /usr/bin/true /usr/bin/true -k")
+  names+=("an owner that is gone is not joined")
+  snippets+=("export VGS_TUI_SUDO_SESSION=$dead_pid; vgs_tui_sudo_session start; vgs_tui_sudo_session end")
+  wants+=("-k /usr/bin/true -k")
+  for i in "${!names[@]}"; do
+    rm -f -- "$tmp/sudo"
+    run "${snippets[i]}"
+    got="$(tr '\n' ' ' <"$tmp/sudo" | sed 's/ $//')" || got="unreadable"
+    if [[ $status == 0 && $got == "${wants[i]}" ]]; then
+      [[ $1 == quiet ]] || ok "${names[i]}"
+    else
+      red=$((red + 1))
+      [[ $1 == quiet ]] || fail "${names[i]}: exit=$status calls=[$got]"
+    fi
+  done
+  return "$red"
+}
+nested_rows loud || true
+run 'vgs_tui_sudo_session start; vgs_tui_sudo_session end; printf "%s" "${VGS_TUI_SUDO_SESSION-unset}"'
+check "an ended session unexports its pid" test "$(cat "$tmp/out")" == unset
+
 # The lock: one holder per name, a lower-case name only.
 # Two holders of one name: this shell, then a child bash that sources the
 # same library.
@@ -228,6 +267,10 @@ check "the kept-credential mutant ends without sudo -k" test "$(cat "$tmp/sudo")
 control shared-lock 'flock -n -E 75 "$_vgs_tui_lock_fd" || status=$?' 'true || status=$?'
 lock_twice
 check "the shared-lock mutant lets a second holder in" grep -qxF second=0 "$tmp/out"
+control never-joins '&& kill -0 "$outer" 2>/dev/null; then' '&& false; then'
+check "the never-joins mutant fails a nested row" test "$(nested_rows quiet && echo green || echo red)" == red
+control joins-the-dead '&& kill -0 "$outer" 2>/dev/null; then' '; then'
+check "the joins-the-dead mutant fails a nested row" test "$(nested_rows quiet && echo green || echo red)" == red
 LIB="$lib"
 
 # The template's control: a copy that turns every confirm status into success.

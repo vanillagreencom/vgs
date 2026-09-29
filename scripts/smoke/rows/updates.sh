@@ -1,10 +1,11 @@
 # vgs.updates, the service that owns every update probe. A copy of the
 # plugin in the user directory, which wins the id over the shipped one,
 # runs the shipped Service.qml and bin/check against the shipped bin/vgsh,
-# with two changes only: one stub `tui` script, because the update TUIs
-# belong to a later issue and shell.tui.state carries declared scripts
-# only, listed with an entry so `openTui` reaches it, and the vgsh it runs,
-# a wrapper that confines each verb:
+# with two changes only: one stub `tui` script beside the declared update
+# TUIs, a run of which the row holds open until it opens a gate, since the
+# pipeline itself would run package managers and its own controls are
+# scripts/test-updates-pipeline.sh, listed with an entry so `openTui`
+# reaches it, and the vgsh it runs, a wrapper that confines each verb:
 #
 # - `pkg` runs the shipped `vgsh pkg` in an unprivileged mount namespace
 #   whose /etc/os-release names the identity this row picks, `arch` or
@@ -19,7 +20,8 @@
 # Read back from the accepted status record: every source's count, one
 # probe run per check however often it is read, a failing source named and
 # kept, a list past the status ceiling cut with its count kept, a request
-# during a check queued once, a TUI run's end starting one check, and only
+# during a check queued once, a TUI run's end starting one check, the
+# pipeline listed in the launcher's Update group, and only
 # the VGS rows where no manager is detected. The control is a bar widget
 # that runs the check itself: on two bars it probes twice for one check.
 set -euo pipefail
@@ -77,8 +79,8 @@ import json, pathlib, sys
 plugin, vgsh = pathlib.Path(sys.argv[1]), sys.argv[2]
 manifest = plugin / "manifest.json"
 doc = json.loads(manifest.read_text())
-assert "tui" not in doc
-doc["tui"] = {"finish": {"script": "tui/finish.sh", "title": "Updates smoke", "size": "default", "presentation": "plain", "entry": {"label": "Updates smoke", "icon": "terminal", "group": "Smoke"}}}
+assert "finish" not in doc["tui"], doc["tui"]
+doc["tui"]["finish"] = {"script": "tui/finish.sh", "title": "Updates smoke", "size": "default", "presentation": "plain", "entry": {"label": "Updates smoke", "icon": "terminal", "group": "Smoke"}}
 manifest.write_text(json.dumps(doc))
 service = plugin / "Service.qml"
 lines = service.read_text().splitlines()
@@ -145,6 +147,8 @@ expect "rescan after adding the updates copy answers ok" ok ipc shell rescanPlug
 expect_poll "the updates copy is discovered" True plugin_known vgs.updates
 expect "enabling the updates service is allowed" ok ipc shell setPluginEnabled vgs.updates true
 expect_poll "the updates service is built" True record_exists vgs.updates
+updates_tui_rows() { ipc shell listTuis | python3 -c 'import json,sys; print(json.dumps(sorted([r["key"], r["group"]] for r in json.load(sys.stdin) if r["plugin"] == "vgs.updates")))'; }
+expect "the pipeline is listed in the Update group and the one-source TUI is not listed" '[["vgs.updates/finish", "Smoke"], ["vgs.updates/update", "Update"]]' updates_tui_rows
 expect_poll "the first check publishes every source vgsh reports" \
   '[["pacman", 2, null], ["aur", 1, null], ["flatpak", 1, null], ["mise", 1, null], ["vgs", 1, null], ["plugins", 1, null], ["themes", 0, null]]' updates_sources
 expect "pending sums every source" 7 updates_field pending

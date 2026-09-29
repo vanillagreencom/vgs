@@ -18,7 +18,8 @@
 #                                    gum confirm; yes under VGS_TUI_UNATTENDED=1
 #   vgs_tui_choose|input|filter [GUM_ARG...]
 #                                    gum choose, input or filter
-#   vgs_tui_sudo_session start|end   one sudo authorization kept alive for this script
+#   vgs_tui_sudo_session start|end   one sudo authorization kept alive for this script,
+#                                    joined by a nested run's session
 #   vgs_tui_lock NAME                hold $XDG_RUNTIME_DIR/vgs-tui-NAME.lock until exit
 #   vgs_tui_log FILE [ARG...]        run this script again under script(1) into FILE
 #   vgs_tui_reboot_check             print why a reboot is needed; 1 when none is
@@ -90,16 +91,34 @@ vgs_tui_filter() { _vgs_tui_terminal filter || return; gum filter "$@"; }
 
 _vgs_tui_keepalive_pid=""
 _vgs_tui_lock_fd=""
+_vgs_tui_sudo_joined=""
 
 # start drops any cached sudo credential, asks for the password once through
 # `sudo /usr/bin/true` (sudo -v would prompt under a passwordless rule too)
 # and keeps the credential fresh with `sudo -n /usr/bin/true` every 60 s
-# while this script's process lives. From then on EXIT, HUP, INT and TERM
-# end the session: those traps replace any the caller set before. end stops
-# the keepalive, clears those traps and drops the credential.
+# while this script's process lives. It exports VGS_TUI_SUDO_SESSION, this
+# process's pid, to every command the script runs. From then on EXIT, HUP,
+# INT and TERM end the session: those traps replace any the caller set
+# before. end stops the keepalive, clears those traps, drops the credential
+# and unexports the pid.
+#
+# A start in a process whose VGS_TUI_SUDO_SESSION names a live process joins
+# that session: it drops nothing, starts no keepalive and sets no trap, and
+# its `sudo /usr/bin/true` answers from the owner's credential, asking only
+# when it lapsed; its end drops nothing. The Updates pipeline runs
+# `vgsh pkg run upgrade` inside its own session, and that run's end would
+# otherwise revoke the credential the pipeline's later steps use. A pid that
+# names no live process, as a command a step started that outlives the
+# owner carries, starts a session of its own.
 vgs_tui_sudo_session() { # start|end
   case "${1:-}" in
     start)
+      local outer="${VGS_TUI_SUDO_SESSION:-}"
+      if [[ $outer =~ ^[123456789][0123456789]*$ ]] && kill -0 "$outer" 2>/dev/null; then
+        sudo /usr/bin/true || _vgs_tui_refuse 1 "sudo=not-authorized" || return
+        _vgs_tui_sudo_joined=1
+        return 0
+      fi
       sudo -k || _vgs_tui_refuse 1 "sudo=reset-failed" || return
       sudo /usr/bin/true || _vgs_tui_refuse 1 "sudo=not-authorized" || return
       local owner=$$
@@ -116,12 +135,18 @@ vgs_tui_sudo_session() { # start|end
         done
       ) </dev/null &
       _vgs_tui_keepalive_pid=$!
+      export VGS_TUI_SUDO_SESSION=$$
       trap 'vgs_tui_sudo_session end' EXIT
       trap 'exit 129' HUP
       trap 'exit 130' INT
       trap 'exit 143' TERM
       ;;
     end)
+      if [[ -n $_vgs_tui_sudo_joined ]]; then
+        _vgs_tui_sudo_joined=""
+        return 0
+      fi
+      unset VGS_TUI_SUDO_SESSION
       # The keepalive may have exited already, when sudo -n refused.
       if [[ -n $_vgs_tui_keepalive_pid ]]; then
         kill "$_vgs_tui_keepalive_pid" 2>/dev/null || :

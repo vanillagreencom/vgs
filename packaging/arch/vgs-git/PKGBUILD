@@ -34,6 +34,8 @@ optdepends=(
   'xdg-utils: launcher Files'
   'hyprlock: launcher Lock'
   'pacman-contrib: checkupdates, for the package update check'
+  'snapper: a snapshot before the update pipeline changes packages'
+  'timeshift: a snapshot before the update pipeline changes packages, without snapper'
   'sudo: package installs and the browser policy writer in floating TUIs'
   'imagemagick: square Slack profile photos in notifications'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'

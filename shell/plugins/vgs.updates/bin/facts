@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// vgs.updates facts: reads one vgsh JSON answer on stdin and prints the
+// facts the update pipeline, tui/pipeline.sh, acts on, one `<key> <value>`
+// line each, so bash never parses JSON. Whether VGS, a plugin or a theme
+// is behind is UpdatesLogic.js's decision, the one the service counts
+// with, loaded through the core's qml-library loader.
+//
+//   facts <loader> detect           `vgsh pkg detect --json`
+//       `primary <id>` when a primary serves the system, then
+//       `present <id> <binary>` for each overlay and source
+//   facts <loader> plan             `vgsh pkg plan upgrade <id>`
+//       `elevate true|false`, then `step <argv joined by spaces>` per step
+//   facts <loader> self             `vgsh self status --json`
+//       `method <method>`, `package <name>` when a package owns the tree,
+//       `current <version>`, `behind true|false`, and `error <refusal>`
+//       when the status names one
+//   facts <loader> owner            `vgsh pkg owner <path>`
+//       `version <version>`
+//   facts <loader> outdated plugins|themes
+//                                   `vgsh plugin|theme outdated --json`
+//       `update <id>` for each checkout behind its upstream, then
+//       `error <text>` naming each checkout whose probe failed
+//   facts <loader> settings         `vgsh plugin settings vgs.updates`
+//       `aur-command <text>`, `snapshot auto|off`, `trust true|false`
+//
+// Every refusal is one line on stderr, `updates-facts: refused: <key>=<value>`,
+// and exit 2 for a bad invocation, 1 for an answer it cannot read. A value
+// holding a control character is refused, since the lines are the protocol.
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+
+function refuse(first, status) {
+    process.stderr.write("updates-facts: refused: " + first + "\n");
+    process.exit(status);
+}
+
+const [loaderPath, verb, source] = process.argv.slice(2);
+if (loaderPath === undefined || verb === undefined) refuse("arguments=want-loader-verb", 2);
+
+let answer;
+try {
+    answer = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (e) {
+    refuse(verb + "=unparseable", 1);
+}
+
+const lines = [];
+function line(key, value) {
+    const text = String(value);
+    if (/[\u0000-\u001f\u007f]/.test(text)) refuse(verb + "=control-character key=" + key, 1);
+    lines.push(key + " " + text);
+}
+function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function logic() {
+    return require(loaderPath).load(path.join(__dirname, "..", "UpdatesLogic.js"));
+}
+
+switch (verb) {
+case "detect": {
+    if (!isObject(answer) || !Array.isArray(answer.overlays) || !Array.isArray(answer.sources)) refuse("detect=malformed", 1);
+    if (answer.primary !== null) line("primary", answer.primary.id);
+    for (const row of answer.overlays.concat(answer.sources)) line("present", row.id + " " + row.binary);
+    break;
+}
+case "plan": {
+    if (!isObject(answer) || typeof answer.elevate !== "boolean" || !Array.isArray(answer.steps)) refuse("plan=malformed", 1);
+    line("elevate", answer.elevate);
+    for (const step of answer.steps) line("step", step.join(" "));
+    break;
+}
+case "self": {
+    if (!isObject(answer) || typeof answer.method !== "string") refuse("self=malformed", 1);
+    const row = logic().normalizeSelf({ status: 0, stdout: JSON.stringify(answer), stderr: "" }, 0);
+    line("method", answer.method);
+    if (typeof answer.package === "string") line("package", answer.package);
+    if (typeof answer.current === "string") line("current", answer.current);
+    line("behind", row.count === 1);
+    if (row.error !== null) line("error", row.error);
+    break;
+}
+case "owner": {
+    if (!isObject(answer) || typeof answer.version !== "string") refuse("owner=malformed", 1);
+    line("version", answer.version);
+    break;
+}
+case "outdated": {
+    if (source !== "plugins" && source !== "themes") refuse("outdated=" + (source || "missing"), 2);
+    const row = logic().normalizeOutdated(source, { status: 0, stdout: JSON.stringify(answer), stderr: "" }, 0);
+    if (row.count === null) refuse("outdated=" + source + " reason=" + row.error, 1);
+    for (const pkg of row.packages) line("update", pkg.name);
+    if (row.error !== null) line("error", row.error);
+    break;
+}
+case "settings": {
+    if (!isObject(answer) || typeof answer.aurCommand !== "string" || typeof answer.trustPluginUpdates !== "boolean"
+        || (answer.snapshot !== "auto" && answer.snapshot !== "off"))
+        refuse("settings=malformed", 1);
+    line("aur-command", answer.aurCommand);
+    line("snapshot", answer.snapshot);
+    line("trust", answer.trustPluginUpdates);
+    break;
+}
+default:
+    refuse("verb=" + verb, 2);
+}
+if (lines.length > 0) process.stdout.write(lines.join("\n") + "\n");

@@ -213,7 +213,11 @@ f share/vgs/shell/plugins/vgs.updates/NormalizeCheck.js
 f share/vgs/shell/plugins/vgs.updates/Service.qml
 f share/vgs/shell/plugins/vgs.updates/UpdatesLogic.js
 f share/vgs/shell/plugins/vgs.updates/bin/check
+f share/vgs/shell/plugins/vgs.updates/bin/facts
 f share/vgs/shell/plugins/vgs.updates/manifest.json
+f share/vgs/shell/plugins/vgs.updates/tui/pipeline.sh
+f share/vgs/shell/plugins/vgs.updates/tui/update-source.sh
+f share/vgs/shell/plugins/vgs.updates/tui/update.sh
 f share/vgs/shell/shell.qml
 f share/vgs/themes/catalog/BACKGROUNDS-ATTRIBUTION.md
 f share/vgs/themes/catalog/THEMES-ATTRIBUTION.md

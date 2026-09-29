@@ -20,8 +20,10 @@
 # run with its exit status. Under sudo every run holds one sudo session
 # (tui.sh's vgs_tui_sudo_session): the password is asked once, before the
 # first step, and the credential is dropped when the run ends, whatever the
-# number of steps. doas and run0 get no keepalive: each step asks as the
-# system's own rules say, doas.conf's `persist` or polkit's
+# number of steps. A run started inside another script's sudo session, as
+# the Updates pipeline starts `vgsh pkg run upgrade`, joins that session and
+# leaves the credential to its owner. doas and run0 get no keepalive: each
+# step asks as the system's own rules say, doas.conf's `persist` or polkit's
 # `auth_admin_keep`, since neither has a command that refreshes a
 # credential without running a program as root.
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// The decisions `vgsh plugin list`, `add`, `update`, `remove` and
-// `requirements` and `vgsh doctor` need, made by the shell's own judge,
-// shell/Core/PluginLogic.js, loaded here under node.
+// The decisions `vgsh plugin list`, `add`, `update`, `remove`,
+// `requirements` and `settings` and `vgsh doctor` need, made by the shell's
+// own judge, shell/Core/PluginLogic.js, loaded here under node.
 //
 //   vgsh-plugin-judge list
 //       read the shell's `listPlugins` reply on stdin and print it as
@@ -35,6 +35,13 @@
 //       `<state> <command>[ (<package>)][ optional]: <purpose>`, and with
 //       json one line, a list of rows (below). An id no accepted manifest
 //       names is refused as `unknown=<id>`.
+//   vgsh-plugin-judge settings <shipped-config> <user-config> <id>
+//       read `bin/vgsh-scan` JSON on stdin and print, as one JSON line, the
+//       settings plugin <id> hands its service, panel and floating TUIs:
+//       PluginLogic.settingsFor its plugins[] row under the configuration
+//       the two files make effective. A value its schema refuses, as a
+//       hand edit leaves, is refused as `setting=<key> want=<type> id=<id>`;
+//       an unknown id as `unknown=<id>`.
 //   vgsh-plugin-judge doctor text|json <shipped-config> <user-config> <core-requirements>
 //       read `bin/vgsh-scan` JSON on stdin and print the requirements of
 //       the core, <core-requirements>, and of every plugin the
@@ -318,6 +325,19 @@ main(() => {
         const rows = reportRows(plugin.manifest.requirements, plugin.missing, managersFor([plugin.manifest.requirements]));
         if (json) process.stdout.write(JSON.stringify(rows) + "\n");
         else print(rows.map(rowLine));
+        break;
+    }
+    case "settings": {
+        const [shippedPath, userPath, id] = args;
+        const shipped = readConfig(logic, shippedPath, "shipped-config");
+        const user = readConfig(logic, userPath, "user-config", true);
+        const manifest = pluginOf(registryOf(readScan()), id).manifest;
+        const settings = logic.settingsFor(logic.effectiveConfig(shipped, user), manifest, "plugins", null);
+        for (const key of Object.keys(manifest.schema)) {
+            const refusal = logic.settingRefusal(manifest, key, settings[key]);
+            if (refusal !== "") refuse(refusal.slice("refused: ".length) + " id=" + id);
+        }
+        process.stdout.write(JSON.stringify(settings) + "\n");
         break;
     }
     case "doctor": {
