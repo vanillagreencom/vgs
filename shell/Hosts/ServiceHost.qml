@@ -7,7 +7,7 @@ import qs.Core
 // its source changes. Variants keeps the slot of every id that stays in
 // the list, so enabling or disabling one service rebuilds no other. No
 // service builds before ServiceGate releases them, once the first bars
-// have presented a frame (D045).
+// have presented a frame (D046).
 Scope {
     Variants {
         model: ServiceGate.release !== "" ? Registry.enabledOfKind("service") : []

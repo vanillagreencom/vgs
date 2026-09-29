@@ -5,7 +5,7 @@ import Quickshell
 
 // When the service host may build services: once every bar the core built
 // for the first applied scan has presented its first frame, so no service
-// build delays the first bar (D045). Bars, their widgets and backgrounds
+// build delays the first bar (D046). Bars, their widgets and backgrounds
 // build in the turn that scan ends; services build on the release, in a
 // later turn, and so claim an exclusive capability after every surface
 // plugin. The release happens once per shell process and is never taken
