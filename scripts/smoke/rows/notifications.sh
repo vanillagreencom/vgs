@@ -440,15 +440,87 @@ checked_space() { # SUMMARY KIND [clamped]
   t="$(text_space "$1")" || return
   inset_contract_value "$2" "${3:-}" "$t"
 }
+note_card_reading() { # LABEL SUMMARY
+  local t
+  t="$(text_space "$2")" || { fail "$1: no card reading"; return; }
+  ok "$1: $t"
+}
+header_space() {
+  local headers texts pills
+  headers="$(ipc smoke layerItems vgs.notifications InboxHeader titleInset)" || return
+  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
+  pills="$(ipc smoke layerItems vgs.notifications PillButton text,visible)" || return
+  python3 -c 'import json,sys
+headers, texts, pills = json.loads(sys.argv[1]), json.loads(sys.argv[2]), json.loads(sys.argv[3])
+header = next(((s, r, v) for s, r, v in headers if r[3] > 0), None)
+if header is None: print("absent"); sys.exit()
+screen, (x, y, w, h), values = header
+lines = [r for s, r, v in texts if s == screen and v["visible"] and v["objectName"] in ("notificationHeaderTitleText", "notificationHeaderSubtitleText") and x <= r[0] < x + w and y <= r[1] < y + h]
+buttons = [(r, v["text"]) for s, r, v in pills if s == screen and v["visible"] and v["text"] in ("Mark read", "History", "Clear history", "Unread") and x <= r[0] < x + w and y <= r[1] < y + h]
+if not lines or not buttons: print("incomplete"); sys.exit()
+left = min(r[0] for r in lines) - x
+right_button = max(buttons, key=lambda item: item[0][0] + item[0][2])[0]
+control = x + w - (right_button[0] + right_button[2])
+centre = control + right_button[3] / 2
+print("left=%d height=%d control=%d centre=%.1f" % (left, h, control, centre))' "$headers" "$texts" "$pills"
+}
+header_contract_value() {
+  python3 -c 'import math,re,sys
+t = sys.stdin.read().strip()
+m = re.fullmatch(r"left=(\d+) height=(\d+) control=(\d+) centre=([0-9.]+)", t)
+if not m: print(t); sys.exit()
+left, height, control, centre = int(m.group(1)), int(m.group(2)), int(m.group(3)), float(m.group(4))
+need = math.ceil(height / 2) + 4
+problems = []
+if left < need: problems.append("left")
+if abs(centre - height / 2) > 1: problems.append("control")
+print("ok" if not problems else "violation " + ",".join(problems))'
+}
+checked_header() {
+  local t
+  t="$(header_space)" || return
+  header_contract_value <<<"$t"
+}
+note_header_reading() {
+  local t
+  t="$(header_space)" || { fail "header: no reading"; return; }
+  ok "header geometry measured: $t"
+}
 notify smoke-app 0 "Even one" "" '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even two" "One line of body text" '[]' '{}' 0 >/dev/null
+notify smoke-app 0 "Even multi" "calendar.google.com\n\n10:30am – 11:30am" '[]' '{}' 0 >/dev/null
+notify "Google Chrome" 0 "Weekly eStaff" "calendar.google.com\n\n10:30am – 11:30am" '[]' '{}' 0 >/dev/null
+notify "chromium" 0 "New message in master-operator" "app.slack.com\n\nAda posted a deployment note in the channel." '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even max" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}' 0 >/dev/null
+notify smoke-chat 0 "Hover geometry" "Pick one" '["default", "Open", "reply", "Reply"]' '{}' 30000 >/dev/null
+expect_poll "the hover geometry card shows" True has_row live "Hover geometry"
+read -r gx gy < <(card_centre "Hover geometry") || fail "the hover geometry toast has no card"
+hover "$gx" "$gy" || fail "the hover over the geometry toast failed"
+expect_poll "the hover geometry card shows actions" '["Open", "Reply", "Dismiss"]' shown_pills "Hover geometry"
 expect "the inset predicate rejects text under the rounded end" "violation left,right" inset_contract_value avatarless "" "top=14 bottom=14 left=14 right=14 height=45 slot=-1 pad=14"
+expect "the header predicate rejects a title under the rounded end" "violation left" header_contract_value <<<"left=20 height=48 control=10 centre=24.0"
 expect_poll "a one-line card clears the rounded end on both sides" ok checked_space "Even one" avatarless
 expect_poll "a two-line card clears the rounded end on both sides" ok checked_space "Even two" avatarless
+expect_poll "a multiline card clears the rounded end on both sides" ok checked_space "Even multi" avatarless
+expect_poll "a browser calendar card clears the rounded end on both sides" ok checked_space "Weekly eStaff" avatarless
+expect_poll "a browser message card clears the rounded end on both sides" ok checked_space "New message in master-operator" avatarless
 expect_poll "a card past its most lines stops at its maximum height and clears both sides" ok checked_space "Even max" avatarless clamped
+expect_poll "a hovered action card clears the rounded end while the pills show" ok checked_space "Hover geometry" avatarless
 expect_poll "a card with an image keeps its round slot at the pad and clears the text" ok checked_space Pictured slot
 expect_poll "a Slack faces card keeps its round slot at the pad and clears the text" ok checked_space "[acme] in ada, grace, alan, edsger, barbara" slot
+expect "the inbox opens for header geometry" ok notes inbox
+expect_poll "the inbox header title clears the rounded end" ok checked_header
+note_card_reading "one-line card geometry measured" "Even one"
+note_card_reading "two-line card geometry measured" "Even two"
+note_card_reading "multiline card geometry measured" "Even multi"
+note_card_reading "browser calendar card geometry measured" "Weekly eStaff"
+note_card_reading "browser message card geometry measured" "New message in master-operator"
+note_card_reading "clamped card geometry measured" "Even max"
+note_card_reading "hover action card geometry measured" "Hover geometry"
+note_card_reading "image avatar card geometry measured" Pictured
+note_card_reading "Slack faces card geometry measured" "[acme] in ada, grace, alan, edsger, barbara"
+note_header_reading
+expect "the inbox closes after header geometry" ok notes close
 
 # A full stack lets the oldest non-critical toast go for a new one.
 on_screen() { note_status onScreen; }

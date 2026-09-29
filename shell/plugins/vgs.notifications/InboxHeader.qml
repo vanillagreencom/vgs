@@ -37,6 +37,7 @@ Item {
         spacing: header.look.header.lineGap
 
         Text {
+            objectName: "notificationHeaderTitleText"
             textFormat: Text.PlainText
             text: header.history ? "History" : "Notifications"
             color: header.look.text.foreground
@@ -47,6 +48,7 @@ Item {
             styleColor: header.look.text.shadow
         }
         Text {
+            objectName: "notificationHeaderSubtitleText"
             textFormat: Text.PlainText
             visible: text.length > 0
             text: header.service !== null ? header.service.panelSubtitle : ""
