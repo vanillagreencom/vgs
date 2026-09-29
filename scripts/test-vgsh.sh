@@ -590,8 +590,9 @@ check "add leaves no staging directory" test -z "$(find "$cfg/vgs" -maxdepth 1 -
 check "add writes no user file for a plugin the configuration does not enable" test ! -e "$cfg/vgs/shell.json"
 
 # The must-fail control: a copy of vgsh without the hook suppression lets
-# the post-checkout hook fire on add. The copy resolves shell, config,
-# scripts and its bin siblings from its own location, so each is linked in.
+# the post-checkout hook fire on add. The copy resolves shell, config
+# and its bin siblings, bin/lib among them, from its own location, so each
+# is linked in.
 mutant="$tmp/mutant"; mkdir -p "$mutant/bin"
 suppression='-c core.hooksPath=/dev/null '
 occurrences="$(grep -o -F -- "$suppression" "$repo/bin/vgsh" | wc -l)" || occurrences=0
@@ -599,8 +600,8 @@ check "the hook suppression occurs once in bin/vgsh" test "$occurrences" == 1
 sed "s|$suppression||" "$repo/bin/vgsh" >"$mutant/bin/vgsh"
 chmod +x "$mutant/bin/vgsh"
 check "the mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$mutant/bin/vgsh"; echo $?)" == 1
-for sibling in shell config scripts; do ln -s "$repo/$sibling" "$mutant/$sibling"; done
-for tool in vgsh-scan vgsh-plugin-judge; do ln -s "$repo/bin/$tool" "$mutant/bin/$tool"; done
+for sibling in shell config; do ln -s "$repo/$sibling" "$mutant/$sibling"; done
+for tool in vgsh-scan vgsh-plugin-judge lib; do ln -s "$repo/bin/$tool" "$mutant/bin/$tool"; done
 cfg="$tmp/cfg-mutant"
 INST_BIN="$mutant/bin/vgsh" inst "the mutant add installs the plugin" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
 check "the mutant add runs the post-checkout hook" test -e "$hooks/post-checkout.marker"
@@ -674,8 +675,8 @@ noask="$tmp/noask"; mkdir -p "$noask/bin"
 grep -v -x -F -- "$ask" "$repo/bin/vgsh" >"$noask/bin/vgsh" || true
 chmod +x "$noask/bin/vgsh"
 check "the never-asking mutant differs from bin/vgsh" test "$(cmp -s "$repo/bin/vgsh" "$noask/bin/vgsh"; echo $?)" == 1
-for sibling in shell config scripts; do ln -s "$repo/$sibling" "$noask/$sibling"; done
-for tool in vgsh-scan vgsh-plugin-judge; do ln -s "$repo/bin/$tool" "$noask/bin/$tool"; done
+for sibling in shell config; do ln -s "$repo/$sibling" "$noask/$sibling"; done
+for tool in vgsh-scan vgsh-plugin-judge lib; do ln -s "$repo/bin/$tool" "$noask/bin/$tool"; done
 cfg="$tmp/cfg-noask"
 inst "add installs a plugin for the never-asking control" "$cfg" "$rt_empty" 0 "shell=not-running" "" plugin add "$tmp/src/probe.git"
 g -C "$cfg/vgs/plugins/acme.probe" reset -q --hard HEAD~1
