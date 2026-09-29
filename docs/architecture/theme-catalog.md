@@ -65,11 +65,7 @@ An installed package's curated file on a `runsCode` target is dropped at apply (
 
 ## Conversion and readability
 
-The v1 converter, the contrast check, the conversion metrics and the readability override rules are [theme-conversion.md](theme-conversion.md). A held-back theme is not listed in `themes/catalog/index.json`, has no package directory and has no thumbnail.
-
-| Theme | Failing pair | Ratio |
-|---|---|---|
-| `moon-orbit` | `color.text` on `color.surfaceRaised` | 4.33 |
+The v1 converter, the contrast check, the conversion metrics and the readability override rules are [theme-conversion.md](theme-conversion.md). A held-back theme is not listed in `themes/catalog/index.json`, has no package directory and has no thumbnail. No v1 theme is held back in the current catalog.
 
 ## Invariants
 
