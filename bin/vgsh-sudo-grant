@@ -345,10 +345,7 @@ nixos_status() {
 }
 
 nixos_grant() { # [MINUTES]
-  local minutes="$default_minutes" expires deadline
-  (($# == 0)) || minutes="$1"
-  minutes_valid "$minutes" || bad_invocation "minutes=$(printf '%q' "$minutes")"
-  minutes=$((10#$minutes))
+  local minutes=$((10#${1:-$default_minutes})) expires deadline
   resolve_account "$uid"
   deadline_for_minutes "$minutes"
   printf 'ok sudo-grant=skipped=nixos-config minutes=%s until=%s\n' "$minutes" "$(iso "$deadline")"
@@ -381,12 +378,6 @@ nixos_install() {
 nixos_uninstall() {
   printf 'ok sudo-grant=skipped=nixos-config\n'
   printf 'Nothing is removed because NixOS sudo rules come from its configuration. Run vgsh sudo grant to print the rule.\n'
-}
-
-nixos_verb() { # VERB ARGS...
-  local verb="$1"
-  shift
-  "nixos_$verb" "$@"
 }
 
 # Drops any cached sudo credential now and again when this command ends.
@@ -476,10 +467,7 @@ user_revoke() {
 }
 
 user_grant() { # [MINUTES]
-  local minutes="$default_minutes" answer=0 user
-  (($# == 0)) || minutes="$1"
-  minutes_valid "$minutes" || bad_invocation "minutes=$(printf '%q' "$minutes")"
-  minutes=$((10#$minutes))
+  local minutes=$((10#${1:-$default_minutes})) answer=0 user
   requires_installed
   [[ $(root_half_state) == current ]] ||
     refuse 1 "root-half=stale path=$installed" "vgsh sudo install replaces it with this version"
@@ -565,7 +553,7 @@ user_main() {
   uid="$(id -u)" || refuse 1 "user=unknown"
   detect_or_refuse
   if [[ $detected_system == nix ]]; then
-    nixos_verb "$verb" "$@"
+    "nixos_$verb" "$@"
     return
   fi
   "user_$verb" "$@"

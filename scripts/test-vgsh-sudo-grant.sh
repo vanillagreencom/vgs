@@ -145,7 +145,7 @@ place() { # SOURCE
 # A new tree with nothing installed and every record cleared.
 fresh() {
   rm -rf -- "${root:?}/etc" "${root:?}/run" "${root:?}/usr/local"
-  mkdir -p "$root/etc/sudoers.d" "$root/etc/tmpfiles.d" "$root/run" "$root/run/current-system/sw/bin" "$root/usr/local/bin"
+  mkdir -p "$root/etc/sudoers.d" "$root/etc/tmpfiles.d" "$root/run" "$root/usr/local/bin"
   chmod 0755 "$root/etc" "$root/etc/tmpfiles.d" "$root/run"; chmod 0750 "$root/etc/sudoers.d"
   rm -f -- "$tmp"/{sudo.log,systemd-run.log,systemctl.log,gum.log,tmpfiles.log,checked-rule,visudo-env,timer-active,foreign,date-junk,sudo-old,sudo-exit,sudo-ignores,visudo-exit,arm-exit,tmpfiles-exit,account,before-tree,after-tree}
   printf '0\n' >"$tmp/gum-answer"
