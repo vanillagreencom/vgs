@@ -75,6 +75,7 @@ mutations=(
   "the scroll area's gutter comes and goes with the overflow|layout/ScrollArea.qml|contentWidth: width - rightInset|contentWidth: overflowing ? width - rightInset : width|tst_scroll.qml"
   "the scroll area ignores its right inset|layout/ScrollArea.qml|property real rightInset: Theme.scrollArea.gutter|property real rightInset: 0|tst_scroll.qml"
   "the scroll area reads its content item through childrenRect|layout/ScrollArea.qml|contentHeight: measuredContentHeight|contentHeight: contentItem.childrenRect.height|tst_scroll.qml"
+  "the scroll area drops content height while its ancestor is hidden|layout/ScrollArea.qml|if (!child.visible && root.visible) continue;|if (!child.visible) continue;|tst_scroll.qml"
   "the bar shows without an overflow|layout/ScrollBar.qml|    visible: needed|    visible: true|tst_scroll.qml"
   "the thumb shrinks below its minimum|layout/ScrollBar.qml|Math.max(Theme.scrollArea.minThumb, height * flickable.height / flickable.contentHeight)|height * flickable.height / flickable.contentHeight|tst_scroll.qml"
   "the thumb is not the view's share|layout/ScrollBar.qml|Math.max(Theme.scrollArea.minThumb, height * flickable.height / flickable.contentHeight)|Theme.scrollArea.minThumb|tst_scroll.qml"

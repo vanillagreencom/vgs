@@ -23,6 +23,23 @@ Item {
     ScrollArea { id: tall; x: 240; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 100000; color: "transparent" } } }
     ScrollArea { id: inset; y: 140; width: 120; height: 100; rightInset: Theme.inset.window; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: singleFixed; x: 140; y: 140; width: 120; height: 100; Item { y: Theme.space.sm; width: parent.width; implicitHeight: root.singleFixedHeight } }
+    Item {
+        id: hideParent
+        x: 280
+        y: 140
+        width: 100
+        height: 100
+
+        ScrollArea {
+            id: hiddenArea
+            anchors.fill: parent
+
+            Column {
+                width: parent.width
+                Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } }
+            }
+        }
+    }
     Select { id: long; y: 300; model: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"] }
 
     TestCase {
@@ -34,6 +51,8 @@ Item {
             area.contentY = 0;
             area.bar.hovered = false;
             root.singleFixedHeight = Theme.size.control.lg;
+            hideParent.visible = true;
+            hiddenArea.contentY = 0;
             long.choose(0);
         }
 
@@ -55,6 +74,20 @@ Item {
             compare(singleFixed.contentHeight, Theme.space.sm + Theme.size.panel.sm);
             root.singleFixedHeight = Theme.size.control.md;
             compare(singleFixed.contentHeight, Theme.space.sm + Theme.size.control.md);
+        }
+
+        function test_hiding_an_ancestor_keeps_scroll_position_and_content_height() {
+            hiddenArea.contentY = 60;
+            const beforeY = hiddenArea.contentY;
+            const beforeHeight = hiddenArea.contentHeight;
+            verify(beforeHeight > hiddenArea.height, "the area overflows before it is hidden");
+            hideParent.visible = false;
+            compare(hiddenArea.visible, false);
+            compare(hiddenArea.contentHeight, beforeHeight);
+            compare(hiddenArea.contentY, beforeY);
+            hideParent.visible = true;
+            compare(hiddenArea.contentHeight, beforeHeight);
+            compare(hiddenArea.contentY, beforeY);
         }
 
         function test_the_bar_can_sit_inside_a_container_inset() {

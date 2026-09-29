@@ -2,6 +2,9 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
+// One Settings page header row. The list page and each plugin page use it
+// so the title, leading controls and trailing controls share one height
+// rule and the body does not move during a push or pop.
 Item {
     id: root
 
@@ -23,6 +26,13 @@ Item {
         for (const item of items) found = Math.max(found, item[axis]);
         return found;
     }
+
+    function anchorMenu() {
+        if (menu !== null && menu.parent !== titleControl) menu.parent = titleControl;
+    }
+
+    Component.onCompleted: anchorMenu()
+    onMenuChanged: anchorMenu()
 
     Item {
         id: leadingSlot

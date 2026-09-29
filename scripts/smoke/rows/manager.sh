@@ -458,6 +458,7 @@ settings_show acme.probe
 title_menu() { ipc smoke menus window vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(json.dumps([m[0][k] for k in sys.argv[1:]]) if len(m) == 1 else "menus=%d" % len(m))' "$@"; }
 settings_click TitleButton Probe || fail "the click on the page's title failed"
 expect_poll "a click on the title opens its menu on the current plugin" '[true, ["Probe"], "Probe"]' title_menu opened checked current
+expect "the title's menu anchors to the title button" '["TitleButton"]' title_menu anchorType
 menu_lists_all() { { settings_rows; title_menu entries; } | python3 -c '
 import json, sys
 text = sys.stdin.read()

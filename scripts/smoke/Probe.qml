@@ -690,7 +690,8 @@ Scope {
                     checked: entries.filter(e => e.checked).map(e => e.text),
                     current: menu.currentIndex >= 0 && menu.currentIndex < entries.length ? entries[menu.currentIndex].text : null,
                     overflowing: menu.scrollArea.overflowing,
-                    barVisible: menu.scrollArea.bar.visible
+                    barVisible: menu.scrollArea.bar.visible,
+                    anchorType: root.typeName(menu.anchorItem)
                 };
             }));
         }

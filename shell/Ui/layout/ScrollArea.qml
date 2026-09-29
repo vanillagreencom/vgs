@@ -25,7 +25,7 @@ Flickable {
     function measureContentHeight() {
         let bottom = 0;
         for (const child of contentItem.children) {
-            if (!child.visible) continue;
+            if (!child.visible && root.visible) continue;
             const childHeight = child.height > 0 ? child.height : child.implicitHeight;
             bottom = Math.max(bottom, child.y + childHeight);
         }
