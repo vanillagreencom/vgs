@@ -10,7 +10,7 @@
 | Bar | The gear in the bar's right section, where the shipped layout places it. A click opens and closes the window on that bar's monitor. |
 | IPC | `vgsh ipc call vgs.settings invoke toggle '<payload>'` or `... invoke open '<payload>'`, or the host's `vgsh ipc call shell summon panel vgs.settings '<payload>'`. |
 
-The payload is `{}` for the list, or `{"plugin":"<id>"}` for that plugin's page. An id no plugin has opens the list with a notice naming it. Any other key refuses the summon with `refused: open-failed=vgs.settings`. Any plugin with the `surfaces` capability, or the launcher's menu, opens a page the same way.
+The payload is `{}` for the list, or `{"plugin":"<id>"}` for that plugin's page. An id no plugin has opens the list with a notice naming it. Any other key refuses the summon with `refused: open-failed=vgs.settings`. To open a page from a script, a key or a launcher menu entry, run `vgsh ipc call shell summon panel vgs.settings '{"plugin":"<id>"}'`. Another plugin cannot open it through its `surfaces` capability, which opens only that plugin's own surfaces.
 
 ## The window
 
