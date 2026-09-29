@@ -204,10 +204,13 @@ Item {
                     width: parent.width
                     height: Theme.size.panel.sm / 2
                     Column {
+                        id: scrolledRows
                         width: parent.width
                         Repeater {
                             model: 12
-                            ListItem { required property int index; text: "Row " + (index + 1); iconName: "list"; width: parent.width }
+                            // The column, not `parent`, which is null while
+                            // the repeater tears the row down.
+                            ListItem { required property int index; text: "Row " + (index + 1); iconName: "list"; width: scrolledRows.width }
                         }
                     }
                 }
