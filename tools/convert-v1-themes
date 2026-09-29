@@ -11,7 +11,10 @@
 // directory, with thumbnails in catalog/thumbnails/. Archives download once
 // into the content-addressed cache `${XDG_CACHE_HOME:-$HOME/.cache}/vgs/theme-assets/<sha256>.tar.gz` unless --asset-cache names another directory.
 // --asset-base overrides v1 catalog.json's source.baseUrl. HTTPS is the only
-// normal transport; file:// is accepted only with --allow-file-base for tests.
+// normal transport, redirects included; file:// is accepted only with
+// --allow-file-base for tests. The archive reader supports pax path headers
+// and GNU long names, and refuses invalid headers, links and unsupported
+// member types under backgrounds/.
 // Exit 0: converted. Exit 1: refused input or output. Exit 2: unreadable or
 // I/O failure.
 "use strict";
@@ -95,6 +98,10 @@ function readJson(file) {
 
 function writeJson(value) {
     return JSON.stringify(value, null, 2) + "\n";
+}
+
+function codeUnitCompare(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function parseArgs(argv) {
@@ -272,7 +279,9 @@ function get(url, redirects) {
   const req = client.get(url, res => {
     if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
       res.resume();
-      get(new URL(res.headers.location, url).toString(), redirects - 1);
+      const next = new URL(res.headers.location, url).toString();
+      if (!next.startsWith('https://')) { console.error('reason=redirect-not-https url=' + next); process.exit(4); }
+      get(next, redirects - 1);
       return;
     }
     if (res.statusCode !== 200) { console.error('status=' + res.statusCode); process.exit(3); }
@@ -284,7 +293,12 @@ function get(url, redirects) {
 out.on('error', err => { console.error(err.code || err.message); process.exit(2); });
 get(${JSON.stringify(url)}, 5);
 `], { encoding: "utf8" });
-    if (result.status !== 0) refuseGlobal("asset-download", `url=${url} error=${JSON.stringify((result.stderr || result.stdout).trim())}`);
+    if (result.status !== 0) {
+        const error = (result.stderr || result.stdout).trim();
+        const reasonLine = error.split(/\r?\n/).find(line => line.startsWith("reason="));
+        if (reasonLine !== undefined) refuseGlobal("asset-download", reasonLine);
+        refuseGlobal("asset-download", `url=${url} error=${JSON.stringify(error)}`);
+    }
 }
 
 function ensureArchive(pin, args, catalog) {
@@ -318,9 +332,40 @@ function tarString(buffer, start, length) {
     return buffer.subarray(start, start + length).toString("utf8").replace(/\0.*$/, "");
 }
 
-function tarSize(buffer, start) {
-    const raw = tarString(buffer, start, 12).trim();
-    return raw === "" ? 0 : parseInt(raw, 8);
+function parseOctal(theme, header, start, length, key) {
+    const raw = header.subarray(start, start + length).toString("ascii").replace(/\0/g, " ").trim();
+    if (!/^[0-7]+$/.test(raw)) refuse(theme, "archive.header", `reason=${key} value=${JSON.stringify(raw)}`);
+    return parseInt(raw, 8);
+}
+
+function verifyHeader(theme, header) {
+    const stored = parseOctal(theme, header, 148, 8, "checksum");
+    let actual = 0;
+    for (let index = 0; index < header.length; index++) actual += index >= 148 && index < 156 ? 32 : header[index];
+    if (stored !== actual) refuse(theme, "archive.header", `reason=checksum got=${stored} want=${actual}`);
+}
+
+function parsePax(theme, data) {
+    const attrs = {};
+    let at = 0;
+    while (at < data.length) {
+        const space = data.indexOf(32, at);
+        if (space === -1) refuse(theme, "archive.header", "reason=pax");
+        const rawLength = data.subarray(at, space).toString("ascii");
+        if (!/^[0-9]+$/.test(rawLength)) refuse(theme, "archive.header", "reason=pax-length");
+        const length = Number(rawLength);
+        if (!Number.isSafeInteger(length) || length <= 0 || at + length > data.length || data[at + length - 1] !== 10) refuse(theme, "archive.header", "reason=pax-length");
+        const record = data.subarray(space + 1, at + length - 1).toString("utf8");
+        const equals = record.indexOf("=");
+        if (equals <= 0) refuse(theme, "archive.header", "reason=pax-record");
+        attrs[record.slice(0, equals)] = record.slice(equals + 1);
+        at += length;
+    }
+    return attrs;
+}
+
+function longName(data) {
+    return data.toString("utf8").replace(/\0.*$/, "").replace(/\n$/, "");
 }
 
 function safeTarName(theme, name) {
@@ -339,23 +384,42 @@ function readTarEntries(theme, archive) {
         refuse(theme, "archive", `reason=unreadable-gzip error=${e.code || e.message}`);
     }
     const entries = [];
+    let nextName = null;
     for (let offset = 0; offset + 512 <= data.length;) {
         const header = data.subarray(offset, offset + 512);
         if (header.every(byte => byte === 0)) break;
+        verifyHeader(theme, header);
         const namePart = tarString(header, 0, 100);
         const prefix = tarString(header, 345, 155);
-        const rawName = prefix === "" ? namePart : `${prefix}/${namePart}`;
-        const name = safeTarName(theme, rawName);
-        const size = tarSize(header, 124);
-        const type = tarString(header, 156, 1) || "0";
+        const fallbackName = prefix === "" ? namePart : `${prefix}/${namePart}`;
+        const rawName = nextName || fallbackName;
+        nextName = null;
+        const size = parseOctal(theme, header, 124, 12, "size");
+        const type = tarString(header, 156, 1);
         const body = offset + 512;
-        if (type === "2" && (name === backgrounds.DIR || name.startsWith(`${backgrounds.DIR}/`))) refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=symlink`);
-        if ((type === "0" || type === "\0") && name.startsWith(`${backgrounds.DIR}/`)) {
-            const fileName = name.slice(backgrounds.DIR.length + 1);
-            entries.push({ name: fileName, data: data.subarray(body, body + size), isFile: () => true, isSymbolicLink: () => false });
+        if (body + size > data.length) refuse(theme, "archive.header", `reason=size-truncated size=${size}`);
+        const content = data.subarray(body, body + size);
+        if (type === "x") {
+            const attrs = parsePax(theme, content);
+            if (Object.hasOwn(attrs, "path")) nextName = safeTarName(theme, attrs.path);
+        } else if (type === "g") {
+            const attrs = parsePax(theme, content);
+            if (Object.hasOwn(attrs, "path")) refuse(theme, "archive.header", `reason=global-pax-path path=${JSON.stringify(attrs.path)}`);
+        } else if (type === "L") {
+            nextName = safeTarName(theme, longName(content));
+        } else {
+            const name = safeTarName(theme, rawName);
+            const underBackgrounds = name === backgrounds.DIR || name.startsWith(`${backgrounds.DIR}/`);
+            if (underBackgrounds && (type === "1" || type === "2")) refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=link type=${JSON.stringify(type)}`);
+            if (underBackgrounds && type !== "0" && type !== "" && type !== "5") refuse(theme, "archive.member", `name=${JSON.stringify(name)} reason=unsupported-type type=${JSON.stringify(type)}`);
+            if ((type === "0" || type === "") && name.startsWith(`${backgrounds.DIR}/`)) {
+                const fileName = name.slice(backgrounds.DIR.length + 1);
+                entries.push({ name: fileName, data: content, isFile: () => true, isSymbolicLink: () => false });
+            }
         }
         offset = body + Math.ceil(size / 512) * 512;
     }
+    if (nextName !== null) refuse(theme, "archive.header", "reason=missing-long-name-member");
     return entries;
 }
 
@@ -391,7 +455,7 @@ function buildIndex(existing, converted) {
     const byName = new Map();
     for (const entry of existing.entries || []) byName.set(entry.name, entry);
     for (const item of converted) byName.set(item.theme, item.entry);
-    return { schemaVersion: 1, entries: Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)) };
+    return { schemaVersion: 1, entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name)) };
 }
 
 function readPackageFilesForIndex(catalogDir, convertedByName, entry) {
