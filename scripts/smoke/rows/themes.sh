@@ -433,10 +433,11 @@ expect_poll "the themes panel closes" closed panel_open
 # from the compositor: none while no image is drawn, one per screen while
 # one is. The panel is read back through the labels it draws and clicked
 # through its icon buttons. A headless monitor at scale 2 reads the
-# requested sourceSize back in device pixels. A copy of the background that
-# decodes at logical pixels, a copy of the shared state reader that never
-# reloads the state file and a copy of the background that is always shown
-# are the block's controls. The block leaves vgs applied with no current
+# requested sourceSize back in device pixels, and draws an image set on it
+# alone while the first screen draws `current`. A copy of the background
+# that decodes at logical pixels, a copy of the shared state reader that
+# ignores `screens`, one that never reloads the state file and a copy of
+# the background that is always shown are the block's controls. The block leaves vgs applied with no current
 # image and the plugin disabled, so later rows see the bar they saw before
 # the vgs.themes block.
 bg_state="$home/.local/state/vgs"
@@ -528,6 +529,50 @@ cp -p -- "$sandbox/Background.qml.device-pixels.real" "$plugin_qml.tmp" && mv -T
 expect "a rescan restores the device-pixel background" ok ipc shell rescanPlugins
 expect_poll "the restored scale-2 background requests device pixels" "$(background_device_size "$hidpi_output" 2)" background_source_size "$hidpi_output"
 expect "the follow after the device-pixel rescan queued ends" idle theme_idle
+
+# Each screen draws its own entry in `screens`, else `current`: an image
+# from the user folder set on the scale-2 monitor alone, which a step of
+# `current` leaves in place. A screen whose own image cannot be read draws
+# `current`: the image is removed and the monitor comes back, so a new
+# background decodes the entry that `screens` keeps.
+# Control: a sandbox copy of the state reader that ignores `screens` draws
+# `current` on the scale-2 monitor.
+user_bg="$home/.config/vgs/backgrounds"
+mkdir -p -- "$user_bg"
+cp -- "$scenic/backgrounds/c.png" "$user_bg/own.png"
+expect "set --screen gives the scale-2 monitor its own image" "ok background=own.png theme=- path=$user_bg/own.png screen=$hidpi_output" vgsh_theme background set "$user_bg/own.png" --screen "$hidpi_output"
+expect_poll "the scale-2 monitor draws its own image" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect "the first screen draws the current image beside it" "$scenic/backgrounds/a.png ready" background_image
+expect "next moves the current image under a screen's own" "ok background=b.png theme=scenic path=$scenic/backgrounds/b.png" vgsh_theme background next
+expect_poll "the first screen follows next" "$scenic/backgrounds/b.png ready" background_image
+expect "the scale-2 monitor keeps its own image through next" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect "previous moves the current image back" "ok background=a.png theme=scenic path=$scenic/backgrounds/a.png" vgsh_theme background previous
+expect_poll "the first screen follows previous" "$scenic/backgrounds/a.png ready" background_image
+state_qml="$repo/shell/plugins/vgs.themes/WallpaperState.qml"
+cp -p -- "$state_qml" "$sandbox/WallpaperState.qml.screens.real"
+python3 - "$sandbox/WallpaperState.qml.screens.real" "$state_qml.tmp" <<'PY'
+import pathlib, sys
+src, dst = map(pathlib.Path, sys.argv[1:])
+text = src.read_text()
+old = "return Object.prototype.hasOwnProperty.call(screens, name) ? screens[name] : source;"
+assert text.count(old) == 1, f"screens control must match once: {old}"
+dst.write_text(text.replace(old, "return source;"))
+assert dst.read_text() != text, "screens control must change the file"
+PY
+mv -T -- "$state_qml.tmp" "$state_qml"
+expect "a rescan builds the control that ignores screens" ok ipc shell rescanPlugins
+expect_poll "the control draws the current image on the scale-2 monitor" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
+cp -p -- "$sandbox/WallpaperState.qml.screens.real" "$state_qml.tmp" && mv -T -- "$state_qml.tmp" "$state_qml"
+expect "a rescan restores the reader of screens" ok ipc shell rescanPlugins
+expect_poll "the restored plugin draws the scale-2 monitor's own image" "$user_bg/own.png ready" background_image_on "$hidpi_output"
+expect "the follow after the screens rescans ends" idle theme_idle
+expected_errors+=('background: file://.*/own\.png\?.* unreadable' 'Background\.qml.*Cannot open: file://.*/own\.png')
+rm -- "$user_bg/own.png"
+expect "the nested compositor removes the scale-2 monitor over its removed image" ok hypr output remove "$hidpi_output"
+expect_poll "the scale-2 monitor is gone before it comes back" False screen_listed "$hidpi_output"
+expect "the nested compositor adds the scale-2 monitor back" ok hypr output create headless "$hidpi_output"
+expect_poll "a screen whose own image cannot be read draws the current image" "$scenic/backgrounds/a.png ready" background_image_on "$hidpi_output"
+expect_log "the background logs the unreadable own image" 1 'background: file://.*/own\.png\?.* unreadable'
 expect "the nested compositor removes the scale-2 monitor" ok hypr output remove "$hidpi_output"
 expect_poll "the scale-2 background surface is gone" "$monitors" layer_count vgs:background
 expect_poll "the removed scale-2 monitor is gone" False screen_listed "$hidpi_output"

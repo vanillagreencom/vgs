@@ -2,12 +2,13 @@ import QtQuick
 import Quickshell.Io
 import qs.Commons
 
-// The wallpaper backgrounds.json in the state directory names as
-// `current`, the plugin's one reading of that file: the background draws
-// it and the panel names it. The runner replaces the file by rename on
-// every change, an image replaced under its name included, and `source`
-// carries the file's `stamp`, so each change decodes the image again.
-// WatchedFile reads it, so a change that lands during a read is read again.
+// The wallpapers backgrounds.json in the state directory names: `current`
+// and the `screens` map, the plugin's one reading of that file. The
+// background draws `sourceFor` its screen and the panel names `current`.
+// The runner replaces the file by rename on every change, an image
+// replaced under its name included, and every source carries its entry's
+// `stamp`, so each change decodes the image again. WatchedFile reads it,
+// so a change that lands during a read is read again.
 Item {
     id: root
 
@@ -18,9 +19,43 @@ Item {
     // The same image as a file URL carrying its stamp, or "" for none. The
     // stamp is a query a local file URL ignores.
     property string source: ""
+    // Each output's own image as a file URL carrying its stamp, keyed by
+    // the Hyprland output name; empty for a state file that cannot be read
+    // and for one the runner did not write.
+    property var screens: ({})
 
-    // Set `path` and `source` from backgrounds.json's TEXT; a document the
-    // runner did not write is logged and names no image.
+    // The source the output NAME draws: its own entry in `screens`, else
+    // `current`.
+    function sourceFor(name) {
+        return Object.prototype.hasOwnProperty.call(screens, name) ? screens[name] : source;
+    }
+
+    function fileUrl(path, stamp) {
+        return "file://" + path.split("/").map(encodeURIComponent).join("/") + "?" + encodeURIComponent(stamp);
+    }
+
+    // The `screens` map of a document as sources, {} for an absent key, or
+    // null for one the runner did not write.
+    function screenSources(value) {
+        if (value === undefined) return {};
+        if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+        const sources = {};
+        for (const name of Object.keys(value)) {
+            const entry = value[name];
+            if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || typeof entry.stamp !== "string") return null;
+            sources[name] = fileUrl(entry.path, entry.stamp);
+        }
+        return sources;
+    }
+
+    function clear() {
+        path = "";
+        source = "";
+        screens = {};
+    }
+
+    // Set `path`, `source` and `screens` from backgrounds.json's TEXT; a
+    // document the runner did not write is logged and names no image.
     function take(text) {
         let doc = null;
         try {
@@ -28,14 +63,16 @@ Item {
         } catch (e) {
             // Logged below with the document's other defects.
         }
-        if (doc !== null && typeof doc === "object" && typeof doc.current === "string" && typeof doc.stamp === "string") {
-            path = doc.current;
-            source = "file://" + doc.current.split("/").map(encodeURIComponent).join("/") + "?" + encodeURIComponent(doc.stamp);
+        const sources = doc !== null && typeof doc === "object" ? screenSources(doc.screens) : null;
+        const current = sources !== null && typeof doc.current === "string" && typeof doc.stamp === "string";
+        if (sources !== null && (current || doc.current === null)) {
+            path = current ? doc.current : "";
+            source = current ? fileUrl(doc.current, doc.stamp) : "";
+            screens = sources;
             return;
         }
-        if (doc === null || typeof doc !== "object" || doc.current !== null) console.error("background: " + statePath + " malformed");
-        path = "";
-        source = "";
+        console.error("background: " + statePath + " malformed");
+        clear();
     }
 
     WatchedFile {
@@ -44,8 +81,7 @@ Item {
         onLoaded: content => root.take(content)
         onLoadFailed: error => {
             if (error !== FileViewError.FileNotFound) console.error("background: " + path + " unreadable: " + error);
-            root.path = "";
-            root.source = "";
+            root.clear();
         }
     }
 }

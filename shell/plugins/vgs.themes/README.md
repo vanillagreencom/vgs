@@ -12,6 +12,7 @@ A bar button that opens a panel listing every theme package, and the applied the
 - Closing the panel does not stop an apply. The panel shows the result when it opens again.
 - The applied package's wallpaper: `bin/vgsh theme apply <name>` shows the package's remembered image, else the first of its `backgrounds/` directory in name order. With a package without images nothing is drawn, so a wallpaper another program draws shows.
 - The image is cropped to fill each screen.
+- A monitor shows its own image once `bin/vgsh theme background set <path> --screen <output>` names it, and every other monitor keeps the current image. A monitor whose own image was deleted shows the current image. The next apply of a package clears every monitor's own image.
 - A Wallpaper section in the panel names the current image, and its Previous and Next buttons show the package's previous or next image and remember it for the package, as `bin/vgsh theme background previous` and `next` do. Applying the package again shows the remembered image.
 - `~/.local/state/vgs/background` links to the same image, for a lock screen or any other application that draws it.
 - `bin/vgsh plugin disable vgs.themes` turns off the button, the panel and the wallpaper.
