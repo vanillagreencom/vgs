@@ -92,6 +92,7 @@ Singleton {
             const out = {};
             for (const name of Dispatch.PLUGIN_DISPATCHERS)
                 out[name] = (...args) => Compositor.send(name, args);
+            out.reveal = (addresses, awaitSender) => Compositor.reveal(addresses, awaitSender);
             return out;
         },
         configure: ctx => ({

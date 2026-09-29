@@ -162,7 +162,7 @@ Scope {
         process.destroy();
     }
 
-    // Focuses the window of KEY's live run. A key busy only because its
+    // Brings the window of KEY's live run into view. A key busy only because its
     // launcher still waits has no window yet. A live run with no window is
     // looked for among the dead once: a presenter killed outright leaves a
     // running record that only `vgsh-tui reap` ends.
@@ -172,7 +172,7 @@ Scope {
         const found = Logic.tuiWindow(windows(), slot.running.window);
         switch (found.state) {
         case "found":
-            Compositor.send("focusWindow", [found.address]);
+            Compositor.reveal([found.address], false);
             break;
         case "none":
             console.warn("tui: focus=none tui=" + key);

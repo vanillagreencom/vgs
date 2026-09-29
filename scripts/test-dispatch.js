@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Table-driven checks for shell/Core/Dispatch.js, loaded under node through
-// bin/lib/qml-library.js: every dispatcher in both syntaxes, and one refusal
-// per argument class. The Lua forms are the ones scripts/qml-smoke.sh sends
+// bin/lib/qml-library.js: every dispatcher in both syntaxes, one refusal
+// per argument class, and the reveal decisions with a control per rule. The Lua forms are the ones scripts/qml-smoke.sh sends
 // to a nested Hyprland; the classic forms are pinned here only.
 "use strict";
 const path = require("path");
@@ -49,6 +49,88 @@ const refusalRows = [
 for (const [name, dispatcher, args, want] of refusalRows) {
     const r = ctx.request(dispatcher, args, true);
     check("refusal: " + name, r.ok ? "accepted" : r.error, want);
+}
+
+// Bringing a window into view: the request's judge, what a Hyprland event
+// means to a waiting reveal and which window a reveal focuses. Every value
+// is written out by hand; verifyReveal answers how many rows failed, so
+// the controls below can require a mutant to fail it.
+function verifyReveal(lib, report) {
+    let bad = 0;
+    const row = (name, got, want) => {
+        const ok = JSON.stringify(got) === JSON.stringify(want);
+        if (!ok) bad += 1;
+        if (report) check(name, got, want);
+    };
+    // rows: [name, addresses, want]
+    const requests = [
+        ["one window", ["0xABC"], { ok: true, addresses: ["0xabc"] }],
+        ["each window once", ["0xabc", "0xABC", "0xdef"], { ok: true, addresses: ["0xabc", "0xdef"] }],
+        ["no window", [], { ok: false, error: "refused: reveal windows=0 want=1-16" }],
+        ["not a list", "0xabc", { ok: false, error: "refused: reveal windows=none want=1-16" }],
+        ["past the bound", Array.from({ length: 17 }, (_, i) => "0x" + (i + 1)), { ok: false, error: "refused: reveal windows=17 want=1-16" }],
+        ["an address that is not hexadecimal", ["0xabc", "0xzz"], { ok: false, error: "refused: reveal window=1 value=\"0xzz\"" }],
+        ["an address that is not text", [12], { ok: false, error: "refused: reveal window=0 value=12" }]
+    ];
+    for (const [name, addresses, want] of requests) row("reveal request: " + name, lib.revealRequest(addresses), want);
+    // rows: [name, event, data, want]
+    const events = [
+        ["the application focused its window", "activewindowv2", "ABC", { by: "sender", address: "0xabc" }],
+        ["the application asked for its window", "urgent", "def", { by: "named", address: "0xdef" }],
+        ["another window took the focus", "activewindowv2", "123", { by: "" }],
+        ["focus left every window", "activewindowv2", "", { by: "" }],
+        ["another event naming the window", "closewindow", "abc", { by: "" }]
+    ];
+    for (const [name, event, data, want] of events) row("reveal event: " + name, lib.revealEvent(["0xabc", "0xdef"], event, data), want);
+    const client = (address, focusHistoryID, mapped) => ({ address: address, mapped: mapped !== false, focusHistoryID: focusHistoryID });
+    // rows: [name, clients, named, want]
+    const targets = [
+        ["the window focused last", [client("0xabc", 3), client("0xdef", 1), client("0x999", 2)], "", { state: "reveal", address: "0xdef" }],
+        ["a window never focused comes last", [client("0xabc", -1), client("0xdef", 4)], "", { state: "reveal", address: "0xdef" }],
+        ["the window the application asked for", [client("0xabc", 3), client("0xdef", 1)], "0xabc", { state: "reveal", address: "0xabc" }],
+        ["the focused window moves nothing", [client("0xABC", 0), client("0xdef", 1)], "", { state: "shown", address: "0xabc" }],
+        ["an unmapped window is none", [client("0xabc", 1, false)], "", { state: "none" }],
+        ["no window of the application", [client("0x999", 0)], "", { state: "none" }]
+    ];
+    for (const [name, clients, named, want] of targets) row("reveal target: " + name, lib.revealTarget(clients, ["0xabc", "0xdef"], named), want);
+    return bad;
+}
+failures += verifyReveal(ctx, true);
+
+// Each control removes one reveal rule from a copy of Dispatch.js and keeps
+// the text around it; verifyReveal must fail on every copy.
+const fs = require("fs");
+const revealControls = [
+    ["the window bound", "addresses.length > REVEAL_WINDOWS_MAX)", "false)"],
+    ["an address is checked", "!ADDRESS.test(addresses[i]))", "false)"],
+    ["each window once", "if (out.indexOf(address) === -1) out.push(address);", "out.push(address);"],
+    ["the application's own focus ends the wait", "by: name === \"activewindowv2\" ? \"sender\" : \"named\"", "by: \"named\""],
+    ["only the application's windows count", "if (addresses.indexOf(address) === -1) return { by: \"\" };", ""],
+    ["only focus and urgency count", "if (name !== \"activewindowv2\" && name !== \"urgent\") return { by: \"\" };", ""],
+    ["the window focused last", "return rank(b) < rank(a) ? b : a;", "return a;"],
+    ["a window never focused comes last", "return c.focusHistoryID < 0 ? Infinity : c.focusHistoryID;", "return c.focusHistoryID;"],
+    ["the named window first", "if (target === undefined) target =", "target ="],
+    ["the focused window moves nothing", "state: target.focusHistoryID === 0 ? \"shown\" : \"reveal\"", "state: \"reveal\""],
+    ["only mapped windows", "return c.mapped && addresses", "return addresses"]
+];
+const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");
+const source = fs.readFileSync(dispatchFile, "utf8");
+const scratch = fs.mkdtempSync(path.join(require("os").tmpdir(), "test-dispatch-"));
+try {
+    for (const [name, needle, replacement] of revealControls) {
+        if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }
+        const mutant = path.join(scratch, "Dispatch.js");
+        fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        let bad;
+        try {
+            bad = verifyReveal(require("../bin/lib/qml-library.js").load(mutant), false);
+        } catch (e) {
+            bad = 1;
+        }
+        check("control " + name + " fails the reveal rows", bad > 0, true);
+    }
+} finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
 }
 
 if (failures > 0) { console.log("test-dispatch: " + failures + " failing"); process.exit(1); }
