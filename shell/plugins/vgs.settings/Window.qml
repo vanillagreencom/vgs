@@ -25,7 +25,9 @@ import "Reply.js" as Reply
 // The payload is a JSON object: `{}` opens the list, `{"plugin":"<id>"}`
 // that plugin's page, and an id no plugin has opens the list with a notice
 // naming it. Any other key, or a payload that is no object, throws out of
-// open(), which refuses the summon.
+// open(), which refuses the summon. A plugin that leaves the manager's rows
+// while its page is shown, as a removal's rescan does, returns the window
+// to the list with a notice naming it.
 FocusScope {
     id: root
 
@@ -54,6 +56,13 @@ FocusScope {
     focus: true
 
     function rowOf(id) { return plugins.find(p => p.id === id) || null; }
+
+    onPluginsChanged: {
+        if (page === "" || rowOf(page) !== null) return;
+        const gone = page;
+        showList();
+        notice = gone + " is no longer listed.";
+    }
 
     // Keep one manager reply for plugin `id` and answer it.
     function keep(id, reply) {

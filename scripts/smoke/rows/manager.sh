@@ -360,6 +360,38 @@ expect_poll "the remove's terminal closes" 0 tui_windows
 expect "the stand-in's run left the plugin installed" True plugin_known acme.probe
 expect_poll "the Settings window has the focus after the remove" "$settings_focused" active_window
 
+# A plugin that leaves the rows while its page is shown, as a removal's
+# rescan takes it: the window returns to the list with a notice naming it.
+# The plugin is a directory the row writes and removes; installed, it is
+# listed and never enabled. Control: a change of the rows that keeps the
+# plugin, another plugin's setting written and put back, keeps its page and
+# shows no notice, so the return reads the plugin leaving and not a change
+# of the rows.
+gone_dir="$home/.config/vgs/plugins/acme.gone"
+mkdir -p -- "$gone_dir"
+printf '%s\n' '{ "schemaVersion": 1, "id": "acme.gone", "name": "Gone", "version": "0.1.0", "author": "acme", "description": "a plugin the Settings rows remove", "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }' >"$gone_dir/manifest.json"
+printf '%s\n' 'import QtQuick' 'Item { property var shell: null }' >"$gone_dir/Service.qml"
+settings_notice() { ipc smoke readInstance window vgs.settings notice; }
+expect "a rescan finds the plugin the row adds" ok ipc shell rescanPlugins
+expect_poll "the added plugin is listed" True plugin_known acme.gone
+settings_lists() { settings_rows | python3 -c 'import json,sys; print(any(r["id"] == sys.argv[1] for r in json.load(sys.stdin)))' "$1"; }
+expect_poll "the window lists the added plugin" True settings_lists acme.gone
+settings_show acme.gone
+probe_label() { row_of acme.probe settings | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)[0]["label"]))'; }
+label_before="$(probe_label)" || fail "the fixture's label is unreadable"
+expect "control: writing another plugin's setting is allowed" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"rows-change"}'
+expect_poll "control: the window's rows show the other plugin's setting" '"rows-change"' probe_label
+expect "control: a change of the rows that keeps the plugin keeps its page" '"acme.gone"' settings_page
+expect "control: a change of the rows that keeps the plugin shows no notice" '""' settings_notice
+expect "control: putting the setting back is allowed" ok ipc smoke invokeInstance window vgs.settings applySetting "{\"id\":\"acme.probe\",\"key\":\"label\",\"value\":$label_before}"
+expect_poll "control: the window's rows show the setting put back" "$label_before" probe_label
+rm -r -- "$gone_dir"
+expect "a rescan after the plugin's directory goes is allowed" ok ipc shell rescanPlugins
+expect_poll "the removed plugin leaves the rows" False plugin_known acme.gone
+expect_poll "the window returns to the list when the shown plugin leaves" '""' settings_page
+expect_poll "the list names the plugin that left" '"acme.gone is no longer listed."' settings_notice
+settings_show acme.probe
+
 # The title's menu lists every plugin with the current one checked, scrolls
 # past its maximum height under its own bar, and typed letters then Enter
 # jump to another plugin's page.
