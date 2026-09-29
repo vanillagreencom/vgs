@@ -1386,18 +1386,96 @@ function reloadWiring(name, target, configHome, failures) {
     }
 }
 
+// The marker scripts/validate, scripts/vgsh-rows.sh and
+// scripts/smoke/harness.sh set for every test and sandbox run. Any
+// non-empty value turns the test-run guard on.
+const TEST_RUN = "VGS_TEST_RUN";
+// What the guard reads for an unset PATH: libuv and a hook's shell then
+// search a default of their own, which lies in host directories like these.
+const DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin";
+// The variables a hook's commands reach a live session's servers through,
+// and what the guard requires of each. `unset`: the variable names a live
+// server or its bus, and a test sets none. `inside`: the variable must name
+// a directory strictly inside the scratch root, since unset it falls back to
+// a host default: /run/user/<uid> for XDG_RUNTIME_DIR, whose sockets reach
+// the compositor, the bus and Hyprland's IPC, and /tmp for TMUX_TMPDIR,
+// whose tmux-<uid>/default is the live tmux server.
+const HOST_CHANNELS = [
+    { name: "TMUX", rule: "unset" },
+    { name: "DBUS_SESSION_BUS_ADDRESS", rule: "unset" },
+    { name: "HYPRLAND_INSTANCE_SIGNATURE", rule: "unset" },
+    { name: "WAYLAND_DISPLAY", rule: "unset" },
+    { name: "XDG_RUNTIME_DIR", rule: "inside" },
+    { name: "TMUX_TMPDIR", rule: "inside" },
+];
+
+// Under the test-run marker, what keeps target NAME's hook from running
+// with COMMAND, its argv0, or null when it may run. A hook runs only when
+// the target's directory, the directory COMMAND names and every directory
+// on PATH lie inside the scratch root, the real path of os.tmpdir(), and
+// every HOST_CHANNELS variable meets its rule: a shipped themes/targets
+// directory lies outside the root, and so does every host directory and
+// server a hook's commands would reach the owner's live applications
+// through. An empty PATH entry is the working directory, as execvp reads
+// it, and an unset PATH is DEFAULT_PATH. Without the marker, null.
+function testRunRefusal(name, command) {
+    if (!process.env[TEST_RUN]) return null;
+    let root;
+    try {
+        root = fs.realpathSync(os.tmpdir());
+    } catch (e) {
+        if (typeof e.code !== "string") throw e;
+        return "path=" + os.tmpdir() + " error=" + e.code;
+    }
+    const real = dir => {
+        try {
+            return fs.realpathSync(dir);
+        } catch (e) {
+            if (typeof e.code !== "string") throw e;
+            return path.resolve(dir);
+        }
+    };
+    const below = dir => dir.startsWith(root + path.sep);
+    const dirs = [path.join(SHIPPED, TARGETS, name)];
+    if (command.includes("/")) dirs.push(path.dirname(path.resolve(command)));
+    for (const dir of (process.env.PATH ?? DEFAULT_PATH).split(":")) dirs.push(dir || ".");
+    const outside = dirs.map(real).find(dir => dir !== root && !below(dir));
+    if (outside !== undefined) return "path=" + outside + " scratch=" + root;
+    for (const channel of HOST_CHANNELS) {
+        const value = process.env[channel.name];
+        switch (channel.rule) {
+        case "unset":
+            if (value !== undefined) return "env=" + channel.name + " scratch=" + root;
+            break;
+        case "inside":
+            if (!value) return "env=" + channel.name + " scratch=" + root;
+            if (!below(real(value))) return "env=" + channel.name + " path=" + real(value) + " scratch=" + root;
+            break;
+        default:
+            throw new Error("HOST_CHANNELS rule " + channel.rule + " for " + channel.name + " is neither unset nor inside");
+        }
+    }
+    return null;
+}
+
 // Run target NAME's reload hook, the argv render.reloadCommand writes with
 // LIVE, the state directory's theme/, and WIRING, the file its include line
 // is kept in, bounded by its timeoutMs, with this process's environment.
 // Answers ROW when it exits 0, else ROW as reload-pending with its reason
-// and its keyed line pushed onto FAILURES. No stream is a pipe: the hook's
-// output never reaches the result on stdout, and spawnSync would wait past
-// the timeout for a pipe a hook's child holds.
+// and its keyed line pushed onto FAILURES; under the test-run marker a hook
+// testRunRefusal names a path for never starts and is `reload-refused`. No
+// stream is a pipe: the hook's output never reaches the result on stdout,
+// and spawnSync would wait past the timeout for a pipe a hook's child holds.
 function reloadRow(name, target, configHome, live, row, failures) {
     const reload = target.reload;
     const wiring = reloadWiring(name, target, configHome, failures);
     if (!wiring.ok) return Object.assign({}, row, { state: "reload-pending", reason: "reload-failed" });
     const [command, ...args] = render.reloadCommand(target, live, wiring.path);
+    const refusal = testRunRefusal(name, command);
+    if (refusal !== null) {
+        failures.push("target=" + name + " reason=reload-refused command=" + command + " " + refusal);
+        return Object.assign({}, row, { state: "reload-pending", reason: "reload-refused" });
+    }
     const nul = fs.openSync("/dev/null", "r");
     let run;
     try {

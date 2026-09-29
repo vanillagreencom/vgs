@@ -33,6 +33,10 @@ set -euo pipefail
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 cd -- "$repo"
+# Every row runs under the test-run marker, so the theme judge refuses a
+# reload hook that could reach the host's live applications:
+# docs/architecture/validation.md.
+export VGS_TEST_RUN=1
 
 area="all"
 area_given=false

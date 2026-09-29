@@ -245,4 +245,111 @@ tinst "the lock-descriptor mutant applies changed bytes" "$cfg" "$rt_empty" 0 "$
 check "the lock-descriptor mutant's hook holds the theme lock" ran "alpha fd9=$cfg/vgs/theme.lock rt=$rt_empty pending=$alpha_due"
 unset THEME_BIN
 
+# The test-run guard: under VGS_TEST_RUN a hook runs only when its target's
+# directory, its command's directory and every PATH directory lie inside
+# the scratch root, TMPDIR. kitty is a shipped target copied into the tree,
+# its hook a real sh reaching the signal command by name; that command is a
+# stub recording its arguments, first on every PATH here, so neither a row
+# nor a mutant signals a live application. alpha and plain are disabled, so
+# only the target under test is due.
+cp -R -- "$repo/themes/targets/kitty" "$tree/themes/targets/"
+printf '{ "disabledTargets": ["alpha", "plain"] }\n' >"$cfg/vgs/shell.json"
+signals="$tmp/signals"; guard_tools="$tmp/hook-tools"; mkdir -p "$guard_tools"
+for tool in sh id; do
+  tool_bin="$(command -v "$tool")" || { echo "test-vgsh-reload: status=not-measured missing=$tool"; exit 77; }
+  ln -s -- "$tool_bin" "$guard_tools/$tool"
+done
+printf '#!/bin/sh\nexit 1\n' >"$stubs/kitty"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexit 1\n' "$signals" >"$stubs/pkill"
+chmod +x "$stubs/kitty" "$stubs/pkill"
+# $scratch is a scratch root the tree lies outside of, with every tool the
+# rows run linked into $scratch/bin.
+scratch="$tmp/scratch"; mkdir -p "$scratch/bin"
+for tool in "$stubs"/* "$guard_tools"/* "$theme_path"/*; do ln -s -- "$tool" "$scratch/bin/"; done
+guard_path="$stubs:$guard_tools:$theme_path"
+kitty_due='{"schemaVersion":1,"targets":["kitty"]}'
+kitty_pending() { printf '%s\n' "$kitty_due" >"$pending"; rm -f -- "$signals"; }
+signalled() { [[ "$(cat "$signals" 2>/dev/null)" == "-USR1 -x -u $(id -u) kitty" ]]; }
+unsignalled() { [[ ! -e $signals ]]; }
+kitty_reloaded='{"state":"reloaded","targets":[{"name":"kitty","state":"reloaded","reason":null}],"reason":null}'
+
+# A shipped target, its tree outside the scratch root. The runtime and tmux
+# socket directories move inside $scratch with it.
+rm -f -- "$signals"; inst_env=(XDG_RUNTIME_DIR="$scratch/rt" TMUX_TMPDIR="$scratch/tmux")
+INST_TMPDIR="$scratch" THEME_PATH="$scratch/bin" tinst "an apply refuses a shipped target's hook outside the scratch root" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=kitty reason=reload-refused command=sh path=$tree/themes/targets/kitty scratch=$scratch" theme apply --json nord
+tail -n 1 "$tmp/out" >"$tmp/apply.json"
+check "the refused target is reload-pending with reload-refused" json_is "$tmp/apply.json" 'd["state"] == "partial" and [t for t in d["targets"] if t["name"] == "kitty"] == [{"name": "kitty", "state": "reload-pending", "reason": "reload-refused", "dropped": []}]'
+check "the refused hook signalled nothing" unsignalled
+check "the refused hook stays pending" pending_is '["kitty"]'
+INST_TMPDIR="$scratch" THEME_PATH="$scratch/bin" tinst "a reload refuses the same hook" "$cfg" "$rt_empty" 3 '{"state":"partial","targets":[{"name":"kitty","state":"reload-pending","reason":"reload-refused"}],"reason":null}' "vgsh: refused: target=kitty reason=reload-refused command=sh path=$tree/themes/targets/kitty scratch=$scratch" theme reload --json
+check "the refused reload signalled nothing" unsignalled
+INST_TEST_RUN= INST_TMPDIR="$scratch" THEME_PATH="$scratch/bin" tinst "without the marker the same hook runs" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+check "the hook without the marker reached the signal stub" signalled
+kitty_pending
+judge_control unguarded 'const refusal = testRunRefusal(name, command);' 'const refusal = null;'
+INST_TMPDIR="$scratch" THEME_PATH="$scratch/bin" tinst "the unguarded mutant reloads the shipped target" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+check "the unguarded mutant's hook reached the signal stub" signalled
+kitty_pending
+judge_control target-dir 'const dirs = [path.join(SHIPPED, TARGETS, name)];' 'const dirs = [];'
+INST_TMPDIR="$scratch" THEME_PATH="$scratch/bin" tinst "the target-dir mutant reloads the shipped target" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+check "the target-dir mutant's hook reached the signal stub" signalled
+unset THEME_BIN; inst_env=()
+
+# The tree inside the scratch root: the hook runs through stubs, and is
+# refused once one PATH directory lies outside it.
+kitty_pending
+THEME_PATH="$guard_path" tinst "a copied target's hook runs inside the scratch root" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+check "the hook inside the scratch root reached the signal stub" signalled
+outside="$tmp.outside"
+kitty_pending
+THEME_PATH="$guard_path:$outside" tinst "a reload refuses a hook with a PATH directory outside the scratch root" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=kitty reason=reload-refused command=sh path=$outside scratch=$tmp" theme reload --json
+check "the hook refused for its PATH signalled nothing" unsignalled
+check "the hook refused for its PATH stays pending" pending_is '["kitty"]'
+judge_control path-dirs '    for (const dir of (process.env.PATH ?? DEFAULT_PATH).split(":")) dirs.push(dir || ".");' ''
+THEME_PATH="$guard_path:$outside" tinst "the path-dirs mutant reloads the hook" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+check "the path-dirs mutant's hook reached the signal stub" signalled
+unset THEME_BIN
+
+# A command named by a path outside the scratch root. It is true, so the
+# mutant that runs it reloads.
+true_bin="$(type -P true)" || { echo "test-vgsh-reload: status=not-measured missing=true"; exit 77; }
+true_dir="$(cd -- "$(dirname -- "$true_bin")" && pwd -P)"
+target_dir named "$(target_json named hex6 '[]' 'include=@{state}/named.conf' true "{ \"command\": [\"$true_bin\"], \"timeoutMs\": 3000 }")" 'n=@{palette.accent}'
+printf '{"schemaVersion":1,"targets":["named"]}\n' >"$pending"
+THEME_PATH="$guard_path" tinst "a reload refuses a command outside the scratch root" "$cfg" "$rt_empty" 3 '{"state":"partial","targets":[{"name":"named","state":"reload-pending","reason":"reload-refused"}],"reason":null}' "vgsh: refused: target=named reason=reload-refused command=$true_bin path=$true_dir scratch=$tmp" theme reload --json
+judge_control command-dir '    if (command.includes("/")) dirs.push(path.dirname(path.resolve(command)));' ''
+THEME_PATH="$guard_path" tinst "the command-dir mutant runs the command" "$cfg" "$rt_empty" 0 '{"state":"reloaded","targets":[{"name":"named","state":"reloaded","reason":null}],"reason":null}' "" theme reload --json
+unset THEME_BIN
+rm -r -- "$tree/themes/targets/named"
+
+# The host channels: a variable naming a live session's server, or a
+# runtime or tmux socket directory outside the scratch root, refuses the
+# hook. Each row plants one channel over the suite's isolated environment;
+# its control is a judge copy without that channel's rule.
+channels=(
+  "TMUX|unset|TMUX=$outside/default,1,0|env=TMUX scratch=$tmp"
+  "DBUS_SESSION_BUS_ADDRESS|unset|DBUS_SESSION_BUS_ADDRESS=unix:path=$outside/bus|env=DBUS_SESSION_BUS_ADDRESS scratch=$tmp"
+  "HYPRLAND_INSTANCE_SIGNATURE|unset|HYPRLAND_INSTANCE_SIGNATURE=vgs-host|env=HYPRLAND_INSTANCE_SIGNATURE scratch=$tmp"
+  "WAYLAND_DISPLAY|unset|WAYLAND_DISPLAY=wayland-1|env=WAYLAND_DISPLAY scratch=$tmp"
+  "XDG_RUNTIME_DIR|inside|XDG_RUNTIME_DIR=$outside|env=XDG_RUNTIME_DIR path=$outside scratch=$tmp"
+  "TMUX_TMPDIR|inside|TMUX_TMPDIR=$outside|env=TMUX_TMPDIR path=$outside scratch=$tmp"
+)
+for spec in "${channels[@]}"; do
+  IFS='|' read -r channel rule planted detail <<<"$spec"
+  kitty_pending; inst_env=("$planted")
+  THEME_PATH="$guard_path" tinst "a reload refuses a hook under a planted $channel" "$cfg" "$rt_empty" 3 '{"state":"partial","targets":[{"name":"kitty","state":"reload-pending","reason":"reload-refused"}],"reason":null}' "vgsh: refused: target=kitty reason=reload-refused command=sh $detail" theme reload --json
+  check "the hook refused for $channel signalled nothing" unsignalled
+  judge_control "channel-$channel" "{ name: \"$channel\", rule: \"$rule\" }," ''
+  THEME_PATH="$guard_path" tinst "the $channel mutant reloads the hook" "$cfg" "$rt_empty" 0 "$kitty_reloaded" "" theme reload --json
+  check "the $channel mutant's hook reached the signal stub" signalled
+  unset THEME_BIN; inst_env=()
+done
+# An empty runtime or tmux socket directory is the host default.
+for channel in XDG_RUNTIME_DIR TMUX_TMPDIR; do
+  kitty_pending; inst_env=("$channel=")
+  THEME_PATH="$guard_path" tinst "a reload refuses a hook under an empty $channel" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=kitty reason=reload-refused command=sh env=$channel scratch=$tmp" theme reload --json
+  check "the hook refused for an empty $channel signalled nothing" unsignalled
+  inst_env=()
+done
+
 rows_done test-vgsh-reload

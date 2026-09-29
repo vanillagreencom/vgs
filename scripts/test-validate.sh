@@ -295,6 +295,35 @@ PY
 "${base_env[@]}" git -C "$d" commit -q -m control
 row "removing the source dependency makes the planted defect escape" "$d" 0 "" "validate: ok"
 
+# Every row runs under the test-run marker: a planted row fails without it,
+# and a copy without the export is caught.
+d="$tmp/marker"; fresh "$d"
+printf '#!/bin/sh\n[ "$VGS_TEST_RUN" = 1 ]\n' >"$d/scripts/test-marker.sh"; chmod +x "$d/scripts/test-marker.sh"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+assert source.count('rows=(\n') == 1
+path.write_text(source.replace('rows=(\n', 'rows=(\n  "tools|test-run marker|scripts/test-marker.sh|"\n'))
+PY
+"${base_env[@]}" git -C "$d" commit -q -am marker-row
+test_area=tools
+test_args=(--changed HEAD)
+row "a row runs under the test-run marker" "$d" 0 "" "validate: ok"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+assert source.count('export VGS_TEST_RUN=1\n') == 1
+path.write_text(source.replace('export VGS_TEST_RUN=1\n', ''))
+PY
+"${base_env[@]}" git -C "$d" commit -q -am control
+row "a validate without the marker export fails the planted row" "$d" 1 "" "validate: failed=test-run marker (exit 1)"
+test_area=offline
+test_args=()
+
 d="$tmp/arguments"; fresh "$d"
 argument_cases=(
   'missing|--changed|changed-base=missing-or-repeated'

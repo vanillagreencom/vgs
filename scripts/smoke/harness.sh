@@ -137,7 +137,9 @@ cp -- "$home/.config/hypr/hyprland.lua" "$sandbox/hyprland-harness.lua"
 
 # node on PATH may be a version-manager shim that reads the developer's own
 # configuration and fails under the sandbox HOME; the sandbox PATH leads with
-# the directory of the binary it resolves to.
+# the directory of the binary it resolves to. VGS_TEST_RUN, the test-run
+# marker, keeps the theme judge from running a reload hook through the
+# host's PATH or session: docs/architecture/validation.md.
 if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
   printf 'qml-smoke: status=not-measured missing=node-binary\n'
   exit 77
@@ -145,7 +147,7 @@ fi
 sandbox_env=(env -i
   HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
   XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
-  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache")
+  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache" VGS_TEST_RUN=1)
 
 # The shell alone resolves hyprctl through this directory, so a row can
 # stand a command in for it without touching what the rows themselves run.
