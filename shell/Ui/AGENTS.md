@@ -1,6 +1,6 @@
 # shell/Ui/
 
-The component library, module `qs.Ui`: what a plugin and the shell compose. `qmldir` is the list; files sit under `foundation/`, `controls/`, `feedback/`, `layout/` and `overlay/`. The contract is `docs/architecture/design-system.md` § Components.
+The component library, module `qs.Ui`: what a plugin and the shell compose. `qmldir` is the list; files sit under `foundation/`, `controls/`, `feedback/`, `layout/` and `overlay/`. The contract is `docs/architecture/components.md`.
 
 - A control extends a `QtQuick.Templates` type and supplies its `background`, `contentItem`, `indicator`, `handle` or `delegate` from `Theme` tokens; no literal colour, font, radius, metric, opacity or duration. `scripts/check-design-tokens.py` enforces it.
 - A file in a subdirectory imports `qs.Ui` to compose another component; the directory alone gives it no sibling type.
