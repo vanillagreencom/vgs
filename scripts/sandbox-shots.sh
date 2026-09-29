@@ -212,14 +212,48 @@ settings_close() {
   expect "the Settings window closes" ok ipc shell hide "$settings_kind" vgs.settings
   expect_poll "the Settings window is gone" 0 settings_count
 }
+# The single-workspace token's store command: the last line of the Slack
+# section, on the page of this checkout and of a revision before per-workspace
+# tokens alike.
+slack_legacy_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
+# The Slack section of the notifications' page in its scroll area's content
+# coordinates, as `START END HEIGHT`: its heading's top, the bottom of its
+# last line's command, and the area's height. The bar spans the area, so its
+# top is the area's.
+slack_section() {
+  local area header last
+  area="$(settings_scroll)" && [[ $area == \{* ]] || { echo "area=${area:-unread}"; return 1; }
+  header="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SectionHeader Slack)" && [[ $header == \[* ]] || { echo "heading=${header:-unread}"; return 1; }
+  last="$(ipc smoke windowGeometry "$settings_kind" vgs.settings CodeLine "$slack_legacy_command")" && [[ $last == \[* ]] || { echo "last-line=${last:-unread}"; return 1; }
+  python3 -c 'import json,sys
+a, h, l = (json.loads(v) for v in sys.argv[1:4])
+top, y = a["bar"][1], a["contentY"]
+print(int(h[1] - top + y), int(l[1] + l[3] - top + y), int(a["height"]))' "$area" "$header" "$last"
+}
+# settings_scroll_to Y: the page's scroll area moved to about contentY Y,
+# held inside its content, by dragging its bar's thumb as the scrolled
+# probe page's shot does: the thumb travels the bar less its own length
+# while the content travels its height less the area's.
+settings_scroll_to() {
+  local area move tx ty
+  area="$(settings_scroll)" && [[ $area == \{* ]] || return 1
+  move="$(python3 -c 'import json,sys
+a, want = json.loads(sys.argv[1]), int(sys.argv[2])
+most = a["contentHeight"] - a["height"]
+travel = a["bar"][3] - a["thumb"][3]
+print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["contentY"]) * travel / most))' "$area" "$1")" || return 1
+  [[ $move -ne 0 ]] || return 0
+  read -r tx ty < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")") || return 1
+  drag "$tx" "$ty" "$tx" "$((ty + move))"
+}
 # Whether every status row of the notifications' page is reported.
 notifications_reported() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))'; }
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a plugin page with many grouped settings at its top and dragged
 # down its scroll bar; a plugin with keys; the title's menu open with its
-# scroll bar under the pointer; the notifications' page with its Slack
-# token rows; and the list and a page on a monitor narrower than the
-# window's width token.
+# scroll bar under the pointer; the notifications' page scrolled to its
+# Slack token rows, over two shots when they are taller than the page; and
+# the list and a page on a monitor narrower than the window's width token.
 scene_settings() { # MODE
   local area at tx ty title x y
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
@@ -264,7 +298,23 @@ scene_settings() { # MODE
   expect "the window opens the notifications' page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.notifications
   expect_poll "the notifications' page is shown" '"vgs.notifications"' settings_page
   expect_poll "the notifications' status rows are reported" True notifications_reported
-  take "settings-$1-slack"
+  # The Slack section in view: its heading at the top, and, when the
+  # section is taller than the area, a second shot with its last line at
+  # the bottom, so every line and command shows across the two.
+  local section start end height margin=12
+  if section="$(slack_section)"; then
+    read -r start end height <<<"$section"
+    settings_scroll_to "$((start - margin))" || fail "the scroll to the Slack section failed"
+    park_pointer
+    take "settings-$1-slack"
+    if (( end - start + 2 * margin > height )); then
+      settings_scroll_to "$((end + margin - height))" || fail "the scroll to the Slack section's end failed"
+      park_pointer
+      take "settings-$1-slack-end"
+    fi
+  else
+    fail "the notifications' Slack section is unreadable: $section"
+  fi
   settings_close
   # The monitor made narrower than the window: the nested output takes a
   # 480 by 720 mode for the shot, then its own mode again. The gear opens
