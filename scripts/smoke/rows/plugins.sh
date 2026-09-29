@@ -35,6 +35,20 @@ bare_requirements() { ipc shell listPlugins | python3 -c 'import json,sys; print
 expect_poll "listPlugins reports each declared command's state" '[["sh", "present"], ["vgs-smoke-absent", "missing"]]' bare_requirements
 bare_missing_line() { "${shell_env[@]}" "$repo/bin/vgsh" plugin list | grep -F 'missing acme.' || true; }
 expect "vgsh plugin list names the missing command" "missing acme.bare vgs-smoke-absent" bare_missing_line
+# A command that appears on the shell's PATH is present after the next
+# rescan, and missing again once it goes; the plugin's files did not
+# change, so neither rescan builds anything. $shim leads the shell's PATH.
+if before="$(builds)"; then
+  printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-smoke-absent"; chmod 755 "$shim/vgs-smoke-absent"
+  expect "a rescan after the command appears starts" ok ipc shell rescanPlugins
+  expect_poll "the command on PATH is reported present after the rescan" '[["sh", "present"], ["vgs-smoke-absent", "present"]]' bare_requirements
+  rm -f -- "$shim/vgs-smoke-absent"
+  expect "a rescan after the command goes starts" ok ipc shell rescanPlugins
+  expect_poll "the removed command is reported missing after the rescan" '[["sh", "present"], ["vgs-smoke-absent", "missing"]]' bare_requirements
+  expect "a requirement's state change rebuilds nothing" "$before" builds
+else
+  fail "buildCount unreadable before the requirement rescan rows"
+fi
 service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
 read_widget() { ipc smoke readInstance "$(bar_key)" acme.probe "$1"; }
 read_service() { ipc smoke readInstance service acme.probe "$1"; }
