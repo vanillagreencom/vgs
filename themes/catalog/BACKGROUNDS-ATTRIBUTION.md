@@ -4,7 +4,7 @@ Provenance for every wallpaper source used by the VGS theme catalog. Wallpapers 
 
 ## Thumbnails
 
-The catalog ships one 480 px thumbnail per converted theme, generated from the first wallpaper the converter found in the pinned archive. A `Wallhaven source` value of `yes` means the source file name contains `-wh-`; Wallhaven licenses are unverified in the source attribution above.
+The catalog ships one 480 px thumbnail per converted theme, generated from the first wallpaper the converter found in the pinned archive. A `Wallhaven source` value of `yes` means the source file name contains `-wh-` or `wallhaven-`; Wallhaven licenses are unverified in the source attribution above.
 
 | Theme | Source image | Wallhaven source |
 |---|---|---|
@@ -13,7 +13,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `arc-blueberry` | `1-4.jpg` | no |
 | `arc-raiders` | `1-arcraiders.jpg` | no |
 | `archwave` | `1-3-night-error.jpg` | no |
-| `artzen` | `1-wallhaven-x8jj9o.jpg` | no |
+| `artzen` | `1-wallhaven-x8jj9o.jpg` | yes |
 | `ayu` | `1-ayu-aurora.png` | no |
 | `bauhaus` | `1-bauhaus-Bauhaus01.jpg` | no |
 | `biscuit-de-mar` | `1-6-biscuit-emblem.jpg` | no |
@@ -82,7 +82,7 @@ The catalog ships one 480 px thumbnail per converted theme, generated from the f
 | `vengeance` | `1-wh-vm8r9m.jpg` | yes |
 | `vice-city` | `1-2-vice-city.jpg` | no |
 | `void` | `1-124.jpg` | no |
-| `vurple` | `1-wallhaven-ympwkk.jpg` | no |
+| `vurple` | `1-wallhaven-ympwkk.jpg` | yes |
 | `white` | `1-white.jpg` | no |
 | `x-1632` | `1-3-foundry-overhead.jpg` | no |
 
