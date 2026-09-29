@@ -197,18 +197,29 @@ check "a missing snapshot exits 1" test "$tty_status" == 1
 # the command, and present exits 130 with no prompt and no copy left. The
 # command sleeps 8 s, so a Ctrl-C that fails to reach it ends in a Done
 # prompt instead of the timeout.
-# on_tty_interrupt BIN ARGS...: as on_tty, with 0x03 typed once $tmp/child exists.
+# on_tty_interrupt BIN ARGS...: as on_tty, with 0x03 typed once $tmp/child
+# exists. The typist stops when the reader side has exited, which marks
+# $tmp/reader-done, or after the reader's own 30 s deadline, so a command
+# that never writes the marker ends the helper instead of hanging it.
 on_tty_interrupt() {
-  local cmd
+  local cmd polls=0
   cmd="$(printf '%q ' "$@")"
-  rm -f -- "$tmp/child"
+  rm -f -- "$tmp/child" "$tmp/reader-done"
   set +e
-  { while [[ ! -s $tmp/child ]]; do sleep 0.05; done; printf '\003'; while :; do printf x; sleep 0.2; done; } |
+  {
+    while [[ ! -s $tmp/child && ! -e $tmp/reader-done ]] && ((polls++ < 600)); do sleep 0.05; done
+    [[ -s $tmp/child ]] && printf '\003'
+    while [[ ! -e $tmp/reader-done ]]; do printf x; sleep 0.2; done
+  } | {
     timeout 30 "${tui_env[@]}" script -qec "$cmd" /dev/null >"$tmp/out" 2>&1
+    st=$?
+    : >"$tmp/reader-done"
+    exit "$st"
+  }
   tty_status=${PIPESTATUS[1]}
   set -e
 }
-child_gone() { local pid; pid="$(cat "$tmp/child")"; [[ -n $pid ]] && ! kill -0 "$pid" 2>/dev/null; }
+child_gone() { local pid; pid="$(cat "$tmp/child" 2>/dev/null)"; [[ -n $pid ]] && ! kill -0 "$pid" 2>/dev/null; }
 on_tty_interrupt "$subject" present -- waitint 8
 check "a Ctrl-C'd command exits 130" test "$tty_status" == 130
 check "a Ctrl-C'd command is stopped" child_gone
@@ -339,6 +350,15 @@ rm -f -- "$tmp/argv"
 plain_run "$control_bin" present --presentation plain -- record 'a b' "\$(touch $tmp/planted)"
 check "the shell-string mutant runs an argument as shell code" test -e "$tmp/planted"
 rm -f -- "$tmp/planted"
+
+# The helper's own control: a command that exits without writing the marker,
+# under the plain presentation so nothing waits for a key, ends the helper
+# well inside the deadline, and the Ctrl-C checks fail for it.
+started=$SECONDS
+on_tty_interrupt "$subject" present --presentation plain -- exits 0
+check "a command without the marker ends the helper before the deadline" test $((SECONDS - started)) -lt 30
+check "a command without the marker fails the Ctrl-C exit check" test "$tty_status" != 130
+check "a command without the marker fails the Ctrl-C stop check" test "$(child_gone && echo gone || echo absent)" == absent
 
 control ignored-interrupt vgsh-tui $'\n    trap : INT\n' $'\n    trap \'\' INT\n'
 on_tty_interrupt "$control_bin" present -- waitint 8
