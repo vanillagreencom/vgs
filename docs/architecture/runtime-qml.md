@@ -2,7 +2,7 @@
 
 Covers: shell/Commons/WatchedFile.qml, scripts/qml-tests/stand-ins/FileView.qml
 
-The Quickshell 0.3.1 and Qt facts the shell's QML rests on, each with the source that establishes it. [runtime.md](runtime.md) holds the process, the runner, the measurement tools and the Hyprland facts.
+The Quickshell 0.3.1 and Qt facts the shell's QML rests on, each with the source that establishes it. [runtime.md](runtime.md) holds the process, the runner, the measurement tools and the Hyprland facts; [runtime-qml-text.md](runtime-qml-text.md) the StyledText image facts `ImageText` rests on.
 
 - `FolderListModel` treats a missing folder as the process working directory and reports the swap through its `folder` property. Compare `folder` with the folder asked for before reading the listing.
 - `FolderListModel` compares two listings by file name and kind alone: a file rewritten or replaced under its name changes no row (`FileProperty::operator==` in the installed Qt 6.11.2 header `QtLabsFolderListModel/private/fileproperty_p.h`, read on 2026-09-29). A watcher of a directory's files gives each state a new name; `TuiRecords`' exit records are written that way.

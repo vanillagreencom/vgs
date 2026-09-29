@@ -1,6 +1,6 @@
 # Smoke latencies
 
-Covers: scripts/smoke/rows/diagnostics.sh, scripts/smoke/rows/start-order.sh
+Covers: scripts/smoke/rows/diagnostics.sh, scripts/smoke/rows/start-order.sh, scripts/smoke/rows/notifications.sh
 
 The latencies the nested smoke reads, their ceilings and budgets, and the compositor state they are read under. The sandbox and its harness are in [validation-smoke.md](validation-smoke.md).
 
@@ -18,4 +18,14 @@ The latencies the nested smoke reads, their ceilings and budgets, and the compos
   | the gate released one deferred call after the scan | default | 5.5 | 288 to 330, 12 of 12 | 330 |
 
   The default set's budget is twice the highest of the two default passes with the gate, 542 ms; the service gate's deadline is twice the highest `waited_ms` of all three passes with the gate, 358 ms. The smoke set's 620 ms budget still holds.
+- `scripts/smoke/rows/notifications.sh` reads two latencies with Slack custom emoji, each once: `latency_emoji_toast_ms`, from the notify call for a card whose body holds six emoji to its body naming the images on every screen, and `latency_emoji_inbox_ms`, from the history call to forty such cards naming theirs. Each polls the probe back to back, one reading per IPC round trip of about 22 ms, and fails over `VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS` or `VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS`, twice the highest reading on the branch. The panel builds all forty rows when it opens, so scrolling it moves built rows and adds no card work; the harness has no wheel input, so scroll frames are not read. Readings on host cachy on 2026-09-29, one nested monitor, load 4 to 7, by an uncommitted copy of the row's procedure run under the smoke harness over each tree; `origin/main` at `409efdb5` has no emoji, so its card is read when it is listed:
+
+  | Tree | Reading | Toast, ms | Inbox of 40, ms |
+  |---|---|---|---|
+  | `origin/main` | card listed | 43 to 87, median 46 to 49 | 93 to 120, median 100 to 104 |
+  | branch | card listed | 44 to 72, median 46 to 48 | 98 to 135, median 103 to 111 |
+  | branch | emoji named in the body | 43 to 61, median 45 to 46 | 101 to 114, median 110 to 113 |
+  | branch, full smoke | emoji named in the body | 37 | 102 |
+
+  The toast budget is 122 ms and the inbox budget 228 ms.
 - The nested compositor starts with its logs off: logging every surface slows the first bar, whose median over five interleaved startups of the harness on host cachy on 2026-09-29, at a load of 5 to 6, read 260 ms with the logs on and 244 ms with them off. Once `scripts/smoke/rows/bar.sh` has read the startup latencies, `compositor_logs_on` creates the flag file the harness's `hyprland.lua` reads and reloads the configuration, so `hyprctl rollinglog` holds each cursor shape the shell sends from then on ([runtime-qml.md](runtime-qml.md)). The `hyprland.log` the verdict reads therefore holds the lines logged before the configuration first loaded and every line from that reload to the end, but not the bar rows between. `expect_cursor` moves the pointer onto a control and reads the last shape logged. Qt sends a shape only when it changes, so the helper fails when the log already names the shape it expects before the move, and a row expects another shape between two readings of one.

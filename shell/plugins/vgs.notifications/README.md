@@ -36,47 +36,9 @@ While a panel is open the toasts stay and do not expire, a press outside the sta
 
 Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-action` sender are not ported: nothing in this shell sends them.
 
-## Senders read by a rule
+## Slack
 
-A per-application rule in `NotificationLogic.js` (`ENRICHERS`) reads who wrote and where from a sender's own text. A rule matches its sender's own client by desktop entry or application name, and the same service in a browser by the site address the body opens with, its `origins`. Other senders draw as above.
-
-- **Faces.** The people a notification names show in the icon's place as round faces: the notification's own image on the first, the person's initials otherwise, on a tint the name always picks. One person fills the icon slot. A group shows at most three smaller faces overlapping, the sender first, each over the one before it, and a "+N" chip for the rest on top.
-- **Workspace icon.** The workspace a card belongs to shows as that workspace's icon, a small rounded square before the rule's title. With no icon, the card keeps its summary as it came.
-
-Slack is the one rule. Slack on Linux sends no image, so the default face is initials. Its titles are the ones its web client builds: `[workspace] from Name` for a direct message, `[workspace] in channel` for a channel, and `[workspace] in name, name, name` for a group message, whose body opens with its sender. The bracketed name is the workspace's domain, and shows only when more than one workspace is signed in; with one, and always in a browser, the titles read `New message from Name`, `New message in channel` and `New thread message in channel`. The card draws every one as `from Name` or `in channel` beside the workspace's icon.
-
-- **Browser.** Slack in a browser, `app.slack.com`, is read by the same rule: its site line goes, its sender shows as a face and its title as above. It names no workspace. The card takes the only workspace known, from Slack's workspace list and the photo cache together, or else the one photo team whose users hold the sender's name; with neither, it keeps its summary and initials.
-- **One card per message.** When Slack's desktop client and a browser both deliver the same message within 10 seconds, one card shows: the desktop copy, which names the workspace. `status` counts the copies kept in `duplicates`. [notification-senders.md § One card per message](../../../docs/architecture/notification-senders.md#one-card-per-message) holds the rule.
-
-The workspace icons come from Slack's own client, read-only and with no credentials: its workspace list and the icons its disk cache already holds ([notification-senders.md § Workspace icons](../../../docs/architecture/notification-senders.md#workspace-icons)). A workspace whose icon Slack has not cached keeps its name unless the optional Slack token cache has a workspace icon.
-
-## Slack photos
-
-Slack photos are optional. With no token, or with no `secret-tool` binary installed, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
-
-Each workspace takes its own token, in libsecret under `service vgs-notifications` and `account slack:<team id>`, the team id Slack's workspace list gives it. Settings lists each workspace the list names, with its token's state and the command that stores it, such as:
-
-```bash
-secret-tool store --label='VGS notifications Slack token T0123ABCD' service vgs-notifications account slack:T0123ABCD
-```
-
-Type the token at `secret-tool`'s prompt. Do not put the token on the command line. A token is a Slack app's user token (`xoxp-`): create an app at api.slack.com/apps, add the user token scopes `users:read` and `team:read` under OAuth & Permissions, and `emoji:read` if you want custom emoji, then install it to the workspace.
-
-The single-workspace token of earlier versions, `account slack`, still works. It serves the one team its `team.info` names, unless that team has its own token, and Settings says which workspace it serves. Store it with:
-
-```bash
-secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack
-```
-
-Settings shows a Slack tokens row: a line for each listed workspace, and a line for the single-workspace token when no workspace is listed or it is stored. Each reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). The check runs at start, when the workspace list changes and after each photo refresh; it never reads a token or unlocks the keyring. A token stored for a listed workspace loads within 15 minutes.
-
-Remove a token with the same attributes:
-
-```bash
-secret-tool clear service vgs-notifications account slack:T0123ABCD
-```
-
-The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo, under `$XDG_CACHE_HOME/vgs/notifications/slack-photos/`. It does not read or store messages, channels, presence, email, profile text or tokens. Without a token, faces stay initials: no local Slack store maps a sender's name to a photo. [notification-senders.md](../../../docs/architecture/notification-senders.md) holds the cache, its refresh and its limits.
+A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message, optional sender photos from a token per workspace, and each workspace's custom emoji in the body. [slack.md](slack.md) holds what each shows, how to store a token and how to turn the custom emoji off.
 
 ## State
 

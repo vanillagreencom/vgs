@@ -30,7 +30,7 @@ pkgbase = vgs-git
 	optdepends = timeshift: a snapshot before the update pipeline changes packages, without snapper
 	optdepends = less: the last update log in the Updates flyout
 	optdepends = sudo: package installs and the browser policy writer in floating TUIs
-	optdepends = imagemagick: square Slack profile photos in notifications
+	optdepends = imagemagick: square Slack profile photos and custom emoji in notifications
 	optdepends = vsys: the agent dashboard and warden the Agent Warden plugin reads
 	optdepends = mise: Dev Tools installs, updates and removes developer tools
 	provides = vgs=0.1.0

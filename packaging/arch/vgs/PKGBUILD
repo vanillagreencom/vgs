@@ -39,7 +39,7 @@ optdepends=(
   'timeshift: a snapshot before the update pipeline changes packages, without snapper'
   'less: the last update log in the Updates flyout'
   'sudo: package installs and the browser policy writer in floating TUIs'
-  'imagemagick: square Slack profile photos in notifications'
+  'imagemagick: square Slack profile photos and custom emoji in notifications'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'
 )

@@ -51,6 +51,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D046 | VGS-588 | Slack tokens per workspace, a `presenceList` status type, and one card per Slack message | Photos for every workspace; manifests cannot list workspaces; the desktop copy names its workspace | Slack ships a local name-to-photo map or a browser names Slack | Active | [Full](D046-slack-tokens-per-workspace-and-one-card-per-message.md) |
 | 2026-09-29 | D047 | VGS-592 | Services build after every first bar presents a frame, with a deadline | No service build delays the first bar, whatever a plugin imports | A layer surface reports its first presented frame, or a service must precede the bar | Active | [Full](D047-services-build-after-the-first-bar-frame.md) |
 | 2026-09-29 | D048 | VGS-585 | Theme-owned Hyprland appearance groups use manifest switches | Core names no plugin; settings stay manifest-drawn | A theme needs layout-affecting Hyprland values | Active | [Full](D048-theme-owned-hyprland-appearance.md) |
+| 2026-09-29 | D049 | VGS-589 | Slack custom emoji from Slack's cache and `emoji.list`, drawn inline by `ImageText` | No token needed, no work on the notification path, Qt elision misplaces images | Slack sends emoji images, or Qt fixes StyledText image loading and elision | Active | [Full](D049-slack-custom-emoji-from-the-cache-drawn-inline.md) |
 
 ---
 
