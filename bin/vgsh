@@ -486,7 +486,7 @@ preflight() {
     read -ra argv <<<"${probes[i]}"
     pids[i]=""
     command -v -- "${argv[0]}" >/dev/null || continue
-    "${argv[@]}" >&"${scratch_fds[i]}" 2>/dev/null </dev/null &
+    "${argv[@]}" 1>&"${scratch_fds[i]}" 2>/dev/null </dev/null &
     pids[i]=$!
   done
   for i in "${!tools[@]}"; do

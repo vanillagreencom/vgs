@@ -404,7 +404,7 @@ pre_control() { # NAME KIND ASSIGNMENT WANT_EXIT WANT_ERR NEEDLE REPLACEMENT [NE
   pre_run "$copy" "$kind" "$assignment"
   if pre_held "$want_exit" "$want_err"; then fail "the $name control still holds: exit=$pre_status stderr=[$pre_err]"; else ok "the $name control fails its row"; fi
 }
-probe_line='"${argv[@]}" >&"${scratch_fds[i]}" 2>/dev/null </dev/null &'
+probe_line='"${argv[@]}" 1>&"${scratch_fds[i]}" 2>/dev/null </dev/null &'
 pre_control "floor row" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   'hyprland   0.56    "version"' 'hyprland   present "version"'
 pre_control "numeric compare" full "STUB_QS_VERSION=Quickshell 0.10.0" 0 "" \
@@ -412,7 +412,7 @@ pre_control "numeric compare" full "STUB_QS_VERSION=Quickshell 0.10.0" 0 "" \
 pre_control "failed probe" full STUB_HYPR_VERSION_EXIT=4 78 "vgsh: refused: preflight=hyprland have=unknown need=0.56" \
   '[[ ${statuses[i]} == 0 ]] ||' '[[ ${statuses[i]} == 0 ]] || true ||'
 pre_control "stdout only" full "STUB_QS_STDERR=qt.qpa: warning" 0 "" \
-  "$probe_line" '"${argv[@]}" >&"${scratch_fds[i]}" 2>&1 </dev/null &'
+  "$probe_line" '"${argv[@]}" 1>&"${scratch_fds[i]}" 2>&1 </dev/null &'
 pre_control "unread version" full "STUB_QS_VERSION=Quickshell git" 78 "vgsh: refused: preflight=quickshell have=unknown need=0.3.1" \
   '[[ ${outs[i]} =~ $pattern ]] ||' '[[ ${outs[i]} =~ $pattern ]] || true ||'
 pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none need=present" \
