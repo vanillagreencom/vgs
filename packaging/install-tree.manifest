@@ -50,6 +50,7 @@ f share/vgs/shell/Core/PluginLogic.js
 f share/vgs/shell/Core/PluginStatus.qml
 f share/vgs/shell/Core/Plugins.qml
 f share/vgs/shell/Core/Registry.qml
+f share/vgs/shell/Core/ServiceGate.qml
 f share/vgs/shell/Core/SessionLock.qml
 f share/vgs/shell/Core/ShortcutRegistry.qml
 f share/vgs/shell/Core/ThemeRunner.qml

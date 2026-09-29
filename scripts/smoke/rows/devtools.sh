@@ -1,7 +1,8 @@
-# Dev Tools, vgs.devtools. The plugin runs over stand-ins in the shell's
-# own PATH directory: a mise whose installs are one key per line of a file
-# the row writes, a docker and a podman that hold no container, and a
-# pacman that owns no file, so every probe the engine and the core's
+# Dev Tools, vgs.devtools. The plugin runs over harness.sh's
+# devtools_stand_ins in the shell's own PATH directory: a mise whose
+# installs are one key per line of a file the row writes, a docker and a
+# podman that hold no container, and a pacman that owns no file, so every
+# probe the engine and the core's
 # commands make reaches a stand-in or reads the host's PATH. The row picks
 # an agent whose command that PATH does not hold, so it lists absent on any
 # host. rows/tui.sh's stand-in terminal records the argv of every run and
@@ -22,37 +23,7 @@
 # service ignores a run's end and a change of the scan's missing commands
 # leaves the list as it was after each.
 set -euo pipefail
-dev_state="$sandbox/devtools-mise"
-mkdir -p "$dev_state"
-: >"$dev_state/installed"
-# One global mise tool no row declares, for the Other mise tools section.
-echo "github:acme/extra" >"$dev_state/installed"
-# The stand-in mise answers what list, launchers and pkg check ask: its
-# version, `ls --json` and `ls --global --json` from the installed keys,
-# `which` for no command and `outdated --json` with no update.
-cat >"$shim/mise" <<EOF
-#!/usr/bin/env bash
-case "\$1" in
-  --version) echo "2026.9.9 linux-x64 (stub)" ;;
-  ls)
-    first=1
-    printf '{'
-    while IFS= read -r key; do
-      [[ -n \$key ]] || continue
-      [[ \$first == 1 ]] || printf ','
-      first=0
-      printf '"%s":[{"version":"1.0.0","installed":true,"active":true}]' "\$key"
-    done <"$dev_state/installed"
-    printf '}\n' ;;
-  which) printf 'mise ERROR %s is not a mise bin. Perhaps you need to install it first.\n' "\$2" >&2; exit 1 ;;
-  outdated) echo '{}' ;;
-  *) exit 0 ;;
-esac
-EOF
-printf '#!/bin/sh\nexit 0\n' >"$shim/docker"
-printf '#!/bin/sh\nexit 0\n' >"$shim/podman"
-printf '#!/bin/sh\necho "error: No package owns $2" >&2\nexit 1\n' >"$shim/pacman"
-chmod 755 "$shim/mise" "$shim/docker" "$shim/podman" "$shim/pacman"
+devtools_stand_ins
 requires_dir="$home/.config/vgs/plugins/acme.requires"
 mkdir -p "$requires_dir"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.requires/." "$requires_dir/"

@@ -5,10 +5,12 @@ import qs.Core
 // The holder for every enabled plugin of kind `service`. A service has no
 // surface; it is built once per session and destroyed when disabled or when
 // its source changes. Variants keeps the slot of every id that stays in
-// the list, so enabling or disabling one service rebuilds no other.
+// the list, so enabling or disabling one service rebuilds no other. No
+// service builds before ServiceGate releases them, once the first bars
+// have presented a frame (D045).
 Scope {
     Variants {
-        model: Registry.enabledOfKind("service")
+        model: ServiceGate.release !== "" ? Registry.enabledOfKind("service") : []
 
         PluginSlot {
             required property string modelData

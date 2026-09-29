@@ -2,7 +2,7 @@
 # Run the shell inside a nested Hyprland sandbox and check it end to end.
 #
 # Usage: scripts/qml-smoke.sh [--timeout SECONDS] [--keep]
-#        scripts/qml-smoke.sh --first-bar-runs N [--timeout SECONDS]
+#        scripts/qml-smoke.sh --first-bar-runs N [--plugin-set smoke|default] [--timeout SECONDS]
 #
 # The sandbox is built from the repository alone: its own HOME, XDG dirs and
 # runtime dir, a minimal compositor config, no user state. It never touches
@@ -26,12 +26,18 @@
 #
 # --first-bar-runs N, N a positive integer, measures the first bar alone:
 # it starts the sandbox N times, runs no row, and prints one line per run,
-# `run=<i> latency_first_bar_ms=<ms> cpu_some_pct=<pct>`, or
+# `run=<i> latency_first_bar_ms=<ms> cpu_some_pct=<pct>
+# services_released=<reason> waited_ms=<ms>`, the last two from the
+# service gate's release line (unreleased and - when it logged none), or
 # `run=<i> status=not-measured exit=<status> log=<path>` for a run whose
 # harness exited non-zero or read no bar. The last line is
-# `qml-smoke: first-bar runs=<N> measured=<M> highest_ms=<H> budget_ms=<2H>`.
-# Exit 0 when every run measured; otherwise a line naming how many did not
-# and where their logs are, then exit 77. One run takes about 2 s.
+# `qml-smoke: first-bar runs=<N> measured=<M> highest_ms=<H> budget_ms=<2H>
+# highest_waited_ms=<W> deadline_ms=<2W>`, W over the runs released on a
+# first frame. Exit 0 when every run measured; otherwise a line naming how
+# many did not and where their logs are, then exit 77. One run takes about
+# 2 s. --plugin-set picks the set each run starts with: `smoke`, the rows'
+# own and the default, or `default`, every first-party plugin enabled as
+# in a live session (scripts/smoke/harness.sh); it needs --first-bar-runs.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
 # the end of the run. It catches a startup allocation blow-up and nothing
@@ -49,6 +55,12 @@
 # 9950X) on 2026-09-29, at load average 10 to 14; each pass lost one start
 # to an unsized nested monitor. The 22 readings, each a start with no
 # compiled QML cache, were 253 to 310 ms with cpu_some_pct at most 1.3.
+# VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS: the same ceiling for the start
+# over the default set that rows/start-order.sh reads. The default is twice
+# the highest reading of two passes of --first-bar-runs 12 --plugin-set
+# default on the same machine on 2026-09-29, at load average 4 to 8; each
+# pass lost one start to an unsized nested monitor. The 22 readings were
+# 206 to 271 ms with cpu_some_pct at most 1.3.
 # VGSH_SMOKE_RECONCILE_BUDGET_MS: ceiling on the time from a
 # setPluginEnabled reply to the build records no longer listing the
 # disabled widget, polled with qs ipc. The default is twice the highest
@@ -59,6 +71,7 @@ set -euo pipefail
 timeout_s=60
 keep=false
 first_bar_runs=""
+plugin_set=smoke
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout_s="$2"; shift 2 ;;
@@ -66,15 +79,24 @@ while [[ $# -gt 0 ]]; do
     --first-bar-runs)
       if [[ $# -lt 2 || ! $2 =~ ^[1-9][0-9]*$ ]]; then printf 'qml-smoke: refused: argument=--first-bar-runs value=%s\n' "${2-}" >&2; exit 2; fi
       first_bar_runs="$2"; shift 2 ;;
+    --plugin-set)
+      if [[ $# -lt 2 || ! $2 =~ ^(smoke|default)$ ]]; then printf 'qml-smoke: refused: argument=--plugin-set value=%s\n' "${2-}" >&2; exit 2; fi
+      plugin_set="$2"; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) printf 'qml-smoke: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
+# The rows read the smoke set's state, so another set only measures.
+if [[ $plugin_set != smoke && -z $first_bar_runs ]]; then
+  printf 'qml-smoke: refused: argument=--plugin-set value=%s reason=needs-first-bar-runs\n' "$plugin_set" >&2
+  exit 2
+fi
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
+default_first_bar_budget_ms="${VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS:-542}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
 
 # The measurement mode. Each run sources the harness in its own subshell,
@@ -88,29 +110,34 @@ if [[ -n $first_bar_runs ]]; then
   fi
   measured=0
   highest=0
+  highest_waited=""
   for ((run = 1; run <= first_bar_runs; run++)); do
     log="$first_bar_logs/run-$run.log"
     result="$first_bar_logs/run-$run.result"
     set +e
     (
       source "$repo/scripts/smoke/harness.sh"
-      printf '%s %s\n' "${first_bar_ms:-unmeasured}" "$first_bar_cpu_some_pct" >"$result"
+      printf '%s %s %s\n' "${first_bar_ms:-unmeasured}" "$first_bar_cpu_some_pct" "$(service_release)" >"$result"
     ) >"$log" 2>&1 </dev/null
     status=$?
     set -e
     ms=""
     pct=""
-    if [[ $status -eq 0 && -f $result ]]; then read -r ms pct <"$result"; fi
+    reason=""
+    waited=""
+    if [[ $status -eq 0 && -f $result ]]; then read -r ms pct reason waited <"$result"; fi
     if [[ $status -eq 0 && $ms =~ ^[0-9]+$ ]]; then
       measured=$((measured + 1))
       if ((ms > highest)); then highest=$ms; fi
-      printf 'run=%d latency_first_bar_ms=%d cpu_some_pct=%s\n' "$run" "$ms" "$pct"
+      if [[ $reason == first-frame ]] && { [[ -z $highest_waited ]] || ((waited > highest_waited)); }; then highest_waited=$waited; fi
+      printf 'run=%d latency_first_bar_ms=%d cpu_some_pct=%s services_released=%s waited_ms=%s\n' "$run" "$ms" "$pct" "$reason" "$waited"
     else
       printf 'run=%d status=not-measured exit=%d log=%s\n' "$run" "$status" "$log"
     fi
   done
   if ((measured > 0)); then
-    printf 'qml-smoke: first-bar runs=%d measured=%d highest_ms=%d budget_ms=%d\n' "$first_bar_runs" "$measured" "$highest" $((highest * 2))
+    printf 'qml-smoke: first-bar runs=%d measured=%d highest_ms=%d budget_ms=%d highest_waited_ms=%s deadline_ms=%s\n' "$first_bar_runs" "$measured" "$highest" $((highest * 2)) \
+      "${highest_waited:-unmeasured}" "$([[ -n $highest_waited ]] && echo $((highest_waited * 2)) || echo unmeasured)"
   else
     printf 'qml-smoke: first-bar runs=%d measured=0 highest_ms=unmeasured budget_ms=unmeasured\n' "$first_bar_runs"
   fi
@@ -161,5 +188,6 @@ source "$repo/scripts/smoke/rows/instance-guard.sh"
 source "$repo/scripts/smoke/rows/diagnostics.sh"
 source "$repo/scripts/smoke/rows/read-only-prefix.sh"
 source "$repo/scripts/smoke/rows/notices-control.sh"
+source "$repo/scripts/smoke/rows/start-order.sh"
 
 smoke_finish

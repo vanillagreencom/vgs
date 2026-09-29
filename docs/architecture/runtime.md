@@ -1,6 +1,6 @@
 # Runtime
 
-Covers: scripts/test-dispatch.js, scripts/test-vgsh-scan.py, scripts/test-vgsh.sh, scripts/vgsh-rows.sh, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js
+Covers: scripts/test-dispatch.js, scripts/test-vgsh-scan.py, scripts/test-vgsh.sh, scripts/vgsh-rows.sh, bin/vgsh, shell/shell.qml, shell/Core/Compositor.qml, shell/Core/Dispatch.js, shell/Core/ServiceGate.qml, shell/Hosts/ServiceHost.qml
 
 Requirements for the shell process, the runner and the measurement tools, and the Quickshell facts the implementation rests on; the facts its QML rests on are in [runtime-qml.md](runtime-qml.md).
 
@@ -25,6 +25,7 @@ Where the shell's memory sits, how to measure it and the growth invariants are i
 - A lookup that costs a process runs once per set, never once per item. `bin/vgsh-scan` reads every manifest and probes every declared command in one process, and the registry replaces its map whole.
 - No disk walk per keystroke. A search keeps one long-lived index and cancels a stale query.
 - No unconditional sleep on an apply path. Read the current value and skip the write and the wait when nothing changes.
+- The first bar comes before every service. Bars, their widgets and backgrounds build in the turn the first scan ends. `ServiceHost` builds no service until `shell/Core/ServiceGate.qml` releases the services: once every bar built for that scan has presented its first frame, at once when that scan built no bar, and at a 358 ms deadline otherwise, which logs a warning naming each bar host that did not present. The release logs `plugins: services released reason=<first-frame|no-bar|deadline> waited_ms=<ms>`. It happens once per shell process, so a later enable, rescan, screen change or bar rebuild builds services at once. At start a surface plugin therefore claims an exclusive capability before any service, and the theme follow on `scanFinished` never waits for the release: [D045](../decisions/D045-services-build-after-the-first-bar-frame.md).
 
 ## Hyprland
 

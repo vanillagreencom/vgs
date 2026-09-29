@@ -5,8 +5,8 @@
 # replies, so the lending record read after the reply is decisive. The copy
 # holds its own bin/, since bin/vgsh finds the tree from its own real path,
 # and its own shell/; config/ and themes/ are links to the sandbox's. The
-# row runs last: it stops the shell rows/read-only-prefix.sh started and
-# leaves the copy running for the harness's teardown.
+# row stops the shell rows/read-only-prefix.sh started and leaves the copy
+# running for rows/start-order.sh, which stops it.
 set -euo pipefail
 mutant="$sandbox/notice-mutant"
 mkdir -p -- "$mutant"

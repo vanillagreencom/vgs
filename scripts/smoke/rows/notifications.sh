@@ -94,30 +94,7 @@ team("T0GLOBEX", ["globex", "Globex"], "slack", (200, 120, 20), [
 PY
 }
 seed_slack_photos
-# The stub libsecret: $shim/secret-tool.states holds `<account> <state>`
-# lines, and an account holds its token while its state reads `present`,
-# none for `absent` or an account the file does not list, and holds it in a
-# locked collection for `locked`. `lookup` answers as the photo helper reads
-# it; `search` answers as libsecret's secret-tool does, the item and an
-# unlocked secret on stdout and the attributes and a lock on stderr, for
-# the token probe. Every token starts xoxp-smoke-.
-slack_states() { tr ';' '\n' <<<"$1" >"$shim/secret-tool.states"; }
-slack_states "slack:T0ACME present;slack:T0GLOBEX absent;slack present"
-cat >"$shim/secret-tool" <<SH
-#!/usr/bin/env bash
-[[ \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
-account="\$5" state=absent
-while read -r name answer; do [[ \$name == "\$account" ]] && state="\$answer"; done <"$shim/secret-tool.states"
-token="xoxp-smoke-\$(tr : - <<<"\$account")"
-case "\${1:-}:\$state" in
-  lookup:present) printf '%s\\n' "\$token" ;;
-  search:present) printf '[/1]\\nlabel = VGS notifications Slack token\\nsecret = %s\\n' "\$token"; printf 'attribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
-  search:locked) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'secret-tool: Cannot get secret of a locked object\\nattribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
-  search:absent) ;;
-  *) exit 1 ;;
-esac
-SH
-chmod 755 "$shim/secret-tool"
+secret_tool_stand_in "slack:T0ACME present;slack:T0GLOBEX absent;slack present"
 cat >"$shim/curl" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' 'notifications-smoke: real Slack API refused' >&2

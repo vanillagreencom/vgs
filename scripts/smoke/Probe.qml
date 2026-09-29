@@ -17,6 +17,16 @@ Scope {
     property int changes: 0
     property int userLoads: 0
     property var previousRows: []
+    // What the shell did from its start, in order, for rows/start-order.sh:
+    // ["scan"] per ended scan and ["scan-turn-end"] once the event loop has
+    // run past the turn that ended it, ["frame", n] when a bar window
+    // presents its first frame, n the bar windows presented so far,
+    // ["service", id] per service the core built, ["release", reason] when
+    // ServiceGate releases the services, and ["follow"] per follow job the
+    // theme runner queued.
+    property var startOrder: []
+    property var presentedWindows: []
+    property var followJobs: []
     property var heldField: null
     property var heldEditor: null
     property string grab: ""
@@ -47,6 +57,8 @@ Scope {
         return reply === undefined ? "ok" : String(reply);
     }
 
+    function note(event) { root.startOrder = root.startOrder.concat([event]); }
+
     Connections {
         target: Plugins
         function onBuiltChanged() {
@@ -55,8 +67,32 @@ Scope {
                 for (const row of Plugins.built[key])
                     if (row.origin === "core") rows.push(row);
             for (const row of rows)
-                if (root.previousRows.indexOf(row) === -1) root.builds += 1;
+                if (root.previousRows.indexOf(row) === -1) {
+                    root.builds += 1;
+                    if (row.kind === "service") root.note(["service", row.id]);
+                }
             root.previousRows = rows;
+        }
+    }
+    Connections {
+        target: Registry
+        function onScanFinished() {
+            root.note(["scan"]);
+            Qt.callLater(() => root.note(["scan-turn-end"]));
+        }
+    }
+    Connections {
+        target: ServiceGate
+        function onReleaseChanged() { root.note(["release", ServiceGate.release]); }
+    }
+    Connections {
+        target: Capabilities.themes
+        function onJobsChanged() {
+            for (const job of Capabilities.themes.jobs)
+                if (job.verb === "follow" && root.followJobs.indexOf(job) === -1) {
+                    root.followJobs = root.followJobs.concat([job]);
+                    root.note(["follow"]);
+                }
         }
     }
     Connections {
@@ -79,7 +115,12 @@ Scope {
         Connections {
             required property var modelData
             target: modelData
-            function onFrameSwapped() { root.frames += 1; }
+            function onFrameSwapped() {
+                root.frames += 1;
+                if (root.presentedWindows.indexOf(modelData) !== -1) return;
+                root.presentedWindows = root.presentedWindows.concat([modelData]);
+                root.note(["frame", root.presentedWindows.length]);
+            }
         }
     }
 
@@ -406,6 +447,7 @@ Scope {
         function fontAvailable(family: string): bool { return Qt.fontFamilies().indexOf(family) !== -1; }
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
+        function startOrder(): string { return JSON.stringify(root.startOrder); }
         function configChanges(): int { return root.changes; }
         function configUserLoads(): int { return root.userLoads; }
         function failedBuilds(hostKey: string): int {

@@ -294,12 +294,124 @@ fi
 # rows/devtools.sh enables it over stub commands. vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
-tick="$home/.config/vgs/plugins/acme.tick"
-mkdir -p "$tick"
-cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
-cat >"$home/.config/vgs/shell.json" <<'JSON'
+#
+# plugin_set, which scripts/qml-smoke.sh sets, picks the set the shell
+# starts with: `smoke`, the rows' own set above, or `default`, the shipped
+# configuration's, with every first-party plugin enabled as in a live
+# session, which rows/start-order.sh and the default-set first-bar
+# readings start (docs/architecture/validation-latency.md).
+plugin_set="${plugin_set:-smoke}"
+
+# devtools_stand_ins: vgs.devtools's host commands in the shell's own PATH
+# directory: a mise whose installs are one key per line of
+# $dev_state/installed, with one global tool no row declares, a docker and
+# a podman that hold no container, and a pacman that owns no file. The
+# mise answers what list, launchers and pkg check ask: its version,
+# `ls --json` and `ls --global --json` from the installed keys, `which`
+# for no command and `outdated --json` with no update. Writing them again
+# resets the installs.
+dev_state="$sandbox/devtools-mise"
+devtools_stand_ins() {
+  mkdir -p "$dev_state"
+  echo "github:acme/extra" >"$dev_state/installed"
+  cat >"$shim/mise" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  --version) echo "2026.9.9 linux-x64 (stub)" ;;
+  ls)
+    first=1
+    printf '{'
+    while IFS= read -r key; do
+      [[ -n \$key ]] || continue
+      [[ \$first == 1 ]] || printf ','
+      first=0
+      printf '"%s":[{"version":"1.0.0","installed":true,"active":true}]' "\$key"
+    done <"$dev_state/installed"
+    printf '}\n' ;;
+  which) printf 'mise ERROR %s is not a mise bin. Perhaps you need to install it first.\n' "\$2" >&2; exit 1 ;;
+  outdated) echo '{}' ;;
+  *) exit 0 ;;
+esac
+EOF
+  printf '#!/bin/sh\nexit 0\n' >"$shim/docker"
+  printf '#!/bin/sh\nexit 0\n' >"$shim/podman"
+  printf '#!/bin/sh\necho "error: No package owns $2" >&2\nexit 1\n' >"$shim/pacman"
+  chmod 755 "$shim/mise" "$shim/docker" "$shim/podman" "$shim/pacman"
+}
+
+# The libsecret stand-in vgs.notifications reads its Slack tokens
+# through, in the directory the harness hands the shell as
+# VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR. $shim/secret-tool.states
+# holds `<account> <state>` lines, and an account holds its token while its
+# state reads `present`, none for `absent` or an account the file does not
+# list, and holds it in a locked collection for `locked`. `lookup` answers
+# as the photo helper reads it; `search` answers as libsecret's secret-tool
+# does, the item and an unlocked secret on stdout and the attributes and a
+# lock on stderr, for the token probe. Every token starts xoxp-smoke-.
+# slack_states STATES: the states file rewritten from STATES, lines joined
+# by `;`. secret_tool_stand_in STATES: the stand-in written, with STATES.
+slack_states() { tr ';' '\n' <<<"$1" >"$shim/secret-tool.states"; }
+secret_tool_stand_in() { # STATES
+  slack_states "$1"
+  cat >"$shim/secret-tool" <<SH
+#!/usr/bin/env bash
+[[ \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
+account="\$5" state=absent
+while read -r name answer; do [[ \$name == "\$account" ]] && state="\$answer"; done <"$shim/secret-tool.states"
+token="xoxp-smoke-\$(tr : - <<<"\$account")"
+case "\${1:-}:\$state" in
+  lookup:present) printf '%s\\n' "\$token" ;;
+  search:present) printf '[/1]\\nlabel = VGS notifications Slack token\\nsecret = %s\\n' "\$token"; printf 'attribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
+  search:locked) printf '[/1]\\nlabel = VGS notifications Slack token\\n'; printf 'secret-tool: Cannot get secret of a locked object\\nattribute.service = vgs-notifications\\nattribute.account = %s\\n' "\$account" >&2 ;;
+  search:absent) ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod 755 "$shim/secret-tool"
+}
+
+# default_set_prepare PLUGINS_JSON [DISABLED_JSON]: what a start over the
+# default set needs before the shell starts. The user file names no bar
+# and disables nothing, so the shipped bar and every first-party plugin
+# build; it enables the third-party plugins PLUGINS_JSON lists, a JSON
+# list of ids, and disables those DISABLED_JSON lists.
+# Every host command a default-set service runs at start reaches a
+# stand-in or does not run: vgs.devtools's queries reach
+# devtools_stand_ins; vgs.updates reads a status cache written as a check
+# that ended now and listed nothing, so its service starts no check for
+# hours, since each probe of a check runs a host package manager or a git
+# fetch, which only rows/updates.sh's copy confines; vgs.agent-warden
+# notifies only once the warden's status file exists, which no start
+# finds; vgs.notifications reads its token only through
+# secret_tool_stand_in, which lists no account for a start over the default set.
+default_set_prepare() { # PLUGINS_JSON [DISABLED_JSON]
+  devtools_stand_ins
+  secret_tool_stand_in ""
+  mkdir -p "$home/.local/state/vgs/updates"
+  python3 - "$home/.local/state/vgs/updates/status.json" "$home/.config/vgs/shell.json" "$1" "${2:-[]}" <<'PY'
+import json, os, sys, time
+cache, user, plugins, disabled = sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), json.loads(sys.argv[4])
+for path, doc in ((cache, {"checkedAt": int(time.time() * 1000), "sources": []}),
+                  (user, {"version": 1, "plugins": [{"id": p} for p in plugins], "disabledPlugins": disabled})):
+    with open(path + ".tmp", "w") as out:
+        json.dump(doc, out)
+    os.replace(path + ".tmp", path)
+PY
+}
+
+mkdir -p "$home/.config/vgs"
+case "$plugin_set" in
+  smoke)
+    tick="$home/.config/vgs/plugins/acme.tick"
+    mkdir -p "$tick"
+    cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
+    cat >"$home/.config/vgs/shell.json" <<'JSON'
 { "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools"] }
 JSON
+    ;;
+  default) default_set_prepare '[]' ;;
+  *) printf 'qml-smoke: refused: plugin-set=%s\n' "$plugin_set"; exit 2 ;;
+esac
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 # The host's CPU pressure stall total in microseconds: the `total=` field of
@@ -312,10 +424,6 @@ cpu_some_us() {
       if [[ $kind == some && $rest =~ total=([0-9]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
     done </proc/pressure/cpu; } 2>/dev/null || true
 }
-start_cpu_some_us="$(cpu_some_us)"
-start_ms="$(now_ms)"
-spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$repo/bin/vgsh" run
-shell_pid="$spawn_pid"
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.
 # hover X Y: the pointer moved there with no press. drag X Y X2 Y2: a
@@ -414,35 +522,6 @@ expect_cursor_at() { # LABEL SHAPE X Y
   fail "$label: got ${seen:-no shape} want $want"
 }
 
-# Latency from the runner's exec to the first bar surface with a client,
-# polled every 10 ms from the compositor's layer list, which answers in a
-# few milliseconds; the reading carries at most one poll interval.
-# first_bar_cpu_some_pct records beside it the percent of that window in
-# which some runnable task on the host waited for a CPU, from the host-wide
-# pressure stall `some` totals read before the spawn and at the reading,
-# with one decimal; `unmeasured` when either total is unreadable. It is a
-# record for reading a slow start, not a gate. The load average is no
-# measure of this: it counts tasks running on a CPU and tasks in
-# uninterruptible sleep, so on a host with many CPUs a high load can mean
-# no task waited at all.
-first_bar_ms=""
-first_bar_cpu_some_pct=unmeasured
-for _ in $(seq 1 $((timeout_s * 100))); do
-  if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
-    first_bar_ms=$(( $(now_ms) - start_ms ))
-    bar_cpu_some_us="$(cpu_some_us)"
-    if [[ -n $start_cpu_some_us && -n $bar_cpu_some_us && $first_bar_ms -gt 0 ]]; then
-      # Stalled microseconds over the window's milliseconds is the percent
-      # in tenths.
-      tenths=$(( (bar_cpu_some_us - start_cpu_some_us) / first_bar_ms ))
-      first_bar_cpu_some_pct="$((tenths / 10)).$((tenths % 10))"
-    fi
-    break
-  fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.01
-done
-
 # qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
 ipc() {
   "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
@@ -486,33 +565,78 @@ theme_idle() { # [IPC_FN]
   printf '%s\n' "$state"
 }
 
-up=false
-for _ in $(seq 1 $((timeout_s * 5))); do
-  if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
-  kill -0 "$shell_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if [[ $up != true ]]; then
-  fail "shell did not answer ping within ${timeout_s}s"
-  tail -n 40 "$sandbox/qs.log"
-  exit 1
-fi
-ok "shell answers ping"
-
+# start_shell TREE LOG [BAR]: start the runner of TREE, a product tree
+# holding its own bin/ and shell/, as the sandbox's shell, its output in
+# LOG, and wait for it. Sets shell_pid, the first-bar reading, shell_qs_pid
+# and instance_log. BAR `no-bar` takes no first-bar reading, for a start
+# that maps no bar. Returns 1, with the row failed, when the shell does not
+# answer ping within timeout_s or names no instance log.
+#
+# The first-bar reading is the latency from the runner's exec to the first
+# bar surface with a client, polled every 10 ms from the compositor's
+# layer list, which answers in a few milliseconds; the reading carries at
+# most one poll interval. first_bar_cpu_some_pct records beside it the
+# percent of that window in which some runnable task on the host waited
+# for a CPU, from the host-wide pressure stall `some` totals read before
+# the spawn and at the reading, with one decimal; `unmeasured` when either
+# total is unreadable. It is a record for reading a slow start, not a
+# gate. The load average is no measure of this: it counts tasks running on
+# a CPU and tasks in uninterruptible sleep, so on a host with many CPUs a
+# high load can mean no task waited at all.
+#
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
 # runner execs qs, so the shell's pid is the runner's unless setsid forked.
-shell_qs_pid="$shell_pid"
-if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
-instance_log=""
-for _ in $(seq 1 50); do
-  if instance_id="$("${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
-    instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
-    break
+start_shell() { # TREE LOG [BAR]
+  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false child instance_id
+  [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
+  start_cpu_some_us="$(cpu_some_us)"
+  start_ms="$(now_ms)"
+  spawn "$log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$tree/bin/vgsh" run
+  shell_pid="$spawn_pid"
+  first_bar_ms=""
+  first_bar_cpu_some_pct=unmeasured
+  if [[ $bar == bar ]]; then
+    for _ in $(seq 1 $((timeout_s * 100))); do
+      if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
+        first_bar_ms=$(( $(now_ms) - start_ms ))
+        bar_cpu_some_us="$(cpu_some_us)"
+        if [[ -n $start_cpu_some_us && -n $bar_cpu_some_us && $first_bar_ms -gt 0 ]]; then
+          # Stalled microseconds over the window's milliseconds is the
+          # percent in tenths.
+          tenths=$(( (bar_cpu_some_us - start_cpu_some_us) / first_bar_ms ))
+          first_bar_cpu_some_pct="$((tenths / 10)).$((tenths % 10))"
+        fi
+        break
+      fi
+      kill -0 "$shell_pid" 2>/dev/null || break
+      sleep 0.01
+    done
   fi
-  sleep 0.2
-done
-if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; exit 1; fi
+  for _ in $(seq 1 $((timeout_s * 5))); do
+    if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
+    kill -0 "$shell_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [[ $up != true ]]; then
+    fail "shell did not answer ping within ${timeout_s}s"
+    tail -n 40 "$log"
+    return 1
+  fi
+  ok "shell answers ping"
+  shell_qs_pid="$shell_pid"
+  if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
+  instance_log=""
+  for _ in $(seq 1 50); do
+    if instance_id="$("${shell_env[@]}" qs list -p "$tree/shell" -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
+      instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; return 1; fi
+}
+start_shell "$repo" "$sandbox/qs.log" || exit 1
 # Lines of the instance log matching an extended regex, counted. grep exits
 # 1 for a count of zero, which is an answer; anything above is a read or
 # pattern failure: grep's message goes to stderr and the function returns 1.
@@ -538,6 +662,23 @@ expect_log() {
     sleep 0.2
   done
   fail "$label: log lines matching $pattern: $got want at least $want"
+}
+
+# service_release: the release ServiceGate logged in the instance log, as
+# `<reason> <waited_ms>`, polled every 0.2 s for up to 5 s; `unreleased -`
+# when it logged none. waited_ms is the time from the gate's first
+# judgement that found a bar unpresented to the release.
+service_release() {
+  local line
+  for _ in $(seq 1 25); do
+    if line="$(grep -o -E -m 1 -e 'plugins: services released reason=[a-z-]+ waited_ms=[0-9]+' -- "$instance_log")" \
+      && [[ $line =~ reason=([a-z-]+)\ waited_ms=([0-9]+) ]]; then
+      printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "unreleased -"
 }
 
 # expect LABEL WANT CMD...: the command's last stdout line must equal WANT.
