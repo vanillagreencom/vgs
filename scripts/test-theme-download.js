@@ -205,6 +205,17 @@ async function verify(lib, work) {
     e = await refused(lib, () => lib.readArchive(path.join(work, "absent.tar.gz"), () => null, () => {}));
     assert.deepEqual([e.step, e.reason, e.detail], ["archive", "unreadable", "path=" + path.join(work, "absent.tar.gz") + " error=ENOENT"]);
 
+    // The download lock: one holder at a time, freed by release.
+    const lockDir = path.join(work, "cache-lock");
+    const first = lib.holdDownloadLock(lockDir);
+    e = await refused(lib, () => lib.holdDownloadLock(lockDir));
+    assert.deepEqual([e.step, e.reason, e.detail], ["fetch", "busy", "path=" + path.join(lockDir, "download.lock")], "a held lock is busy");
+    first.release();
+    lib.holdDownloadLock(lockDir).release();
+    fs.writeFileSync(path.join(work, "not-a-dir"), "");
+    e = await refused(lib, () => lib.holdDownloadLock(path.join(work, "not-a-dir")));
+    assert.deepEqual([e.step, e.reason], ["fetch", "lock-failed"], "a lock that cannot be opened");
+
     // fetchArchive from file:// sources.
     const archive = path.join(work, "archive.tar.gz");
     const bytes = crypto.randomBytes(300000);
@@ -270,6 +281,8 @@ async function verify(lib, work) {
 }
 
 const CONTROLS = [
+    ['if (taken.status === 0) return', 'if (taken.status === 0 || taken.status === 75) return'],
+    ['return { release() { fs.closeSync(fd); } };', 'return { release() {} };'],
     ['if (protocol === "https:" || (protocol === "file:" && allowFile)) return url;', 'return url;'],
     ['(protocol === "file:" && allowFile)', '(protocol === "file:")'],
     ['if (!Number.isSafeInteger(pin.size) || pin.size <= 0 || typeof pin.sha256 !== "string" || !SHA256_HEX.test(pin.sha256))', 'if (false)'],

@@ -10,12 +10,15 @@
 // download streams into `<sha256>.tar.gz.part`, hashed and counted as it
 // is written and cut off once it passes the pinned size, and a caller that
 // keeps it renames it to `<sha256>.tar.gz`. `download.lock` there is the
-// lock `vgsh theme wallpapers` holds for the whole fetch.
+// lock every caller of fetchArchive holds for the whole fetch, since the
+// part's path is fixed: bin/vgsh takes it with flock(1) for `vgsh theme
+// wallpapers`, and tools/convert-v1-themes through holdDownloadLock.
 // docs/architecture/theme-wallpapers.md.
 "use strict";
 const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
+const { spawnSync } = require("child_process");
 const os = require("os");
 const path = require("path");
 const zlib = require("zlib");
@@ -52,6 +55,28 @@ class AssetRefusal extends Error {
 // The theme-asset cache directory, from the environment ENV.
 function cacheDir(env = process.env) {
     return path.join(env.XDG_CACHE_HOME || path.join(env.HOME || os.homedir(), ".cache"), "vgs", "theme-assets");
+}
+
+// Take the download lock of cache DIR, `download.lock` there, without
+// waiting, and answer `{ release() }`, which frees it; the process's exit
+// frees it too. A lock held elsewhere is refused `busy`, one that cannot be
+// taken `lock-failed`. flock(1) locks the descriptor it inherits as its fd
+// 3, and a flock lock belongs to the open file description, which this
+// process keeps open after the child exits, so the lock stays held here.
+function holdDownloadLock(dir) {
+    const file = path.join(dir, LOCK_FILE);
+    let fd;
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fd = fs.openSync(file, "a");
+    } catch (e) {
+        throw new AssetRefusal("fetch", "lock-failed", "path=" + file + " error=" + e.code);
+    }
+    const taken = spawnSync("flock", ["-n", "-E", "75", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
+    if (taken.status === 0) return { release() { fs.closeSync(fd); } };
+    fs.closeSync(fd);
+    if (taken.status === 75) throw new AssetRefusal("fetch", "busy", "path=" + file);
+    throw new AssetRefusal("fetch", "lock-failed", "path=" + file + " error=" + (taken.error ? taken.error.code : "status=" + taken.status));
 }
 
 // The URL of PIN's archive, `<base>/<release>/<archive>`, BASE defaulting to
@@ -162,8 +187,9 @@ async function source(url, idle) {
 
 // Fetch PIN's archive from URL, archiveUrl's answer, into DIR, the cache.
 // A verified `<sha256>.tar.gz` already there is used as it is. Otherwise
-// the bytes stream into `<sha256>.tar.gz.part`, which the caller's lock
-// makes this process's own, so a part already there is stale and removed.
+// the bytes stream into `<sha256>.tar.gz.part`, which the download lock
+// the caller holds makes this process's own, so a part already there is
+// stale and removed.
 // Each chunk is hashed as it is written, and the transfer is cut off once
 // it passes PIN's size; the part is then refused unless its size and
 // sha256 are PIN's. With KEEP the verified part is renamed to
@@ -442,4 +468,4 @@ async function readArchive(file, policy, progress) {
     }
 }
 
-module.exports = { MEMBER_CEILING, LOCK_FILE, AssetRefusal, cacheDir, archiveUrl, fetchArchive, writeAll, TarReader, readArchive };
+module.exports = { MEMBER_CEILING, LOCK_FILE, AssetRefusal, cacheDir, holdDownloadLock, archiveUrl, fetchArchive, writeAll, TarReader, readArchive };

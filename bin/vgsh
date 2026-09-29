@@ -169,10 +169,11 @@
 # `definitionUpdate`, `imageryInstalled` and `imageryUpdate`, `--json` as
 # `{ entries: [...] }`: docs/architecture/theme-catalog.md § Install.
 #
-# `theme wallpapers` is the one theme command that reaches the network. It
-# fetches the archive a catalog install's index entry pins, over HTTPS
-# only, into ${XDG_CACHE_HOME:-~/.cache}/vgs/theme-assets/, holding
-# download.lock there and not the theme lock, checks its size and sha256,
+# `theme wallpapers` is the one catalog command that reaches the network;
+# `theme catalog` and `theme install` work offline. It fetches the archive
+# a catalog install's index entry pins, over HTTPS only, into
+# ${XDG_CACHE_HOME:-~/.cache}/vgs/theme-assets/, holding download.lock
+# there and not the theme lock, checks its size and sha256,
 # and unpacks only regular backgrounds/<image> members of at most 128 MiB
 # into a staging directory. Under the theme lock it then renames the images
 # into the package's backgrounds/ and records the pin in the marker. It

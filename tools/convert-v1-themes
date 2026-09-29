@@ -242,16 +242,21 @@ function refuseAsset(theme, e) {
 }
 
 // The verified archive of theme ITEM in the asset cache, downloaded once
-// and kept there.
+// and kept there, under the cache's download lock, which `vgsh theme
+// wallpapers` takes too: a fetch owns the part it writes.
 async function ensureArchive(item, args, catalog) {
     const base = args.assetBase || catalog.source.baseUrl;
     if (typeof base !== "string" || base === "") refuseGlobal("asset-base", "reason=missing");
+    let lock = null;
     try {
         const url = download.archiveUrl(item.entry.imagery, base, args.allowFileBase);
+        lock = download.holdDownloadLock(args.assetCache);
         return (await download.fetchArchive(item.entry.imagery, url, args.assetCache, true, () => {})).file;
     } catch (e) {
         if (e instanceof download.AssetRefusal) refuseAsset(item.theme, e);
         throw e;
+    } finally {
+        if (lock !== null) lock.release();
     }
 }
 

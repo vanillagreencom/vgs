@@ -20,7 +20,8 @@ const CONVERTER = path.join(repo, "tools", "convert-v1-themes");
 const JUDGE = path.join(repo, "bin", "vgsh-theme-judge");
 const NODE = process.execPath;
 const MAGICK = findOnPath("magick");
-const TEST_PATH = Array.from(new Set([path.dirname(NODE), path.dirname(MAGICK)])).join(path.delimiter);
+const FLOCK = findOnPath("flock");
+const TEST_PATH = Array.from(new Set([path.dirname(NODE), path.dirname(MAGICK), path.dirname(FLOCK)])).join(path.delimiter);
 const TLS_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDP29gb/Ka2HUVG
 XsVeQGSQxtfEF94aWUGszUgb/GIEZL/luPXGYbbrBR0iAH0HHh8E7Muik6OpsfXT
@@ -386,6 +387,30 @@ try {
         const mutant = runThemes(dir, ["alpha"], [], copy);
         assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
         assert.doesNotMatch(mutant.stdout, /source=z-direct\.jpg/, "mutant still skipped nested member");
+    });
+
+    row("a conversion while the download lock is held is refused busy", dir => {
+        freshRoot(dir);
+        copyFixtureArchives(dir);
+        const cache = path.join(dir, "cache");
+        const lockFile = path.join(cache, "download.lock");
+        fs.mkdirSync(cache, { recursive: true });
+        // flock(1) locks this process's descriptor, which it inherits as
+        // fd 3; the lock stays held here until the descriptor is closed.
+        const held = fs.openSync(lockFile, "a");
+        try {
+            const taken = spawnSync(FLOCK, ["-n", "3"], { stdio: ["ignore", "ignore", "inherit", held] });
+            assert.equal(taken.status, 0, "the suite takes the download lock");
+            const proc = runThemes(dir, ["alpha"]);
+            assert.equal(proc.status, 1, proc.stdout + proc.stderr);
+            assert.equal(proc.stderr.split("\n")[0], `convert-v1-themes: refused: asset-busy path=${lockFile}`);
+            assert.deepEqual(fs.readdirSync(cache), ["download.lock"], "a busy conversion touches no part");
+            const copy = converterCopy(path.join(dir, "control"), "        lock = download.holdDownloadLock(args.assetCache);\n", "");
+            const mutant = runThemes(dir, ["alpha"], [], copy);
+            assert.equal(mutant.status, 0, "the lockless mutant converts under the held lock: " + mutant.stdout + mutant.stderr);
+        } finally {
+            fs.closeSync(held);
+        }
     });
 
     row("https redirect to http is refused", dir => {
