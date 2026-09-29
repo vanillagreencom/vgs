@@ -38,12 +38,12 @@ Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-a
 
 ## Opening a notification
 
-A click on a toast or an inbox row, the default action's pill, Show and `invoke-latest` open a notification the same way for every application:
+A click on a toast or an inbox row, Show and `invoke-latest` open a notification, and a pill runs the sender's action it names, the same way for every application:
 
-1. While the notification is still open, the sender's default action reaches the sender, which then shows what the notification is about.
-2. The sender's window comes forward, open or not. The server gives the sender no activation token, so on Wayland the sender cannot raise its own window.
+1. While the notification is still open, the action reaches the sender, which then shows what the action is about.
+2. The sender's window comes into view, open or not: its workspace, a hidden special workspace, a background group tab or another monitor. With several windows, the one the sender asks for, else the one used last. The server gives the sender no activation token, so on Wayland the sender cannot raise its own window; when it does, nothing else moves.
 
-Another action, such as Reply, reaches the sender and raises nothing. A toast that expires stays open for its inbox row until the row leaves the history, the user dismisses it or clears the history, or the sender closes it; `held` in `status` counts these. A Slack message from a browser raises that browser. Slack's notifications carry no link to their channel or message, so a Slack row no longer open raises Slack alone. Unlike Omarchy's, an inbox row opens too: [notification-actions.md](../../../docs/architecture/notification-actions.md).
+Dismiss sends nothing and raises nothing. A toast that expires stays open for its inbox row until the row leaves the history, the user dismisses it or clears the history, or the sender closes it; `held` in `status` counts these. A Slack message from a browser raises that browser. Slack's notifications carry no link to their channel or message, so a Slack row no longer open raises Slack alone. Unlike Omarchy's, an inbox row opens too: [notification-actions.md](../../../docs/architecture/notification-actions.md).
 
 ## Slack
 

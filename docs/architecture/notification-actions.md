@@ -2,25 +2,26 @@
 
 Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/CardSlot.qml
 
-What opening a notification in `vgs.notifications` does, which window it raises, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [runtime.md § Notifications](runtime.md#notifications).
+What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime.md § Hyprland](runtime.md#hyprland).
 
 ## The open rule
 
 - A choice on a card is one of three, and `NotificationLogic.choicePlan` answers what it does for every sender alike. `open` is a click on a toast or an inbox row, Show and the `invoke-latest` IPC. `action:<identifier>` is a pill of the sender's own. `dismiss` is Dismiss or a right click.
-- Opening, and the pill of the `default` action, delivers `default` while the service holds the notification and it offers that action. It then raises the sender's window through the `compositor` capability's `focusWindow`, held or not. The server gives the sender no activation token, so on Wayland neither Slack nor Chromium can raise its own window after the click.
-- Another action of the sender's, such as Reply or Mark read, is delivered and raises nothing, since it is meant to act without a change of context.
-- Each open logs `notifications: opened delivered=<identifier|none> raised=<address|none>`, with no content, so a live check can read what a click reached.
+- Opening delivers `default`, and a pill its own action, while the service holds the notification and it offers that action. Every action names a place in the sender, so either then brings the sender's window into view, delivered or not. The server gives the sender no activation token, so on Wayland neither Slack nor Chromium can raise its own window after the click.
+- Bringing into view is the core's `shell.compositor.reveal` ([capabilities.md](capabilities.md)), never a dispatch of the plugin's own: after a delivered action it first waits briefly for the sender to raise its own window, and moves nothing when it did.
+- Dismissing delivers and raises nothing.
+- Each choice that raises logs `notifications: chose delivered=<identifier|none> windows=<n>`, with no content, and the core logs where the reveal ended, so a live check can read what a click reached.
 
 ## The sender's window
 
-`NotificationLogic.senderAddress` names the window to raise, or none:
+`NotificationLogic.senderWindows` names the windows that may have sent the notification, and the core's reveal picks one: the window the sender asks for, else the one the user focused last. The windows are:
 
-1. the window whose class is the notification's desktop entry or application name, case folded;
-2. else, for a browser's web notification ([notification-senders.md § Browser notifications](notification-senders.md#browser-notifications)), the one Chromium-family window whose class names the site's host, as an installed web app's does;
-3. else the one Chromium-family window open;
-4. else none: with several browser windows and none naming the site, no guess is raised.
+1. those whose class is the notification's desktop entry, else its application name, case folded;
+2. else, for a browser's web notification ([notification-senders.md § Browser notifications](notification-senders.md#browser-notifications)), the Chromium-family windows whose class names the site's host, as an installed web app's does;
+3. else every Chromium-family window open;
+4. else none, and nothing moves.
 
-A Slack message from a browser therefore raises that browser, never Slack's desktop client, and a copy the desktop client sent raises Slack.
+A Slack message from a browser therefore raises a browser, never Slack's desktop client, and a copy the desktop client sent raises Slack.
 
 ## What the service holds
 
@@ -36,13 +37,23 @@ A Slack message from a browser therefore raises that browser, never Slack's desk
 - Slack's desktop client is Electron. Its libnotify notification sends a title, a body, one `default` action labelled Show, the urgency, an image when it has one, and the `desktop-entry` and `sender-pid` hints; the `append` hint only to a server that advertises it, which Quickshell does not. Nothing in it names a channel, a thread or a URL (`LibnotifyNotification::Show` in `shell/browser/notifications/linux/libnotify_notification.cc`, electron/electron main, read on 2026-09-29). The click reaches Electron's `NotificationClicked`, which runs the application's own click handler, where Slack decides what to open. Electron asks libnotify for the activation token on the click (`OnNotificationView`) and gets none. VGS therefore builds no `slack://` link: nothing to build one from arrives.
 - Chromium sends a web notification's body with the site's address first, a `default` action labelled Activate and a `settings` action. Its origin is the site, never the page (`NotificationPlatformBridgeLinuxImpl` in `chrome/browser/notifications/notification_platform_bridge_linux.cc`, chromium/chromium main, read on 2026-09-29). It forgets a notification once told it closed (`OnNotificationClosed`), so an action after that reaches nothing.
 
+## Quickshell 0.3.1
+
+What the Quickshell 0.3.1 notification server does, from its source at tag `v0.3.1` (commit `1a4716c`, `src/services/notifications/`), which the notifications rest on:
+
+- `NotificationAction::invoke()` emits `ActionInvoked` with the notification's id and the action's identifier, then closes the notification as `Dismissed` unless its `resident` hint is set (`notification.cpp`, lines 45 to 56).
+- The server emits no `ActivationToken`: `org.freedesktop.Notifications.xml` declares the signal (line 46) and nothing under `src/` emits it. A sender that raises its window with the token it waits for gets none.
+- `Notification::expire()` and `dismiss()` close the notification (`notification.cpp`, lines 65 to 79). `NotificationServer::deleteNotification` then emits the object's `closed`, drops the id, emits `NotificationClosed` and destroys the object (`server.cpp`, lines 100 to 113). An action on a destroyed notification is refused with `Cannot invoke destroyed notification`. A sender's `CloseNotification` takes the same path as `CloseRequested` (lines 136 to 142).
+- `Notify` with the id of a notification the server still tracks updates that object in place and emits no new `notification` signal, only the changed properties' signals (`server.cpp`, lines 177 to 220). An id it no longer tracks makes a new notification with a new id.
+- The server watches only its own bus name (`server.cpp`, lines 48 to 57), never a sender's connection: a notification stays tracked until the service or its sender closes it.
+
 ## Omarchy
 
-Omarchy's notifications (`shell/plugins/notifications/Service.qml` `invokePopupDefault`, basecamp/omarchy default branch, read on 2026-09-29) invoke a toast's `default` action and focus the sender's window only when the invoke fails; a history replay has no live action, so it only focuses the window. VGS raises the window on every open, because the sender cannot raise it on Wayland, and holds the notification for the inbox, so an inbox row reaches the sender as a toast does.
+Omarchy's notifications (`shell/plugins/notifications/Service.qml` `invokePopupDefault`, basecamp/omarchy default branch, read on 2026-09-29) invoke a toast's `default` action and focus the sender's window by class only when the invoke fails; a history replay has no live action, so it only focuses the window. VGS brings the window into view on every action, because the sender cannot raise it on Wayland, picks among several windows the one the sender asked for or the user used last, and holds the notification for the inbox, so an inbox row reaches the sender as a toast does.
 
 ## Invariants
 
-1. Opening delivers `default` while it is held and offered, and raises the sender's window either way; another action raises nothing. Enforced by `scripts/test-notifications-logic.js`, each rule with a control, and by `scripts/smoke/rows/notifications.sh`, which reads the sender's signals and the focused window after a toast click, the Open pill and a Reply, starting each from another window.
+1. Every action but Dismiss delivers the sender's action while it is held and offered, and brings the sender's window into view either way; Dismiss does neither. Enforced by `scripts/test-notifications-logic.js`, each rule with a control, and by `scripts/smoke/rows/notifications.sh`, which reads the sender's signals and the focused window after a toast click, the Open and Reply pills and the Dismiss pill, starting each from another window.
 2. A toast that expired stays deliverable from its inbox row; a dismissed one and one its sender closed deliver nothing and still raise. Enforced by `scripts/smoke/rows/notifications.sh` and by the holding rules' controls in `scripts/test-notifications-logic.js`.
-3. No notification is held past its stored entry. Enforced by `scripts/test-notifications-logic.js`, `heldPastHistory` with a control.
-4. A browser's web notification raises a browser window and never the desktop client of the same service. Enforced by `scripts/test-notifications-logic.js`, each window rule with a control.
+3. No notification is held past its stored entry. Enforced by `scripts/test-notifications-logic.js`, `heldPastHistory` with a control, and by the bound `scripts/smoke/rows/notifications.sh` reads after the history is full.
+4. A browser's web notification names browser windows and never the desktop client of the same service. Enforced by `scripts/test-notifications-logic.js`, each window rule with a control.
