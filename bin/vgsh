@@ -212,7 +212,8 @@
 # top-level directory is the tree itself, they print the describe form
 # `vgs X.Y.Z.r<N>.g<hash>`: X.Y.Z is the newest reachable release tag's,
 # a tag v<X.Y.Z>, and N counts the commits since it; with no release tag
-# X.Y.Z is VERSION's and N counts every commit. Elsewhere they print
+# X.Y.Z is VERSION's and N counts every commit. The hash is abbreviated to
+# 7 hex digits, more only when 7 are ambiguous. Elsewhere they print
 # `vgs <VERSION>`. `version --json` prints
 # `{"version":"<VERSION>","describe":"X.Y.Z.r<N>.g<hash>"}`, describe null
 # outside a checkout. Refusals, with nothing on stdout: version=missing or
@@ -341,6 +342,8 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
 # first group reads the version from the probe's output, and the probe.
 # `present` needs only a version the regex reads. The floor and where each
 # figure was measured: docs/architecture/runtime.md § Process.
+# scripts/check-packaging.js reads the first two columns, so a raised floor
+# fails that check until the package recipes' constraints follow.
 preflight_floor='
 quickshell 0.3.1   ^Quickshell[[:space:]]([0-9]+(\.[0-9]+)*)                 qs --version
 hyprland   0.56    "version":[[:space:]]*"([0-9]+(\.[0-9]+)*)                 hyprctl -j version
@@ -1017,7 +1020,7 @@ tree_is_checkout() {
 describe_of() { # VERSION_TEXT REV
   local out tag count hash
   # The globs keep tags of v, digits and dots: v1-beta and nightly never count.
-  out="$(git_or_refuse "git=describe path=$root" -C "$root" describe --long --tags --always --match 'v[0-9]*' --exclude 'v*[!0-9.]*' "$2")" || exit 1
+  out="$(git_or_refuse "git=describe path=$root" -C "$root" describe --long --tags --always --abbrev=7 --match 'v[0-9]*' --exclude 'v*[!0-9.]*' "$2")" || exit 1
   if [[ $out =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
     tag="${BASH_REMATCH[1]}" count="${BASH_REMATCH[2]}" hash="${BASH_REMATCH[3]}"
     [[ ${tag#v} =~ $version_re ]] || refuse 1 "tag=$tag reason=not-a-version"

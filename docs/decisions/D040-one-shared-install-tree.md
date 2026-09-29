@@ -20,6 +20,7 @@
 - The installer refuses an existing non-empty runtime tree. A package upgrade installs into a fresh staging root, or removes the old runtime tree first.
 - `vgsh self` knows four install methods: a git checkout, the `vgs` or `vgs-git` package, a curl install and a Nix tree. `vgsh self status` names the method and whether the channel offers something newer. `vgsh self update` fast-forwards a checkout and replaces a curl install with the newest release. It refuses a package or a Nix tree and names what updates it.
 - A curl install keeps each release's runtime tree in `${XDG_DATA_HOME:-~/.local/share}/vgs/X.Y.Z`, with a relative `current` link replaced by rename and `~/.local/bin/vgsh` linked to `current/bin/vgsh`. Every writer of that directory holds `vgs/.self.lock`.
+- The Arch channel is two AUR recipes kept beside the source, `packaging/arch/vgs` and `packaging/arch/vgs-git`. Each `package()` only runs the installer. They conflict with v1's `vgs-shell` packages and never use `replaces`.
 - Publishing runs from local scripts. VGS adds no GitHub workflow for releases or package publication.
 - VGS uses the MIT licence. Package metadata uses `MIT AND OFL-1.1 AND ISC` because bundled fonts and icons carry their own licences.
 - Fedora gets `vgs` and `vgs-git` from one COPR, `vanillagreen/vgs`, from 0.1.x. Its runtime comes from the third-party COPRs `errornointernet/quickshell` and `sdegler/hyprland`, held to the preflight floor by versioned `Requires`. A Fedora release joins the project only after a clean container install passes.
@@ -39,13 +40,15 @@
 
 At `basecamp/omarchy` `main`, read from `/home/method/dev/vgs/tmp/omarchy-ref`, Omarchy's user Hyprland file loads `(os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua"`. Omarchy uses one distribution tree with defaults, migrations, packages, helper commands and themes. Development overrides set `OMARCHY_PATH`.
 
+Omarchy keeps its PKGBUILDs in the separate `omarchy-pkgs` repository and serves them from its own pacman repository. VGS keeps its recipes beside the source and publishes them to the AUR, so a recipe changes in the same commit as the installer it calls.
+
 VGS takes the single-tree property, but not the distribution ownership. VGS installs one shell beside a user's own Hyprland configuration. User state stays in XDG directories.
 
 Omarchy's development channel is a git checkout that `omarchy-update-dev` fast-forwards with `git pull --ff-only`. VGS supports that checkout flow and three more forms: the `vgs` and `vgs-git` packages, a curl install and a Nix tree.
 
 ## Verification
 
-`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/test-install-sh.sh` proves the curl installer's layout, checks and refusals. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme. `scripts/check-fedora-specs.py` holds both Fedora specs to the requirement data and the preflight floor, and `scripts/fedora-container.sh` builds and installs them in a clean Fedora container.
+`scripts/test-install-tree.sh` proves the installer and manifest checker. `scripts/test-vgsh-self.sh` proves the method detection, the status and the update for each method. `scripts/test-install-sh.sh` proves the curl installer's layout, checks and refusals. `scripts/qml-smoke.sh` runs `scripts/smoke/rows/read-only-prefix.sh`, which starts from a non-writable installed prefix, uses the sandbox target set, checks the installed shell log and applies the default theme. `scripts/check-packaging.js` holds the Arch recipes and both Fedora specs to the requirement data and the preflight floor. `scripts/arch-packages.sh` builds and installs the Arch recipes in an `archlinux:latest` container, and `scripts/fedora-container.sh` builds and installs the Fedora specs in a clean Fedora container.
 
 **Revisit When**: VGS ships architecture-specific binaries, package publication moves to a workflow, a channel needs a different runtime tree, or Fedora ships Quickshell and Hyprland at the floor, or a third-party COPR falls behind it.
 

@@ -1,0 +1,38 @@
+pkgbase = vgs-git
+	pkgdesc = Desktop shell for Hyprland, built on Quickshell (development version)
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/vanillagreencom/vgs
+	arch = any
+	license = MIT AND OFL-1.1 AND ISC
+	makedepends = git
+	depends = quickshell>=0.3.1
+	depends = hyprland>=0.56
+	depends = bash
+	depends = coreutils
+	depends = util-linux
+	depends = nodejs>=18
+	depends = python
+	depends = git
+	depends = gum
+	depends = xdg-terminal-exec
+	optdepends = fd: launcher file and folder search
+	optdepends = fzf: launcher file search matching and the package pickers in floating TUIs
+	optdepends = file: launcher open-with list for a found file
+	optdepends = grim: launcher Screenshot
+	optdepends = slurp: launcher Screenshot region selection
+	optdepends = wl-clipboard: launcher Screenshot and Copy path
+	optdepends = libnotify: notify-send, to post notifications to the VGS notification server
+	optdepends = xdg-utils: launcher Files
+	optdepends = hyprlock: launcher Lock
+	optdepends = pacman-contrib: checkupdates, for the package update check
+	optdepends = sudo: package installs and the browser policy writer in floating TUIs
+	optdepends = imagemagick: square Slack profile photos in notifications
+	provides = vgs=0.1.0
+	conflicts = vgs
+	conflicts = vgs-shell
+	conflicts = vgs-shell-git
+	source = vgs::git+https://github.com/vanillagreencom/vgs.git
+	sha256sums = SKIP
+
+pkgname = vgs-git

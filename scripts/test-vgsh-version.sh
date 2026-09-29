@@ -45,6 +45,11 @@ done
 hash="$(g -C "$checkout" rev-parse --short HEAD)"
 INST_BIN="$checkout/bin/vgsh" inst "a checkout with no release tag counts every commit" "$cfg" "$rt_empty" 0 "vgs $want_version.r3.g$hash" "" --version
 INST_BIN="$checkout/bin/vgsh" inst "version --json in a checkout carries the describe form" "$cfg" "$rt_empty" 0 "{\"version\":\"$want_version\",\"describe\":\"$want_version.r3.g$hash\"}" "" version --json
+# A repository's core.abbrev of 12 would lengthen git's own abbreviation;
+# the describe form keeps 7 hex digits, the AUR -git package convention.
+g -C "$checkout" config core.abbrev 12
+check "the fixture's own git abbreviates to 12 digits" test "$(g -C "$checkout" rev-parse --short HEAD)" == "$(g -C "$checkout" rev-parse HEAD | cut -c1-12)"
+INST_BIN="$checkout/bin/vgsh" inst "a checkout's describe keeps a 7-digit hash under core.abbrev=12" "$cfg" "$rt_empty" 0 "vgs $want_version.r3.g${hash:0:7}" "" --version
 
 # nightly and v1-beta sit on HEAD, nearer than v0.0.9: a describe that
 # counted them would name them.
@@ -57,6 +62,8 @@ g -C "$tagged" tag nightly; g -C "$tagged" tag v1-beta
 hash="$(g -C "$tagged" rev-parse --short HEAD)"
 INST_BIN="$tagged/bin/vgsh" inst "a checkout prints the release tag's version and the distance from it" "$cfg" "$rt_empty" 0 "vgs 0.0.9.r2.g$hash" "" --version
 INST_BIN="$tagged/bin/vgsh" inst "version --json keeps VERSION beside the tag's describe form" "$cfg" "$rt_empty" 0 "{\"version\":\"$want_version\",\"describe\":\"0.0.9.r2.g$hash\"}" "" version --json
+g -C "$tagged" config core.abbrev 12
+INST_BIN="$tagged/bin/vgsh" inst "a tagged describe keeps a 7-digit hash under core.abbrev=12" "$cfg" "$rt_empty" 0 "vgs 0.0.9.r2.g${hash:0:7}" "" --version
 g -C "$tagged" tag v2.0
 INST_BIN="$tagged/bin/vgsh" inst "a release tag that is not v<X.Y.Z> is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: tag=v2.0 reason=not-a-version" --version
 

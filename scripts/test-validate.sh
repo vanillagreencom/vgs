@@ -177,8 +177,12 @@ heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
-fedora_plan=$'python3 scripts/check-fedora-specs.py\npython3 scripts/test-check-fedora-specs.py\nscripts/test-fedora-srpm.sh\n'
-version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan$repo_plan"
+fedora_plan=$'scripts/test-fedora-srpm.sh\n'
+version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$repo_plan"
+# A recipe change runs the recipe check and its controls, never the product
+# smoke; the container build runs only where the area admits it, never
+# offline.
+recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$repo_plan"
 cases=(
   "docs|docs/architecture/overview.md|offline|$repo_plan"
   "version|VERSION|offline|$version_plan"
@@ -187,8 +191,12 @@ cases=(
   "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$installer_plan"
   "curl-installer|install.sh|offline|$curl_installer_plan"
+  "recipe|packaging/arch/vgs/PKGBUILD|offline|$recipe_plan"
+  "recipe-all|packaging/arch/vgs-git/.SRCINFO|all|$recipe_plan"$'\nscripts/arch-packages.sh'
+  "recipe-package|packaging/arch/vgs/PKGBUILD|package|scripts/arch-packages.sh"
+  "requirements|config/requirements.json|offline|node scripts/test-plugin-logic.js"$'\nscripts/test-install-tree.sh\nnode scripts/check-packaging.js\nnode scripts/test-check-packaging.js\nscripts/test-install-sh.sh\n'"$repo_plan"
   "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
-  "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$repo_plan"
+  "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$recipe_plan"
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
@@ -242,6 +250,14 @@ for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.
   if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
 done
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
+
+# bin/vgsh holds the preflight floors the recipe check reads.
+d="$tmp/plan-floors"; fresh "$d"
+mkdir -p "$d/bin"; printf 'changed\n' >"$d/bin/vgsh"
+out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")"
+for consumer in 'node scripts/check-packaging.js' 'node scripts/test-check-packaging.js'; do
+  if grep -qxF "$consumer" <<<"$out"; then ok "a bin/vgsh change selects $consumer"; else fail "a bin/vgsh change omitted $consumer"; fi
+done
 
 d="$tmp/plan-full"; fresh "$d"
 full_plan="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --full --list 2>"$tmp/plan.err")"

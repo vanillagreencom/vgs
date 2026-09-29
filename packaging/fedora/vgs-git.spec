@@ -4,7 +4,7 @@
 # RPM form of `vgsh --version` in the checkout) and vgs_commit (the full
 # commit), packs that commit as Source0, and appends the one %changelog
 # entry. The dependency block is the same in vgs.spec;
-# scripts/check-fedora-specs.py holds both to the requirement data and the
+# scripts/check-packaging.js holds both to the requirement data and the
 # preflight floor.
 
 %{!?vgs_version:%{error:vgs-git builds through packaging/fedora/srpm.sh, which defines vgs_version}}

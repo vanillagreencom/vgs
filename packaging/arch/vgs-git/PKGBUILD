@@ -1,0 +1,63 @@
+# Maintainer: VanillaGreen <brad@vanillagreen.com>
+#
+# The development package, built from main. docs/architecture/distribution.md
+# § Arch packages states the rules scripts/check-packaging.js enforces on
+# this file and on ../vgs/PKGBUILD. makepkg rewrites pkgver from pkgver().
+
+pkgname=vgs-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Desktop shell for Hyprland, built on Quickshell (development version)'
+arch=('any')
+url='https://github.com/vanillagreencom/vgs'
+license=('MIT AND OFL-1.1 AND ISC')
+depends=(
+  'quickshell>=0.3.1'
+  'hyprland>=0.56'
+  'bash'
+  'coreutils'
+  'util-linux'
+  'nodejs>=18'
+  'python'
+  'git'
+  'gum'
+  'xdg-terminal-exec'
+)
+optdepends=(
+  'fd: launcher file and folder search'
+  'fzf: launcher file search matching and the package pickers in floating TUIs'
+  'file: launcher open-with list for a found file'
+  'grim: launcher Screenshot'
+  'slurp: launcher Screenshot region selection'
+  'wl-clipboard: launcher Screenshot and Copy path'
+  'libnotify: notify-send, to post notifications to the VGS notification server'
+  'xdg-utils: launcher Files'
+  'hyprlock: launcher Lock'
+  'pacman-contrib: checkupdates, for the package update check'
+  'sudo: package installs and the browser policy writer in floating TUIs'
+  'imagemagick: square Slack profile photos in notifications'
+)
+makedepends=('git')
+provides=("vgs=$pkgver")
+conflicts=('vgs' 'vgs-shell' 'vgs-shell-git')
+source=("vgs::git+$url.git")
+sha256sums=('SKIP')
+
+# The tree's own version judge names the version, so the package and
+# `vgsh --version` in the checkout print the same X.Y.Z.r<N>.g<hash>.
+pkgver() {
+  local out
+  cd "$srcdir/vgs"
+  out="$(./bin/vgsh version)" || return 1
+  out="${out#vgs }"
+  if [[ ! $out =~ ^[0-9]+\.[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]+$ ]]; then
+    printf 'vgs-git: refused: pkgver=%s\n' "$out" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+package() {
+  cd "$srcdir/vgs"
+  DESTDIR="$pkgdir" PREFIX=/usr ./packaging/install-system.sh
+}

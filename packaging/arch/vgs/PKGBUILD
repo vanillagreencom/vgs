@@ -1,0 +1,48 @@
+# Maintainer: VanillaGreen <brad@vanillagreen.com>
+#
+# The release package. docs/architecture/distribution.md § Arch packages
+# states the rules scripts/check-packaging.js enforces on this file and on
+# ../vgs-git/PKGBUILD. sha256sums stays SKIP only until the tag v$pkgver
+# exists; the release pins the tarball's sum.
+
+pkgname=vgs
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Desktop shell for Hyprland, built on Quickshell'
+arch=('any')
+url='https://github.com/vanillagreencom/vgs'
+license=('MIT AND OFL-1.1 AND ISC')
+depends=(
+  'quickshell>=0.3.1'
+  'hyprland>=0.56'
+  'bash'
+  'coreutils'
+  'util-linux'
+  'nodejs>=18'
+  'python'
+  'git'
+  'gum'
+  'xdg-terminal-exec'
+)
+optdepends=(
+  'fd: launcher file and folder search'
+  'fzf: launcher file search matching and the package pickers in floating TUIs'
+  'file: launcher open-with list for a found file'
+  'grim: launcher Screenshot'
+  'slurp: launcher Screenshot region selection'
+  'wl-clipboard: launcher Screenshot and Copy path'
+  'libnotify: notify-send, to post notifications to the VGS notification server'
+  'xdg-utils: launcher Files'
+  'hyprlock: launcher Lock'
+  'pacman-contrib: checkupdates, for the package update check'
+  'sudo: package installs and the browser policy writer in floating TUIs'
+  'imagemagick: square Slack profile photos in notifications'
+)
+conflicts=('vgs-shell' 'vgs-shell-git')
+source=("vgs-$pkgver.tar.gz::$url/releases/download/v$pkgver/vgs-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "vgs-$pkgver"
+  DESTDIR="$pkgdir" PREFIX=/usr ./packaging/install-system.sh
+}
