@@ -1,5 +1,37 @@
 # Sourced by harness.sh and by scripts/test-smoke-verdict.sh; defines the
-# smoke's closing verdict and reads no sandbox state of its own.
+# failure tally the rows write and the smoke's closing verdict, and reads no
+# sandbox state of its own: fail asks held_mode_state, which harness.sh
+# defines, only while a row holds a mode.
+
+failures=0
+# A row that reads positions, sizes or reserved space from the compositor
+# runs under `geometry`; a row whose subject shows only once the shell
+# draws a frame runs under `render`; every other failure counts as
+# behaviour. Only a run whose failures are all geometry or render can be
+# excused by a sandbox fault: the compositor's buffers, or a host that
+# withholds frame callbacks from the nested window.
+behaviour_failures=0
+stalled_render=false
+row_class=behaviour
+# A mode a row holds on a nested output, as (OUTPUT MODE), empty when no row
+# holds one; hold_mode and release_mode alone write it. A row that fails
+# after the output left the held mode counts in mode_resets and never as
+# behaviour: it measured an output the sandbox reset (held_mode_state in
+# harness.sh).
+mode_hold=()
+mode_resets=0
+# fail MESSAGE: one failed row, counted by its class and printed.
+fail() {
+  failures=$((failures + 1))
+  if [[ ${#mode_hold[@]} -gt 0 && $(held_mode_state) == reset ]]; then
+    mode_resets=$((mode_resets + 1))
+    printf '  FAIL  %s\n' "$*"
+    printf '        %s left the held mode %s: not measured\n' "${mode_hold[0]}" "${mode_hold[1]}"
+    return
+  fi
+  [[ $row_class == geometry || $row_class == render ]] || behaviour_failures=$((behaviour_failures + 1))
+  printf '  FAIL  %s\n' "$*"
+}
 
 # nested_output_unallocated LOG...: true when a nested compositor log holds
 # the line Aquamarine's Wayland backend writes when the nested window's own

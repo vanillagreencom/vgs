@@ -25,33 +25,6 @@ sandbox=""
 rt_dir=""
 source_repo="$repo"
 pgids=()
-failures=0
-# A row that reads positions, sizes or reserved space from the compositor
-# runs under `geometry`; a row whose subject shows only once the shell
-# draws a frame runs under `render`; every other failure counts as
-# behaviour. Only a run whose failures are all geometry or render can be
-# excused by a sandbox fault: the compositor's buffers, or a host that
-# withholds frame callbacks from the nested window.
-behaviour_failures=0
-stalled_render=false
-row_class=behaviour
-# A mode a row holds on a nested output, as (OUTPUT MODE), empty when no row
-# holds one; hold_mode and release_mode alone write it. A row that fails
-# after the output left the held mode counts in mode_resets and never as
-# behaviour: it measured an output the sandbox reset (held_mode_state).
-mode_hold=()
-mode_resets=0
-fail() {
-  failures=$((failures + 1))
-  if [[ ${#mode_hold[@]} -gt 0 && $(held_mode_state) == reset ]]; then
-    mode_resets=$((mode_resets + 1))
-    printf '  FAIL  %s\n' "$*"
-    printf '        %s left the held mode %s: not measured\n' "${mode_hold[0]}" "${mode_hold[1]}"
-    return
-  fi
-  [[ $row_class == geometry || $row_class == render ]] || behaviour_failures=$((behaviour_failures + 1))
-  printf '  FAIL  %s\n' "$*"
-}
 geometry() { local previous="$row_class"; row_class=geometry; "$@"; row_class="$previous"; }
 # A render row that fails while the bar windows swapped no frame measured
 # the sandbox, not the shell.
