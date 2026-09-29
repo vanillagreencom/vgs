@@ -97,6 +97,32 @@ const DERIVED = [
     ["a newer minor's event kinds and near ids are skipped", edited("calm", d => { d.schema = "1.4"; d.extra = { any: 1 }; d.lanes[0].near = ["io"]; d.events = [{ id: 1, time: T, kind: "throttled", scope: null, pid: null, processes: null, near: null }]; }), MS, { state: "calm", reason: null, checkedAt: MS, agents: 1, issues: 0, items: [], memory: SLICE }]
 ];
 
+// The next moment derive's answer can change with the file unchanged:
+// [label, doc, now, moment]. Each moment is checked from both sides: the
+// answer a millisecond before it is the answer at now, and the answer at
+// it differs.
+const NEXT = [
+    ["a fresh status turns stale past 90 s", fixture("calm"), MS, MS + 90001],
+    ["a status at its last fresh moment turns stale next", fixture("calm"), MS + 90000, MS + 90001],
+    ["a status dated ahead turns fresh 90 s before its time", fixture("calm"), MS - 100000, MS - 90000],
+    ["a cleanup leaves its window before the status turns stale", edited("reaped", d => { d.events[0].time = d.time - 250; }), MS + 120000, MS + 170001],
+    ["a cleanup whose window ends after the stale moment", fixture("reaped"), MS + 120000, MS + 210001],
+    ["a move leaves its window", edited("calm", d => { d.events = [{ id: 1, time: T - 280, kind: "moved", scope: "s", pid: 4, processes: 3, near: null }]; }), MS, MS + 20001],
+    ["a failed move leaves its window", edited("holding-off", d => { d.events = [{ id: 1, time: T - 200, kind: "failed", scope: null, pid: 321, processes: null, near: null }]; }), MS + 60000, MS + 100001],
+    ["an event already out of its window sets no moment", edited("reaped", d => { d.events[0].time = d.time - 301; }), MS + 120000, MS + 210001],
+    ["an event kind no state reads sets no moment", edited("calm", d => { d.events = [{ id: 1, time: T - 250, kind: "throttled", scope: null, pid: null, processes: null, near: null }]; }), MS, MS + 90001],
+    ["a near-cap event sets no moment", fixture("near-limit"), MS + 30000, MS + 120001]
+];
+// Statuses only a new read can change: [label, file or doc, now].
+const NO_NEXT = [
+    ["a status stale in the past", fixture("calm"), MS + 90001],
+    ["nothing read yet", { kind: "pending" }, MS],
+    ["no warden", { kind: "absent" }, MS],
+    ["an older warden", { kind: "legacy" }, MS],
+    ["an unreadable status", { kind: "unreadable", cause: "json" }, MS],
+    ["a major not read", { kind: "schema", schema: "2.0" }, MS]
+];
+
 // The files that are not a status document: [label, status, legacy, file, detail].
 const FILES = [
     ["nothing read yet", { kind: "pending" }, "pending", { kind: "pending" }, null],
@@ -150,6 +176,15 @@ function verify(logic) {
     assert.throws(() => logic.fileOf({ kind: "absent" }, "maybe"), /legacy="maybe" unknown/);
     assert.throws(() => logic.derive({ kind: "later" }, MS), /file kind="later" unknown/);
 
+    for (const [label, doc, now, want] of NEXT) {
+        const file = read(logic, doc);
+        assert.equal(logic.nextChange(file, now), want, label);
+        same(logic.derive(file, want - 1), JSON.parse(JSON.stringify(logic.derive(file, now))), label + ": unchanged until the moment");
+        assert.notDeepEqual(JSON.parse(JSON.stringify(logic.derive(file, want))), JSON.parse(JSON.stringify(logic.derive(file, now))), label + ": changed at the moment");
+    }
+    for (const [label, input, now] of NO_NEXT)
+        assert.equal(logic.nextChange(input.kind === undefined ? read(logic, input) : input, now), null, label);
+
     for (const [label, fields, want] of ROWS)
         same(logic.wardenRow(Object.assign({ agents: null, checkedAt: null }, fields)), want, label);
     assert.throws(() => logic.wardenRow({ state: "sleeping", items: [] }), /state="sleeping" unknown/);
@@ -176,7 +211,12 @@ const CONTROLS = [
     ["a future time is fresh", "Math.abs(now - checkedAt)", "(now - checkedAt)"],
     ["an unknown major is read", "if (Number(version[1]) !== SUPPORTED_MAJOR) return", "if (false) return"],
     ["fields go unchecked", "var field = shapeError(doc);", "var field = \"\";"],
-    ["old events count", "now - e.time * 1000 <= RECENT_MS", "true"],
+    ["old events count", "return now - t <= RECENT_MS;", "return true;"],
+    ["no stale moment", "var next = checkedAt + STALE_AFTER_MS + 1;", "var next = Infinity;"],
+    ["no moment for a status dated ahead", "if (checkedAt - now > STALE_AFTER_MS) return checkedAt - STALE_AFTER_MS;", ""],
+    ["event windows set no moment", "if (RECENT_KINDS.indexOf(e.kind) !== -1 && isRecent(t, now)) next", "if (false) next"],
+    ["every event kind sets a moment", "if (RECENT_KINDS.indexOf(e.kind) !== -1 && isRecent(t, now))", "if (isRecent(t, now))"],
+    ["a past stale status sets a moment", "if (now - checkedAt > STALE_AFTER_MS) return null;", ""],
     ["leftover work counts as an agent", " && orphans.indexOf(lane.scope) === -1", ""],
     ["an unidentified lane counts as an agent", "lane.label.tool !== null && ", ""],
     ["unknown near ids count", "NEAR_IDS.indexOf(n) !== -1", "true"],
@@ -208,4 +248,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-agent-warden-logic: ok refused=${REFUSED.length} derived=${DERIVED.length} files=${FILES.length} controls=${CONTROLS.length}`);
+console.log(`test-agent-warden-logic: ok refused=${REFUSED.length} derived=${DERIVED.length} next=${NEXT.length + NO_NEXT.length} files=${FILES.length} controls=${CONTROLS.length}`);

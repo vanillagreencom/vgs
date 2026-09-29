@@ -22,6 +22,8 @@ var STALE_AFTER_MS = 90000;
 // An event this recent still shapes the state: a move shows as Working, a
 // failed or partial move and a cleanup as a Problem.
 var RECENT_MS = 300000;
+// The event kinds whose recent window shapes the state.
+var RECENT_KINDS = ["moved", "failed", "partial", "reaped"];
 var GIB = 1073741824;
 
 // The consumer states `derive` answers, in the order the widget ranks them.
@@ -178,10 +180,20 @@ function numberOrNull(limit) {
     return typeof limit === "number" ? limit : null;
 }
 
+// An event's time in whole milliseconds since the epoch.
+function eventMs(e) {
+    return Math.round(e.time * 1000);
+}
+
+// Whether an event at T milliseconds is still in the recent window at NOW.
+function isRecent(t, now) {
+    return now - t <= RECENT_MS;
+}
+
 // The events of KIND in the last RECENT_MS before NOW.
 function recent(doc, kind, now) {
     return doc.events.filter(function (e) {
-        return e.kind === kind && now - e.time * 1000 <= RECENT_MS;
+        return e.kind === kind && isRecent(eventMs(e), now);
     });
 }
 
@@ -261,7 +273,7 @@ function itemsOf(doc, now) {
         items.push({ kind: "leftover", level: "look", count: doc.orphans.length, processes: sum(doc.orphans, "processes") });
     var moved = recent(doc, "moved", now);
     if (moved.length > 0)
-        items.push({ kind: "moved", level: "info", count: moved.length, at: Math.max.apply(null, moved.map(function (e) { return Math.round(e.time * 1000); })) });
+        items.push({ kind: "moved", level: "info", count: moved.length, at: Math.max.apply(null, moved.map(eventMs)) });
     return items;
 }
 
@@ -309,6 +321,29 @@ function derive(file, now) {
     var count = function (level) { return items.filter(function (i) { return i.level === level; }).length; };
     var state = count("problem") > 0 ? "problem" : count("look") > 0 ? "look" : count("info") > 0 ? "working" : "calm";
     return { state: state, reason: null, checkedAt: checkedAt, agents: agents, issues: count("problem") + count("look"), items: items, memory: meterOf(doc.slice) };
+}
+
+// The first moment after NOW, in milliseconds since the epoch, at which
+// derive's answer for FILE can change while the file does not, or null
+// when only a new read can change it. A fresh status turns stale one
+// millisecond past STALE_AFTER_MS after its time, and a recent event of a
+// RECENT_KINDS kind leaves its window one millisecond past RECENT_MS after
+// its own; a status dated more than STALE_AFTER_MS ahead turns fresh once
+// now is that close to its time. A status already stale in the past stays
+// so. The service holds one timer to this moment and derives again when
+// it fires.
+function nextChange(file, now) {
+    if (file.kind !== "read") return null;
+    var doc = file.doc;
+    var checkedAt = Math.round(doc.time * 1000);
+    if (now - checkedAt > STALE_AFTER_MS) return null;
+    if (checkedAt - now > STALE_AFTER_MS) return checkedAt - STALE_AFTER_MS;
+    var next = checkedAt + STALE_AFTER_MS + 1;
+    doc.events.forEach(function (e) {
+        var t = eventMs(e);
+        if (RECENT_KINDS.indexOf(e.kind) !== -1 && isRecent(t, now)) next = Math.min(next, t + RECENT_MS + 1);
+    });
+    return next;
 }
 
 // The Settings row for the warden itself, a `state` status value: whether

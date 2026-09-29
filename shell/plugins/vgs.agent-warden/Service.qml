@@ -13,9 +13,10 @@ import "WardenLogic.js" as WardenLogic
 //   vgsh ipc call vgs.agent-warden invoke status
 //     the published values as one JSON line
 //
-// The derivation runs again when a file changes and on every tick of the
-// shared minute clock, so a status the warden stopped rewriting reads as
-// stale between 90 and 150 s after its time.
+// The derivation runs again when a file changes and when one timer fires
+// at the moment WardenLogic.nextChange names, so a status the warden
+// stopped rewriting reads as stale 90 s after its time, and a recent event
+// leaves the state when its window ends, with no file change.
 Item {
     id: root
 
@@ -33,12 +34,8 @@ Item {
     // "pending", "present" or "absent".
     property string legacy: "pending"
     // The derived state, WardenLogic.derive's answer; null while a read is
-    // pending. Time.now is the dependency that re-derives it each minute;
-    // the moment itself is read to the millisecond.
-    readonly property var detail: {
-        Time.now;
-        return WardenLogic.derive(WardenLogic.fileOf(status, legacy), Date.now());
-    }
+    // pending. derive() alone sets it.
+    property var detail: null
     // The plugin's requirement commands the last scan did not find; its
     // change publishes again. publish() reads the source itself, since a
     // dependent binding may still hold its old value in a change handler
@@ -53,8 +50,28 @@ Item {
         }
         publish();
     }
-    onDetailChanged: publish()
+    onStatusChanged: derive()
+    onLegacyChanged: derive()
     onMissingChanged: publish()
+
+    // Derive the state from both reads at this moment, publish it, and set
+    // the timer to the next moment the answer can change with the files
+    // unchanged.
+    function derive() {
+        const file = WardenLogic.fileOf(status, legacy);
+        const now = Date.now();
+        detail = WardenLogic.derive(file, now);
+        const next = WardenLogic.nextChange(file, now);
+        if (next === null) {
+            deadline.stop();
+        } else {
+            // Timer.interval is a 32-bit int: a moment further ahead fires
+            // at the ceiling, derives again and sets the timer again.
+            deadline.interval = Math.min(next - now, 2147483647);
+            deadline.restart();
+        }
+        publish();
+    }
 
     // Publish each value that differs from the one the core holds. A
     // refusal means a value this plugin declares did not fit its own
@@ -71,11 +88,18 @@ Item {
     }
 
     // A status that cannot be read is logged once per cause; the published
-    // state already says so.
+    // state already says so. An absent status is a warden not set up, a
+    // normal state, and logs nothing.
     function readStatus(next) {
-        if (next.kind !== "read" && JSON.stringify(next) !== JSON.stringify(status))
+        if ((next.kind === "unreadable" || next.kind === "schema") && JSON.stringify(next) !== JSON.stringify(status))
             console.warn("agent-warden: status=" + next.kind + " " + (next.kind === "schema" ? "schema=" + next.schema : "cause=" + next.cause) + " path=" + dir + "/status.json");
         status = next;
+    }
+
+    Timer {
+        id: deadline
+        repeat: false
+        onTriggered: root.derive()
     }
 
     // A watcher adds only a directory that exists when it is built

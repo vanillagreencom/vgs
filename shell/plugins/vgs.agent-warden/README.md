@@ -23,7 +23,7 @@ The service is the plugin's one reader of `$XDG_RUNTIME_DIR/agent-warden/status.
 | `not-set-up` | Neither `status.json` nor `state.json` exists. |
 | `update-warden` | `state.json` exists and `status.json` does not: an older warden, which writes no status. |
 
-The state is derived again once a minute, on the shell's shared clock, so a warden that stops writing reads as `not-checking` between 90 and 150 seconds after its last tick. The service makes the warden's directory at start, so that a warden set up while the shell runs is seen.
+The state is also derived again, with no file change, at the moment `WardenLogic.nextChange` names: 90 seconds after the status's time, when it turns stale, or the end of a recent event's 5-minute window, whichever comes first. The service holds one single-shot timer to that moment. A warden that stops writing therefore reads as `not-checking` 90 seconds after its last tick. The service makes the warden's directory at start, so that a warden set up while the shell runs is seen.
 
 ## Published status
 
@@ -49,5 +49,5 @@ The service publishes these values through the core `status` capability ([status
 
 ## Validation
 
-- `scripts/test-agent-warden-logic.js` reads vsys's fixtures and pins every refusal, every state, the Settings row and the published keys, with a control per rule.
-- `scripts/smoke/rows/agent-warden.sh` writes each fixture into the sandbox's runtime directory by rename, as the warden does, and reads the published status and the Settings rows back. Its control is a copy of the plugin whose logic ignores staleness, which reads a stale status as calm.
+- `scripts/test-agent-warden-logic.js` reads vsys's fixtures and pins every refusal, every state, the next moment each state can change, the Settings row and the published keys, with a control per rule.
+- `scripts/smoke/rows/agent-warden.sh` writes each fixture into the sandbox's runtime directory by rename, as the warden does, and reads the published status and the Settings rows back. A status written 85 seconds back and left unchanged turns stale on the service's timer. Its controls are a copy of the plugin whose logic ignores staleness, which reads a stale status as calm, and a copy whose timer derives nothing, which keeps the unchanged status calm past its stale moment.
