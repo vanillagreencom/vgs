@@ -488,9 +488,9 @@ note_header_reading() {
 }
 notify smoke-app 0 "Even one" "" '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even two" "One line of body text" '[]' '{}' 0 >/dev/null
-notify smoke-app 0 "Even multi" "calendar.google.com\n\n10:30am – 11:30am" '[]' '{}' 0 >/dev/null
-notify "Google Chrome" 0 "Weekly eStaff" "calendar.google.com\n\n10:30am – 11:30am" '[]' '{}' 0 >/dev/null
-notify "chromium" 0 "New message in master-operator" "app.slack.com\n\nAda posted a deployment note in the channel." '[]' '{}' 0 >/dev/null
+notify smoke-app 0 "Even multi" $'The first line of the body\nthe second line\nand the third' '[]' '{}' 0 >/dev/null
+notify "Google Chrome" 0 "Weekly eStaff" $'calendar.google.com\n\n10:30am – 11:30am' '[]' '{}' 0 >/dev/null
+notify "" 0 "New message in master-operator" $'app.slack.com\n\nada: the deployment note is in the channel.' '[]' '{}' 0 >/dev/null
 notify smoke-app 0 "Even max" "$(printf 'A body long enough to run past every line the card may show. %.0s' $(seq 1 12))" '[]' '{}' 0 >/dev/null
 notify smoke-chat 0 "Hover geometry" "Pick one" '["default", "Open", "reply", "Reply"]' '{}' 30000 >/dev/null
 expect_poll "the hover geometry card shows" True has_row live "Hover geometry"
@@ -503,7 +503,7 @@ expect_poll "a one-line card clears the rounded end on both sides" ok checked_sp
 expect_poll "a two-line card clears the rounded end on both sides" ok checked_space "Even two" avatarless
 expect_poll "a multiline card clears the rounded end on both sides" ok checked_space "Even multi" avatarless
 expect_poll "a browser calendar card clears the rounded end on both sides" ok checked_space "Weekly eStaff" avatarless
-expect_poll "a browser message card clears the rounded end on both sides" ok checked_space "New message in master-operator" avatarless
+expect_poll "a browser Slack card keeps its round slot at the pad and clears the text" ok checked_space "New message in master-operator" slot
 expect_poll "a card past its most lines stops at its maximum height and clears both sides" ok checked_space "Even max" avatarless clamped
 expect_poll "a hovered action card clears the rounded end while the pills show" ok checked_space "Hover geometry" avatarless
 expect_poll "a card with an image keeps its round slot at the pad and clears the text" ok checked_space Pictured slot
