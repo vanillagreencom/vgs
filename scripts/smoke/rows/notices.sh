@@ -121,12 +121,10 @@ expect "an offer while the plugin rests is refused" "refused: requirements=acme.
 expect "a refused offer raises no notice" 0 layer_count vgs:notice
 
 # Install: the primary's package through the core's TUI. While
-# $sandbox/core-hold exists the stand-in terminal holds the core run open
+# hold_core makes the stand-in terminal hold the core run open
 # (terminal_stand_in in harness.sh), and the notice has no surface, so the terminal shows
 # whole. The command stays missing after the run's rescan, so the notice
 # comes back with the keyboard.
-hold_core() { : >"$sandbox/core-hold"; }
-release_core() { rm -f -- "$sandbox/core-hold"; }
 notice_waiting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
 notice_front() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
 # `settled` once no install is in flight: the notice in front is not

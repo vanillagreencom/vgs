@@ -96,8 +96,6 @@ expect_poll "Escape clears the search, then closes" 0 layer_count vgs:overlay
 # open the core's package pickers; Update opens the first listed entry of
 # the Update group, the fixture acme.tui's while it is enabled, and hides
 # while it is disabled, as tui.sh left it and as this block leaves it.
-hold_core() { : >"$sandbox/core-hold"; }
-release_core() { rm -f -- "$sandbox/core-hold"; }
 # The index of the launcher's row of kind $1 and label $2, or none.
 row_index() { launcher_rows | python3 -c 'import json,sys; r=[i for i, x in enumerate(json.load(sys.stdin)) if x[0] == sys.argv[1] and x[1] == sys.argv[2]]; print(r[0] if r else "none")' "$1" "$2"; }
 # categories LABEL: summon the launcher and show its categories.
@@ -155,6 +153,9 @@ categories Update
 expect "Update is hidden while its fixture is disabled" False has_row tui Update
 expect "enabling the Update fixture while the launcher is open is allowed" ok ipc shell setPluginEnabled acme.tui true
 expect_poll "the open launcher shows Update once the fixture lists it" True has_row tui Update
+type_keys -k Escape || fail "sending Escape before picking Update failed"
+expect_poll "Escape closes the refreshed Update list" 0 layer_count vgs:overlay
+categories "enabled Update"
 forget_record
 pick_tui Update
 expect_poll "Update hands the terminal the fixture's Update script" "$(update_words)" recorded

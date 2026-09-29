@@ -157,6 +157,8 @@ Singleton {
         return request.ok ? root.managerCoreTui(request.name, request.args) : request.answer;
     }
 
+    // Opens the core TUI `core/<name>` for the manager and returns the
+    // shared shown answer from PluginLogic.tuiShownAnswer.
     function managerCoreTui(name, args) {
         const key = "core/" + name;
         return Logic.tuiShownAnswer(key, tuis.openCore(name, args));

@@ -297,8 +297,6 @@ fi
 # the argv and runs none of it, so the plugin stays installed.
 terminal_stand_in
 terminal_ready "Settings' TUIs"
-hold_core() { : >"$sandbox/core-hold"; }
-release_core() { rm -f -- "$sandbox/core-hold"; }
 # settings_button TEXT: whether the window draws a shown Button TEXT.
 settings_button() { ipc smoke windowGeometry panel vgs.settings Button "$1" | python3 -c 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
 # settings_reopen PAGE: the gear opens the window again on its bar's

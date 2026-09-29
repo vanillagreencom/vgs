@@ -1003,7 +1003,7 @@ function managerTui(action, id, source) {
 // the manager capability's TUI members use this; any other refusal passes
 // through unchanged.
 function tuiShownAnswer(key, answer) {
-    return answer === "ok" || answer === tuiRefusal(key, "busy").answer ? "ok" : answer;
+    return answer === tuiRefusal(key, "busy").answer ? "ok" : answer;
 }
 
 // One printable line of 1 to TUI_TEXT_MAX characters.

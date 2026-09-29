@@ -642,6 +642,9 @@ wait "\$window"
 EOF
   chmod 755 "$shim/xdg-terminal-exec"
 }
+# Hold a core TUI stand-in open while a row checks a busy key.
+hold_core() { : >"$sandbox/core-hold"; }
+release_core() { rm -f -- "$sandbox/core-hold"; }
 # The record, with the run id the core chose as RUN, and a list of words, as
 # one JSON line each.
 recorded() { python3 -c '
