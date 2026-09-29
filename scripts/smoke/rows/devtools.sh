@@ -146,12 +146,13 @@ click_in vgs:panel panel vgs.devtools Switch "Write launchers" || fail "the seco
 expect_poll "turning launchers off removes it" absent launcher_state "$agent_command"
 
 # The VGS section: a plugin's missing requirement, with the package this
-# system's package manager names for it.
+# system's package manager names for it. The fixture marks it optional, so
+# enabling it raises no core requirement notice over the panel.
 doctor_package() { in_shell_env "$repo/bin/vgsh" doctor --json | python3 -c 'import json,sys; p=[r["package"] for r in json.load(sys.stdin)["plugins"]["acme.requires"] if r["command"] == "vgs-smoke-devtool"][0]; print("none" if p is None else p["manager"] + " " + p["name"])'; }
 expect "enabling the requirement fixture is allowed" ok ipc shell setPluginEnabled acme.requires true
 expect "a refresh answers ok" ok devtools refresh
 expect_poll "the VGS section lists the fixture's missing requirement with Install" \
-  "$(texts vgs-smoke-devtool "acme.requires · A command no sandbox has, which a package names" Missing Install)" row_texts vgs-smoke-devtool
+  "$(texts vgs-smoke-devtool "acme.requires · A command no sandbox has, which a package names" Missing Optional Install)" row_texts vgs-smoke-devtool
 if read -r req_manager req_name < <(doctor_package) && [[ $req_manager != none ]]; then
   forget_record
   expect "the requirement's row scrolls into view" revealed reveal_row vgs-smoke-devtool

@@ -1,5 +1,5 @@
-{ "schemaVersion": 1, "id": "acme.requires", "name": "Requires", "version": "0.1.0", "author": "acme", "description": "smoke fixture whose one requirement is missing and has a package on every manager",
+{ "schemaVersion": 1, "id": "acme.requires", "name": "Requires", "version": "0.1.0", "author": "acme", "description": "smoke fixture whose one requirement is missing and has a package on every manager; it is optional, so enabling the fixture raises no core notice",
   "kinds": ["service"], "entryPoints": { "service": "Service.qml" },
   "requirements": [
-    { "command": "vgs-smoke-devtool", "packages": { "pacman": "vgs-smoke-devtool", "apt": "vgs-smoke-devtool", "dnf": "vgs-smoke-devtool", "xbps": "vgs-smoke-devtool", "emerge": "app-misc/vgs-smoke-devtool", "nix": "vgs-smoke-devtool" }, "purpose": "A command no sandbox has, which a package names" }
+    { "command": "vgs-smoke-devtool", "packages": { "pacman": "vgs-smoke-devtool", "apt": "vgs-smoke-devtool", "dnf": "vgs-smoke-devtool", "xbps": "vgs-smoke-devtool", "emerge": "app-misc/vgs-smoke-devtool", "nix": "vgs-smoke-devtool" }, "optional": true, "purpose": "A command no sandbox has, which a package names" }
   ] }
