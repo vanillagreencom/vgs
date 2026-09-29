@@ -171,7 +171,8 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 # plans name consumers independently of the dependency table under test.
 repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
-installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\n'"$repo_plan"
+installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\n'"$repo_plan"
+curl_installer_plan=$'scripts/test-install-sh.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\n'"$repo_plan"
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
@@ -185,6 +186,7 @@ cases=(
   "flake|flake.nix|all|$repo_plan"$'\nscripts/test-flake.sh'
   "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$installer_plan"
+  "curl-installer|install.sh|offline|$curl_installer_plan"
   "install-manifest|packaging/install-tree.manifest|offline|$install_plan"
   "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$repo_plan"
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
