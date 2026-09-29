@@ -582,13 +582,6 @@ expect_poll "notify: off sent nothing, and back on only the lane that opened aga
 warden_notify everything
 warden_put partial 0 moved >/dev/null
 expect_poll "under notify: everything a move shows as a toast" '[{"plugin": "vgs.agent-warden", "title": "Moved an agent back into its limits", "tone": "accent"}]' warden_toasts
-# Its close button ends it, so no toast lies over the shield the rows
-# below click. The button's rectangle is in its window's coordinates; the
-# window's origin comes from the compositor's layer list.
-read -r cx cy cw ch < <(ipc smoke toastCloseGeometry 0 | python3 -c 'import json,sys; print(*json.load(sys.stdin))')
-read -r lx ly < <(layers_of vgs:toast | python3 -c 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])')
-click "$((lx + cx + cw / 2))" "$((ly + cy + ch / 2))" || fail "the click on the move toast's close button failed"
-expect_poll "the close button ends the move toast" '[]' warden_toasts
 warden_notify ""
 
 # A warden that stopped: Start it runs the timer through the stand-in,

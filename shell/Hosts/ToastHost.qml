@@ -39,13 +39,22 @@ Scope {
             screen: Toasts.screen
             anchors { top: host.onTop; bottom: !host.onTop; left: host.onLeft; right: !host.onLeft }
             margins { top: Theme.toast.margin; bottom: Theme.toast.margin; left: Theme.toast.margin; right: Theme.toast.margin }
-            exclusionMode: ExclusionMode.Ignore
+            exclusionMode: ExclusionMode.Normal
             exclusiveZone: 0
             implicitWidth: Theme.toast.width
             implicitHeight: Math.max(1, column.implicitHeight)
             color: "transparent"
+            mask: inputRegion
             WlrLayershell.namespace: "vgs:toast"
             WlrLayershell.layer: WlrLayer.Overlay
+
+            Region {
+                id: inputRegion
+                // PluginLogic.TOAST_VISIBLE_MAX is three; null items make empty regions.
+                Region { item: win.toastAt(0) }
+                Region { item: win.toastAt(1) }
+                Region { item: win.toastAt(2) }
+            }
 
             Column {
                 id: column
