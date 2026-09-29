@@ -1,4 +1,4 @@
-# D049: Automations run under systemd user timers, compiled and guarded by one judge, and notify through VGS hints
+# D050: Automations run under systemd user timers, compiled and guarded by one judge, and notify through VGS hints
 
 [← Decision Index](INDEX.md)
 

@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.automations/**, scripts/test-automations-logic.js, scripts/test-automations-engine.js, scripts/test-automations-linger.sh, scripts/smoke/rows/automations.sh
 
-How `vgs.automations` turns a recurrence into systemd user timers, runs a command, keeps its history and tells the user about it. The plugin's [README](../../shell/plugins/vgs.automations/README.md) says what the user sees; [D049](../decisions/D049-automations-engine.md) records the choices.
+How `vgs.automations` turns a recurrence into systemd user timers, runs a command, keeps its history and tells the user about it. The plugin's [README](../../shell/plugins/vgs.automations/README.md) says what the user sees; [D050](../decisions/D050-automations-engine.md) records the choices.
 
 ## The parts
 
